@@ -307,11 +307,12 @@ def get_auth_context(
 
     Authentication logic:
     - Personal key: returns the key owner directly, ignores wegent-username
-    - Service key: requires wegent-username header to specify the user
+    - Service key: requires username via wegent-username header OR api_key#username format
 
     Args:
         db: Database session
         api_key: API key string (from X-API-Key, Authorization, or wegent-source header)
+                 For service keys, supports "api_key#username" format
         wegent_username: Username to impersonate (from wegent-username header, required for service keys)
 
     Returns:
@@ -327,7 +328,15 @@ def get_auth_context(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    # Parse api_key#username format
+    actual_api_key = api_key
+    username_from_key = None
+    if "#" in api_key:
+        parts = api_key.split("#", 1)
+        actual_api_key = parts[0]
+        username_from_key = parts[1] if len(parts) > 1 and parts[1] else None
+
+    key_hash = hashlib.sha256(actual_api_key.encode()).hexdigest()
     api_key_record = (
         db.query(APIKey)
         .filter(
@@ -364,42 +373,44 @@ def get_auth_context(
             detail="User not found or inactive",
         )
 
-    # Service key: require wegent-username header
+    # Service key: require username via header or api_key#username format
     if api_key_record.key_type == KEY_TYPE_SERVICE:
-        if not wegent_username:
+        # Priority: username_from_key (api_key#username) > wegent_username header
+        target_username = username_from_key or wegent_username
+        if not target_username:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="wegent-username header is required for service key authentication",
+                detail="Username is required for service key authentication (use wegent-username header)",
             )
 
-        # Validate wegent_username format: only letters, numbers, underscores, hyphens
-        if not re.match(r"^[a-zA-Z0-9_-]+$", wegent_username):
+        # Validate username format: only letters, numbers, underscores, hyphens
+        if not re.match(r"^[a-zA-Z0-9_-]+$", target_username):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="wegent-username can only contain letters, numbers, underscores, and hyphens",
+                detail="Username can only contain letters, numbers, underscores, and hyphens",
             )
 
         # Try to find existing user
-        user = userReader.get_by_name(db, wegent_username)
+        user = userReader.get_by_name(db, target_username)
 
         if user:
             if not user.is_active:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"User '{wegent_username}' is inactive",
+                    detail=f"User '{target_username}' is inactive",
                 )
             return AuthContext(user=user, api_key_name=api_key_record.name)
 
         # User not found, auto-create for service key authentication
         logger.info(
-            f"Auto-creating user '{wegent_username}' via service key '{api_key_record.name}'"
+            f"Auto-creating user '{target_username}' via service key '{api_key_record.name}'"
         )
 
         # Create new user with minimal info
         # auth_source uses "api:{service_key_name}" to track which service key created this user
         new_user = User(
-            user_name=wegent_username,
-            email=f"{wegent_username}@api.auto",  # Placeholder email
+            user_name=target_username,
+            email=f"{target_username}@api.auto",  # Placeholder email
             password_hash=get_password_hash(
                 str(uuid.uuid4())
             ),  # Random password for security

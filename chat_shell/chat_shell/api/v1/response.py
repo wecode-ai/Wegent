@@ -212,6 +212,7 @@ async def _stream_response(
         bot_namespace = ""
         skill_names = []
         skill_configs_from_meta = []
+        preload_skills = []
         knowledge_base_ids = None
         document_ids = None
         table_contexts = []
@@ -233,6 +234,7 @@ async def _stream_response(
             skill_configs_from_meta = (
                 getattr(request.metadata, "skill_configs", None) or []
             )
+            preload_skills = getattr(request.metadata, "preload_skills", None) or []
             knowledge_base_ids = getattr(request.metadata, "knowledge_base_ids", None)
             document_ids = getattr(request.metadata, "document_ids", None)
             table_contexts = getattr(request.metadata, "table_contexts", None) or []
@@ -271,6 +273,7 @@ async def _stream_response(
             skills=all_skill_configs,
             skill_names=skill_names,
             skill_configs=all_skill_configs,
+            preload_skills=preload_skills,
             knowledge_base_ids=knowledge_base_ids,
             document_ids=document_ids,
             table_contexts=table_contexts,
@@ -281,7 +284,7 @@ async def _stream_response(
         logger.info(
             "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, "
             "enable_web_search=%s, mcp_servers=%d, skills=%d, "
-            "skill_names=%s, knowledge_base_ids=%s, document_ids=%s, "
+            "skill_names=%s, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s, "
             "table_contexts_count=%d, table_contexts=%s",
             task_id,
             subtask_id,
@@ -289,6 +292,7 @@ async def _stream_response(
             len(mcp_servers),
             len(all_skill_configs),
             skill_names,
+            preload_skills,
             knowledge_base_ids,
             document_ids,
             len(table_contexts),
@@ -374,12 +378,21 @@ async def _stream_response(
                         status = details.get("status")
                         tool_name = details.get("tool_name", details.get("name", ""))
                         run_id = step.get("run_id", "")
+                        title = step.get("title", "")
 
                         # Create unique key for this tool event
                         event_key = f"{run_id}:{status}"
                         if event_key in emitted_tool_run_ids:
                             continue  # Skip already emitted events
                         emitted_tool_run_ids.add(event_key)
+
+                        logger.info(
+                            "[RESPONSE] Processing thinking step: run_id=%s, status=%s, tool=%s, title=%s",
+                            run_id[:20] if run_id else "N/A",
+                            status,
+                            tool_name,
+                            title[:30] if title else "N/A",
+                        )
 
                         if status == "started":
                             yield _format_sse_event(
@@ -391,7 +404,17 @@ async def _stream_response(
                                     display_name=step.get("title", tool_name),
                                 ).model_dump(),
                             )
-                        elif status == "completed":
+                        elif status in ("completed", "failed"):
+                            logger.info(
+                                "[RESPONSE] Emitting TOOL_DONE: run_id=%s, status=%s, error=%s",
+                                run_id[:20] if run_id else "N/A",
+                                status,
+                                (
+                                    details.get("error", "none")[:50]
+                                    if details.get("error")
+                                    else "none"
+                                ),
+                            )
                             yield _format_sse_event(
                                 ResponseEventType.TOOL_DONE.value,
                                 ToolDone(
@@ -400,8 +423,13 @@ async def _stream_response(
                                         "output", details.get("content")
                                     ),
                                     duration_ms=None,
-                                    error=None,
+                                    error=(
+                                        details.get("error")
+                                        if status == "failed"
+                                        else None
+                                    ),
                                     sources=None,
+                                    display_name=title if status == "failed" else None,
                                 ).model_dump(),
                             )
 

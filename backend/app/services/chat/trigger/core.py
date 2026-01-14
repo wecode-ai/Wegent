@@ -342,6 +342,7 @@ async def _stream_chat_response(
                 enable_clarification=payload.enable_clarification,
                 enable_deep_thinking=True,
                 task_id=stream_data.task_id,
+                preload_skills=getattr(payload, "preload_skills", None),
             )
         except ValueError as e:
             error_msg = str(e)
@@ -457,6 +458,8 @@ async def _stream_chat_response(
                 subtask_id=stream_data.subtask_id,
                 user_id=stream_data.user_id,
                 skill_configs=chat_config.skill_configs,
+                load_skill_tool=load_skill_tool,
+                user_name=stream_data.user_name,
             )
             extra_tools.extend(skill_tools)
 
@@ -518,6 +521,7 @@ async def _stream_chat_response(
                 knowledge_base_ids=knowledge_base_ids,
                 document_ids=document_ids,
                 table_contexts=table_contexts,
+                preload_skills=chat_config.preload_skills,  # Use resolved from ChatConfig
             )
         elif streaming_mode == "bridge":
             # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards
@@ -583,6 +587,7 @@ async def _stream_with_http_adapter(
     knowledge_base_ids: list = None,
     document_ids: list = None,
     table_contexts: list = None,
+    preload_skills: list = None,
 ) -> None:
     """Stream using HTTP adapter to call remote chat_shell service.
 
@@ -604,6 +609,7 @@ async def _stream_with_http_adapter(
         knowledge_base_ids: List of knowledge base IDs to search
         document_ids: List of document IDs to filter retrieval
         table_contexts: List of table context dicts for DataTableTool
+        preload_skills: List of skill names to preload into system prompt
     """
     from app.core.config import settings
     from app.services.chat.adapters.http import HTTPAdapter
@@ -688,10 +694,11 @@ async def _stream_with_http_adapter(
         search_engine=ws_config.search_engine,
         bot_name=ws_config.bot_name,
         bot_namespace=ws_config.bot_namespace,
-        skills=ws_config.skills or [],
+        skills=ws_config.skills or [],  # Skill metadata with preload field
         # Add skill and knowledge base parameters for HTTP mode
         skill_names=skill_names or [],
         skill_configs=skill_configs or [],
+        preload_skills=preload_skills or [],  # Pass preload_skills to ChatRequest
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids,
         table_contexts=table_contexts or [],
@@ -701,15 +708,16 @@ async def _stream_with_http_adapter(
 
     logger.info(
         "[HTTP_ADAPTER] ChatRequest built: task_id=%d, skill_names=%s, "
-        "skill_configs_count=%d, knowledge_base_ids=%s, document_ids=%s, "
-        "table_contexts_count=%d, table_contexts=%s",
+        "table_contexts_count=%d, table_contexts=%s, "
+        "skill_configs_count=%d, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s",
         task_id,
         skill_names,
-        len(skill_configs) if skill_configs else 0,
-        knowledge_base_ids,
-        document_ids,
         len(table_contexts) if table_contexts else 0,
         table_contexts,  # Log the actual content
+        len(skill_configs) if skill_configs else 0,
+        preload_skills,
+        knowledge_base_ids,
+        document_ids,
     )
 
     # Record chat request details to trace
@@ -748,6 +756,9 @@ async def _stream_with_http_adapter(
     # Track last Redis save time for periodic saves (every 1 second)
     last_redis_save = asyncio.get_event_loop().time()
     redis_save_interval = 1.0  # Save to Redis every 1 second
+    # Track TTFT (Time To First Token)
+    stream_start_time = asyncio.get_event_loop().time()
+    first_token_received = False
 
     try:
         # Stream events from chat_shell and forward to WebSocket
@@ -770,6 +781,21 @@ async def _stream_with_http_adapter(
                 # Text chunk - forward to WebSocket
                 chunk_text = event.data.get("content", "")
                 if chunk_text:
+                    # Log TTFT (Time To First Token) for the first content chunk
+                    if not first_token_received:
+                        ttft_ms = (
+                            asyncio.get_event_loop().time() - stream_start_time
+                        ) * 1000
+                        first_token_received = True
+                        logger.info(
+                            "[BACKEND_TTFT] First token received from chat_shell: "
+                            "task_id=%d, subtask_id=%d, ttft_ms=%.2f, token_len=%d",
+                            task_id,
+                            subtask_id,
+                            ttft_ms,
+                            len(chunk_text),
+                        )
+
                     full_response += chunk_text
                     await ws_emitter.emit_chat_chunk(
                         task_id=task_id,
@@ -857,33 +883,57 @@ async def _stream_with_http_adapter(
                     },  # Skip output to reduce log size
                 )
 
-                # Find matching start step and update display name
-                display_name = f"Tool completed: {tool_name}"
-                for step in thinking_steps:
-                    if (
-                        step.get("run_id") == tool_id
-                        and step.get("details", {}).get("status") == "started"
-                    ):
-                        # Get the original title and remove "正在" prefix
-                        orig_title = step.get("title", "")
-                        if orig_title.startswith("正在"):
-                            display_name = orig_title[2:]
-                        else:
-                            display_name = orig_title
-                        break
+                # Determine status based on event data
+                # chat_shell sends error field directly in tool_done event when failed
+                status = "completed"
+                error_msg = event.data.get("error")
+                if error_msg:
+                    status = "failed"
+                elif isinstance(tool_output, str) and tool_output:
+                    # Also check tool_output JSON for success: false (fallback)
+                    try:
+                        import json
+
+                        parsed = json.loads(tool_output)
+                        if isinstance(parsed, dict) and parsed.get("success") is False:
+                            status = "failed"
+                            error_msg = parsed.get("error", "Task failed")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                # Use display_name from event data, or fall back to matching start step
+                display_name = event.data.get("display_name", "")
+                if not display_name:
+                    for step in thinking_steps:
+                        if (
+                            step.get("run_id") == tool_id
+                            and step.get("details", {}).get("status") == "started"
+                        ):
+                            orig_title = step.get("title", "")
+                            if orig_title.startswith("正在"):
+                                display_name = orig_title[2:]
+                            else:
+                                display_name = orig_title
+                            break
+                    if not display_name:
+                        display_name = f"Tool completed: {tool_name}"
+
+                tool_result_details = {
+                    "type": "tool_result",
+                    "tool_name": tool_name,
+                    "status": status,
+                    "output": tool_output,
+                    "content": tool_output,
+                }
+                if status == "failed" and error_msg:
+                    tool_result_details["error"] = error_msg
 
                 thinking_steps.append(
                     {
                         "title": display_name,
                         "next_action": "continue",
                         "run_id": tool_id,
-                        "details": {
-                            "type": "tool_result",
-                            "tool_name": tool_name,
-                            "status": "completed",
-                            "output": tool_output,
-                            "content": tool_output,
-                        },
+                        "details": tool_result_details,
                     }
                 )
 

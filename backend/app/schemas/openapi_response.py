@@ -20,11 +20,13 @@ class WegentTool(BaseModel):
       Includes: deep thinking with web search, server MCP tools, and message enhancement
     - mcp: Custom MCP server configuration
       Allows connecting to user-provided MCP servers for additional tools
+    - skill: Preload specific skills for the bot
 
     Note:
     - Bot/Ghost MCP tools are always available by default (no user tool needed)
     - Use wegent_chat_bot to enable full server-side capabilities
     - Use mcp type with mcp_servers to add custom MCP servers
+    - Use skill type with skills to preload specific skills
 
     Examples:
         # Enable all server-side capabilities
@@ -40,15 +42,22 @@ class WegentTool(BaseModel):
                 }
             ]
         }
+
+        # Preload specific skills
+        {"type": "skill", "preload_skills": ["skill_a", "skill_b"]}
     """
 
     type: str = Field(
         ...,
-        description="Tool type: 'wegent_chat_bot' (server capabilities) or 'mcp' (custom MCP servers)",
+        description="Tool type: 'wegent_chat_bot' (server capabilities), 'mcp' (custom MCP servers), or 'skill' (preload skills)",
     )
     mcp_servers: Optional[List[Dict[str, Any]]] = Field(
         default=None,
-        description="List containing a dict of MCP server configs: [{name: {url, type, headers}, ...}]",
+        description="List containing a dict of MCP server configs: [{name: {url, type, headers}, ...}]. Required when type='mcp'",
+    )
+    preload_skills: Optional[List[str]] = Field(
+        default=None,
+        description="List of skill names to preload. Required when type='skill'",
     )
 
 

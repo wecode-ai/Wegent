@@ -10,7 +10,19 @@
     "copy": "复制",
     "regenerate": "重新生成",
     "stop": "停止",
-    "retry": "重试"
+    "retry": "重试",
+    "edit": "编辑",
+    "save": "保存",
+    "cancel": "取消"
+  },
+  "edit": {
+    "tooltip": "编辑消息",
+    "success": "消息编辑成功",
+    "failed": "编辑消息失败",
+    "confirm_title": "确认编辑",
+    "confirm_description": "此编辑操作将清除本条消息及其后的所有消息，对话将从当前位置重新开始。确定要继续吗？",
+    "confirm_button": "确认",
+    "confirming": "处理中..."
   },
   "quote": {
     "ask_wegent": "询问 Wegent",
@@ -178,7 +190,8 @@
     "invalid_parameter": "参数错误：请求参数不正确，请检查输入内容",
     "network_error": "网络连接失败：请检查网络连接后重试",
     "timeout_error": "请求超时：服务响应时间过长，请稍后重试",
-    "generic_error": "请求失败：未知错误，请重试或联系管理员"
+    "generic_error": "请求失败：未知错误，请重试或联系管理员",
+    "copy_error": "复制错误详情"
   },
   "clarification": {
     "title": "智能追问 (Smart Follow-up)",

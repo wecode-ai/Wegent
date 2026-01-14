@@ -17,7 +17,13 @@ interface MobileSidebarProps {
   hideTitle?: boolean // New prop to hide title bar while keeping structure
 }
 
-export function MobileSidebar({ isOpen, onClose, children, title, hideTitle = false }: MobileSidebarProps) {
+export function MobileSidebar({
+  isOpen,
+  onClose,
+  children,
+  title,
+  hideTitle = false,
+}: MobileSidebarProps) {
   const { t } = useTranslation()
 
   return (

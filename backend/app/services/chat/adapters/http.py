@@ -145,6 +145,7 @@ class HTTPAdapter(ChatInterface):
             # Additional fields for HTTP mode
             "skill_names": request.skill_names,
             "skill_configs": request.skill_configs,
+            "preload_skills": request.preload_skills,
             "knowledge_base_ids": request.knowledge_base_ids,
             "document_ids": request.document_ids,
             "table_contexts": request.table_contexts,
@@ -471,6 +472,9 @@ class HTTPAdapter(ChatInterface):
                         event_data["input"] = data.get("input", {})
                     else:  # TOOL_RESULT
                         event_data["output"] = data.get("output", "")
+                        # Include error field for failed tools
+                        if data.get("error"):
+                            event_data["error"] = data.get("error")
                     logger.info(
                         "[HTTP_ADAPTER] Parsed %s event: data=%s, event_data=%s",
                         event_type.value,
