@@ -54,6 +54,10 @@ class ServerEvents:
     CHAT_BOT_COMPLETE = "chat:bot_complete"
     CHAT_SYSTEM = "chat:system"
 
+    # Tool execution events (to task room)
+    TOOL_START = "tool:start"
+    TOOL_DONE = "tool:done"
+
     # Correction events (to task room)
     CORRECTION_START = "correction:start"
     CORRECTION_PROGRESS = "correction:progress"
@@ -291,6 +295,28 @@ class ChatSystemPayload(BaseModel):
     type: str
     content: str
     data: Optional[Dict[str, Any]] = None
+
+
+class ToolStartPayload(BaseModel):
+    """Payload for tool:start event."""
+
+    task_id: int
+    subtask_id: int
+    tool_id: str = Field(..., description="Unique tool execution ID")
+    tool_name: str = Field(..., description="Name of the tool being executed")
+    tool_input: Dict[str, Any] = Field(
+        default_factory=dict, description="Tool input parameters"
+    )
+
+
+class ToolDonePayload(BaseModel):
+    """Payload for tool:done event."""
+
+    task_id: int
+    subtask_id: int
+    tool_id: str = Field(..., description="Tool execution ID (matches tool:start)")
+    tool_output: Optional[str] = Field(None, description="Tool output")
+    tool_error: Optional[str] = Field(None, description="Error message if tool failed")
 
 
 class TaskCreatedPayload(BaseModel):
