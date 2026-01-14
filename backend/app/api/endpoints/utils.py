@@ -8,6 +8,7 @@ Utility API endpoints.
 
 from fastapi import APIRouter, Query
 
+from app.core.config import settings
 from app.services.link_preview import LinkPreviewResult, fetch_link_preview
 from app.services.url_metadata import UrlMetadataResult, fetch_url_metadata
 

@@ -162,6 +162,19 @@ async def fetch_link_preview(url: str) -> LinkPreviewResult:
     Returns:
         LinkPreviewResult with title, description, image, etc.
     """
+    # If Browserless is disabled, return failure to trigger fallback to plain URL
+    if not settings.BROWSERLESS_ENABLED or not settings.BROWSERLESS_URL:
+        logger.warning("Browserless is disabled, returning failure for link preview")
+        return LinkPreviewResult(
+            url=url,
+            title=None,
+            description=None,
+            image=None,
+            favicon=None,
+            site_name=None,
+            success=False,
+        )
+
     # Check cache first
     redis_client = _get_redis_client()
     if redis_client:

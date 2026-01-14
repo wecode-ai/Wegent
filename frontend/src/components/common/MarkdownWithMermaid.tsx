@@ -78,7 +78,7 @@ function isValidCardUrl(url: string): boolean {
  * - ```mermaid code blocks for diagrams
  * - [card:url] syntax for rich link preview cards
  */
-function parseContentParts(source: string): ContentPart[] {
+function parseContentParts(source: string, browserlessEnabled: boolean): ContentPart[] {
   const parts: ContentPart[] = []
 
   // Combined regex to match both mermaid blocks and card syntax
@@ -110,7 +110,12 @@ function parseContentParts(source: string): ContentPart[] {
       // Card syntax matched (group 2)
       const cardUrl = match[2].trim()
       if (cardUrl && isValidCardUrl(cardUrl)) {
-        parts.push({ type: 'card', content: cardUrl })
+        // If browserless is disabled, convert card to plain markdown link
+        if (!browserlessEnabled) {
+          parts.push({ type: 'markdown', content: `[${cardUrl}](${cardUrl})` })
+        } else {
+          parts.push({ type: 'card', content: cardUrl })
+        }
       } else {
         // Invalid URL - treat as regular text
         parts.push({ type: 'markdown', content: match[0] })
@@ -156,7 +161,11 @@ export const MarkdownWithMermaid = memo(function MarkdownWithMermaid({
   disableLinkPreview = false,
 }: MarkdownWithMermaidProps) {
   // Parse the source to extract special blocks and regular content
-  const contentParts = useMemo(() => parseContentParts(source), [source])
+  // When link preview is disabled, treat as browserless disabled
+  const contentParts = useMemo(
+    () => parseContentParts(source, !disableLinkPreview),
+    [source, disableLinkPreview]
+  )
 
   // Default components with link handling
   const defaultComponents = useMemo(
