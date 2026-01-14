@@ -256,7 +256,9 @@ class SaveRagResultRequest(BaseModel):
     """Request for saving RAG retrieval results to context database."""
 
     user_subtask_id: int = Field(..., description="User subtask ID")
-    knowledge_base_id: int = Field(..., description="Knowledge base ID that was searched")
+    knowledge_base_id: int = Field(
+        ..., description="Knowledge base ID that was searched"
+    )
     extracted_text: str = Field(..., description="Concatenated retrieval text")
     sources: list[dict] = Field(
         default_factory=list,

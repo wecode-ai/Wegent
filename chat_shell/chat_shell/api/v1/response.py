@@ -502,6 +502,22 @@ async def _stream_response(
                 return
 
         # Send response.done event with accumulated sources
+        # Convert accumulated_sources to SourceItem format for proper serialization
+        formatted_sources = None
+        if accumulated_sources:
+            from chat_shell.api.v1.schemas import SourceItem
+
+            formatted_sources = [
+                SourceItem(
+                    index=source.get("index"),
+                    title=source.get("title", "Unknown"),
+                    kb_id=source.get("kb_id"),
+                    url=source.get("url"),
+                    snippet=source.get("snippet"),
+                )
+                for source in accumulated_sources
+            ]
+
         yield _format_sse_event(
             ResponseEventType.RESPONSE_DONE.value,
             ResponseDone(
@@ -516,7 +532,7 @@ async def _stream_response(
                     else None
                 ),
                 stop_reason="end_turn",
-                sources=accumulated_sources if accumulated_sources else None,
+                sources=formatted_sources,
             ).model_dump(),
         )
 

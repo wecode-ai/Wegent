@@ -994,10 +994,13 @@ async def _stream_with_http_adapter(
                 # Preserve sources from result (knowledge base citations)
                 # Sources are passed through from chat_shell's ResponseDone event
                 if result.get("sources"):
-                    logger.debug(
-                        "[HTTP_ADAPTER] Sources in result: %d items",
+                    logger.info(
+                        "[HTTP_ADAPTER] Sources in result: %d items, sources=%s",
                         len(result["sources"]),
+                        result["sources"],
                     )
+                else:
+                    logger.info("[HTTP_ADAPTER] No sources in result")
 
                 # Update subtask status to COMPLETED in database
                 # This is critical for persistence - without this, messages show as "running" after refresh
