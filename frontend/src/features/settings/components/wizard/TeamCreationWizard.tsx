@@ -372,7 +372,13 @@ export default function TeamCreationWizard({
       state.systemPrompt !== '' || state.agentName !== '' || state.agentDescription !== ''
 
     return hasCoreAnswers || hasFollowupData || hasPromptData
-  }, [state.coreAnswers, state.followupRounds, state.systemPrompt, state.agentName, state.agentDescription])
+  }, [
+    state.coreAnswers,
+    state.followupRounds,
+    state.systemPrompt,
+    state.agentName,
+    state.agentDescription,
+  ])
 
   // Render current step content
   const renderStepContent = () => {
@@ -454,6 +460,7 @@ export default function TeamCreationWizard({
         preventEscapeClose
         preventOutsideClick
         onBeforeClose={hasUnsavedChanges}
+        onConfirmClose={handleClose}
         confirmTitle={t('wizard:confirm_close_title')}
         confirmDescription={t('wizard:confirm_close_description')}
       >

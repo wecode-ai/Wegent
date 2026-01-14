@@ -40,13 +40,17 @@ const DialogOverlay = React.forwardRef<
 ))
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
-interface DialogContentProps extends React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> {
+interface DialogContentProps extends React.ComponentPropsWithoutRef<
+  typeof DialogPrimitive.Content
+> {
   // Prevent closing dialog when ESC key is pressed
   preventEscapeClose?: boolean
   // Prevent closing dialog when clicking outside
   preventOutsideClick?: boolean
   // Callback to check for unsaved changes before closing, returns true if there are unsaved changes
   onBeforeClose?: () => boolean
+  // Callback to close the dialog after user confirms (required when onBeforeClose is provided)
+  onConfirmClose?: () => void
   // Custom title for confirmation dialog (optional)
   confirmTitle?: string
   // Custom description for confirmation dialog (optional)
@@ -66,6 +70,7 @@ const DialogContent = React.forwardRef<
       preventEscapeClose,
       preventOutsideClick,
       onBeforeClose,
+      onConfirmClose,
       confirmTitle,
       confirmDescription,
       hideCloseButton,
@@ -77,7 +82,9 @@ const DialogContent = React.forwardRef<
   ) => {
     const { t } = useTranslation('common')
     const [showConfirmDialog, setShowConfirmDialog] = React.useState(false)
-    const [_pendingCloseAction, setPendingCloseAction] = React.useState<'escape' | 'outside' | 'button' | null>(null)
+    const [_pendingCloseAction, setPendingCloseAction] = React.useState<
+      'escape' | 'outside' | 'button' | null
+    >(null)
 
     // Handle ESC key press
     const handleEscapeKeyDown = React.useCallback(
@@ -128,30 +135,38 @@ const DialogContent = React.forwardRef<
           setShowConfirmDialog(true)
           return
         }
-        // If no onBeforeClose or no unsaved changes, let the default DialogPrimitive.Close handle it
+        // If no onBeforeClose or no unsaved changes, close the dialog directly
+        if (onConfirmClose) {
+          onConfirmClose()
+        }
       },
-      [onBeforeClose]
+      [onBeforeClose, onConfirmClose]
     )
 
     // Handle confirm close
     const handleConfirmClose = React.useCallback(() => {
       setShowConfirmDialog(false)
       setPendingCloseAction(null)
-      // Dispatch a custom event to trigger dialog close
-      const dialogContent = document.querySelector('[data-state="open"][role="dialog"]')
-      if (dialogContent) {
-        // Find the dialog close button and click it, or dispatch escape key
-        const event = new KeyboardEvent('keydown', {
-          key: 'Escape',
-          code: 'Escape',
-          keyCode: 27,
-          which: 27,
-          bubbles: true,
-          cancelable: true,
-        })
-        dialogContent.dispatchEvent(event)
+      // Use the onConfirmClose callback if provided, otherwise fall back to dispatching escape key
+      if (onConfirmClose) {
+        onConfirmClose()
+      } else {
+        // Fallback: Dispatch a custom event to trigger dialog close
+        const dialogContent = document.querySelector('[data-state="open"][role="dialog"]')
+        if (dialogContent) {
+          // Find the dialog close button and click it, or dispatch escape key
+          const event = new KeyboardEvent('keydown', {
+            key: 'Escape',
+            code: 'Escape',
+            keyCode: 27,
+            which: 27,
+            bubbles: true,
+            cancelable: true,
+          })
+          dialogContent.dispatchEvent(event)
+        }
       }
-    }, [])
+    }, [onConfirmClose])
 
     // Handle cancel
     const handleCancelClose = React.useCallback(() => {
@@ -174,8 +189,8 @@ const DialogContent = React.forwardRef<
             {...props}
           >
             {children}
-            {!hideCloseButton && (
-              onBeforeClose ? (
+            {!hideCloseButton &&
+              (onBeforeClose ? (
                 <button
                   type="button"
                   onClick={handleCloseButtonClick}
@@ -189,17 +204,14 @@ const DialogContent = React.forwardRef<
                   <X className="h-4 w-4" />
                   <span className="sr-only">Close</span>
                 </DialogPrimitive.Close>
-              )
-            )}
+              ))}
           </DialogPrimitive.Content>
         </DialogPortal>
 
         <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>
-                {confirmTitle || t('dialog.confirm_close_title')}
-              </AlertDialogTitle>
+              <AlertDialogTitle>{confirmTitle || t('dialog.confirm_close_title')}</AlertDialogTitle>
               <AlertDialogDescription>
                 {confirmDescription || t('dialog.confirm_close_description')}
               </AlertDialogDescription>
@@ -208,7 +220,10 @@ const DialogContent = React.forwardRef<
               <AlertDialogCancel onClick={handleCancelClose}>
                 {t('dialog.confirm_close_cancel')}
               </AlertDialogCancel>
-              <AlertDialogAction onClick={handleConfirmClose}>
+              <AlertDialogAction
+                onClick={handleConfirmClose}
+                className="bg-primary text-white hover:bg-primary/90 border-primary"
+              >
                 {t('dialog.confirm_close_confirm')}
               </AlertDialogAction>
             </AlertDialogFooter>
