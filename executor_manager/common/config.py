@@ -10,6 +10,10 @@ and modify settings.
 """
 
 import os
+
+# Route prefix constant - use this everywhere to avoid typos
+ROUTE_PREFIX = "/executor-manager"
+
 from dataclasses import dataclass, field
 from typing import Optional
 
