@@ -8,7 +8,7 @@ This module implements the private protocol for E2B SDK that uses path-based rou
 instead of subdomain-based routing:
 
 Original E2B format:  <port>-<sandboxID>.E2B_DOMAIN
-Private protocol:     E2B_DOMAIN/executor_manager/e2b/proxy/<sandboxID>/<port>/<path>
+Private protocol:     E2B_DOMAIN/executor-manager/e2b/proxy/<sandboxID>/<port>/<path>
 
 This allows deployments without wildcard DNS and certificates.
 
@@ -25,7 +25,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from shared.logger import setup_logger
 
-from executor_manager.common.config import get_config
+from executor_manager.common.config import ROUTE_PREFIX, get_config
 from executor_manager.services.sandbox import get_sandbox_manager
 
 logger = setup_logger(__name__)
@@ -95,7 +95,7 @@ async def _get_sandbox_info(sandbox_id: str) -> tuple:
 
 
 @router.api_route(
-    "/executor_manager/e2b/proxy/{sandbox_id}/{port:int}/{path:path}",
+    "/{sandbox_id}/{port:int}/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
 )
 async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Request):
@@ -104,14 +104,14 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
     This endpoint proxies HTTP requests to the sandbox container using path-based
     routing instead of subdomain-based routing.
 
-    URL format: /executor_manager/e2b/proxy/<sandboxID>/<port>/<path>
+    URL format: {ROUTE_PREFIX}/e2b/proxy/<sandboxID>/<port>/<path>
 
     For subagent tasks (metadata.task_type == "subagent"), requests to /execute
     are transformed and forwarded to the executor's task dispatch endpoint.
 
     Examples:
-        /executor_manager/e2b/proxy/abc123/49983/execute -> http://container_host:mapped_port/execute
-        /executor_manager/e2b/proxy/abc123/49999/contexts -> http://container_host:mapped_port/contexts
+        {ROUTE_PREFIX}/e2b/proxy/abc123/49983/execute -> http://container_host:mapped_port/execute
+        {ROUTE_PREFIX}/e2b/proxy/abc123/49999/contexts -> http://container_host:mapped_port/contexts
 
     Args:
         sandbox_id: E2B sandbox UUID
@@ -341,7 +341,7 @@ async def _proxy_subagent_execute(
             "EXECUTOR_MANAGER_EXTERNAL_URL", "http://localhost:8001"
         )
 
-        task_url = f"{external_url}/executor-manager/sandboxes/{sandbox_id}/executions/{subtask_id}"
+        task_url = f"{external_url}{ROUTE_PREFIX}/sandboxes/{sandbox_id}/executions/{subtask_id}"
 
         # E2B NDJSON format response
         result_payload = {
