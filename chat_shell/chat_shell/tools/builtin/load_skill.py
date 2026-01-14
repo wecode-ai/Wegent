@@ -154,15 +154,28 @@ class LoadSkillTool(BaseTool):
         This method returns the skill's displayName if available,
         otherwise falls back to the skill_name itself.
 
+        Priority:
+        1. Check cache (_skill_display_names) for previously loaded skills
+        2. Check skill_metadata for skills not yet loaded
+        3. Fall back to skill_name
+
         Args:
             skill_name: The technical name of the skill
 
         Returns:
             The friendly display name or the skill_name if not found
         """
-        # First check cache
+        # First check cache (for already loaded skills)
         if skill_name in self._skill_display_names:
             return self._skill_display_names[skill_name]
+
+        # Then check skill_metadata (for skills not yet loaded)
+        skill_info = self.skill_metadata.get(skill_name, {})
+        display_name = skill_info.get("displayName")
+        if display_name:
+            # Cache it for future use
+            self._skill_display_names[skill_name] = display_name
+            return display_name
 
         # Fallback to skill_name
         return skill_name
