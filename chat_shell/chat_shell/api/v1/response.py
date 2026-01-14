@@ -214,6 +214,7 @@ async def _stream_response(
         preload_skills = []
         knowledge_base_ids = None
         document_ids = None
+        is_user_selected_kb = True  # Default to strict mode for backward compatibility
         table_contexts = []
         task_data = None
 
@@ -235,6 +236,10 @@ async def _stream_response(
             preload_skills = getattr(request.metadata, "preload_skills", None) or []
             knowledge_base_ids = getattr(request.metadata, "knowledge_base_ids", None)
             document_ids = getattr(request.metadata, "document_ids", None)
+            # is_user_selected_kb: defaults to True if not provided (strict mode)
+            is_user_selected_kb = getattr(request.metadata, "is_user_selected_kb", True)
+            if is_user_selected_kb is None:
+                is_user_selected_kb = True  # Ensure it's never None
             table_contexts = getattr(request.metadata, "table_contexts", None) or []
             task_data = getattr(request.metadata, "task_data", None)
 
@@ -273,6 +278,7 @@ async def _stream_response(
             preload_skills=preload_skills,
             knowledge_base_ids=knowledge_base_ids,
             document_ids=document_ids,
+            is_user_selected_kb=is_user_selected_kb,
             table_contexts=table_contexts,
             task_data=task_data,
             mcp_servers=mcp_servers,

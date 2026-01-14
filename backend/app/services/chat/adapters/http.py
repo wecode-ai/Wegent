@@ -147,6 +147,7 @@ class HTTPAdapter(ChatInterface):
             "preload_skills": request.preload_skills,
             "knowledge_base_ids": request.knowledge_base_ids,
             "document_ids": request.document_ids,
+            "is_user_selected_kb": request.is_user_selected_kb,
             "table_contexts": request.table_contexts,
             "task_data": request.task_data,
         }

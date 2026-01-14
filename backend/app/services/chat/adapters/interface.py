@@ -77,6 +77,7 @@ class ChatRequest:
     # Knowledge base configuration
     knowledge_base_ids: Optional[list] = None  # Knowledge base IDs to search
     document_ids: Optional[list] = None  # Document IDs to filter retrieval
+    is_user_selected_kb: bool = True  # True = strict mode (user selected), False = relaxed mode (inherited)
 
     # Table configuration
     table_contexts: list = field(
@@ -86,12 +87,12 @@ class ChatRequest:
     # Task data for MCP tools
     task_data: Optional[dict] = None
 
-    # Extra tools to add
-    extra_tools: list = field(default_factory=list)
-
     # MCP server configuration for HTTP mode
     # Format: [{"name": "...", "url": "http://...", "type": "streamable-http", "auth": {...}}]
     mcp_servers: list = field(default_factory=list)
+
+    # Extra tools to add
+    extra_tools: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -123,6 +124,7 @@ class ChatRequest:
             "preload_skills": self.preload_skills,
             "knowledge_base_ids": self.knowledge_base_ids,
             "document_ids": self.document_ids,
+            "is_user_selected_kb": self.is_user_selected_kb,
             "table_contexts": self.table_contexts,
             "task_data": self.task_data,
             "extra_tools": self.extra_tools,

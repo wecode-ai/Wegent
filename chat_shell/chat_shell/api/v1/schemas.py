@@ -207,6 +207,10 @@ class Metadata(BaseModel):
         None,
         description="Document IDs to filter retrieval (when user references specific documents)",
     )
+    is_user_selected_kb: Optional[bool] = Field(
+        True,
+        description="Whether KB is explicitly selected by user (strict mode) or inherited from task (relaxed mode)",
+    )
     # Table configuration
     table_contexts: Optional[list[dict]] = Field(
         None, description="Table contexts for DataTableTool"

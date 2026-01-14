@@ -79,6 +79,7 @@ class ChatRequest:
     # Knowledge base configuration
     knowledge_base_ids: Optional[list] = None  # Knowledge base IDs to search
     document_ids: Optional[list] = None  # Document IDs to filter retrieval
+    is_user_selected_kb: bool = True  # True = strict mode (user selected), False = relaxed mode (inherited)
 
     # Table configuration
     table_contexts: list = field(
