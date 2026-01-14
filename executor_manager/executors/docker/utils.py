@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 from shared.logger import setup_logger
 from shared.utils.ip_util import get_host_ip, is_ip_address
 
+from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import PORT_RANGE_MAX, PORT_RANGE_MIN
 
 logger = setup_logger(__name__)
@@ -58,7 +59,7 @@ def build_callback_url(task: dict) -> str:
         else:
             netloc = parsed.netloc  # Preserve original domain/port
 
-        callback_url = f"{scheme}://{netloc}/executor-manager/callback"
+        callback_url = f"{scheme}://{netloc}{ROUTE_PREFIX}/callback"
 
     return callback_url
 
