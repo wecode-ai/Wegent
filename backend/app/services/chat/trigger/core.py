@@ -492,22 +492,39 @@ async def _stream_chat_response(
             # Get knowledge_base_ids and document_ids from user subtask's contexts
             knowledge_base_ids = None
             document_ids = None
+            is_user_selected_kb = False
+
             if user_subtask_id:
                 from app.services.chat.preprocessing.contexts import (
+                    _get_bound_knowledge_base_ids,
                     get_document_ids_from_subtask,
                     get_knowledge_base_ids_from_subtask,
                 )
 
+                # Priority 1: Get subtask-level KB selection (user explicitly selected for this message)
                 knowledge_base_ids = get_knowledge_base_ids_from_subtask(
                     db, user_subtask_id
                 )
-                document_ids = get_document_ids_from_subtask(db, user_subtask_id)
+                is_user_selected_kb = bool(knowledge_base_ids)
+
                 if knowledge_base_ids:
+                    document_ids = get_document_ids_from_subtask(db, user_subtask_id)
                     logger.info(
-                        "[ai_trigger] HTTP mode: knowledge_base_ids=%s, document_ids=%s",
+                        "[ai_trigger] HTTP mode: subtask-level KB selected, knowledge_base_ids=%s, "
+                        "document_ids=%s (strict mode)",
                         knowledge_base_ids,
                         document_ids,
                     )
+                elif stream_data.task_id:
+                    # Priority 2: Fall back to task-level bound knowledge bases
+                    knowledge_base_ids = _get_bound_knowledge_base_ids(
+                        db, stream_data.task_id
+                    )
+                    if knowledge_base_ids:
+                        logger.info(
+                            "[ai_trigger] HTTP mode: task-level KB fallback, knowledge_base_ids=%s (relaxed mode)",
+                            knowledge_base_ids,
+                        )
 
             await _stream_with_http_adapter(
                 stream_data=stream_data,
@@ -521,7 +538,9 @@ async def _stream_chat_response(
                 knowledge_base_ids=knowledge_base_ids,
                 document_ids=document_ids,
                 table_contexts=table_contexts,
+                is_user_selected_kb=is_user_selected_kb,
                 preload_skills=chat_config.preload_skills,  # Use resolved from ChatConfig
+                user_subtask_id=user_subtask_id,  # Pass user subtask ID for RAG persistence
             )
         elif streaming_mode == "bridge":
             # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards
@@ -587,7 +606,9 @@ async def _stream_with_http_adapter(
     knowledge_base_ids: list = None,
     document_ids: list = None,
     table_contexts: list = None,
+    is_user_selected_kb: bool = True,
     preload_skills: list = None,
+    user_subtask_id: Optional[int] = None,
 ) -> None:
     """Stream using HTTP adapter to call remote chat_shell service.
 
@@ -609,7 +630,11 @@ async def _stream_with_http_adapter(
         knowledge_base_ids: List of knowledge base IDs to search
         document_ids: List of document IDs to filter retrieval
         table_contexts: List of table context dicts for DataTableTool
+        is_user_selected_kb: Whether KB is explicitly selected by user (strict mode)
+            or inherited from task (relaxed mode). Defaults to True for backward compatibility.
         preload_skills: List of skill names to preload into system prompt
+        user_subtask_id: User subtask ID for RAG result persistence (different from
+            stream_data.subtask_id which is AI response's subtask)
     """
     from app.core.config import settings
     from app.services.chat.adapters.http import HTTPAdapter
@@ -677,6 +702,7 @@ async def _stream_with_http_adapter(
     chat_request = ChatRequest(
         task_id=task_id,
         subtask_id=subtask_id,
+        user_subtask_id=user_subtask_id,  # User subtask ID for RAG persistence
         message=message,
         user_id=stream_data.user_id,
         user_name=stream_data.user_name,
@@ -700,16 +726,19 @@ async def _stream_with_http_adapter(
         preload_skills=preload_skills or [],  # Pass preload_skills to ChatRequest
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids,
+        is_user_selected_kb=is_user_selected_kb,
         table_contexts=table_contexts or [],
         task_data=task_data,
         mcp_servers=mcp_servers,
     )
 
     logger.info(
-        "[HTTP_ADAPTER] ChatRequest built: task_id=%d, skill_names=%s, "
-        "table_contexts_count=%d, table_contexts=%s, "
+        "[HTTP_ADAPTER] ChatRequest built: task_id=%d, subtask_id=%d, user_subtask_id=%s, "
+        "skill_names=%s, table_contexts_count=%d, table_contexts=%s, "
         "skill_configs_count=%d, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s",
         task_id,
+        subtask_id,
+        user_subtask_id,
         skill_names,
         len(table_contexts) if table_contexts else 0,
         table_contexts,  # Log the actual content

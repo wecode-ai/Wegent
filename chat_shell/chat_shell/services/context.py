@@ -254,7 +254,8 @@ class ChatContext:
             db=db,
             base_system_prompt=base_system_prompt,
             task_id=self._request.task_id,
-            user_subtask_id=self._request.subtask_id,
+            user_subtask_id=self._request.user_subtask_id,  # Use user_subtask_id for RAG persistence
+            is_user_selected=self._request.is_user_selected_kb,
             document_ids=self._request.document_ids,
             context_window=context_window,
         )

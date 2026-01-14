@@ -201,6 +201,7 @@ async def _stream_response(
         # Extract metadata
         task_id = 0
         subtask_id = 0
+        user_subtask_id = None  # User subtask ID for RAG persistence
         user_id = 0
         user_name = ""
         team_id = 0
@@ -214,12 +215,14 @@ async def _stream_response(
         preload_skills = []
         knowledge_base_ids = None
         document_ids = None
+        is_user_selected_kb = True  # Default to strict mode for backward compatibility
         table_contexts = []
         task_data = None
 
         if request.metadata:
             task_id = getattr(request.metadata, "task_id", 0) or 0
             subtask_id = getattr(request.metadata, "subtask_id", 0) or 0
+            user_subtask_id = getattr(request.metadata, "user_subtask_id", None)
             user_id = request.metadata.user_id or 0
             user_name = request.metadata.user_name or ""
             team_id = getattr(request.metadata, "team_id", 0) or 0
@@ -235,6 +238,10 @@ async def _stream_response(
             preload_skills = getattr(request.metadata, "preload_skills", None) or []
             knowledge_base_ids = getattr(request.metadata, "knowledge_base_ids", None)
             document_ids = getattr(request.metadata, "document_ids", None)
+            # is_user_selected_kb: defaults to True if not provided (strict mode)
+            is_user_selected_kb = getattr(request.metadata, "is_user_selected_kb", True)
+            if is_user_selected_kb is None:
+                is_user_selected_kb = True  # Ensure it's never None
             table_contexts = getattr(request.metadata, "table_contexts", None) or []
             task_data = getattr(request.metadata, "task_data", None)
 
@@ -245,6 +252,7 @@ async def _stream_response(
         chat_request = ChatRequest(
             task_id=task_id,
             subtask_id=subtask_id,
+            user_subtask_id=user_subtask_id,  # User subtask ID for RAG persistence
             message=message,
             user_id=user_id,
             user_name=user_name,
@@ -273,18 +281,20 @@ async def _stream_response(
             preload_skills=preload_skills,
             knowledge_base_ids=knowledge_base_ids,
             document_ids=document_ids,
+            is_user_selected_kb=is_user_selected_kb,
             table_contexts=table_contexts,
             task_data=task_data,
             mcp_servers=mcp_servers,
         )
 
         logger.info(
-            "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, "
+            "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, user_subtask_id=%s, "
             "enable_web_search=%s, mcp_servers=%d, skills=%d, "
             "skill_names=%s, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s, "
             "table_contexts_count=%d, table_contexts=%s",
             task_id,
             subtask_id,
+            user_subtask_id,
             enable_web_search,
             len(mcp_servers),
             len(all_skill_configs),
