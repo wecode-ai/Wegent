@@ -41,7 +41,6 @@ class InjectionStrategy:
         model_id: str,
         context_window: int | None = None,
         injection_mode: str = InjectionMode.RAG_ONLY,
-        aggressive_cleaning: bool = False,
         min_chunk_score: float = 0.5,
         max_direct_chunks: int = 500,
         context_buffer_ratio: float = 0.1,
@@ -53,14 +52,12 @@ class InjectionStrategy:
             context_window: Context window size from Model CRD.
                 If not provided, uses DEFAULT_CONTEXT_WINDOW (128000).
             injection_mode: Injection mode (rag_only, direct_injection, hybrid)
-            aggressive_cleaning: Whether to use aggressive content cleaning
             min_chunk_score: Minimum score threshold for chunks
             max_direct_chunks: Maximum chunks to inject directly
             context_buffer_ratio: Ratio of context to keep as buffer (0.0-1.0)
         """
         self.model_id = model_id
         self.injection_mode = injection_mode
-        self.aggressive_cleaning = aggressive_cleaning
         self.min_chunk_score = min_chunk_score
         self.max_direct_chunks = max_direct_chunks
         self.context_buffer_ratio = context_buffer_ratio
@@ -138,9 +135,7 @@ class InjectionStrategy:
         for chunk in chunks:
             content = chunk.get("content", "")
             if clean_chunks:
-                content = self.content_cleaner.clean_content(
-                    content, aggressive=self.aggressive_cleaning
-                )
+                content = self.content_cleaner.clean_content(content)
             total_chars += len(content)
 
         # Estimate tokens (add overhead for formatting)
@@ -184,9 +179,7 @@ class InjectionStrategy:
             filtered_chunks = filtered_chunks[:max_chunks]
 
         # Clean chunks
-        cleaned_chunks = self.content_cleaner.clean_knowledge_chunks(
-            filtered_chunks, aggressive=self.aggressive_cleaning
-        )
+        cleaned_chunks = self.content_cleaner.clean_knowledge_chunks(filtered_chunks)
 
         logger.info(
             "[InjectionStrategy] Prepared chunks: %d -> %d (score >= %.2f, max=%d)",
@@ -277,7 +270,6 @@ class InjectionStrategy:
 
         # Check if we can fit all chunks
         can_fit_all = estimated_tokens <= available_space
-
         # Additional checks for direct injection
         chunks_not_too_many = len(chunks) <= self.max_direct_chunks
         reasonable_token_count = (
@@ -466,7 +458,6 @@ class InjectionStrategy:
         return {
             "model_id": self.model_id,
             "injection_mode": self.injection_mode,
-            "aggressive_cleaning": self.aggressive_cleaning,
             "min_chunk_score": self.min_chunk_score,
             "max_direct_chunks": self.max_direct_chunks,
             "context_buffer_ratio": self.context_buffer_ratio,
