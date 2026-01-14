@@ -65,6 +65,26 @@ services:
       retries: 5
       start_period: 40s
 
+  browserless:
+    image: browserless/chrome
+    container_name: wegent-browserless
+    restart: always
+    profiles:
+      - browserless
+    ports:
+      - "8910:3000"
+    environment:
+      - MAX_CONCURRENT_SESSIONS=10
+      - CONNECTION_TIMEOUT=60000
+    networks:
+      - wegent-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/pressure || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
   backend:
     # build:
       # dockerfile: docker/backend/Dockerfile
