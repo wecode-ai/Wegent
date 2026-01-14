@@ -40,8 +40,11 @@ from app.schemas.knowledge import (
 from app.schemas.knowledge_qa_history import QAHistoryResponse
 from app.schemas.rag import SplitterConfig
 from app.services.adapters.retriever_kinds import retriever_kinds_service
-from app.services.knowledge_base_qa_service import knowledge_base_qa_service
-from app.services.knowledge_service import KnowledgeService
+from app.services.knowledge import (
+    KnowledgeBaseQAService,
+    KnowledgeService,
+    knowledge_base_qa_service,
+)
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
 
@@ -528,9 +531,9 @@ def _trigger_document_summary_if_enabled(
         kb_info: Knowledge base index information
     """
     try:
-        global_summary_enabled = getattr(settings, "SUMMARY_ENABLED", True)
+        global_summary_enabled = getattr(settings, "SUMMARY_ENABLED", False)
         if global_summary_enabled and kb_info.summary_enabled:
-            from app.services.summary_service import get_summary_service
+            from app.services.knowledge import get_summary_service
 
             summary_service = get_summary_service(db)
             asyncio.run(summary_service.trigger_document_summary(document_id, user_id))
@@ -951,7 +954,7 @@ async def get_kb_summary(
     - status: Summary generation status
     """
     from app.schemas.summary import KnowledgeBaseSummaryResponse
-    from app.services.summary_service import get_summary_service
+    from app.services.knowledge import get_summary_service
 
     # Validate KB access permission
     kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
@@ -1029,7 +1032,7 @@ async def get_document_detail(
     """
     from app.models.knowledge import KnowledgeDocument
     from app.models.subtask_context import SubtaskContext
-    from app.services.summary_service import get_summary_service
+    from app.services.knowledge import get_summary_service
 
     # Validate KB access permission first
     kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
@@ -1122,7 +1125,7 @@ async def get_document_summary(
     """
     from app.models.knowledge import KnowledgeDocument
     from app.schemas.summary import DocumentSummaryResponse
-    from app.services.summary_service import get_summary_service
+    from app.services.knowledge import get_summary_service
 
     # Validate KB access permission first
     kb = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
@@ -1203,7 +1206,7 @@ async def refresh_document_summary(
 async def _run_kb_summary_refresh(kb_id: int, user_id: int):
     """Background task wrapper for KB summary refresh."""
     from app.db.session import SessionLocal
-    from app.services.summary_service import get_summary_service
+    from app.services.knowledge import get_summary_service
 
     # Create new session for background task
     new_db = SessionLocal()
@@ -1219,7 +1222,7 @@ async def _run_kb_summary_refresh(kb_id: int, user_id: int):
 async def _run_document_summary_refresh(doc_id: int, user_id: int):
     """Background task wrapper for document summary refresh."""
     from app.db.session import SessionLocal
-    from app.services.summary_service import get_summary_service
+    from app.services.knowledge import get_summary_service
 
     # Create new session for background task
     new_db = SessionLocal()
@@ -1249,7 +1252,7 @@ def _update_kb_summary_after_deletion(kb_id: int, user_id: int):
         kb_id: Knowledge base ID
         user_id: User who triggered the deletion
     """
-    from app.services.summary_service import get_summary_service
+    from app.services.knowledge import get_summary_service
 
     logger.info(
         f"[KnowledgeAPI] Starting KB summary update after deletion: kb_id={kb_id}"

@@ -19,7 +19,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import KnowledgeBaseTaskRef
 from app.services.group_permission import get_effective_role_in_group
-from app.services.knowledge_service import KnowledgeService
+from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.task_member_service import task_member_service
 
 logger = logging.getLogger(__name__)

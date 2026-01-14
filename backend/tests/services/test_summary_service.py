@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.user import User
-from app.services.summary_service import SummaryService, get_summary_service
+from app.services.knowledge import SummaryService, get_summary_service
 
 
 class TestTriggerKbSummaryClearIfEmpty:
@@ -131,7 +131,7 @@ class TestTriggerKbSummaryClearIfEmpty:
         # But we don't have BackgroundChatExecutor mocked, so it will fail
         # The important thing is that summary should NOT be cleared
         with patch(
-            "app.services.summary_service.BackgroundChatExecutor"
+            "app.services.knowledge.summary_service.BackgroundChatExecutor"
         ) as mock_executor:
             mock_instance = MagicMock()
             mock_instance.execute = AsyncMock(
@@ -182,9 +182,7 @@ class TestTriggerKbSummaryClearIfEmpty:
         assert kb.json["spec"]["summary"]["short_summary"] == "Test summary"
 
     @pytest.mark.asyncio
-    async def test_clear_if_empty_kb_not_found(
-        self, test_db: Session, test_user: User
-    ):
+    async def test_clear_if_empty_kb_not_found(self, test_db: Session, test_user: User):
         """Test trigger_kb_summary with non-existent KB."""
         summary_service = get_summary_service(test_db)
 
@@ -342,7 +340,7 @@ class TestKnowledgeServiceDeleteDocument:
         test_document: KnowledgeDocument,
     ):
         """Test that delete_document returns DocumentDeleteResult with kb_id."""
-        from app.services.knowledge_service import KnowledgeService
+        from app.services.knowledge import KnowledgeService
 
         document_id = test_document.id
         expected_kb_id = test_knowledge_base.id
@@ -366,7 +364,7 @@ class TestKnowledgeServiceDeleteDocument:
 
     def test_delete_document_not_found(self, test_db: Session, test_user: User):
         """Test delete_document returns failure when document not found."""
-        from app.services.knowledge_service import KnowledgeService
+        from app.services.knowledge import KnowledgeService
 
         result = KnowledgeService.delete_document(
             db=test_db,
@@ -443,7 +441,7 @@ class TestKnowledgeServiceBatchDeleteDocuments:
         test_documents: list[KnowledgeDocument],
     ):
         """Test that batch_delete_documents returns BatchDeleteResult with kb_ids."""
-        from app.services.knowledge_service import KnowledgeService
+        from app.services.knowledge import KnowledgeService
 
         document_ids = [doc.id for doc in test_documents]
         expected_kb_id = test_knowledge_base.id
@@ -466,7 +464,7 @@ class TestKnowledgeServiceBatchDeleteDocuments:
         test_documents: list[KnowledgeDocument],
     ):
         """Test batch delete with some non-existent documents."""
-        from app.services.knowledge_service import KnowledgeService
+        from app.services.knowledge import KnowledgeService
 
         # Mix existing and non-existent document IDs
         document_ids = [test_documents[0].id, 99999, test_documents[1].id]

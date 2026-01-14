@@ -604,4 +604,3 @@ function GroupKnowledgeBaseList({
     </div>
   )
 }
-

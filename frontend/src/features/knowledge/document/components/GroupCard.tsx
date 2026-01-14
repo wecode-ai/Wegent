@@ -14,11 +14,22 @@ interface GroupCardProps {
 }
 
 export function GroupCard({ group, onClick }: GroupCardProps) {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onClick()
+    }
+  }
+
   return (
     <Card
       padding="sm"
-      className="hover:bg-hover transition-colors cursor-pointer h-[140px] flex flex-col group"
+      className="hover:bg-hover transition-colors cursor-pointer h-[140px] flex flex-col group focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
       onClick={onClick}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
+      aria-label={group.display_name || group.name}
     >
       {/* Header with icon and name */}
       <div className="flex items-center gap-3 mb-2">

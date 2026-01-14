@@ -25,6 +25,8 @@ import {
 } from '@/components/ui/accordion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { RetrievalSettingsSection, type RetrievalConfig } from './RetrievalSettingsSection'
+import { SummaryModelSelector } from './SummaryModelSelector'
+import type { SummaryModelRef } from '@/types/knowledge'
 
 interface CreateKnowledgeBaseDialogProps {
   open: boolean
@@ -34,6 +36,7 @@ interface CreateKnowledgeBaseDialogProps {
     description?: string
     retrieval_config?: Partial<RetrievalConfig>
     summary_enabled?: boolean
+    summary_model_ref?: SummaryModelRef | null
   }) => Promise<void>
   loading?: boolean
   scope?: 'personal' | 'group' | 'all'
@@ -52,6 +55,8 @@ export function CreateKnowledgeBaseDialog({
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [summaryEnabled, setSummaryEnabled] = useState(false)
+  const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
+  const [summaryModelError, setSummaryModelError] = useState('')
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({
     retrieval_mode: 'vector',
     top_k: 5,
@@ -69,6 +74,7 @@ export function CreateKnowledgeBaseDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    setSummaryModelError('')
 
     if (!name.trim()) {
       setError(t('knowledge:document.knowledgeBase.nameRequired'))
@@ -77,6 +83,12 @@ export function CreateKnowledgeBaseDialog({
 
     if (name.length > 100) {
       setError(t('knowledge:document.knowledgeBase.nameTooLong'))
+      return
+    }
+
+    // Validate summary model when summary is enabled
+    if (summaryEnabled && !summaryModelRef) {
+      setSummaryModelError(t('knowledge:document.summary.modelRequired'))
       return
     }
 
@@ -99,10 +111,12 @@ export function CreateKnowledgeBaseDialog({
         description: description.trim() || undefined,
         retrieval_config: retrievalConfig,
         summary_enabled: summaryEnabled,
+        summary_model_ref: summaryEnabled ? summaryModelRef : null,
       })
       setName('')
       setDescription('')
       setSummaryEnabled(false)
+      setSummaryModelRef(null)
       setRetrievalConfig({
         retrieval_mode: 'vector',
         top_k: 5,
@@ -122,6 +136,8 @@ export function CreateKnowledgeBaseDialog({
       setName('')
       setDescription('')
       setSummaryEnabled(false)
+      setSummaryModelRef(null)
+      setSummaryModelError('')
       setRetrievalConfig({
         retrieval_mode: 'vector',
         top_k: 5,
@@ -169,6 +185,44 @@ export function CreateKnowledgeBaseDialog({
               />
             </div>
 
+            {/* Summary Settings - moved outside accordion */}
+            <div className="space-y-3 border-b border-border pb-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor="summary-enabled">
+                    {t('knowledge:document.summary.enableLabel')}
+                  </Label>
+                  <p className="text-xs text-text-muted">
+                    {t('knowledge:document.summary.enableDescription')}
+                  </p>
+                </div>
+                <Switch
+                  id="summary-enabled"
+                  checked={summaryEnabled}
+                  onCheckedChange={checked => {
+                    setSummaryEnabled(checked)
+                    if (!checked) {
+                      setSummaryModelRef(null)
+                      setSummaryModelError('')
+                    }
+                  }}
+                />
+              </div>
+              {summaryEnabled && (
+                <div className="space-y-2 pt-2">
+                  <Label>{t('knowledge:document.summary.selectModel')}</Label>
+                  <SummaryModelSelector
+                    value={summaryModelRef}
+                    onChange={value => {
+                      setSummaryModelRef(value)
+                      setSummaryModelError('')
+                    }}
+                    error={summaryModelError}
+                  />
+                </div>
+              )}
+            </div>
+
             {/* Advanced Settings */}
             <Accordion
               type="single"
@@ -189,23 +243,6 @@ export function CreateKnowledgeBaseDialog({
                     <p className="text-xs text-text-muted">
                       {t('knowledge:document.advancedSettings.collapsed')}
                     </p>
-
-                    {/* Summary Settings */}
-                    <div className="flex items-center justify-between py-2 border-b border-border pb-4">
-                      <div className="space-y-0.5">
-                        <Label htmlFor="summary-enabled">
-                          {t('knowledge:document.summary.enableLabel')}
-                        </Label>
-                        <p className="text-xs text-text-muted">
-                          {t('knowledge:document.summary.enableDescription')}
-                        </p>
-                      </div>
-                      <Switch
-                        id="summary-enabled"
-                        checked={summaryEnabled}
-                        onCheckedChange={setSummaryEnabled}
-                      />
-                    </div>
 
                     <RetrievalSettingsSection
                       config={retrievalConfig}

@@ -359,26 +359,20 @@ class BackgroundChatExecutor:
         return task, user_subtask, assistant_subtask
 
     def _get_default_model_config(self) -> Dict[str, Any]:
-        """Get default model configuration (from environment variables).
+        """Get default model configuration.
+
+        This method is called when no model_config is provided in BackgroundTaskConfig.
+        Since we now require model_config to be explicitly provided (from knowledge base settings),
+        this method raises an error to indicate that a model must be configured.
 
         Raises:
-            ValueError: If SUMMARY_MODEL_CONFIG is not set or cannot be parsed
+            ValueError: Always raises to indicate model_config must be provided
         """
-        config_str = getattr(settings, "SUMMARY_MODEL_CONFIG", None)
-        if not config_str:
-            raise ValueError(
-                "SUMMARY_MODEL_CONFIG environment variable is not set. "
-                "Please configure it in .env file with model configuration JSON."
-            )
-
-        try:
-            return json.loads(config_str)
-        except Exception as e:
-            raise ValueError(
-                f"Failed to parse SUMMARY_MODEL_CONFIG: {e}. "
-                f"Config value: {config_str!r}. "
-                f"Expected JSON format: {{'model_id': '...', 'model': 'anthropic', 'api_key': '...', 'base_url': '...', 'max_tokens': 96000}}"
-            ) from e
+        raise ValueError(
+            "No model configuration provided. "
+            "Summary generation requires a model to be configured in the knowledge base settings. "
+            "Please select a model for summary generation in the knowledge base configuration."
+        )
 
     def _parse_json_response(self, content: str) -> Optional[Dict[str, Any]]:
         """

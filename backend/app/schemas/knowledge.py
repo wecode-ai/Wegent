@@ -8,7 +8,7 @@ Pydantic schemas for knowledge base and document management.
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Dict, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -18,6 +18,7 @@ from app.schemas.kind import (
     HybridWeights,
     RetrievalConfig,
     RetrieverRef,
+    SummaryModelRef,
 )
 
 # Import SplitterConfig from rag.py to use unified splitter configuration
@@ -65,6 +66,10 @@ class KnowledgeBaseCreate(BaseModel):
         default=False,
         description="Enable automatic summary generation for documents",
     )
+    summary_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
+    )
 
 
 class RetrievalConfigUpdate(BaseModel):
@@ -97,6 +102,10 @@ class KnowledgeBaseUpdate(BaseModel):
         None,
         description="Enable automatic summary generation for documents",
     )
+    summary_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
+    )
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -116,6 +125,10 @@ class KnowledgeBaseResponse(BaseModel):
         default=False,
         description="Enable automatic summary generation for documents",
     )
+    summary_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model reference for summary generation",
+    )
     summary: Optional[dict] = Field(
         None,
         description="Knowledge base summary (short_summary, long_summary, topics, etc.)",
@@ -134,6 +147,8 @@ class KnowledgeBaseResponse(BaseModel):
         spec = kind.json.get("spec", {})
         # Extract summary from spec.summary if available
         summary = spec.get("summary")
+        # Extract summary_model_ref from spec
+        summary_model_ref = spec.get("summaryModelRef")
         return cls(
             id=kind.id,
             name=spec.get("name", ""),
@@ -143,6 +158,7 @@ class KnowledgeBaseResponse(BaseModel):
             document_count=document_count,
             retrieval_config=spec.get("retrievalConfig"),
             summary_enabled=spec.get("summaryEnabled", False),
+            summary_model_ref=summary_model_ref,
             summary=summary,
             is_active=kind.is_active,
             created_at=kind.created_at,

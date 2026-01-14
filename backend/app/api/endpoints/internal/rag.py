@@ -193,7 +193,7 @@ async def get_knowledge_base_size(
     Returns:
         Size information for each knowledge base
     """
-    from app.services.knowledge_service import KnowledgeService
+    from app.services.knowledge import KnowledgeService
 
     items = []
     total_file_size = 0

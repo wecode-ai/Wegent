@@ -55,6 +55,13 @@ export interface SemanticSplitterConfig extends BaseSplitterConfig {
 // Union type for splitter config
 export type SplitterConfig = SentenceSplitterConfig | SemanticSplitterConfig
 
+// Summary Model Reference types
+export interface SummaryModelRef {
+  name: string
+  namespace: string
+  type: 'public' | 'user' | 'group'
+}
+
 // Knowledge Base types
 export interface KnowledgeBase {
   id: number
@@ -66,6 +73,7 @@ export interface KnowledgeBase {
   is_active: boolean
   retrieval_config?: RetrievalConfig
   summary_enabled: boolean
+  summary_model_ref?: SummaryModelRef | null
   summary?: KnowledgeBaseSummary | null
   created_at: string
   updated_at: string
@@ -77,6 +85,7 @@ export interface KnowledgeBaseCreate {
   namespace?: string
   retrieval_config?: Partial<RetrievalConfig>
   summary_enabled?: boolean
+  summary_model_ref?: SummaryModelRef | null
 }
 
 export interface RetrievalConfigUpdate {
@@ -94,6 +103,7 @@ export interface KnowledgeBaseUpdate {
   description?: string
   retrieval_config?: RetrievalConfigUpdate
   summary_enabled?: boolean
+  summary_model_ref?: SummaryModelRef | null
 }
 
 export interface KnowledgeBaseListResponse {
@@ -182,30 +192,30 @@ export interface TableUrlValidationResponse {
 
 // Document Summary types
 export interface DocumentSummary {
-  short_summary: string
-  long_summary: string
-  topics: string[]
+  short_summary?: string
+  long_summary?: string
+  topics?: string[]
   meta_info?: {
     author?: string
     source?: string
     type?: string
   }
-  status: 'generating' | 'completed' | 'failed'
-  task_id?: string
+  status?: 'pending' | 'generating' | 'completed' | 'failed'
+  task_id?: number
   error?: string
   updated_at?: string
 }
 
 // Knowledge Base Summary types
 export interface KnowledgeBaseSummary {
-  short_summary: string
-  long_summary: string
-  topics: string[]
+  short_summary?: string
+  long_summary?: string
+  topics?: string[]
   meta_info?: {
     document_count?: number
     last_updated?: string
   }
-  status: 'pending' | 'generating' | 'completed' | 'failed'
+  status?: 'pending' | 'generating' | 'completed' | 'failed'
   task_id?: number
   error?: string
   updated_at?: string

@@ -19,8 +19,14 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { KnowledgeBase, KnowledgeBaseUpdate, RetrievalConfigUpdate } from '@/types/knowledge'
+import type {
+  KnowledgeBase,
+  KnowledgeBaseUpdate,
+  RetrievalConfigUpdate,
+  SummaryModelRef,
+} from '@/types/knowledge'
 import { RetrievalSettingsSection, RetrievalConfig } from './RetrievalSettingsSection'
+import { SummaryModelSelector } from './SummaryModelSelector'
 
 interface EditKnowledgeBaseDialogProps {
   open: boolean
@@ -41,6 +47,8 @@ export function EditKnowledgeBaseDialog({
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [summaryEnabled, setSummaryEnabled] = useState(false)
+  const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
+  const [summaryModelError, setSummaryModelError] = useState('')
   const [error, setError] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({})
@@ -50,6 +58,8 @@ export function EditKnowledgeBaseDialog({
       setName(knowledgeBase.name)
       setDescription(knowledgeBase.description || '')
       setSummaryEnabled(knowledgeBase.summary_enabled || false)
+      setSummaryModelRef(knowledgeBase.summary_model_ref || null)
+      setSummaryModelError('')
       setShowAdvanced(false) // Reset expanded state
       // Initialize retrieval config from knowledge base
       if (knowledgeBase.retrieval_config) {
@@ -65,6 +75,7 @@ export function EditKnowledgeBaseDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    setSummaryModelError('')
 
     if (!name.trim()) {
       setError(t('knowledge:document.knowledgeBase.nameRequired'))
@@ -76,12 +87,19 @@ export function EditKnowledgeBaseDialog({
       return
     }
 
+    // Validate summary model when summary is enabled
+    if (summaryEnabled && !summaryModelRef) {
+      setSummaryModelError(t('knowledge:document.summary.modelRequired'))
+      return
+    }
+
     try {
       // Build update data
       const updateData: KnowledgeBaseUpdate = {
         name: name.trim(),
         description: description.trim(), // Allow empty string to clear description
         summary_enabled: summaryEnabled,
+        summary_model_ref: summaryEnabled ? summaryModelRef : null,
       }
 
       // Add retrieval config update if advanced settings were modified
@@ -117,6 +135,7 @@ export function EditKnowledgeBaseDialog({
   const handleOpenChange = (newOpen: boolean) => {
     if (!newOpen) {
       setError('')
+      setSummaryModelError('')
     }
     onOpenChange(newOpen)
   }
@@ -153,9 +172,47 @@ export function EditKnowledgeBaseDialog({
               />
             </div>
 
+            {/* Summary Settings - moved outside advanced settings */}
+            <div className="space-y-3 border-b border-border pb-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor="edit-summary-enabled">
+                    {t('knowledge:document.summary.enableLabel')}
+                  </Label>
+                  <p className="text-xs text-text-muted">
+                    {t('knowledge:document.summary.enableDescription')}
+                  </p>
+                </div>
+                <Switch
+                  id="edit-summary-enabled"
+                  checked={summaryEnabled}
+                  onCheckedChange={checked => {
+                    setSummaryEnabled(checked)
+                    if (!checked) {
+                      setSummaryModelRef(null)
+                      setSummaryModelError('')
+                    }
+                  }}
+                />
+              </div>
+              {summaryEnabled && (
+                <div className="space-y-2 pt-2">
+                  <Label>{t('knowledge:document.summary.selectModel')}</Label>
+                  <SummaryModelSelector
+                    value={summaryModelRef}
+                    onChange={value => {
+                      setSummaryModelRef(value)
+                      setSummaryModelError('')
+                    }}
+                    error={summaryModelError}
+                  />
+                </div>
+              )}
+            </div>
+
             {/* Advanced Settings (Partially Editable) */}
             {knowledgeBase?.retrieval_config && (
-              <div className="border-t border-border pt-4">
+              <div className="pt-2">
                 <button
                   type="button"
                   onClick={() => setShowAdvanced(!showAdvanced)}
@@ -171,23 +228,6 @@ export function EditKnowledgeBaseDialog({
 
                 {showAdvanced && (
                   <div className="mt-4 p-4 bg-bg-muted rounded-lg border border-border space-y-4">
-                    {/* Summary Settings */}
-                    <div className="flex items-center justify-between py-2 border-b border-border pb-4">
-                      <div className="space-y-0.5">
-                        <Label htmlFor="edit-summary-enabled">
-                          {t('knowledge:document.summary.enableLabel')}
-                        </Label>
-                        <p className="text-xs text-text-muted">
-                          {t('knowledge:document.summary.enableDescription')}
-                        </p>
-                      </div>
-                      <Switch
-                        id="edit-summary-enabled"
-                        checked={summaryEnabled}
-                        onCheckedChange={setSummaryEnabled}
-                      />
-                    </div>
-
                     <RetrievalSettingsSection
                       config={retrievalConfig}
                       onChange={handleRetrievalConfigChange}

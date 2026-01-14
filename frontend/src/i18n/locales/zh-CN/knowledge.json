@@ -239,7 +239,11 @@
     },
     "summary": {
       "enableLabel": "自动生成摘要",
-      "enableDescription": "上传文档时自动生成文档摘要"
+      "enableDescription": "上传文档时自动生成文档摘要",
+      "selectModel": "选择摘要模型",
+      "modelRequired": "请选择用于摘要生成的模型",
+      "modelPlaceholder": "搜索模型...",
+      "noModel": "未选择模型"
     },
     "retrievalTest": {
       "button": "召回测试",
