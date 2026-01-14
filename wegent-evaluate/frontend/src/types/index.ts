@@ -341,6 +341,8 @@ export interface EvaluationResultItem {
   generation_score?: number
   is_failed?: boolean
   failure_reason?: string
+  // TruLens groundedness for list view (事实性)
+  trulens_groundedness?: number
 }
 
 // Evaluation Result Detail with all metrics

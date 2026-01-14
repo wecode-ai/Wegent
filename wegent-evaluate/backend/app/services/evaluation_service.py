@@ -813,6 +813,10 @@ class EvaluationService:
                 "generation_score": evaluation.generation_score if evaluation else None,
                 "is_failed": evaluation.is_failed if evaluation else False,
                 "failure_reason": evaluation.failure_reason if evaluation else None,
+                # TruLens groundedness for list view (事实性)
+                "trulens_groundedness": (
+                    evaluation.trulens_groundedness if evaluation else None
+                ),
             }
             items.append(item)
 

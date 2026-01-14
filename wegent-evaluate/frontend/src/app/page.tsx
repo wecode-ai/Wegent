@@ -4,15 +4,9 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScoreCard } from '@/components/charts/score-card'
 import { TrendChart } from '@/components/charts/trend-chart'
-import { SyncModal } from '@/components/modals/sync-modal'
-import { EvaluationModal } from '@/components/modals/evaluation-modal'
 import {
   BarChart3,
-  CheckCircle,
-  Clock,
   AlertTriangle,
-  RefreshCcw,
-  Play,
   Loader2,
   ShieldAlert,
   Trophy,
@@ -33,8 +27,6 @@ export default function DashboardPage() {
   const [trendData, setTrendData] = useState<TrendDataPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [syncModalOpen, setSyncModalOpen] = useState(false)
-  const [evalModalOpen, setEvalModalOpen] = useState(false)
 
   // Calculate date range for last 7 days
   const getDateRange = () => {
@@ -100,25 +92,7 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{t('dashboard.title')}</h1>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setSyncModalOpen(true)}
-            className="flex items-center gap-2 rounded-md bg-secondary px-4 py-2 text-sm hover:bg-secondary/80"
-          >
-            <RefreshCcw className="h-4 w-4" />
-            {t('dashboard.triggerSync')}
-          </button>
-          <button
-            onClick={() => setEvalModalOpen(true)}
-            className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90"
-          >
-            <Play className="h-4 w-4" />
-            {t('dashboard.triggerEvaluation')}
-          </button>
-        </div>
-      </div>
+      <h1 className="text-2xl font-semibold">{t('dashboard.title')}</h1>
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
@@ -315,18 +289,6 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
-
-      {/* Modals */}
-      <SyncModal
-        open={syncModalOpen}
-        onClose={() => setSyncModalOpen(false)}
-        onSuccess={fetchData}
-      />
-      <EvaluationModal
-        open={evalModalOpen}
-        onClose={() => setEvalModalOpen(false)}
-        onSuccess={fetchData}
-      />
     </div>
   )
 }

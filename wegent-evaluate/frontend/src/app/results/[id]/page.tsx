@@ -9,7 +9,6 @@ import {
 } from '@/components/metrics'
 import {
   ArrowLeft,
-  RefreshCcw,
   Loader2,
   AlertTriangle,
   CheckCircle,
@@ -24,11 +23,7 @@ import {
   Search,
 } from 'lucide-react'
 import Link from 'next/link'
-import {
-  getEvaluationResultDetail,
-  triggerEvaluation,
-  getEvaluationStatus,
-} from '@/apis/evaluation'
+import { getEvaluationResultDetail } from '@/apis/evaluation'
 import { EvaluationResultDetail as ResultDetail, DiagnosticAnalysis } from '@/types'
 
 function getRatingColor(rating: string): string {
@@ -393,7 +388,6 @@ export default function ResultDetailPage({
   const [result, setResult] = useState<ResultDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [reEvaluating, setReEvaluating] = useState(false)
 
   const fetchDetail = async () => {
     setLoading(true)
@@ -411,31 +405,6 @@ export default function ResultDetailPage({
   useEffect(() => {
     fetchDetail()
   }, [id])
-
-  const handleReEvaluate = async () => {
-    if (!result) return
-    setReEvaluating(true)
-    try {
-      const jobResult = await triggerEvaluation('ids', {
-        record_ids: [result.conversation_record_id],
-      })
-
-      // Poll for completion
-      const pollStatus = async () => {
-        const statusResult = await getEvaluationStatus(jobResult.job_id)
-        if (statusResult.status === 'completed' || statusResult.status === 'failed') {
-          setReEvaluating(false)
-          fetchDetail()
-        } else {
-          setTimeout(pollStatus, 2000)
-        }
-      }
-      pollStatus()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to re-evaluate')
-      setReEvaluating(false)
-    }
-  }
 
   if (loading) {
     return (
@@ -482,33 +451,19 @@ export default function ResultDetailPage({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link href="/results" className="rounded-md p-2 hover:bg-secondary">
-            <ArrowLeft className="h-5 w-5" />
-          </Link>
-          <h1 className="text-2xl font-semibold">
-            {t('results.title')} #{result.id}
-          </h1>
-          {result.has_cv_alert && (
-            <span className="text-xs px-2 py-1 rounded bg-red-100 text-red-700 flex items-center gap-1">
-              <AlertTriangle className="h-3 w-3" />
-              {t('resultDetail.cvAlert')}
-            </span>
-          )}
-        </div>
-        <button
-          onClick={handleReEvaluate}
-          disabled={reEvaluating}
-          className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
-          {reEvaluating ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCcw className="h-4 w-4" />
-          )}
-          {t('results.reEvaluate')}
-        </button>
+      <div className="flex items-center gap-4">
+        <Link href="/results" className="rounded-md p-2 hover:bg-secondary">
+          <ArrowLeft className="h-5 w-5" />
+        </Link>
+        <h1 className="text-2xl font-semibold">
+          {t('results.title')} #{result.id}
+        </h1>
+        {result.has_cv_alert && (
+          <span className="text-xs px-2 py-1 rounded bg-red-100 text-red-700 flex items-center gap-1">
+            <AlertTriangle className="h-3 w-3" />
+            {t('resultDetail.cvAlert')}
+          </span>
+        )}
       </div>
 
       {/* Total Score Card - Most Prominent */}

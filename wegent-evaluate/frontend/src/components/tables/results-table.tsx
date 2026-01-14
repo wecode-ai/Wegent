@@ -153,8 +153,21 @@ export function ResultsTable({ items }: ResultsTableProps) {
                   )}
                 </span>
               </td>
-              {/* Groundedness - not available in list view, show placeholder */}
-              <td className="px-4 py-3 text-muted-foreground">-</td>
+              {/* Groundedness (事实性) with threshold warning */}
+              <td className="px-4 py-3">
+                <span
+                  className={
+                    item.trulens_groundedness != null && item.trulens_groundedness < 0.6
+                      ? 'text-red-600 font-medium'
+                      : ''
+                  }
+                >
+                  {formatScore(item.trulens_groundedness)}
+                  {item.trulens_groundedness != null && item.trulens_groundedness < 0.6 && (
+                    <span className="ml-1 text-red-500">⚠️</span>
+                  )}
+                </span>
+              </td>
               <td className="px-4 py-3">
                 {formatScore(item.answer_relevancy_score)}
               </td>
