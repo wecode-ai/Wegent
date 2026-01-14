@@ -15,7 +15,7 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from shared.logger import setup_logger
@@ -25,6 +25,7 @@ from shared.telemetry.context import (set_request_context, set_task_context,
                                       set_user_context)
 
 from executor_manager.clients.task_api_client import TaskApiClient
+from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.tasks.task_processor import TaskProcessor
@@ -45,21 +46,22 @@ from executor_manager.routers.sandbox import router as sandbox_router
 from executor_manager.routers.wegent_e2b_proxy import \
     router as wegent_e2b_proxy_router
 
-app.include_router(sandbox_router, prefix="/executor-manager")
+# Create main API router with unified prefix
+api_router = APIRouter(prefix=ROUTE_PREFIX)
 
+# Mount sub-routers to api_router
+api_router.include_router(sandbox_router)
 # E2B standard endpoints:
-# All E2B routes are prefixed with /executor_manager/e2b for unified routing
-# - /executor_manager/e2b/sandboxes - Create sandbox (POST), Get sandbox (GET), Delete (DELETE)
-# - /executor_manager/e2b/v2/sandboxes - List sandboxes
-# - /executor_manager/e2b/sandboxes/{id}/timeout - Set timeout
-# - /executor_manager/e2b/sandboxes/{id}/pause - Pause sandbox
-# - /executor_manager/e2b/sandboxes/{id}/resume - Resume sandbox
-# - /executor_manager/e2b/sandboxes/{id}/connect - Connect to sandbox
-app.include_router(e2b_router, prefix="/executor_manager/e2b")
-
+# - /executor-manager/e2b/sandboxes - Create sandbox (POST), Get sandbox (GET), Delete (DELETE)
+# - /executor-manager/e2b/v2/sandboxes - List sandboxes
+# - /executor-manager/e2b/sandboxes/{id}/timeout - Set timeout
+# - /executor-manager/e2b/sandboxes/{id}/pause - Pause sandbox
+# - /executor-manager/e2b/sandboxes/{id}/resume - Resume sandbox
+# - /executor-manager/e2b/sandboxes/{id}/connect - Connect to sandbox
+api_router.include_router(e2b_router, prefix="/e2b")
 # Private protocol proxy for sandbox access
-# Routes: /executor_manager/e2b/proxy/<sandboxID>/<port>/<path> -> container
-app.include_router(wegent_e2b_proxy_router, prefix="")
+# Routes: /executor-manager/e2b/proxy/<sandboxID>/<port>/<path> -> container
+api_router.include_router(wegent_e2b_proxy_router, prefix="/e2b/proxy")
 
 # Create task processor for handling callbacks
 task_processor = TaskProcessor()
@@ -229,7 +231,7 @@ class CallbackRequest(BaseModel):
     subagent_metadata: Optional[Dict[str, Any]] = None  # SubAgent metadata from task
 
 
-@app.post("/executor-manager/callback")
+@api_router.post("/callback")
 async def callback_handler(request: CallbackRequest, http_request: Request):
     """
     Receive callback interface for executor task progress and completion.
@@ -464,7 +466,7 @@ async def _handle_sandbox_callback(request: CallbackRequest):
     )
 
 
-@app.post("/executor-manager/tasks/receive")
+@api_router.post("/tasks/receive")
 async def receive_tasks(request: TasksRequest, http_request: Request):
     """
     Receive tasks in batch via POST.
@@ -520,7 +522,7 @@ class DeleteExecutorRequest(BaseModel):
     executor_name: str
 
 
-@app.post("/executor-manager/executor/delete")
+@api_router.post("/executor/delete")
 async def delete_executor(request: DeleteExecutorRequest, http_request: Request):
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
@@ -535,7 +537,7 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/executor-manager/executor/load")
+@api_router.get("/executor/load")
 async def get_executor_load(http_request: Request):
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
@@ -580,7 +582,7 @@ class ValidateImageResponse(BaseModel):
     validation_task_id: Optional[int] = None
 
 
-@app.post("/executor-manager/images/validate")
+@api_router.post("/images/validate")
 async def validate_image(request: ValidateImageRequest, http_request: Request):
     """
     Validate if a base image is compatible with a specific shell type.
@@ -683,7 +685,7 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
         }
 
 
-@app.post("/executor-manager/tasks/cancel")
+@api_router.post("/tasks/cancel")
 async def cancel_task(request: CancelTaskRequest, http_request: Request):
     """
     Cancel a running task by calling the executor's cancel API.
@@ -722,3 +724,7 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
     except Exception as e:
         logger.error(f"Error cancelling task {request.task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Mount api_router to app
+app.include_router(api_router)

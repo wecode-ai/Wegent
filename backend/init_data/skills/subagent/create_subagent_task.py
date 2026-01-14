@@ -40,7 +40,7 @@ MAX_POLL_COUNT = 3600  # max polls (2 hours at 2s interval)
 # E2B SDK patching - must be done before any e2b imports
 # Setup environment variables first
 _executor_manager_url = os.getenv("EXECUTOR_MANAGER_URL", DEFAULT_EXECUTOR_MANAGER_URL)
-os.environ["E2B_API_URL"] = _executor_manager_url.rstrip("/") + "/executor_manager/e2b"
+os.environ["E2B_API_URL"] = _executor_manager_url.rstrip("/") + "/executor-manager/e2b"
 os.environ["E2B_API_KEY"] = os.getenv(
     "E2B_API_KEY", "test-api-key"
 )  # Default matches executor_manager
@@ -62,14 +62,14 @@ try:
         """Get host for sandbox using Wegent path-based routing.
 
         Original E2B format:  <port>-<sandboxID>.E2B_DOMAIN
-        Wegent protocol:      domain/executor_manager/e2b/proxy/<sandboxID>/<port>
+        Wegent protocol:      domain/executor-manager/e2b/proxy/<sandboxID>/<port>
         """
         domain = self.sandbox_domain
         if domain.startswith("http://"):
             domain = domain[7:]
         elif domain.startswith("https://"):
             domain = domain[8:]
-        return f"{domain}/executor_manager/e2b/proxy/{self.sandbox_id}/{port}"
+        return f"{domain}/executor-manager/e2b/proxy/{self.sandbox_id}/{port}"
 
     def _patched_connection_config_get_host(
         self, sandbox_id: str, sandbox_domain: str, port: int
@@ -80,7 +80,7 @@ try:
             domain = domain[7:]
         elif domain.startswith("https://"):
             domain = domain[8:]
-        return f"{domain}/executor_manager/e2b/proxy/{sandbox_id}/{port}"
+        return f"{domain}/executor-manager/e2b/proxy/{sandbox_id}/{port}"
 
     def _patched_connection_config_get_sandbox_url(
         self, sandbox_id: str, sandbox_domain: str
@@ -97,7 +97,7 @@ try:
         # Ensure we have a protocol
         if not domain.startswith("http://") and not domain.startswith("https://"):
             domain = f"{'http' if self.debug else 'https'}://{domain}"
-        return f"{domain}/executor_manager/e2b/proxy/{sandbox_id}/{self.envd_port}"
+        return f"{domain}/executor-manager/e2b/proxy/{sandbox_id}/{self.envd_port}"
 
     def _build_url_with_port(request) -> str:
         """Build URL string with port for logging.
