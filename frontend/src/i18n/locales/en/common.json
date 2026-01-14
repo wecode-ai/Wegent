@@ -579,6 +579,12 @@
     "cannotUndo": "This action cannot be undone",
     "coming_soon": "Coming Soon"
   },
+  "dialog": {
+    "confirm_close_title": "Confirm Close",
+    "confirm_close_description": "You have unsaved changes. Are you sure you want to close?",
+    "confirm_close_cancel": "Cancel",
+    "confirm_close_confirm": "Close Anyway"
+  },
   "correction": {
     "result_title": "Correction Result"
   },
