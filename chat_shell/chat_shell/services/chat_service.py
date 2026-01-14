@@ -230,6 +230,13 @@ class ChatService(ChatInterface):
             t2 = time.perf_counter()
             agent_builder = agent.create_agent_builder(agent_config)
 
+            # Set tool registry for dynamic tool registration (lazy loading)
+            # This enables load_skill() to register tools directly to the agent builder
+            context.set_tool_registry(agent_builder.tool_registry)
+            logger.debug(
+                "[CHAT_SERVICE] Set tool registry for dynamic registration",
+            )
+
             on_tool_event = create_tool_event_handler(state, emitter, agent_builder)
             logger.debug(
                 "[CHAT_SERVICE] Created tool event handler, agent_builder=%s",

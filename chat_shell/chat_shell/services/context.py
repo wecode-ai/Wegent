@@ -71,6 +71,7 @@ class ChatContext:
         self._db_session: AsyncSession | None = None
         self._load_skill_tool: Any = None
         self._extra_tools: list = []  # Track dynamically loaded tools
+        self._tool_registry: Any = None  # Tool registry for dynamic registration
 
     @trace_async(
         span_name="chat_context.prepare",
@@ -205,6 +206,22 @@ class ChatContext:
             )
             self._mcp_clients = []
         add_span_event("cleanup_completed")
+
+    def set_tool_registry(self, tool_registry: Any) -> None:
+        """Set the tool registry for dynamic tool registration.
+
+        This method must be called before the agent starts executing to enable
+        lazy loading of skill tools and MCP servers. The callbacks will register
+        tools directly to this registry when load_skill() is called.
+
+        Args:
+            tool_registry: The ToolRegistry instance from the agent builder
+        """
+        self._tool_registry = tool_registry
+        logger.debug(
+            "[CHAT_CONTEXT] Tool registry set for dynamic registration: %s",
+            type(tool_registry).__name__,
+        )
 
     @trace_async(
         span_name="chat_context.load_chat_history",
@@ -499,8 +516,8 @@ class ChatContext:
         """Lazily load skill tools when load_skill() is called.
 
         This callback is invoked by LoadSkillTool._arun() when a skill is loaded.
-        It dynamically creates tool instances for the skill and adds them to
-        the extra_tools list.
+        It dynamically creates tool instances for the skill and registers them
+        to the tool registry, making them immediately available to the LLM.
 
         Args:
             skill_name: Name of the skill being loaded
@@ -532,18 +549,30 @@ class ChatContext:
             user_name=self._request.user_name,
         )
 
-        # Add to extra_tools list for dynamic registration
+        # Register tools to the tool registry for immediate availability
         if tools:
+            # Add to extra_tools list for tracking
             self._extra_tools.extend(tools)
+
+            # Register to tool registry if available (for dynamic availability to LLM)
+            if self._tool_registry:
+                for tool in tools:
+                    self._tool_registry.register(tool)
+                    logger.debug(
+                        "[CHAT_CONTEXT] Registered tool '%s' to tool registry",
+                        tool.name,
+                    )
+
             add_span_event(
                 "skill_tools_lazy_loaded",
                 {"skill_name": skill_name, "tools_count": len(tools)},
             )
             logger.info(
-                "[CHAT_CONTEXT] Lazy loaded %d tools for skill '%s': %s",
+                "[CHAT_CONTEXT] Lazy loaded %d tools for skill '%s': %s (registry_registered=%s)",
                 len(tools),
                 skill_name,
                 [t.name for t in tools],
+                self._tool_registry is not None,
             )
 
         return tools
@@ -563,7 +592,7 @@ class ChatContext:
 
         This callback is invoked by LoadSkillTool._arun() when a skill declares
         MCP server requirements. It connects to the specified MCP servers and
-        adds their tools to the extra_tools list.
+        registers their tools to the tool registry, making them immediately available to the LLM.
 
         Args:
             skill_name: Name of the skill being loaded
@@ -640,15 +669,32 @@ class ChatContext:
                     len(tools),
                 )
 
-        # Add to extra_tools list for dynamic registration
+        # Register tools to the tool registry for immediate availability
         if mcp_tools:
+            # Add to extra_tools list for tracking
             self._extra_tools.extend(mcp_tools)
+
+            # Register to tool registry if available (for dynamic availability to LLM)
+            if self._tool_registry:
+                for tool in mcp_tools:
+                    self._tool_registry.register(tool)
+                    logger.debug(
+                        "[CHAT_CONTEXT] Registered MCP tool '%s' to tool registry",
+                        tool.name,
+                    )
+
             add_span_event(
                 "skill_mcp_tools_lazy_loaded",
                 {
                     "skill_name": skill_name,
                     "tools_count": len(mcp_tools),
                 },
+            )
+            logger.info(
+                "[CHAT_CONTEXT] Lazy loaded %d MCP tools for skill '%s' (registry_registered=%s)",
+                len(mcp_tools),
+                skill_name,
+                self._tool_registry is not None,
             )
 
         return mcp_tools
