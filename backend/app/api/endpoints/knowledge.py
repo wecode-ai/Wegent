@@ -370,6 +370,7 @@ async def create_document(
                         embedding_model_name=embedding_model_name,
                         embedding_model_namespace=embedding_model_namespace,
                         user_id=current_user.id,
+                        user_name=current_user.user_name,
                         splitter_config=data.splitter_config,
                         document_id=document.id,
                         kb_index_info=kb_index_info,
@@ -516,6 +517,7 @@ def _trigger_document_summary_if_enabled(
     db: Session,
     document_id: int,
     user_id: int,
+    user_name: str,
     kb_info: KnowledgeBaseIndexInfo,
 ):
     """
@@ -528,6 +530,7 @@ def _trigger_document_summary_if_enabled(
         db: Database session
         document_id: Document ID
         user_id: User ID (the user who triggered the indexing)
+        user_name: Username for placeholder resolution
         kb_info: Knowledge base index information
     """
     try:
@@ -542,7 +545,9 @@ def _trigger_document_summary_if_enabled(
             asyncio.set_event_loop(loop)
             try:
                 loop.run_until_complete(
-                    summary_service.trigger_document_summary(document_id, user_id)
+                    summary_service.trigger_document_summary(
+                        document_id, user_id, user_name
+                    )
                 )
             finally:
                 # Properly shutdown async generators and close the loop
@@ -571,6 +576,7 @@ def _index_document_background(
     embedding_model_name: str,
     embedding_model_namespace: str,
     user_id: int,
+    user_name: str,
     splitter_config: Optional[SplitterConfig] = None,
     document_id: Optional[int] = None,
     kb_index_info: Optional[KnowledgeBaseIndexInfo] = None,
@@ -593,6 +599,7 @@ def _index_document_background(
         embedding_model_name: Embedding model name
         embedding_model_namespace: Embedding model namespace
         user_id: User ID (the user who triggered the indexing)
+        user_name: Username for placeholder resolution
         splitter_config: Optional splitter configuration
         document_id: Optional document ID to use as doc_ref
         kb_index_info: Pre-computed KB info (avoids redundant DB query if provided)
@@ -684,6 +691,7 @@ def _index_document_background(
                     db=db,
                     document_id=document_id,
                     user_id=user_id,
+                    user_name=user_name,
                     kb_info=kb_info,
                 )
     except Exception as e:
@@ -763,6 +771,7 @@ def delete_document(
                 _update_kb_summary_after_deletion,
                 kb_id=result.kb_id,
                 user_id=current_user.id,
+                user_name=current_user.user_name,
             )
 
         return None
@@ -817,6 +826,7 @@ def batch_delete_documents(
                 _update_kb_summary_after_deletion,
                 kb_id=kb_id,
                 user_id=current_user.id,
+                user_name=current_user.user_name,
             )
 
     return result
@@ -1012,7 +1022,9 @@ async def refresh_kb_summary(
         )
 
     # Run in background, return immediately
-    background_tasks.add_task(_run_kb_summary_refresh, kb_id, current_user.id)
+    background_tasks.add_task(
+        _run_kb_summary_refresh, kb_id, current_user.id, current_user.user_name
+    )
 
     return SummaryRefreshResponse(
         message="Summary refresh started",
@@ -1214,7 +1226,9 @@ async def refresh_document_summary(
         )
 
     # Run in background, return immediately
-    background_tasks.add_task(_run_document_summary_refresh, doc_id, current_user.id)
+    background_tasks.add_task(
+        _run_document_summary_refresh, doc_id, current_user.id, current_user.user_name
+    )
 
     return SummaryRefreshResponse(
         message="Summary refresh started",
@@ -1222,7 +1236,7 @@ async def refresh_document_summary(
     )
 
 
-async def _run_kb_summary_refresh(kb_id: int, user_id: int):
+async def _run_kb_summary_refresh(kb_id: int, user_id: int, user_name: str):
     """Background task wrapper for KB summary refresh."""
     from app.db.session import SessionLocal
     from app.services.knowledge import get_summary_service
@@ -1231,14 +1245,14 @@ async def _run_kb_summary_refresh(kb_id: int, user_id: int):
     new_db = SessionLocal()
     try:
         summary_service = get_summary_service(new_db)
-        await summary_service.refresh_kb_summary(kb_id, user_id)
+        await summary_service.refresh_kb_summary(kb_id, user_id, user_name)
     except Exception:
         logger.exception(f"Failed to refresh KB summary for kb_id={kb_id}")
     finally:
         new_db.close()
 
 
-async def _run_document_summary_refresh(doc_id: int, user_id: int):
+async def _run_document_summary_refresh(doc_id: int, user_id: int, user_name: str):
     """Background task wrapper for document summary refresh."""
     from app.db.session import SessionLocal
     from app.services.knowledge import get_summary_service
@@ -1247,14 +1261,14 @@ async def _run_document_summary_refresh(doc_id: int, user_id: int):
     new_db = SessionLocal()
     try:
         summary_service = get_summary_service(new_db)
-        await summary_service.refresh_document_summary(doc_id, user_id)
+        await summary_service.refresh_document_summary(doc_id, user_id, user_name)
     except Exception:
         logger.exception(f"Failed to refresh document summary for doc_id={doc_id}")
     finally:
         new_db.close()
 
 
-def _update_kb_summary_after_deletion(kb_id: int, user_id: int):
+def _update_kb_summary_after_deletion(kb_id: int, user_id: int, user_name: str):
     """
     Background task to update KB summary after document deletion.
 
@@ -1270,6 +1284,7 @@ def _update_kb_summary_after_deletion(kb_id: int, user_id: int):
     Args:
         kb_id: Knowledge base ID
         user_id: User who triggered the deletion
+        user_name: Username for placeholder resolution
     """
     from app.services.knowledge import get_summary_service
 
@@ -1294,7 +1309,7 @@ def _update_kb_summary_after_deletion(kb_id: int, user_id: int):
         try:
             loop.run_until_complete(
                 summary_service.trigger_kb_summary(
-                    kb_id, user_id, force=False, clear_if_empty=True
+                    kb_id, user_id, user_name, force=False, clear_if_empty=True
                 )
             )
         finally:

@@ -16,17 +16,17 @@ from app.api.dependencies import get_db, with_task_telemetry
 from app.core import security
 from app.core.config import settings
 from app.models.user import User
+from app.schemas.service import (
+    ServiceDeleteRequest,
+    ServiceResponse,
+    ServiceUpdate,
+)
 from app.schemas.shared_task import (
     JoinSharedTaskRequest,
     JoinSharedTaskResponse,
     PublicSharedTaskResponse,
     TaskShareInfo,
     TaskShareResponse,
-)
-from app.schemas.service import (
-    ServiceDeleteRequest,
-    ServiceResponse,
-    ServiceUpdate,
 )
 from app.schemas.task import (
     ConfirmStageRequest,
