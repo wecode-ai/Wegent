@@ -406,6 +406,26 @@ async def _stream_chat_response(
                 f"[ai_trigger] user_subtask_id is None, skipping context processing"
             )
 
+        # Retrieve long-term memories (if enabled)
+        try:
+            from app.services.memory import get_memory_service
+
+            memory_service = get_memory_service()
+            if memory_service.enabled:
+                memory_context = await memory_service.retrieve_for_chat(
+                    user_id=stream_data.user_id,
+                    team_id=stream_data.team_id,
+                    task_id=stream_data.task_id,
+                    query=message,
+                )
+                if memory_context:
+                    enhanced_system_prompt = (
+                        f"{enhanced_system_prompt}\n\n{memory_context}"
+                    )
+                    logger.info(f"[ai_trigger] Injected long-term memory context")
+        except Exception:
+            pass  # Never block on memory
+
         # Emit chat:start event with shell_type using global emitter for cross-worker broadcasting
         logger.info(
             "[ai_trigger] Emitting chat:start event with shell_type=%s",
