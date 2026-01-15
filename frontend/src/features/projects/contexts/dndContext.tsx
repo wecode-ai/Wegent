@@ -20,6 +20,8 @@ import {
 import { Task } from '@/types/api'
 import { useProjectContext } from './projectContext'
 import { GripVertical } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface DraggedTask {
   id: number
@@ -49,6 +51,8 @@ interface TaskDndProviderProps {
 
 export function TaskDndProvider({ children }: TaskDndProviderProps) {
   const { addTaskToProject, removeTaskFromProject } = useProjectContext()
+  const { toast } = useToast()
+  const { t } = useTranslation('projects')
   const [draggedTask, setDraggedTask] = useState<DraggedTask | null>(null)
   const [activeDropTarget, setActiveDropTarget] = useState<number | null>(null)
 
@@ -102,25 +106,43 @@ export function TaskDndProvider({ children }: TaskDndProviderProps) {
     }
   }, [])
 
-  const handleDragEnd = useCallback(async (event: DragEndEvent) => {
-    const { active, over } = event
-    const activeData = active.data.current
+  const handleDragEnd = useCallback(
+    async (event: DragEndEvent) => {
+      const { active, over } = event
+      const activeData = active.data.current
 
-    if (over && over.data.current?.type === 'project' && activeData?.type === 'task') {
-      // Dragging from history to project - add task to project
-      const projectId = over.data.current.projectId as number
-      const taskId = activeData.task.id as number
-      await addTaskToProject(projectId, taskId)
-    } else if (over && over.data.current?.type === 'history' && activeData?.type === 'project-task') {
-      // Dragging from project to history - remove task from project
-      const projectId = activeData.projectId as number
-      const taskId = activeData.taskId as number
-      await removeTaskFromProject(projectId, taskId)
-    }
+      if (over && over.data.current?.type === 'project' && activeData?.type === 'task') {
+        // Check if the task is a group chat
+        const task = activeData.task as Task
+        if (task.is_group_chat) {
+          toast({
+            description: t('toast.groupChatNotSupported'),
+            variant: 'destructive',
+          })
+          setDraggedTask(null)
+          setActiveDropTarget(null)
+          return
+        }
+        // Dragging from history to project - add task to project
+        const projectId = over.data.current.projectId as number
+        const taskId = activeData.task.id as number
+        await addTaskToProject(projectId, taskId)
+      } else if (
+        over &&
+        over.data.current?.type === 'history' &&
+        activeData?.type === 'project-task'
+      ) {
+        // Dragging from project to history - remove task from project
+        const projectId = activeData.projectId as number
+        const taskId = activeData.taskId as number
+        await removeTaskFromProject(projectId, taskId)
+      }
 
-    setDraggedTask(null)
-    setActiveDropTarget(null)
-  }, [addTaskToProject, removeTaskFromProject])
+      setDraggedTask(null)
+      setActiveDropTarget(null)
+    },
+    [addTaskToProject, removeTaskFromProject, toast, t]
+  )
 
   const handleDragCancel = useCallback(() => {
     setDraggedTask(null)
@@ -144,7 +166,7 @@ export function TaskDndProvider({ children }: TaskDndProviderProps) {
         onDragCancel={handleDragCancel}
       >
         {children}
-        
+
         {/* Drag Overlay - shows the dragged item */}
         <DragOverlay dropAnimation={null}>
           {draggedTask && (

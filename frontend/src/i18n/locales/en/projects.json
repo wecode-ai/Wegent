@@ -42,7 +42,9 @@
   "menu": {
     "edit": "Edit",
     "delete": "Delete",
-    "removeTask": "Remove from project"
+    "removeTask": "Remove from project",
+    "moveToGroup": "Move to Group",
+    "createGroup": "Create Group"
   },
   "toast": {
     "createSuccess": "Project created successfully",
@@ -55,7 +57,8 @@
     "addTaskSuccess": "Task added to project",
     "addTaskFailed": "Failed to add task",
     "removeTaskSuccess": "Task removed from project",
-    "removeTaskFailed": "Failed to remove task"
+    "removeTaskFailed": "Failed to remove task",
+    "groupChatNotSupported": "Group chats cannot be added to chat groups"
   },
   "colors": {
     "red": "Red",

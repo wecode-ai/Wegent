@@ -51,16 +51,18 @@ function DraggableTaskItem({
   children: React.ReactNode
   enableDrag: boolean
 }) {
+  // Disable drag for group chat tasks
+  const isDragDisabled = !enableDrag || task.is_group_chat
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: task.id,
     data: {
       type: 'task',
       task,
     },
-    disabled: !enableDrag,
+    disabled: isDragDisabled,
   })
 
-  if (!enableDrag) {
+  if (!enableDrag || isDragDisabled) {
     return <>{children}</>
   }
 

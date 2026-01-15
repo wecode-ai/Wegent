@@ -10,7 +10,7 @@
   "section": {
     "title": "对话分组",
     "empty": "暂无分组，点击 + 创建",
-    "noTasks": "暂无对话，可拖拽加入"
+    "noTasks": "暂无对话"
   },
   "actions": {
     "edit": "编辑",
@@ -42,7 +42,9 @@
   "menu": {
     "edit": "编辑",
     "delete": "删除",
-    "removeTask": "从项目移除"
+    "removeTask": "从项目移除",
+    "moveToGroup": "移至分组",
+    "createGroup": "创建分组"
   },
   "toast": {
     "createSuccess": "项目创建成功",
@@ -55,7 +57,8 @@
     "addTaskSuccess": "任务已添加到项目",
     "addTaskFailed": "添加任务失败",
     "removeTaskSuccess": "任务已从项目移除",
-    "removeTaskFailed": "移除任务失败"
+    "removeTaskFailed": "移除任务失败",
+    "groupChatNotSupported": "对话分组功能暂时不支持群聊加入"
   },
   "colors": {
     "red": "红色",
