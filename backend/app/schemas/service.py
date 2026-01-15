@@ -27,9 +27,7 @@ class ServiceUpdate(BaseModel):
 class ServiceDeleteRequest(BaseModel):
     """Request model for deleting service/app fields."""
 
-    fields: list[str] = Field(
-        ..., description="List of field names to delete from app"
-    )
+    fields: list[str] = Field(..., description="List of field names to delete from app")
 
 
 class ServiceResponse(BaseModel):

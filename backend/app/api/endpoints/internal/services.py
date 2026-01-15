@@ -21,7 +21,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.dependencies import get_db
 from app.models.task import TaskResource
-from app.services.chat.ws_emitter import get_ws_emitter, get_main_event_loop
+from app.services.chat.ws_emitter import get_main_event_loop, get_ws_emitter
 
 logger = logging.getLogger(__name__)
 
@@ -124,9 +124,7 @@ def update_task_services(
     db.commit()
     db.refresh(task)
 
-    logger.info(
-        f"Updated task {request.task_id} services: {list(update_data.keys())}"
-    )
+    logger.info(f"Updated task {request.task_id} services: {list(update_data.keys())}")
 
     # Emit WebSocket event to notify frontend about app update
     ws_emitter = get_ws_emitter()

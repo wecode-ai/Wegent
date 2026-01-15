@@ -2318,7 +2318,9 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             app_data = task_crd.status.app.model_dump()
             logger.info(f"[_convert_to_task_dict] Found app data: {app_data}")
         else:
-            logger.info(f"[_convert_to_task_dict] No app data found. status={task_crd.status}, app={task_crd.status.app if task_crd.status else 'N/A'}")
+            logger.info(
+                f"[_convert_to_task_dict] No app data found. status={task_crd.status}, app={task_crd.status.app if task_crd.status else 'N/A'}"
+            )
 
         return {
             "id": task.id,
@@ -2848,7 +2850,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             "updated_at": related_data.get("updated_at", task.updated_at),
             "completed_at": related_data.get("completed_at"),
             "is_group_chat": related_data.get("is_group_chat", False),
-            "app": task_crd.status.app.model_dump() if task_crd.status and task_crd.status.app else None,
+            "app": (
+                task_crd.status.app.model_dump()
+                if task_crd.status and task_crd.status.app
+                else None
+            ),
         }
 
 
