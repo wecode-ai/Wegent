@@ -682,25 +682,8 @@ def build_system_prompt(
     Returns:
         The final system prompt with all enhancements applied
     """
-    # Filter valid skills upfront
-    valid_skills = []
-    if skills:
-        valid_skills = [s for s in skills if s.get("name") and s.get("description")]
-
-    skill_list = ""
-    if valid_skills:
-        skill_list = "\n".join(
-            [f"- **{s['name']}**: {s['description']}" for s in valid_skills]
-        )
-
-    return (
-        PromptBuilder()
-        .base(base_prompt)
-        .append_if(enable_clarification, CLARIFICATION_PROMPT)
-        .append_if(enable_deep_thinking, DEEP_THINKING_PROMPT)
-        .append_if(
-            bool(valid_skills),
-            SKILL_METADATA_PROMPT.format(skill_list=skill_list) if valid_skills else "",
-        )
-        .build()
-    )
+    # Use existing append functions to maintain consistency
+    result = append_clarification_prompt(base_prompt, enable_clarification)
+    result = append_deep_thinking_prompt(result, enable_deep_thinking)
+    result = append_skill_metadata_prompt(result, skills or [])
+    return result
