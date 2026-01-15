@@ -381,12 +381,19 @@ check_frontend_dependencies() {
 
 # Default configuration
 DEFAULT_FRONTEND_PORT=3000
+DEFAULT_BACKEND_PORT=8000
+DEFAULT_CHAT_SHELL_PORT=8100
+DEFAULT_EXECUTOR_MANAGER_PORT=8001
 DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:1.1.1"
 
 FRONTEND_PORT=$DEFAULT_FRONTEND_PORT
+BACKEND_PORT=$DEFAULT_BACKEND_PORT
+CHAT_SHELL_PORT=$DEFAULT_CHAT_SHELL_PORT
+EXECUTOR_MANAGER_PORT=$DEFAULT_EXECUTOR_MANAGER_PORT
 EXECUTOR_IMAGE=$DEFAULT_EXECUTOR_IMAGE
 DEFAULT_API_URL="http://localhost:8000"
 API_URL=$DEFAULT_API_URL
+AUTO_ADJUST_PORTS=false
 
 # Get local IP address
 get_local_ip() {
@@ -438,6 +445,7 @@ Options:
   -e, --executor-image IMG  Executor image (default: $DEFAULT_EXECUTOR_IMAGE)
   --api-url                 Backend api url (default: $DEFAULT_API_URL)
   --socket-url              Socket direct url (default: $DEFAULT_SOCKET_URL)
+  --auto-adjust-ports       Automatically adjust ports if conflicts detected
   --stop                    Stop all services
   --restart                 Restart all services
   --status                  Check service status
@@ -446,6 +454,7 @@ Options:
 Examples:
   $0                                    # Start with default configuration
   $0 -p 8080                            # Specify frontend port as 8080
+  $0 --auto-adjust-ports                # Auto-adjust ports on conflict
   $0 -e my-executor:latest              # Specify custom executor image
   $0 --socket-url http://192.168.1.100:8000  # Specify socket URL with your IP
   $0 --stop                             # Stop all services
@@ -473,6 +482,10 @@ case $1 in
     --socket-url)
         SOCKET_URL="$2"
         shift 2
+        ;;
+    --auto-adjust-ports)
+        AUTO_ADJUST_PORTS=true
+        shift
         ;;
     --stop)
         ACTION="stop"
@@ -504,30 +517,59 @@ mkdir -p "$PID_DIR"
 # Check if port is in use
 check_port() {
     local port=$1
-    local service=$2
     if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
         return 1
     fi
     return 0
 }
 
-# Check all required ports
-check_all_ports() {
-    local ports=("8000:Backend" "8100:Chat Shell" "8001:Executor Manager" "$FRONTEND_PORT:Frontend")
-    local conflicts=()
-
-    for item in "${ports[@]}"; do
-        local port="${item%%:*}"
-        local service="${item##*:}"
-        if ! check_port "$port" "$service"; then
-            conflicts+=("$port ($service)")
+# Find next available port starting from given port
+find_available_port() {
+    local start_port=$1
+    local max_attempts=100
+    local port=$start_port
+    
+    for ((i=0; i<max_attempts; i++)); do
+        if check_port "$port"; then
+            echo "$port"
+            return 0
         fi
+        port=$((port + 1))
     done
+    
+    # If no port found, return original
+    echo "$start_port"
+    return 1
+}
 
+# Check all ports for conflicts
+check_all_ports() {
+    local conflicts=()
+    
+    # Check Backend port
+    if ! check_port "$BACKEND_PORT"; then
+        conflicts+=("$BACKEND_PORT (Backend)")
+    fi
+    
+    # Check Chat Shell port
+    if ! check_port "$CHAT_SHELL_PORT"; then
+        conflicts+=("$CHAT_SHELL_PORT (Chat Shell)")
+    fi
+    
+    # Check Executor Manager port
+    if ! check_port "$EXECUTOR_MANAGER_PORT"; then
+        conflicts+=("$EXECUTOR_MANAGER_PORT (Executor Manager)")
+    fi
+    
+    # Check Frontend port
+    if ! check_port "$FRONTEND_PORT"; then
+        conflicts+=("$FRONTEND_PORT (Frontend)")
+    fi
+    
     if [ ${#conflicts[@]} -gt 0 ]; then
-        echo -e "${RED}Port conflict! The following ports are already in use:${NC}"
+        echo -e "${RED}Port conflict detected! The following ports are already in use:${NC}"
         for conflict in "${conflicts[@]}"; do
-            echo -e "  ${RED}●${NC} $conflict"
+            echo -e "  ${RED}●${NC} Port $conflict"
         done
         echo ""
         echo -e "${YELLOW}Solutions:${NC}"
@@ -535,13 +577,68 @@ check_all_ports() {
         echo -e "     ${BLUE}lsof -i :PORT${NC}  # View occupying process"
         echo -e "     ${BLUE}kill -9 PID${NC}    # Stop process"
         echo ""
-        echo -e "  2. Or run ${BLUE}$0 --stop${NC} to stop previously started services"
+        echo -e "  2. Run ${BLUE}$0 --stop${NC} to stop previously started services"
         echo ""
-        echo -e "  3. If frontend port conflicts, specify another port:"
-        echo -e "     ${BLUE}$0 -p 3001${NC}"
+        echo -e "  3. Use ${BLUE}$0 --auto-adjust-ports${NC} to automatically find available ports"
+        echo ""
         return 1
     fi
     return 0
+}
+
+# Auto-adjust ports to avoid conflicts
+auto_adjust_ports() {
+    local adjusted=false
+    
+    # Check and adjust Backend port
+    if ! check_port "$BACKEND_PORT"; then
+        local new_port=$(find_available_port "$BACKEND_PORT")
+        if [ "$new_port" != "$BACKEND_PORT" ]; then
+            echo -e "${YELLOW}⚠ Backend port $BACKEND_PORT is in use, using port $new_port instead${NC}"
+            BACKEND_PORT=$new_port
+            adjusted=true
+        fi
+    fi
+    
+    # Check and adjust Chat Shell port
+    if ! check_port "$CHAT_SHELL_PORT"; then
+        local new_port=$(find_available_port "$CHAT_SHELL_PORT")
+        if [ "$new_port" != "$CHAT_SHELL_PORT" ]; then
+            echo -e "${YELLOW}⚠ Chat Shell port $CHAT_SHELL_PORT is in use, using port $new_port instead${NC}"
+            CHAT_SHELL_PORT=$new_port
+            adjusted=true
+        fi
+    fi
+    
+    # Check and adjust Executor Manager port
+    if ! check_port "$EXECUTOR_MANAGER_PORT"; then
+        local new_port=$(find_available_port "$EXECUTOR_MANAGER_PORT")
+        if [ "$new_port" != "$EXECUTOR_MANAGER_PORT" ]; then
+            echo -e "${YELLOW}⚠ Executor Manager port $EXECUTOR_MANAGER_PORT is in use, using port $new_port instead${NC}"
+            EXECUTOR_MANAGER_PORT=$new_port
+            adjusted=true
+        fi
+    fi
+    
+    # Check and adjust Frontend port
+    if ! check_port "$FRONTEND_PORT"; then
+        local new_port=$(find_available_port "$FRONTEND_PORT")
+        if [ "$new_port" != "$FRONTEND_PORT" ]; then
+            echo -e "${YELLOW}⚠ Frontend port $FRONTEND_PORT is in use, using port $new_port instead${NC}"
+            FRONTEND_PORT=$new_port
+            adjusted=true
+        fi
+    fi
+    
+    # Update API_URL and SOCKET_URL if backend port changed
+    if [ "$BACKEND_PORT" != "$DEFAULT_BACKEND_PORT" ]; then
+        API_URL="http://localhost:$BACKEND_PORT"
+        SOCKET_URL="http://$(get_local_ip):$BACKEND_PORT"
+    fi
+    
+    if [ "$adjusted" = true ]; then
+        echo ""
+    fi
 }
 
 # Stop all services
@@ -587,25 +684,31 @@ show_status() {
     echo -e "${BLUE}Wegent Service Status:${NC}"
     echo ""
 
-    local services=("backend:8000" "frontend:3000" "chat_shell:8100" "executor_manager:8001")
+    local services=("backend" "chat_shell" "executor_manager" "frontend")
+    local default_ports=("8000" "8100" "8001" "3000")
 
-    for item in "${services[@]}"; do
-        local service="${item%%:*}"
-        local port="${item##*:}"
+    for i in "${!services[@]}"; do
+        local service="${services[$i]}"
+        local default_port="${default_ports[$i]}"
         local pid_file="$PID_DIR/${service}.pid"
 
         if [ -f "$pid_file" ]; then
             local pid=$(cat "$pid_file")
             if kill -0 "$pid" 2>/dev/null; then
-                echo -e "  ${GREEN}●${NC} $service (PID: $pid, Port: $port)"
+                # Try to find actual port from process
+                local actual_port=$(lsof -Pan -p $pid -i 2>/dev/null | grep LISTEN | awk '{print $9}' | cut -d: -f2 | head -1)
+                if [ -z "$actual_port" ]; then
+                    actual_port=$default_port
+                fi
+                echo -e "  ${GREEN}●${NC} $service (PID: $pid, Port: $actual_port)"
             else
                 echo -e "  ${RED}●${NC} $service (exited)"
                 rm -f "$pid_file"
             fi
         else
-            # Check if port is in use
-            if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
-                echo -e "  ${YELLOW}●${NC} $service (port $port in use)"
+            # Check if default port is in use
+            if lsof -Pi :$default_port -sTCP:LISTEN -t >/dev/null 2>&1; then
+                echo -e "  ${YELLOW}●${NC} $service (port $default_port in use)"
             else
                 echo -e "  ${RED}●${NC} $service (not running)"
             fi
@@ -726,19 +829,28 @@ start_services() {
     echo -e "  ${GREEN}✓${NC} Node.js detected: $node_version (npm $npm_version)"
 
     echo ""
+    
+    # Check or adjust ports based on AUTO_ADJUST_PORTS flag
+    echo -e "${BLUE}Checking port availability...${NC}"
+    if [ "$AUTO_ADJUST_PORTS" = true ]; then
+        auto_adjust_ports
+        echo -e "${GREEN}✓ Ports configured (auto-adjusted if needed)${NC}"
+    else
+        if ! check_all_ports; then
+            exit 1
+        fi
+        echo -e "${GREEN}✓ All ports available${NC}"
+    fi
+    echo ""
+    
     echo -e "${GREEN}Configuration:${NC}"
+    echo -e "  Backend Port:     $BACKEND_PORT"
+    echo -e "  Chat Shell Port:  $CHAT_SHELL_PORT"
+    echo -e "  Executor Mgr Port: $EXECUTOR_MANAGER_PORT"
     echo -e "  Frontend Port:    $FRONTEND_PORT"
     echo -e "  Executor Image:   $EXECUTOR_IMAGE"
     echo -e "  API URL:          $API_URL"
     echo -e "  Socket URL:       $SOCKET_URL"
-    echo ""
-
-    # Check port conflicts
-    echo -e "${BLUE}Checking port usage...${NC}"
-    if ! check_all_ports; then
-        exit 1
-    fi
-    echo -e "${GREEN}✓ All ports available${NC}"
     echo ""
 
     # Sync Python dependencies
@@ -763,17 +875,17 @@ start_services() {
 
     # 1. Start Backend
     start_service "backend" "backend" \
-        "source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+        "source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT"
 
     # 2. Start Chat Shell
     start_service "chat_shell" "chat_shell" \
-        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:8000/api/internal && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --host 0.0.0.0 --port 8100"
+        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --host 0.0.0.0 --port $CHAT_SHELL_PORT"
 
     # 3. Start Executor Manager
     # TASK_API_DOMAIN uses local IP so docker containers can access the backend
     # DOCKER_HOST_ADDR=localhost so executor_manager can access docker containers
     start_service "executor_manager" "executor_manager" \
-        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=http://$(get_local_ip):8000 && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && source .venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port 8001"
+        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=http://$(get_local_ip):$BACKEND_PORT && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && source .venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT"
 
     # 4. Start Frontend (run in background)
     echo -e "  Starting ${BLUE}frontend${NC}..."
@@ -803,9 +915,9 @@ start_services() {
 
     # Health check for all services
     local failed=0
-    check_service_health "backend" 8000 "/health" || failed=1
-    check_service_health "chat_shell" 8100 "/health" || failed=1
-    check_service_health "executor_manager" 8001 "/health" || failed=1
+    check_service_health "backend" $BACKEND_PORT "/health" || failed=1
+    check_service_health "chat_shell" $CHAT_SHELL_PORT "/health" || failed=1
+    check_service_health "executor_manager" $EXECUTOR_MANAGER_PORT "/health" || failed=1
     check_service_health "frontend" $FRONTEND_PORT "" || failed=1
 
     echo ""
@@ -826,6 +938,9 @@ start_services() {
     echo -e "${GREEN}All services started successfully!${NC}"
     echo ""
     echo -e "${GREEN}🌐 Access URLs:${NC}"
+    echo -e "  Backend API:     ${BLUE}http://localhost:$BACKEND_PORT${NC}"
+    echo -e "  Chat Shell:      ${BLUE}http://localhost:$CHAT_SHELL_PORT${NC}"
+    echo -e "  Executor Mgr:    ${BLUE}http://localhost:$EXECUTOR_MANAGER_PORT${NC}"
     echo -e "  Local Frontend:  ${BLUE}http://localhost:$FRONTEND_PORT${NC}"
     echo -e "  Remote Frontend: ${BLUE}http://$(get_local_ip):$FRONTEND_PORT${NC}"
     echo -e "  Socket URL:      ${BLUE}$SOCKET_URL${NC}"
@@ -837,7 +952,7 @@ start_services() {
     echo -e "${YELLOW}Common Commands:${NC}"
     echo -e "  $0 --status    Check service status"
     echo -e "  $0 --stop      Stop all services"
-    echo -e "  $0 --socket-url http://YOUR_IP:8000  # Set custom socket URL"
+    echo -e "  $0 --socket-url http://YOUR_IP:$BACKEND_PORT  # Set custom socket URL"
     echo ""
     echo -e "${YELLOW}Log Files:${NC}"
     echo -e "  Backend:          $PID_DIR/backend.log"
