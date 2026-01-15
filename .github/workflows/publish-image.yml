@@ -8,6 +8,11 @@ on:
   pull_request:
     types: [closed]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Custom version to release (e.g. 1.2.3). If empty, auto-increment from docker-compose.yml'
+        type: string
+        required: false
 
 env:
   GIT_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || 'main' }}
@@ -43,8 +48,17 @@ jobs:
       - name: Get version from docker-compose (and bump patch)
         id: get_version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
+
+          # If custom version is provided, use it directly
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            echo "Using custom version: ${INPUT_VERSION}"
+            echo "version=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           if [ ! -f docker-compose.yml ]; then
             echo "Error: docker-compose.yml not found"
