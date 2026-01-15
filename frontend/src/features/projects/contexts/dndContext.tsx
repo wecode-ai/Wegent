@@ -15,7 +15,9 @@ import {
   useSensors,
   PointerSensor,
   TouchSensor,
-  closestCenter,
+  pointerWithin,
+  rectIntersection,
+  CollisionDetection,
 } from '@dnd-kit/core'
 import { Task } from '@/types/api'
 import { useProjectContext } from './projectContext'
@@ -55,6 +57,36 @@ export function TaskDndProvider({ children }: TaskDndProviderProps) {
   const { t } = useTranslation('projects')
   const [draggedTask, setDraggedTask] = useState<DraggedTask | null>(null)
   const [activeDropTarget, setActiveDropTarget] = useState<number | null>(null)
+
+  // Custom collision detection: prioritize projects over history
+  // This ensures that when dragging over a project, it takes precedence
+  // But when not over any project, the history section can be detected
+  const customCollisionDetection: CollisionDetection = useCallback(args => {
+    // First, check for pointer within collisions
+    const pointerCollisions = pointerWithin(args)
+
+    // If we have collisions, prioritize project over history
+    if (pointerCollisions.length > 0) {
+      // Find project collisions first
+      const projectCollision = pointerCollisions.find(
+        collision => collision.data?.droppableContainer?.data?.current?.type === 'project'
+      )
+      if (projectCollision) {
+        return [projectCollision]
+      }
+
+      // If no project collision, check for history
+      const historyCollision = pointerCollisions.find(
+        collision => collision.data?.droppableContainer?.data?.current?.type === 'history'
+      )
+      if (historyCollision) {
+        return [historyCollision]
+      }
+    }
+
+    // Fallback to rect intersection
+    return rectIntersection(args)
+  }, [])
 
   // Configure sensors for both mouse and touch
   const sensors = useSensors(
@@ -174,7 +206,7 @@ export function TaskDndProvider({ children }: TaskDndProviderProps) {
     <DndContext.Provider value={contextValue}>
       <DndKitContext
         sensors={sensors}
-        collisionDetection={closestCenter}
+        collisionDetection={customCollisionDetection}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
