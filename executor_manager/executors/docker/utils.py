@@ -642,12 +642,11 @@ def get_orphan_containers(known_sandbox_ids: Set[str]) -> list:
 
             # Parse creation time (Docker format: 2024-01-15 10:30:00 +0800 CST)
             try:
-                # Simple parsing - just extract the timestamp
-                from datetime import datetime
+                from dateutil import parser as dateutil_parser
 
+                # Use dateutil.parser.parse to handle timezone-aware datetime
                 # Docker uses format like "2024-01-15 10:30:00 +0800 CST"
-                # We'll parse the first 19 characters as datetime
-                created_dt = datetime.strptime(created_at_str[:19], "%Y-%m-%d %H:%M:%S")
+                created_dt = dateutil_parser.parse(created_at_str)
                 container_age = current_time - created_dt.timestamp()
             except Exception:
                 # If parsing fails, assume container is old enough

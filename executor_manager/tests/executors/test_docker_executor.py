@@ -371,15 +371,15 @@ class TestContainerHealthCheckCleanup:
             )
 
         # Verify cleanup was attempted
+        # Verify cleanup was attempted
         # There should be at least one call trying to clean up
         cleanup_calls = [
-            call
-            for call in mock_subprocess.run.call_args_list
-            if call[0][0] == ["docker", "rm", "-f", executor_name]
+            c
+            for c in mock_subprocess.run.call_args_list
+            if c[0][0] == ["docker", "rm", "-f", executor_name]
         ]
-        # The cleanup is attempted after timeout
-        assert len(cleanup_calls) >= 0  # Cleanup attempted in except block
-
+        # The cleanup is attempted after timeout - verify at least one cleanup call
+        assert len(cleanup_calls) >= 1, "Container cleanup should be attempted after timeout"
     @patch("time.sleep")
     def test_check_container_health_timeout_validation_task_reports_failure(
         self, mock_sleep, executor, mock_subprocess
@@ -550,9 +550,9 @@ class TestContainerCreationRollback:
                 assert mock_subprocess.run.call_count >= 2
                 # Find the cleanup call
                 cleanup_calls = [
-                    call
-                    for call in mock_subprocess.run.call_args_list
-                    if len(call[0]) > 0
-                    and call[0][0] == ["docker", "rm", "-f", "test-executor"]
+                    c
+                    for c in mock_subprocess.run.call_args_list
+                    if len(c[0]) > 0
+                    and c[0][0] == ["docker", "rm", "-f", "test-executor"]
                 ]
                 assert len(cleanup_calls) >= 1, "Container cleanup should be attempted"
