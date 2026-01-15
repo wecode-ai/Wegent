@@ -42,7 +42,8 @@ class ChatRequest:
     team_id: int
     team_name: str
     request_id: str = ""
-    message_id: Optional[int] = None
+    message_id: Optional[int] = None  # Assistant's message_id for frontend ordering
+    user_message_id: Optional[int] = None  # User's message_id for history exclusion
     is_group_chat: bool = False
     # User subtask ID for RAG result persistence (different from subtask_id which is AI response's subtask)
     user_subtask_id: Optional[int] = None
@@ -111,6 +112,7 @@ class ChatRequest:
             "team_name": self.team_name,
             "request_id": self.request_id,
             "message_id": self.message_id,
+            "user_message_id": self.user_message_id,
             "is_group_chat": self.is_group_chat,
             "model_config": self.model_config,
             "system_prompt": self.system_prompt,

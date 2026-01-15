@@ -673,8 +673,21 @@ async def _stream_with_http_adapter(
         subtask_id,
     )
 
-    # Parse MCP servers with separate span
-    mcp_servers = _append_mcp_servers(ws_config.bot_name, ws_config.bot_namespace)
+    # Build task_data for MCP variable substitution
+    # This must be built before _append_mcp_servers to support ${{user.name}} etc.
+    task_data = {
+        "user": {
+            "name": str(stream_data.user_name or ""),
+            "id": stream_data.user_id,
+        },
+        "task_id": task_id,
+        "team_id": stream_data.team_id,
+    }
+
+    # Parse MCP servers with separate span (includes variable substitution)
+    mcp_servers = _append_mcp_servers(
+        ws_config.bot_name, ws_config.bot_namespace, task_data
+    )
 
     # Append skills with separate span
     _append_skills(skill_names, skill_configs)
@@ -689,16 +702,6 @@ async def _stream_with_http_adapter(
         settings, "WEB_SEARCH_ENABLED", False
     )
 
-    # Build task_data for MCP tools
-    task_data = {
-        "user": {
-            "name": str(stream_data.user_name or ""),
-            "id": stream_data.user_id,
-        },
-        "task_id": task_id,
-        "team_id": stream_data.team_id,
-    }
-
     chat_request = ChatRequest(
         task_id=task_id,
         subtask_id=subtask_id,
@@ -709,6 +712,7 @@ async def _stream_with_http_adapter(
         team_id=stream_data.team_id,
         team_name=stream_data.team_name,
         message_id=ws_config.message_id,
+        user_message_id=ws_config.user_message_id,  # For history exclusion
         is_group_chat=ws_config.is_group_chat,
         model_config=model_config,
         system_prompt=system_prompt,
@@ -1408,17 +1412,20 @@ from shared.telemetry.decorators import trace_sync
 def _append_mcp_servers(
     bot_name: Optional[str] = None,
     bot_namespace: Optional[str] = None,
+    task_data: Optional[Dict[str, Any]] = None,
 ) -> list[Dict[str, Any]]:
     """Append MCP server configuration for HTTP mode.
 
     Creates a separate span for MCP server parsing and loading.
+    Supports ${{path}} variable substitution in MCP server configs.
 
     Args:
         bot_name: Optional bot name to load Bot MCP servers
         bot_namespace: Optional bot namespace
+        task_data: Optional task data for variable substitution (e.g., user.name, user.id)
 
     Returns:
-        List of MCP server configurations
+        List of MCP server configurations with variables replaced
     """
     import json
 
@@ -1497,6 +1504,17 @@ def _append_mcp_servers(
                 )
         except Exception as e:
             logger.warning("[MCP] Failed to load Bot MCP servers: %s", e)
+
+    # Apply variable substitution to all MCP servers
+    # This replaces ${{user.name}}, ${{user.id}}, etc. with actual values from task_data
+    if mcp_servers and task_data:
+        from shared.utils.mcp_utils import replace_mcp_server_variables
+
+        mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
+        logger.info(
+            "[MCP] Applied variable substitution to %d MCP servers",
+            len(mcp_servers),
+        )
 
     return mcp_servers
 

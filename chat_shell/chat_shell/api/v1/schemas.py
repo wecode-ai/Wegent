@@ -183,7 +183,12 @@ class Metadata(BaseModel):
         None,
         description="User subtask ID for RAG result persistence (different from subtask_id which is AI response's subtask)",
     )
-    message_id: Optional[int] = Field(None, description="Message ID")
+    message_id: Optional[int] = Field(
+        None, description="Assistant message ID for frontend ordering"
+    )
+    user_message_id: Optional[int] = Field(
+        None, description="User message ID for history exclusion"
+    )
     bot_name: Optional[str] = Field(None, description="Bot name")
     bot_namespace: Optional[str] = Field(None, description="Bot namespace")
     trace_id: Optional[str] = Field(

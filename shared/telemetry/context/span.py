@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 
 from opentelemetry import trace
 from opentelemetry.trace import Span, Status, StatusCode
+
 from shared.telemetry.context.attributes import SpanAttributes
 from shared.telemetry.core import is_telemetry_enabled
 

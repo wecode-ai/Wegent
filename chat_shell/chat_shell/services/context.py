@@ -214,11 +214,22 @@ class ChatContext:
         """Load chat history asynchronously."""
         from chat_shell.history import get_chat_history
 
+        # Use user_message_id to exclude current user message (and all messages after it)
+        # Fall back to message_id if user_message_id is not provided
+        exclude_message_id = self._request.user_message_id or self._request.message_id
+
         add_span_event("loading_chat_history")
+        logger.debug(
+            "[CHAT_CONTEXT] >>> Loading history: task_id=%d, exclude_message_id=%s (user_message_id=%s, message_id=%s)",
+            self._request.task_id,
+            exclude_message_id,
+            self._request.user_message_id,
+            self._request.message_id,
+        )
         history = await get_chat_history(
             task_id=self._request.task_id,
             is_group_chat=self._request.is_group_chat,
-            exclude_after_message_id=self._request.message_id,
+            exclude_after_message_id=exclude_message_id,
         )
         add_span_event("chat_history_loaded", {"message_count": len(history)})
         return history

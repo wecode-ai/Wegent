@@ -74,6 +74,7 @@ def _setup_fastapi_instrumentation(app: Any, logger: logging.Logger) -> None:
     """
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
         from shared.telemetry.config import (get_excluded_urls_regex,
                                              get_http_capture_settings,
                                              get_otel_config)
@@ -343,6 +344,7 @@ def _setup_httpx_instrumentation(logger: logging.Logger) -> None:
     """Setup HTTPX instrumentation for tracing async HTTP client requests."""
     try:
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
         from shared.telemetry.config import get_http_capture_settings
 
         # Get HTTP capture settings
@@ -795,6 +797,7 @@ def _setup_requests_instrumentation(logger: logging.Logger) -> None:
     """Setup Requests instrumentation for tracing sync HTTP client requests."""
     try:
         from opentelemetry.instrumentation.requests import RequestsInstrumentor
+
         from shared.telemetry.config import get_http_capture_settings
 
         # Get HTTP capture settings

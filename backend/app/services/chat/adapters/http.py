@@ -140,6 +140,7 @@ class HTTPAdapter(ChatInterface):
             "team_name": request.team_name,
             "chat_type": "group" if request.is_group_chat else "single",
             "message_id": request.message_id,
+            "user_message_id": request.user_message_id,  # For history exclusion
             "bot_name": request.bot_name,
             "bot_namespace": request.bot_namespace,
             # Additional fields for HTTP mode
