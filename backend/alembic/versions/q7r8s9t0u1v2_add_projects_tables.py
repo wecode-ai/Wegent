@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Add projects and project_tasks tables for task organization
+"""Add projects table and project_id to tasks table
 
 Revision ID: q7r8s9t0u1v2
 Revises: p6q7r8s9t0u1
@@ -10,7 +10,7 @@ Create Date: 2026-01-12 11:30:00.000000+08:00
 
 This migration adds support for project functionality:
 1. Creates projects table to store project information
-2. Creates project_tasks table for project-task many-to-many relationship
+2. Adds project_id column to tasks table for one-to-many relationship
 """
 from typing import Sequence, Union
 
@@ -26,8 +26,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Create projects and project_tasks tables."""
-    # Create projects table (without foreign key)
+    """Create projects table and add project_id to tasks table."""
+    # Create projects table
     op.execute(
         """
     CREATE TABLE IF NOT EXISTS projects (
@@ -48,28 +48,29 @@ def upgrade() -> None:
     """
     )
 
-    # Create project_tasks association table (without foreign keys)
+    # Add project_id column to tasks table
     op.execute(
         """
-    CREATE TABLE IF NOT EXISTS project_tasks (
-        id INT NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
-        project_id INT NOT NULL COMMENT 'Project ID',
-        task_id INT NOT NULL COMMENT 'Task ID',
-        sort_order INT NOT NULL DEFAULT 0 COMMENT 'Sort order within the project',
-        added_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'When the task was added to the project',
-        PRIMARY KEY (id),
-        UNIQUE KEY uniq_project_task (project_id, task_id),
-        KEY idx_project_tasks_project_id (project_id),
-        KEY idx_project_tasks_task_id (task_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Project-Task association table'
-    """
+        ALTER TABLE tasks
+        ADD COLUMN project_id INT DEFAULT NULL COMMENT 'Project ID for task grouping'
+        """
+    )
+
+    # Add index on project_id
+    op.execute(
+        """
+        CREATE INDEX idx_tasks_project_id ON tasks(project_id)
+        """
     )
 
 
 def downgrade() -> None:
-    """Drop project_tasks and projects tables."""
-    # Drop project_tasks table first (due to foreign key constraints)
-    op.execute("DROP TABLE IF EXISTS project_tasks")
+    """Drop project_id from tasks table and drop projects table."""
+    # Drop index on project_id
+    op.execute("DROP INDEX idx_tasks_project_id ON tasks")
+
+    # Drop project_id column from tasks table
+    op.execute("ALTER TABLE tasks DROP COLUMN project_id")
 
     # Drop projects table
     op.execute("DROP TABLE IF EXISTS projects")
