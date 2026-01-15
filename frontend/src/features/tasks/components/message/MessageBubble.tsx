@@ -159,6 +159,10 @@ export interface MessageBubbleProps {
   onEditSave?: (content: string) => Promise<void>
   /** Callback when user cancels editing */
   onEditCancel?: () => void
+  /** Callback when user clicks regenerate button (only for last AI message in single chat) */
+  onRegenerate?: () => void
+  /** Whether regenerate action is in progress */
+  isRegenerating?: boolean
 }
 
 // Component for rendering a paragraph with hover action button
@@ -278,6 +282,8 @@ const MessageBubble = memo(
     onEdit,
     onEditSave,
     onEditCancel,
+    onRegenerate,
+    isRegenerating,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
@@ -611,6 +617,8 @@ const MessageBubble = memo(
               like: t('chat:messages.like') || 'Like',
               dislike: t('chat:messages.dislike') || 'Dislike',
             }}
+            onRegenerate={onRegenerate}
+            isRegenerating={isRegenerating}
           />
         </>
       )
@@ -1575,7 +1583,9 @@ const MessageBubble = memo(
       prevProps.msg.status === nextProps.msg.status &&
       prevProps.msg.error === nextProps.msg.error &&
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&
-      prevProps.isEditing === nextProps.isEditing
+      prevProps.isEditing === nextProps.isEditing &&
+      prevProps.onRegenerate === nextProps.onRegenerate &&
+      prevProps.isRegenerating === nextProps.isRegenerating
 
     return shouldSkipRender
   }

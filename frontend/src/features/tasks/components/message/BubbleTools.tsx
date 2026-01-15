@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Copy, Check, ThumbsUp, ThumbsDown, Pencil } from 'lucide-react'
+import { Copy, Check, ThumbsUp, ThumbsDown, Pencil, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from 'react-i18next'
@@ -142,6 +142,10 @@ export interface BubbleToolsProps {
     like: string
     dislike: string
   }
+  /** Handler for regenerate button click - only shown when provided */
+  onRegenerate?: () => void
+  /** Whether regenerate action is in progress */
+  isRegenerating?: boolean
 }
 
 // Bubble toolbar: supports copy button, feedback buttons, and extensible tool buttons
@@ -153,6 +157,8 @@ const BubbleTools = ({
   onLike,
   onDislike,
   feedbackLabels,
+  onRegenerate,
+  isRegenerating,
 }: BubbleToolsProps) => {
   const { t } = useTranslation()
 
@@ -196,6 +202,25 @@ const BubbleTools = ({
         </TooltipTrigger>
         <TooltipContent>{feedbackLabels?.dislike || 'Dislike'}</TooltipContent>
       </Tooltip>
+      {/* Regenerate button - only shown when onRegenerate is provided */}
+      {onRegenerate && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onRegenerate}
+              disabled={isRegenerating}
+              className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec disabled:opacity-50"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 text-text-muted ${isRegenerating ? 'animate-spin' : ''}`}
+              />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('chat:actions.regenerate') || 'Regenerate'}</TooltipContent>
+        </Tooltip>
+      )}
       {/* Additional tool buttons (e.g., download) */}
       {tools.map(tool => (
         <Tooltip key={tool.key}>

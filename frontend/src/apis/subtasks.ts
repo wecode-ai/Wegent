@@ -16,6 +16,10 @@ export interface MessageEditResponse {
   new_content: string
 }
 
+export interface DeleteSubtaskResponse {
+  message: string
+}
+
 export const subtaskApis = {
   /**
    * Edit a user message and delete all subsequent messages.
@@ -29,5 +33,16 @@ export const subtaskApis = {
     return apiClient.post<MessageEditResponse>(`/subtasks/${subtaskId}/edit`, {
       new_content: newContent,
     })
+  },
+
+  /**
+   * Delete a subtask (message).
+   * Used for regenerate feature to delete the last AI response before resending.
+   *
+   * @param subtaskId - The subtask ID to delete
+   * @returns Success message
+   */
+  deleteSubtask: async (subtaskId: number): Promise<DeleteSubtaskResponse> => {
+    return apiClient.delete<DeleteSubtaskResponse>(`/subtasks/${subtaskId}`)
   },
 }

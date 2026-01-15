@@ -230,6 +230,14 @@ export default function MessagesArea({
   // Message edit state
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
 
+  // Regenerate state - for regenerating the last AI response
+  const [isRegenerating, setIsRegenerating] = useState(false)
+  // Store the original AI message in case regeneration fails
+  const [cachedAiMessage, setCachedAiMessage] = useState<{
+    subtaskId: number
+    content: string
+  } | null>(null)
+
   // Correction mode state
   const [correctionResults, setCorrectionResults] = useState<Map<number, CorrectionResponse>>(
     new Map()
@@ -728,6 +736,88 @@ export default function MessagesArea({
     ]
   )
 
+  // Handle regenerate - delete the last AI message and resend the user message
+  const handleRegenerate = useCallback(async () => {
+    // Find the last AI message with completed status
+    const lastAiMessage = [...messages].reverse().find(
+      msg => msg.type === 'ai' && msg.status === 'completed' && msg.subtaskId
+    )
+
+    if (!lastAiMessage || !lastAiMessage.subtaskId) {
+      toast({
+        variant: 'destructive',
+        title: t('chat:errors.generic_error') || 'Failed to regenerate',
+      })
+      return
+    }
+
+    // Find the preceding user message
+    const aiIndex = messages.findIndex(msg => msg.subtaskId === lastAiMessage.subtaskId)
+    const lastUserMessage = aiIndex > 0
+      ? [...messages.slice(0, aiIndex)].reverse().find(msg => msg.type === 'user')
+      : null
+
+    if (!lastUserMessage || !lastUserMessage.content) {
+      toast({
+        variant: 'destructive',
+        title: t('chat:errors.generic_error') || 'Failed to regenerate',
+        description: 'Could not find the original user message',
+      })
+      return
+    }
+
+    // Cache the AI message in case we need to restore it
+    setCachedAiMessage({
+      subtaskId: lastAiMessage.subtaskId,
+      content: lastAiMessage.content,
+    })
+
+    setIsRegenerating(true)
+
+    try {
+      // Delete the AI message from backend
+      await subtaskApis.deleteSubtask(lastAiMessage.subtaskId)
+
+      // Clean up the message from local state
+      if (selectedTaskDetail?.id) {
+        cleanupMessagesAfterEdit(selectedTaskDetail.id, lastAiMessage.subtaskId)
+      }
+
+      // Refresh task detail to ensure backend and frontend are in sync
+      await refreshSelectedTaskDetail(true)
+
+      // Resend the user message to trigger new AI response
+      if (onSendMessage) {
+        onSendMessage(lastUserMessage.content)
+      }
+
+      // Clear cached message on success
+      setCachedAiMessage(null)
+    } catch (error) {
+      console.error('Failed to regenerate:', error)
+
+      // Show error message
+      toast({
+        variant: 'destructive',
+        title: t('chat:errors.generic_error') || 'Failed to regenerate',
+        description: (error as Error)?.message || 'Unknown error',
+      })
+
+      // Refresh to restore state if needed
+      await refreshSelectedTaskDetail(true)
+    } finally {
+      setIsRegenerating(false)
+    }
+  }, [
+    messages,
+    selectedTaskDetail?.id,
+    cleanupMessagesAfterEdit,
+    refreshSelectedTaskDetail,
+    onSendMessage,
+    toast,
+    t,
+  ])
+
   // Memoize share and export buttons
   const shareButton = useMemo(() => {
     if (!selectedTaskDetail?.id || messages.length === 0) {
@@ -1059,6 +1149,18 @@ export default function MessagesArea({
             }
 
             // Use regular MessageBubble for other messages
+            // Calculate if this is the last AI message for regenerate feature
+            // Only show regenerate button when:
+            // 1. Not in group chat
+            // 2. This is the last AI message with completed status
+            // 3. Not currently streaming
+            const isLastCompletedAiMessage = !isGroupChat &&
+              msg.type === 'ai' &&
+              msg.status === 'completed' &&
+              msg.subtaskId === [...messages].reverse().find(
+                m => m.type === 'ai' && m.status === 'completed' && m.subtaskId
+              )?.subtaskId
+
             return (
               <MessageBubble
                 key={messageKey}
@@ -1080,6 +1182,8 @@ export default function MessagesArea({
                 onEdit={handleEditMessage}
                 onEditSave={handleEditSave}
                 onEditCancel={handleEditCancel}
+                onRegenerate={isLastCompletedAiMessage && !isStreaming ? handleRegenerate : undefined}
+                isRegenerating={isLastCompletedAiMessage ? isRegenerating : false}
               />
             )
           })}
