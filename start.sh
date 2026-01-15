@@ -381,7 +381,7 @@ check_frontend_dependencies() {
 
 # Default configuration
 DEFAULT_FRONTEND_PORT=3000
-DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:1.1.1"
+DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:latest"
 
 FRONTEND_PORT=$DEFAULT_FRONTEND_PORT
 EXECUTOR_IMAGE=$DEFAULT_EXECUTOR_IMAGE

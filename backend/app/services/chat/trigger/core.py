@@ -492,22 +492,39 @@ async def _stream_chat_response(
             # Get knowledge_base_ids and document_ids from user subtask's contexts
             knowledge_base_ids = None
             document_ids = None
+            is_user_selected_kb = False
+
             if user_subtask_id:
                 from app.services.chat.preprocessing.contexts import (
+                    _get_bound_knowledge_base_ids,
                     get_document_ids_from_subtask,
                     get_knowledge_base_ids_from_subtask,
                 )
 
+                # Priority 1: Get subtask-level KB selection (user explicitly selected for this message)
                 knowledge_base_ids = get_knowledge_base_ids_from_subtask(
                     db, user_subtask_id
                 )
-                document_ids = get_document_ids_from_subtask(db, user_subtask_id)
+                is_user_selected_kb = bool(knowledge_base_ids)
+
                 if knowledge_base_ids:
+                    document_ids = get_document_ids_from_subtask(db, user_subtask_id)
                     logger.info(
-                        "[ai_trigger] HTTP mode: knowledge_base_ids=%s, document_ids=%s",
+                        "[ai_trigger] HTTP mode: subtask-level KB selected, knowledge_base_ids=%s, "
+                        "document_ids=%s (strict mode)",
                         knowledge_base_ids,
                         document_ids,
                     )
+                elif stream_data.task_id:
+                    # Priority 2: Fall back to task-level bound knowledge bases
+                    knowledge_base_ids = _get_bound_knowledge_base_ids(
+                        db, stream_data.task_id
+                    )
+                    if knowledge_base_ids:
+                        logger.info(
+                            "[ai_trigger] HTTP mode: task-level KB fallback, knowledge_base_ids=%s (relaxed mode)",
+                            knowledge_base_ids,
+                        )
 
             await _stream_with_http_adapter(
                 stream_data=stream_data,
@@ -521,7 +538,9 @@ async def _stream_chat_response(
                 knowledge_base_ids=knowledge_base_ids,
                 document_ids=document_ids,
                 table_contexts=table_contexts,
+                is_user_selected_kb=is_user_selected_kb,
                 preload_skills=chat_config.preload_skills,  # Use resolved from ChatConfig
+                user_subtask_id=user_subtask_id,  # Pass user subtask ID for RAG persistence
             )
         elif streaming_mode == "bridge":
             # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards
@@ -587,7 +606,9 @@ async def _stream_with_http_adapter(
     knowledge_base_ids: list = None,
     document_ids: list = None,
     table_contexts: list = None,
+    is_user_selected_kb: bool = True,
     preload_skills: list = None,
+    user_subtask_id: Optional[int] = None,
 ) -> None:
     """Stream using HTTP adapter to call remote chat_shell service.
 
@@ -609,7 +630,11 @@ async def _stream_with_http_adapter(
         knowledge_base_ids: List of knowledge base IDs to search
         document_ids: List of document IDs to filter retrieval
         table_contexts: List of table context dicts for DataTableTool
+        is_user_selected_kb: Whether KB is explicitly selected by user (strict mode)
+            or inherited from task (relaxed mode). Defaults to True for backward compatibility.
         preload_skills: List of skill names to preload into system prompt
+        user_subtask_id: User subtask ID for RAG result persistence (different from
+            stream_data.subtask_id which is AI response's subtask)
     """
     from app.core.config import settings
     from app.services.chat.adapters.http import HTTPAdapter
@@ -648,8 +673,21 @@ async def _stream_with_http_adapter(
         subtask_id,
     )
 
-    # Parse MCP servers with separate span
-    mcp_servers = _append_mcp_servers(ws_config.bot_name, ws_config.bot_namespace)
+    # Build task_data for MCP variable substitution
+    # This must be built before _append_mcp_servers to support ${{user.name}} etc.
+    task_data = {
+        "user": {
+            "name": str(stream_data.user_name or ""),
+            "id": stream_data.user_id,
+        },
+        "task_id": task_id,
+        "team_id": stream_data.team_id,
+    }
+
+    # Parse MCP servers with separate span (includes variable substitution)
+    mcp_servers = _append_mcp_servers(
+        ws_config.bot_name, ws_config.bot_namespace, task_data
+    )
 
     # Append skills with separate span
     _append_skills(skill_names, skill_configs)
@@ -664,25 +702,17 @@ async def _stream_with_http_adapter(
         settings, "WEB_SEARCH_ENABLED", False
     )
 
-    # Build task_data for MCP tools
-    task_data = {
-        "user": {
-            "name": str(stream_data.user_name or ""),
-            "id": stream_data.user_id,
-        },
-        "task_id": task_id,
-        "team_id": stream_data.team_id,
-    }
-
     chat_request = ChatRequest(
         task_id=task_id,
         subtask_id=subtask_id,
+        user_subtask_id=user_subtask_id,  # User subtask ID for RAG persistence
         message=message,
         user_id=stream_data.user_id,
         user_name=stream_data.user_name,
         team_id=stream_data.team_id,
         team_name=stream_data.team_name,
         message_id=ws_config.message_id,
+        user_message_id=ws_config.user_message_id,  # For history exclusion
         is_group_chat=ws_config.is_group_chat,
         model_config=model_config,
         system_prompt=system_prompt,
@@ -700,16 +730,19 @@ async def _stream_with_http_adapter(
         preload_skills=preload_skills or [],  # Pass preload_skills to ChatRequest
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids,
+        is_user_selected_kb=is_user_selected_kb,
         table_contexts=table_contexts or [],
         task_data=task_data,
         mcp_servers=mcp_servers,
     )
 
     logger.info(
-        "[HTTP_ADAPTER] ChatRequest built: task_id=%d, skill_names=%s, "
-        "table_contexts_count=%d, table_contexts=%s, "
+        "[HTTP_ADAPTER] ChatRequest built: task_id=%d, subtask_id=%d, user_subtask_id=%s, "
+        "skill_names=%s, table_contexts_count=%d, table_contexts=%s, "
         "skill_configs_count=%d, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s",
         task_id,
+        subtask_id,
+        user_subtask_id,
         skill_names,
         len(table_contexts) if table_contexts else 0,
         table_contexts,  # Log the actual content
@@ -965,10 +998,13 @@ async def _stream_with_http_adapter(
                 # Preserve sources from result (knowledge base citations)
                 # Sources are passed through from chat_shell's ResponseDone event
                 if result.get("sources"):
-                    logger.debug(
-                        "[HTTP_ADAPTER] Sources in result: %d items",
+                    logger.info(
+                        "[HTTP_ADAPTER] Sources in result: %d items, sources=%s",
                         len(result["sources"]),
+                        result["sources"],
                     )
+                else:
+                    logger.info("[HTTP_ADAPTER] No sources in result")
 
                 # Update subtask status to COMPLETED in database
                 # This is critical for persistence - without this, messages show as "running" after refresh
@@ -1376,17 +1412,20 @@ from shared.telemetry.decorators import trace_sync
 def _append_mcp_servers(
     bot_name: Optional[str] = None,
     bot_namespace: Optional[str] = None,
+    task_data: Optional[Dict[str, Any]] = None,
 ) -> list[Dict[str, Any]]:
     """Append MCP server configuration for HTTP mode.
 
     Creates a separate span for MCP server parsing and loading.
+    Supports ${{path}} variable substitution in MCP server configs.
 
     Args:
         bot_name: Optional bot name to load Bot MCP servers
         bot_namespace: Optional bot namespace
+        task_data: Optional task data for variable substitution (e.g., user.name, user.id)
 
     Returns:
-        List of MCP server configurations
+        List of MCP server configurations with variables replaced
     """
     import json
 
@@ -1465,6 +1504,17 @@ def _append_mcp_servers(
                 )
         except Exception as e:
             logger.warning("[MCP] Failed to load Bot MCP servers: %s", e)
+
+    # Apply variable substitution to all MCP servers
+    # This replaces ${{user.name}}, ${{user.id}}, etc. with actual values from task_data
+    if mcp_servers and task_data:
+        from shared.utils.mcp_utils import replace_mcp_server_variables
+
+        mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
+        logger.info(
+            "[MCP] Applied variable substitution to %d MCP servers",
+            len(mcp_servers),
+        )
 
     return mcp_servers
 

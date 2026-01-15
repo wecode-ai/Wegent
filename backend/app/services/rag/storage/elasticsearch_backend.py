@@ -556,9 +556,15 @@ class ElasticsearchBackend(BaseStorageBackend):
                 source = hit.get("_source", {})
                 metadata = source.get("metadata", {})
 
+                # Normalize content to plain text. In most cases Elasticsearch
+                # stores human-readable text in the "content" field. However,
+                # for robustness we still pass it through extract_chunk_text
+                # to handle potential serialized node payloads.
+                raw_content = source.get("content", "")
+
                 chunks.append(
                     {
-                        "content": source.get("content", ""),
+                        "content": self.extract_chunk_text(raw_content),
                         "title": metadata.get("source_file", ""),
                         "chunk_id": metadata.get("chunk_index", 0),
                         "doc_ref": metadata.get("doc_ref", ""),
