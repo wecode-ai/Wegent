@@ -5,18 +5,21 @@
 'use client'
 
 import React from 'react'
-import { X, Quote } from 'lucide-react'
+import { X, CornerDownRight } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useQuote } from './QuoteContext'
 
 /**
  * Maximum characters to display in the quote preview before truncating
  */
-const PREVIEW_MAX_LENGTH = 100
+const PREVIEW_MAX_LENGTH = 150
 
 /**
  * QuoteCard component displays the quoted text above the chat input.
- * Shows a preview of the quoted text with a close button to remove.
+ * Uses a compact single-line style similar to ChatGPT's quote design:
+ * - Left quote icon (corner arrow)
+ * - Quoted text with ellipsis for overflow
+ * - Right close button
  */
 export function QuoteCard() {
   const { t } = useTranslation('chat')
@@ -34,36 +37,25 @@ export function QuoteCard() {
       : quote.text
 
   return (
-    <div className="mx-4 mb-2 animate-in slide-in-from-bottom-2 duration-200">
-      <div className="relative bg-surface border border-border rounded-xl p-3 shadow-sm">
-        {/* Quote icon and label */}
-        <div className="flex items-start gap-2">
-          {/* Quote indicator */}
-          <div className="flex-shrink-0 w-1 h-full min-h-[24px] bg-primary rounded-full" />
+    <div className="mx-4 mt-2 mb-2 animate-in slide-in-from-bottom-2 duration-200">
+      <div className="flex items-start gap-2 py-2 px-3 bg-surface rounded-xl border border-border/60">
+        {/* Quote icon */}
+        <CornerDownRight className="flex-shrink-0 h-4 w-4 mt-0.5 text-text-muted" />
 
-          {/* Quote content */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 mb-1">
-              <Quote className="h-3 w-3 text-primary" />
-              <span className="text-xs font-medium text-text-muted">{t('quote.quoted_text')}</span>
-            </div>
-            <p className="text-sm text-text-secondary leading-relaxed break-words whitespace-pre-wrap">
-              {previewText}
-            </p>
-          </div>
+        {/* Quote content - single line with ellipsis or multiline preview */}
+        <p className="flex-1 min-w-0 text-sm text-text-secondary leading-relaxed line-clamp-3 break-words">
+          {previewText}
+        </p>
 
-          {/* Close button */}
-          <button
-            onClick={clearQuote}
-            className="flex-shrink-0 p-1 rounded-md
-              text-text-muted hover:text-text-primary
-              hover:bg-fill-tert transition-colors duration-150"
-            title={t('quote.remove_quote')}
-            aria-label={t('quote.remove_quote')}
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+        {/* Close button */}
+        <button
+          onClick={clearQuote}
+          className="flex-shrink-0 p-0.5 rounded-md text-text-muted hover:text-text-primary transition-colors duration-150"
+          title={t('quote.remove_quote')}
+          aria-label={t('quote.remove_quote')}
+        >
+          <X className="h-4 w-4" />
+        </button>
       </div>
     </div>
   )

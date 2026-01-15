@@ -6,6 +6,7 @@
 Base storage backend interface for RAG functionality.
 """
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Dict, List, Optional
@@ -44,6 +45,45 @@ class BaseStorageBackend(ABC):
         self.api_key = config.get("apiKey")
         self.index_strategy = config.get("indexStrategy", {})
         self.ext = config.get("ext", {})
+
+    def extract_chunk_text(self, raw_content: Any) -> str:
+        """Extract normalized plain text from raw chunk content.
+
+        Some storage providers (e.g., LlamaIndex-based backends) may store
+        serialized node objects (such as TextNode JSON) in the content field
+        when using get_all_chunks. For direct injection we only want the
+        human-readable `text` field and should drop internal fields
+        (id_, embedding, relationships, etc.).
+
+        This helper attempts to parse such JSON structures and extract the
+        `text` value. If parsing fails or the expected structure is missing,
+        it falls back to the original content.
+        """
+        if raw_content is None:
+            return ""
+
+        # Most backends already return plain text
+        if not isinstance(raw_content, str):
+            return str(raw_content)
+
+        stripped = raw_content.strip()
+        # Fast path: not a JSON object or does not contain a `text` key
+        if not stripped.startswith("{") or '"text"' not in stripped:
+            return raw_content
+
+        try:
+            data = json.loads(stripped)
+        except Exception:
+            # If parsing fails, fall back to original content
+            return raw_content
+
+        if isinstance(data, dict):
+            text = data.get("text")
+            if isinstance(text, str):
+                return text
+
+        # Fallback: return original content
+        return raw_content
 
     def _validate_prefix(self, mode: str) -> str:
         """

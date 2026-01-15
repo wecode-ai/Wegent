@@ -13,6 +13,7 @@ This module provides a simplified LangGraph agent implementation using:
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncGenerator
 from typing import Any, Callable
 
@@ -23,6 +24,8 @@ from langchain_core.tools.base import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent
+from opentelemetry import trace as otel_trace
+from shared.telemetry.decorators import add_span_event, trace_sync
 
 from ..tools.base import ToolRegistry
 
@@ -151,16 +154,35 @@ class LangGraphAgentBuilder:
 
         return prompt_modifier
 
+    @trace_sync(
+        span_name="agent_builder.build_agent",
+        tracer_name="chat_shell.agents",
+        extract_attributes=lambda self, *args, **kwargs: {
+            "agent.tools_count": len(self.tools),
+            "agent.max_iterations": self.max_iterations,
+            "agent.enable_checkpointing": self.enable_checkpointing,
+        },
+    )
     def _build_agent(self):
         """Build the LangGraph ReAct agent lazily."""
         if self._agent is not None:
+            add_span_event("agent_already_built")
             return self._agent
+
+        add_span_event("building_new_agent")
 
         # Use LangGraph's prebuilt create_react_agent
         checkpointer = MemorySaver() if self.enable_checkpointing else None
+        add_span_event(
+            "checkpointer_created", {"has_checkpointer": checkpointer is not None}
+        )
 
         # Create prompt modifier for dynamic skill prompt injection
         prompt_modifier = self._create_prompt_modifier()
+        add_span_event(
+            "prompt_modifier_created",
+            {"has_modifier": prompt_modifier is not None},
+        )
 
         # Build agent with optional prompt modifier for dynamic system prompt updates
         self._agent = create_react_agent(
@@ -169,6 +191,7 @@ class LangGraphAgentBuilder:
             checkpointer=checkpointer,
             prompt=prompt_modifier,
         )
+        add_span_event("react_agent_created")
 
         return self._agent
 
@@ -262,8 +285,17 @@ class LangGraphAgentBuilder:
         Yields:
             Content tokens as they are generated
         """
+        add_span_event("stream_tokens_started", {"message_count": len(messages)})
+
+        add_span_event("building_agent_started")
         agent = self._build_agent()
+        add_span_event("building_agent_completed")
+
+        add_span_event("convert_to_messages_started", {"message_count": len(messages)})
         lc_messages = convert_to_messages(messages)
+        add_span_event(
+            "convert_to_messages_completed", {"lc_message_count": len(lc_messages)}
+        )
 
         exec_config = {"configurable": config} if config else None
 
@@ -272,6 +304,15 @@ class LangGraphAgentBuilder:
         final_content = ""  # Store final content for non-streaming fallback
         tool_name_by_run_id: dict[str, str] = {}  # Track tool names by run_id for on_tool_end
 
+        # TTFT tracking variables
+        first_token_received = False
+        llm_request_start_time: float | None = None
+        ttft_ms: float | None = None  # Time to first token in milliseconds
+
+        # Get tracer for LLM request span
+        tracer = otel_trace.get_tracer("chat_shell.agents")
+
+        add_span_event("astream_events_starting")
         try:
             async for event in agent.astream_events(
                 {"messages": lc_messages},
@@ -290,8 +331,30 @@ class LangGraphAgentBuilder:
                 # Handle token streaming events
                 kind = event.get("event", "")
 
+                # Track LLM request start
+                if kind == "on_chat_model_start":
+                    llm_request_start_time = time.perf_counter()
+                    first_token_received = False
+                    add_span_event(
+                        "llm_request_started",
+                        {"model_name": event.get("name", "unknown")},
+                    )
+
                 # Log streaming completion event (much less verbose)
                 if kind == "on_chat_model_stream":
+                    # Calculate TTFT on first token
+                    if not first_token_received and llm_request_start_time is not None:
+                        ttft_ms = (time.perf_counter() - llm_request_start_time) * 1000
+                        first_token_received = True
+                        add_span_event(
+                            "first_token_received",
+                            {"ttft_ms": round(ttft_ms, 2)},
+                        )
+                        logger.info(
+                            "[stream_tokens] TTFT: %.2fms",
+                            ttft_ms,
+                        )
+
                     data = event.get("data", {})
                     chunk = data.get("chunk")
 
@@ -376,6 +439,27 @@ class LangGraphAgentBuilder:
                         # Log empty content case
                         else:
                             logger.debug("[stream_tokens] Empty content in chunk")
+
+                elif kind == "on_chat_model_end":
+                    # Track LLM request completion
+                    if llm_request_start_time is not None:
+                        total_llm_time_ms = (
+                            time.perf_counter() - llm_request_start_time
+                        ) * 1000
+                        add_span_event(
+                            "llm_request_completed",
+                            {
+                                "total_time_ms": round(total_llm_time_ms, 2),
+                                "ttft_ms": round(ttft_ms, 2) if ttft_ms else None,
+                            },
+                        )
+                        logger.info(
+                            "[stream_tokens] LLM request completed: total=%.2fms, ttft=%.2fms",
+                            total_llm_time_ms,
+                            ttft_ms or 0,
+                        )
+                        # Reset for potential next LLM call (e.g., after tool execution)
+                        llm_request_start_time = None
 
                 elif kind == "on_chain_end" and event.get("name") == "LangGraph":
                     # Extract final content from the top-level LangGraph chain end

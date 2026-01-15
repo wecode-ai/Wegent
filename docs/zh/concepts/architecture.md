@@ -194,7 +194,7 @@ MAX_CONCURRENT_TASKS: 5              # 最大并发任务数
 EXECUTOR_PORT_RANGE_MIN: 10001      # 端口范围起始
 EXECUTOR_PORT_RANGE_MAX: 10100      # 端口范围结束
 NETWORK: wegent-network              # Docker 网络
-EXECUTOR_IMAGE: wegent-executor:1.0.13 # 执行器镜像
+EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
 ```
 
 ---

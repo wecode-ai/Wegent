@@ -25,7 +25,12 @@ import {
   getTaskViewStatus,
 } from '@/utils/taskViewStatus'
 import { useSocket } from '@/contexts/SocketContext'
-import { TaskCreatedPayload, TaskInvitedPayload, TaskStatusPayload } from '@/types/socket'
+import {
+  TaskCreatedPayload,
+  TaskInvitedPayload,
+  TaskStatusPayload,
+  TaskAppUpdatePayload,
+} from '@/types/socket'
 import { usePageVisibility } from '@/hooks/usePageVisibility'
 
 type TaskContextType = {
@@ -623,6 +628,25 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     },
     [selectedTask]
   )
+
+  // Handle task app update via WebSocket (sent to task room when expose_service updates app data)
+  const handleTaskAppUpdate = useCallback(
+    (data: TaskAppUpdatePayload) => {
+      console.log('[TaskContext] Received task:app_update', data)
+      // Only update if this is the currently selected task
+      if (selectedTask && selectedTask.id === data.task_id) {
+        setSelectedTaskDetail(prev => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            app: data.app,
+          }
+        })
+      }
+    },
+    [selectedTask]
+  )
+
   // Register WebSocket event handlers for real-time task updates
   useEffect(() => {
     // Only register handlers when WebSocket is connected
@@ -634,12 +658,20 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       onTaskCreated: handleTaskCreated,
       onTaskInvited: handleTaskInvited,
       onTaskStatus: handleTaskStatus,
+      onTaskAppUpdate: handleTaskAppUpdate,
     })
 
     return () => {
       cleanup()
     }
-  }, [isConnected, registerTaskHandlers, handleTaskCreated, handleTaskInvited, handleTaskStatus])
+  }, [
+    isConnected,
+    registerTaskHandlers,
+    handleTaskCreated,
+    handleTaskInvited,
+    handleTaskStatus,
+    handleTaskAppUpdate,
+  ])
 
   // Removed polling - relying entirely on WebSocket real-time updates
   // Task list will be updated via WebSocket events:

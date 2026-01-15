@@ -44,6 +44,7 @@ DEFAULT_EXCLUDED_URLS = [
     "/api/docs",
     "/api/openapi.json",
     "/api/quota/*",
+    "/api/executors/tasks/dispatch",  # Task dispatch endpoint - uses internal trace
     "/favicon.ico",
 ]
 
@@ -362,7 +363,7 @@ def get_excluded_urls_regex() -> str:
             prefix = re.escape(pattern[:-1])
             regex_parts.append(f"{prefix}.*")
         else:
-            # Exact match: escape special chars
-            regex_parts.append(re.escape(pattern))
+            # Exact match: escape special chars and add anchors
+            regex_parts.append(f"^{re.escape(pattern)}$")
 
     return "|".join(regex_parts)

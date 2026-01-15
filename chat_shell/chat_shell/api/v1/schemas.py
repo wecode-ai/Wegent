@@ -179,7 +179,16 @@ class Metadata(BaseModel):
     team_name: Optional[str] = Field(None, description="Team name")
     task_id: Optional[int] = Field(None, description="Task ID")
     subtask_id: Optional[int] = Field(None, description="Subtask ID")
-    message_id: Optional[int] = Field(None, description="Message ID")
+    user_subtask_id: Optional[int] = Field(
+        None,
+        description="User subtask ID for RAG result persistence (different from subtask_id which is AI response's subtask)",
+    )
+    message_id: Optional[int] = Field(
+        None, description="Assistant message ID for frontend ordering"
+    )
+    user_message_id: Optional[int] = Field(
+        None, description="User message ID for history exclusion"
+    )
     bot_name: Optional[str] = Field(None, description="Bot name")
     bot_namespace: Optional[str] = Field(None, description="Bot namespace")
     trace_id: Optional[str] = Field(
@@ -206,6 +215,10 @@ class Metadata(BaseModel):
     document_ids: Optional[list[int]] = Field(
         None,
         description="Document IDs to filter retrieval (when user references specific documents)",
+    )
+    is_user_selected_kb: Optional[bool] = Field(
+        True,
+        description="Whether KB is explicitly selected by user (strict mode) or inherited from task (relaxed mode)",
     )
     # Table configuration
     table_contexts: Optional[list[dict]] = Field(

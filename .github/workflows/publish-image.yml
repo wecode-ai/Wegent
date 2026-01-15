@@ -8,6 +8,11 @@ on:
   pull_request:
     types: [closed]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Custom version to release (e.g. 1.2.3). If empty, auto-increment from latest git tag'
+        type: string
+        required: false
 
 env:
   GIT_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || 'main' }}
@@ -40,30 +45,33 @@ jobs:
           ref: ${{ env.GIT_REF }}
           fetch-depth: 0
 
-      - name: Get version from docker-compose (and bump patch)
+      - name: Get version from git tags (and bump patch)
         id: get_version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
 
-          if [ ! -f docker-compose.yml ]; then
-            echo "Error: docker-compose.yml not found"
-            exit 1
+          # If custom version is provided, use it directly
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            echo "Using custom version: ${INPUT_VERSION}"
+            echo "version=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-          LINE=$(grep -E 'ghcr.io/wecode-ai/wegent-backend:[0-9]+\.[0-9]+\.[0-9]+' docker-compose.yml | head -1 || true)
-          if [ -z "$LINE" ]; then
-            echo "Error: Could not find backend image line in docker-compose.yml"
-            exit 1
+          # Get the latest version tag (format: vX.X.X)
+          LATEST_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1 || true)
+
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No existing version tags found, starting from v0.0.1"
+            echo "version=0.0.1" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-          VERSION=$(echo "$LINE" | sed -E 's/.*ghcr.io\/wecode-ai\/wegent-backend:([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
-          if [ -z "$VERSION" ]; then
-            echo "Error: Could not extract version from docker-compose.yml"
-            exit 1
-          fi
-
-          echo "Current version: $VERSION"
+          # Remove 'v' prefix
+          VERSION="${LATEST_TAG#v}"
+          echo "Current version: $VERSION (from tag $LATEST_TAG)"
 
           IFS='.' read -ra VERSION_PARTS <<< "$VERSION"
           if [ ${#VERSION_PARTS[@]} -ne 3 ]; then
@@ -86,83 +94,11 @@ jobs:
           echo "New version: $NEW_VERSION"
           echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
-  determine-changes:
-    runs-on: ubuntu-latest
-    needs: prepare-release
-    outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      chat_shell: ${{ steps.filter.outputs.chat_shell }}
-      executor: ${{ steps.filter.outputs.executor }}
-      executor_manager: ${{ steps.filter.outputs.executor_manager }}
-      frontend: ${{ steps.filter.outputs.frontend }}
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.GIT_REF }}
-          fetch-depth: 0
-
-      - name: Select comparison range for change detection
-        id: compare
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Ensure latest tags are available before describing release history
-          git fetch --tags --force
-
-          HEAD_REF=$(git rev-parse HEAD)
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
-
-          if [ -n "${LAST_TAG}" ]; then
-            BASE_REF="${LAST_TAG}"
-            echo "Using last release tag ${LAST_TAG} as base."
-          else
-            if git rev-parse "${HEAD_REF}^" >/dev/null 2>&1; then
-              BASE_REF=$(git rev-parse "${HEAD_REF}^")
-              echo "No release tag found; using previous commit ${BASE_REF}."
-            else
-              BASE_REF="${HEAD_REF}"
-              echo "Only one commit present; using HEAD for both base and head."
-            fi
-          fi
-
-          echo "base_ref=${BASE_REF}" >> "$GITHUB_OUTPUT"
-          echo "head_ref=${HEAD_REF}" >> "$GITHUB_OUTPUT"
-
-      - name: Detect changed paths
-        id: filter
-        uses: dorny/paths-filter@v3.0.2
-        with:
-          base: ${{ steps.compare.outputs.base_ref }}
-          ref: ${{ steps.compare.outputs.head_ref }}
-          filters: |
-            backend:
-              - 'backend/**'
-              - 'docker/backend/**'
-
-            chat_shell:
-              - 'chat_shell/**'
-              - 'docker/chat_shell/**'
-
-            executor:
-              - 'executor/**'
-              - 'docker/executor/**'
-
-            executor_manager:
-              - 'executor_manager/**'
-              - 'docker/executor_manager/**'
-
-            frontend:
-              - 'frontend/**'
-              - 'docker/frontend/**'
-
   build-backend:
-    needs: [prepare-release, determine-changes]
+    needs: prepare-release
     runs-on: ubuntu-latest
     permissions:
       packages: write
-    if: needs.determine-changes.outputs.backend == 'true'
 
     steps:
       - name: Checkout code (full history for reproducible builds)
@@ -198,11 +134,10 @@ jobs:
           cache-to: type=gha,mode=max
 
   build-executor:
-    needs: [prepare-release, determine-changes]
+    needs: prepare-release
     runs-on: ubuntu-latest
     permissions:
       packages: write
-    if: needs.determine-changes.outputs.executor == 'true'
 
     steps:
       - name: Checkout code (full history for reproducible builds)
@@ -238,11 +173,10 @@ jobs:
           cache-to: type=gha,mode=max
 
   build-executor-manager:
-    needs: [prepare-release, determine-changes]
+    needs: prepare-release
     runs-on: ubuntu-latest
     permissions:
       packages: write
-    if: needs.determine-changes.outputs.executor_manager == 'true'
 
     steps:
       - name: Checkout code (full history for reproducible builds)
@@ -278,11 +212,10 @@ jobs:
           cache-to: type=gha,mode=max
 
   build-frontend:
-    needs: [prepare-release, determine-changes]
+    needs: prepare-release
     runs-on: ubuntu-latest
     permissions:
       packages: write
-    if: needs.determine-changes.outputs.frontend == 'true'
 
     steps:
       - name: Checkout code (full history for reproducible builds)
@@ -318,11 +251,10 @@ jobs:
           cache-to: type=gha,mode=max
 
   build-chat-shell:
-    needs: [prepare-release, determine-changes]
+    needs: prepare-release
     runs-on: ubuntu-latest
     permissions:
       packages: write
-    if: needs.determine-changes.outputs.chat_shell == 'true'
 
     steps:
       - name: Checkout code (full history for reproducible builds)
@@ -360,7 +292,6 @@ jobs:
   create-release-tag:
     needs:
       - prepare-release
-      - determine-changes
       - build-backend
       - build-chat-shell
       - build-executor
@@ -369,16 +300,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    if: >
-      always() &&
-      needs.prepare-release.result == 'success' &&
-      (
-        (needs.determine-changes.outputs.backend == 'true' && needs.build-backend.result == 'success') ||
-        (needs.determine-changes.outputs.chat_shell == 'true' && needs.build-chat-shell.result == 'success') ||
-        (needs.determine-changes.outputs.executor == 'true' && needs.build-executor.result == 'success') ||
-        (needs.determine-changes.outputs.executor_manager == 'true' && needs.build-executor-manager.result == 'success') ||
-        (needs.determine-changes.outputs.frontend == 'true' && needs.build-frontend.result == 'success')
-      )
 
     steps:
       - name: Checkout code (full history + tags)
@@ -440,110 +361,3 @@ jobs:
           body: ${{ steps.release-notes.outputs.body }}
           draft: false
           prerelease: false
-
-  update-docker-compose:
-    needs:
-      - prepare-release
-      - determine-changes
-      - build-backend
-      - build-chat-shell
-      - build-executor
-      - build-executor-manager
-      - build-frontend
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    if: >
-      always() &&
-      needs.prepare-release.result == 'success' &&
-      (
-        (needs.determine-changes.outputs.backend == 'true' && needs.build-backend.result == 'success') ||
-        (needs.determine-changes.outputs.chat_shell == 'true' && needs.build-chat-shell.result == 'success') ||
-        (needs.determine-changes.outputs.executor == 'true' && needs.build-executor.result == 'success') ||
-        (needs.determine-changes.outputs.executor_manager == 'true' && needs.build-executor-manager.result == 'success') ||
-        (needs.determine-changes.outputs.frontend == 'true' && needs.build-frontend.result == 'success')
-      )
-
-    steps:
-      - name: Checkout code from release ref (avoid drift vs main)
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.GIT_REF }}
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update docker-compose.yml versions (only for changed components)
-        shell: bash
-        env:
-          VERSION: ${{ needs.prepare-release.outputs.new_version }}
-          CHANGED_BACKEND: ${{ needs.determine-changes.outputs.backend }}
-          CHANGED_CHAT_SHELL: ${{ needs.determine-changes.outputs.chat_shell }}
-          CHANGED_EXECUTOR: ${{ needs.determine-changes.outputs.executor }}
-          CHANGED_EXECUTOR_MANAGER: ${{ needs.determine-changes.outputs.executor_manager }}
-          CHANGED_FRONTEND: ${{ needs.determine-changes.outputs.frontend }}
-        run: |
-          set -euo pipefail
-
-          if [ ! -f docker-compose.yml ]; then
-            echo "Error: docker-compose.yml not found"
-            exit 1
-          fi
-
-          if [ "${CHANGED_BACKEND}" = "true" ]; then
-            echo "Updating backend image version to ${VERSION}"
-            sed -i -E "s|(ghcr.io/wecode-ai/wegent-backend:)[0-9]+\.[0-9]+\.[0-9]+|\1${VERSION}|g" docker-compose.yml
-          else
-            echo "Backend unchanged, skip updating backend image tag"
-          fi
-
-          if [ "${CHANGED_CHAT_SHELL}" = "true" ]; then
-            echo "Updating chat shell image version to ${VERSION}"
-            sed -i -E "s|(ghcr.io/wecode-ai/wegent-chat-shell:)[0-9]+\.[0-9]+\.[0-9]+|\1${VERSION}|g" docker-compose.yml
-          else
-            echo "Chat shell unchanged, skip updating chat shell image tag"
-          fi
-
-          if [ "${CHANGED_EXECUTOR}" = "true" ]; then
-            echo "Updating executor image version to ${VERSION}"
-            sed -i -E "s|(ghcr.io/wecode-ai/wegent-executor:)[0-9]+\.[0-9]+\.[0-9]+|\1${VERSION}|g" docker-compose.yml
-          else
-            echo "Executor unchanged, skip updating executor image tag"
-          fi
-
-          if [ "${CHANGED_EXECUTOR_MANAGER}" = "true" ]; then
-            echo "Updating executor manager image version to ${VERSION}"
-            sed -i -E "s|(ghcr.io/wecode-ai/wegent-executor-manager:)[0-9]+\.[0-9]+\.[0-9]+|\1${VERSION}|g" docker-compose.yml
-          else
-            echo "Executor manager unchanged, skip updating executor manager image tag"
-          fi
-
-          if [ "${CHANGED_FRONTEND}" = "true" ]; then
-            echo "Updating frontend image version to ${VERSION}"
-            sed -i -E "s|(ghcr.io/wecode-ai/wegent-web:)[0-9]+\.[0-9]+\.[0-9]+|\1${VERSION}|g" docker-compose.yml
-          else
-            echo "Frontend unchanged, skip updating frontend image tag"
-          fi
-
-      - name: Create Pull Request for docker-compose bump
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore: update docker-compose.yml to version ${{ needs.prepare-release.outputs.new_version }}"
-          branch: weagent/update-docker-compose-${{ needs.prepare-release.outputs.new_version }}
-          delete-branch: true
-          title: "chore: update docker-compose.yml to version ${{ needs.prepare-release.outputs.new_version }}"
-          body: |
-            This PR updates Docker image versions in docker-compose.yml to version ${{ needs.prepare-release.outputs.new_version }}.
-
-            ## Changes
-            The following images have been built and pushed to GHCR with version ${{ needs.prepare-release.outputs.new_version }} (only modules with changes were updated):
-
-            - Backend image: `ghcr.io/wecode-ai/wegent-backend:${{ needs.prepare-release.outputs.new_version }}` (changed: ${{ needs.determine-changes.outputs.backend }})
-            - Chat Shell image: `ghcr.io/wecode-ai/wegent-chat-shell:${{ needs.prepare-release.outputs.new_version }}` (changed: ${{ needs.determine-changes.outputs.chat_shell }})
-            - Executor image: `ghcr.io/wecode-ai/wegent-executor:${{ needs.prepare-release.outputs.new_version }}` (changed: ${{ needs.determine-changes.outputs.executor }})
-            - Executor Manager image: `ghcr.io/wecode-ai/wegent-executor-manager:${{ needs.prepare-release.outputs.new_version }}` (changed: ${{ needs.determine-changes.outputs.executor_manager }})
-            - Frontend image: `ghcr.io/wecode-ai/wegent-web:${{ needs.prepare-release.outputs.new_version }}` (changed: ${{ needs.determine-changes.outputs.frontend }})
-
-            ## Release Tag
-            Git tag `v${{ needs.prepare-release.outputs.new_version }}` has been created and pushed (if at least one component changed).

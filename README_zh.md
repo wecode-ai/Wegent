@@ -14,7 +14,11 @@
 
 <div align="center">
 
-<img src="./docs/assets/images/example.gif" width="75%" alt="演示"/>
+<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
+
+<img src="https://github.com/user-attachments/assets/85e08e2f-5f52-4275-b349-0b5703664c2c" width="100%" alt="Knowledge Demo"/>
+
+<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
 
 [快速开始](#-快速开始) · [文档](docs/zh/README.md) · [开发指南](docs/zh/guides/developer/setup.md)
 
@@ -24,7 +28,7 @@
 
 ## ✨ 核心模式
 
-| 💬 对话模式 | 💻 编码模式 | 📚 知识模式 *(实验性)* |
+| 💬 对话模式 | 💻 编码模式 | 📚 知识模式 |
 |:------------|:------------|:-----------------------|
 | **LLM**: 支持Claude / OpenAI / Gemini 等主流模型<br>**多模态**: 支持图片 / PPT / Word / PDF / Excel 文件自动解析<br>**联网搜索**: 支持对接各类搜索引擎<br>**深度调研**: 支持深度调研模式，可自动搜索、整理、生成调研报告<br>**纠错模式**: 由多个AI自动检测并修正回答中的错误<br>**追问模式**: AI 主动追问澄清需求，确保理解准确<br>**扩展能力**: 支持 Skill 技能包 / MCP 工具 / 自定义工具 | **多平台集成**: 支持GitHub / GitLab / Gitea / Gitee / Gerrit平台<br>**自动化AI工作流**: 分支 → 编码 → 提交 → PR 流程自动化<br>**需求澄清**: AI 主动追问，确保理解准确<br>**Wiki 生成**: 自动生成代码库文档 | **RAG 检索**: 向量 / 关键词 / 混合检索<br>**存储后端**: Elasticsearch / Qdrant<br>**文档解析**: PDF / Markdown / DOCX / 代码文件<br>**Wiki**: 代码库文档自动生成 |
 
@@ -45,10 +49,10 @@
 ## 🚀 快速开始
 
 ```bash
-git clone https://github.com/wecode-ai/wegent.git && cd wegent
-docker-compose up -d
-# 访问 http://localhost:3000
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
 ```
+
+然后在浏览器中访问 http://localhost:3000
 
 > 可选：启用 RAG 功能 `docker compose --profile rag up -d`
 
@@ -86,6 +90,7 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
 ## 📞 支持
 
 - 🐛 问题反馈：[GitHub Issues](https://github.com/wecode-ai/wegent/issues)
+- 💬 Discord：[加入社区](https://discord.gg/MVzJzyqEUp)
 
 ## 👥 贡献者
 

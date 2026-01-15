@@ -451,6 +451,14 @@ class TaskSpec(BaseModel):
     )
 
 
+class TaskApp(BaseModel):
+    """App preview information (set by expose_service tool when service starts)"""
+
+    name: str
+    address: str
+    previewUrl: str
+
+
 class TaskStatus(Status):
     """Task status"""
 
@@ -463,6 +471,7 @@ class TaskStatus(Status):
     updatedAt: Optional[datetime] = None
     completedAt: Optional[datetime] = None
     subTasks: Optional[List[Dict[str, Any]]] = None
+    app: Optional[TaskApp] = None  # App preview information
 
 
 class Task(BaseModel):
@@ -631,6 +640,17 @@ class RetrievalConfig(BaseModel):
     )
 
 
+class SummaryModelRef(BaseModel):
+    """Reference to a Model for summary generation"""
+
+    name: str = Field(..., description="Model name")
+    namespace: str = Field("default", description="Model namespace")
+    type: str = Field(
+        "public",
+        description="Model type: 'public' (system public model), 'user' (personal model), or 'group' (group model)",
+    )
+
+
 class KnowledgeBaseSpec(BaseModel):
     """KnowledgeBase specification"""
 
@@ -641,6 +661,14 @@ class KnowledgeBaseSpec(BaseModel):
     )
     retrievalConfig: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
+    )
+    summaryEnabled: bool = Field(
+        default=False,
+        description="Enable automatic summary generation for documents",
+    )
+    summaryModelRef: Optional[SummaryModelRef] = Field(
+        None,
+        description="Model reference for summary generation. Required when summaryEnabled=True",
     )
 
 

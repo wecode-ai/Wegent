@@ -96,7 +96,11 @@ export default function TopNavigation({
       </div>
 
       {/* Right side - User menu and other controls */}
-      {children && <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">{children}</div>}
+      {children && (
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+          {children}
+        </div>
+      )}
     </div>
   )
 }
