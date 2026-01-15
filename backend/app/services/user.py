@@ -6,16 +6,15 @@ import json
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import BackgroundTasks, HTTPException, status
+from fastapi import HTTPException, status
 from shared.utils.crypto import decrypt_git_token, encrypt_git_token, is_token_encrypted
 from sqlalchemy.orm import Session
 
 from app.core import security
 from app.core.exceptions import ValidationException
 from app.models.user import User
-from app.schemas.user import UserCreate, UserUpdate
+from app.schemas.user import UserUpdate
 from app.services.base import BaseService
-from app.services.k_batch import apply_default_resources_async
 from app.services.readers.users import userReader
 
 
@@ -118,52 +117,6 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
             validated_git_info.append(git_item)
 
         return validated_git_info
-
-    def create_user(
-        self,
-        db: Session,
-        *,
-        obj_in: UserCreate,
-        background_tasks: Optional[BackgroundTasks] = None,
-    ) -> User:
-        """
-        Create new user with git token validation
-        """
-        # Set default values
-        password = obj_in.password if obj_in.password else obj_in.user_name
-
-        # Convert GitInfo objects to dictionaries and validate git info
-        git_info = []
-        if obj_in.git_info:
-            git_info = [git_item.model_dump() for git_item in obj_in.git_info]
-            git_info = self._validate_git_info(git_info)
-            if obj_in.email is None:
-                obj_in.email = git_info[0]["git_email"]
-
-        # Check if user already exists
-        existing_user = userReader.get_by_name(db, obj_in.user_name)
-        if existing_user:
-            raise HTTPException(
-                status_code=400, detail="User with this username already exists"
-            )
-
-        db_obj = User(
-            user_name=obj_in.user_name,
-            email=obj_in.email,
-            password_hash=security.get_password_hash(password),
-            git_info=git_info,
-            is_active=True,
-            preferences=json.dumps({}),
-        )
-        db.add(db_obj)
-        db.commit()
-        db.refresh(db_obj)
-
-        # Schedule the async task to run in the background using FastAPI BackgroundTasks
-        if background_tasks:
-            background_tasks.add_task(apply_default_resources_async, db_obj.id)
-
-        return db_obj
 
     def update_current_user(
         self,

@@ -1143,11 +1143,10 @@ spec:
     基于需求分析文档,开发用户管理 API:
 
     ## API 端点
-    1. POST /api/users - 创建用户
-    2. GET /api/users/:id - 获取用户信息
-    3. PUT /api/users/:id - 更新用户信息
-    4. DELETE /api/users/:id - 删除用户
-    5. GET /api/users - 用户列表 (支持分页和搜索)
+    1. GET /api/users/:id - 获取用户信息
+    2. PUT /api/users/:id - 更新用户信息
+    3. DELETE /api/users/:id - 删除用户
+    4. GET /api/users - 用户列表 (支持分页和搜索)
 
     ## 技术要求
     - 使用 FastAPI

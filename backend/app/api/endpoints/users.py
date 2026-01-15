@@ -5,7 +5,7 @@
 import json
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -20,7 +20,7 @@ from app.schemas.admin import (
     QuickAccessTeam,
     WelcomeConfigResponse,
 )
-from app.schemas.user import UserCreate, UserInDB, UserUpdate
+from app.schemas.user import UserInDB, UserUpdate
 from app.services.kind import kind_service
 from app.services.user import user_service
 
@@ -76,18 +76,6 @@ async def delete_git_token(
         return user
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-
-@router.post("", response_model=UserInDB, status_code=status.HTTP_201_CREATED)
-def create_user(
-    user_create: UserCreate,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-):
-    """Create new user"""
-    return user_service.create_user(
-        db=db, obj_in=user_create, background_tasks=background_tasks
-    )
 
 
 QUICK_ACCESS_CONFIG_KEY = "quick_access_recommended"
