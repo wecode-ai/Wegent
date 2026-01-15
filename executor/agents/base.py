@@ -184,9 +184,11 @@ class Agent:
 
         username = user_config.get("user_name")
         branch_name = self.task_data.get("branch_name")
+        # Get repository type for URL encoding (important for Gerrit)
+        repo_type = user_config.get("type")
         repo_name = git_util.get_repo_name_from_url(git_url)
         logger.info(
-            f"Agent[{self.get_name()}][{self.task_id}] start download code for git url: {git_url}, branch name: {branch_name}"
+            f"Agent[{self.get_name()}][{self.task_id}] start download code for git url: {git_url}, branch name: {branch_name}, repo_type: {repo_type}"
         )
         logger.info("username: {username} git token: {git_token}")
         logger.info(user_config)
@@ -197,7 +199,7 @@ class Agent:
 
         if not os.path.exists(project_path):
             success, error_msg = git_util.clone_repo(
-                git_url, branch_name, project_path, username, git_token
+                git_url, branch_name, project_path, username, git_token, repo_type
             )
 
             if success:
