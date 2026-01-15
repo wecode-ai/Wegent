@@ -25,7 +25,7 @@ from app.schemas.knowledge_qa_history import (
     QAHistoryResponse,
     RetrievalConfigInfo,
 )
-from app.services.knowledge_base_qa_service import (
+from app.services.knowledge.knowledge_base_qa_service import (
     MAX_QUERY_DAYS,
     KnowledgeBaseQAService,
     knowledge_base_qa_service,

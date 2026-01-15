@@ -75,7 +75,8 @@
   "user": {
     "default_name": "用户",
     "logout": "退出登录",
-    "login": "登录"
+    "login": "登录",
+    "menu": "用户菜单"
   },
   "chat": {
     "placeholder_chat": "使用智能体进行探索和发现",

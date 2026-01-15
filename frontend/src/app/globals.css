@@ -652,3 +652,49 @@ button:focus-visible {
 }
 
 /* Badge scroll container - use default browser scrollbar */
+
+/* KaTeX Math Formula Styles */
+.katex-display {
+  margin: 1em 0;
+  text-align: center;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.katex {
+  font-size: 1.1em;
+}
+
+/* Ensure math formulas wrap properly on mobile */
+@media (max-width: 768px) {
+  .katex-display {
+    font-size: 0.9em;
+  }
+
+  .katex-display > .katex {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+}
+
+/* Dark mode adjustments for math formulas */
+[data-theme='dark'] .katex {
+  color: rgb(var(--color-text-primary));
+}
+
+[data-theme='dark'] .katex-display {
+  background-color: transparent;
+}
+
+/* Inline math styling */
+.markdown-content .katex {
+  padding: 0 0.1em;
+}
+
+/* Block math styling */
+.markdown-content .katex-display {
+  padding: 0.5em 1em;
+  border-radius: var(--radius);
+  background-color: rgba(var(--color-bg-muted), 0.3);
+}

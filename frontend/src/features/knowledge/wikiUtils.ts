@@ -17,12 +17,16 @@ export interface ContentWrite {
 
 /**
  * Parse source URL to identify source_type and source_domain
+ *
+ * source_domain includes protocol (e.g., "https://github.com", "http://gitlab.example.com")
+ * to ensure backend uses correct protocol when making API requests.
  */
 export const parseSourceUrl = (url: string) => {
   try {
     const parsedUrl = new URL(url)
     const hostname = parsedUrl.hostname
     const pathname = parsedUrl.pathname
+    const protocol = parsedUrl.protocol // e.g., "http:" or "https:"
 
     // Identify source_type
     let source_type = 'git'
@@ -32,8 +36,8 @@ export const parseSourceUrl = (url: string) => {
       source_type = 'gitlab'
     }
 
-    // Identify source_domain
-    const source_domain = hostname
+    // Identify source_domain with protocol (e.g., "https://github.com")
+    const source_domain = `${protocol}//${hostname}`
 
     // Identify project_name (extract from path, show up to 2 levels)
     const pathParts = pathname.split('/').filter(part => part)

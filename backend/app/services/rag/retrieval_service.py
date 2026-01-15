@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.services.adapters.retriever_kinds import retriever_kinds_service
-from app.services.knowledge_service import KnowledgeService
+from app.services.knowledge import KnowledgeService
 from app.services.rag.embedding.factory import create_embedding_model_from_crd
 from app.services.rag.retrieval.retriever import DocumentRetriever
 from app.services.rag.storage.base import BaseStorageBackend

@@ -16,10 +16,13 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
-from app.services.task_knowledge_base_service import task_knowledge_base_service
+from app.services.knowledge import TaskKnowledgeBaseService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Create service instance
+task_kb_service = TaskKnowledgeBaseService()
 
 
 # ============ Request/Response Schemas ============
@@ -77,9 +80,7 @@ def get_bound_knowledge_bases(
     Get knowledge bases bound to a group chat task.
     User must be a member of the task to view.
     """
-    bound_kbs = task_knowledge_base_service.get_bound_knowledge_bases(
-        db, task_id, current_user.id
-    )
+    bound_kbs = task_kb_service.get_bound_knowledge_bases(db, task_id, current_user.id)
 
     return BoundKnowledgeBaseListResponse(
         items=[
@@ -96,7 +97,7 @@ def get_bound_knowledge_bases(
             for kb in bound_kbs
         ],
         total=len(bound_kbs),
-        max_limit=task_knowledge_base_service.MAX_BOUND_KNOWLEDGE_BASES,
+        max_limit=task_kb_service.MAX_BOUND_KNOWLEDGE_BASES,
     )
 
 
@@ -114,7 +115,7 @@ def bind_knowledge_base(
     Bind a knowledge base to a group chat task.
     User must be a member and have access to the knowledge base.
     """
-    bound_kb = task_knowledge_base_service.bind_knowledge_base(
+    bound_kb = task_kb_service.bind_knowledge_base(
         db=db,
         task_id=task_id,
         kb_name=request.kb_name,
@@ -149,7 +150,7 @@ def unbind_knowledge_base(
     Unbind a knowledge base from a group chat task.
     User must be a member of the task.
     """
-    task_knowledge_base_service.unbind_knowledge_base(
+    task_kb_service.unbind_knowledge_base(
         db=db,
         task_id=task_id,
         kb_name=kb_name,

@@ -61,7 +61,7 @@ def get_table_context_for_document(
     Returns:
         Dictionary with 'baseId' and 'sheetIdOrName', or None if not found
     """
-    from app.services.knowledge_service import KnowledgeService
+    from app.services.knowledge import KnowledgeService
 
     doc = KnowledgeService.get_table_document_by_id(db, document_id, user_id)
     if not doc:
