@@ -236,6 +236,13 @@ export interface OpenLinks {
   target_branch: string | null
 }
 
+/** App preview information (set by expose_service tool when service starts) */
+export interface TaskApp {
+  address: string
+  name: string
+  previewUrl: string
+}
+
 export interface TaskDetail {
   id: number
   title: string
@@ -262,6 +269,7 @@ export interface TaskDetail {
   is_group_chat?: boolean // Whether this task is a group chat
   is_group_owner?: boolean // Whether current user is the group owner
   member_count?: number // Number of active members in the group
+  app?: TaskApp | null // App preview information (set by expose_service tool)
 }
 
 /** Correction data stored in subtask.result.correction */

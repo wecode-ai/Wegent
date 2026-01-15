@@ -582,6 +582,10 @@
   "correction": {
     "result_title": "纠正结果"
   },
+  "appPreview": {
+    "button": "预览",
+    "title": "应用预览"
+  },
   "userSearch": {
     "placeholder": "搜索用户名或邮箱...",
     "selectedUsers": "已选择 {{count}} 个用户",

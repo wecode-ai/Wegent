@@ -26,6 +26,7 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis, BranchDiffResponse } from '@/apis/tasks'
 import DiffViewer from '../message/DiffViewer'
+import { TaskApp } from '@/types/api'
 
 // Tool icon mapping
 const TOOL_ICONS: Record<string, string> = {
@@ -112,6 +113,7 @@ interface WorkbenchProps {
     next_action: string
     details?: Record<string, unknown>
   }> | null
+  app?: TaskApp | null
 }
 
 function classNames(...classes: string[]) {
@@ -145,8 +147,9 @@ export default function Workbench({
   taskTitle,
   taskNumber,
   thinking,
+  app,
 }: WorkbenchProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'files'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'files' | 'preview'>('overview')
   const [showCommits, setShowCommits] = useState(false)
   const [copiedCommitId, setCopiedCommitId] = useState<string | null>(null)
   const [diffData, setDiffData] = useState<BranchDiffResponse | null>(null)
@@ -283,6 +286,16 @@ export default function Workbench({
         ? diffData?.files?.length || 0
         : displayData?.file_changes?.length || 0,
     },
+    // Preview tab - only shown when app data is available
+    ...(app
+      ? [
+          {
+            name: t('common:appPreview.button'),
+            value: 'preview' as const,
+            current: activeTab === 'preview',
+          },
+        ]
+      : []),
   ]
 
   const getStatusColor = () => {
@@ -841,7 +854,7 @@ export default function Workbench({
                       </Disclosure>
                     )}
                   </div>
-                ) : (
+                ) : activeTab === 'files' ? (
                   // Files Changed Tab - with integrated diff support
                   <>
                     {isDiffLoading ? (
@@ -893,7 +906,20 @@ export default function Workbench({
                       </div>
                     )}
                   </>
-                )}
+                ) : activeTab === 'preview' && app ? (
+                  // Preview Tab - iframe for app preview
+                  <div className="h-full flex flex-col -mx-2 -mb-2 sm:-mx-3 lg:-mx-4">
+                    <div className="flex-1 min-h-0">
+                      <iframe
+                        src={app.previewUrl}
+                        title={app.name || t('common:appPreview.title')}
+                        className="w-full h-full border-0"
+                        style={{ minHeight: 'calc(100vh - 180px)' }}
+                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
