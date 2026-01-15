@@ -7,7 +7,11 @@
 import { WikiContent as WikiContentType } from '@/types/wiki'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
 import rehypeRaw from 'rehype-raw'
+import rehypeKatex from 'rehype-katex'
+
+import 'katex/dist/katex.min.css'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
@@ -356,8 +360,8 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
         <div className="px-8 py-6">
           <div className="prose prose-base max-w-none dark:prose-invert wiki-content">
             <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeRaw]}
+              remarkPlugins={[remarkGfm, remarkMath]}
+              rehypePlugins={[rehypeRaw, rehypeKatex]}
               components={{
                 // Table components
                 table: ({ node: _node, ...props }: MarkdownComponentProps) => (
