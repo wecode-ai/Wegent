@@ -281,7 +281,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8"
+                              className="h-11 w-11 min-w-[44px] min-h-[44px]"
                               onClick={() => handleTestConnection(retriever)}
                               disabled={testingRetrieverName === retriever.name}
                               title={t('common:retrievers.test_connection')}
@@ -295,7 +295,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8"
+                              className="h-11 w-11 min-w-[44px] min-h-[44px]"
                               onClick={() => handleEdit(retriever)}
                               title={t('common:retrievers.edit')}
                             >
@@ -304,7 +304,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8 hover:text-error"
+                              className="h-11 w-11 min-w-[44px] min-h-[44px] hover:text-error"
                               onClick={() => setDeleteConfirmRetriever(retriever)}
                               title={t('common:retrievers.delete')}
                             >
@@ -355,7 +355,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8"
+                                className="h-11 w-11 min-w-[44px] min-h-[44px]"
                                 onClick={() => handleEdit(retriever)}
                                 title={t('common:retrievers.edit')}
                               >
@@ -366,7 +366,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8 hover:text-error"
+                                className="h-11 w-11 min-w-[44px] min-h-[44px] hover:text-error"
                                 onClick={() => setDeleteConfirmRetriever(retriever)}
                                 title={t('common:retrievers.delete')}
                               >

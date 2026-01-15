@@ -154,7 +154,7 @@ export default function GitHubIntegration() {
                         size="icon"
                         onClick={() => handleEdit(info)}
                         title={t('common:integrations.edit_token')}
-                        className="h-8 w-8"
+                        className="h-11 w-11 min-w-[44px] min-h-[44px]"
                       >
                         <PencilIcon className="w-4 h-4" />
                       </Button>
@@ -163,7 +163,7 @@ export default function GitHubIntegration() {
                         size="icon"
                         onClick={() => handleDelete(info)}
                         title={t('common:integrations.delete')}
-                        className="h-8 w-8 hover:text-error"
+                        className="h-11 w-11 min-w-[44px] min-h-[44px] hover:text-error"
                       >
                         <TrashIcon className="w-4 h-4" />
                       </Button>

@@ -447,7 +447,7 @@ const ModelList: React.FC<ModelListProps> = ({
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8"
+                              className="h-11 w-11 min-w-[44px] min-h-[44px]"
                               onClick={() => handleTestConnection(displayModel)}
                               disabled={testingModelName === displayModel.name}
                               title={t('common:models.test_connection')}
@@ -461,7 +461,7 @@ const ModelList: React.FC<ModelListProps> = ({
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8"
+                              className="h-11 w-11 min-w-[44px] min-h-[44px]"
                               onClick={() => handleEdit(displayModel)}
                               disabled={loadingModelName === displayModel.name}
                               title={t('common:models.edit')}
@@ -475,7 +475,7 @@ const ModelList: React.FC<ModelListProps> = ({
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8 hover:text-error"
+                              className="h-11 w-11 min-w-[44px] min-h-[44px] hover:text-error"
                               onClick={() => setDeleteConfirmModel(displayModel)}
                               title={t('common:models.delete')}
                             >
@@ -541,7 +541,7 @@ const ModelList: React.FC<ModelListProps> = ({
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8"
+                                className="h-11 w-11 min-w-[44px] min-h-[44px]"
                                 onClick={() => handleEdit(displayModel)}
                                 disabled={loadingModelName === displayModel.name}
                                 title={t('common:models.edit')}
@@ -557,7 +557,7 @@ const ModelList: React.FC<ModelListProps> = ({
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8 hover:text-error"
+                                className="h-11 w-11 min-w-[44px] min-h-[44px] hover:text-error"
                                 onClick={() => setDeleteConfirmModel(displayModel)}
                                 title={t('common:models.delete')}
                               >

@@ -257,7 +257,7 @@ export default function TaskSidebar({
                       variant="ghost"
                       size="icon"
                       onClick={onToggleCollapsed}
-                      className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg"
+                      className="h-11 w-11 min-w-[44px] p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg"
                       aria-label={t('common:sidebar.collapse')}
                     >
                       <PanelLeftClose className="h-4 w-4" />
@@ -281,7 +281,7 @@ export default function TaskSidebar({
             <Button
               variant="ghost"
               onClick={handleNewAgentClick}
-              className="w-full justify-between px-3 h-9 text-sm text-text-primary hover:bg-hover rounded-md group"
+              className="w-full justify-between px-3 h-11 min-h-[44px] text-sm text-text-primary hover:bg-hover rounded-md group"
               size="sm"
             >
               <span className="flex items-center">
@@ -303,7 +303,7 @@ export default function TaskSidebar({
                 <Button
                   variant="ghost"
                   onClick={() => handleNavigationClick(btn.path, btn.isActive)}
-                  className={`w-full justify-start px-3 h-9 text-sm rounded-md transition-colors ${
+                  className={`w-full justify-start px-3 h-11 min-h-[44px] text-sm rounded-md transition-colors ${
                     btn.isActive
                       ? 'bg-primary/10 text-primary font-medium'
                       : 'text-text-primary hover:bg-hover'

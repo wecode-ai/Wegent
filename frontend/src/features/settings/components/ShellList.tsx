@@ -245,7 +245,7 @@ const ShellList: React.FC<ShellListProps> = ({
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8"
+                              className="h-11 w-11 min-w-[44px] min-h-[44px]"
                               onClick={() => handleEdit(shell)}
                               title={t('common:shells.edit')}
                             >
@@ -254,7 +254,7 @@ const ShellList: React.FC<ShellListProps> = ({
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8 hover:text-error"
+                              className="h-11 w-11 min-w-[44px] min-h-[44px] hover:text-error"
                               onClick={() => setDeleteConfirmShell(shell)}
                               title={t('common:shells.delete')}
                             >
@@ -322,7 +322,7 @@ const ShellList: React.FC<ShellListProps> = ({
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8"
+                                className="h-11 w-11 min-w-[44px] min-h-[44px]"
                                 onClick={() => handleEdit(shell)}
                                 title={t('common:shells.edit')}
                               >
@@ -333,7 +333,7 @@ const ShellList: React.FC<ShellListProps> = ({
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8 hover:text-error"
+                                className="h-11 w-11 min-w-[44px] min-h-[44px] hover:text-error"
                                 onClick={() => setDeleteConfirmShell(shell)}
                                 title={t('common:shells.delete')}
                               >

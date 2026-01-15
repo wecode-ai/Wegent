@@ -63,7 +63,7 @@ export function TeamIconPicker({ value, onChange, disabled = false }: TeamIconPi
                   type="button"
                   onClick={() => handleSelectIcon(iconConfig.id)}
                   className={`
-                    flex items-center justify-center w-9 h-9 rounded-md transition-colors
+                    flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] rounded-md transition-colors
                     ${
                       isSelected
                         ? 'bg-primary text-white'

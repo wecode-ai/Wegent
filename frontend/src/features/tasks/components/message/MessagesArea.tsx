@@ -396,6 +396,8 @@ export default function MessagesArea({
     selectedTaskDetail?.id,
     toast,
     correctionAttempted, // Add this dependency so useEffect re-runs when retry button is clicked
+    correctionLoading,
+    correctionResults,
   ])
 
   // Register correction WebSocket event handlers for real-time progress updates
@@ -746,7 +748,7 @@ export default function MessagesArea({
             <Button
               variant="outline"
               size="sm"
-              className="flex items-center justify-center h-8 w-8 p-0 rounded-[7px]"
+              className="flex items-center justify-center h-11 w-11 min-w-[44px] min-h-[44px] p-0 rounded-[7px]"
             >
               <MoreHorizontal className="h-4 w-4" />
             </Button>
@@ -808,7 +810,7 @@ export default function MessagesArea({
             variant="outline"
             size="sm"
             onClick={() => setShowMembersPanel(true)}
-            className="flex items-center gap-1 h-8 pl-2 pr-3 rounded-[7px] text-sm"
+            className="flex items-center gap-1 h-11 min-h-[44px] pl-2 pr-3 rounded-[7px] text-sm"
           >
             <Users className="h-3.5 w-3.5" />
             {t('common:groupChat.members.title') || 'Members'}
