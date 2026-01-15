@@ -13,6 +13,7 @@ import { ProjectCreateDialog } from './ProjectCreateDialog'
 import { ProjectEditDialog } from './ProjectEditDialog'
 import { ProjectDeleteDialog } from './ProjectDeleteDialog'
 import { DroppableProject } from './DroppableProject'
+import { DraggableProjectTask } from './DraggableProjectTask'
 import { ProjectWithTasks, ProjectTask } from '@/types/api'
 import {
   DropdownMenu,
@@ -249,19 +250,24 @@ function ProjectItem({
           {project.tasks?.map(projectTask => {
             const isSelected = selectedProjectTaskId === projectTask.task_id
             return (
-              <div
+              <DraggableProjectTask
                 key={projectTask.id}
-                onClick={() => onTaskClick(projectTask)}
-                className={cn(
-                  'flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer',
-                  'text-sm transition-colors',
-                  isSelected
-                    ? 'bg-primary/10 text-text-primary'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-surface'
-                )}
+                projectId={project.id}
+                projectTask={projectTask}
               >
-                <span className="truncate">{projectTask.task_title || `Task #${projectTask.task_id}`}</span>
-              </div>
+                <div
+                  onClick={() => onTaskClick(projectTask)}
+                  className={cn(
+                    'flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer',
+                    'text-sm transition-colors',
+                    isSelected
+                      ? 'bg-primary/10 text-text-primary'
+                      : 'text-text-secondary hover:text-text-primary hover:bg-surface'
+                  )}
+                >
+                  <span className="truncate">{projectTask.task_title || `Task #${projectTask.task_id}`}</span>
+                </div>
+              </DraggableProjectTask>
             )
           })}
         </div>

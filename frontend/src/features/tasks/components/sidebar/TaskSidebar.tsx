@@ -29,7 +29,7 @@ import { isTaskUnread } from '@/utils/taskViewStatus'
 import MobileSidebar from '@/features/layout/MobileSidebar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
-import { ProjectSection, ProjectProvider, TaskDndProvider, useProjectContext } from '@/features/projects'
+import { ProjectSection, ProjectProvider, TaskDndProvider, useProjectContext, DroppableHistory } from '@/features/projects'
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
@@ -474,28 +474,30 @@ export default function TaskSidebar({
                 })()
               )
             ) : (
-              <TaskHistorySection
-                groupTasks={groupTasks}
-                personalTasks={personalTasks}
-                isCollapsed={isCollapsed}
-                isGroupChatsExpanded={isGroupChatsExpanded}
-                setIsGroupChatsExpanded={setIsGroupChatsExpanded}
-                maxVisibleGroupChats={maxVisibleGroupChats}
-                hasMoreGroupTasks={hasMoreGroupTasks}
-                hasMorePersonalTasks={hasMorePersonalTasks}
-                loadMoreGroupTasks={loadMoreGroupTasks}
-                loadMorePersonalTasks={loadMorePersonalTasks}
-                loadingMoreGroupTasks={loadingMoreGroupTasks}
-                loadingMorePersonalTasks={loadingMorePersonalTasks}
-                viewStatusVersion={viewStatusVersion}
-                getUnreadCount={getUnreadCount}
-                totalUnreadCount={totalUnreadCount}
-                handleMarkAllAsViewed={handleMarkAllAsViewed}
-                handleOpenSearchDialog={handleOpenSearchDialog}
-                shortcutDisplayText={shortcutDisplayText}
-                setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-                t={t}
-              />
+              <DroppableHistory>
+                <TaskHistorySection
+                  groupTasks={groupTasks}
+                  personalTasks={personalTasks}
+                  isCollapsed={isCollapsed}
+                  isGroupChatsExpanded={isGroupChatsExpanded}
+                  setIsGroupChatsExpanded={setIsGroupChatsExpanded}
+                  maxVisibleGroupChats={maxVisibleGroupChats}
+                  hasMoreGroupTasks={hasMoreGroupTasks}
+                  hasMorePersonalTasks={hasMorePersonalTasks}
+                  loadMoreGroupTasks={loadMoreGroupTasks}
+                  loadMorePersonalTasks={loadMorePersonalTasks}
+                  loadingMoreGroupTasks={loadingMoreGroupTasks}
+                  loadingMorePersonalTasks={loadingMorePersonalTasks}
+                  viewStatusVersion={viewStatusVersion}
+                  getUnreadCount={getUnreadCount}
+                  totalUnreadCount={totalUnreadCount}
+                  handleMarkAllAsViewed={handleMarkAllAsViewed}
+                  handleOpenSearchDialog={handleOpenSearchDialog}
+                  shortcutDisplayText={shortcutDisplayText}
+                  setIsMobileSidebarOpen={setIsMobileSidebarOpen}
+                  t={t}
+                />
+              </DroppableHistory>
             )}
             {loadingMore && isSearchResult && (
               <div className="text-center py-2 text-xs text-text-muted">

@@ -48,7 +48,7 @@ interface TaskDndProviderProps {
 }
 
 export function TaskDndProvider({ children }: TaskDndProviderProps) {
-  const { addTaskToProject } = useProjectContext()
+  const { addTaskToProject, removeTaskFromProject } = useProjectContext()
   const [draggedTask, setDraggedTask] = useState<DraggedTask | null>(null)
   const [activeDropTarget, setActiveDropTarget] = useState<number | null>(null)
 
@@ -69,22 +69,34 @@ export function TaskDndProvider({ children }: TaskDndProviderProps) {
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const { active } = event
-    const taskData = active.data.current as { task: Task } | undefined
-    
-    if (taskData?.task) {
+    const data = active.data.current
+
+    if (data?.type === 'task' && data?.task) {
+      // Dragging from history to project
       setDraggedTask({
-        id: taskData.task.id,
-        title: taskData.task.title,
-        task: taskData.task,
+        id: data.task.id,
+        title: data.task.title,
+        task: data.task,
+      })
+    } else if (data?.type === 'project-task' && data?.projectTask) {
+      // Dragging from project to history
+      const projectTask = data.projectTask
+      setDraggedTask({
+        id: projectTask.task_id,
+        title: projectTask.task_title || `Task #${projectTask.task_id}`,
+        task: { id: projectTask.task_id, title: projectTask.task_title } as Task,
       })
     }
   }, [])
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
     const { over } = event
-    
+
     if (over && over.data.current?.type === 'project') {
       setActiveDropTarget(over.data.current.projectId as number)
+    } else if (over && over.data.current?.type === 'history') {
+      // Use -1 to indicate history section as drop target
+      setActiveDropTarget(-1)
     } else {
       setActiveDropTarget(null)
     }
@@ -92,18 +104,23 @@ export function TaskDndProvider({ children }: TaskDndProviderProps) {
 
   const handleDragEnd = useCallback(async (event: DragEndEvent) => {
     const { active, over } = event
-    
-    if (over && over.data.current?.type === 'project' && draggedTask) {
+    const activeData = active.data.current
+
+    if (over && over.data.current?.type === 'project' && activeData?.type === 'task') {
+      // Dragging from history to project - add task to project
       const projectId = over.data.current.projectId as number
-      const taskId = active.id as number
-      
-      // Add task to project
+      const taskId = activeData.task.id as number
       await addTaskToProject(projectId, taskId)
+    } else if (over && over.data.current?.type === 'history' && activeData?.type === 'project-task') {
+      // Dragging from project to history - remove task from project
+      const projectId = activeData.projectId as number
+      const taskId = activeData.taskId as number
+      await removeTaskFromProject(projectId, taskId)
     }
-    
+
     setDraggedTask(null)
     setActiveDropTarget(null)
-  }, [draggedTask, addTaskToProject])
+  }, [addTaskToProject, removeTaskFromProject])
 
   const handleDragCancel = useCallback(() => {
     setDraggedTask(null)
