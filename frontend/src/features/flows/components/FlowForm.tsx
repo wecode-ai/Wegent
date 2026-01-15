@@ -49,8 +49,17 @@ interface FlowFormProps {
   onSuccess: () => void
 }
 
+// Get user's local timezone (e.g., 'Asia/Shanghai', 'America/New_York')
+const getUserTimezone = (): string => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone
+  } catch {
+    return 'UTC'
+  }
+}
+
 const defaultTriggerConfig: Record<FlowTriggerType, Record<string, unknown>> = {
-  cron: { expression: '0 9 * * *', timezone: 'UTC' },
+  cron: { expression: '0 9 * * *', timezone: getUserTimezone() },
   interval: { value: 1, unit: 'hours' },
   one_time: { execute_at: new Date().toISOString() },
   event: { event_type: 'webhook' },
@@ -61,7 +70,6 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
   const isEditing = !!flow
 
   // Form state
-  const [_name, setName] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [description, setDescription] = useState('')
   const [taskType, setTaskType] = useState<FlowTaskType>('collection')
@@ -103,7 +111,6 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
   // Reset form when flow changes
   useEffect(() => {
     if (flow) {
-      setName(flow.name)
       setDisplayName(flow.display_name)
       setDescription(flow.description || '')
       setTaskType(flow.task_type)
@@ -115,7 +122,6 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
       setTimeoutSeconds(flow.timeout_seconds || 600)
       setEnabled(flow.enabled)
     } else {
-      setName('')
       setDisplayName('')
       setDescription('')
       setTaskType('collection')
@@ -224,10 +230,15 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
     switch (triggerType) {
       case 'cron':
         return (
-          <CronSchedulePicker
-            value={(triggerConfig.expression as string) || '0 9 * * *'}
-            onChange={expression => setTriggerConfig({ ...triggerConfig, expression })}
-          />
+          <div className="space-y-2">
+            <CronSchedulePicker
+              value={(triggerConfig.expression as string) || '0 9 * * *'}
+              onChange={expression => setTriggerConfig({ ...triggerConfig, expression })}
+            />
+            <p className="text-xs text-text-muted">
+              {t('timezone_hint')}: {(triggerConfig.timezone as string) || getUserTimezone()}
+            </p>
+          </div>
         )
       case 'interval':
         return (

@@ -10,7 +10,7 @@ import logging
 import re
 import secrets
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -125,7 +125,7 @@ class FlowService:
         flow_crd = self._build_flow_crd(flow_in, team, workspace, webhook_token)
 
         # Calculate next execution time for scheduled flows
-        next_execution_time = self._calculate_next_execution_time(
+        next_execution_time = self.calculate_next_execution_time(
             flow_in.trigger_type, flow_in.trigger_config
         )
 
@@ -306,7 +306,7 @@ class FlowService:
             trigger_type = update_data.get("trigger_type", flow.trigger_type)
             trigger_config = update_data.get(
                 "trigger_config",
-                self._extract_trigger_config(flow_crd.spec.trigger),
+                self.extract_trigger_config(flow_crd.spec.trigger),
             )
 
             # Generate new webhook token if switching to event trigger
@@ -328,7 +328,7 @@ class FlowService:
             )
 
             # Recalculate next execution time
-            flow.next_execution_time = self._calculate_next_execution_time(
+            flow.next_execution_time = self.calculate_next_execution_time(
                 trigger_type, trigger_config
             )
 
@@ -340,7 +340,7 @@ class FlowService:
 
         # Save changes
         flow.json = flow_crd.model_dump(mode="json")
-        flow.updated_at = datetime.utcnow()
+        flow.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         flag_modified(flow, "json")
 
         db.commit()
@@ -372,7 +372,7 @@ class FlowService:
         # Soft delete
         flow.is_active = False
         flow.enabled = False
-        flow.updated_at = datetime.utcnow()
+        flow.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         db.commit()
 
@@ -404,15 +404,15 @@ class FlowService:
 
         # Recalculate next execution time if enabling
         if enabled:
-            flow.next_execution_time = self._calculate_next_execution_time(
+            flow.next_execution_time = self.calculate_next_execution_time(
                 flow.trigger_type,
-                self._extract_trigger_config(flow_crd.spec.trigger),
+                self.extract_trigger_config(flow_crd.spec.trigger),
             )
         else:
             flow.next_execution_time = None
 
         flow.json = flow_crd.model_dump(mode="json")
-        flow.updated_at = datetime.utcnow()
+        flow.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         flag_modified(flow, "json")
 
         db.commit()
@@ -442,13 +442,18 @@ class FlowService:
             raise HTTPException(status_code=404, detail="Flow not found")
 
         # Create execution record
-        return self._create_execution(
+        execution = self.create_execution(
             db,
             flow=flow,
             user_id=user_id,
             trigger_type="manual",
             trigger_reason="Manually triggered by user",
         )
+
+        # Dispatch Celery task for execution
+        self._dispatch_flow_execution(flow, execution)
+
+        return execution
 
     def get_flow_by_webhook_token(
         self,
@@ -481,7 +486,7 @@ class FlowService:
             raise HTTPException(status_code=404, detail="Flow not found or disabled")
 
         # Create execution with webhook data
-        return self._create_execution(
+        execution = self.create_execution(
             db,
             flow=flow,
             user_id=flow.user_id,
@@ -489,6 +494,11 @@ class FlowService:
             trigger_reason="Triggered by webhook",
             extra_variables={"webhook_data": payload},
         )
+
+        # Dispatch Celery task for execution
+        self._dispatch_flow_execution(flow, execution)
+
+        return execution
 
     # ========== Execution Management ==========
 
@@ -634,7 +644,7 @@ class FlowService:
             return
 
         # Use UTC for all timestamps
-        now_utc = datetime.utcnow()
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
         execution.status = status.value
         execution.updated_at = now_utc
@@ -681,7 +691,7 @@ class FlowService:
 
     # ========== Helper Methods ==========
 
-    def _create_execution(
+    def create_execution(
         self,
         db: Session,
         *,
@@ -720,6 +730,41 @@ class FlowService:
         exec_dict["task_type"] = flow_crd.spec.taskType.value
 
         return FlowExecutionInDB(**exec_dict)
+
+    def _dispatch_flow_execution(
+        self,
+        flow: FlowResource,
+        execution: FlowExecutionInDB,
+    ) -> None:
+        """
+        Dispatch a Flow execution to Celery for async processing.
+
+        This method extracts the common Celery dispatch logic used by both
+        trigger_flow_manually() and trigger_flow_by_webhook().
+
+        Args:
+            flow: The Flow resource to execute
+            execution: The execution record created by _create_execution()
+        """
+        from app.core.config import settings
+        from app.tasks.flow_tasks import execute_flow_task
+
+        flow_crd = Flow.model_validate(flow.json)
+        timeout_seconds = getattr(
+            flow_crd.spec,
+            "timeout_seconds",
+            settings.FLOW_DEFAULT_TIMEOUT_SECONDS,
+        )
+        retry_count = flow_crd.spec.retryCount or settings.FLOW_DEFAULT_RETRY_COUNT
+
+        execute_flow_task.apply_async(
+            args=[flow.id, execution.id],
+            kwargs={"timeout_seconds": timeout_seconds},
+            max_retries=retry_count,
+        )
+        logger.debug(
+            f"[flow_service] Dispatched execution {execution.id} for flow {flow.id}"
+        )
 
     def _resolve_prompt_template(
         self,
@@ -864,7 +909,7 @@ class FlowService:
 
         raise ValueError(f"Unknown trigger type: {trigger_type}")
 
-    def _extract_trigger_config(self, trigger: FlowTriggerConfig) -> Dict[str, Any]:
+    def extract_trigger_config(self, trigger: FlowTriggerConfig) -> Dict[str, Any]:
         """Extract trigger config dict from FlowTriggerConfig."""
         if trigger.type == FlowTriggerType.CRON and trigger.cron:
             return {
@@ -891,7 +936,7 @@ class FlowService:
 
         return {}
 
-    def _calculate_next_execution_time(
+    def calculate_next_execution_time(
         self,
         trigger_type: FlowTriggerType,
         trigger_config: Dict[str, Any],
@@ -1010,7 +1055,7 @@ class FlowService:
             description=flow_crd.spec.description,
             task_type=flow_crd.spec.taskType,
             trigger_type=FlowTriggerType(flow.trigger_type),
-            trigger_config=self._extract_trigger_config(flow_crd.spec.trigger),
+            trigger_config=self.extract_trigger_config(flow_crd.spec.trigger),
             team_id=flow.team_id,
             workspace_id=flow.workspace_id,
             prompt_template=flow_crd.spec.promptTemplate,

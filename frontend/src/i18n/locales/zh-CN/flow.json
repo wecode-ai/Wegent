@@ -104,6 +104,7 @@
   "month_day": "日期",
   "day_of_month": "每月 {{day}} 日",
   "cron_preview": "Cron 表达式",
+  "timezone_hint": "时区",
 
   "weekday_monday": "星期一",
   "weekday_tuesday": "星期二",

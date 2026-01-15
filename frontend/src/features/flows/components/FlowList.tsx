@@ -46,6 +46,7 @@ import { useFlowContext } from '../contexts/flowContext'
 import { flowApis } from '@/apis/flow'
 import type { Flow, FlowTriggerType } from '@/types/flow'
 import { toast } from 'sonner'
+import { formatUTCDate } from '@/lib/utils'
 
 interface FlowListProps {
   onCreateFlow: () => void
@@ -151,9 +152,7 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
   )
 
   const formatNextExecution = (dateStr?: string) => {
-    if (!dateStr) return '-'
-    const date = new Date(dateStr)
-    return date.toLocaleString()
+    return formatUTCDate(dateStr)
   }
 
   const getTriggerLabel = (flow: Flow): string => {

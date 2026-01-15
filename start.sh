@@ -386,10 +386,28 @@ DEFAULT_CHAT_SHELL_PORT=8100
 DEFAULT_EXECUTOR_MANAGER_PORT=8001
 DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:1.1.1"
 
-FRONTEND_PORT=$DEFAULT_FRONTEND_PORT
-BACKEND_PORT=$DEFAULT_BACKEND_PORT
-CHAT_SHELL_PORT=$DEFAULT_CHAT_SHELL_PORT
-EXECUTOR_MANAGER_PORT=$DEFAULT_EXECUTOR_MANAGER_PORT
+# Try to load last used ports from .port files
+load_last_used_port() {
+    local service=$1
+    local default_port=$2
+    local port_file="$PID_DIR/${service}.port"
+    
+    if [ -f "$port_file" ]; then
+        local saved_port=$(cat "$port_file" 2>/dev/null)
+        if [ -n "$saved_port" ] && [ "$saved_port" -gt 0 ] 2>/dev/null; then
+            echo "$saved_port"
+            return 0
+        fi
+    fi
+    echo "$default_port"
+}
+
+# Initialize ports (try to use last used ports if available)
+BACKEND_PORT=$(load_last_used_port "backend" $DEFAULT_BACKEND_PORT)
+CHAT_SHELL_PORT=$(load_last_used_port "chat_shell" $DEFAULT_CHAT_SHELL_PORT)
+EXECUTOR_MANAGER_PORT=$(load_last_used_port "executor_manager" $DEFAULT_EXECUTOR_MANAGER_PORT)
+FRONTEND_PORT=$(load_last_used_port "frontend" $DEFAULT_FRONTEND_PORT)
+
 EXECUTOR_IMAGE=$DEFAULT_EXECUTOR_IMAGE
 DEFAULT_API_URL="http://localhost:8000"
 API_URL=$DEFAULT_API_URL
@@ -433,6 +451,9 @@ SOCKET_URL=$DEFAULT_SOCKET_URL
 
 # PID file directory
 PID_DIR="$SCRIPT_DIR/.pids"
+
+# Track assigned ports during auto-adjust to avoid collisions
+ASSIGNED_PORTS=()
 
 show_help() {
     cat << EOF
@@ -514,7 +535,7 @@ done
 # Create PID directory
 mkdir -p "$PID_DIR"
 
-# Check if port is in use
+# Check if port is in use (by OS)
 check_port() {
     local port=$1
     if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
@@ -523,20 +544,39 @@ check_port() {
     return 0
 }
 
+# Check if port is already assigned to another service in this script
+is_port_assigned() {
+    local port=$1
+    for assigned in "${ASSIGNED_PORTS[@]}"; do
+        if [ "$assigned" = "$port" ]; then
+            return 0  # true, port is assigned
+        fi
+    done
+    return 1  # false, port is not assigned
+}
+
+# Mark a port as assigned
+mark_port_assigned() {
+    local port=$1
+    ASSIGNED_PORTS+=("$port")
+}
+
 # Find next available port starting from given port
+# Checks both OS-level usage and internally assigned ports
 find_available_port() {
     local start_port=$1
     local max_attempts=100
     local port=$start_port
-    
+
     for ((i=0; i<max_attempts; i++)); do
-        if check_port "$port"; then
+        # Check both: OS port usage AND internally assigned ports
+        if check_port "$port" && ! is_port_assigned "$port"; then
             echo "$port"
             return 0
         fi
         port=$((port + 1))
     done
-    
+
     # If no port found, return original
     echo "$start_port"
     return 1
@@ -589,7 +629,10 @@ check_all_ports() {
 # Auto-adjust ports to avoid conflicts
 auto_adjust_ports() {
     local adjusted=false
-    
+
+    # Reset assigned ports list for fresh calculation
+    ASSIGNED_PORTS=()
+
     # Check and adjust Backend port
     if ! check_port "$BACKEND_PORT"; then
         local new_port=$(find_available_port "$BACKEND_PORT")
@@ -599,9 +642,11 @@ auto_adjust_ports() {
             adjusted=true
         fi
     fi
-    
+    # Mark Backend port as assigned
+    mark_port_assigned "$BACKEND_PORT"
+
     # Check and adjust Chat Shell port
-    if ! check_port "$CHAT_SHELL_PORT"; then
+    if ! check_port "$CHAT_SHELL_PORT" || is_port_assigned "$CHAT_SHELL_PORT"; then
         local new_port=$(find_available_port "$CHAT_SHELL_PORT")
         if [ "$new_port" != "$CHAT_SHELL_PORT" ]; then
             echo -e "${YELLOW}⚠ Chat Shell port $CHAT_SHELL_PORT is in use, using port $new_port instead${NC}"
@@ -609,9 +654,11 @@ auto_adjust_ports() {
             adjusted=true
         fi
     fi
-    
+    # Mark Chat Shell port as assigned
+    mark_port_assigned "$CHAT_SHELL_PORT"
+
     # Check and adjust Executor Manager port
-    if ! check_port "$EXECUTOR_MANAGER_PORT"; then
+    if ! check_port "$EXECUTOR_MANAGER_PORT" || is_port_assigned "$EXECUTOR_MANAGER_PORT"; then
         local new_port=$(find_available_port "$EXECUTOR_MANAGER_PORT")
         if [ "$new_port" != "$EXECUTOR_MANAGER_PORT" ]; then
             echo -e "${YELLOW}⚠ Executor Manager port $EXECUTOR_MANAGER_PORT is in use, using port $new_port instead${NC}"
@@ -619,9 +666,11 @@ auto_adjust_ports() {
             adjusted=true
         fi
     fi
-    
+    # Mark Executor Manager port as assigned
+    mark_port_assigned "$EXECUTOR_MANAGER_PORT"
+
     # Check and adjust Frontend port
-    if ! check_port "$FRONTEND_PORT"; then
+    if ! check_port "$FRONTEND_PORT" || is_port_assigned "$FRONTEND_PORT"; then
         local new_port=$(find_available_port "$FRONTEND_PORT")
         if [ "$new_port" != "$FRONTEND_PORT" ]; then
             echo -e "${YELLOW}⚠ Frontend port $FRONTEND_PORT is in use, using port $new_port instead${NC}"
@@ -629,15 +678,36 @@ auto_adjust_ports() {
             adjusted=true
         fi
     fi
-    
+    # Mark Frontend port as assigned
+    mark_port_assigned "$FRONTEND_PORT"
+
     # Update API_URL and SOCKET_URL if backend port changed
     if [ "$BACKEND_PORT" != "$DEFAULT_BACKEND_PORT" ]; then
         API_URL="http://localhost:$BACKEND_PORT"
         SOCKET_URL="http://$(get_local_ip):$BACKEND_PORT"
     fi
-    
+
     if [ "$adjusted" = true ]; then
         echo ""
+    fi
+}
+
+# Kill process and all its children
+kill_process_tree() {
+    local pid=$1
+    local signal=${2:-TERM}
+
+    # Get all child processes
+    local children=$(pgrep -P "$pid" 2>/dev/null)
+
+    # Kill children first (recursively)
+    for child in $children; do
+        kill_process_tree "$child" "$signal"
+    done
+
+    # Kill the process itself
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -"$signal" "$pid" 2>/dev/null || true
     fi
 }
 
@@ -646,35 +716,72 @@ stop_services() {
     echo -e "${YELLOW}Stopping all Wegent services...${NC}"
 
     local services=("backend" "frontend" "chat_shell" "executor_manager")
+    local default_ports=("8000" "8100" "8001" "3000")
 
-    for service in "${services[@]}"; do
+    for i in "${!services[@]}"; do
+        local service="${services[$i]}"
+        local default_port="${default_ports[$i]}"
         local pid_file="$PID_DIR/${service}.pid"
+        local port_file="$PID_DIR/${service}.port"
+
+        # Get the port (from saved file or use default)
+        local port=$default_port
+        if [ -f "$port_file" ]; then
+            port=$(cat "$port_file" 2>/dev/null)
+        fi
+
+        local stopped=false
+
+        # Method 1: Try to stop using PID file
         if [ -f "$pid_file" ]; then
             local pid=$(cat "$pid_file")
             if kill -0 "$pid" 2>/dev/null; then
                 echo -e "  Stopping $service (PID: $pid)..."
-                kill "$pid" 2>/dev/null || true
+                # Kill the entire process tree
+                kill_process_tree "$pid" "TERM"
+
                 # Wait for process to exit
-                for i in {1..10}; do
+                for j in {1..10}; do
                     if ! kill -0 "$pid" 2>/dev/null; then
+                        stopped=true
                         break
                     fi
                     sleep 0.5
                 done
-                # Force terminate
-                if kill -0 "$pid" 2>/dev/null; then
-                    kill -9 "$pid" 2>/dev/null || true
+
+                # Force terminate if still running
+                if ! $stopped && kill -0 "$pid" 2>/dev/null; then
+                    echo -e "    Force killing $service..."
+                    kill_process_tree "$pid" "KILL"
+                    sleep 1
                 fi
             fi
             rm -f "$pid_file"
         fi
-    done
 
-    # Clean up potentially remaining processes
-    pkill -f "uvicorn app.main:app" 2>/dev/null || true
-    pkill -f "uvicorn main:app.*8001" 2>/dev/null || true
-    pkill -f "uvicorn chat_shell.main:app" 2>/dev/null || true
-    pkill -f "npm run dev.*$FRONTEND_PORT" 2>/dev/null || true
+        # Method 2: Kill any process still using the port
+        if [ -n "$port" ]; then
+            local port_pids=$(lsof -ti :$port 2>/dev/null)
+            if [ -n "$port_pids" ]; then
+                echo -e "  Killing processes on port $port..."
+                for port_pid in $port_pids; do
+                    if kill -0 "$port_pid" 2>/dev/null; then
+                        kill -TERM "$port_pid" 2>/dev/null || true
+                    fi
+                done
+                sleep 1
+                # Force kill if still running
+                port_pids=$(lsof -ti :$port 2>/dev/null)
+                for port_pid in $port_pids; do
+                    if kill -0 "$port_pid" 2>/dev/null; then
+                        kill -9 "$port_pid" 2>/dev/null || true
+                    fi
+                done
+            fi
+        fi
+
+        rm -f "$port_file"
+    done
 
     echo -e "${GREEN}All services stopped${NC}"
 }
@@ -696,18 +803,23 @@ show_status() {
             local pid=$(cat "$pid_file")
             if kill -0 "$pid" 2>/dev/null; then
                 # Try to find actual port from process
-                local actual_port=$(lsof -Pan -p $pid -i 2>/dev/null | grep LISTEN | awk '{print $9}' | cut -d: -f2 | head -1)
-                if [ -z "$actual_port" ]; then
-                    actual_port=$default_port
+                local actual_port=""
+                if [ -n "$default_port" ]; then
+                    actual_port=$(lsof -Pan -p $pid -i 2>/dev/null | grep LISTEN | awk '{print $9}' | cut -d: -f2 | head -1)
+                    if [ -z "$actual_port" ]; then
+                        actual_port=$default_port
+                    fi
+                    echo -e "  ${GREEN}●${NC} $service (PID: $pid, Port: $actual_port)"
+                else
+                    echo -e "  ${GREEN}●${NC} $service (PID: $pid)"
                 fi
-                echo -e "  ${GREEN}●${NC} $service (PID: $pid, Port: $actual_port)"
             else
                 echo -e "  ${RED}●${NC} $service (exited)"
                 rm -f "$pid_file"
             fi
         else
             # Check if default port is in use
-            if lsof -Pi :$default_port -sTCP:LISTEN -t >/dev/null 2>&1; then
+            if [ -n "$default_port" ] && lsof -Pi :$default_port -sTCP:LISTEN -t >/dev/null 2>&1; then
                 echo -e "  ${YELLOW}●${NC} $service (port $default_port in use)"
             else
                 echo -e "  ${RED}●${NC} $service (not running)"
@@ -721,6 +833,7 @@ start_service() {
     local name=$1
     local dir=$2
     local cmd=$3
+    local port=$4
     local log_file="$PID_DIR/${name}.log"
 
     echo -e "  Starting ${BLUE}$name${NC}..."
@@ -736,6 +849,10 @@ start_service() {
 
     if kill -0 "$pid" 2>/dev/null; then
         echo $pid > "$PID_DIR/${name}.pid"
+        # Save port information if provided
+        if [ -n "$port" ]; then
+            echo $port > "$PID_DIR/${name}.port"
+        fi
         echo -e "    ${GREEN}✓${NC} $name started (PID: $pid)"
     else
         echo -e "    ${RED}✗${NC} $name failed to start, check log: $log_file"
@@ -874,18 +991,25 @@ start_services() {
     echo -e "${BLUE}Starting services...${NC}"
 
     # 1. Start Backend
+    # Note: CHAT_SHELL_URL must be set here so Backend knows where to reach Chat Shell service
     start_service "backend" "backend" \
-        "source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT"
+        "export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT" \
+        "$BACKEND_PORT"
 
     # 2. Start Chat Shell
     start_service "chat_shell" "chat_shell" \
-        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --host 0.0.0.0 --port $CHAT_SHELL_PORT"
+        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --host 0.0.0.0 --port $CHAT_SHELL_PORT" \
+        "$CHAT_SHELL_PORT"
 
     # 3. Start Executor Manager
     # TASK_API_DOMAIN uses local IP so docker containers can access the backend
     # DOCKER_HOST_ADDR=localhost so executor_manager can access docker containers
     start_service "executor_manager" "executor_manager" \
-        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=http://$(get_local_ip):$BACKEND_PORT && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && source .venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT"
+        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=http://$(get_local_ip):$BACKEND_PORT && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && source .venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT" \
+        "$EXECUTOR_MANAGER_PORT"
+
+    # Note: Celery Worker and Beat are now embedded in Backend process
+    # They start automatically when Backend starts (see app/main.py lifespan)
 
     # 4. Start Frontend (run in background)
     echo -e "  Starting ${BLUE}frontend${NC}..."
@@ -903,6 +1027,8 @@ start_services() {
     sleep 3
 
     if kill -0 "$frontend_pid" 2>/dev/null; then
+        # Save frontend port information
+        echo $FRONTEND_PORT > "$PID_DIR/frontend.port"
         echo -e "    ${GREEN}✓${NC} frontend started (PID: $frontend_pid)"
     else
         echo -e "    ${RED}✗${NC} frontend failed to start, check log: $PID_DIR/frontend.log"
@@ -955,7 +1081,7 @@ start_services() {
     echo -e "  $0 --socket-url http://YOUR_IP:$BACKEND_PORT  # Set custom socket URL"
     echo ""
     echo -e "${YELLOW}Log Files:${NC}"
-    echo -e "  Backend:          $PID_DIR/backend.log"
+    echo -e "  Backend:          $PID_DIR/backend.log  (includes Celery logs)"
     echo -e "  Frontend:         $PID_DIR/frontend.log"
     echo -e "  Chat Shell:       $PID_DIR/chat_shell.log"
     echo -e "  Executor Manager: $PID_DIR/executor_manager.log"

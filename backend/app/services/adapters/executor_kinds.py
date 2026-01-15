@@ -145,6 +145,10 @@ class ExecutorKindsService(
         # - source='chat_shell': Direct WebSocket chat
         # - source='flow': Flow Scheduler triggered (Chat Shell type is handled by Flow Scheduler directly)
         tasks = None
+        # Note: We exclude 'chat_shell' source tasks because they are handled
+        # directly by the backend (via WebSocket). However, we DO NOT exclude
+        # 'flow' source tasks because Flow Scheduler can trigger Executor-type tasks
+        # that need to be picked up by executor_manager.
         if type == "offline":
             tasks = (
                 db.query(TaskResource)
@@ -155,8 +159,7 @@ class ExecutorKindsService(
                         "JSON_EXTRACT(json, '$.metadata.labels.type') = 'offline' "
                         "and JSON_EXTRACT(json, '$.status.status') = :status "
                         "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL "
-                        "    OR (JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell' "
-                        "        AND JSON_EXTRACT(json, '$.metadata.labels.source') != 'flow'))"
+                        "    OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
                     ),
                 )
                 .params(status=status)
@@ -174,8 +177,7 @@ class ExecutorKindsService(
                         "(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online') "
                         "and JSON_EXTRACT(json, '$.status.status') = :status "
                         "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL "
-                        "    OR (JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell' "
-                        "        AND JSON_EXTRACT(json, '$.metadata.labels.source') != 'flow'))"
+                        "    OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
                     ),
                 )
                 .params(status=status)

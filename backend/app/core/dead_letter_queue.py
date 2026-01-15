@@ -18,7 +18,7 @@ The DLQ helps with:
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from celery import current_app
@@ -101,7 +101,7 @@ def add_to_dlq(
         "exception": _serialize_exception(exception),
         "traceback": traceback_str,
         "retries": retries,
-        "failed_at": datetime.utcnow().isoformat(),
+        "failed_at": datetime.now(timezone.utc).isoformat(),
         "status": "failed",
     }
 
@@ -216,7 +216,7 @@ def reprocess_dlq_task(task_id: str) -> Optional[str]:
         # Update the DLQ entry
         redis_client = _get_redis_client()
         entry["status"] = "reprocessed"
-        entry["reprocessed_at"] = datetime.utcnow().isoformat()
+        entry["reprocessed_at"] = datetime.now(timezone.utc).isoformat()
         entry["new_task_id"] = result.id
 
         entry_key = f"{DLQ_KEY_PREFIX}{task_id}"

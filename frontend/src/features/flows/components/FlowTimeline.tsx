@@ -27,6 +27,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { useFlowContext } from '../contexts/flowContext'
 import type { FlowExecution, FlowExecutionStatus } from '@/types/flow'
+import { parseUTCDate } from '@/lib/utils'
 
 const statusConfig: Record<
   FlowExecutionStatus,
@@ -71,69 +72,86 @@ export function FlowTimeline() {
 
   // Group executions by date for section headers
   const groupedExecutions = useMemo(() => {
-    const groups: { label: string; items: FlowExecution[] }[] = []
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
+    try {
+      const groups: { label: string; items: FlowExecution[] }[] = []
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
 
-    const yesterday = new Date(today)
-    yesterday.setDate(yesterday.getDate() - 1)
+      const yesterday = new Date(today)
+      yesterday.setDate(yesterday.getDate() - 1)
 
-    const weekAgo = new Date(today)
-    weekAgo.setDate(weekAgo.getDate() - 7)
+      const weekAgo = new Date(today)
+      weekAgo.setDate(weekAgo.getDate() - 7)
 
-    const groupMap: Record<string, FlowExecution[]> = {}
+      const groupMap: Record<string, FlowExecution[]> = {}
 
-    executions.forEach(exec => {
-      const execDate = new Date(exec.created_at)
-      execDate.setHours(0, 0, 0, 0)
+      executions.forEach(exec => {
+        // Parse as UTC time from backend
+        const execDate = parseUTCDate(exec.created_at)
+        if (!execDate || isNaN(execDate.getTime())) return
 
-      let groupKey: string
-      if (execDate.getTime() === today.getTime()) {
-        groupKey = 'today'
-      } else if (execDate.getTime() === yesterday.getTime()) {
-        groupKey = 'yesterday'
-      } else if (execDate >= weekAgo) {
-        groupKey = 'this_week'
-      } else {
-        groupKey = 'earlier'
+        // Create a local date for comparison (strip time)
+        const execLocalDate = new Date(execDate)
+        execLocalDate.setHours(0, 0, 0, 0)
+
+        let groupKey: string
+        if (execLocalDate.getTime() === today.getTime()) {
+          groupKey = 'today'
+        } else if (execLocalDate.getTime() === yesterday.getTime()) {
+          groupKey = 'yesterday'
+        } else if (execLocalDate >= weekAgo) {
+          groupKey = 'this_week'
+        } else {
+          groupKey = 'earlier'
+        }
+
+        if (!groupMap[groupKey]) {
+          groupMap[groupKey] = []
+        }
+        groupMap[groupKey].push(exec)
+      })
+
+      const order = ['today', 'yesterday', 'this_week', 'earlier']
+      const labels: Record<string, string> = {
+        today: t('common:tasks.today'),
+        yesterday: t('yesterday'),
+        this_week: t('common:tasks.this_week'),
+        earlier: t('common:tasks.earlier'),
       }
 
-      if (!groupMap[groupKey]) {
-        groupMap[groupKey] = []
-      }
-      groupMap[groupKey].push(exec)
-    })
+      order.forEach(key => {
+        if (groupMap[key]?.length > 0) {
+          groups.push({ label: labels[key], items: groupMap[key] })
+        }
+      })
 
-    const order = ['today', 'yesterday', 'this_week', 'earlier']
-    const labels: Record<string, string> = {
-      today: t('common:tasks.today'),
-      yesterday: t('yesterday'),
-      this_week: t('common:tasks.this_week'),
-      earlier: t('common:tasks.earlier'),
+      return groups
+    } catch {
+      // Return empty groups on error to prevent crash
+      return []
     }
-
-    order.forEach(key => {
-      if (groupMap[key]?.length > 0) {
-        groups.push({ label: labels[key], items: groupMap[key] })
-      }
-    })
-
-    return groups
   }, [executions, t])
 
   const formatRelativeTime = (dateStr: string) => {
-    const date = new Date(dateStr)
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffMins = Math.floor(diffMs / 60000)
-    const diffHours = Math.floor(diffMs / 3600000)
-    const diffDays = Math.floor(diffMs / 86400000)
+    try {
+      // Parse as UTC time from backend
+      const date = parseUTCDate(dateStr)
+      if (!date || isNaN(date.getTime())) return '-'
 
-    if (diffMins < 1) return t('feed.just_now')
-    if (diffMins < 60) return t('feed.minutes_ago', { count: diffMins })
-    if (diffHours < 24) return t('feed.hours_ago', { count: diffHours })
-    if (diffDays < 7) return t('feed.days_ago', { count: diffDays })
-    return date.toLocaleDateString()
+      const now = new Date()
+      const diffMs = now.getTime() - date.getTime()
+      const diffMins = Math.floor(diffMs / 60000)
+      const diffHours = Math.floor(diffMs / 3600000)
+      const diffDays = Math.floor(diffMs / 86400000)
+
+      if (diffMins < 1) return t('feed.just_now')
+      if (diffMins < 60) return t('feed.minutes_ago', { count: diffMins })
+      if (diffHours < 24) return t('feed.hours_ago', { count: diffHours })
+      if (diffDays < 7) return t('feed.days_ago', { count: diffDays })
+      return date.toLocaleDateString()
+    } catch {
+      return '-'
+    }
   }
 
   const handleViewTask = (exec: FlowExecution) => {

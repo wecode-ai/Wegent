@@ -173,6 +173,9 @@ def with_circuit_breaker_async(
     """
     Async version of circuit breaker decorator.
 
+    Note: pybreaker's call() method doesn't support async functions directly.
+    We wrap the async function execution with proper state management.
+
     Usage:
         @with_circuit_breaker_async(ai_service_breaker)
         async def call_ai():
@@ -201,11 +204,15 @@ def with_circuit_breaker_async(
 
             try:
                 result = await func(*args, **kwargs)
+                # Record success using pybreaker's internal mechanism
+                # This properly updates fail_counter and state transitions
                 breaker._success()
                 return result
             except Exception as e:
+                # Record failure using pybreaker's internal mechanism
+                # This properly updates fail_counter and triggers state transitions
                 breaker._failure(e)
-                # Check if circuit just opened
+                # Check if circuit just opened after this failure
                 if breaker.current_state == pybreaker.STATE_OPEN:
                     logger.error(
                         f"[CircuitBreaker] {breaker.name} opened after failure: {e}"

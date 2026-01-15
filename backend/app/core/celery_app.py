@@ -21,6 +21,7 @@ from celery import Celery
 from app.core.config import settings
 
 # Use configured broker/backend or fallback to REDIS_URL
+# Settings validator already converts empty strings to None
 broker_url = settings.CELERY_BROKER_URL or settings.REDIS_URL
 result_backend = settings.CELERY_RESULT_BACKEND or settings.REDIS_URL
 

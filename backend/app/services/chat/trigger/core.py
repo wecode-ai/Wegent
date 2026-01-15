@@ -17,7 +17,7 @@ Uses ChatStreamContext for better parameter organization.
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from shared.telemetry.context import (
     SpanAttributes,
@@ -36,6 +36,10 @@ from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.user import User
+
+if TYPE_CHECKING:
+    from app.api.ws.chat_namespace import ChatNamespace
+    from app.services.chat.trigger.emitter import ChatEventEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -109,12 +113,9 @@ async def trigger_ai_response(
     payload: Any,
     task_room: str,
     supports_direct_chat: bool,
-    namespace: Optional[
-        Any
-    ] = None,  # ChatNamespace instance for emitting events (optional for HTTP mode)
-    user_subtask_id: Optional[
-        int
-    ] = None,  # User subtask ID for unified context processing
+    namespace: Optional["ChatNamespace"] = None,
+    user_subtask_id: Optional[int] = None,
+    event_emitter: Optional["ChatEventEmitter"] = None,
 ) -> None:
     """
     Trigger AI response for a chat message.
@@ -142,6 +143,8 @@ async def trigger_ai_response(
         namespace: ChatNamespace instance for emitting events (optional, can be None for HTTP mode)
         user_subtask_id: Optional user subtask ID for unified context processing
             (attachments and knowledge bases are retrieved from this subtask's contexts)
+        event_emitter: Optional custom event emitter. If None, uses WebSocketEventEmitter.
+            Pass FlowEventEmitter for Flow tasks to update FlowExecution status.
     """
     logger.info(
         "[ai_trigger] Triggering AI response: task_id=%d, "
@@ -164,6 +167,7 @@ async def trigger_ai_response(
             task_room=task_room,
             namespace=namespace,
             user_subtask_id=user_subtask_id,
+            event_emitter=event_emitter,
         )
     else:
         # Executor-based (ClaudeCode, Agno, etc.)
@@ -182,8 +186,9 @@ async def _trigger_direct_chat(
     message: str,
     payload: Any,
     task_room: str,
-    namespace: Optional[Any],
+    namespace: Optional["ChatNamespace"],
     user_subtask_id: Optional[int] = None,
+    event_emitter: Optional["ChatEventEmitter"] = None,
 ) -> None:
     """
     Trigger direct chat (Chat Shell) AI response using ChatService.
@@ -201,6 +206,8 @@ async def _trigger_direct_chat(
         namespace: ChatNamespace instance (optional, can be None for HTTP mode)
         user_subtask_id: Optional user subtask ID for unified context processing
             (attachments and knowledge bases are retrieved from this subtask's contexts)
+        event_emitter: Optional custom event emitter. If None, uses WebSocketEventEmitter.
+            Pass FlowEventEmitter for Flow tasks to update FlowExecution status.
     """
     # Extract data from ORM objects before starting background task
     # This prevents DetachedInstanceError when the session is closed
@@ -220,10 +227,18 @@ async def _trigger_direct_chat(
     except Exception as e:
         logger.debug(f"Failed to copy trace context: {e}")
 
-    # Start streaming in background task using ChatService
-    logger.info("[ai_trigger] Starting background stream task with ChatService")
-    stream_task = asyncio.create_task(
-        _stream_chat_response(
+    # For Flow tasks (namespace is None), we must await the streaming directly
+    # because the event loop will close after trigger_ai_response returns.
+    # For WebSocket mode (namespace is not None), we start a background task
+    # so the WebSocket handler can return immediately while streaming continues.
+    if namespace is None:
+        # Flow task mode: await directly to ensure streaming completes
+        # before the event loop closes in flow_tasks.py
+        logger.info(
+            "[ai_trigger] Flow task mode: awaiting stream task directly (subtask_id=%d)",
+            assistant_subtask.id,
+        )
+        await _stream_chat_response(
             stream_data=stream_data,
             message=message,
             payload=payload,
@@ -232,16 +247,34 @@ async def _trigger_direct_chat(
             trace_context=trace_context,
             otel_context=otel_context,
             user_subtask_id=user_subtask_id,
+            event_emitter=event_emitter,
         )
-    )
+        logger.info(
+            "[ai_trigger] Flow task mode: stream task completed (subtask_id=%d)",
+            assistant_subtask.id,
+        )
+    else:
+        # WebSocket mode: start background task for non-blocking response
+        logger.info("[ai_trigger] WebSocket mode: starting background stream task")
+        stream_task = asyncio.create_task(
+            _stream_chat_response(
+                stream_data=stream_data,
+                message=message,
+                payload=payload,
+                task_room=task_room,
+                namespace=namespace,
+                trace_context=trace_context,
+                otel_context=otel_context,
+                user_subtask_id=user_subtask_id,
+                event_emitter=event_emitter,
+            )
+        )
 
-    # Track active streams only if namespace is provided (WebSocket mode)
-    # In HTTP mode (e.g., Flow Scheduler), namespace is None and tracking is not needed
-    if namespace is not None:
+        # Track active streams for WebSocket mode
         namespace._active_streams[assistant_subtask.id] = stream_task
         namespace._stream_versions[assistant_subtask.id] = "v2"
 
-    logger.info("[ai_trigger] Background stream task started")
+        logger.info("[ai_trigger] WebSocket mode: background stream task started")
 
 
 async def _stream_chat_response(
@@ -249,7 +282,7 @@ async def _stream_chat_response(
     message: str,
     payload: Any,
     task_room: str,
-    namespace: Optional[Any],
+    namespace: Optional["ChatNamespace"],
     trace_context: Optional[Dict[str, Any]] = None,
     otel_context: Optional[Any] = None,
     user_subtask_id: Optional[int] = None,
@@ -752,6 +785,7 @@ async def _stream_with_http_adapter(
     # Create HTTP adapter
     chat_shell_url = getattr(settings, "CHAT_SHELL_URL", "http://localhost:8100")
     chat_shell_token = getattr(settings, "CHAT_SHELL_TOKEN", "")
+    logger.info(f"[_stream_chat_response] Using CHAT_SHELL_URL={chat_shell_url}")
 
     adapter = HTTPAdapter(
         base_url=chat_shell_url,

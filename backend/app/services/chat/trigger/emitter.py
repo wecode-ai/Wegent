@@ -380,12 +380,11 @@ class FlowEventEmitter(NoOpEventEmitter):
             error_message: Optional error message for FAILED status
         """
         try:
-            from app.db.session import SessionLocal
+            from app.db.session import get_db_session
             from app.schemas.flow import FlowExecutionStatus
             from app.services.flow import flow_service
 
-            db = SessionLocal()
-            try:
+            with get_db_session() as db:
                 flow_service.update_execution_status(
                     db,
                     execution_id=self.execution_id,
@@ -396,8 +395,6 @@ class FlowEventEmitter(NoOpEventEmitter):
                 logger.info(
                     f"[FlowEmitter] Updated execution {self.execution_id} status to {status}"
                 )
-            finally:
-                db.close()
         except Exception as e:
             logger.error(
                 f"[FlowEmitter] Failed to update execution {self.execution_id} "

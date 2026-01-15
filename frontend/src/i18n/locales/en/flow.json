@@ -104,6 +104,7 @@
   "month_day": "Day of Month",
   "day_of_month": "Day {{day}}",
   "cron_preview": "Cron Expression",
+  "timezone_hint": "Timezone",
 
   "weekday_monday": "Monday",
   "weekday_tuesday": "Tuesday",

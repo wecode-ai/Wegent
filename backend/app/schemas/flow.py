@@ -336,3 +336,21 @@ class FlowTimelineFilter(BaseModel):
     flow_ids: Optional[List[int]] = None
     team_ids: Optional[List[int]] = None
     task_types: Optional[List[FlowTaskType]] = None
+
+
+# Flow Trigger Payload for AI Response
+class FlowTriggerPayload(BaseModel):
+    """
+    Payload for triggering AI response in Flow tasks.
+
+    This replaces the inline FlowPayload class in flow_tasks.py to follow
+    DRY principles and proper software engineering practices.
+    """
+
+    force_override_bot_model: Optional[str] = None
+    enable_clarification: bool = False
+    enable_deep_thinking: bool = True
+    is_group_chat: bool = False
+    enable_web_search: bool = False
+    search_engine: Optional[str] = None
+    preload_skills: Optional[List[str]] = None

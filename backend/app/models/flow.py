@@ -64,10 +64,10 @@ class FlowResource(Base):
     success_count = Column(Integer, default=0, nullable=False)
     failure_count = Column(Integer, default=0, nullable=False)
 
-    # Timestamps
-    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    # Timestamps (stored in UTC)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
-        DateTime, default=datetime.now, onupdate=datetime.now, nullable=False
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
     __table_args__ = (
@@ -126,12 +126,12 @@ class FlowExecution(Base):
     # Retry tracking
     retry_attempt = Column(Integer, default=0, nullable=False)
 
-    # Timing
+    # Timing (stored in UTC)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(
-        DateTime, default=datetime.now, onupdate=datetime.now, nullable=False
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
     __table_args__ = (

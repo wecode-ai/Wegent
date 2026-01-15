@@ -3,9 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
-from typing import Any, Mapping, Tuple, Type
+from typing import Any, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
+from pydantic import field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -130,8 +131,35 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
 
     # Celery configuration
-    CELERY_BROKER_URL: str = ""  # If empty, uses REDIS_URL
-    CELERY_RESULT_BACKEND: str = ""  # If empty, uses REDIS_URL
+    CELERY_BROKER_URL: Optional[str] = None  # If None/empty, uses REDIS_URL
+    CELERY_RESULT_BACKEND: Optional[str] = None  # If None/empty, uses REDIS_URL
+
+    # Embedded Celery configuration
+    # When True, Backend starts Celery worker/beat as daemon threads (for local dev)
+    # When False, Celery must be started separately (for production)
+    EMBEDDED_CELERY_ENABLED: bool = True
+
+    @field_validator("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", mode="before")
+    @classmethod
+    def empty_str_to_none(cls, v: Any) -> Optional[str]:
+        """Convert empty strings to None for proper fallback to REDIS_URL."""
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
+
+    # Scheduler backend configuration
+    # Supported backends: "celery" (default), "apscheduler", "xxljob"
+    SCHEDULER_BACKEND: str = "celery"
+
+    # APScheduler configuration (only used when SCHEDULER_BACKEND="apscheduler")
+    APSCHEDULER_JOB_STORE: str = "memory"  # "memory" or "sqlite"
+    APSCHEDULER_SQLITE_PATH: str = "scheduler_jobs.db"
+
+    # XXL-JOB configuration (only used when SCHEDULER_BACKEND="xxljob")
+    XXLJOB_ADMIN_ADDRESSES: str = ""  # Comma-separated admin URLs
+    XXLJOB_APP_NAME: str = "wegent-executor"
+    XXLJOB_ACCESS_TOKEN: str = ""
+    XXLJOB_EXECUTOR_PORT: int = 9999
 
     # Flow scheduler configuration
     FLOW_SCHEDULER_INTERVAL_SECONDS: int = 60

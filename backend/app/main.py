@@ -185,6 +185,22 @@ async def lifespan(app: FastAPI):
     start_background_jobs(app)
     logger.info("✓ Background jobs started")
 
+    # Start scheduler backend (for Flow scheduling)
+    # The scheduler backend is selected based on SCHEDULER_BACKEND config:
+    # - "celery" (default): Uses Celery Beat with embedded/standalone mode
+    # - "apscheduler": Uses APScheduler (lightweight, no Redis required)
+    # - "xxljob": Uses XXL-JOB distributed scheduler
+    logger.info(f"Starting scheduler backend: {settings.SCHEDULER_BACKEND}...")
+    from app.core.scheduler import start_scheduler
+
+    scheduler = start_scheduler()
+    if scheduler:
+        logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' started")
+    else:
+        logger.warning(
+            "Failed to start scheduler backend. Flow scheduling may not work."
+        )
+
     # Initialize Socket.IO WebSocket emitter
     # Note: Chat namespace is already registered in create_socketio_asgi_app()
     logger.info("Initializing Socket.IO...")
@@ -254,7 +270,15 @@ async def lifespan(app: FastAPI):
     stop_background_jobs(app)
     logger.info("✓ Background jobs stopped")
 
-    # Step 4: Shutdown PendingRequestRegistry
+    # Step 4: Stop scheduler backend
+    from app.core.scheduler import get_active_scheduler, stop_scheduler
+
+    scheduler = get_active_scheduler()
+    if scheduler:
+        stop_scheduler()
+        logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' stopped")
+
+    # Step 5: Shutdown PendingRequestRegistry
     from chat_shell.tools import (
         shutdown_pending_request_registry,
     )
@@ -262,7 +286,7 @@ async def lifespan(app: FastAPI):
     await shutdown_pending_request_registry()
     logger.info("✓ PendingRequestRegistry shutdown completed")
 
-    # Step 5: Shutdown OpenTelemetry
+    # Step 6: Shutdown OpenTelemetry
     from shared.telemetry.config import get_otel_config
     from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 
