@@ -126,6 +126,9 @@ class FlowExecution(Base):
     # Retry tracking
     retry_attempt = Column(Integer, default=0, nullable=False)
 
+    # Optimistic locking version (incremented on each update)
+    version = Column(Integer, default=0, nullable=False)
+
     # Timing (stored in UTC)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)

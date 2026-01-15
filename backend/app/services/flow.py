@@ -11,7 +11,7 @@ import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import HTTPException
 from sqlalchemy import and_, desc, func, or_
@@ -38,6 +38,78 @@ from app.schemas.flow import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ========== State Machine for FlowExecution ==========
+
+# Valid state transitions for FlowExecution
+# Key: current state, Value: set of valid next states
+VALID_STATE_TRANSITIONS: Dict[FlowExecutionStatus, Set[FlowExecutionStatus]] = {
+    FlowExecutionStatus.PENDING: {
+        FlowExecutionStatus.RUNNING,
+        FlowExecutionStatus.CANCELLED,
+        FlowExecutionStatus.FAILED,  # Can fail before starting (e.g., validation error)
+    },
+    FlowExecutionStatus.RUNNING: {
+        FlowExecutionStatus.COMPLETED,
+        FlowExecutionStatus.FAILED,
+        FlowExecutionStatus.RETRYING,
+    },
+    FlowExecutionStatus.RETRYING: {
+        FlowExecutionStatus.RUNNING,
+        FlowExecutionStatus.FAILED,
+        FlowExecutionStatus.CANCELLED,
+    },
+    FlowExecutionStatus.COMPLETED: set(),  # Terminal state
+    FlowExecutionStatus.FAILED: set(),  # Terminal state
+    FlowExecutionStatus.CANCELLED: set(),  # Terminal state
+}
+
+
+class InvalidStateTransitionError(Exception):
+    """Raised when an invalid state transition is attempted."""
+
+    def __init__(self, current_state: str, new_state: str, execution_id: int):
+        self.current_state = current_state
+        self.new_state = new_state
+        self.execution_id = execution_id
+        super().__init__(
+            f"Invalid state transition for execution {execution_id}: "
+            f"{current_state} -> {new_state}"
+        )
+
+
+class OptimisticLockError(Exception):
+    """Raised when optimistic lock conflict is detected."""
+
+    def __init__(self, execution_id: int, expected_version: int, actual_version: int):
+        self.execution_id = execution_id
+        self.expected_version = expected_version
+        self.actual_version = actual_version
+        super().__init__(
+            f"Optimistic lock conflict for execution {execution_id}: "
+            f"expected version {expected_version}, got {actual_version}"
+        )
+
+
+def validate_state_transition(
+    current_state: FlowExecutionStatus, new_state: FlowExecutionStatus
+) -> bool:
+    """
+    Validate if a state transition is allowed.
+
+    Args:
+        current_state: Current execution status
+        new_state: Desired new status
+
+    Returns:
+        True if transition is valid, False otherwise
+    """
+    if current_state == new_state:
+        return True  # No-op transitions are always valid
+
+    valid_next_states = VALID_STATE_TRANSITIONS.get(current_state, set())
+    return new_state in valid_next_states
 
 
 class FlowService:
@@ -634,20 +706,66 @@ class FlowService:
         status: FlowExecutionStatus,
         result_summary: Optional[str] = None,
         error_message: Optional[str] = None,
-    ) -> None:
-        """Update execution status (called by scheduler/task completion)."""
+        expected_version: Optional[int] = None,
+    ) -> bool:
+        """
+        Update execution status with optimistic locking and state machine validation.
+
+        This method ensures:
+        1. State transitions are valid (follows the state machine)
+        2. Concurrent updates are detected via optimistic locking
+        3. Statistics are updated atomically
+
+        Args:
+            db: Database session
+            execution_id: ID of the execution to update
+            status: New status to set
+            result_summary: Optional result summary
+            error_message: Optional error message
+            expected_version: Expected version for optimistic locking (optional)
+
+        Returns:
+            True if update was successful, False if skipped due to invalid transition
+
+        Raises:
+            OptimisticLockError: If version conflict detected and expected_version was provided
+        """
+        # Convert string status to enum if needed
+        if isinstance(status, str):
+            status = FlowExecutionStatus(status)
+
         execution = (
             db.query(FlowExecution).filter(FlowExecution.id == execution_id).first()
         )
 
         if not execution:
-            return
+            logger.warning(f"Execution {execution_id} not found for status update")
+            return False
+
+        current_status = FlowExecutionStatus(execution.status)
+
+        # Validate state transition
+        if not validate_state_transition(current_status, status):
+            logger.warning(
+                f"Invalid state transition for execution {execution_id}: "
+                f"{current_status.value} -> {status.value}"
+            )
+            # Don't raise exception, just skip invalid transitions
+            # This prevents race conditions from causing errors
+            return False
+
+        # Check optimistic lock if expected_version is provided
+        current_version = getattr(execution, "version", 0) or 0
+        if expected_version is not None and current_version != expected_version:
+            raise OptimisticLockError(execution_id, expected_version, current_version)
 
         # Use UTC for all timestamps
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
+        # Update execution
         execution.status = status.value
         execution.updated_at = now_utc
+        execution.version = current_version + 1  # Increment version
 
         if status == FlowExecutionStatus.RUNNING:
             execution.started_at = now_utc
@@ -660,34 +778,41 @@ class FlowService:
         if error_message:
             execution.error_message = error_message
 
-        # Update flow statistics
-        flow = (
-            db.query(FlowResource).filter(FlowResource.id == execution.flow_id).first()
-        )
-        if flow:
-            flow.last_execution_time = now_utc
-            flow.last_execution_status = status.value
-            flow.execution_count += 1
+        # Update flow statistics (only for terminal states to avoid double counting)
+        if status in (FlowExecutionStatus.COMPLETED, FlowExecutionStatus.FAILED):
+            flow = (
+                db.query(FlowResource)
+                .filter(FlowResource.id == execution.flow_id)
+                .first()
+            )
+            if flow:
+                flow.last_execution_time = now_utc
+                flow.last_execution_status = status.value
+                flow.execution_count += 1
 
-            if status == FlowExecutionStatus.COMPLETED:
-                flow.success_count += 1
-            elif status == FlowExecutionStatus.FAILED:
-                flow.failure_count += 1
+                if status == FlowExecutionStatus.COMPLETED:
+                    flow.success_count += 1
+                elif status == FlowExecutionStatus.FAILED:
+                    flow.failure_count += 1
 
-            # Update CRD status
-            flow_crd = Flow.model_validate(flow.json)
-            if flow_crd.status is None:
-                flow_crd.status = FlowStatus()
-            flow_crd.status.lastExecutionTime = now_utc
-            flow_crd.status.lastExecutionStatus = status
-            flow_crd.status.executionCount = flow.execution_count
-            flow_crd.status.successCount = flow.success_count
-            flow_crd.status.failureCount = flow.failure_count
+                # Update CRD status
+                flow_crd = Flow.model_validate(flow.json)
+                if flow_crd.status is None:
+                    flow_crd.status = FlowStatus()
+                flow_crd.status.lastExecutionTime = now_utc
+                flow_crd.status.lastExecutionStatus = status
+                flow_crd.status.executionCount = flow.execution_count
+                flow_crd.status.successCount = flow.success_count
+                flow_crd.status.failureCount = flow.failure_count
 
-            flow.json = flow_crd.model_dump(mode="json")
-            flag_modified(flow, "json")
+                flow.json = flow_crd.model_dump(mode="json")
+                flag_modified(flow, "json")
 
         db.commit()
+        logger.debug(
+            f"Updated execution {execution_id} status: {current_status.value} -> {status.value} (version {current_version + 1})"
+        )
+        return True
 
     # ========== Helper Methods ==========
 

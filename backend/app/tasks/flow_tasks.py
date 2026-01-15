@@ -17,7 +17,7 @@ The architecture separates trigger from execution:
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from celery.exceptions import SoftTimeLimitExceeded
@@ -287,7 +287,16 @@ async def _trigger_chat_shell_response(
     assistant_subtask: Any,
     user_subtask: Any,
 ) -> None:
-    """Trigger AI response for Chat Shell type flows."""
+    """
+    Trigger AI response for Chat Shell type flows.
+
+    Uses circuit breaker to protect against AI service failures.
+    """
+    from app.core.circuit_breaker import (
+        CircuitBreakerOpenError,
+        ai_service_breaker,
+        with_circuit_breaker_async,
+    )
     from app.core.constants import get_task_room
     from app.schemas.flow import FlowTriggerPayload
     from app.services.chat.trigger import trigger_ai_response
@@ -297,19 +306,40 @@ async def _trigger_chat_shell_response(
     task_room = get_task_room(task.id)
     flow_emitter = FlowEventEmitter(execution_id=ctx.execution.id)
 
-    await trigger_ai_response(
-        task=task,
-        assistant_subtask=assistant_subtask,
-        team=ctx.team,
-        user=ctx.user,
-        message=ctx.execution.prompt or "",
-        payload=payload,
-        task_room=task_room,
-        supports_direct_chat=True,
-        namespace=None,
-        user_subtask_id=user_subtask.id if user_subtask else None,
-        event_emitter=flow_emitter,
-    )
+    # Wrap the AI call with circuit breaker protection
+    @with_circuit_breaker_async(ai_service_breaker)
+    async def _call_ai_service():
+        await trigger_ai_response(
+            task=task,
+            assistant_subtask=assistant_subtask,
+            team=ctx.team,
+            user=ctx.user,
+            message=ctx.execution.prompt or "",
+            payload=payload,
+            task_room=task_room,
+            supports_direct_chat=True,
+            namespace=None,
+            user_subtask_id=user_subtask.id if user_subtask else None,
+            event_emitter=flow_emitter,
+        )
+
+    try:
+        await _call_ai_service()
+    except CircuitBreakerOpenError as e:
+        logger.error(f"[flow_tasks] Circuit breaker open for flow {ctx.flow.id}: {e}")
+        # Update execution with circuit breaker error
+        from app.db.session import get_db_session
+        from app.schemas.flow import FlowExecutionStatus
+        from app.services.flow import flow_service
+
+        with get_db_session() as db:
+            flow_service.update_execution_status(
+                db,
+                execution_id=ctx.execution.id,
+                status=FlowExecutionStatus.FAILED,
+                error_message=f"AI service temporarily unavailable: {e}",
+            )
+        raise
 
 
 def _handle_execution_failure(
@@ -335,19 +365,31 @@ def _handle_execution_failure(
 # ========== Celery Tasks ==========
 
 
+# Batch size for processing due flows (to avoid memory issues with large datasets)
+FLOW_BATCH_SIZE = 100
+
+# Lock timeout for check_due_flows (should be longer than expected execution time)
+CHECK_DUE_FLOWS_LOCK_TIMEOUT = 120  # seconds
+
+# Stale execution threshold (executions in PENDING/RUNNING for too long)
+STALE_EXECUTION_HOURS = 2
+
+
 @celery_app.task(bind=True, name="app.tasks.flow_tasks.check_due_flows")
 def check_due_flows(self):
     """
     Periodic task that checks for flows due for execution.
 
     This task:
-    1. Acquires a check to avoid duplicate processing
-    2. Queries for enabled flows with next_execution_time <= now
-    3. Creates execution records and dispatches execute_flow_task for each
-    4. Updates next_execution_time for recurring flows
+    1. Acquires a distributed lock to avoid duplicate processing across instances
+    2. Recovers any stale PENDING executions from previous runs
+    3. Queries for enabled flows with next_execution_time <= now (in batches)
+    4. Creates execution records and dispatches execute_flow_task for each
+    5. Updates next_execution_time for recurring flows
 
     Runs every FLOW_SCHEDULER_INTERVAL_SECONDS (default: 60 seconds).
     """
+    from app.core.distributed_lock import distributed_lock
     from app.db.session import get_db_session
     from app.models.flow import FlowResource
     from app.schemas.flow import Flow, FlowTriggerType
@@ -355,88 +397,256 @@ def check_due_flows(self):
 
     logger.info("[flow_tasks] Starting check_due_flows cycle")
 
-    with get_db_session() as db:
-        try:
-            # Use UTC for comparison since next_execution_time is stored in UTC
-            now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-
-            # Query for due flows
-            due_flows = (
-                db.query(FlowResource)
-                .filter(
-                    FlowResource.is_active == True,
-                    FlowResource.enabled == True,
-                    FlowResource.next_execution_time != None,
-                    FlowResource.next_execution_time <= now_utc,
-                    FlowResource.trigger_type.in_(
-                        [
-                            FlowTriggerType.CRON.value,
-                            FlowTriggerType.INTERVAL.value,
-                            FlowTriggerType.ONE_TIME.value,
-                        ]
-                    ),
-                )
-                .all()
-            )
-
-            if not due_flows:
-                logger.debug("[flow_tasks] No flows due for execution")
-                return {"due_flows": 0, "dispatched": 0}
-
+    # Acquire distributed lock to prevent multiple instances from processing
+    with distributed_lock.acquire_context(
+        "check_due_flows", expire_seconds=CHECK_DUE_FLOWS_LOCK_TIMEOUT
+    ) as acquired:
+        if not acquired:
             logger.info(
-                f"[flow_tasks] Found {len(due_flows)} flow(s) due for execution"
+                "[flow_tasks] Another instance is already running check_due_flows, skipping"
             )
+            return {"status": "skipped", "reason": "lock_held_by_another_instance"}
 
-            dispatched = 0
-            for flow in due_flows:
-                try:
-                    flow_crd = Flow.model_validate(flow.json)
-                    trigger_type = flow.trigger_type
+        with get_db_session() as db:
+            try:
+                # First, recover any orphaned PENDING executions
+                recovered = _recover_stale_pending_executions(db)
 
-                    # Determine trigger reason
-                    trigger_reason = _get_trigger_reason(flow_crd, trigger_type)
+                # Use UTC for comparison since next_execution_time is stored in UTC
+                now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
-                    # Create execution record
-                    execution = flow_service.create_execution(
-                        db,
-                        flow=flow,
-                        user_id=flow.user_id,
-                        trigger_type=trigger_type,
-                        trigger_reason=trigger_reason,
+                # Count total due flows first
+                total_due = (
+                    db.query(FlowResource)
+                    .filter(
+                        FlowResource.is_active == True,
+                        FlowResource.enabled == True,
+                        FlowResource.next_execution_time != None,
+                        FlowResource.next_execution_time <= now_utc,
+                        FlowResource.trigger_type.in_(
+                            [
+                                FlowTriggerType.CRON.value,
+                                FlowTriggerType.INTERVAL.value,
+                                FlowTriggerType.ONE_TIME.value,
+                            ]
+                        ),
+                    )
+                    .count()
+                )
+
+                if total_due == 0:
+                    logger.debug("[flow_tasks] No flows due for execution")
+                    return {
+                        "due_flows": 0,
+                        "dispatched": 0,
+                        "recovered_pending": recovered,
+                    }
+
+                logger.info(f"[flow_tasks] Found {total_due} flow(s) due for execution")
+
+                # Process in batches to avoid memory issues
+                dispatched = 0
+                offset = 0
+
+                while offset < total_due:
+                    # Query batch of due flows
+                    due_flows = (
+                        db.query(FlowResource)
+                        .filter(
+                            FlowResource.is_active == True,
+                            FlowResource.enabled == True,
+                            FlowResource.next_execution_time != None,
+                            FlowResource.next_execution_time <= now_utc,
+                            FlowResource.trigger_type.in_(
+                                [
+                                    FlowTriggerType.CRON.value,
+                                    FlowTriggerType.INTERVAL.value,
+                                    FlowTriggerType.ONE_TIME.value,
+                                ]
+                            ),
+                        )
+                        .order_by(FlowResource.next_execution_time)
+                        .limit(FLOW_BATCH_SIZE)
+                        .all()
                     )
 
-                    # Dispatch execution using unified method
-                    flow_service.dispatch_flow_execution(
-                        flow, execution, use_sync=False
-                    )
-                    FLOW_QUEUE_SIZE.inc()
-                    dispatched += 1
+                    if not due_flows:
+                        break
 
-                    logger.info(
-                        f"[flow_tasks] Dispatched execution {execution.id} for flow {flow.id} ({flow.name})"
-                    )
+                    for flow in due_flows:
+                        try:
+                            flow_crd = Flow.model_validate(flow.json)
+                            trigger_type = flow.trigger_type
 
-                    # Update next execution time
-                    _update_next_execution_time(db, flow, flow_crd, trigger_type)
+                            # Determine trigger reason
+                            trigger_reason = _get_trigger_reason(flow_crd, trigger_type)
 
-                except Exception as e:
-                    logger.error(
-                        f"[flow_tasks] Error processing flow {flow.id}: {str(e)}",
-                        exc_info=True,
+                            # Create execution record
+                            execution = flow_service.create_execution(
+                                db,
+                                flow=flow,
+                                user_id=flow.user_id,
+                                trigger_type=trigger_type,
+                                trigger_reason=trigger_reason,
+                            )
+
+                            # Dispatch execution using unified method
+                            flow_service.dispatch_flow_execution(
+                                flow, execution, use_sync=False
+                            )
+                            FLOW_QUEUE_SIZE.inc()
+                            dispatched += 1
+
+                            logger.info(
+                                f"[flow_tasks] Dispatched execution {execution.id} for flow {flow.id} ({flow.name})"
+                            )
+
+                            # Update next execution time
+                            _update_next_execution_time(
+                                db, flow, flow_crd, trigger_type
+                            )
+
+                        except Exception as e:
+                            logger.error(
+                                f"[flow_tasks] Error processing flow {flow.id}: {str(e)}",
+                                exc_info=True,
+                            )
+                            db.rollback()
+                            continue
+
+                    offset += len(due_flows)
+
+                    # Extend lock if processing takes a while
+                    if offset < total_due:
+                        distributed_lock.extend(
+                            "check_due_flows",
+                            expire_seconds=CHECK_DUE_FLOWS_LOCK_TIMEOUT,
+                        )
+
+                logger.info(
+                    f"[flow_tasks] check_due_flows completed: {dispatched}/{total_due} flows dispatched, {recovered} pending recovered"
+                )
+                return {
+                    "due_flows": total_due,
+                    "dispatched": dispatched,
+                    "recovered_pending": recovered,
+                }
+
+            except Exception as e:
+                logger.error(
+                    f"[flow_tasks] Error in check_due_flows: {str(e)}", exc_info=True
+                )
+                raise
+
+
+def _recover_stale_pending_executions(db: Session) -> int:
+    """
+    Recover stale PENDING executions that were not dispatched.
+
+    This handles the case where:
+    1. A FlowExecution was created with PENDING status
+    2. The service crashed before dispatch_flow_execution was called
+    3. The execution is now orphaned
+
+    Args:
+        db: Database session
+
+    Returns:
+        Number of recovered executions
+    """
+    from app.models.flow import FlowExecution, FlowResource
+    from app.schemas.flow import FlowExecutionStatus
+    from app.services.flow import flow_service
+
+    try:
+        # Find PENDING executions older than threshold (likely orphaned)
+        stale_threshold = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+            hours=STALE_EXECUTION_HOURS
+        )
+
+        stale_executions = (
+            db.query(FlowExecution)
+            .filter(
+                FlowExecution.status == FlowExecutionStatus.PENDING.value,
+                FlowExecution.created_at < stale_threshold,
+                FlowExecution.task_id == None,  # Never linked to a task
+            )
+            .limit(50)  # Limit to avoid processing too many at once
+            .all()
+        )
+
+        if not stale_executions:
+            return 0
+
+        logger.info(
+            f"[flow_tasks] Found {len(stale_executions)} stale PENDING executions to recover"
+        )
+
+        recovered = 0
+        for execution in stale_executions:
+            try:
+                # Get the flow
+                flow = (
+                    db.query(FlowResource)
+                    .filter(
+                        FlowResource.id == execution.flow_id,
+                        FlowResource.is_active == True,
                     )
-                    db.rollback()
+                    .first()
+                )
+
+                if not flow:
+                    # Flow was deleted, mark execution as CANCELLED
+                    execution.status = FlowExecutionStatus.CANCELLED.value
+                    execution.error_message = "Flow was deleted"
+                    execution.updated_at = datetime.now(timezone.utc).replace(
+                        tzinfo=None
+                    )
+                    db.commit()
                     continue
 
-            logger.info(
-                f"[flow_tasks] check_due_flows completed: {dispatched}/{len(due_flows)} flows dispatched"
-            )
-            return {"due_flows": len(due_flows), "dispatched": dispatched}
+                # Re-dispatch the execution
+                from app.schemas.flow import FlowExecutionInDB
 
-        except Exception as e:
-            logger.error(
-                f"[flow_tasks] Error in check_due_flows: {str(e)}", exc_info=True
-            )
-            raise
+                exec_in_db = FlowExecutionInDB(
+                    id=execution.id,
+                    user_id=execution.user_id,
+                    flow_id=execution.flow_id,
+                    task_id=execution.task_id,
+                    trigger_type=execution.trigger_type,
+                    trigger_reason=execution.trigger_reason,
+                    prompt=execution.prompt,
+                    status=FlowExecutionStatus(execution.status),
+                    result_summary=execution.result_summary,
+                    error_message=execution.error_message,
+                    retry_attempt=execution.retry_attempt,
+                    started_at=execution.started_at,
+                    completed_at=execution.completed_at,
+                    created_at=execution.created_at,
+                    updated_at=execution.updated_at,
+                )
+
+                flow_service.dispatch_flow_execution(flow, exec_in_db, use_sync=False)
+                recovered += 1
+
+                logger.info(
+                    f"[flow_tasks] Recovered stale execution {execution.id} for flow {flow.id}"
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"[flow_tasks] Failed to recover execution {execution.id}: {e}",
+                    exc_info=True,
+                )
+                continue
+
+        return recovered
+
+    except Exception as e:
+        logger.error(
+            f"[flow_tasks] Error recovering stale executions: {e}", exc_info=True
+        )
+        return 0
 
 
 def _get_trigger_reason(flow_crd: Any, trigger_type: str) -> str:
