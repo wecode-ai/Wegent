@@ -11,6 +11,8 @@ import { extractArtifact } from '@/features/canvas/hooks/useArtifact'
 interface UseCanvasIntegrationOptions {
   taskId?: number
   onSendMessage?: (message: string) => void
+  /** Called when canvas state is reset (e.g., on task change) */
+  onReset?: () => void
 }
 
 interface CanvasIntegrationReturn {
@@ -50,7 +52,7 @@ interface CanvasIntegrationReturn {
 export function useCanvasIntegration(
   options: UseCanvasIntegrationOptions = {}
 ): CanvasIntegrationReturn {
-  const { onSendMessage } = options
+  const { taskId, onSendMessage, onReset } = options
 
   // Canvas visibility
   const [canvasEnabled, setCanvasEnabled] = useState(false)
@@ -145,6 +147,18 @@ export function useCanvasIntegration(
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [isFullscreen])
+
+  // Reset state when taskId changes
+  useEffect(() => {
+    // Reset artifact and canvas state when switching tasks
+    console.log('[useCanvasIntegration] Task changed to:', taskId, '- resetting state')
+    setArtifact(null)
+    setSubtaskId(null)
+    setCanvasEnabled(false)
+    setIsCanvasLoading(false)
+    setIsFullscreen(false)
+    onReset?.()
+  }, [taskId, onReset])
 
   return {
     // Canvas visibility

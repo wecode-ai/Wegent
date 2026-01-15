@@ -11,6 +11,7 @@ import RepositorySelector from '../selector/RepositorySelector'
 import BranchSelector from '../selector/BranchSelector'
 import ClarificationToggle from '../clarification/ClarificationToggle'
 import CorrectionModeToggle from '../CorrectionModeToggle'
+import { CanvasToggle } from '@/features/canvas'
 import ChatContextInput from '../chat/ChatContextInput'
 import AttachmentButton from '../AttachmentButton'
 import SendButton from './SendButton'
@@ -63,6 +64,11 @@ export interface ChatInputControlsProps {
   enableCorrectionMode?: boolean
   correctionModelName?: string | null
   onCorrectionModeToggle?: (enabled: boolean, modelId?: string, modelName?: string) => void
+
+  // Canvas
+  isCanvasOpen?: boolean
+  onCanvasToggle?: () => void
+  showCanvasToggle?: boolean
 
   // Context selection (knowledge bases)
   selectedContexts: ContextItem[]
@@ -128,6 +134,9 @@ export function ChatInputControls({
   enableCorrectionMode = false,
   correctionModelName,
   onCorrectionModeToggle,
+  isCanvasOpen = false,
+  onCanvasToggle,
+  showCanvasToggle = false,
   selectedContexts,
   setSelectedContexts,
   attachmentState: _attachmentState,
@@ -298,6 +307,15 @@ export function ChatInputControls({
             disabled={isLoading || isStreaming}
             correctionModelName={correctionModelName}
             taskId={selectedTaskDetail?.id ?? null}
+          />
+        )}
+
+        {/* Canvas Toggle Button - show when showCanvasToggle is true */}
+        {showCanvasToggle && onCanvasToggle && (
+          <CanvasToggle
+            enabled={isCanvasOpen}
+            onToggle={onCanvasToggle}
+            disabled={isLoading || isStreaming}
           />
         )}
 

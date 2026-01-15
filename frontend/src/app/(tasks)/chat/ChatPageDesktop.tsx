@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { UserGroupIcon } from '@heroicons/react/24/outline'
 import { teamService } from '@/features/tasks/service/teamService'
@@ -20,13 +20,16 @@ import { Team } from '@/types/api'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useChatStreamContext, useTaskStreamState } from '@/features/tasks/contexts/chatStreamContext'
 import { paths } from '@/config/paths'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
+import { CanvasPanel } from '@/features/canvas'
+import { useCanvasIntegration } from '@/features/tasks/components/chat/useCanvasIntegration'
+import type { Artifact } from '@/features/canvas/types'
 
 /**
  * Desktop-specific implementation of Chat Page
@@ -92,6 +95,69 @@ export function ChatPageDesktop() {
 
   // Create group chat dialog state
   const [isCreateGroupChatOpen, setIsCreateGroupChatOpen] = useState(false)
+
+  // Canvas state - similar to Workbench in CodePageDesktop
+  const [isCanvasOpen, setIsCanvasOpen] = useState(false)
+
+  // Get stream state for current task - this will update when messages change
+  const currentTaskStreamState = useTaskStreamState(selectedTaskDetail?.id)
+
+  // Canvas integration hook - reset lastProcessedArtifactRef when task changes
+  const handleCanvasReset = useCallback(() => {
+    lastProcessedArtifactRef.current = null
+    setIsCanvasOpen(false)
+  }, [])
+
+  const canvas = useCanvasIntegration({
+    taskId: selectedTaskDetail?.id,
+    onSendMessage: async (_message: string) => {
+      // Canvas quick actions will be handled by ChatArea
+    },
+    onReset: handleCanvasReset,
+  })
+
+  // Check if there are messages (for showing Canvas)
+  const hasMessages = useMemo(() => {
+    const taskId = selectedTaskDetail?.id
+    if (!taskId) return false
+    const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0
+    const hasStreamMessages = currentTaskStreamState?.messages && currentTaskStreamState.messages.size > 0
+    return Boolean(hasSubtasks || hasStreamMessages)
+  }, [selectedTaskDetail, currentTaskStreamState])
+
+  // Track processed artifacts to avoid duplicate processing
+  const lastProcessedArtifactRef = useRef<string | null>(null)
+
+  // Extract artifact data from stream messages - similar to CodePageDesktop workbench extraction
+  // Uses currentTaskStreamState which updates when messages change
+  useEffect(() => {
+    const currentTaskId = selectedTaskDetail?.id
+    if (!currentTaskId) return
+
+    if (!currentTaskStreamState?.messages || currentTaskStreamState.messages.size === 0) return
+
+    // Find the latest AI message with artifact data
+    let latestArtifact: Artifact | null = null
+
+    for (const msg of currentTaskStreamState.messages.values()) {
+      if (msg.type === 'ai' && msg.result) {
+        const result = msg.result as { type?: string; artifact?: Artifact }
+        if (result.type === 'artifact' && result.artifact) {
+          latestArtifact = result.artifact
+        }
+      }
+    }
+
+    // Process artifact if found and different from last processed
+    if (latestArtifact) {
+      const artifactKey = `${latestArtifact.id}-${latestArtifact.version}`
+      if (lastProcessedArtifactRef.current !== artifactKey) {
+        console.log('[ChatPageDesktop] Processing artifact:', latestArtifact.id, 'version:', latestArtifact.version)
+        canvas.processSubtaskResult({ type: 'artifact', artifact: latestArtifact })
+        lastProcessedArtifactRef.current = artifactKey
+      }
+    }
+  }, [selectedTaskDetail?.id, currentTaskStreamState, canvas])
 
   // Search dialog state (controlled from page level for global shortcut support)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
@@ -194,16 +260,50 @@ export function ChatPageDesktop() {
           {shareButton}
           <GithubStarButton />
         </TopNavigation>
-        {/* Chat area without repository selector */}
-        <ChatArea
-          teams={teams}
-          isTeamsLoading={isTeamsLoading}
-          selectedTeamForNewTask={_selectedTeamForNewTask}
-          showRepositorySelector={false}
-          taskType="chat"
-          onShareButtonRender={handleShareButtonRender}
-          onRefreshTeams={handleRefreshTeams}
-        />
+        {/* Content area with split layout */}
+        <div className="flex flex-1 min-h-0">
+          {/* Chat area - affected by canvas */}
+          <div
+            className="transition-all duration-300 ease-in-out flex flex-col min-h-0"
+            style={{
+              width: hasOpenTask && hasMessages && isCanvasOpen ? '60%' : '100%',
+            }}
+          >
+            <ChatArea
+              teams={teams}
+              isTeamsLoading={isTeamsLoading}
+              selectedTeamForNewTask={_selectedTeamForNewTask}
+              showRepositorySelector={false}
+              taskType="chat"
+              onShareButtonRender={handleShareButtonRender}
+              onRefreshTeams={handleRefreshTeams}
+              isCanvasOpen={isCanvasOpen}
+              onCanvasToggle={() => setIsCanvasOpen(prev => !prev)}
+              showCanvasToggle={hasOpenTask && hasMessages}
+            />
+          </div>
+
+          {/* Canvas Panel - only show if there's a task with messages */}
+          {hasOpenTask && hasMessages && (
+            <div
+              className="transition-all duration-300 ease-in-out bg-surface overflow-hidden"
+              style={{ width: isCanvasOpen ? '40%' : '0' }}
+            >
+              {isCanvasOpen && (
+                <CanvasPanel
+                  artifact={canvas.artifact}
+                  isLoading={canvas.isCanvasLoading}
+                  onClose={() => setIsCanvasOpen(false)}
+                  onArtifactUpdate={canvas.setArtifact}
+                  onQuickAction={canvas.handleQuickAction}
+                  onVersionRevert={canvas.handleVersionRevert}
+                  isFullscreen={canvas.isFullscreen}
+                  onToggleFullscreen={canvas.toggleFullscreen}
+                />
+              )}
+            </div>
+          )}
+        </div>
       </div>
       {/* Create Group Chat Dialog */}
       <CreateGroupChatDialog open={isCreateGroupChatOpen} onOpenChange={setIsCreateGroupChatOpen} />

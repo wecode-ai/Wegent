@@ -4,37 +4,24 @@
 
 'use client'
 
-import React, { useState, useCallback, useMemo } from 'react'
+import React, { useState, useCallback } from 'react'
 import {
-  History,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  Check,
-  Download,
-  MoreHorizontal,
-  X,
-  Maximize2,
-  Minimize2,
-} from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ClipboardDocumentIcon,
+  CheckIcon,
+  ArrowDownTrayIcon,
+  XMarkIcon,
+  ArrowsPointingOutIcon,
+  ArrowsPointingInIcon,
+  ClockIcon,
+} from '@heroicons/react/24/outline'
 import { cn } from '@/lib/utils'
-import type { Artifact, ArtifactVersion } from '../types'
-import { getQuickActions } from '../constants/quickActions'
-import { QuickActionsBar } from './QuickActionsBar'
+import type { Artifact } from '../types'
+
+function classNames(...classes: string[]) {
+  return classes.filter(Boolean).join(' ')
+}
 
 interface CanvasPanelProps {
   artifact: Artifact | null
@@ -52,21 +39,15 @@ export function CanvasPanel({
   artifact,
   isLoading = false,
   onClose,
-  onArtifactUpdate,
-  onQuickAction,
+  onArtifactUpdate: _onArtifactUpdate,
+  onQuickAction: _onQuickAction,
   onVersionRevert,
   className,
   isFullscreen = false,
   onToggleFullscreen,
 }: CanvasPanelProps) {
   const [copied, setCopied] = useState(false)
-  const [showVersionHistory, setShowVersionHistory] = useState(false)
-
-  // Get quick actions for artifact type
-  const quickActions = useMemo(() => {
-    if (!artifact) return []
-    return getQuickActions(artifact.artifact_type)
-  }, [artifact?.artifact_type])
+  const [activeTab, setActiveTab] = useState<'content' | 'versions'>('content')
 
   // Copy content to clipboard
   const handleCopy = useCallback(async () => {
@@ -116,22 +97,44 @@ export function CanvasPanel({
     return (
       <div
         className={cn(
-          'flex flex-col h-full bg-background border-l',
+          'h-full flex flex-col border-l border-border overflow-hidden bg-surface',
+          isFullscreen && 'fixed inset-0 z-50',
           className
         )}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b">
-          <h3 className="text-sm font-medium text-muted-foreground">Canvas</h3>
-          {onClose && (
-            <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
-              <X className="h-4 w-4" />
-            </Button>
-          )}
+        {/* Minimal header */}
+        <div className="flex items-center justify-between h-10 px-3 border-b border-border flex-shrink-0">
+          <span className="text-sm font-medium text-text-primary">Canvas</span>
+          <div className="flex items-center gap-1">
+            {onToggleFullscreen && (
+              <button
+                onClick={onToggleFullscreen}
+                className="p-1 text-text-muted hover:text-text-primary"
+                title={isFullscreen ? '退出全屏' : '全屏'}
+              >
+                {isFullscreen ? (
+                  <ArrowsPointingInIcon className="size-4" />
+                ) : (
+                  <ArrowsPointingOutIcon className="size-4" />
+                )}
+              </button>
+            )}
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="p-1 text-text-muted hover:text-text-primary"
+              >
+                <XMarkIcon className="size-4" />
+              </button>
+            )}
+          </div>
         </div>
-        <div className="flex-1 flex items-center justify-center p-6">
-          <div className="text-center text-muted-foreground">
-            <p className="text-sm">暂无内容</p>
-            <p className="text-xs mt-1">
+
+        {/* Empty content */}
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center">
+            <p className="text-text-muted text-sm">暂无内容</p>
+            <p className="text-text-tertiary text-xs mt-1">
               让 AI 生成代码或文档后会显示在这里
             </p>
           </div>
@@ -143,220 +146,187 @@ export function CanvasPanel({
   return (
     <div
       className={cn(
-        'flex flex-col h-full bg-background border-l',
-        isFullscreen && 'fixed inset-0 z-50 border-l-0',
+        'h-full flex flex-col border-l border-border overflow-hidden bg-surface',
+        isFullscreen && 'fixed inset-0 z-50',
         className
       )}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <h3 className="text-sm font-medium truncate">
-            {artifact?.title || 'Untitled'}
-          </h3>
-          {artifact?.language && (
-            <span className="text-xs px-1.5 py-0.5 bg-muted rounded text-muted-foreground">
-              {artifact.language}
-            </span>
-          )}
+      {/* Compact header: tabs + actions */}
+      <div className="flex items-center justify-between h-10 px-3 border-b border-border flex-shrink-0">
+        {/* Tabs */}
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setActiveTab('content')}
+            className={classNames(
+              'text-sm font-medium',
+              activeTab === 'content'
+                ? 'text-text-primary'
+                : 'text-text-muted hover:text-text-primary'
+            )}
+          >
+            内容
+          </button>
+          <button
+            onClick={() => setActiveTab('versions')}
+            className={classNames(
+              'text-sm font-medium flex items-center gap-1',
+              activeTab === 'versions'
+                ? 'text-text-primary'
+                : 'text-text-muted hover:text-text-primary'
+            )}
+          >
+            版本
+            {artifact && artifact.versions.length > 1 && (
+              <span className="text-xs bg-muted px-1.5 py-0.5 rounded">
+                {artifact.versions.length}
+              </span>
+            )}
+          </button>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
-          {/* Version navigation */}
-          {artifact && artifact.versions.length > 1 && (
-            <TooltipProvider>
-              <div className="flex items-center gap-1 mr-2">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      disabled={artifact.version <= 1}
-                      onClick={() => handleVersionNav('prev')}
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>上一版本</TooltipContent>
-                </Tooltip>
 
-                <span className="text-xs text-muted-foreground px-1">
-                  v{artifact.version}/{artifact.versions.length}
-                </span>
-
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      disabled={artifact.version >= artifact.versions.length}
-                      onClick={() => handleVersionNav('next')}
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>下一版本</TooltipContent>
-                </Tooltip>
-              </div>
-            </TooltipProvider>
-          )}
-
-          {/* Actions menu */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={handleCopy}>
-                {copied ? (
-                  <Check className="mr-2 h-4 w-4" />
-                ) : (
-                  <Copy className="mr-2 h-4 w-4" />
-                )}
-                {copied ? '已复制!' : '复制'}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleDownload}>
-                <Download className="mr-2 h-4 w-4" />
-                下载
-              </DropdownMenuItem>
-              {artifact && artifact.versions.length > 1 && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => setShowVersionHistory(!showVersionHistory)}>
-                    <History className="mr-2 h-4 w-4" />
-                    版本历史
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          {/* Fullscreen toggle */}
+        {/* Actions */}
+        <div className="flex items-center gap-1">
           {onToggleFullscreen && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={onToggleFullscreen}
-                  >
-                    {isFullscreen ? (
-                      <Minimize2 className="h-4 w-4" />
-                    ) : (
-                      <Maximize2 className="h-4 w-4" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {isFullscreen ? '退出全屏' : '全屏'}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <button
+              onClick={onToggleFullscreen}
+              className="p-1 text-text-muted hover:text-text-primary"
+              title={isFullscreen ? '退出全屏' : '全屏'}
+            >
+              {isFullscreen ? (
+                <ArrowsPointingInIcon className="size-4" />
+              ) : (
+                <ArrowsPointingOutIcon className="size-4" />
+              )}
+            </button>
           )}
-
-          {/* Close button */}
           {onClose && (
-            <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
-              <X className="h-4 w-4" />
-            </Button>
+            <button
+              onClick={onClose}
+              className="p-1 text-text-muted hover:text-text-primary"
+            >
+              <XMarkIcon className="size-4" />
+            </button>
           )}
         </div>
       </div>
 
-      {/* Content area */}
-      <div className="flex-1 overflow-auto p-4">
-        {isLoading ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" />
+      {/* Action bar with version nav and copy/download - only for content tab */}
+      {artifact && activeTab === 'content' && (
+        <div className="flex items-center justify-end h-8 px-3 border-b border-border flex-shrink-0 bg-muted/30">
+          {/* Version nav + actions */}
+          <div className="flex items-center gap-1">
+            {artifact.versions.length > 1 ? (
+              <>
+                <button
+                  onClick={() => handleVersionNav('prev')}
+                  disabled={artifact.version <= 1}
+                  className="p-0.5 text-text-muted hover:text-text-primary disabled:opacity-40"
+                  title="上一版本"
+                >
+                  <ChevronLeftIcon className="size-3.5" />
+                </button>
+                <span className="text-xs text-text-muted">
+                  v{artifact.version}/{artifact.versions.length}
+                </span>
+                <button
+                  onClick={() => handleVersionNav('next')}
+                  disabled={artifact.version >= artifact.versions.length}
+                  className="p-0.5 text-text-muted hover:text-text-primary disabled:opacity-40"
+                  title="下一版本"
+                >
+                  <ChevronRightIcon className="size-3.5" />
+                </button>
+                <div className="w-px h-3 bg-border mx-1" />
+              </>
+            ) : (
+              <>
+                <span className="text-xs text-text-muted mr-1">v1</span>
+                <div className="w-px h-3 bg-border mx-1" />
+              </>
+            )}
+            <button
+              onClick={handleCopy}
+              className="p-1 text-text-muted hover:text-text-primary"
+              title={copied ? '已复制' : '复制'}
+            >
+              {copied ? (
+                <CheckIcon className="size-3.5 text-green-600" />
+              ) : (
+                <ClipboardDocumentIcon className="size-3.5" />
+              )}
+            </button>
+            <button
+              onClick={handleDownload}
+              className="p-1 text-text-muted hover:text-text-primary"
+              title="下载"
+            >
+              <ArrowDownTrayIcon className="size-3.5" />
+            </button>
           </div>
-        ) : (
-          <div className="h-full">
+        </div>
+      )}
+
+      {/* Main content area - full height */}
+      <div className="flex-1 overflow-auto min-h-0">
+        {isLoading ? (
+          <div className="flex items-center justify-center h-full gap-2">
+            <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary border-t-transparent" />
+            <span className="text-sm text-text-muted">加载中...</span>
+          </div>
+        ) : activeTab === 'content' ? (
+          <div className="p-3 h-full">
             {artifact?.artifact_type === 'code' ? (
-              <pre className="text-sm font-mono bg-muted p-4 rounded-lg overflow-auto h-full">
-                <code>{artifact.content}</code>
+              <pre className="text-sm font-mono bg-muted/30 p-3 rounded h-full overflow-auto">
+                <code className="text-text-primary whitespace-pre-wrap break-words">
+                  {artifact.content}
+                </code>
               </pre>
             ) : (
-              <div className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap">
+              <div className="text-sm text-text-primary whitespace-pre-wrap break-words leading-relaxed h-full overflow-auto">
                 {artifact?.content}
               </div>
             )}
           </div>
-        )}
-      </div>
-
-      {/* Quick actions bar */}
-      {artifact && onQuickAction && (
-        <QuickActionsBar
-          artifactType={artifact.artifact_type}
-          onAction={onQuickAction}
-          disabled={isLoading}
-        />
-      )}
-
-      {/* Version history sidebar */}
-      {showVersionHistory && artifact && (
-        <VersionHistorySidebar
-          versions={artifact.versions}
-          currentVersion={artifact.version}
-          onSelect={(version) => {
-            onVersionRevert?.(version)
-            setShowVersionHistory(false)
-          }}
-          onClose={() => setShowVersionHistory(false)}
-        />
-      )}
-    </div>
-  )
-}
-
-// Version history sidebar component
-interface VersionHistorySidebarProps {
-  versions: ArtifactVersion[]
-  currentVersion: number
-  onSelect: (version: number) => void
-  onClose: () => void
-}
-
-function VersionHistorySidebar({
-  versions,
-  currentVersion,
-  onSelect,
-  onClose,
-}: VersionHistorySidebarProps) {
-  return (
-    <div className="absolute right-0 top-0 bottom-0 w-64 bg-background border-l shadow-lg z-10">
-      <div className="flex items-center justify-between px-4 py-3 border-b">
-        <h4 className="text-sm font-medium">版本历史</h4>
-        <Button variant="ghost" size="icon" onClick={onClose} className="h-7 w-7">
-          <X className="h-4 w-4" />
-        </Button>
-      </div>
-      <div className="overflow-auto max-h-[calc(100%-48px)]">
-        {[...versions].reverse().map((v) => (
-          <button
-            key={v.version}
-            onClick={() => onSelect(v.version)}
-            className={cn(
-              'w-full px-4 py-3 text-left hover:bg-muted transition-colors border-b',
-              v.version === currentVersion && 'bg-primary/5'
+        ) : (
+          <div className="p-3 space-y-2">
+            {artifact?.versions && artifact.versions.length > 0 ? (
+              [...artifact.versions].reverse().map((v) => (
+                <button
+                  key={v.version}
+                  onClick={() => {
+                    onVersionRevert?.(v.version)
+                    setActiveTab('content')
+                  }}
+                  className={classNames(
+                    'w-full text-left rounded border border-border bg-surface p-3 hover:bg-muted/50 transition-colors',
+                    v.version === artifact.version ? 'ring-2 ring-primary' : ''
+                  )}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <ClockIcon className="size-4 text-text-muted" />
+                      <span className="text-sm font-medium text-text-primary">
+                        版本 {v.version}
+                      </span>
+                      {v.version === artifact.version && (
+                        <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded">
+                          当前
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs text-text-muted">
+                      {new Date(v.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                </button>
+              ))
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-text-muted text-sm">暂无版本历史</p>
+              </div>
             )}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">版本 {v.version}</span>
-              {v.version === currentVersion && (
-                <span className="text-xs text-primary">当前</span>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {new Date(v.created_at).toLocaleString()}
-            </p>
-          </button>
-        ))}
+          </div>
+        )}
       </div>
     </div>
   )

@@ -4,13 +4,8 @@
 
 'use client'
 
-import React, { useState } from 'react'
-import { Button } from '@/components/ui/button'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
+import React, { useState, useRef, useEffect } from 'react'
+import { ChevronDownIcon } from '@heroicons/react/24/outline'
 import { cn } from '@/lib/utils'
 import { getQuickActions, type QuickActionDef } from '../constants/quickActions'
 
@@ -32,7 +27,7 @@ export function QuickActionsBar({
   return (
     <div
       className={cn(
-        'flex items-center gap-1 px-4 py-2 border-t bg-muted/50 overflow-x-auto',
+        'flex items-center gap-2 px-4 py-3 border-t border-border bg-muted/30 overflow-x-auto',
         className
       )}
     >
@@ -56,52 +51,88 @@ interface QuickActionButtonProps {
 
 function QuickActionButton({ action, onAction, disabled }: QuickActionButtonProps) {
   const [open, setOpen] = useState(false)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
   const Icon = action.icon
+
+  // Close popover when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        popoverRef.current &&
+        !popoverRef.current.contains(event.target as Node) &&
+        buttonRef.current &&
+        !buttonRef.current.contains(event.target as Node)
+      ) {
+        setOpen(false)
+      }
+    }
+
+    if (open) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [open])
 
   // If action has options, show popover
   if (action.options && action.options.length > 0) {
     return (
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={disabled}
-            className="h-8 px-3 text-xs gap-1.5 shrink-0"
+      <div className="relative">
+        <button
+          ref={buttonRef}
+          onClick={() => setOpen(!open)}
+          disabled={disabled}
+          className={cn(
+            'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+            'bg-surface border border-border text-text-primary',
+            'hover:bg-muted focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary',
+            disabled && 'opacity-50 cursor-not-allowed',
+            open && 'bg-muted'
+          )}
+        >
+          <Icon className="h-4 w-4" />
+          {action.labelZh}
+          <ChevronDownIcon className={cn('h-3 w-3 transition-transform', open && 'rotate-180')} />
+        </button>
+        {open && (
+          <div
+            ref={popoverRef}
+            className="absolute bottom-full left-0 mb-2 w-40 rounded-lg border border-border bg-surface shadow-lg z-50"
           >
-            <Icon className="h-3.5 w-3.5" />
-            {action.labelZh}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-40 p-1" align="start">
-          {action.options.map((option) => (
-            <button
-              key={option.value}
-              onClick={() => {
-                onAction(action.id, option.value)
-                setOpen(false)
-              }}
-              className="w-full px-3 py-2 text-sm text-left hover:bg-muted rounded transition-colors"
-            >
-              {option.labelZh}
-            </button>
-          ))}
-        </PopoverContent>
-      </Popover>
+            <div className="py-1">
+              {action.options.map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => {
+                    onAction(action.id, option.value)
+                    setOpen(false)
+                  }}
+                  className="w-full px-3 py-2 text-sm text-left text-text-primary hover:bg-muted transition-colors"
+                >
+                  {option.labelZh}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     )
   }
 
   // Simple action without options
   return (
-    <Button
-      variant="ghost"
-      size="sm"
+    <button
       disabled={disabled}
       onClick={() => onAction(action.id)}
-      className="h-8 px-3 text-xs gap-1.5 shrink-0"
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+        'bg-surface border border-border text-text-primary',
+        'hover:bg-muted focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary',
+        disabled && 'opacity-50 cursor-not-allowed'
+      )}
     >
-      <Icon className="h-3.5 w-3.5" />
+      <Icon className="h-4 w-4" />
       {action.labelZh}
-    </Button>
+    </button>
   )
 }
