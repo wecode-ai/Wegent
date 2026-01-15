@@ -144,6 +144,8 @@ npm run format && npm run lint
 
 ⚠️ **Wegent uses a mobile-first, component-separation architecture for responsive design**
 
+**Mobile Support Status:** ✅ Complete - All core pages (Chat, Code, Settings, Knowledge) have full mobile implementations
+
 **Breakpoint System:**
 - Mobile: ≤767px - Touch-optimized UI with drawer sidebar
 - Tablet: 768px-1023px - Uses desktop layout
@@ -165,6 +167,21 @@ app/(tasks)/chat/
 ├── page.tsx                 # Router component (dynamic imports)
 ├── ChatPageDesktop.tsx      # Desktop implementation
 └── ChatPageMobile.tsx       # Mobile implementation
+
+app/(tasks)/code/
+├── page.tsx                 # Router component (dynamic imports)
+├── CodePageDesktop.tsx      # Desktop implementation
+└── CodePageMobile.tsx       # Mobile implementation
+
+app/(tasks)/settings/
+├── page.tsx                 # Router component (dynamic imports)
+├── SettingsPageDesktop.tsx  # Desktop implementation
+└── SettingsPageMobile.tsx   # Mobile implementation
+
+app/(tasks)/knowledge/
+├── page.tsx                 # Router component (dynamic imports)
+├── KnowledgePageDesktop.tsx # Desktop implementation
+└── KnowledgePageMobile.tsx  # Mobile implementation
 ```
 
 **Component-Level Separation Pattern:**
