@@ -535,7 +535,9 @@ def get_task_services(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    app_data = task.json.get("app", {}) if task.json else {}
+    # App data is stored under status.app
+    status_data = task.json.get("status", {}) if task.json else {}
+    app_data = status_data.get("app", {}) if status_data else {}
     return {"app": app_data}
 
 
@@ -575,15 +577,18 @@ def update_task_services(
         raise HTTPException(status_code=404, detail="Task not found")
 
     # Get existing app data or initialize empty dict
+    # App data is stored under status.app
     task_json = task.json or {}
-    app_data = task_json.get("app", {}) or {}
+    status_data = task_json.get("status", {}) or {}
+    app_data = status_data.get("app", {}) or {}
 
     # Merge only non-None fields from the request
     update_data = service_update.model_dump(exclude_none=True)
     app_data.update(update_data)
 
-    # Update task JSON with new app data
-    task_json["app"] = app_data
+    # Update task JSON with new app data under status.app
+    status_data["app"] = app_data
+    task_json["status"] = status_data
     task.json = task_json
     task.updated_at = datetime.now()
     flag_modified(task, "json")
@@ -629,15 +634,18 @@ def delete_task_services(
         raise HTTPException(status_code=404, detail="Task not found")
 
     # Get existing app data
+    # App data is stored under status.app
     task_json = task.json or {}
-    app_data = task_json.get("app", {}) or {}
+    status_data = task_json.get("status", {}) or {}
+    app_data = status_data.get("app", {}) or {}
 
     # Remove specified fields
     for field_name in delete_request.fields:
         app_data.pop(field_name, None)
 
-    # Update task JSON
-    task_json["app"] = app_data
+    # Update task JSON under status.app
+    status_data["app"] = app_data
+    task_json["status"] = status_data
     task.json = task_json
     task.updated_at = datetime.now()
     flag_modified(task, "json")
