@@ -40,18 +40,28 @@ interface EnhancedMarkdownProps {
 
 /**
  * Parse LaTeX code and extract individual formulas
- * Handles multiple $$...$$ blocks and standalone formulas
+ * Handles multiple $$...$$, \[...\], and standalone formulas
+ * Also removes LaTeX comments (lines starting with %)
  */
 function parseLatexFormulas(code: string): string[] {
   const formulas: string[] = []
-  const trimmedCode = code.trim()
+  // Remove LaTeX comments (lines starting with %)
+  const codeWithoutComments = code
+    .split('\n')
+    .filter(line => !line.trim().startsWith('%'))
+    .join('\n')
+    .trim()
 
   // Match all $$...$$ blocks
-  const blockMathRegex = /\$\$([\s\S]*?)\$\$/g
+  const dollarBlockRegex = /\$\$([\s\S]*?)\$\$/g
+  // Match all \[...\] blocks
+  const bracketBlockRegex = /\\\[([\s\S]*?)\\\]/g
+
   let match
   let hasMatches = false
 
-  while ((match = blockMathRegex.exec(trimmedCode)) !== null) {
+  // Extract $$...$$ blocks
+  while ((match = dollarBlockRegex.exec(codeWithoutComments)) !== null) {
     hasMatches = true
     const formula = match[1].trim()
     if (formula) {
@@ -59,9 +69,18 @@ function parseLatexFormulas(code: string): string[] {
     }
   }
 
-  // If no $$ blocks found, treat the entire content as a single formula
-  if (!hasMatches && trimmedCode) {
-    formulas.push(trimmedCode)
+  // Extract \[...\] blocks
+  while ((match = bracketBlockRegex.exec(codeWithoutComments)) !== null) {
+    hasMatches = true
+    const formula = match[1].trim()
+    if (formula) {
+      formulas.push(formula)
+    }
+  }
+
+  // If no blocks found, treat the entire content as a single formula
+  if (!hasMatches && codeWithoutComments) {
+    formulas.push(codeWithoutComments)
   }
 
   return formulas
@@ -178,13 +197,17 @@ function LaTeXBlock({ code }: { code: string }) {
 
 /**
  * Check if the content contains LaTeX math formulas
- * Supports: $...$, $$...$$, \begin{...}...\end{...}, ```latex code blocks
+ * Supports: $...$, $$...$$, \[...\], \(...\), \begin{...}...\end{...}, ```latex code blocks
  */
 function containsMathFormulas(text: string): boolean {
   // Check for inline math: $...$
   const inlineMathRegex = /\$[^$\n]+\$/
   // Check for block math: $$...$$
   const blockMathRegex = /\$\$[\s\S]+?\$\$/
+  // Check for display math: \[...\]
+  const displayMathRegex = /\\\[[\s\S]+?\\\]/
+  // Check for inline math: \(...\)
+  const inlineParenMathRegex = /\\\([\s\S]+?\\\)/
   // Check for LaTeX environments: \begin{...}...\end{...}
   const latexEnvRegex = /\\begin\{[^}]+\}[\s\S]*?\\end\{[^}]+\}/
   // Check for latex code blocks: ```latex
@@ -193,9 +216,30 @@ function containsMathFormulas(text: string): boolean {
   return (
     inlineMathRegex.test(text) ||
     blockMathRegex.test(text) ||
+    displayMathRegex.test(text) ||
+    inlineParenMathRegex.test(text) ||
     latexEnvRegex.test(text) ||
     latexCodeBlockRegex.test(text)
   )
+}
+/**
+ * Pre-process LaTeX syntax to convert \[...\] and \(...\) to $$...$$ and $...$
+ * This is necessary because Markdown parsers escape backslashes, so \[ becomes [
+ * By converting to dollar syntax first, we ensure proper math rendering
+ */
+function preprocessLatexSyntax(text: string): string {
+  // Convert \[...\] to $$...$$ (display math)
+  // Use a regex that matches \[ followed by content and \]
+  let result = text.replace(/\\\[([\s\S]*?)\\\]/g, (_, content) => {
+    return `$$${content}$$`
+  })
+
+  // Convert \(...\) to $...$ (inline math)
+  result = result.replace(/\\\(([\s\S]*?)\\\)/g, (_, content) => {
+    return `$${content}$`
+  })
+
+  return result
 }
 
 /**
@@ -203,6 +247,7 @@ function containsMathFormulas(text: string): boolean {
  *
  * Detects ```mermaid code blocks and renders them using MermaidDiagram component.
  * Supports LaTeX math formulas with $...$ for inline and $$...$$ for block math.
+ * Also supports \[...\] and \(...\) syntax by converting them to dollar syntax.
  * All other markdown is rendered using react-markdown with remark/rehype plugins.
  */
 export const EnhancedMarkdown = memo(function EnhancedMarkdown({
@@ -210,8 +255,11 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   theme,
   components,
 }: EnhancedMarkdownProps) {
+  // Pre-process source to convert \[...\] and \(...\) to dollar syntax
+  const processedSource = useMemo(() => preprocessLatexSyntax(source), [source])
+
   // Check if source contains math formulas
-  const hasMath = useMemo(() => containsMathFormulas(source), [source])
+  const hasMath = useMemo(() => containsMathFormulas(processedSource), [processedSource])
 
   // Parse the source to extract mermaid blocks, latex blocks, and regular content
   const contentParts = useMemo(() => {
@@ -222,10 +270,10 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     let lastIndex = 0
     let match
 
-    while ((match = specialBlockRegex.exec(source)) !== null) {
+    while ((match = specialBlockRegex.exec(processedSource)) !== null) {
       // Add markdown content before this special block
       if (match.index > lastIndex) {
-        const markdownContent = source.slice(lastIndex, match.index)
+        const markdownContent = processedSource.slice(lastIndex, match.index)
         if (markdownContent.trim()) {
           parts.push({ type: 'markdown', content: markdownContent })
         }
@@ -242,20 +290,20 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     }
 
     // Add remaining markdown content after the last special block
-    if (lastIndex < source.length) {
-      const remainingContent = source.slice(lastIndex)
+    if (lastIndex < processedSource.length) {
+      const remainingContent = processedSource.slice(lastIndex)
       if (remainingContent.trim()) {
         parts.push({ type: 'markdown', content: remainingContent })
       }
     }
 
     // If no special blocks found, return the entire source as markdown
-    if (parts.length === 0 && source.trim()) {
-      parts.push({ type: 'markdown', content: source })
+    if (parts.length === 0 && processedSource.trim()) {
+      parts.push({ type: 'markdown', content: processedSource })
     }
 
     return parts
-  }, [source])
+  }, [processedSource])
 
   // Default components with link handling
   const defaultComponents = useMemo(
@@ -286,7 +334,14 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     const plugins: any[] = []
     // rehypeKatex must come before rehypeRaw to properly render math formulas
     if (hasMath) {
-      plugins.push(rehypeKatex)
+      // Configure rehypeKatex with strict: false to handle edge cases
+      plugins.push([
+        rehypeKatex,
+        {
+          strict: false,
+          throwOnError: false,
+        },
+      ])
     }
     plugins.push(rehypeRaw)
     return plugins
@@ -307,7 +362,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   if (contentParts.length === 1 && contentParts[0].type === 'markdown') {
     return (
       <div className="markdown-content" data-color-mode={theme}>
-        {renderMarkdown(source)}
+        {renderMarkdown(processedSource)}
       </div>
     )
   }
