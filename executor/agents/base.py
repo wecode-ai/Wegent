@@ -190,8 +190,10 @@ class Agent:
         logger.info(
             f"Agent[{self.get_name()}][{self.task_id}] start download code for git url: {git_url}, branch name: {branch_name}, repo_type: {repo_type}"
         )
-        logger.info("username: {username} git token: {git_token}")
-        logger.info(user_config)
+        # Log username for debugging but redact token for security
+        logger.debug(
+            f"Agent[{self.get_name()}][{self.task_id}] Using username: {username}, token: {'***' if git_token else 'None'}"
+        )
 
         project_path = os.path.join(config.WORKSPACE_ROOT, str(self.task_id), repo_name)
         if self.project_path is None:
