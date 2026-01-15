@@ -215,7 +215,7 @@ class LoadSkillTool(BaseTool):
 
         for skill_name, prompt in self._loaded_skill_prompts.items():
             builder.append_with_header(
-                f"\n\n### Skill: {skill_name}",
+                f"\n\n## Skill: {skill_name}",
                 prompt,
                 content_target_level=4,
             )
