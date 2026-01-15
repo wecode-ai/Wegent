@@ -6,11 +6,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react'
 import { ProjectWithTasks, ProjectTask } from '@/types/api'
-import {
-  projectApis,
-  CreateProjectRequest,
-  UpdateProjectRequest,
-} from '@/apis/projects'
+import { projectApis, CreateProjectRequest, UpdateProjectRequest } from '@/apis/projects'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -125,9 +121,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       try {
         await projectApis.updateProject(id, data)
         // Update local state
-        setProjects(prev =>
-          prev.map(p => (p.id === id ? { ...p, ...data } : p))
-        )
+        setProjects(prev => prev.map(p => (p.id === id ? { ...p, ...data } : p)))
         toast({
           title: t('toast.updateSuccess'),
         })
@@ -176,14 +170,29 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     async (projectId: number, taskId: number): Promise<ProjectTask | null> => {
       try {
         const response = await projectApis.addTaskToProject(projectId, taskId)
-        // Update local state
+        // Update local state - add to new project and remove from any other project
         setProjects(prev =>
           prev.map(p => {
             if (p.id === projectId) {
+              // Add task to target project (if not already there)
+              const alreadyExists = p.tasks.some(t => t.task_id === taskId)
+              if (alreadyExists) {
+                return p
+              }
               return {
                 ...p,
                 tasks: [...p.tasks, response.project_task],
                 task_count: p.task_count + 1,
+              }
+            } else {
+              // Remove task from other projects (for moving between projects)
+              const hadTask = p.tasks.some(t => t.task_id === taskId)
+              if (hadTask) {
+                return {
+                  ...p,
+                  tasks: p.tasks.filter(t => t.task_id !== taskId),
+                  task_count: Math.max(0, p.task_count - 1),
+                }
               }
             }
             return p
@@ -259,11 +268,13 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       // Persist to server
       const project = projects.find(p => p.id === projectId)
       if (project) {
-        projectApis.updateProject(projectId, {
-          is_expanded: !project.is_expanded,
-        }).catch(err => {
-          console.error('[ProjectContext] Failed to persist expanded state:', err)
-        })
+        projectApis
+          .updateProject(projectId, {
+            is_expanded: !project.is_expanded,
+          })
+          .catch(err => {
+            console.error('[ProjectContext] Failed to persist expanded state:', err)
+          })
       }
     },
     [projects]
