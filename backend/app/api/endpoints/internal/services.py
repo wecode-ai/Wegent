@@ -34,7 +34,9 @@ class ServiceUpdateRequest(BaseModel):
 
     task_id: int = Field(..., description="Task ID to update")
     name: Optional[str] = Field(None, description="Application name")
-    host: Optional[str] = Field(None, description="Host address")
+    address: Optional[str] = Field(
+        None, description="Service address in IP:port format (e.g., '192.168.1.1:3456')"
+    )
     previewUrl: Optional[str] = Field(None, description="Application preview URL")
     mysql: Optional[str] = Field(
         None, description="MySQL connection string (mysql://user:pass@host:port/db)"

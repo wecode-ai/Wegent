@@ -5,7 +5,7 @@
 """Expose Service tool for publishing/exposing service information.
 
 This tool allows AI to publish or expose service information such as
-application name, host address, preview URL, and database connection strings.
+application name, service address, preview URL, and database connection strings.
 The data is stored in the Task's app field in the backend.
 """
 
@@ -30,9 +30,9 @@ class ExposeServiceInput(BaseModel):
         None,
         description="Application name. Extract from user input like 'app name is XXX' or 'project called XXX'. Example: 'MyWebApp', 'TodoList'",
     )
-    host: Optional[str] = Field(
+    address: Optional[str] = Field(
         None,
-        description="Host address where the service runs. Extract from user input mentioning host/server address. Example: 'localhost:3000', '192.168.1.100', '127.0.0.1:8080'",
+        description="Service address in IP:port format. Extract from user input mentioning server/service address. Example: 'ZINFOID_07Q:3456', '127.0.0.1:8080'",
     )
     previewUrl: Optional[str] = Field(
         None,
@@ -49,7 +49,7 @@ class ExposeServiceTool(BaseTool):
 
     This tool allows AI agents to expose/publish service information when:
     - User requests to deploy/publish a web application or static website
-    - User needs to set or share a host address
+    - User needs to set or share a service address
     - User creates a database and needs to share the MySQL connection info
 
     The service information is stored in the Task's app field in the backend.
@@ -62,16 +62,16 @@ class ExposeServiceTool(BaseTool):
         "IMPORTANT: You MUST extract and provide at least one parameter from the user's request or context.\n\n"
         "Use this tool when:\n"
         "- User wants to deploy/publish a web application → extract and pass 'name' and/or 'previewUrl'\n"
-        "- User mentions a host address or server → extract and pass 'host'\n"
+        "- User mentions a service address (IP:port) → extract and pass 'address'\n"
         "- User created a database and wants to share connection info → extract and pass 'mysql'\n"
         "- User wants to set an application name → extract and pass 'name'\n\n"
         "REQUIRED: At least one of these parameters must be provided:\n"
         "- name: The application/project name (e.g., 'MyApp', 'TodoList')\n"
-        "- host: The host address (e.g., 'localhost:3000', '192.168.1.100')\n"
+        "- address: The service address in IP:port format (e.g., 'ZINFOID_08Q:3456')\n"
         "- previewUrl: The preview URL (e.g., 'https://example.com')\n"
         "- mysql: The MySQL connection string (e.g., 'mysql://root:pass@localhost:3306/db')\n\n"
-        "Example: If user says '发布应用 Service Example，主机是 localhost，预览地址是 https://example.com', "
-        "you should call this tool with: name='Service Example', host='localhost', previewUrl='https://example.com'"
+        "Example: If user says '发布应用 Service Example，地址是 ZINFOID_09Q:3000，预览地址是 https://example.com', "
+        "you should call this tool with: name='Service Example', address='ZINFOID_10Q:3000', previewUrl='https://example.com'"
     )
     args_schema: type[BaseModel] = ExposeServiceInput
 
@@ -83,7 +83,7 @@ class ExposeServiceTool(BaseTool):
     def _run(
         self,
         name: Optional[str] = None,
-        host: Optional[str] = None,
+        address: Optional[str] = None,
         previewUrl: Optional[str] = None,
         mysql: Optional[str] = None,
         run_manager: CallbackManagerForToolRun | None = None,
@@ -94,7 +94,7 @@ class ExposeServiceTool(BaseTool):
     async def _arun(
         self,
         name: Optional[str] = None,
-        host: Optional[str] = None,
+        address: Optional[str] = None,
         previewUrl: Optional[str] = None,
         mysql: Optional[str] = None,
         run_manager: CallbackManagerForToolRun | None = None,
@@ -103,7 +103,7 @@ class ExposeServiceTool(BaseTool):
 
         Args:
             name: Application name
-            host: Host address
+            address: Service address (IP:port format)
             previewUrl: Application preview URL
             mysql: MySQL connection string
             run_manager: Callback manager
@@ -119,22 +119,22 @@ class ExposeServiceTool(BaseTool):
                 )
 
             # Check that at least one field is provided
-            if not any([name, host, previewUrl, mysql]):
+            if not any([name, address, previewUrl, mysql]):
                 return json.dumps(
                     {
-                        "error": "At least one service field (name, host, previewUrl, mysql) must be provided."
+                        "error": "At least one service field (name, address, previewUrl, mysql) must be provided."
                     },
                     ensure_ascii=False,
                 )
 
             logger.info(
                 f"[ExposeServiceTool] Exposing service for task {self.task_id}: "
-                f"name={name}, host={host}, previewUrl={previewUrl}, mysql={'***' if mysql else None}"
+                f"name={name}, address={address}, previewUrl={previewUrl}, mysql={'***' if mysql else None}"
             )
 
             result = await self._update_service_via_backend(
                 name=name,
-                host=host,
+                address=address,
                 previewUrl=previewUrl,
                 mysql=mysql,
             )
@@ -148,8 +148,8 @@ class ExposeServiceTool(BaseTool):
                 updated_fields = []
                 if name:
                     updated_fields.append(f"name: {name}")
-                if host:
-                    updated_fields.append(f"host: {host}")
+                if address:
+                    updated_fields.append(f"address: {address}")
                 if previewUrl:
                     updated_fields.append(f"previewUrl: {previewUrl}")
                 if mysql:
@@ -176,7 +176,7 @@ class ExposeServiceTool(BaseTool):
     async def _update_service_via_backend(
         self,
         name: Optional[str],
-        host: Optional[str],
+        address: Optional[str],
         previewUrl: Optional[str],
         mysql: Optional[str],
     ) -> dict:
@@ -184,7 +184,7 @@ class ExposeServiceTool(BaseTool):
 
         Args:
             name: Application name
-            host: Host address
+            address: Service address (IP:port format)
             previewUrl: Preview URL
             mysql: MySQL connection string
 
@@ -203,8 +203,8 @@ class ExposeServiceTool(BaseTool):
         request_data = {"task_id": self.task_id}
         if name is not None:
             request_data["name"] = name
-        if host is not None:
-            request_data["host"] = host
+        if address is not None:
+            request_data["address"] = address
         if previewUrl is not None:
             request_data["previewUrl"] = previewUrl
         if mysql is not None:

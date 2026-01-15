@@ -473,7 +473,7 @@ class Task(BaseModel):
     metadata: ObjectMeta
     spec: TaskSpec
     status: Optional[TaskStatus] = None
-    app: Optional[Dict[str, Any]] = None  # Application service info (name, host, previewUrl, mysql)
+    app: Optional[Dict[str, Any]] = None  # Application service info (name, address, previewUrl, mysql)
 
 
 class TaskList(BaseModel):
