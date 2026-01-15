@@ -184,7 +184,7 @@ export function ChatInputCard({
         {!shouldHideChatInput && <QuoteCard />}
 
         {/* Connection Status Banner - shows WebSocket connection status */}
-        <ConnectionStatusBanner />
+        {!shouldHideChatInput && <ConnectionStatusBanner />}
 
         {/* Chat Input with inline badge */}
         {!shouldHideChatInput && (
