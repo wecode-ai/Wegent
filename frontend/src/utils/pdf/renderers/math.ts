@@ -30,8 +30,6 @@ export function renderMathFormula(
   maxWidth: number,
   displayMode: boolean = false
 ): void {
-  const { pdf } = ctx
-
   if (displayMode) {
     // Block math: render centered with visual styling
     renderDisplayMath(ctx, latex, startX, maxWidth)
@@ -159,7 +157,8 @@ export async function renderMathAsImage(
 ): Promise<void> {
   try {
     // Attempt to render with KaTeX for validation
-    const html = katex.renderToString(latex, {
+    // This validates the LaTeX syntax even though we fall back to text rendering
+    katex.renderToString(latex, {
       displayMode,
       throwOnError: false,
       output: 'html',
