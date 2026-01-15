@@ -70,7 +70,7 @@ services:
   backend:
     # build:
       # dockerfile: docker/backend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-backend:1.1.1
+    image: ghcr.io/wecode-ai/wegent-backend:latest
     container_name: wegent-backend
     restart: always
     ports:
@@ -118,7 +118,7 @@ services:
   frontend:
     # build:
     #   dockerfile: docker/frontend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-web:1.1.1
+    image: ghcr.io/wecode-ai/wegent-web:latest
     container_name: wegent-frontend
     restart: always
     ports:
@@ -149,7 +149,7 @@ services:
       - wegent-network
 
   chat_shell:
-    image: ghcr.io/wecode-ai/wegent-chat-shell:1.1.1
+    image: ghcr.io/wecode-ai/wegent-chat-shell:latest
     container_name: wegent-chat-shell
     restart: always
     ports:
@@ -180,7 +180,7 @@ services:
   executor_manager:
     #build:
       #dockerfile: docker/frontend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-executor-manager:1.1.1
+    image: ghcr.io/wecode-ai/wegent-executor-manager:latest
     extra_hosts:
       - "host.docker.internal:host-gateway"
     container_name: wegent-executor-manager
