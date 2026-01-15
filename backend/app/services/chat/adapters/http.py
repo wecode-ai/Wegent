@@ -133,12 +133,14 @@ class HTTPAdapter(ChatInterface):
         metadata = {
             "task_id": request.task_id,
             "subtask_id": request.subtask_id,
+            "user_subtask_id": request.user_subtask_id,  # User subtask ID for RAG persistence
             "user_id": request.user_id,
             "user_name": request.user_name,
             "team_id": request.team_id,
             "team_name": request.team_name,
             "chat_type": "group" if request.is_group_chat else "single",
             "message_id": request.message_id,
+            "user_message_id": request.user_message_id,  # For history exclusion
             "bot_name": request.bot_name,
             "bot_namespace": request.bot_namespace,
             # Additional fields for HTTP mode
@@ -147,6 +149,7 @@ class HTTPAdapter(ChatInterface):
             "preload_skills": request.preload_skills,
             "knowledge_base_ids": request.knowledge_base_ids,
             "document_ids": request.document_ids,
+            "is_user_selected_kb": request.is_user_selected_kb,
             "table_contexts": request.table_contexts,
             "task_data": request.task_data,
         }

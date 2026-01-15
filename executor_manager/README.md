@@ -27,7 +27,7 @@ The script will automatically:
 ./start.sh --port 8002
 
 # Use custom executor image
-./start.sh --executor-image ghcr.io/wecode-ai/wegent-executor:1.0.18
+./start.sh --executor-image ghcr.io/wecode-ai/wegent-executor:latest
 
 # Use custom backend API
 ./start.sh --task-api-domain http://backend:8000
@@ -71,7 +71,7 @@ Run the application (example with environment variables):
 cd executor_manager
 
 # Run with uv
-EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:{version} DOCKER_HOST_ADDR={LocalHost IP} uv run main.py
+EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest DOCKER_HOST_ADDR={LocalHost IP} uv run main.py
 ```
 
 > EXECUTOR_IMAGE: Check docker-compose.yml for the latest wegent-executor image version

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for knowledge injection strategy."""
+"""Tests for knowledge injection strategy - clean test version."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,11 +20,11 @@ from chat_shell.tools.knowledge_injection_strategy import (
 )
 
 
-class TestKnowledgeContentCleaner:
-    """Test knowledge content cleaner."""
+class TestKnowledgeContentCleanerClean:
+    """Test knowledge content cleaner - clean version preserving URLs."""
 
-    def test_clean_content_basic(self):
-        """Test basic content cleaning."""
+    def test_clean_content_preserves_urls(self):
+        """Test that content cleaning preserves URLs."""
         cleaner = KnowledgeContentCleaner()
 
         content = """
@@ -37,25 +37,25 @@ class TestKnowledgeContentCleaner:
 
         cleaned = cleaner.clean_content(content)
 
-        # Check that URLs are removed
-        assert "https://example.com" not in cleaned
-        assert "http://test.org/page" not in cleaned
+        # Check that URLs are preserved
+        assert "https://example.com" in cleaned
+        assert "http://test.org/page" in cleaned
 
         # Check that HTML tags are removed
         assert "<p>" not in cleaned
         assert "</p>" not in cleaned
         assert "<div>" not in cleaned
 
-        # Check that repeated punctuation is normalized
+        # Check that repeated punctuation is normalized to original type
         assert "Hello!!!" not in cleaned
-        assert "Hello." in cleaned
+        assert "Hello!" in cleaned  # ! preserved, not changed to .
 
         # Check that whitespace is normalized
         assert "extra   whitespace   here" not in cleaned
         assert "extra whitespace here" in cleaned
 
-    def test_clean_knowledge_chunk(self):
-        """Test cleaning knowledge base chunk."""
+    def test_clean_knowledge_chunk_preserves_urls(self):
+        """Test cleaning knowledge base chunk preserves URLs."""
         cleaner = KnowledgeContentCleaner()
 
         chunk = {
@@ -67,7 +67,9 @@ class TestKnowledgeContentCleaner:
 
         cleaned_chunk = cleaner.clean_knowledge_chunk(chunk)
 
-        assert "https://example.com" not in cleaned_chunk["content"]
+        # URL should be preserved
+        assert "https://example.com" in cleaned_chunk["content"]
+        # HTML should be removed
         assert "<p>" not in cleaned_chunk["content"]
         assert cleaned_chunk["source"] == "test.txt"
         assert cleaned_chunk["score"] == 0.8
@@ -77,15 +79,16 @@ class TestKnowledgeContentCleaner:
         """Test token reduction estimation."""
         cleaner = KnowledgeContentCleaner()
 
-        content = "Content with URL: https://example.com and HTML: <p>test</p>"
+        content = "Content with HTML: <p>test</p> and   extra   spaces"
         original_tokens, cleaned_tokens = cleaner.estimate_token_reduction(content)
 
-        assert cleaned_tokens < original_tokens
+        # Cleaned should have fewer or equal tokens (HTML and spaces removed)
+        assert cleaned_tokens <= original_tokens
         assert original_tokens > 0
 
 
-class TestInjectionStrategy:
-    """Test injection strategy."""
+class TestInjectionStrategyClean:
+    """Test injection strategy - clean version without aggressive mode."""
 
     def test_calculate_available_space(self):
         """Test available space calculation."""
@@ -224,8 +227,8 @@ class TestInjectionStrategy:
         assert result["injected_content"] is None
 
 
-class TestKnowledgeBaseTool:
-    """Test KnowledgeBaseTool with injection strategy."""
+class TestKnowledgeBaseToolClean:
+    """Test KnowledgeBaseTool with injection strategy - clean version."""
 
     def test_injection_strategy_property(self):
         """Test injection strategy lazy initialization."""

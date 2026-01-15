@@ -955,6 +955,21 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-instrumentation-redis"
+version = "0.60b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b0/54/e08c60b3cc7aadcdd91c6cf83bb69b9b6ba88b6a1fb75e4893fbd2571211/opentelemetry_instrumentation_redis-0.60b0.tar.gz", hash = "sha256:e97121942d9cf8705e310fee3f1413d74356bf0426b96bf9508385e63fb8ab85", size = 14775, upload-time = "2025-12-03T13:22:30.205Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/31/6d/0ae60b2e6989bd35b8a2dc9e3a8842ecbd7c7e37639d6e69684493911736/opentelemetry_instrumentation_redis-0.60b0-py3-none-any.whl", hash = "sha256:f22aeea7de815228fede1a1bc139bc1634f45af4878c2e9a5fc159913d031d6d", size = 15503, upload-time = "2025-12-03T13:21:36.972Z" },
+]
+
+[[package]]
 name = "opentelemetry-instrumentation-requests"
 version = "0.60b0"
 source = { registry = "https://pypi.org/simple" }
@@ -1609,6 +1624,7 @@ dependencies = [
     { name = "opentelemetry-exporter-otlp" },
     { name = "opentelemetry-instrumentation-fastapi" },
     { name = "opentelemetry-instrumentation-httpx" },
+    { name = "opentelemetry-instrumentation-redis" },
     { name = "opentelemetry-instrumentation-requests" },
     { name = "opentelemetry-instrumentation-system-metrics" },
     { name = "opentelemetry-sdk" },
@@ -1627,6 +1643,7 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.27.0" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.48b0" },
     { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.48b0" },
+    { name = "opentelemetry-instrumentation-redis", specifier = ">=0.48b0" },
     { name = "opentelemetry-instrumentation-requests", specifier = ">=0.48b0" },
     { name = "opentelemetry-instrumentation-system-metrics", specifier = ">=0.48b0" },
     { name = "opentelemetry-sdk", specifier = ">=1.27.0" },

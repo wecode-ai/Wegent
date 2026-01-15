@@ -8,6 +8,7 @@ OpenTelemetry instrumentation setup for all services.
 This module provides auto-instrumentation for:
 - FastAPI (HTTP requests/responses)
 - SQLAlchemy (database queries) - optional
+- Redis (cache operations) - optional
 - HTTPX (async HTTP client)
 - Requests (sync HTTP client)
 - System metrics (CPU, memory, etc.)
@@ -20,8 +21,9 @@ from typing import Any, Optional
 def setup_opentelemetry_instrumentation(
     app: Any,
     logger: Optional[logging.Logger] = None,
-    enable_sqlalchemy: bool = False,
+    enable_sqlalchemy: bool = True,
     sqlalchemy_engine: Any = None,
+    enable_redis: bool = True,
 ) -> None:
     """
     Setup OpenTelemetry instrumentation for a FastAPI service.
@@ -31,6 +33,7 @@ def setup_opentelemetry_instrumentation(
         logger: Logger instance (optional, will create one if not provided)
         enable_sqlalchemy: Whether to enable SQLAlchemy instrumentation
         sqlalchemy_engine: SQLAlchemy engine instance (required if enable_sqlalchemy is True)
+        enable_redis: Whether to enable Redis instrumentation
     """
     if logger is None:
         logger = logging.getLogger(__name__)
@@ -39,6 +42,9 @@ def setup_opentelemetry_instrumentation(
 
     if enable_sqlalchemy:
         _setup_sqlalchemy_instrumentation(logger, sqlalchemy_engine)
+
+    if enable_redis:
+        _setup_redis_instrumentation(logger)
 
     _setup_httpx_instrumentation(logger)
     _setup_requests_instrumentation(logger)
@@ -311,6 +317,27 @@ def _setup_sqlalchemy_instrumentation(
         logger.debug("SQLAlchemy instrumentation not available (package not installed)")
     except Exception as e:
         logger.warning(f"Failed to setup SQLAlchemy instrumentation: {e}")
+
+
+def _setup_redis_instrumentation(logger: logging.Logger) -> None:
+    """Setup Redis instrumentation for tracing cache operations.
+
+    Note: This may be a no-op if instrumentation was already set up early
+    (before redis module import). We check is_instrumented() to avoid errors.
+    """
+    try:
+        from opentelemetry.instrumentation.redis import RedisInstrumentor
+
+        instrumentor = RedisInstrumentor()
+        if instrumentor.is_instrumented_by_opentelemetry:
+            logger.info("✓ Redis instrumentation already enabled (early setup)")
+        else:
+            instrumentor.instrument()
+            logger.info("✓ Redis instrumentation enabled")
+    except ImportError:
+        logger.debug("Redis instrumentation not available (package not installed)")
+    except Exception as e:
+        logger.warning(f"Failed to setup Redis instrumentation: {e}")
 
 
 def _setup_httpx_instrumentation(logger: logging.Logger) -> None:

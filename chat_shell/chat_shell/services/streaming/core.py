@@ -108,8 +108,16 @@ class StreamingState:
         include_value: bool = True,
         include_thinking: bool = True,
         slim_thinking: bool = False,
+        include_sources: bool = True,
     ) -> dict:
-        """Get current result with thinking steps and sources."""
+        """Get current result with thinking steps and sources.
+
+        Args:
+            include_value: Include the full response value
+            include_thinking: Include thinking steps (tool calls)
+            slim_thinking: Use slimmed down thinking data (for Chat mode)
+            include_sources: Include knowledge base sources (independent of thinking)
+        """
         result: dict = {"shell_type": self.shell_type}
         if include_value:
             result["value"] = self.full_response
@@ -119,8 +127,10 @@ class StreamingState:
                     result["thinking"] = self._slim_thinking_data(self.thinking)
                 else:
                     result["thinking"] = self.thinking
-            if self.sources:
-                result["sources"] = self.sources
+        # Sources should be included independently of thinking steps
+        # This ensures knowledge base citations are always available
+        if include_sources and self.sources:
+            result["sources"] = self.sources
         if self.reasoning_content:
             result["reasoning_content"] = self.reasoning_content
         return result
