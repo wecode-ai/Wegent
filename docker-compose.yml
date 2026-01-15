@@ -7,6 +7,10 @@ services:
     image: mysql:9.4
     container_name: wegent-mysql
     restart: always
+    command: >
+      --innodb_buffer_pool_size=256M
+      --max_connections=200
+      --sort_buffer_size=8M
     environment:
       MYSQL_ROOT_PASSWORD: 123456
       MYSQL_DATABASE: task_manager

@@ -200,7 +200,7 @@ services:
     command: >
       --innodb_buffer_pool_size=256M
       --max_connections=200
-      --query_cache_size=32M
+      --sort_buffer_size=8M
 ```
 
 **3. 定期清理**

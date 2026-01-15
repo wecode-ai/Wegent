@@ -401,6 +401,17 @@ SET GLOBAL slow_query_log = 'ON';
 SET GLOBAL long_query_time = 2;
 ```
 
+**MySQL Configuration Optimization**
+```yaml
+# Add MySQL configuration in docker-compose.yml
+services:
+  mysql:
+    command: >
+      --innodb_buffer_pool_size=256M
+      --max_connections=200
+      --sort_buffer_size=8M
+```
+
 **3. Optimize Redis**
 ```bash
 # Check Redis performance
