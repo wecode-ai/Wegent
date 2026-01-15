@@ -105,6 +105,13 @@ Returns:
         **_,
     ) -> str:
         """Create a new artifact."""
+        logger.info(
+            "[CreateArtifactTool] _run called with: artifact_type=%s, title=%s, language=%s, content_length=%d",
+            artifact_type,
+            title,
+            language,
+            len(content) if content else 0,
+        )
         try:
             artifact_id = str(uuid.uuid4())
             now = datetime.utcnow().isoformat()
@@ -135,11 +142,12 @@ Returns:
                 title,
                 len(content),
             )
+            logger.info("[CreateArtifactTool] Returning result: %s", result)
 
             return json.dumps(result, ensure_ascii=False)
 
         except Exception as e:
-            logger.exception("Error creating artifact")
+            logger.exception("[CreateArtifactTool] Error creating artifact")
             return json.dumps({"error": f"Failed to create artifact: {e}"})
 
     async def _arun(
@@ -151,6 +159,7 @@ Returns:
         **_,
     ) -> str:
         """Async version - delegates to sync."""
+        logger.info("[CreateArtifactTool] _arun called, delegating to _run")
         return self._run(artifact_type, title, content, language)
 
 
@@ -332,8 +341,11 @@ def create_canvas_tools() -> list[BaseTool]:
     Returns:
         List of Canvas tools to register with the agent
     """
-    return [
+    logger.info("[create_canvas_tools] Creating Canvas tools...")
+    tools = [
         CreateArtifactTool(),
         UpdateArtifactTool(),
         ArtifactQuickActionTool(),
     ]
+    logger.info("[create_canvas_tools] Created %d Canvas tools: %s", len(tools), [t.name for t in tools])
+    return tools

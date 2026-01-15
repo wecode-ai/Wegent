@@ -51,13 +51,15 @@ export function useArtifactStream(options: UseArtifactStreamOptions) {
  * Check if a subtask result contains an artifact
  */
 export function isArtifactResult(result: unknown): result is ArtifactResult {
-  return (
-    typeof result === 'object' &&
-    result !== null &&
-    'type' in result &&
-    (result as { type: unknown }).type === 'artifact' &&
-    'artifact' in result
-  )
+  if (typeof result !== 'object' || result === null) {
+    return false
+  }
+
+  const hasType = 'type' in result
+  const typeValue = hasType ? (result as { type: unknown }).type : undefined
+  const hasArtifact = 'artifact' in result
+
+  return hasType && typeValue === 'artifact' && hasArtifact
 }
 
 /**

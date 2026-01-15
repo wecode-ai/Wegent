@@ -279,6 +279,161 @@ def append_deep_thinking_prompt(system_prompt: str, enable_deep_thinking: bool) 
     return system_prompt
 
 
+# Canvas Artifact Mode Prompt - Instructs LLM to use Canvas tools for content creation
+CANVAS_ARTIFACT_PROMPT = """
+
+## Canvas Artifact System (画布工件系统)
+
+You have access to Canvas tools for creating and managing rich content artifacts. Canvas provides a dedicated panel for displaying generated content separately from the chat conversation.
+
+### ⚠️ CRITICAL: When to Use Canvas Tools
+
+**You MUST use the `create_artifact` tool when the user asks you to:**
+
+1. **Write/Create Content (写作/创作):**
+   - Articles, essays, blog posts (文章、散文、博客)
+   - Stories, poems, scripts (故事、诗歌、剧本)
+   - Reports, summaries, documentation (报告、总结、文档)
+   - Any substantial text content (>100 characters)
+
+2. **Generate Code (代码生成):**
+   - Complete code files or scripts
+   - Code examples with explanations
+   - Configuration files
+
+3. **Create Structured Content (结构化内容):**
+   - Tables, lists, structured data
+   - Markdown documents
+   - Technical specifications
+
+4. **Design Documents (设计文档):**
+   - Architecture designs
+   - API documentation
+   - User guides
+
+### ⚠️ CRITICAL: Modifying Existing Artifacts (修改现有内容)
+
+**When the user asks to modify, edit, expand, or change existing artifact content, you MUST use the `update_artifact` tool.**
+
+Look for artifact content in the conversation history. It will be marked like this:
+```
+[Created Artifact: <title> (artifact_id: <uuid>)]
+<content>
+```
+
+The `artifact_id` in parentheses is what you need to pass to `update_artifact`.
+
+**Modification requests include (修改请求包括):**
+- "扩充/扩写第X段" (Expand paragraph X)
+- "删除/移除第X章/段" (Delete chapter/paragraph X)
+- "修改/编辑这篇文章" (Modify/edit this article)
+- "把第X段改成..." (Change paragraph X to...)
+- "添加/增加一个章节" (Add a section)
+- "精简/缩短内容" (Shorten the content)
+- "改写/重写这部分" (Rewrite this part)
+- Any request to change existing artifact content
+
+**How to handle modification requests:**
+1. Read the existing artifact content from conversation history (marked with `[Created Artifact: <title>]`)
+2. Find the artifact_id from when it was created
+3. Make the requested changes to the content
+4. Use `update_artifact` with the artifact_id and the complete updated content
+
+### How to Use Canvas Tools
+
+**`create_artifact` Tool:**
+```
+Use this to create NEW content in the Canvas panel.
+Required parameters:
+- artifact_type: "text" | "code"
+- title: A descriptive title for the artifact
+- content: The full content to display
+
+Optional parameters:
+- language: For code artifacts (e.g., "python", "javascript", "typescript")
+```
+
+**`update_artifact` Tool:**
+```
+Use this to MODIFY existing artifacts.
+⚠️ YOU MUST USE THIS TOOL when user asks to edit, expand, delete, or change existing content!
+
+Required parameters:
+- artifact_id: The ID of the artifact to update (found in conversation history)
+- content: The COMPLETE updated content (not just the changes)
+
+Optional parameters:
+- title: New title if you want to change it
+```
+
+### Examples
+
+**User says:** "帮我写一篇关于航天的文章" (Help me write an article about aerospace)
+**You should:** Use `create_artifact` with artifact_type="text"
+
+**User says:** "写一个Python脚本" (Write a Python script)
+**You should:** Use `create_artifact` with artifact_type="code" and language="python"
+
+**User says:** "扩充第五段" (Expand paragraph 5)
+**You should:**
+1. Find the existing artifact content in conversation history
+2. Find the artifact_id
+3. Expand paragraph 5 in the content
+4. Use `update_artifact` with artifact_id and the complete updated content
+
+**User says:** "删除第七章" (Delete chapter 7)
+**You should:**
+1. Find the existing artifact content in conversation history
+2. Find the artifact_id
+3. Remove chapter 7 from the content
+4. Use `update_artifact` with artifact_id and the complete updated content
+
+### Important Guidelines
+
+1. **Always use Canvas for substantial content creation** - Don't just output content in the chat; use `create_artifact` to display it in the Canvas panel
+2. **Always use `update_artifact` for modifications** - When user asks to change existing artifact content, you MUST use `update_artifact`, not just describe the changes
+3. **Choose the correct artifact_type:**
+   - `text` for articles, reports, essays, stories, documents, etc.
+   - `code` for programming code (include the `language` parameter)
+4. **Provide a clear title** that describes the content
+5. **Include the full content** - Both `create_artifact` and `update_artifact` require the COMPLETE content
+6. **Use Markdown formatting** in text artifacts for better readability
+
+### When NOT to Use Canvas
+
+- Simple one-line answers or explanations
+- Conversational responses
+- Lists of options or clarifying questions
+- Error messages or status updates
+"""
+
+
+def get_canvas_artifact_prompt() -> str:
+    """
+    Get the Canvas artifact mode prompt.
+
+    Returns:
+        The Canvas artifact prompt string to append to system prompt.
+    """
+    return CANVAS_ARTIFACT_PROMPT
+
+
+def append_canvas_artifact_prompt(system_prompt: str, enable_canvas: bool = True) -> str:
+    """
+    Append Canvas artifact prompt to system prompt if enabled.
+
+    Args:
+        system_prompt: The original system prompt.
+        enable_canvas: Whether Canvas mode is enabled.
+
+    Returns:
+        The system prompt with Canvas artifact instructions appended if enabled.
+    """
+    if enable_canvas:
+        return system_prompt + CANVAS_ARTIFACT_PROMPT
+    return system_prompt
+
+
 # Skill Metadata Prompt Template
 SKILL_METADATA_PROMPT = """
 
@@ -325,13 +480,14 @@ def build_system_prompt(
     base_prompt: str,
     enable_clarification: bool = False,
     enable_deep_thinking: bool = True,
+    enable_canvas: bool = True,
     skills: list[dict] | None = None,
 ) -> str:
     """
     Build the final system prompt with optional enhancements.
 
     This function centralizes all prompt building logic within chat_shell,
-    applying clarification mode, deep thinking mode, and on-demand skill metadata
+    applying clarification mode, deep thinking mode, canvas mode, and on-demand skill metadata
     based on the provided configuration.
 
     Note: Skills with preload=True will be automatically injected by prompt_modifier
@@ -341,6 +497,7 @@ def build_system_prompt(
         base_prompt: The base system prompt from Ghost
         enable_clarification: Whether to enable clarification mode
         enable_deep_thinking: Whether to enable deep thinking mode
+        enable_canvas: Whether to enable canvas artifact mode (default True)
         skills: List of all skill configs [{"name": "...", "description": "...", "prompt": "...", "preload": bool, ...}]
 
     Returns:
@@ -350,8 +507,9 @@ def build_system_prompt(
         1. Base prompt
         2. Clarification mode instructions (if enabled)
         3. Deep thinking mode instructions (if enabled)
-        4. On-demand skill metadata (for load_skill tool)
-        5. Preloaded skills (injected later by prompt_modifier)
+        4. Canvas artifact mode instructions (if enabled)
+        5. On-demand skill metadata (for load_skill tool)
+        6. Preloaded skills (injected later by prompt_modifier)
     """
     system_prompt = base_prompt
 
@@ -362,6 +520,10 @@ def build_system_prompt(
     # Append deep thinking mode instructions if enabled
     if enable_deep_thinking:
         system_prompt = append_deep_thinking_prompt(system_prompt, True)
+
+    # Append canvas artifact mode instructions if enabled
+    if enable_canvas:
+        system_prompt = append_canvas_artifact_prompt(system_prompt, True)
 
     # Inject on-demand skill metadata (filter out preloaded ones)
     if skills:

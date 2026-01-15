@@ -101,6 +101,7 @@ async def _stream_response(
         set()
     )  # Track emitted tool events to avoid duplicates
     accumulated_sources: list[dict] = []  # Track knowledge base sources for citation
+    accumulated_artifact: dict | None = None  # Track Canvas artifact for history storage
 
     try:
         # Send response.start event
@@ -468,6 +469,15 @@ async def _stream_response(
                 if usage:
                     total_input_tokens = usage.get("input_tokens", 0)
                     total_output_tokens = usage.get("output_tokens", 0)
+                # Extract artifact data for history storage
+                # Artifact is at top level of result (type=artifact, artifact={...})
+                if result and result.get("type") == "artifact" and result.get("artifact"):
+                    accumulated_artifact = result.get("artifact")
+                    logger.info(
+                        "[RESPONSE] Extracted artifact from DONE event: title=%s, content_len=%d",
+                        accumulated_artifact.get("title", ""),
+                        len(accumulated_artifact.get("content", "")),
+                    )
 
             elif event.type == ChatEventType.ERROR:
                 error_msg = event.data.get("error", "Unknown error")
@@ -491,7 +501,7 @@ async def _stream_response(
                 )
                 return
 
-        # Send response.done event with accumulated sources
+        # Send response.done event with accumulated sources and artifact
         yield _format_sse_event(
             ResponseEventType.RESPONSE_DONE.value,
             ResponseDone(
@@ -507,6 +517,7 @@ async def _stream_response(
                 ),
                 stop_reason="end_turn",
                 sources=accumulated_sources if accumulated_sources else None,
+                artifact=accumulated_artifact,  # Include artifact for history storage
             ).model_dump(),
         )
 

@@ -196,9 +196,40 @@ def subtask_to_message(
             db, subtask, sender_username, is_group_chat
         )
     else:
-        # For assistant, content is in result.value
+        # For assistant, content is in result.value or result.artifact.content
         if subtask.result and isinstance(subtask.result, dict):
-            content = subtask.result.get("value", "")
+            # Debug logging
+            logger.info(
+                f"[subtask_to_message] Processing assistant subtask {subtask.id}, "
+                f"result keys: {list(subtask.result.keys())}, "
+                f"result type: {subtask.result.get('type', 'N/A')}"
+            )
+            # Check if this is an artifact result (from create_artifact/update_artifact tools)
+            # Artifact results have structure: {"type": "artifact", "artifact": {...}}
+            if subtask.result.get("type") == "artifact":
+                artifact = subtask.result.get("artifact", {})
+                artifact_content = artifact.get("content", "")
+                artifact_id = artifact.get("id", "")
+                title = artifact.get("title", "Untitled")
+                artifact_type = artifact.get("artifact_type", "text")
+                language = artifact.get("language", "")
+
+                logger.info(
+                    f"[subtask_to_message] Found artifact: id={artifact_id}, title={title}, "
+                    f"content_len={len(artifact_content)}, type={artifact_type}"
+                )
+
+                if artifact_content:
+                    # Format artifact content with context for follow-up conversations
+                    # Include artifact_id so AI can use update_artifact tool
+                    if artifact_type == "code" and language:
+                        content = f"[Created Artifact: {title} (artifact_id: {artifact_id})]\n```{language}\n{artifact_content}\n```"
+                    else:
+                        content = f"[Created Artifact: {title} (artifact_id: {artifact_id})]\n{artifact_content}"
+                else:
+                    content = ""
+            else:
+                content = subtask.result.get("value", "")
         else:
             content = ""
 

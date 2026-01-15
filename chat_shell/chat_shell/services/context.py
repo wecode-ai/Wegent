@@ -485,6 +485,16 @@ class ChatContext:
                 default_max_results,
             )
 
+        # Add Canvas tools for artifact creation (always enabled)
+        from chat_shell.tools.builtin import create_canvas_tools
+
+        canvas_tools = create_canvas_tools()
+        extra_tools.extend(canvas_tools)
+        logger.info(
+            "[CHAT_CONTEXT] Added Canvas tools: %s",
+            [t.name for t in canvas_tools],
+        )
+
         # Add DataTableTool if table_contexts provided
         logger.debug(
             "[CHAT_CONTEXT] Checking table_contexts: has_table_contexts=%s, count=%d",

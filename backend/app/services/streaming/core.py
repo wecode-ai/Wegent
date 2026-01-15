@@ -259,6 +259,15 @@ class StreamingState:
                         except (json.JSONDecodeError, TypeError):
                             pass
 
+                # For create_artifact/update_artifact tool_result, preserve full output
+                # Frontend needs artifact data to display in Canvas panel
+                if details.get("type") == "tool_result" and slim_details[
+                    "tool_name"
+                ] in ("create_artifact", "update_artifact"):
+                    output = details.get("output") or details.get("content")
+                    if output:
+                        slim_details["output"] = output
+
                 slim_step["details"] = slim_details
 
             slimmed.append(slim_step)

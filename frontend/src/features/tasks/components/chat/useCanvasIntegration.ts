@@ -67,8 +67,9 @@ export function useCanvasIntegration(
 
   // Toggle canvas
   const toggleCanvas = useCallback(() => {
+    console.log('[useCanvasIntegration] toggleCanvas called, current:', canvasEnabled)
     setCanvasEnabled(prev => !prev)
-  }, [])
+  }, [canvasEnabled])
 
   // Toggle fullscreen
   const toggleFullscreen = useCallback(() => {
@@ -122,6 +123,7 @@ export function useCanvasIntegration(
     (result: unknown) => {
       const extractedArtifact = extractArtifact(result)
       if (extractedArtifact) {
+        console.log('[useCanvasIntegration] Updating artifact:', extractedArtifact.id, 'version:', extractedArtifact.version)
         setArtifact(extractedArtifact)
         // Auto-enable canvas when artifact is generated
         if (!canvasEnabled) {

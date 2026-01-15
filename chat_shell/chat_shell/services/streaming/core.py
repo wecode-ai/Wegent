@@ -72,6 +72,7 @@ class StreamingState:
     thinking: list = field(default_factory=list)
     sources: list = field(default_factory=list)
     reasoning_content: str = ""
+    artifact: Optional[dict] = None  # Canvas artifact data (from create_artifact/update_artifact)
 
     # TTFT tracking
     stream_start_time: Optional[float] = None
@@ -103,6 +104,10 @@ class StreamingState:
                 self.sources.append(source)
                 existing_keys.add(key)
 
+    def set_artifact(self, artifact: dict) -> None:
+        """Set Canvas artifact data (from create_artifact/update_artifact tools)."""
+        self.artifact = artifact
+
     def get_current_result(
         self,
         include_value: bool = True,
@@ -123,6 +128,10 @@ class StreamingState:
                 result["sources"] = self.sources
         if self.reasoning_content:
             result["reasoning_content"] = self.reasoning_content
+        # Include artifact data at top level for easy access
+        if self.artifact:
+            result["type"] = "artifact"
+            result["artifact"] = self.artifact
         return result
 
     def _slim_thinking_data(self, thinking: list) -> list:
@@ -145,6 +154,23 @@ class StreamingState:
                 # Preserve error field for failed status
                 if details.get("error"):
                     slim_details["error"] = details["error"]
+
+                # For create_artifact/update_artifact tool_result, preserve full output
+                # Frontend needs artifact data to display in Canvas panel
+                tool_name = slim_details["tool_name"]
+                if details.get("type") == "tool_result" and tool_name in (
+                    "create_artifact",
+                    "update_artifact",
+                ):
+                    output = details.get("output") or details.get("content")
+                    logger.info(
+                        "[SLIM_THINKING] Found %s tool_result: output_length=%d",
+                        tool_name,
+                        len(str(output)) if output else 0,
+                    )
+                    if output:
+                        slim_details["output"] = output
+
                 slim_step["details"] = slim_details
             slimmed.append(slim_step)
         return slimmed

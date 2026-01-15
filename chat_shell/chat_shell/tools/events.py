@@ -154,6 +154,19 @@ def _handle_tool_end(
                     )
                 elif parsed_output.get("success") is True:
                     status = "completed"
+
+                # Extract artifact data for create_artifact/update_artifact tools
+                # Store artifact at top level (same level as thinking) for proper history retrieval
+                if tool_name in ("create_artifact", "update_artifact"):
+                    if parsed_output.get("type") == "artifact" and parsed_output.get("artifact"):
+                        artifact_data = parsed_output["artifact"]
+                        state.set_artifact(artifact_data)
+                        logger.info(
+                            "[TOOL_EVENT] Extracted artifact from %s: title=%s, content_len=%d",
+                            tool_name,
+                            artifact_data.get("title", ""),
+                            len(artifact_data.get("content", "")),
+                        )
         except json.JSONDecodeError:
             pass
 

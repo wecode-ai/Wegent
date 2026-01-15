@@ -455,6 +455,9 @@ class ResponseDone(BaseModel):
         ..., description="Stop reason: end_turn, tool_use, max_tokens"
     )
     sources: Optional[list[SourceItem]] = Field(None, description="Source references")
+    artifact: Optional[dict] = Field(
+        None, description="Canvas artifact data (from create_artifact/update_artifact tools)"
+    )
 
 
 class ResponseCancelled(BaseModel):

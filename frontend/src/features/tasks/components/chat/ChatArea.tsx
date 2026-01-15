@@ -89,7 +89,7 @@ function ChatAreaContent({
   // Canvas integration - for artifact display and quick actions
   const canvas = useCanvasIntegration({
     taskId: selectedTaskDetail?.id,
-    onSendMessage: async (message: string) => {
+    onSendMessage: async (_message: string) => {
       // Will be connected to streamHandlers after it's initialized
     },
   })
@@ -227,6 +227,11 @@ function ChatAreaContent({
     }
   }, [taskIdFromUrl])
 
+  // Reset artifact tracking when switching tasks
+  useEffect(() => {
+    lastProcessedArtifactRef.current = null
+  }, [selectedTaskDetail?.id])
+
   // Save team preference when user manually selects (via QuickAccessCards)
   const handleTeamSelect = useCallback(
     (team: Team) => {
@@ -285,6 +290,162 @@ function ChatAreaContent({
     selectedContexts: chatState.selectedContexts,
     resetContexts: chatState.resetContexts,
   })
+
+  // Use ref to store processSubtaskResult to avoid useEffect dependency issues
+  const processSubtaskResultRef = useRef(canvas.processSubtaskResult)
+  processSubtaskResultRef.current = canvas.processSubtaskResult
+
+  // Track the last processed artifact to avoid duplicate processing
+  // We use artifactId + version (or content hash) to detect updates
+  const lastProcessedArtifactRef = useRef<{ id: string; version?: number; contentHash?: string } | null>(null)
+
+  // Monitor stream messages for artifact data and update canvas
+  // Always show the LATEST artifact from all messages
+  useEffect(() => {
+    const messages = streamHandlers.currentStreamState?.messages
+    if (!messages) return
+
+    console.log('[ChatArea] Checking messages for artifacts, message count:', messages.size)
+
+    // Collect all artifacts from all messages, then pick the latest one
+    const allArtifacts: Array<{ artifact: unknown; timestamp: number; msgId: string }> = []
+
+    // Check each message for artifact data in result
+    for (const [msgId, msg] of messages) {
+      if (msg.type === 'ai' && msg.result) {
+        // Check if result contains artifact data
+        // The backend returns: {"type": "artifact", "artifact": {...}}
+        // But we may need to parse it from string
+        const resultData = msg.result as Record<string, unknown>
+        // Check for artifact in result.value (tool output is usually in result.value)
+        if (resultData.value && typeof resultData.value === 'string') {
+          try {
+            const parsedValue = JSON.parse(resultData.value)
+            if (parsedValue.type === 'artifact' && parsedValue.artifact) {
+              allArtifacts.push({
+                artifact: parsedValue,
+                timestamp: msg.timestamp || 0,
+                msgId,
+              })
+            }
+          } catch {
+            // Not JSON artifact, skip
+          }
+        }
+        // Also check direct artifact in result (cast to any for dynamic property access)
+        const anyResult = resultData as { type?: string; artifact?: { id?: string } }
+        if (anyResult.type === 'artifact' && anyResult.artifact) {
+          allArtifacts.push({
+            artifact: resultData,
+            timestamp: msg.timestamp || 0,
+            msgId,
+          })
+        }
+
+        // Check for artifact in thinking array (tool outputs are stored in thinking steps)
+        // Structure: thinking[].details.output contains the tool output JSON string
+        const thinking = resultData.thinking as
+          | Array<{
+              run_id?: string
+              details?: {
+                type?: string
+                tool_name?: string
+                name?: string
+                output?: string
+              }
+            }>
+          | undefined
+        if (thinking && Array.isArray(thinking)) {
+          // First pass: build a map of run_id -> tool_name from tool_use steps
+          const toolNameByRunId = new Map<string, string>()
+          for (const step of thinking) {
+            if (step.details?.type === 'tool_use' && step.run_id) {
+              const toolName = step.details.tool_name || step.details.name || ''
+              if (toolName) {
+                toolNameByRunId.set(step.run_id, toolName)
+              }
+            }
+          }
+
+          // Second pass: process tool_result steps
+          for (let i = 0; i < thinking.length; i++) {
+            const step = thinking[i]
+
+            // Get tool name from step details or from matching tool_use step via run_id
+            let toolName = step.details?.tool_name || step.details?.name || ''
+            if (!toolName && step.run_id) {
+              toolName = toolNameByRunId.get(step.run_id) || ''
+            }
+
+            if (
+              step.details?.type === 'tool_result' &&
+              (toolName === 'create_artifact' || toolName === 'update_artifact')
+            ) {
+              if (step.details?.output) {
+                try {
+                  // Tool output can be string (JSON) or already parsed object
+                  const output = step.details.output
+                  const parsedOutput = typeof output === 'string' ? JSON.parse(output) : output
+                  if (parsedOutput.type === 'artifact' && parsedOutput.artifact) {
+                    allArtifacts.push({
+                      artifact: parsedOutput,
+                      timestamp: msg.timestamp || 0,
+                      msgId,
+                    })
+                  }
+                } catch (e) {
+                  console.log('[ChatArea] Failed to parse artifact output:', e)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // If we found artifacts, always use the latest one (by timestamp/message order)
+    if (allArtifacts.length > 0) {
+      // Sort by timestamp descending (or use message order if timestamps are equal)
+      allArtifacts.sort((a, b) => b.timestamp - a.timestamp)
+      const latestArtifact = allArtifacts[0]
+      const artifactData = (latestArtifact.artifact as { artifact?: { id?: string; version?: number; content?: string } }).artifact
+      const artifactId = artifactData?.id
+      const artifactVersion = artifactData?.version
+      // Create a simple hash of content to detect changes (first 100 chars + length)
+      const contentHash = artifactData?.content
+        ? `${artifactData.content.length}-${artifactData.content.substring(0, 100)}`
+        : undefined
+
+      // Check if we should process this artifact:
+      // 1. New artifact ID we haven't seen
+      // 2. Same ID but different version
+      // 3. Same ID but different content (for cases without version)
+      const lastProcessed = lastProcessedArtifactRef.current
+      const isNewArtifact = !lastProcessed || lastProcessed.id !== artifactId
+      const isUpdatedVersion = lastProcessed && lastProcessed.id === artifactId &&
+        artifactVersion !== undefined && lastProcessed.version !== artifactVersion
+      const isUpdatedContent = lastProcessed && lastProcessed.id === artifactId &&
+        contentHash !== undefined && lastProcessed.contentHash !== contentHash
+
+      if (artifactId && (isNewArtifact || isUpdatedVersion || isUpdatedContent)) {
+        console.log('[ChatArea] Found latest artifact:', artifactId,
+          'version:', artifactVersion,
+          'isNew:', isNewArtifact,
+          'isUpdatedVersion:', isUpdatedVersion,
+          'isUpdatedContent:', isUpdatedContent,
+          'from message:', latestArtifact.msgId)
+
+        // Update tracking ref
+        lastProcessedArtifactRef.current = {
+          id: artifactId,
+          version: artifactVersion,
+          contentHash: contentHash,
+        }
+
+        processSubtaskResultRef.current(latestArtifact.artifact)
+      }
+    }
+  }, [streamHandlers.currentStreamState?.messages])
 
   // Determine if there are messages to display (full computation)
   const hasMessages = useMemo(() => {

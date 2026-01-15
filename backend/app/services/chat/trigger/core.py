@@ -970,6 +970,17 @@ async def _stream_with_http_adapter(
                         len(result["sources"]),
                     )
 
+                # Preserve artifact from result (Canvas artifact data)
+                # Artifact is passed through from chat_shell's ResponseDone event
+                # Mark result as artifact type for history API to extract content
+                if result.get("artifact"):
+                    result["type"] = "artifact"
+                    logger.info(
+                        "[HTTP_ADAPTER] Artifact in result: title=%s, content_len=%d",
+                        result["artifact"].get("title", ""),
+                        len(result["artifact"].get("content", "")),
+                    )
+
                 # Update subtask status to COMPLETED in database
                 # This is critical for persistence - without this, messages show as "running" after refresh
                 from app.services.chat.storage.db import db_handler
@@ -1239,6 +1250,16 @@ async def _stream_with_bridge(
                         default_max_results=settings.WEB_SEARCH_DEFAULT_MAX_RESULTS,
                     )
                 )
+
+            # Add Canvas tools for artifact creation
+            from chat_shell.tools.builtin import create_canvas_tools
+
+            canvas_tools = create_canvas_tools()
+            extra_tools.extend(canvas_tools)
+            logger.info(
+                "[BRIDGE] Added Canvas tools: %s",
+                [t.name for t in canvas_tools],
+            )
 
         # Get chat history
         history = await get_chat_history(
