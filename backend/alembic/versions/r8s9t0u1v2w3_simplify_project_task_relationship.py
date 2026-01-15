@@ -47,16 +47,7 @@ def upgrade() -> None:
         """
     )
 
-    # Step 3: Add foreign key constraint
-    op.execute(
-        """
-        ALTER TABLE tasks
-        ADD CONSTRAINT fk_tasks_project
-        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
-        """
-    )
-
-    # Step 4: Migrate data from project_tasks to tasks.project_id
+    # Step 3: Migrate data from project_tasks to tasks.project_id
     # For tasks that were in multiple projects, keep only the most recently added association
     op.execute(
         """
@@ -74,13 +65,13 @@ def upgrade() -> None:
         """
     )
 
-    # Step 5: Drop project_tasks table (no longer needed)
+    # Step 4: Drop project_tasks table (no longer needed)
     op.execute("DROP TABLE IF EXISTS project_tasks")
 
 
 def downgrade() -> None:
     """Recreate project_tasks table and migrate data back from tasks.project_id."""
-    # Step 1: Recreate project_tasks table
+    # Step 1: Recreate project_tasks table (without foreign keys)
     op.execute(
         """
         CREATE TABLE IF NOT EXISTS project_tasks (
@@ -92,9 +83,7 @@ def downgrade() -> None:
             PRIMARY KEY (id),
             UNIQUE KEY uniq_project_task (project_id, task_id),
             KEY idx_project_tasks_project_id (project_id),
-            KEY idx_project_tasks_task_id (task_id),
-            CONSTRAINT fk_project_tasks_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-            CONSTRAINT fk_project_tasks_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            KEY idx_project_tasks_task_id (task_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Project-Task association table'
         """
     )
@@ -109,21 +98,14 @@ def downgrade() -> None:
         """
     )
 
-    # Step 3: Drop foreign key constraint from tasks
-    op.execute(
-        """
-        ALTER TABLE tasks DROP FOREIGN KEY fk_tasks_project
-        """
-    )
-
-    # Step 4: Drop index on project_id
+    # Step 3: Drop index on project_id
     op.execute(
         """
         DROP INDEX idx_tasks_project_id ON tasks
         """
     )
 
-    # Step 5: Drop project_id column from tasks table
+    # Step 4: Drop project_id column from tasks table
     op.execute(
         """
         ALTER TABLE tasks DROP COLUMN project_id

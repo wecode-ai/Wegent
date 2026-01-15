@@ -27,7 +27,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Create projects and project_tasks tables."""
-    # Create projects table
+    # Create projects table (without foreign key)
     op.execute(
         """
     CREATE TABLE IF NOT EXISTS projects (
@@ -43,13 +43,12 @@ def upgrade() -> None:
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last update timestamp',
         PRIMARY KEY (id),
         KEY idx_projects_user_id (user_id),
-        KEY idx_projects_sort_order (sort_order),
-        CONSTRAINT fk_projects_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        KEY idx_projects_sort_order (sort_order)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Projects table for task organization'
     """
     )
 
-    # Create project_tasks association table
+    # Create project_tasks association table (without foreign keys)
     op.execute(
         """
     CREATE TABLE IF NOT EXISTS project_tasks (
@@ -61,9 +60,7 @@ def upgrade() -> None:
         PRIMARY KEY (id),
         UNIQUE KEY uniq_project_task (project_id, task_id),
         KEY idx_project_tasks_project_id (project_id),
-        KEY idx_project_tasks_task_id (task_id),
-        CONSTRAINT fk_project_tasks_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-        CONSTRAINT fk_project_tasks_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+        KEY idx_project_tasks_task_id (task_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Project-Task association table'
     """
     )

@@ -15,12 +15,10 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
-    ForeignKey,
     Integer,
     String,
     UniqueConstraint,
 )
-from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
@@ -72,14 +70,10 @@ class TaskResource(Base):
     )
     project_id = Column(
         Integer,
-        ForeignKey("projects.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
         comment="Project ID for task grouping",
     )
-
-    # Relationships
-    project = relationship("Project", back_populates="tasks")
 
     __table_args__ = (
         UniqueConstraint(

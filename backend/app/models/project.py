@@ -14,12 +14,10 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
-    ForeignKey,
     Integer,
     String,
     Text,
 )
-from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -38,7 +36,6 @@ class Project(Base):
     id = Column(Integer, primary_key=True, index=True, comment="Primary key")
     user_id = Column(
         Integer,
-        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
         comment="Project owner user ID",
@@ -89,13 +86,6 @@ class Project(Base):
         default=func.now(),
         onupdate=func.now(),
         comment="Last update timestamp",
-    )
-
-    # Relationships
-    tasks = relationship(
-        "TaskResource",
-        back_populates="project",
-        lazy="dynamic",
     )
 
     __table_args__ = (
