@@ -29,6 +29,7 @@ import { isTaskUnread } from '@/utils/taskViewStatus'
 import MobileSidebar from '@/features/layout/MobileSidebar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
+import { useProjectContext } from '@/features/projects'
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
@@ -78,7 +79,18 @@ export default function TaskSidebar({
     setSelectedTask,
     isRefreshing,
   } = useTaskContext()
+  const { projectTaskIds } = useProjectContext()
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Filter out tasks that are already in projects from history lists
+  const filteredPersonalTasks = React.useMemo(
+    () => personalTasks.filter(task => !projectTaskIds.has(task.id)),
+    [personalTasks, projectTaskIds]
+  )
+  const filteredGroupTasks = React.useMemo(
+    () => groupTasks.filter(task => !projectTaskIds.has(task.id)),
+    [groupTasks, projectTaskIds]
+  )
 
   // Use external state for search dialog (controlled by parent page)
   const setIsSearchDialogOpen = onSearchDialogOpenChange ?? (() => {})
@@ -459,7 +471,7 @@ export default function TaskSidebar({
               )
             })()
           )
-        ) : groupTasks.length === 0 && personalTasks.length === 0 ? (
+        ) : filteredGroupTasks.length === 0 && filteredPersonalTasks.length === 0 ? (
           <div className="text-center py-8 text-xs text-text-muted">
             {t('common:tasks.no_tasks')}
           </div>
@@ -467,8 +479,8 @@ export default function TaskSidebar({
           (() => {
             // Use separated lists from context
             // Sort group chats: unread first, then by updated_at
-            const unreadGroupChats = groupTasks.filter(isTaskUnread)
-            const readGroupChats = groupTasks.filter(task => !isTaskUnread(task))
+            const unreadGroupChats = filteredGroupTasks.filter(isTaskUnread)
+            const readGroupChats = filteredGroupTasks.filter(task => !isTaskUnread(task))
             const orderedGroupChats = [...unreadGroupChats, ...readGroupChats]
 
             // Calculate visible group chats based on collapse state
@@ -501,7 +513,7 @@ export default function TaskSidebar({
             return (
               <>
                 {/* Group Chats Section */}
-                {groupTasks.length > 0 && (
+                {filteredGroupTasks.length > 0 && (
                   <>
                     {!isCollapsed && (
                       <div className="px-1 pb-1 text-xs font-medium text-text-muted">
@@ -588,11 +600,11 @@ export default function TaskSidebar({
                   </>
                 )}
                 {/* History Section (Personal Tasks) - with search button next to title */}
-                {personalTasks.length > 0 && (
+                {filteredPersonalTasks.length > 0 && (
                   <>
                     {!isCollapsed && (
                       <div
-                        className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${groupTasks.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}`}
+                        className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${filteredGroupTasks.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}`}
                       >
                         <div className="flex items-center gap-1">
                           <span>{t('common:tasks.history_title')}</span>
@@ -630,13 +642,13 @@ export default function TaskSidebar({
                         )}
                       </div>
                     )}
-                    {isCollapsed && groupTasks.length > 0 && (
+                    {isCollapsed && filteredGroupTasks.length > 0 && (
                       <div className="border-t border-border my-2" />
                     )}
                     <TaskListSection
-                      tasks={personalTasks}
+                      tasks={filteredPersonalTasks}
                       title=""
-                      unreadCount={getUnreadCount(personalTasks)}
+                      unreadCount={getUnreadCount(filteredPersonalTasks)}
                       onTaskClick={() => setIsMobileSidebarOpen(false)}
                       isCollapsed={isCollapsed}
                       showTitle={false}
