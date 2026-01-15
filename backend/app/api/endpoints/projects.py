@@ -5,7 +5,7 @@
 """
 Project API endpoints for managing projects and project-task associations.
 
-Projects are containers for organizing tasks. A task can belong to multiple projects.
+Projects are containers for organizing tasks. Each task can belong to one project.
 """
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
@@ -19,8 +19,6 @@ from app.schemas.project import (
     ProjectListResponse,
     ProjectResponse,
     ProjectTaskCreate,
-    ProjectTaskReorderRequest,
-    ProjectTaskResponse,
     ProjectUpdate,
     ProjectWithTasksResponse,
     RemoveTaskFromProjectResponse,
@@ -32,7 +30,9 @@ router = APIRouter()
 
 @router.get("", response_model=ProjectListResponse)
 def list_projects(
-    include_tasks: bool = Query(True, description="Whether to include tasks in response"),
+    include_tasks: bool = Query(
+        True, description="Whether to include tasks in response"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -124,7 +124,7 @@ def delete_project_endpoint(
 ):
     """
     Delete a project (soft delete).
-    Tasks are not deleted, only the project-task associations are removed.
+    Tasks are not deleted, only their project_id is set to NULL.
     """
     try:
         project_service.delete_project(
@@ -191,7 +191,7 @@ def remove_task_from_project_endpoint(
 ):
     """
     Remove a task from a project.
-    The task itself is not deleted, only the association.
+    The task itself is not deleted, only the project_id is set to NULL.
     """
     try:
         project_service.remove_task_from_project(
@@ -209,33 +209,4 @@ def remove_task_from_project_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to remove task from project: {str(e)}",
-        )
-
-
-@router.put(
-    "/{project_id}/tasks/reorder",
-    response_model=list[ProjectTaskResponse],
-)
-def reorder_project_tasks_endpoint(
-    project_id: int = Path(..., description="Project ID"),
-    reorder_data: ProjectTaskReorderRequest = Body(...),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Reorder tasks within a project.
-    """
-    try:
-        return project_service.reorder_project_tasks(
-            db=db,
-            project_id=project_id,
-            reorder_data=reorder_data,
-            user_id=current_user.id,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to reorder tasks: {str(e)}",
         )

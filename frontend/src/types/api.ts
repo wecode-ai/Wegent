@@ -587,13 +587,11 @@ export type {
 // Project Types
 /** Task within a project */
 export interface ProjectTask {
-  id: number // Project-task association ID
   task_id: number
   task_title: string
   task_status: TaskStatus
   is_group_chat: boolean
-  sort_order: number
-  added_at: string
+  project_id: number
 }
 
 /** Project for organizing tasks */

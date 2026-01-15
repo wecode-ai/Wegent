@@ -5,7 +5,7 @@
 """
 Project service for managing projects and project-task associations.
 
-Projects are containers for organizing tasks. A task can belong to multiple projects.
+Projects are containers for organizing tasks. Each task can belong to one project.
 """
 from typing import Optional
 
@@ -13,13 +13,12 @@ from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.project import Project, ProjectTask
+from app.models.project import Project
 from app.models.task import TaskResource
 from app.schemas.project import (
     ProjectCreate,
     ProjectListResponse,
     ProjectResponse,
-    ProjectTaskReorderRequest,
     ProjectTaskResponse,
     ProjectUpdate,
     ProjectWithTasksResponse,
@@ -98,10 +97,20 @@ def get_project(
     # Get tasks in this project
     tasks = _get_project_tasks(db, project_id)
 
-    response = ProjectWithTasksResponse.model_validate(project)
-    response.task_count = len(tasks)
-    response.tasks = tasks
-    return response
+    # Build response manually to avoid auto-validation of tasks relationship
+    return ProjectWithTasksResponse(
+        id=project.id,
+        user_id=project.user_id,
+        name=project.name,
+        description=project.description or "",
+        color=project.color,
+        sort_order=project.sort_order,
+        is_expanded=project.is_expanded,
+        task_count=len(tasks),
+        created_at=project.created_at,
+        updated_at=project.updated_at,
+        tasks=tasks,
+    )
 
 
 def list_projects(
@@ -132,17 +141,36 @@ def list_projects(
     for project in projects:
         if include_tasks:
             tasks = _get_project_tasks(db, project.id)
-            response = ProjectWithTasksResponse.model_validate(project)
-            response.task_count = len(tasks)
-            response.tasks = tasks
         else:
-            response = ProjectWithTasksResponse.model_validate(project)
-            response.task_count = (
-                db.query(ProjectTask)
-                .filter(ProjectTask.project_id == project.id)
+            tasks = []
+
+        task_count = (
+            len(tasks)
+            if include_tasks
+            else (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.project_id == project.id,
+                    TaskResource.is_active == True,
+                )
                 .count()
             )
-            response.tasks = []
+        )
+
+        # Build response manually to avoid auto-validation of tasks relationship
+        response = ProjectWithTasksResponse(
+            id=project.id,
+            user_id=project.user_id,
+            name=project.name,
+            description=project.description or "",
+            color=project.color,
+            sort_order=project.sort_order,
+            is_expanded=project.is_expanded,
+            task_count=task_count,
+            created_at=project.created_at,
+            updated_at=project.updated_at,
+            tasks=tasks,
+        )
         items.append(response)
 
     return ProjectListResponse(total=len(items), items=items)
@@ -190,7 +218,12 @@ def update_project(
 
     response = ProjectResponse.model_validate(project)
     response.task_count = (
-        db.query(ProjectTask).filter(ProjectTask.project_id == project_id).count()
+        db.query(TaskResource)
+        .filter(
+            TaskResource.project_id == project_id,
+            TaskResource.is_active == True,
+        )
+        .count()
     )
     return response
 
@@ -199,7 +232,7 @@ def delete_project(db: Session, project_id: int, user_id: int) -> None:
     """
     Delete a project (soft delete).
 
-    Tasks are not deleted, only the project-task associations are removed.
+    Tasks are not deleted, only their project_id is set to NULL.
 
     Args:
         db: Database session
@@ -222,7 +255,12 @@ def delete_project(db: Session, project_id: int, user_id: int) -> None:
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Soft delete the project (cascade will handle project_tasks)
+    # Clear project_id for all tasks in this project
+    db.query(TaskResource).filter(TaskResource.project_id == project_id).update(
+        {TaskResource.project_id: None}
+    )
+
+    # Soft delete the project
     project.is_active = False
     db.commit()
 
@@ -240,10 +278,10 @@ def add_task_to_project(
         user_id: User ID (for ownership verification)
 
     Returns:
-        Created project-task association
+        Updated task response
 
     Raises:
-        HTTPException: If project or task not found, or task already in project
+        HTTPException: If project or task not found, or task already in a project
     """
     # Verify project ownership
     project = (
@@ -274,37 +312,10 @@ def add_task_to_project(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # Check if task is already in project
-    existing = (
-        db.query(ProjectTask)
-        .filter(
-            ProjectTask.project_id == project_id,
-            ProjectTask.task_id == task_id,
-        )
-        .first()
-    )
-
-    if existing:
-        raise HTTPException(status_code=400, detail="Task is already in this project")
-
-    # Get max sort_order for tasks in this project
-    max_sort_order = (
-        db.query(func.max(ProjectTask.sort_order))
-        .filter(ProjectTask.project_id == project_id)
-        .scalar()
-    )
-    next_sort_order = (max_sort_order or 0) + 1
-
-    # Create association
-    project_task = ProjectTask(
-        project_id=project_id,
-        task_id=task_id,
-        sort_order=next_sort_order,
-    )
-
-    db.add(project_task)
+    # Update task's project_id
+    task.project_id = project_id
     db.commit()
-    db.refresh(project_task)
+    db.refresh(task)
 
     # Get task details for response
     task_json = task.json or {}
@@ -315,13 +326,11 @@ def add_task_to_project(
     task_title = spec.get("title") or task.name or f"Task #{task_id}"
 
     return ProjectTaskResponse(
-        id=project_task.id,
         task_id=task_id,
         task_title=task_title,
         task_status=task_status,
         is_group_chat=is_group_chat,
-        sort_order=project_task.sort_order,
-        added_at=project_task.added_at,
+        project_id=project_id,
     )
 
 
@@ -338,7 +347,7 @@ def remove_task_from_project(
         user_id: User ID (for ownership verification)
 
     Raises:
-        HTTPException: If project or association not found
+        HTTPException: If project or task not found
     """
     # Verify project ownership
     project = (
@@ -354,72 +363,23 @@ def remove_task_from_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Find and delete association
-    project_task = (
-        db.query(ProjectTask)
+    # Find task and verify it belongs to this project
+    task = (
+        db.query(TaskResource)
         .filter(
-            ProjectTask.project_id == project_id,
-            ProjectTask.task_id == task_id,
+            TaskResource.id == task_id,
+            TaskResource.project_id == project_id,
+            TaskResource.is_active == True,
         )
         .first()
     )
 
-    if not project_task:
+    if not task:
         raise HTTPException(status_code=404, detail="Task not found in project")
 
-    db.delete(project_task)
+    # Remove task from project by setting project_id to NULL
+    task.project_id = None
     db.commit()
-
-
-def reorder_project_tasks(
-    db: Session, project_id: int, reorder_data: ProjectTaskReorderRequest, user_id: int
-) -> list[ProjectTaskResponse]:
-    """
-    Reorder tasks within a project.
-
-    Args:
-        db: Database session
-        project_id: Project ID
-        reorder_data: New task order
-        user_id: User ID (for ownership verification)
-
-    Returns:
-        Updated list of project tasks
-
-    Raises:
-        HTTPException: If project not found
-    """
-    # Verify project ownership
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.user_id == user_id,
-            Project.is_active == True,
-        )
-        .first()
-    )
-
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    # Update sort_order for each task
-    for index, task_id in enumerate(reorder_data.task_ids):
-        project_task = (
-            db.query(ProjectTask)
-            .filter(
-                ProjectTask.project_id == project_id,
-                ProjectTask.task_id == task_id,
-            )
-            .first()
-        )
-
-        if project_task:
-            project_task.sort_order = index
-
-    db.commit()
-
-    return _get_project_tasks(db, project_id)
 
 
 def _get_project_tasks(db: Session, project_id: int) -> list[ProjectTaskResponse]:
@@ -433,44 +393,34 @@ def _get_project_tasks(db: Session, project_id: int) -> list[ProjectTaskResponse
     Returns:
         List of project tasks with details
     """
-    project_tasks = (
-        db.query(ProjectTask)
-        .filter(ProjectTask.project_id == project_id)
-        .order_by(ProjectTask.sort_order.asc())
+    tasks = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.project_id == project_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
+        )
+        .order_by(TaskResource.created_at.desc())
         .all()
     )
 
     result = []
-    for pt in project_tasks:
-        # Get task details
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == pt.task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == True,
+    for task in tasks:
+        task_json = task.json or {}
+        spec = task_json.get("spec", {})
+        is_group_chat = spec.get("is_group_chat", False)
+        task_status = task_json.get("status", {}).get("phase", "PENDING")
+        # Task title is stored in spec.title, fallback to task.name
+        task_title = spec.get("title") or task.name or f"Task #{task.id}"
+
+        result.append(
+            ProjectTaskResponse(
+                task_id=task.id,
+                task_title=task_title,
+                task_status=task_status,
+                is_group_chat=is_group_chat,
+                project_id=project_id,
             )
-            .first()
         )
-
-        if task:
-            task_json = task.json or {}
-            spec = task_json.get("spec", {})
-            is_group_chat = spec.get("is_group_chat", False)
-            task_status = task_json.get("status", {}).get("phase", "PENDING")
-            # Task title is stored in spec.title, fallback to task.name
-            task_title = spec.get("title") or task.name or f"Task #{pt.task_id}"
-
-            result.append(
-                ProjectTaskResponse(
-                    id=pt.id,
-                    task_id=pt.task_id,
-                    task_title=task_title,
-                    task_status=task_status,
-                    is_group_chat=is_group_chat,
-                    sort_order=pt.sort_order,
-                    added_at=pt.added_at,
-                )
-            )
 
     return result

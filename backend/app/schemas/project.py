@@ -5,7 +5,7 @@
 """
 Project schemas for API request/response validation.
 
-Projects are containers for organizing tasks. A task can belong to multiple projects.
+Projects are containers for organizing tasks. Each task can belong to one project.
 """
 from datetime import datetime
 from typing import Optional
@@ -28,13 +28,13 @@ class ProjectTaskCreate(ProjectTaskBase):
 class ProjectTaskResponse(BaseModel):
     """Response model for a task within a project."""
 
-    id: int = Field(..., description="Project-task association ID")
     task_id: int = Field(..., description="Task ID")
     task_title: str = Field(..., description="Task title")
     task_status: str = Field(..., description="Task status")
-    is_group_chat: bool = Field(default=False, description="Whether the task is a group chat")
-    sort_order: int = Field(default=0, description="Sort order within the project")
-    added_at: datetime = Field(..., description="When the task was added to the project")
+    is_group_chat: bool = Field(
+        default=False, description="Whether the task is a group chat"
+    )
+    project_id: int = Field(..., description="Project ID")
 
     class Config:
         from_attributes = True
@@ -61,11 +61,15 @@ class ProjectCreate(ProjectBase):
 class ProjectUpdate(BaseModel):
     """Request model for updating a project."""
 
-    name: Optional[str] = Field(None, min_length=1, max_length=100, description="Project name")
+    name: Optional[str] = Field(
+        None, min_length=1, max_length=100, description="Project name"
+    )
     description: Optional[str] = Field(None, description="Project description")
     color: Optional[str] = Field(None, max_length=20, description="Project color")
     sort_order: Optional[int] = Field(None, description="Sort order for display")
-    is_expanded: Optional[bool] = Field(None, description="Whether the project is expanded in UI")
+    is_expanded: Optional[bool] = Field(
+        None, description="Whether the project is expanded in UI"
+    )
 
 
 class ProjectResponse(ProjectBase):
@@ -74,7 +78,9 @@ class ProjectResponse(ProjectBase):
     id: int = Field(..., description="Project ID")
     user_id: int = Field(..., description="Project owner user ID")
     sort_order: int = Field(default=0, description="Sort order for display")
-    is_expanded: bool = Field(default=True, description="Whether the project is expanded in UI")
+    is_expanded: bool = Field(
+        default=True, description="Whether the project is expanded in UI"
+    )
     task_count: int = Field(default=0, description="Number of tasks in the project")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
@@ -102,20 +108,13 @@ class ProjectListResponse(BaseModel):
     )
 
 
-class ProjectTaskReorderRequest(BaseModel):
-    """Request model for reordering tasks within a project."""
-
-    task_ids: list[int] = Field(
-        ...,
-        description="Ordered list of task IDs representing the new order",
-    )
-
-
 class AddTaskToProjectResponse(BaseModel):
     """Response model for adding a task to a project."""
 
     message: str = Field(default="Task added to project successfully")
-    project_task: ProjectTaskResponse = Field(..., description="The created project-task association")
+    project_task: ProjectTaskResponse = Field(
+        ..., description="The task that was added to the project"
+    )
 
 
 class RemoveTaskFromProjectResponse(BaseModel):

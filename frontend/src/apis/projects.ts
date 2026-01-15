@@ -39,10 +39,6 @@ export interface RemoveTaskFromProjectResponse {
   message: string
 }
 
-export interface ReorderProjectTasksRequest {
-  task_ids: number[]
-}
-
 // Project API Services
 export const projectApis = {
   /**
@@ -110,17 +106,5 @@ export const projectApis = {
     taskId: number
   ): Promise<RemoveTaskFromProjectResponse> => {
     return apiClient.delete(`/projects/${projectId}/tasks/${taskId}`)
-  },
-
-  /**
-   * Reorder tasks within a project
-   * @param projectId - Project ID
-   * @param taskIds - Ordered list of task IDs
-   */
-  reorderProjectTasks: async (
-    projectId: number,
-    taskIds: number[]
-  ): Promise<ProjectTask[]> => {
-    return apiClient.put(`/projects/${projectId}/tasks/reorder`, { task_ids: taskIds })
   },
 }

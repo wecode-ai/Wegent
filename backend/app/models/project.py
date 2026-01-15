@@ -6,7 +6,7 @@
 Project model for organizing tasks into projects.
 
 Projects are containers for tasks, allowing users to categorize and organize
-their tasks. A task can belong to multiple projects (many-to-many relationship).
+their tasks. Each task can belong to one project (one-to-many relationship).
 """
 from datetime import datetime
 
@@ -18,7 +18,6 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -93,10 +92,9 @@ class Project(Base):
     )
 
     # Relationships
-    project_tasks = relationship(
-        "ProjectTask",
+    tasks = relationship(
+        "TaskResource",
         back_populates="project",
-        cascade="all, delete-orphan",
         lazy="dynamic",
     )
 
@@ -106,58 +104,5 @@ class Project(Base):
             "mysql_charset": "utf8mb4",
             "mysql_collate": "utf8mb4_unicode_ci",
             "comment": "Projects table for task organization",
-        },
-    )
-
-
-class ProjectTask(Base):
-    """
-    Association table for Project-Task many-to-many relationship.
-
-    Tracks which tasks belong to which projects, along with
-    ordering information within each project.
-    """
-
-    __tablename__ = "project_tasks"
-
-    id = Column(Integer, primary_key=True, index=True, comment="Primary key")
-    project_id = Column(
-        Integer,
-        ForeignKey("projects.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-        comment="Project ID",
-    )
-    task_id = Column(
-        Integer,
-        ForeignKey("tasks.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-        comment="Task ID",
-    )
-    sort_order = Column(
-        Integer,
-        nullable=False,
-        default=0,
-        comment="Sort order within the project",
-    )
-    added_at = Column(
-        DateTime,
-        nullable=False,
-        default=func.now(),
-        comment="When the task was added to the project",
-    )
-
-    # Relationships
-    project = relationship("Project", back_populates="project_tasks")
-    task = relationship("TaskResource")
-
-    __table_args__ = (
-        UniqueConstraint("project_id", "task_id", name="uniq_project_task"),
-        {
-            "mysql_engine": "InnoDB",
-            "mysql_charset": "utf8mb4",
-            "mysql_collate": "utf8mb4_unicode_ci",
-            "comment": "Project-Task association table",
         },
     )

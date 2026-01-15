@@ -257,7 +257,7 @@ function ProjectItem({
             const isSelected = selectedProjectTaskId === projectTask.task_id
             return (
               <DraggableProjectTask
-                key={projectTask.id}
+                key={projectTask.task_id}
                 projectId={project.id}
                 projectTask={projectTask}
               >
