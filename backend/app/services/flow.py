@@ -294,6 +294,9 @@ class FlowService:
         if "retry_count" in update_data:
             flow_crd.spec.retryCount = update_data["retry_count"]
 
+        if "timeout_seconds" in update_data:
+            flow_crd.spec.timeoutSeconds = update_data["timeout_seconds"]
+
         if "enabled" in update_data:
             flow_crd.spec.enabled = update_data["enabled"]
             flow.enabled = update_data["enabled"]
@@ -777,6 +780,7 @@ class FlowService:
             ),
             promptTemplate=flow_in.prompt_template,
             retryCount=flow_in.retry_count,
+            timeoutSeconds=flow_in.timeout_seconds,
             enabled=flow_in.enabled,
             description=flow_in.description,
         )
@@ -1011,8 +1015,10 @@ class FlowService:
             workspace_id=flow.workspace_id,
             prompt_template=flow_crd.spec.promptTemplate,
             retry_count=flow_crd.spec.retryCount,
+            timeout_seconds=flow_crd.spec.timeoutSeconds,
             enabled=flow.enabled,
             webhook_url=webhook_url,
+            webhook_secret=flow.webhook_secret,
             last_execution_time=flow.last_execution_time,
             last_execution_status=flow.last_execution_status,
             next_execution_time=flow.next_execution_time,

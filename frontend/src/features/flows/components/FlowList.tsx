@@ -11,7 +11,9 @@ import { useCallback, useState } from 'react'
 import {
   CalendarClock,
   Clock,
+  Copy,
   Edit,
+  Key,
   MoreHorizontal,
   Play,
   Plus,
@@ -25,6 +27,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
 import { Switch } from '@/components/ui/switch'
@@ -70,9 +73,7 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
       try {
         await flowApis.toggleFlow(flow.id, enabled)
         await refreshFlows()
-        toast.success(
-          enabled ? t('enabled_success') : t('disabled_success')
-        )
+        toast.success(enabled ? t('enabled_success') : t('disabled_success'))
       } catch (error) {
         console.error('Failed to toggle flow:', error)
         toast.error(t('toggle_failed'))
@@ -118,6 +119,37 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
     }
   }, [deleteConfirmFlow, refreshFlows, t])
 
+  const handleCopyWebhookUrl = useCallback(
+    async (flow: Flow) => {
+      if (!flow.webhook_url) return
+      try {
+        // Construct full URL
+        const baseUrl = window.location.origin
+        const fullUrl = `${baseUrl}${flow.webhook_url}`
+        await navigator.clipboard.writeText(fullUrl)
+        toast.success(t('webhook_url_copied'))
+      } catch (error) {
+        console.error('Failed to copy webhook URL:', error)
+        toast.error(t('copy_failed'))
+      }
+    },
+    [t]
+  )
+
+  const handleCopyWebhooksecret = useCallback(
+    async (flow: Flow) => {
+      if (!flow.webhook_secret) return
+      try {
+        await navigator.clipboard.writeText(flow.webhook_secret)
+        toast.success(t('webhook_secret_copied'))
+      } catch (error) {
+        console.error('Failed to copy webhook secret:', error)
+        toast.error(t('copy_failed'))
+      }
+    },
+    [t]
+  )
+
   const formatNextExecution = (dateStr?: string) => {
     if (!dateStr) return '-'
     const date = new Date(dateStr)
@@ -134,9 +166,7 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
       case 'one_time':
         return t('trigger_one_time')
       case 'event':
-        return config.event_type === 'webhook'
-          ? 'Webhook'
-          : 'Git Push'
+        return config.event_type === 'webhook' ? 'Webhook' : 'Git Push'
       default:
         return flow.trigger_type || 'Unknown'
     }
@@ -170,10 +200,7 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
         ) : (
           <div className="divide-y divide-border">
             {flows.map(flow => (
-              <div
-                key={flow.id}
-                className="flex items-center gap-4 px-4 py-3 hover:bg-surface/50"
-              >
+              <div key={flow.id} className="flex items-center gap-4 px-4 py-3 hover:bg-surface/50">
                 {/* Icon and Name */}
                 <div className="flex min-w-0 flex-1 items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface text-text-secondary">
@@ -181,13 +208,9 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="truncate font-medium">
-                        {flow.display_name}
-                      </span>
+                      <span className="truncate font-medium">{flow.display_name}</span>
                       <Badge
-                        variant={
-                          flow.task_type === 'execution' ? 'default' : 'secondary'
-                        }
+                        variant={flow.task_type === 'execution' ? 'default' : 'secondary'}
                         className="text-xs"
                       >
                         {flow.task_type === 'execution'
@@ -201,17 +224,14 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
                         <>
                           <span>·</span>
                           <span>
-                            {t('next_execution')}:{' '}
-                            {formatNextExecution(flow.next_execution_time)}
+                            {t('next_execution')}: {formatNextExecution(flow.next_execution_time)}
                           </span>
                         </>
                       )}
                       {flow.trigger_type === 'event' && flow.webhook_url && (
                         <>
                           <span>·</span>
-                          <span className="truncate max-w-[200px]">
-                            {flow.webhook_url}
-                          </span>
+                          <span className="truncate max-w-[200px]">{flow.webhook_url}</span>
                         </>
                       )}
                     </div>
@@ -250,6 +270,23 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
                       <Edit className="mr-2 h-4 w-4" />
                       {t('edit')}
                     </DropdownMenuItem>
+                    {/* Webhook copy options for event triggers */}
+                    {flow.trigger_type === 'event' && flow.webhook_url && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => handleCopyWebhookUrl(flow)}>
+                          <Copy className="mr-2 h-4 w-4" />
+                          {t('copy_webhook_url')}
+                        </DropdownMenuItem>
+                        {flow.webhook_secret && (
+                          <DropdownMenuItem onClick={() => handleCopyWebhooksecret(flow)}>
+                            <Key className="mr-2 h-4 w-4" />
+                            {t('copy_webhook_secret')}
+                          </DropdownMenuItem>
+                        )}
+                      </>
+                    )}
+                    <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={() => setDeleteConfirmFlow(flow)}
                       className="text-destructive"
@@ -265,14 +302,8 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
             {/* Load more */}
             {flows.length < flowsTotal && (
               <div className="flex justify-center py-4">
-                <Button
-                  variant="ghost"
-                  onClick={loadMoreFlows}
-                  disabled={flowsLoading}
-                >
-                  {flowsLoading
-                    ? t('common:actions.loading')
-                    : t('common:tasks.load_more')}
+                <Button variant="ghost" onClick={loadMoreFlows} disabled={flowsLoading}>
+                  {flowsLoading ? t('common:actions.loading') : t('common:tasks.load_more')}
                 </Button>
               </div>
             )}

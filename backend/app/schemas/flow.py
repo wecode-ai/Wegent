@@ -212,6 +212,9 @@ class FlowBase(BaseModel):
     workspace_id: Optional[int] = Field(None, description="Workspace ID (optional)")
     prompt_template: str = Field(..., description="Prompt template")
     retry_count: int = Field(0, ge=0, le=3, description="Retry count (0-3)")
+    timeout_seconds: int = Field(
+        600, ge=60, le=3600, description="Execution timeout (60-3600s)"
+    )
     enabled: bool = Field(True, description="Whether enabled")
 
 
@@ -233,6 +236,7 @@ class FlowUpdate(BaseModel):
     workspace_id: Optional[int] = None
     prompt_template: Optional[str] = None
     retry_count: Optional[int] = Field(None, ge=0, le=3)
+    timeout_seconds: Optional[int] = Field(None, ge=60, le=3600)
     enabled: Optional[bool] = None
 
 
@@ -243,6 +247,7 @@ class FlowInDB(FlowBase):
     user_id: int
     namespace: str = "default"
     webhook_url: Optional[str] = None
+    webhook_secret: Optional[str] = None
     last_execution_time: Optional[datetime] = None
     last_execution_status: Optional[str] = None
     next_execution_time: Optional[datetime] = None

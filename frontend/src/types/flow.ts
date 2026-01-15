@@ -70,8 +70,10 @@ export interface Flow {
   workspace_id?: number
   prompt_template: string
   retry_count: number
+  timeout_seconds: number // Execution timeout (60-3600s, default 600)
   enabled: boolean
   webhook_url?: string
+  webhook_secret?: string // HMAC signing secret for webhook verification
   last_execution_time?: string
   last_execution_status?: string
   next_execution_time?: string
@@ -95,6 +97,7 @@ export interface FlowCreateRequest {
   workspace_id?: number
   prompt_template: string
   retry_count?: number
+  timeout_seconds?: number // Execution timeout (60-3600s)
   enabled?: boolean
 }
 
@@ -109,6 +112,7 @@ export interface FlowUpdateRequest {
   workspace_id?: number
   prompt_template?: string
   retry_count?: number
+  timeout_seconds?: number // Execution timeout (60-3600s)
   enabled?: boolean
 }
 

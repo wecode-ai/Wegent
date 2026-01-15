@@ -72,6 +72,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
   const [teamId, setTeamId] = useState<number | null>(null)
   const [promptTemplate, setPromptTemplate] = useState('')
   const [retryCount, setRetryCount] = useState(0)
+  const [timeoutSeconds, setTimeoutSeconds] = useState(600) // Default 10 minutes
   const [enabled, setEnabled] = useState(true)
 
   // Teams for selection
@@ -111,6 +112,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
       setTeamId(flow.team_id)
       setPromptTemplate(flow.prompt_template)
       setRetryCount(flow.retry_count)
+      setTimeoutSeconds(flow.timeout_seconds || 600)
       setEnabled(flow.enabled)
     } else {
       setName('')
@@ -122,6 +124,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
       setTeamId(null)
       setPromptTemplate('')
       setRetryCount(0)
+      setTimeoutSeconds(600)
       setEnabled(true)
     }
   }, [flow, open])
@@ -160,6 +163,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
           team_id: teamId,
           prompt_template: promptTemplate,
           retry_count: retryCount,
+          timeout_seconds: timeoutSeconds,
           enabled,
         }
         await flowApis.updateFlow(flow.id, updateData)
@@ -183,6 +187,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
           team_id: teamId,
           prompt_template: promptTemplate,
           retry_count: retryCount,
+          timeout_seconds: timeoutSeconds,
           enabled,
         }
         await flowApis.createFlow(createData)
@@ -206,6 +211,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
     teamId,
     promptTemplate,
     retryCount,
+    timeoutSeconds,
     enabled,
     isEditing,
     flow,
@@ -487,6 +493,31 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
                 <SelectItem value="3">3</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Timeout */}
+          <div>
+            <Label>{t('timeout_seconds')}</Label>
+            <Select
+              value={timeoutSeconds.toString()}
+              onValueChange={value => setTimeoutSeconds(parseInt(value))}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="60">1 {t('timeout_minute')}</SelectItem>
+                <SelectItem value="120">2 {t('timeout_minutes')}</SelectItem>
+                <SelectItem value="300">5 {t('timeout_minutes')}</SelectItem>
+                <SelectItem value="600">
+                  10 {t('timeout_minutes')} ({t('default')})
+                </SelectItem>
+                <SelectItem value="900">15 {t('timeout_minutes')}</SelectItem>
+                <SelectItem value="1800">30 {t('timeout_minutes')}</SelectItem>
+                <SelectItem value="3600">60 {t('timeout_minutes')}</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="mt-1 text-xs text-text-muted">{t('timeout_hint')}</p>
           </div>
 
           {/* Enabled */}
