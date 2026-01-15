@@ -28,19 +28,19 @@ class ExposeServiceInput(BaseModel):
 
     name: Optional[str] = Field(
         None,
-        description="Application name",
+        description="Application name. Extract from user input like 'app name is XXX' or 'project called XXX'. Example: 'MyWebApp', 'TodoList'",
     )
     host: Optional[str] = Field(
         None,
-        description="Host address (e.g., 'localhost', '192.168.1.100')",
+        description="Host address where the service runs. Extract from user input mentioning host/server address. Example: 'localhost:3000', '192.168.1.100', '127.0.0.1:8080'",
     )
     previewUrl: Optional[str] = Field(
         None,
-        description="Application preview URL (e.g., 'https://example.com')",
+        description="Application preview URL for users to access. Extract from user input mentioning preview/demo/access URL. Example: 'https://my-app.example.com', 'http://localhost:3000'",
     )
     mysql: Optional[str] = Field(
         None,
-        description="MySQL connection string in format: mysql://user:pass@host:port/database",
+        description="MySQL database connection string. Extract from user input after creating a database. Format: mysql://user:password@host:port/database. Example: 'mysql://root:123456@localhost:3306/mydb'",
     )
 
 
@@ -58,12 +58,20 @@ class ExposeServiceTool(BaseTool):
     name: str = "expose_service"
     display_name: str = "发布服务信息"
     description: str = (
-        "Publish or expose service information. Use this tool when the user needs to:\n"
-        "- Deploy or publish a web application with a preview URL\n"
-        "- Set or share a host address\n"
-        "- Share MySQL database connection information after creating a database\n"
-        "- Set an application name\n\n"
-        "At least one of the parameters (name, host, previewUrl, mysql) must be provided."
+        "Publish or expose service information to make it accessible to users. "
+        "IMPORTANT: You MUST extract and provide at least one parameter from the user's request or context.\n\n"
+        "Use this tool when:\n"
+        "- User wants to deploy/publish a web application → extract and pass 'name' and/or 'previewUrl'\n"
+        "- User mentions a host address or server → extract and pass 'host'\n"
+        "- User created a database and wants to share connection info → extract and pass 'mysql'\n"
+        "- User wants to set an application name → extract and pass 'name'\n\n"
+        "REQUIRED: At least one of these parameters must be provided:\n"
+        "- name: The application/project name (e.g., 'MyApp', 'TodoList')\n"
+        "- host: The host address (e.g., 'localhost:3000', '192.168.1.100')\n"
+        "- previewUrl: The preview URL (e.g., 'https://example.com')\n"
+        "- mysql: The MySQL connection string (e.g., 'mysql://root:pass@localhost:3306/db')\n\n"
+        "Example: If user says '发布应用 Service Example，主机是 localhost，预览地址是 https://example.com', "
+        "you should call this tool with: name='Service Example', host='localhost', previewUrl='https://example.com'"
     )
     args_schema: type[BaseModel] = ExposeServiceInput
 
@@ -131,6 +139,10 @@ class ExposeServiceTool(BaseTool):
                 mysql=mysql,
             )
 
+            logger.info(
+                f"[ExposeServiceTool] Backend API result for task {self.task_id}: {result}"
+            )
+
             if result.get("success"):
                 # Build a user-friendly response message
                 updated_fields = []
@@ -181,6 +193,7 @@ class ExposeServiceTool(BaseTool):
         """
         # Get backend API URL from settings
         remote_url = getattr(settings, "REMOTE_STORAGE_URL", "")
+        logger.info(f"[ExposeServiceTool] REMOTE_STORAGE_URL from settings: {remote_url}")
         if remote_url:
             backend_url = remote_url.replace("/api/internal", "")
         else:
