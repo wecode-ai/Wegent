@@ -92,7 +92,11 @@ class TestTriggerKbSummaryClearIfEmpty:
 
         # Trigger with clear_if_empty=True (no active documents)
         result = await summary_service.trigger_kb_summary(
-            test_knowledge_base.id, test_user.id, force=False, clear_if_empty=True
+            test_knowledge_base.id,
+            test_user.id,
+            test_user.user_name,
+            force=False,
+            clear_if_empty=True,
         )
 
         # Should return None (no summary generated)
@@ -148,7 +152,11 @@ class TestTriggerKbSummaryClearIfEmpty:
             mock_executor.return_value = mock_instance
 
             result = await summary_service.trigger_kb_summary(
-                test_knowledge_base.id, test_user.id, force=False, clear_if_empty=True
+                test_knowledge_base.id,
+                test_user.id,
+                test_user.user_name,
+                force=False,
+                clear_if_empty=True,
             )
 
         # Summary should be updated (not cleared)
@@ -170,7 +178,7 @@ class TestTriggerKbSummaryClearIfEmpty:
 
         # Trigger without clear_if_empty (defaults to False)
         result = await summary_service.trigger_kb_summary(
-            test_knowledge_base.id, test_user.id, force=False
+            test_knowledge_base.id, test_user.id, test_user.user_name, force=False
         )
 
         # Should return None (no documents to summarize)
@@ -187,7 +195,7 @@ class TestTriggerKbSummaryClearIfEmpty:
         summary_service = get_summary_service(test_db)
 
         result = await summary_service.trigger_kb_summary(
-            99999, test_user.id, force=False, clear_if_empty=True
+            99999, test_user.id, test_user.user_name, force=False, clear_if_empty=True
         )
 
         assert result is None
@@ -230,7 +238,7 @@ class TestTriggerKbSummaryClearIfEmpty:
 
         # Clear again - should work without error
         result = await summary_service.trigger_kb_summary(
-            kb.id, test_user.id, force=False, clear_if_empty=True
+            kb.id, test_user.id, test_user.user_name, force=False, clear_if_empty=True
         )
 
         assert result is None
@@ -269,7 +277,11 @@ class TestTriggerKbSummaryClearIfEmpty:
 
         # Should clear because no ACTIVE documents
         result = await summary_service.trigger_kb_summary(
-            test_knowledge_base.id, test_user.id, force=False, clear_if_empty=True
+            test_knowledge_base.id,
+            test_user.id,
+            test_user.user_name,
+            force=False,
+            clear_if_empty=True,
         )
 
         assert result is None
