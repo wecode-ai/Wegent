@@ -405,21 +405,9 @@ def check_due_flows(self):
                         trigger_reason=trigger_reason,
                     )
 
-                    # Get timeout from flow config or use default
-                    timeout_seconds = getattr(
-                        flow_crd.spec,
-                        "timeout_seconds",
-                        settings.FLOW_DEFAULT_TIMEOUT_SECONDS,
-                    )
-                    retry_count = (
-                        flow_crd.spec.retryCount or settings.FLOW_DEFAULT_RETRY_COUNT
-                    )
-
-                    # Dispatch async execution task
-                    execute_flow_task.apply_async(
-                        args=[flow.id, execution.id],
-                        kwargs={"timeout_seconds": timeout_seconds},
-                        max_retries=retry_count,
+                    # Dispatch execution using unified method
+                    flow_service.dispatch_flow_execution(
+                        flow, execution, use_sync=False
                     )
                     FLOW_QUEUE_SIZE.inc()
                     dispatched += 1
@@ -765,23 +753,8 @@ def check_due_flows_sync():
                         trigger_reason=trigger_reason,
                     )
 
-                    # Get timeout from flow config or use default
-                    timeout_seconds = getattr(
-                        flow_crd.spec,
-                        "timeout_seconds",
-                        settings.FLOW_DEFAULT_TIMEOUT_SECONDS,
-                    )
-
-                    # Execute synchronously (in a thread to avoid blocking)
-                    import threading
-
-                    thread = threading.Thread(
-                        target=execute_flow_task_sync,
-                        args=(flow.id, execution.id, timeout_seconds),
-                        daemon=True,
-                    )
-                    thread.start()
-
+                    # Dispatch execution using unified method (sync mode)
+                    flow_service.dispatch_flow_execution(flow, execution, use_sync=True)
                     FLOW_QUEUE_SIZE.inc()
                     dispatched += 1
 

@@ -731,23 +731,26 @@ class FlowService:
 
         return FlowExecutionInDB(**exec_dict)
 
-    def _dispatch_flow_execution(
+    def dispatch_flow_execution(
         self,
         flow: FlowResource,
         execution: FlowExecutionInDB,
+        use_sync: bool = False,
     ) -> None:
         """
-        Dispatch a Flow execution to Celery for async processing.
+        Dispatch a Flow execution for async processing.
 
-        This method extracts the common Celery dispatch logic used by both
-        trigger_flow_manually() and trigger_flow_by_webhook().
+        This is the unified dispatch method used by all trigger paths:
+        - Manual trigger (trigger_flow_manually)
+        - Webhook trigger (trigger_flow_by_webhook)
+        - Automatic trigger (check_due_flows / check_due_flows_sync)
 
         Args:
             flow: The Flow resource to execute
-            execution: The execution record created by _create_execution()
+            execution: The execution record created by create_execution()
+            use_sync: If True, use sync execution (for non-Celery backends)
         """
         from app.core.config import settings
-        from app.tasks.flow_tasks import execute_flow_task
 
         flow_crd = Flow.model_validate(flow.json)
         timeout_seconds = getattr(
@@ -757,14 +760,36 @@ class FlowService:
         )
         retry_count = flow_crd.spec.retryCount or settings.FLOW_DEFAULT_RETRY_COUNT
 
-        execute_flow_task.apply_async(
-            args=[flow.id, execution.id],
-            kwargs={"timeout_seconds": timeout_seconds},
-            max_retries=retry_count,
-        )
-        logger.debug(
-            f"[flow_service] Dispatched execution {execution.id} for flow {flow.id}"
-        )
+        if use_sync:
+            # Sync execution for non-Celery backends (APScheduler, XXL-JOB)
+            import threading
+
+            from app.tasks.flow_tasks import execute_flow_task_sync
+
+            thread = threading.Thread(
+                target=execute_flow_task_sync,
+                args=(flow.id, execution.id, timeout_seconds),
+                daemon=True,
+            )
+            thread.start()
+            logger.debug(
+                f"[flow_service] Dispatched sync execution {execution.id} for flow {flow.id}"
+            )
+        else:
+            # Celery async execution (default)
+            from app.tasks.flow_tasks import execute_flow_task
+
+            execute_flow_task.apply_async(
+                args=[flow.id, execution.id],
+                kwargs={"timeout_seconds": timeout_seconds},
+                max_retries=retry_count,
+            )
+            logger.debug(
+                f"[flow_service] Dispatched async execution {execution.id} for flow {flow.id}"
+            )
+
+    # Keep the old name as alias for backward compatibility
+    _dispatch_flow_execution = dispatch_flow_execution
 
     def _resolve_prompt_template(
         self,
