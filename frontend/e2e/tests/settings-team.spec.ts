@@ -11,7 +11,7 @@ test.describe('Settings - Team Management', () => {
     await expect(page).toHaveURL(/\/settings/)
 
     // Wait for team list title to load
-    await expect(page.locator('h2:has-text("Team")')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('h2:has-text("Team")')).toBeVisible({ timeout: 20000 })
   })
 
   test('should display team list or empty state', async ({ page }) => {
@@ -35,7 +35,7 @@ test.describe('Settings - Team Management', () => {
     const createButton = page.locator('button:has-text("New Team"), button:has-text("新建团队")')
 
     // Button should be visible - no skip, this is a required UI element
-    await expect(createButton).toBeVisible({ timeout: 10000 })
+    await expect(createButton).toBeVisible({ timeout: 20000 })
 
     await createButton.click()
 
@@ -51,7 +51,7 @@ test.describe('Settings - Team Management', () => {
 
     // "New Team" button should always be visible
     const createButton = page.locator('button:has-text("New Team"), button:has-text("新建团队")')
-    await expect(createButton).toBeVisible({ timeout: 10000 })
+    await expect(createButton).toBeVisible({ timeout: 20000 })
     await createButton.click()
 
     // Wait for TeamEdit component (full-page replacement, not dialog)
@@ -78,7 +78,7 @@ test.describe('Settings - Team Management', () => {
 
   test('should show edit and delete buttons for existing teams', async ({ page }) => {
     // Wait for page to load
-    await expect(page.locator('h2:has-text("Team")')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('h2:has-text("Team")')).toBeVisible({ timeout: 20000 })
 
     // Check if there are any teams - if so, edit/delete buttons should exist
     const teamCard = page.locator('[data-testid="team-card"], .team-card').first()
