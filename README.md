@@ -86,6 +86,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ## 📞 Support
 
 - 🐛 Issues: [GitHub Issues](https://github.com/wecode-ai/wegent/issues)
+- 💬 Discord: [Join our community](https://discord.gg/MVzJzyqEUp)
 
 ## 👥 Contributors
 
