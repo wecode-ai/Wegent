@@ -267,7 +267,7 @@ uv sync
 export TASK_API_DOMAIN=http://localhost:8000
 export CALLBACK_HOST=http://localhost:8001
 export MAX_CONCURRENT_TASKS=5
-export EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:1.0.13
+export EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
 export EXECUTOR_WORKSPCE=${HOME}/wecode-bot
 
 # 运行服务

@@ -10,6 +10,14 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import HTTPException
+from shared.telemetry.context import (
+    SpanAttributes,
+    set_task_context,
+    set_user_context,
+)
+
+# Import telemetry utilities
+from shared.telemetry.core import get_tracer, is_telemetry_enabled
 from shared.utils.crypto import decrypt_api_key
 from sqlalchemy import and_, func, text
 from sqlalchemy.orm import Session, selectinload
@@ -1133,7 +1141,78 @@ class ExecutorKindsService(
         logger.info(
             f"dispatch subtasks response count={len(formatted_subtasks)} ids={subtask_ids}"
         )
+
+        # Start a new trace for each dispatched task
+        # This creates a root span for the task execution lifecycle
+        self._start_dispatch_traces(formatted_subtasks)
+
         return {"tasks": formatted_subtasks}
+
+    def _start_dispatch_traces(self, formatted_subtasks: List[Dict]) -> None:
+        """
+        Start a new trace for each dispatched task.
+
+        This method creates a root span for each task being dispatched to executor.
+        The trace context is added to the task data so executor can continue the trace.
+
+        Args:
+            formatted_subtasks: List of formatted subtask dictionaries
+        """
+        if not is_telemetry_enabled():
+            return
+
+        if not formatted_subtasks:
+            return
+
+        try:
+            from opentelemetry import trace
+            from shared.telemetry.context import get_trace_context_for_propagation
+
+            tracer = get_tracer("backend.dispatch")
+
+            for task_data in formatted_subtasks:
+                task_id = task_data.get("task_id")
+                subtask_id = task_data.get("subtask_id")
+                user_data = task_data.get("user", {})
+                user_id = user_data.get("id") if user_data else None
+                user_name = user_data.get("name") if user_data else None
+                task_title = task_data.get("task_title", "")
+
+                # Create a new root span for the task dispatch
+                # Use PRODUCER kind to indicate this starts a new trace for async processing
+                with tracer.start_as_current_span(
+                    name="task.dispatch",
+                    kind=trace.SpanKind.PRODUCER,
+                ) as span:
+                    # Set task and user context attributes
+                    span.set_attribute(SpanAttributes.TASK_ID, task_id)
+                    span.set_attribute(SpanAttributes.SUBTASK_ID, subtask_id)
+                    if user_id:
+                        span.set_attribute(SpanAttributes.USER_ID, str(user_id))
+                    if user_name:
+                        span.set_attribute(SpanAttributes.USER_NAME, user_name)
+                    span.set_attribute("task.title", task_title)
+                    span.set_attribute("dispatch.type", "executor")
+
+                    # Get bot info for tracing
+                    bots = task_data.get("bot", [])
+                    if bots:
+                        bot_names = [b.get("name", "") for b in bots]
+                        shell_types = [b.get("shell_type", "") for b in bots]
+                        span.set_attribute("bot.names", ",".join(bot_names))
+                        span.set_attribute("shell.types", ",".join(shell_types))
+
+                    # Extract trace context for propagation to executor
+                    trace_context = get_trace_context_for_propagation()
+                    if trace_context:
+                        # Add trace context to task data for executor to continue the trace
+                        task_data["trace_context"] = trace_context
+                        logger.debug(
+                            f"Added trace context to task {task_id}: traceparent={trace_context.get('traceparent', 'N/A')}"
+                        )
+
+        except Exception as e:
+            logger.warning(f"Failed to start dispatch traces: {e}")
 
     async def update_subtask(
         self, db: Session, *, subtask_update: SubtaskExecutorUpdate

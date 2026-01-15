@@ -240,7 +240,7 @@ class ChatService(ChatInterface):
                 (time.perf_counter() - t2) * 1000,
             )
 
-            # Stream tokens from agent
+            # Stream tokens from agent, reusing the agent_builder we already created
             add_span_event("streaming_started")
             token_count = 0
             async for token in agent.stream(
@@ -248,6 +248,7 @@ class ChatService(ChatInterface):
                 config=agent_config,
                 cancel_event=core.cancel_event,
                 on_tool_event=on_tool_event,
+                agent_builder=agent_builder,  # Reuse to avoid duplicate creation
             ):
                 if core.is_cancelled():
                     add_span_event(

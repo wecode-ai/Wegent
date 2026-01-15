@@ -156,7 +156,15 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
       const existingId = mode === 'edit' && editInfo?.id ? editInfo.id : undefined
       // Pass authType for Gerrit
       const authTypeToSave = isGerrit ? authType : undefined
-      await saveGitToken(user, domainToSave, tokenToSave, usernameToSave, type, existingId, authTypeToSave)
+      await saveGitToken(
+        user,
+        domainToSave,
+        tokenToSave,
+        usernameToSave,
+        type,
+        existingId,
+        authTypeToSave
+      )
       onClose()
       await refresh()
     } catch (error) {
