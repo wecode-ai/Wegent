@@ -269,6 +269,9 @@ class MCPClient:
         All loaded tools are automatically wrapped with protection mechanisms:
         - Timeout protection (60s default per tool call)
         - Exception isolation (errors return error messages instead of raising)
+
+        Note: This method is fault-tolerant - if some servers fail to connect,
+        tools from successfully connected servers will still be available.
         """
         if not self.connections:
             add_span_event("no_connections_skipped")
@@ -277,9 +280,73 @@ class MCPClient:
         add_span_event("creating_multi_server_client")
         self._client = MultiServerMCPClient(connections=self.connections)
 
+        # Load tools from each server individually to handle failures gracefully
+        # This avoids the issue where one failing server causes all tools to fail
         add_span_event("loading_tools_started")
-        raw_tools = await self._client.get_tools()
-        add_span_event("loading_tools_completed", {"raw_tools_count": len(raw_tools)})
+        raw_tools: list[BaseTool] = []
+        failed_servers: list[str] = []
+        successful_servers: list[str] = []
+
+        async def load_server_tools(
+            server_name: str,
+        ) -> tuple[str, list[BaseTool], str | None]:
+            """Load tools from a single server, returning (name, tools, error)."""
+            try:
+                tools = await self._client.get_tools(server_name=server_name)
+                return (server_name, tools, None)
+            except Exception as e:
+                error_msg = str(e)
+                # Extract nested exception message if available
+                if hasattr(e, "exceptions"):
+                    for exc in e.exceptions:
+                        if hasattr(exc, "exceptions"):
+                            for sub_exc in exc.exceptions:
+                                error_msg = str(sub_exc)
+                                break
+                        else:
+                            error_msg = str(exc)
+                        break
+                return (server_name, [], error_msg)
+
+        # Load tools from all servers in parallel with fault tolerance
+        results = await asyncio.gather(
+            *[load_server_tools(name) for name in self.connections.keys()],
+            return_exceptions=True,
+        )
+
+        for result in results:
+            if isinstance(result, Exception):
+                # This shouldn't happen since we catch exceptions in load_server_tools
+                logger.error("[MCP] Unexpected error loading tools: %s", result)
+                continue
+            server_name, tools, error = result
+            if error:
+                failed_servers.append(server_name)
+                logger.warning(
+                    "[MCP] Failed to load tools from server '%s': %s",
+                    server_name,
+                    error,
+                )
+            else:
+                successful_servers.append(server_name)
+                raw_tools.extend(tools)
+
+        add_span_event(
+            "loading_tools_completed",
+            {
+                "raw_tools_count": len(raw_tools),
+                "successful_servers": successful_servers,
+                "failed_servers": failed_servers,
+            },
+        )
+
+        if failed_servers:
+            logger.warning(
+                "[MCP] %d/%d servers failed to connect: %s",
+                len(failed_servers),
+                len(self.connections),
+                ", ".join(failed_servers),
+            )
 
         # Wrap all tools with protection mechanisms
         add_span_event("wrapping_tools_started")

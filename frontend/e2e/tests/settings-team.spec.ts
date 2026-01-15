@@ -32,7 +32,7 @@ test.describe('Settings - Team Management', () => {
 
   test('should open create team form', async ({ page }) => {
     // "New Team" button should always be visible after page loads
-    const createButton = page.locator('button:has-text("New Team"), button:has-text("新建团队")')
+    const createButton = page.locator('button:has-text("New Team"), button:has-text("新建智能体")')
 
     // Button should be visible - no skip, this is a required UI element
     await expect(createButton).toBeVisible({ timeout: 20000 })
@@ -50,7 +50,7 @@ test.describe('Settings - Team Management', () => {
     const teamName = TestData.uniqueName(`${testPrefix}-team`)
 
     // "New Team" button should always be visible
-    const createButton = page.locator('button:has-text("New Team"), button:has-text("新建团队")')
+    const createButton = page.locator('button:has-text("New Team"), button:has-text("新建智能体")')
     await expect(createButton).toBeVisible({ timeout: 20000 })
     await createButton.click()
 
@@ -67,7 +67,7 @@ test.describe('Settings - Team Management', () => {
 
       // Wait for navigation back to list (could fail validation - that's ok for this test)
       await page
-        .waitForSelector('button:has-text("New Team"), button:has-text("新建团队")', {
+        .waitForSelector('button:has-text("New Team"), button:has-text("新建智能体")', {
           timeout: 10000,
         })
         .catch(() => {

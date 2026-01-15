@@ -109,6 +109,12 @@ async def _create_streaming_response_http(
     response_id = f"resp_{setup.task_id}"
     created_at = int(datetime.now().timestamp())
     assistant_subtask_id = setup.assistant_subtask.id
+    user_subtask_id = (
+        setup.user_subtask.id
+    )  # User subtask ID for RAG result persistence
+    user_message_id = (
+        setup.user_subtask.message_id
+    )  # User message_id for history exclusion
     task_kind_id = setup.task_id
     enable_chat_bot = tool_settings.get("enable_chat_bot", False)
 
@@ -192,6 +198,8 @@ async def _create_streaming_response_http(
             chat_request = ChatRequest(
                 task_id=task_kind_id,
                 subtask_id=assistant_subtask_id,
+                user_subtask_id=user_subtask_id,  # For RAG result persistence
+                user_message_id=user_message_id,  # For history exclusion (prevent duplicate messages)
                 message=input_text,
                 user_id=user.id,
                 user_name=user.user_name or "",
@@ -374,6 +382,12 @@ async def _create_sync_response_http(
     response_id = f"resp_{setup.task_id}"
     created_at = int(datetime.now().timestamp())
     assistant_subtask_id = setup.assistant_subtask.id
+    user_subtask_id = (
+        setup.user_subtask.id
+    )  # User subtask ID for RAG result persistence
+    user_message_id = (
+        setup.user_subtask.message_id
+    )  # User message_id for history exclusion
     enable_chat_bot = tool_settings.get("enable_chat_bot", False)
 
     # Prepare MCP servers for HTTP mode
@@ -451,6 +465,8 @@ async def _create_sync_response_http(
         chat_request = ChatRequest(
             task_id=setup.task_id,
             subtask_id=assistant_subtask_id,
+            user_subtask_id=user_subtask_id,  # For RAG result persistence
+            user_message_id=user_message_id,  # For history exclusion (prevent duplicate messages)
             message=input_text,
             user_id=user.id,
             user_name=user.user_name or "",
