@@ -140,7 +140,7 @@ export default function MobileTeamSelector({
         >
           {searchFilteredTeams.length === 0 ? (
             <div className="rounded-xl bg-white dark:bg-[#2c2c2e] p-4 text-center text-sm text-[#8e8e93]">
-              {isLoading ? t('common:loading') : t('common:teams.no_match')}
+              {isLoading ? t('common:actions.loading') : t('common:teams.no_match')}
             </div>
           ) : (
             <div className="rounded-xl bg-white dark:bg-[#2c2c2e] overflow-hidden">

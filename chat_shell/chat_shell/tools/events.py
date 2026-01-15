@@ -9,11 +9,14 @@ including thinking step generation and event emission.
 """
 
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, Union
 
 from shared.telemetry.decorators import add_span_event, set_span_attribute
 
 logger = logging.getLogger(__name__)
+
+# Type alias for i18n title (can be a string or an object with key and params)
+I18nTitle = Union[str, dict[str, Any]]
 
 
 def create_tool_event_handler(
@@ -210,7 +213,7 @@ def _handle_tool_end(
 
 def _process_tool_output(
     tool_name: str, tool_output: Any
-) -> tuple[str, list[dict[str, Any]]]:
+) -> tuple[I18nTitle, list[dict[str, Any]]]:
     """Process tool output and extract sources.
 
     Args:
@@ -244,7 +247,10 @@ def _process_tool_output(
                             f"[TOOL_OUTPUT] Extracted {len(kb_sources)} sources from knowledge_base_search"
                         )
                     result_count = parsed.get("count", 0)
-                    title = {"key": "tools.knowledge_base.completed", "params": {"count": result_count}}
+                    title = {
+                        "key": "tools.knowledge_base.completed",
+                        "params": {"count": result_count},
+                    }
             except json.JSONDecodeError as e:
                 logger.warning(f"[TOOL_OUTPUT] Failed to parse tool output: {e}")
 
@@ -257,7 +263,10 @@ def _process_tool_output(
             urls = re.findall(r'https?://[^\s<>"{}|\\^`\[\]]+', tool_output)
             for url in urls[:5]:  # Limit to 5 sources
                 sources.append({"type": "url", "url": url})
-            title = {"key": "tools.web_search.completed", "params": {"count": len(urls)}}
+            title = {
+                "key": "tools.web_search.completed",
+                "params": {"count": len(urls)},
+            }
 
     return title, sources
 
@@ -291,7 +300,7 @@ def _build_tool_start_title(
     agent_builder: Any,
     tool_name: str,
     serializable_input: Any,
-) -> str:
+) -> I18nTitle:
     """Build friendly title for tool start event."""
     tool_instance = None
     if agent_builder.tool_registry:
@@ -340,7 +349,7 @@ def _build_tool_end_title(
     run_id: str,
     state: Any,
     default_title: str,
-) -> str:
+) -> I18nTitle:
     """Build friendly title for tool end event."""
     tool_instance = None
     if agent_builder.tool_registry:
@@ -373,7 +382,10 @@ def _build_tool_end_title(
                         skill_display = tool_instance.get_skill_display_name(
                             skill_name_param
                         )
-                        return {"key": "tools.load_skill.completed_with_name", "params": {"name": skill_display}}
+                        return {
+                            "key": "tools.load_skill.completed_with_name",
+                            "params": {"name": skill_display},
+                        }
                 break
 
     return base_title
