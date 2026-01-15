@@ -493,3 +493,69 @@ class TestCopyToGroup:
         assert len(result["copied_bots"]) == 0
         assert len(result["referenced_bots"]) == 1
         assert result["referenced_bots"][0]["name"] == "public-bot"
+
+    def test_copy_with_existing_bot_in_group(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_team: Kind,
+        test_bot: Kind,
+        test_ghost: Kind,
+        test_shell: Kind,
+        test_group: Namespace,
+        test_group_membership: NamespaceMember,
+    ):
+        """Test copy when a bot with same name owned by same user exists in target group."""
+        # Create a bot with same name in target group (owned by same user)
+        existing_group_ghost = Kind(
+            user_id=test_user.id,
+            kind="Ghost",
+            name="test-bot-ghost",
+            namespace=test_group.name,
+            json={
+                "kind": "Ghost",
+                "apiVersion": "agent.wecode.io/v1",
+                "metadata": {"name": "test-bot-ghost", "namespace": test_group.name},
+                "spec": {"systemPrompt": "Group ghost", "mcpServers": {}},
+                "status": {"state": "Available"},
+            },
+            is_active=True,
+        )
+        test_db.add(existing_group_ghost)
+        test_db.commit()
+
+        existing_group_bot = Kind(
+            user_id=test_user.id,
+            kind="Bot",
+            name="test-bot",
+            namespace=test_group.name,
+            json={
+                "kind": "Bot",
+                "apiVersion": "agent.wecode.io/v1",
+                "metadata": {"name": "test-bot", "namespace": test_group.name},
+                "spec": {
+                    "ghostRef": {
+                        "name": "test-bot-ghost",
+                        "namespace": test_group.name,
+                    },
+                    "shellRef": {"name": "test-shell", "namespace": "default"},
+                },
+                "status": {"state": "Available"},
+            },
+            is_active=True,
+        )
+        test_db.add(existing_group_bot)
+        test_db.commit()
+        test_db.refresh(existing_group_bot)
+
+        # Now copy the personal team - should reuse existing bot
+        result = team_kinds_service.copy_to_group(
+            db=test_db,
+            team_id=test_team.id,
+            user_id=test_user.id,
+            target_group_name=test_group.name,
+        )
+
+        # Bot should be copied (reusing existing), not creating new
+        assert len(result["copied_bots"]) == 1
+        assert result["copied_bots"][0]["new_bot_id"] == existing_group_bot.id

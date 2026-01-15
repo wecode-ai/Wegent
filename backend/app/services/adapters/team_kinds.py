@@ -2232,8 +2232,16 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             .first()
         )
         if existing_bot:
-            # Bot already exists in target namespace, return it
-            return existing_bot
+            # Bot already exists - check if user owns it and can reuse
+            if existing_bot.user_id == user_id:
+                # User owns the existing bot, safe to reference it
+                return existing_bot
+            else:
+                # Bot exists but owned by different user, cannot copy
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"A bot with name '{bot.name}' already exists in group '{target_namespace}'",
+                )
 
         # Get source ghost
         source_ghost = (
