@@ -246,6 +246,7 @@ spec:
   mcpServers: {}
   skills:
     - mermaid-diagram
+    - subagent
   systemPrompt: |
     You are Wegent, a helpful, harmless, and honest AI assistant.
 

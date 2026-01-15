@@ -59,6 +59,103 @@ class TestContextServiceStorage:
 
     def test_get_binary_data_from_mysql(self):
         """Test retrieving binary data from MySQL storage"""
+        import sys
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context.context_service import context_service as cs_instance
+
+        # Get the actual module (not the singleton instance) for patching
+        cs_module = sys.modules["app.services.context.context_service"]
+
+        # Arrange
+        mock_db = Mock()
+        storage_key = "attachments/test123_20250113_1_100"
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="test.pdf",
+            status=ContextStatus.READY.value,
+            binary_data=b"stored data",
+            type_data={
+                "storage_backend": "mysql",
+                "storage_key": storage_key,
+                "is_encrypted": False,
+            },
+        )
+        context.id = 100
+
+        # Mock the storage backend to return the binary data
+        # Use patch.object with the module to avoid name conflicts
+        with patch.object(cs_module, "get_storage_backend") as mock_get_backend:
+            mock_backend = Mock()
+            mock_backend.get.return_value = b"stored data"
+            mock_get_backend.return_value = mock_backend
+
+            # Act
+            binary_data = cs_instance.get_attachment_binary_data(mock_db, context)
+
+        # Assert
+        assert binary_data == b"stored data"
+        mock_backend.get.assert_called_once_with(storage_key)
+
+    def test_get_binary_data_with_encryption(self):
+        """Test retrieving and decrypting encrypted binary data"""
+        import sys
+
+        from shared.utils.crypto import encrypt_attachment
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context.context_service import context_service as cs_instance
+
+        # Get the actual module (not the singleton instance) for patching
+        cs_module = sys.modules["app.services.context.context_service"]
+
+        # Arrange
+        mock_db = Mock()
+        storage_key = "attachments/test123_20250113_1_100"
+        original_data = b"original attachment data"
+        encrypted_data = encrypt_attachment(original_data)
+
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="test.pdf",
+            status=ContextStatus.READY.value,
+            binary_data=encrypted_data,
+            type_data={
+                "storage_backend": "mysql",
+                "storage_key": storage_key,
+                "is_encrypted": True,
+            },
+        )
+        context.id = 100
+
+        # Mock the storage backend to return encrypted data
+        # Use patch.object with the module to avoid name conflicts
+        with patch.object(cs_module, "get_storage_backend") as mock_get_backend:
+            mock_backend = Mock()
+            mock_backend.get.return_value = encrypted_data
+            mock_get_backend.return_value = mock_backend
+
+            # Act
+            binary_data = cs_instance.get_attachment_binary_data(mock_db, context)
+
+        # Assert - should return decrypted data
+        assert binary_data == original_data
+        assert binary_data != encrypted_data
+
+    def test_get_binary_data_returns_none_without_storage_key(self):
+        """Test that get_binary_data returns None when storage_key is missing"""
         from app.models.subtask_context import (
             ContextStatus,
             ContextType,
@@ -82,7 +179,7 @@ class TestContextServiceStorage:
         binary_data = context_service.get_attachment_binary_data(mock_db, context)
 
         # Assert
-        assert binary_data == b"stored data"
+        assert binary_data is None
 
 
 class TestContextServiceVision:

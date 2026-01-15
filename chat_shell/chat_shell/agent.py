@@ -40,18 +40,21 @@ class AgentConfig:
 
     This dataclass holds all the parameters needed to create and configure
     a chat agent, keeping the creation logic clean and type-safe.
+
+    Note: Tools that implement PromptModifierTool protocol (e.g., LoadSkillTool)
+    should be included in extra_tools. The LangGraphAgentBuilder will automatically
+    detect and use them for dynamic prompt modification.
     """
 
     model_config: dict[str, Any]
     system_prompt: str = ""
     max_iterations: int = 10  # Default, can be overridden by settings
     extra_tools: list[BaseTool] | None = None
-    load_skill_tool: Any = None
     streaming: bool = True
     # Prompt enhancement options (handled internally by ChatAgent)
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
-    skills: list[dict[str, Any]] | None = None  # Skill metadata for prompt injection
+    skills: list[dict[str, Any]] | None = None  # All skill configs (with preload field)
 
 
 class ChatAgent:
@@ -97,11 +100,11 @@ class ChatAgent:
         self._enable_web_search_default = enable_web_search
 
         # Register built-in skills
-        if enable_skills:
-            from .tools.builtin import FileListSkill, FileReaderSkill
+        # if enable_skills:
+        # from .tools.builtin import FileListSkill, FileReaderSkill
 
-            self.tool_registry.register(FileReaderSkill(workspace_root=workspace_root))
-            self.tool_registry.register(FileListSkill(workspace_root=workspace_root))
+        # self.tool_registry.register(FileReaderSkill(workspace_root=workspace_root))
+        # self.tool_registry.register(FileListSkill(workspace_root=workspace_root))
 
         # Register web search if enabled globally
         web_search_enabled = getattr(settings, "WEB_SEARCH_ENABLED", False)
@@ -132,18 +135,18 @@ class ChatAgent:
         for tool in self.tool_registry.get_all():
             tool_registry.register(tool)
 
-        # Add extra tools
+        # Add extra tools (including PromptModifierTool instances like LoadSkillTool)
+        # LangGraphAgentBuilder will automatically detect PromptModifierTool instances
         if config.extra_tools:
             for tool in config.extra_tools:
                 tool_registry.register(tool)
 
-        # Create agent builder with load_skill_tool for dynamic skill prompt injection
+        # Create agent builder - it will auto-detect PromptModifierTool from registry
         return LangGraphAgentBuilder(
             llm=llm,
             tool_registry=tool_registry,
             max_iterations=config.max_iterations,
             enable_checkpointing=self.enable_checkpointing,
-            load_skill_tool=config.load_skill_tool,
         )
 
     async def execute(

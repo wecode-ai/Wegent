@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from shared.telemetry.context import (
+    SpanAttributes,
     SpanManager,
     SpanNames,
     TelemetryEventNames,
@@ -27,6 +28,7 @@ from shared.telemetry.context import (
     copy_context_vars,
     detach_otel_context,
     restore_context_vars,
+    set_span_attributes,
 )
 
 from app.core.config import settings
@@ -355,6 +357,7 @@ async def _stream_chat_response(
                 enable_clarification=payload.enable_clarification,
                 enable_deep_thinking=True,
                 task_id=stream_data.task_id,
+                preload_skills=getattr(payload, "preload_skills", None),
             )
         except ValueError as e:
             error_msg = str(e)
@@ -464,6 +467,8 @@ async def _stream_chat_response(
                 subtask_id=stream_data.subtask_id,
                 user_id=stream_data.user_id,
                 skill_configs=chat_config.skill_configs,
+                load_skill_tool=load_skill_tool,
+                user_name=stream_data.user_name,
             )
             extra_tools.extend(skill_tools)
 
@@ -526,6 +531,7 @@ async def _stream_chat_response(
                 document_ids=document_ids,
                 table_contexts=table_contexts,
                 event_emitter=emitter,
+                preload_skills=chat_config.preload_skills,  # Use resolved from ChatConfig
             )
         elif streaming_mode == "bridge":
             # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards
@@ -589,6 +595,7 @@ async def _stream_with_http_adapter(
     document_ids: list = None,
     table_contexts: list = None,
     event_emitter: Optional["ChatEventEmitter"] = None,
+    preload_skills: list = None,
 ) -> None:
     """Stream using HTTP adapter to call remote chat_shell service.
 
@@ -612,6 +619,7 @@ async def _stream_with_http_adapter(
         table_contexts: List of table context dicts for DataTableTool
         event_emitter: Optional event emitter for chat events. If None, uses WebSocketEventEmitter.
             Pass NoOpEventEmitter for background tasks without WebSocket (e.g., Flow Scheduler).
+        preload_skills: List of skill names to preload into system prompt
     """
     # Import here to avoid circular imports
     from app.core.config import settings
@@ -657,65 +665,14 @@ async def _stream_with_http_adapter(
         subtask_id,
     )
 
-    # Parse MCP server configuration for HTTP mode
-    # Format: list of {"name": "...", "url": "...", "type": "...", "auth": ...}
-    mcp_servers = []
-    if settings.CHAT_MCP_ENABLED:
-        import json
+    # Parse MCP servers with separate span
+    mcp_servers = _append_mcp_servers(ws_config.bot_name, ws_config.bot_namespace)
 
-        mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "{}")
-        if mcp_servers_config:
-            try:
-                config = json.loads(mcp_servers_config)
-                servers = config.get("mcpServers", {})
-                for name, server_config in servers.items():
-                    server_type = server_config.get("type", "streamable-http")
-                    url = server_config.get("url", "")
-                    headers = server_config.get("headers", {})
-                    if url:
-                        server_entry = {
-                            "name": name,
-                            "type": server_type,
-                            "url": url,
-                        }
-                        if headers:
-                            server_entry["auth"] = headers
-                        mcp_servers.append(server_entry)
-                logger.info(
-                    "[HTTP_ADAPTER] Parsed MCP servers: %d servers",
-                    len(mcp_servers),
-                )
-            except json.JSONDecodeError as e:
-                logger.warning("[HTTP_ADAPTER] Failed to parse CHAT_MCP_SERVERS: %s", e)
+    # Append skills with separate span
+    _append_skills(skill_names, skill_configs)
 
-    # Load Bot MCP servers from Ghost configuration
-    if ws_config.bot_name:
-        try:
-            bot_mcp_servers = _get_bot_mcp_servers_for_http(
-                ws_config.bot_name, ws_config.bot_namespace or "default"
-            )
-            for name, server_config in bot_mcp_servers.items():
-                server_type = server_config.get("type", "streamable-http")
-                url = server_config.get("url", "")
-                headers = server_config.get("headers", {})
-                if url:
-                    server_entry = {
-                        "name": name,
-                        "type": server_type,
-                        "url": url,
-                    }
-                    if headers:
-                        server_entry["auth"] = headers
-                    mcp_servers.append(server_entry)
-            if bot_mcp_servers:
-                logger.info(
-                    "[HTTP_ADAPTER] Added %d Bot MCP servers for bot %s/%s",
-                    len(bot_mcp_servers),
-                    ws_config.bot_namespace or "default",
-                    ws_config.bot_name,
-                )
-        except Exception as e:
-            logger.warning("[HTTP_ADAPTER] Failed to load Bot MCP servers: %s", e)
+    # Append knowledge with separate span
+    _append_knowledge(knowledge_base_ids, document_ids, table_contexts)
 
     # Build ChatRequest
     # Note: enable_web_search should follow settings.WEB_SEARCH_ENABLED for consistency with bridge mode
@@ -753,10 +710,11 @@ async def _stream_with_http_adapter(
         search_engine=ws_config.search_engine,
         bot_name=ws_config.bot_name,
         bot_namespace=ws_config.bot_namespace,
-        skills=ws_config.skills or [],
+        skills=ws_config.skills or [],  # Skill metadata with preload field
         # Add skill and knowledge base parameters for HTTP mode
         skill_names=skill_names or [],
         skill_configs=skill_configs or [],
+        preload_skills=preload_skills or [],  # Pass preload_skills to ChatRequest
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids,
         table_contexts=table_contexts or [],
@@ -766,15 +724,29 @@ async def _stream_with_http_adapter(
 
     logger.info(
         "[HTTP_ADAPTER] ChatRequest built: task_id=%d, skill_names=%s, "
-        "skill_configs_count=%d, knowledge_base_ids=%s, document_ids=%s, "
-        "table_contexts_count=%d, table_contexts=%s",
+        "table_contexts_count=%d, table_contexts=%s, "
+        "skill_configs_count=%d, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s",
         task_id,
         skill_names,
-        len(skill_configs) if skill_configs else 0,
-        knowledge_base_ids,
-        document_ids,
         len(table_contexts) if table_contexts else 0,
         table_contexts,  # Log the actual content
+        len(skill_configs) if skill_configs else 0,
+        preload_skills,
+        knowledge_base_ids,
+        document_ids,
+    )
+
+    # Record chat request details to trace
+    # Note: MCP, Skills, Knowledge attributes are recorded in separate spans (append.mcp, append.skills, append.knowledge)
+    set_span_attributes(
+        {
+            SpanAttributes.TASK_ID: task_id,
+            SpanAttributes.SUBTASK_ID: subtask_id,
+            SpanAttributes.CHAT_WEB_SEARCH: enable_web_search,
+            SpanAttributes.CHAT_DEEP_THINKING: ws_config.enable_deep_thinking,
+            SpanAttributes.CHAT_CLARIFICATION: ws_config.enable_clarification,
+            SpanAttributes.CHAT_TYPE: "group" if ws_config.is_group_chat else "single",
+        }
     )
 
     # Create HTTP adapter
@@ -797,6 +769,9 @@ async def _stream_with_http_adapter(
     # Track last Redis save time for periodic saves (every 1 second)
     last_redis_save = asyncio.get_event_loop().time()
     redis_save_interval = 1.0  # Save to Redis every 1 second
+    # Track TTFT (Time To First Token)
+    stream_start_time = asyncio.get_event_loop().time()
+    first_token_received = False
 
     try:
         # Stream events from chat_shell and forward to WebSocket
@@ -819,6 +794,21 @@ async def _stream_with_http_adapter(
                 # Text chunk - forward to WebSocket
                 chunk_text = event.data.get("content", "")
                 if chunk_text:
+                    # Log TTFT (Time To First Token) for the first content chunk
+                    if not first_token_received:
+                        ttft_ms = (
+                            asyncio.get_event_loop().time() - stream_start_time
+                        ) * 1000
+                        first_token_received = True
+                        logger.info(
+                            "[BACKEND_TTFT] First token received from chat_shell: "
+                            "task_id=%d, subtask_id=%d, ttft_ms=%.2f, token_len=%d",
+                            task_id,
+                            subtask_id,
+                            ttft_ms,
+                            len(chunk_text),
+                        )
+
                     full_response += chunk_text
                     await emitter.emit_chat_chunk(
                         task_id=task_id,
@@ -906,33 +896,57 @@ async def _stream_with_http_adapter(
                     },  # Skip output to reduce log size
                 )
 
-                # Find matching start step and update display name
-                display_name = f"Tool completed: {tool_name}"
-                for step in thinking_steps:
-                    if (
-                        step.get("run_id") == tool_id
-                        and step.get("details", {}).get("status") == "started"
-                    ):
-                        # Get the original title and remove "正在" prefix
-                        orig_title = step.get("title", "")
-                        if orig_title.startswith("正在"):
-                            display_name = orig_title[2:]
-                        else:
-                            display_name = orig_title
-                        break
+                # Determine status based on event data
+                # chat_shell sends error field directly in tool_done event when failed
+                status = "completed"
+                error_msg = event.data.get("error")
+                if error_msg:
+                    status = "failed"
+                elif isinstance(tool_output, str) and tool_output:
+                    # Also check tool_output JSON for success: false (fallback)
+                    try:
+                        import json
+
+                        parsed = json.loads(tool_output)
+                        if isinstance(parsed, dict) and parsed.get("success") is False:
+                            status = "failed"
+                            error_msg = parsed.get("error", "Task failed")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                # Use display_name from event data, or fall back to matching start step
+                display_name = event.data.get("display_name", "")
+                if not display_name:
+                    for step in thinking_steps:
+                        if (
+                            step.get("run_id") == tool_id
+                            and step.get("details", {}).get("status") == "started"
+                        ):
+                            orig_title = step.get("title", "")
+                            if orig_title.startswith("正在"):
+                                display_name = orig_title[2:]
+                            else:
+                                display_name = orig_title
+                            break
+                    if not display_name:
+                        display_name = f"Tool completed: {tool_name}"
+
+                tool_result_details = {
+                    "type": "tool_result",
+                    "tool_name": tool_name,
+                    "status": status,
+                    "output": tool_output,
+                    "content": tool_output,
+                }
+                if status == "failed" and error_msg:
+                    tool_result_details["error"] = error_msg
 
                 thinking_steps.append(
                     {
                         "title": display_name,
                         "next_action": "continue",
                         "run_id": tool_id,
-                        "details": {
-                            "type": "tool_result",
-                            "tool_name": tool_name,
-                            "status": "completed",
-                            "output": tool_output,
-                            "content": tool_output,
-                        },
+                        "details": tool_result_details,
                     }
                 )
 
@@ -1369,6 +1383,190 @@ async def _stream_with_bridge(
                 del namespace._active_streams[subtask_id]
             if subtask_id in getattr(namespace, "_stream_versions", {}):
                 del namespace._stream_versions[subtask_id]
+
+
+from shared.telemetry.decorators import trace_sync
+
+
+@trace_sync(
+    span_name="append.mcp",
+    tracer_name="backend.chat",
+)
+def _append_mcp_servers(
+    bot_name: Optional[str] = None,
+    bot_namespace: Optional[str] = None,
+) -> list[Dict[str, Any]]:
+    """Append MCP server configuration for HTTP mode.
+
+    Creates a separate span for MCP server parsing and loading.
+
+    Args:
+        bot_name: Optional bot name to load Bot MCP servers
+        bot_namespace: Optional bot namespace
+
+    Returns:
+        List of MCP server configurations
+    """
+    import json
+
+    from shared.telemetry.context import SpanAttributes, set_span_attributes
+
+    mcp_servers = []
+
+    # Parse global MCP servers from settings
+    if settings.CHAT_MCP_ENABLED:
+        mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "{}")
+        if mcp_servers_config:
+            try:
+                config = json.loads(mcp_servers_config)
+                servers = config.get("mcpServers", {})
+                for name, server_config in servers.items():
+                    server_type = server_config.get("type", "streamable-http")
+                    url = server_config.get("url", "")
+                    headers = server_config.get("headers", {})
+                    if url:
+                        server_entry = {
+                            "name": name,
+                            "type": server_type,
+                            "url": url,
+                        }
+                        if headers:
+                            server_entry["auth"] = headers
+                        mcp_servers.append(server_entry)
+                logger.info(
+                    "[MCP] Parsed global MCP servers: %d servers",
+                    len(mcp_servers),
+                )
+                set_span_attributes(
+                    {
+                        SpanAttributes.MCP_SERVERS_COUNT: len(mcp_servers),
+                        SpanAttributes.MCP_SERVER_NAMES: ",".join(
+                            s["name"] for s in mcp_servers
+                        ),
+                    }
+                )
+            except json.JSONDecodeError as e:
+                logger.warning("[MCP] Failed to parse CHAT_MCP_SERVERS: %s", e)
+
+    # Load Bot MCP servers from Ghost configuration
+    if bot_name:
+        try:
+            bot_mcp_servers = _get_bot_mcp_servers_for_http(
+                bot_name, bot_namespace or "default"
+            )
+            bot_server_count = 0
+            for name, server_config in bot_mcp_servers.items():
+                server_type = server_config.get("type", "streamable-http")
+                url = server_config.get("url", "")
+                headers = server_config.get("headers", {})
+                if url:
+                    server_entry = {
+                        "name": name,
+                        "type": server_type,
+                        "url": url,
+                    }
+                    if headers:
+                        server_entry["auth"] = headers
+                    mcp_servers.append(server_entry)
+                    bot_server_count += 1
+            if bot_server_count > 0:
+                logger.info(
+                    "[MCP] Added %d Bot MCP servers for bot %s/%s",
+                    bot_server_count,
+                    bot_namespace or "default",
+                    bot_name,
+                )
+                set_span_attributes(
+                    {
+                        SpanAttributes.MCP_BOT_SERVERS_COUNT: bot_server_count,
+                        SpanAttributes.BOT_NAME: f"{bot_namespace or 'default'}/{bot_name}",
+                    }
+                )
+        except Exception as e:
+            logger.warning("[MCP] Failed to load Bot MCP servers: %s", e)
+
+    return mcp_servers
+
+
+@trace_sync(
+    span_name="append.skills",
+    tracer_name="backend.chat",
+)
+def _append_skills(
+    skill_names: Optional[list[str]] = None,
+    skill_configs: Optional[list[dict]] = None,
+) -> tuple[list[str], list[dict]]:
+    """Append skills configuration.
+
+    Args:
+        skill_names: List of skill names
+        skill_configs: List of skill configurations
+
+    Returns:
+        Tuple of (skill_names, skill_configs)
+    """
+    from shared.telemetry.context import SpanAttributes, set_span_attributes
+
+    names = skill_names or []
+    configs = skill_configs or []
+
+    if names or configs:
+        logger.info(
+            "[SKILLS] Appending skills: names=%s, configs_count=%d", names, len(configs)
+        )
+        set_span_attributes(
+            {
+                SpanAttributes.SKILL_NAMES: ",".join(names) if names else "",
+                SpanAttributes.SKILL_COUNT: len(configs),
+            }
+        )
+
+    return names, configs
+
+
+@trace_sync(
+    span_name="append.knowledge",
+    tracer_name="backend.chat",
+)
+def _append_knowledge(
+    knowledge_base_ids: Optional[list[int]] = None,
+    document_ids: Optional[list[int]] = None,
+    table_contexts: Optional[list[dict]] = None,
+) -> tuple[Optional[list[int]], Optional[list[int]], list[dict]]:
+    """Append knowledge base configuration.
+
+    Args:
+        knowledge_base_ids: List of knowledge base IDs
+        document_ids: List of document IDs
+        table_contexts: List of table contexts
+
+    Returns:
+        Tuple of (knowledge_base_ids, document_ids, table_contexts)
+    """
+    from shared.telemetry.context import SpanAttributes, set_span_attributes
+
+    contexts = table_contexts or []
+
+    if knowledge_base_ids or document_ids or contexts:
+        logger.info(
+            "[KNOWLEDGE] Appending knowledge: kb_ids=%s, doc_ids=%s, table_contexts_count=%d",
+            knowledge_base_ids,
+            document_ids,
+            len(contexts),
+        )
+        set_span_attributes(
+            {
+                SpanAttributes.KB_IDS: (
+                    ",".join(map(str, knowledge_base_ids)) if knowledge_base_ids else ""
+                ),
+                SpanAttributes.KB_DOCUMENT_IDS: (
+                    ",".join(map(str, document_ids)) if document_ids else ""
+                ),
+                SpanAttributes.KB_TABLE_CONTEXTS_COUNT: len(contexts),
+            }
+        )
+
+    return knowledge_base_ids, document_ids, contexts
 
 
 def _get_bot_mcp_servers_for_http(bot_name: str, bot_namespace: str) -> Dict[str, Any]:

@@ -180,6 +180,20 @@ class Settings(BaseSettings):
     ATTACHMENT_S3_REGION: str = "us-east-1"
     ATTACHMENT_S3_USE_SSL: bool = True
 
+    # Attachment encryption configuration
+    # Enable/disable AES-256-CBC encryption for attachment binary data
+    # When enabled, all newly uploaded attachments will be encrypted
+    # Existing unencrypted attachments remain accessible (backward compatible)
+    ATTACHMENT_ENCRYPTION_ENABLED: bool = False
+    # AES encryption key for attachments (32 bytes for AES-256)
+    # SECURITY WARNING: Change this default value in production!
+    # Generate using: openssl rand -hex 32
+    ATTACHMENT_AES_KEY: str = "12345678901234567890123456789012"
+    # AES initialization vector for attachments (16 bytes)
+    # SECURITY WARNING: Change this default value in production!
+    # Generate using: openssl rand -hex 16
+    ATTACHMENT_AES_IV: str = "1234567890123456"
+
     OTEL_ENABLED: bool = False
     # Web search configuration
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature

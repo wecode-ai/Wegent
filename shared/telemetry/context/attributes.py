@@ -63,3 +63,31 @@ class SpanAttributes:
     # Error attributes
     ERROR_TYPE = "error.type"
     ERROR_MESSAGE = "error.message"
+
+    # MCP attributes
+    MCP_SERVERS_COUNT = "mcp.servers.count"
+    MCP_SERVER_NAMES = "mcp.server.names"
+    MCP_BOT_SERVERS_COUNT = "mcp.bot_servers.count"
+
+    # Skill attributes
+    SKILL_NAMES = "skill.names"
+    SKILL_COUNT = "skill.count"
+
+    # Knowledge base attributes
+    KB_IDS = "knowledge_base.ids"
+    KB_DOCUMENT_IDS = "knowledge_base.document_ids"
+    KB_TABLE_CONTEXTS_COUNT = "knowledge_base.table_contexts.count"
+
+    # Chat attributes
+    CHAT_TYPE = "chat.type"
+    CHAT_WEB_SEARCH = "chat.web_search"
+    CHAT_DEEP_THINKING = "chat.deep_thinking"
+    CHAT_CLARIFICATION = "chat.clarification"
+
+    # Tool attributes
+    TOOL_NAME = "tool.name"
+    TOOL_RUN_ID = "tool.run_id"
+    TOOL_INPUT = "tool.input"
+    TOOL_OUTPUT = "tool.output"
+    TOOL_DURATION_MS = "tool.duration_ms"
+    TOOL_STATUS = "tool.status"

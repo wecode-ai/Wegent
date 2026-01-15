@@ -50,6 +50,9 @@ import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config'
 
 const SOCKETIO_PATH = '/socket.io'
 
+/** Callback type for reconnect event */
+export type ReconnectCallback = () => void
+
 interface SocketContextType {
   /** Socket.IO instance */
   socket: Socket | null
@@ -103,6 +106,8 @@ interface SocketContextType {
   sendSkillResponse: (payload: SkillResponsePayload) => void
   /** Register correction event handlers */
   registerCorrectionHandlers: (handlers: CorrectionEventHandlers) => () => void
+  /** Register a callback to be called when WebSocket reconnects */
+  onReconnect: (callback: ReconnectCallback) => () => void
 }
 
 /** Chat event handlers for streaming */
@@ -152,6 +157,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   const socketRef = useRef<Socket | null>(null)
   // Track reconnection attempts for rejoining tasks
   const hasReconnectedRef = useRef<boolean>(false)
+  // Store reconnect callbacks - single source of truth for reconnection events
+  const reconnectCallbacksRef = useRef<Set<ReconnectCallback>>(new Set())
 
   /**
    * Internal function to create socket connection
@@ -247,6 +254,16 @@ export function SocketProvider({ children }: { children: ReactNode }) {
           }
         })
       })
+
+      // Notify all registered reconnect callbacks
+      // This is the single source of truth for reconnection events
+      reconnectCallbacksRef.current.forEach(callback => {
+        try {
+          callback()
+        } catch (err) {
+          console.error('[Socket.IO] Error in reconnect callback:', err)
+        }
+      })
     })
 
     newSocket.io.on('reconnect_error', (error: Error) => {
@@ -315,14 +332,20 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       }
       error?: string
     }> => {
-      if (!socket?.connected) {
+      // Use socketRef for reliable access (socket state may be stale)
+      const currentSocket = socketRef.current
+      if (!currentSocket?.connected) {
         return { error: 'Not connected' }
       }
 
       // Check if already joined this task room to prevent duplicate joins
       // Exception 1: If we just reconnected, always rejoin to sync backend state
       // Exception 2: If forceRefresh is true, always request to get streaming status
-      if (joinedTasksRef.current.has(taskId) && !hasReconnectedRef.current && !forceRefresh) {
+      const alreadyJoined = joinedTasksRef.current.has(taskId)
+      const shouldSkip = alreadyJoined && !hasReconnectedRef.current && !forceRefresh
+
+      if (shouldSkip) {
+        console.log('[Socket.IO] joinTask skipped - already joined, taskId:', taskId)
         return {}
       }
 
@@ -337,7 +360,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       joinedTasksRef.current.add(taskId)
 
       return new Promise(resolve => {
-        socket.emit(
+        currentSocket.emit(
           'task:join',
           { task_id: taskId },
           (response: {
@@ -357,21 +380,20 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         )
       })
     },
-    [socket]
+    [] // No dependencies - use socketRef for stable reference
   )
 
   /**
    * Leave a task room
    */
-  const leaveTask = useCallback(
-    (taskId: number) => {
-      if (socket?.connected) {
-        socket.emit('task:leave', { task_id: taskId })
-        joinedTasksRef.current.delete(taskId)
-      }
-    },
-    [socket]
-  )
+  const leaveTask = useCallback((taskId: number) => {
+    // Use socketRef for reliable access (socket state may be stale)
+    const currentSocket = socketRef.current
+    if (currentSocket?.connected) {
+      currentSocket.emit('task:leave', { task_id: taskId })
+      joinedTasksRef.current.delete(taskId)
+    }
+  }, []) // No dependencies - use socketRef for stable reference
 
   /**
    * Send a chat message via WebSocket
@@ -613,6 +635,18 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     [] // No dependencies - use socketRef
   )
 
+  /**
+   * Register a callback to be called when WebSocket reconnects
+   * This is the single source of truth for reconnection events in the app.
+   * Returns a cleanup function to unregister the callback.
+   */
+  const onReconnect = useCallback((callback: ReconnectCallback): (() => void) => {
+    reconnectCallbacksRef.current.add(callback)
+    return () => {
+      reconnectCallbacksRef.current.delete(callback)
+    }
+  }, [])
+
   // Auto-connect when component mounts if token is available
   useEffect(() => {
     // Only run on client side
@@ -683,6 +717,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         registerSkillHandlers,
         sendSkillResponse,
         registerCorrectionHandlers,
+        onReconnect,
       }}
     >
       {children}

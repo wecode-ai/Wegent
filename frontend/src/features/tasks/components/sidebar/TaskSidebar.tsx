@@ -77,6 +77,7 @@ export default function TaskSidebar({
     markAllTasksAsViewed,
     viewStatusVersion,
     setSelectedTask,
+    isRefreshing,
   } = useTaskContext()
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -358,6 +359,28 @@ export default function TaskSidebar({
         className={`flex-1 ${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 overflow-y-auto task-list-scrollbar border-t border-border mt-3`}
         ref={scrollRef}
       >
+        {/* Auto-refresh indicator - shows when refreshing after page visibility or reconnect */}
+        {isRefreshing && !isCollapsed && (
+          <div className="px-1 pb-2">
+            <div className="flex items-center gap-2 text-xs text-primary">
+              <div className="h-1 w-full bg-surface rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary/60 rounded-full animate-pulse"
+                  style={{ width: '100%' }}
+                />
+              </div>
+              <span className="text-text-muted whitespace-nowrap">
+                {t('common:tasks.refreshing')}
+              </span>
+            </div>
+          </div>
+        )}
+        {/* Collapsed mode refresh indicator */}
+        {isRefreshing && isCollapsed && (
+          <div className="flex justify-center pb-2">
+            <div className="h-1 w-6 bg-primary/60 rounded-full animate-pulse" />
+          </div>
+        )}
         {/* Search Result Header */}
         {!isCollapsed && isSearchResult && (
           <div className="px-1 pb-2 flex items-center justify-between">

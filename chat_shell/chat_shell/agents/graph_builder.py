@@ -43,7 +43,6 @@ class LangGraphAgentBuilder:
         tool_registry: ToolRegistry | None = None,
         max_iterations: int = 10,
         enable_checkpointing: bool = False,
-        load_skill_tool: Any | None = None,
     ):
         """Initialize agent builder.
 
@@ -52,49 +51,73 @@ class LangGraphAgentBuilder:
             tool_registry: Registry of available tools (optional)
             max_iterations: Maximum tool loop iterations
             enable_checkpointing: Enable state checkpointing for resumability
-            load_skill_tool: Optional LoadSkillTool instance for dynamic skill prompt injection
         """
         self.llm = llm
         self.tool_registry = tool_registry
         self.max_iterations = max_iterations
         self.enable_checkpointing = enable_checkpointing
         self._agent = None
-        self._load_skill_tool = load_skill_tool
 
         # Get all LangChain tools from registry
         self.tools: list[BaseTool] = []
         if self.tool_registry:
             self.tools = self.tool_registry.get_all()
 
-    def _create_prompt_modifier(self) -> Callable | None:
-        """Create a prompt modifier function for dynamic skill prompt injection.
+        # Automatically detect PromptModifierTool instances from registered tools
+        self._prompt_modifier_tools = self._find_prompt_modifier_tools()
 
-        This function is called before each model invocation to inject loaded skill
-        prompts into the messages.
+    def _find_prompt_modifier_tools(self) -> list[Any]:
+        """Find all tools that implement the PromptModifierTool protocol.
 
         Returns:
-            A callable that modifies the messages, or None if no load_skill_tool
+            List of tools that have get_prompt_modification method
         """
-        if not self._load_skill_tool:
+        from ..tools.base import PromptModifierTool
+
+        modifier_tools = []
+        for tool in self.tools:
+            if isinstance(tool, PromptModifierTool):
+                modifier_tools.append(tool)
+                logger.debug(
+                    "[LangGraphAgentBuilder] Found PromptModifierTool: %s",
+                    tool.name,
+                )
+        return modifier_tools
+
+    def _create_prompt_modifier(self) -> Callable | None:
+        """Create a prompt modifier function for dynamic prompt injection.
+
+        This function is called before each model invocation to inject
+        prompt modifications from all PromptModifierTool instances.
+
+        Returns:
+            A callable that modifies the messages, or None if no modifier tools
+        """
+        if not self._prompt_modifier_tools:
             return None
 
-        load_skill_tool = self._load_skill_tool
+        modifier_tools = self._prompt_modifier_tools
 
         def prompt_modifier(state: dict[str, Any]) -> list[BaseMessage]:
-            """Modify messages to inject loaded skill prompts into system message.
+            """Modify messages to inject prompt modifications into system message.
 
             This function is called by LangGraph's create_react_agent before each
-            model invocation. It returns the modified messages list.
+            model invocation. It collects prompt modifications from all
+            PromptModifierTool instances and appends them to the system message.
             """
             messages = state.get("messages", [])
             if not messages:
                 return messages
 
-            # Get combined skill prompt from the tool
-            skill_prompt = load_skill_tool.get_combined_skill_prompt()
+            # Collect prompt modifications from all modifier tools
+            combined_modification = ""
+            for tool in modifier_tools:
+                modification = tool.get_prompt_modification()
+                if modification:
+                    combined_modification += modification
 
-            if not skill_prompt:
-                # No skills loaded, return messages unchanged
+            if not combined_modification:
+                # No modifications, return messages unchanged
                 return messages
 
             # Find and update the system message
@@ -103,25 +126,25 @@ class LangGraphAgentBuilder:
 
             for msg in messages:
                 if isinstance(msg, SystemMessage) and not system_updated:
-                    # Append skill prompt to existing system message
+                    # Append modifications to existing system message
                     original_content = (
                         msg.content
                         if isinstance(msg.content, str)
                         else str(msg.content)
                     )
-                    updated_content = original_content + skill_prompt
+                    updated_content = original_content + combined_modification
                     new_messages.append(SystemMessage(content=updated_content))
                     system_updated = True
 
                 else:
                     new_messages.append(msg)
 
-            # If no system message found, prepend one with skill prompt
+            # If no system message found, prepend one with modifications
             if not system_updated:
-                new_messages.insert(0, SystemMessage(content=skill_prompt))
+                new_messages.insert(0, SystemMessage(content=combined_modification))
                 logger.debug(
-                    "[prompt_modifier] Created new system message with skill prompts, len=%d",
-                    len(skill_prompt),
+                    "[prompt_modifier] Created new system message with modifications, len=%d",
+                    len(combined_modification),
                 )
 
             return new_messages

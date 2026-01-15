@@ -40,6 +40,9 @@ class GitInfo(BaseModel):
     git_id: Optional[str] = None
     git_login: Optional[str] = None
     git_email: Optional[str] = None
+    auth_type: Optional[str] = (
+        None  # Authentication type for Gerrit: 'digest' or 'basic'
+    )
 
 
 class UserBase(BaseModel):

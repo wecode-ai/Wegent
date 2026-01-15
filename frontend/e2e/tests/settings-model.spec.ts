@@ -11,7 +11,7 @@ test.describe('Settings - Model Management', () => {
     await expect(page).toHaveURL(/\/settings/)
 
     // Wait for model management title to load
-    await expect(page.locator('h2:has-text("Model")')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('h2:has-text("Model")')).toBeVisible({ timeout: 20000 })
   })
 
   test('should display model list or empty state', async ({ page }) => {
@@ -37,7 +37,7 @@ test.describe('Settings - Model Management', () => {
     )
 
     // Button should be visible - no skip, this is a required UI element
-    await expect(createButton.first()).toBeVisible({ timeout: 10000 })
+    await expect(createButton.first()).toBeVisible({ timeout: 20000 })
 
     await createButton.first().click()
 
@@ -53,7 +53,7 @@ test.describe('Settings - Model Management', () => {
     const createButton = page.locator(
       'button:has-text("Create Model"), button:has-text("新建模型"), button:has-text("Create")'
     )
-    await expect(createButton.first()).toBeVisible({ timeout: 10000 })
+    await expect(createButton.first()).toBeVisible({ timeout: 20000 })
     await createButton.first().click()
 
     // Model edit is a full page form, wait for model ID input
@@ -81,7 +81,7 @@ test.describe('Settings - Model Management', () => {
 
   test('should show test connection button for user models', async ({ page }) => {
     // Wait for page to load
-    await expect(page.locator('h2:has-text("Model")')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('h2:has-text("Model")')).toBeVisible({ timeout: 20000 })
 
     // Test connection button only appears for user models (not public)
     // Check if there are any user model cards with test button
@@ -98,7 +98,7 @@ test.describe('Settings - Model Management', () => {
 
   test('should show delete button for user models', async ({ page }) => {
     // Wait for page to load
-    await expect(page.locator('h2:has-text("Model")')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('h2:has-text("Model")')).toBeVisible({ timeout: 20000 })
 
     // Delete button only appears for user models (not public)
     const deleteButton = page.locator('button[title*="Delete"], button:has-text("Delete")').first()

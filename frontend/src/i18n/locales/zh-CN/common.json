@@ -397,6 +397,7 @@
     "cancel_task": "取消任务",
     "delete_task": "删除任务",
     "searching": "搜索中...",
+    "refreshing": "同步中...",
     "press_enter_to_search": "按 Enter 键搜索",
     "search_hint": "输入关键词搜索对话",
     "clear_search": "清除",
@@ -414,7 +415,6 @@
     "bot": "机器人",
     "team": "智能体",
     "models": "模型",
-    "skills": "技能",
     "skills": "技能",
     "retrievers": "检索引擎",
     "shells": "执行器",
@@ -580,6 +580,12 @@
     "cannotUndo": "此操作无法撤销",
     "coming_soon": "即将推出"
   },
+  "dialog": {
+    "confirm_close_title": "确认关闭",
+    "confirm_close_description": "您有未保存的更改，确定要关闭吗？",
+    "confirm_close_cancel": "取消",
+    "confirm_close_confirm": "确认关闭"
+  },
   "correction": {
     "result_title": "纠正结果"
   },
@@ -646,7 +652,10 @@
       }
     },
     "saving": "保存中...",
-    "save_token": "保存令牌"
+    "save_token": "保存令牌",
+    "auth_type": "认证方式",
+    "auth_type_digest": "Digest Auth（摘要认证）",
+    "auth_type_basic": "Basic Auth（基本认证）"
   },
   "skills": {
     "title": "技能",
@@ -714,6 +723,10 @@
     "public_readonly": "系统技能为只读",
     "public_no_download": "系统技能无法下载",
     "no_skills_hint": "上传技能 ZIP 包或使用系统技能",
+    "preload_skills_section": "预加载技能",
+    "preload_skills_description": "预加载的技能会自动注入到系统提示词中",
+    "preload_only_public_hint": "注意：只有公共技能才能被设置为预加载",
+    "no_skills_selected": "请先选择技能",
     "delete_success": "技能删除成功",
     "delete_failed": "删除技能失败",
     "download_success": "开始下载",
