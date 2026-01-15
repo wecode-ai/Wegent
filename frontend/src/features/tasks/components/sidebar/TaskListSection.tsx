@@ -24,6 +24,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis } from '@/apis/tasks'
 import { isTaskUnread } from '@/utils/taskViewStatus'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { toast } from 'sonner'
 
 interface TaskListSectionProps {
   tasks: Task[]
@@ -293,6 +294,7 @@ export default function TaskListSection({
 
     // Validation: title cannot be empty
     if (!trimmedTitle) {
+      toast.error(t('common:tasks.title_required'))
       return
     }
 
