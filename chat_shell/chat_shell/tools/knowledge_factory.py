@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.utils.prompt_builder import PromptBuilder
+from chat_shell.prompts.builder import PromptBuilder
 
 logger = logging.getLogger(__name__)
 

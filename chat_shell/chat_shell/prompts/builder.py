@@ -3,16 +3,342 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Clarification Mode Prompt.
+Prompt Builder module for Chat Shell.
 
-This module contains the system prompt for smart follow-up questions mode.
-When enabled, the AI will ask targeted clarification questions before proceeding.
+This module provides a unified PromptBuilder class that combines:
+1. Markdown heading remapping utilities (from markdown_util)
+2. Fluent API for building system prompts (from prompt_builder)
+3. Chat Shell specific prompts (clarification, deep thinking, skills)
 
-Also contains the Deep Thinking Mode prompt for search tool usage guidance.
+Usage:
+    >>> from chat_shell.prompts.builder import PromptBuilder
+    >>> prompt = (
+    ...     PromptBuilder()
+    ...     .base("# Base Prompt\n\nSome content")
+    ...     .append("## Section A", target_level=2)
+    ...     .build()
+    ... )
 """
 
-from shared.utils.markdown_util import remap_markdown_headings
-from shared.utils.prompt_builder import PromptBuilder
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Match
+
+# =============================================================================
+# Markdown Utilities (integrated from shared/utils/markdown_util.py)
+# =============================================================================
+
+# Match ATX-style headings, e.g. "## Title"
+_HEADING_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<hashes>#{1,6})(?P<space>\s+)(?P<text>.*)$",
+    re.MULTILINE,
+)
+
+# Valid heading level range
+_MIN_HEADING_LEVEL = 1
+_MAX_HEADING_LEVEL = 6
+
+
+def remap_markdown_headings(md_text: str, target_top_level: int = 2) -> str:
+    """Remap ATX-style Markdown headings based on the top heading in the document.
+
+    This function normalizes heading levels by:
+    1. Detecting the smallest (top-level) heading in the document
+    2. Mapping that level to the specified target level
+    3. Shifting all other headings by the same offset
+    4. Clamping all levels to the valid range [1, 6]
+
+    The main use case is to enforce consistent heading hierarchy when combining
+    multiple Markdown documents, ensuring proper nesting.
+
+    Args:
+        md_text: The Markdown source as a single string.
+        target_top_level: The level that the top heading should become.
+            Defaults to 2 (useful when embedding content under a main heading).
+            Will be clamped to [1, 6] if out of range.
+
+    Returns:
+        The Markdown text with remapped heading levels.
+
+    Examples:
+        >>> text = "# Main\\n## Sub\\n### Deep"
+        >>> remap_markdown_headings(text, target_top_level=2)
+        '## Main\\n### Sub\\n#### Deep'
+
+        >>> text = "### Already Deep\\n#### Even Deeper"
+        >>> remap_markdown_headings(text, target_top_level=1)
+        '# Already Deep\\n## Even Deeper'
+    """
+    # Clamp target_top_level to valid range
+    target_top_level = max(
+        _MIN_HEADING_LEVEL, min(target_top_level, _MAX_HEADING_LEVEL)
+    )
+
+    # First pass: detect all heading levels and find the minimum
+    levels = [len(m.group("hashes")) for m in _HEADING_RE.finditer(md_text)]
+    if not levels:
+        # No headings found; return the original text
+        return md_text
+
+    min_level = min(levels)
+    offset = target_top_level - min_level
+
+    def _replace(match: Match[str]) -> str:
+        indent = match.group("indent")
+        hashes = match.group("hashes")
+        space = match.group("space")
+        text = match.group("text")
+
+        old_level = len(hashes)
+        new_level = max(_MIN_HEADING_LEVEL, min(old_level + offset, _MAX_HEADING_LEVEL))
+        return f"{indent}{'#' * new_level}{space}{text}"
+
+    # Second pass: apply the remapped levels
+    return _HEADING_RE.sub(_replace, md_text)
+
+
+# =============================================================================
+# Prompt Section Data Class
+# =============================================================================
+
+
+@dataclass
+class PromptSection:
+    """A section of the prompt with its configuration."""
+
+    content: str
+    target_level: int = 2
+    condition: bool = True
+
+
+# =============================================================================
+# PromptBuilder Class (integrated from shared/utils/prompt_builder.py)
+# =============================================================================
+
+
+class PromptBuilder:
+    """Builder for constructing system prompts with automatic heading management.
+
+    This class provides a fluent API for building prompts, automatically applying
+    markdown heading remapping to ensure consistent hierarchy when combining
+    multiple markdown sections.
+
+    Attributes:
+        _base_content: The base prompt content.
+        _sections: List of sections to append to the base.
+        _default_target_level: Default heading level for appended sections.
+
+    Example:
+        >>> builder = PromptBuilder(default_target_level=2)
+        >>> result = (
+        ...     builder
+        ...     .base("# Main Title\\n## Subtitle")
+        ...     .append("# Section A\\nContent A", target_level=2)
+        ...     .append_if(True, "# Conditional\\nOnly if True")
+        ...     .build()
+        ... )
+    """
+
+    def __init__(self, default_target_level: int = 2) -> None:
+        """Initialize the PromptBuilder.
+
+        Args:
+            default_target_level: Default heading level for appended sections.
+                Defaults to 2 for embedding under a main heading.
+        """
+        self._base_content: str = ""
+        self._sections: list[PromptSection] = []
+        self._default_target_level = default_target_level
+
+    def base(self, content: str, target_level: int | None = None) -> PromptBuilder:
+        """Set the base prompt content.
+
+        The base content will be remapped to the specified target level.
+
+        Args:
+            content: The base prompt markdown content.
+            target_level: Target heading level for the base content.
+                If None, uses the default_target_level.
+
+        Returns:
+            Self for method chaining.
+        """
+        level = target_level if target_level is not None else self._default_target_level
+        self._base_content = remap_markdown_headings(content, level)
+        return self
+
+    def append(self, content: str, target_level: int | None = None) -> PromptBuilder:
+        """Append a section to the prompt.
+
+        The section content will be remapped to the specified target level
+        before appending.
+
+        Args:
+            content: The markdown content to append.
+            target_level: Target heading level for this section.
+                If None, uses the default_target_level.
+
+        Returns:
+            Self for method chaining.
+        """
+        if not content or not content.strip():
+            return self
+
+        level = target_level if target_level is not None else self._default_target_level
+        self._sections.append(PromptSection(content=content, target_level=level))
+        return self
+
+    def append_if(
+        self,
+        condition: bool,
+        content: str,
+        target_level: int | None = None,
+    ) -> PromptBuilder:
+        """Conditionally append a section to the prompt.
+
+        The section will only be appended if the condition is True.
+
+        Args:
+            condition: Whether to append this section.
+            content: The markdown content to append.
+            target_level: Target heading level for this section.
+                If None, uses the default_target_level.
+
+        Returns:
+            Self for method chaining.
+        """
+        if condition:
+            return self.append(content, target_level)
+        return self
+
+    def append_with_header(
+        self,
+        header: str,
+        content: str,
+        content_target_level: int = 4,
+    ) -> PromptBuilder:
+        """Append content with a custom header prefix.
+
+        This is useful for sections like skills where you want a consistent
+        header format (e.g., "### Skill: skill_name").
+
+        Args:
+            header: The header line to prepend (e.g., "### Skill: my_skill").
+            content: The content to append after the header.
+            content_target_level: Target heading level for the content.
+
+        Returns:
+            Self for method chaining.
+        """
+        if not content or not content.strip():
+            return self
+
+        remapped_content = remap_markdown_headings(content, content_target_level)
+        full_section = f"{header}\n\n{remapped_content}"
+        # Append raw section without additional remapping since we formatted it
+        self._sections.append(
+            PromptSection(content=full_section, target_level=0, condition=True)
+        )
+        return self
+
+    def append_formatted(
+        self,
+        template: str,
+        target_level: int | None = None,
+        **kwargs: str,
+    ) -> PromptBuilder:
+        """Append a formatted template section.
+
+        Args:
+            template: A template string with placeholders (e.g., "{skill_list}").
+            target_level: Target heading level for this section.
+            **kwargs: Values to format into the template.
+
+        Returns:
+            Self for method chaining.
+        """
+        content = template.format(**kwargs)
+        return self.append(content, target_level)
+
+    def build(self) -> str:
+        """Build and return the final prompt string.
+
+        All sections are joined with the base content, with each section's
+        heading levels properly remapped.
+
+        Returns:
+            The complete prompt string.
+        """
+        parts = [self._base_content] if self._base_content else []
+
+        for section in self._sections:
+            if not section.condition or not section.content:
+                continue
+
+            # target_level=0 means raw append (already formatted)
+            if section.target_level == 0:
+                parts.append(section.content)
+            else:
+                remapped = remap_markdown_headings(
+                    section.content, section.target_level
+                )
+                parts.append(remapped)
+
+        return "".join(parts)
+
+    def reset(self) -> PromptBuilder:
+        """Reset the builder to its initial state.
+
+        Returns:
+            Self for method chaining.
+        """
+        self._base_content = ""
+        self._sections = []
+        return self
+
+
+def build_prompt(
+    base: str,
+    *sections: tuple[str, int] | str,
+    default_level: int = 2,
+) -> str:
+    """Convenience function for building prompts in a single call.
+
+    Args:
+        base: The base prompt content.
+        *sections: Variable sections to append. Each can be:
+            - A string (uses default_level)
+            - A tuple of (content, target_level)
+        default_level: Default heading level for sections.
+
+    Returns:
+        The built prompt string.
+
+    Example:
+        >>> prompt = build_prompt(
+        ...     "# Base",
+        ...     "## Section A",
+        ...     ("# Deep Section", 4),
+        ... )
+    """
+    builder = PromptBuilder(default_target_level=default_level)
+    builder.base(base)
+
+    for section in sections:
+        if isinstance(section, tuple):
+            content, level = section
+            builder.append(content, level)
+        else:
+            builder.append(section)
+
+    return builder.build()
+
+
+# =============================================================================
+# Chat Shell Specific Prompts
+# =============================================================================
 
 CLARIFICATION_PROMPT = """
 

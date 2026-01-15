@@ -5,6 +5,8 @@
 """Prompts module for Chat Shell.
 
 This module provides system prompt building utilities:
+- PromptBuilder class with fluent API
+- Markdown heading remapping utilities
 - Clarification mode prompt
 - Deep thinking mode prompt
 - Skill metadata prompt
@@ -16,12 +18,16 @@ from .builder import (
     CLARIFICATION_PROMPT,
     DEEP_THINKING_PROMPT,
     SKILL_METADATA_PROMPT,
+    PromptBuilder,
+    PromptSection,
     append_clarification_prompt,
     append_deep_thinking_prompt,
     append_skill_metadata_prompt,
+    build_prompt,
     build_system_prompt,
     get_clarification_prompt,
     get_deep_thinking_prompt,
+    remap_markdown_headings,
 )
 from .knowledge_base import (
     KB_PROMPT_RELAXED,
@@ -29,6 +35,12 @@ from .knowledge_base import (
 )
 
 __all__ = [
+    # Classes
+    "PromptBuilder",
+    "PromptSection",
+    # Utility functions
+    "remap_markdown_headings",
+    "build_prompt",
     # Prompts
     "CLARIFICATION_PROMPT",
     "DEEP_THINKING_PROMPT",
