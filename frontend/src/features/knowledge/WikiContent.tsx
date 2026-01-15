@@ -196,18 +196,28 @@ function MermaidDiagram({
 }
 /**
  * Parse LaTeX code and extract individual formulas
- * Handles multiple $$...$$ blocks and standalone formulas
+ * Handles multiple $$...$$, \[...\], and standalone formulas
+ * Also removes LaTeX comments (lines starting with %)
  */
 function parseLatexFormulas(code: string): string[] {
   const formulas: string[] = []
-  const trimmedCode = code.trim()
+  // Remove LaTeX comments (lines starting with %)
+  const codeWithoutComments = code
+    .split('\n')
+    .filter(line => !line.trim().startsWith('%'))
+    .join('\n')
+    .trim()
 
   // Match all $$...$$ blocks
-  const blockMathRegex = /\$\$([\s\S]*?)\$\$/g
+  const dollarBlockRegex = /\$\$([\s\S]*?)\$\$/g
+  // Match all \[...\] blocks
+  const bracketBlockRegex = /\\\[([\s\S]*?)\\\]/g
+
   let match
   let hasMatches = false
 
-  while ((match = blockMathRegex.exec(trimmedCode)) !== null) {
+  // Extract $$...$$ blocks
+  while ((match = dollarBlockRegex.exec(codeWithoutComments)) !== null) {
     hasMatches = true
     const formula = match[1].trim()
     if (formula) {
@@ -215,9 +225,18 @@ function parseLatexFormulas(code: string): string[] {
     }
   }
 
-  // If no $$ blocks found, treat the entire content as a single formula
-  if (!hasMatches && trimmedCode) {
-    formulas.push(trimmedCode)
+  // Extract \[...\] blocks
+  while ((match = bracketBlockRegex.exec(codeWithoutComments)) !== null) {
+    hasMatches = true
+    const formula = match[1].trim()
+    if (formula) {
+      formulas.push(formula)
+    }
+  }
+
+  // If no blocks found, treat the entire content as a single formula
+  if (!hasMatches && codeWithoutComments) {
+    formulas.push(codeWithoutComments)
   }
 
   return formulas
