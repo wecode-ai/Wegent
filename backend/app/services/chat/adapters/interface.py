@@ -44,6 +44,8 @@ class ChatRequest:
     request_id: str = ""
     message_id: Optional[int] = None
     is_group_chat: bool = False
+    # User subtask ID for RAG result persistence (different from subtask_id which is AI response's subtask)
+    user_subtask_id: Optional[int] = None
 
     # Model configuration
     model_config: dict = field(default_factory=dict)
@@ -77,6 +79,9 @@ class ChatRequest:
     # Knowledge base configuration
     knowledge_base_ids: Optional[list] = None  # Knowledge base IDs to search
     document_ids: Optional[list] = None  # Document IDs to filter retrieval
+    is_user_selected_kb: bool = (
+        True  # True = strict mode (user selected), False = relaxed mode (inherited)
+    )
 
     # Table configuration
     table_contexts: list = field(
@@ -86,18 +91,19 @@ class ChatRequest:
     # Task data for MCP tools
     task_data: Optional[dict] = None
 
-    # Extra tools to add
-    extra_tools: list = field(default_factory=list)
-
     # MCP server configuration for HTTP mode
     # Format: [{"name": "...", "url": "http://...", "type": "streamable-http", "auth": {...}}]
     mcp_servers: list = field(default_factory=list)
+
+    # Extra tools to add
+    extra_tools: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
             "task_id": self.task_id,
             "subtask_id": self.subtask_id,
+            "user_subtask_id": self.user_subtask_id,
             "message": self.message,
             "user_id": self.user_id,
             "user_name": self.user_name,
@@ -123,6 +129,7 @@ class ChatRequest:
             "preload_skills": self.preload_skills,
             "knowledge_base_ids": self.knowledge_base_ids,
             "document_ids": self.document_ids,
+            "is_user_selected_kb": self.is_user_selected_kb,
             "table_contexts": self.table_contexts,
             "task_data": self.task_data,
             "extra_tools": self.extra_tools,

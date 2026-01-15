@@ -133,6 +133,7 @@ class HTTPAdapter(ChatInterface):
         metadata = {
             "task_id": request.task_id,
             "subtask_id": request.subtask_id,
+            "user_subtask_id": request.user_subtask_id,  # User subtask ID for RAG persistence
             "user_id": request.user_id,
             "user_name": request.user_name,
             "team_id": request.team_id,
@@ -147,6 +148,7 @@ class HTTPAdapter(ChatInterface):
             "preload_skills": request.preload_skills,
             "knowledge_base_ids": request.knowledge_base_ids,
             "document_ids": request.document_ids,
+            "is_user_selected_kb": request.is_user_selected_kb,
             "table_contexts": request.table_contexts,
             "task_data": request.task_data,
         }

@@ -552,9 +552,16 @@ class QdrantBackend(BaseStorageBackend):
             for point in all_points[:max_chunks]:
                 payload = point.payload or {}
 
+                # Normalize content to plain text. Qdrant stores the original
+                # LlamaIndex node payload in `_node_content`, which may be a
+                # serialized TextNode JSON. We use extract_chunk_text to
+                # extract the human-readable `text` field and drop internal
+                # fields (id_, relationships, embeddings, etc.).
+                raw_content = payload.get("_node_content", "")
+
                 chunks.append(
                     {
-                        "content": payload.get("_node_content", ""),
+                        "content": self.extract_chunk_text(raw_content),
                         "title": payload.get("source_file", ""),
                         "chunk_id": payload.get("chunk_index", 0),
                         "doc_ref": payload.get("doc_ref", ""),
