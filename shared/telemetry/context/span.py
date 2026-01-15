@@ -34,6 +34,9 @@ _subtask_id_var: ContextVar[Optional[int]] = ContextVar("subtask_id", default=No
 _user_id_var: ContextVar[Optional[str]] = ContextVar("user_id", default=None)
 _user_name_var: ContextVar[Optional[str]] = ContextVar("user_name", default=None)
 _request_id_var: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
+_websocket_context_var: ContextVar[bool] = ContextVar(
+    "websocket_context", default=False
+)
 
 # Cached server IP (doesn't change during process lifetime)
 _cached_server_ip: Optional[str] = None
@@ -67,6 +70,16 @@ def get_request_id() -> Optional[str]:
         The current request ID or None if not set
     """
     return _request_id_var.get()
+
+
+def is_websocket_context() -> bool:
+    """Check if current context is a WebSocket context."""
+    return _websocket_context_var.get()
+
+
+def set_websocket_context(is_websocket: bool = True) -> None:
+    """Mark current context as WebSocket context."""
+    _websocket_context_var.set(is_websocket)
 
 
 def copy_context_vars() -> Dict[str, Any]:
