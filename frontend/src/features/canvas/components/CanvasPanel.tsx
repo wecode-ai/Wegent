@@ -24,7 +24,6 @@ interface CanvasPanelProps {
   isLoading?: boolean
   onClose?: () => void
   onArtifactUpdate?: (artifact: Artifact) => void
-  onQuickAction?: (actionId: string, optionValue?: string) => void
   onVersionRevert?: (version: number) => void
   className?: string
   isFullscreen?: boolean
@@ -35,8 +34,7 @@ export function CanvasPanel({
   artifact,
   isLoading = false,
   onClose,
-  onArtifactUpdate: _onArtifactUpdate,
-  onQuickAction: _onQuickAction,
+  // onArtifactUpdate - reserved for future inline editing feature
   onVersionRevert,
   className,
   isFullscreen = false,
@@ -81,7 +79,7 @@ export function CanvasPanel({
       if (!artifact || !onVersionRevert) return
       const targetVersion =
         direction === 'prev' ? artifact.version - 1 : artifact.version + 1
-      if (targetVersion >= 1 && targetVersion <= artifact.versions.length) {
+      if (targetVersion >= 1 && targetVersion <= (artifact.versions?.length ?? 1)) {
         onVersionRevert(targetVersion)
       }
     },
@@ -172,9 +170,9 @@ export function CanvasPanel({
             )}
           >
             版本
-            {artifact && artifact.versions.length > 1 && (
+            {artifact && (artifact.versions?.length ?? 0) > 1 && (
               <span className="text-xs bg-muted px-1.5 py-0.5 rounded">
-                {artifact.versions.length}
+                {artifact.versions?.length}
               </span>
             )}
           </button>
@@ -211,7 +209,7 @@ export function CanvasPanel({
         <div className="flex items-center justify-end h-8 px-3 border-b border-border flex-shrink-0 bg-muted/30">
           {/* Version nav + actions */}
           <div className="flex items-center gap-1">
-            {artifact.versions.length > 1 ? (
+            {(artifact.versions?.length ?? 0) > 1 ? (
               <>
                 <button
                   onClick={() => handleVersionNav('prev')}
@@ -222,11 +220,11 @@ export function CanvasPanel({
                   <ChevronLeftIcon className="size-3.5" />
                 </button>
                 <span className="text-xs text-text-muted">
-                  v{artifact.version}/{artifact.versions.length}
+                  v{artifact.version}/{artifact.versions?.length ?? 1}
                 </span>
                 <button
                   onClick={() => handleVersionNav('next')}
-                  disabled={artifact.version >= artifact.versions.length}
+                  disabled={artifact.version >= (artifact.versions?.length ?? 1)}
                   className="p-0.5 text-text-muted hover:text-text-primary disabled:opacity-40"
                   title="下一版本"
                 >

@@ -44,9 +44,10 @@ interface ChatAreaProps {
   onShareButtonRender?: (button: React.ReactNode) => void
   onRefreshTeams?: () => Promise<Team[]>
   // Canvas props
+  canvasEnabled?: boolean
+  onCanvasEnabledChange?: (enabled: boolean) => void
   isCanvasOpen?: boolean
-  onCanvasToggle?: () => void
-  showCanvasToggle?: boolean
+  onCanvasOpenChange?: (open: boolean) => void
 }
 
 /**
@@ -61,9 +62,10 @@ function ChatAreaContent({
   taskType = 'chat',
   onShareButtonRender,
   onRefreshTeams,
+  canvasEnabled = false,
+  onCanvasEnabledChange,
   isCanvasOpen = false,
-  onCanvasToggle,
-  showCanvasToggle = false,
+  onCanvasOpenChange,
 }: ChatAreaProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -548,10 +550,20 @@ function ChatAreaContent({
       }
       streamHandlers.handleSendMessage(message)
     },
-    // Canvas props
+    // Canvas props - compute derived values
+    // Canvas is only available for direct_chat (not group chat)
+    // showCanvasToggle: show the feature toggle button when no messages (new chat)
+    // showCanvasPanelToggle: show the panel toggle button when has messages (chat started)
+    canvasEnabled,
+    onCanvasEnabledChange,
     isCanvasOpen,
-    onCanvasToggle,
-    showCanvasToggle,
+    onCanvasOpenChange,
+    // Show canvas feature toggle only in new chat (no messages), not group chat
+    showCanvasToggle: !hasMessages && !(selectedTaskDetail?.is_group_chat),
+    // Show panel toggle button when has messages and not group chat (direct_chat only)
+    showCanvasPanelToggle: hasMessages && !(selectedTaskDetail?.is_group_chat),
+    // Canvas feature is locked once chat starts (has messages or has task)
+    isCanvasLocked: hasMessages || !!selectedTaskDetail?.id,
   }
 
   return (

@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { UserGroupIcon } from '@heroicons/react/24/outline'
 import { teamService } from '@/features/tasks/service/teamService'
@@ -20,7 +20,7 @@ import { Team } from '@/types/api'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useChatStreamContext, useTaskStreamState } from '@/features/tasks/contexts/chatStreamContext'
+import { useChatStreamContext, useTaskStreamState, computeIsStreaming } from '@/features/tasks/contexts/chatStreamContext'
 import { paths } from '@/config/paths'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -96,7 +96,10 @@ export function ChatPageDesktop() {
   // Create group chat dialog state
   const [isCreateGroupChatOpen, setIsCreateGroupChatOpen] = useState(false)
 
-  // Canvas state - similar to Workbench in CodePageDesktop
+  // Canvas state - two separate concerns:
+  // 1. canvasEnabled: session-level toggle (locked once chat starts)
+  // 2. isCanvasOpen: whether the canvas panel is visible
+  const [canvasEnabled, setCanvasEnabled] = useState(false)
   const [isCanvasOpen, setIsCanvasOpen] = useState(false)
 
   // Get stream state for current task - this will update when messages change
@@ -105,6 +108,7 @@ export function ChatPageDesktop() {
   // Canvas integration hook - reset lastProcessedArtifactRef when task changes
   const handleCanvasReset = useCallback(() => {
     lastProcessedArtifactRef.current = null
+    setCanvasEnabled(false)
     setIsCanvasOpen(false)
   }, [])
 
@@ -116,19 +120,56 @@ export function ChatPageDesktop() {
     onReset: handleCanvasReset,
   })
 
-  // Check if there are messages (for showing Canvas)
-  const hasMessages = useMemo(() => {
-    const taskId = selectedTaskDetail?.id
-    if (!taskId) return false
-    const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0
-    const hasStreamMessages = currentTaskStreamState?.messages && currentTaskStreamState.messages.size > 0
-    return Boolean(hasSubtasks || hasStreamMessages)
-  }, [selectedTaskDetail, currentTaskStreamState])
-
   // Track processed artifacts to avoid duplicate processing
+  // Format: "artifactId-version-contentLength" to detect content updates during streaming
   const lastProcessedArtifactRef = useRef<string | null>(null)
 
-  // Extract artifact data from stream messages - similar to CodePageDesktop workbench extraction
+  // Helper function to extract artifact from thinking steps
+  // During streaming, artifact data comes in thinking steps as tool_result output
+  const extractArtifactFromThinking = (thinking: unknown[] | undefined): Artifact | null => {
+    if (!thinking || !Array.isArray(thinking)) return null
+
+    // Iterate in reverse to find the latest artifact
+    for (let i = thinking.length - 1; i >= 0; i--) {
+      const step = thinking[i] as {
+        details?: {
+          type?: string
+          tool_name?: string
+          output?: string | { artifact?: Artifact }
+        }
+      }
+
+      // Check if this is a tool_result for create_artifact or update_artifact
+      if (
+        step.details?.type === 'tool_result' &&
+        (step.details.tool_name === 'create_artifact' || step.details.tool_name === 'update_artifact')
+      ) {
+        const output = step.details.output
+        if (!output) continue
+
+        try {
+          // Output can be a string (JSON) or already parsed object
+          let artifactData: { artifact?: Artifact }
+          if (typeof output === 'string') {
+            artifactData = JSON.parse(output)
+          } else {
+            artifactData = output
+          }
+
+          if (artifactData.artifact) {
+            return artifactData.artifact
+          }
+        } catch {
+          // JSON parse error, skip this step
+          continue
+        }
+      }
+    }
+
+    return null
+  }
+
+  // Extract artifact data from stream messages - works during streaming and after completion
   // Uses currentTaskStreamState which updates when messages change
   useEffect(() => {
     const currentTaskId = selectedTaskDetail?.id
@@ -140,24 +181,57 @@ export function ChatPageDesktop() {
     let latestArtifact: Artifact | null = null
 
     for (const msg of currentTaskStreamState.messages.values()) {
-      if (msg.type === 'ai' && msg.result) {
-        const result = msg.result as { type?: string; artifact?: Artifact }
-        if (result.type === 'artifact' && result.artifact) {
-          latestArtifact = result.artifact
+      if (msg.type === 'ai') {
+        // First check the result field (for completed messages)
+        if (msg.result) {
+          const result = msg.result as { type?: string; artifact?: Artifact; thinking?: unknown[] }
+          if (result.type === 'artifact' && result.artifact) {
+            latestArtifact = result.artifact
+          }
+
+          // Also check thinking steps for real-time updates during streaming
+          const thinkingArtifact = extractArtifactFromThinking(result.thinking)
+          if (thinkingArtifact) {
+            // Use thinking artifact if it has more recent content (longer or same version)
+            if (!latestArtifact ||
+                thinkingArtifact.version > latestArtifact.version ||
+                (thinkingArtifact.version === latestArtifact.version &&
+                 thinkingArtifact.content.length > latestArtifact.content.length)) {
+              latestArtifact = thinkingArtifact
+            }
+          }
         }
       }
     }
 
     // Process artifact if found and different from last processed
+    // Use content length as part of key to detect partial updates during streaming
     if (latestArtifact) {
-      const artifactKey = `${latestArtifact.id}-${latestArtifact.version}`
+      const artifactKey = `${latestArtifact.id}-${latestArtifact.version}-${latestArtifact.content.length}`
       if (lastProcessedArtifactRef.current !== artifactKey) {
-        console.log('[ChatPageDesktop] Processing artifact:', latestArtifact.id, 'version:', latestArtifact.version)
+        console.log('[ChatPageDesktop] Processing artifact:', latestArtifact.id, 'version:', latestArtifact.version, 'contentLen:', latestArtifact.content.length)
         canvas.processSubtaskResult({ type: 'artifact', artifact: latestArtifact })
         lastProcessedArtifactRef.current = artifactKey
       }
     }
   }, [selectedTaskDetail?.id, currentTaskStreamState, canvas])
+
+  // Track previous streaming state to detect when streaming completes
+  const wasStreamingRef = useRef(false)
+
+  // Fetch artifact with versions from API when streaming completes
+  // This updates the artifact with full version history from the backend
+  useEffect(() => {
+    const isCurrentlyStreaming = computeIsStreaming(currentTaskStreamState?.messages)
+
+    // Detect streaming completion: was streaming, now not streaming
+    if (wasStreamingRef.current && !isCurrentlyStreaming && canvas.artifact) {
+      console.log('[ChatPageDesktop] Streaming completed, fetching artifact with versions')
+      canvas.fetchArtifactWithVersions()
+    }
+
+    wasStreamingRef.current = isCurrentlyStreaming
+  }, [currentTaskStreamState?.messages, canvas])
 
   // Search dialog state (controlled from page level for global shortcut support)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
@@ -277,9 +351,10 @@ export function ChatPageDesktop() {
               taskType="chat"
               onShareButtonRender={handleShareButtonRender}
               onRefreshTeams={handleRefreshTeams}
+              canvasEnabled={canvasEnabled}
+              onCanvasEnabledChange={setCanvasEnabled}
               isCanvasOpen={isCanvasOpen}
-              onCanvasToggle={() => setIsCanvasOpen(prev => !prev)}
-              showCanvasToggle={true}
+              onCanvasOpenChange={setIsCanvasOpen}
             />
           </div>
 
@@ -294,7 +369,6 @@ export function ChatPageDesktop() {
                 isLoading={canvas.isCanvasLoading}
                 onClose={() => setIsCanvasOpen(false)}
                 onArtifactUpdate={canvas.setArtifact}
-                onQuickAction={canvas.handleQuickAction}
                 onVersionRevert={canvas.handleVersionRevert}
                 isFullscreen={canvas.isFullscreen}
                 onToggleFullscreen={canvas.toggleFullscreen}

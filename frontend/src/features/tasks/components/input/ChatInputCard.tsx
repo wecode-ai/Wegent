@@ -127,9 +127,13 @@ export function ChatInputCard({
   onStopStream,
   onSendMessage,
   // Canvas props
+  canvasEnabled,
+  onCanvasEnabledChange,
   isCanvasOpen,
-  onCanvasToggle,
+  onCanvasOpenChange,
   showCanvasToggle,
+  showCanvasPanelToggle,
+  isCanvasLocked,
 }: ChatInputCardProps) {
   const { t } = useTranslation('chat')
 
@@ -256,9 +260,13 @@ export function ChatInputCard({
             isSubtaskStreaming={isSubtaskStreaming}
             onStopStream={onStopStream}
             onSendMessage={onSendMessage}
+            canvasEnabled={canvasEnabled}
+            onCanvasEnabledChange={onCanvasEnabledChange}
             isCanvasOpen={isCanvasOpen}
-            onCanvasToggle={onCanvasToggle}
+            onCanvasOpenChange={onCanvasOpenChange}
             showCanvasToggle={showCanvasToggle}
+            showCanvasPanelToggle={showCanvasPanelToggle}
+            isCanvasLocked={isCanvasLocked}
           />
         </div>
       </div>

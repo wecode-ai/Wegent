@@ -8,7 +8,6 @@ import { useState, useCallback, useMemo } from 'react'
 import type { Artifact, ArtifactVersion } from '../types'
 
 interface UseCanvasStateOptions {
-  taskId?: number
   onArtifactUpdate?: (artifact: Artifact) => void
 }
 
@@ -32,18 +31,21 @@ interface CanvasStateReturn {
   error: string | null
   setError: (error: string | null) => void
 
-  // Version management
+  // Version info (derived from artifact)
   currentVersion: number
   versions: ArtifactVersion[]
-  revertToVersion: (version: number) => void
 
   // Content management
   updateContent: (content: string) => void
   updateTitle: (title: string) => void
 
-  // Highlighted text (for quick actions)
-  highlightedText: string | null
-  setHighlightedText: (text: string | null) => void
+  // Fullscreen
+  isFullscreen: boolean
+  setIsFullscreen: (fullscreen: boolean) => void
+  toggleFullscreen: () => void
+
+  // Reset all state
+  reset: () => void
 }
 
 export function useCanvasState(options: UseCanvasStateOptions = {}): CanvasStateReturn {
@@ -60,12 +62,17 @@ export function useCanvasState(options: UseCanvasStateOptions = {}): CanvasState
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Highlighted text for quick actions
-  const [highlightedText, setHighlightedText] = useState<string | null>(null)
+  // Fullscreen state
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   // Toggle canvas
   const toggleCanvas = useCallback(() => {
     setCanvasEnabled(prev => !prev)
+  }, [])
+
+  // Toggle fullscreen
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen(prev => !prev)
   }, [])
 
   // Set artifact with callback
@@ -79,33 +86,15 @@ export function useCanvasState(options: UseCanvasStateOptions = {}): CanvasState
     [onArtifactUpdate]
   )
 
-  // Version management
+  // Version info (derived from artifact)
   const currentVersion = useMemo(() => artifact?.version ?? 0, [artifact?.version])
   const versions = useMemo(() => artifact?.versions ?? [], [artifact?.versions])
 
-  const revertToVersion = useCallback(
-    (_version: number) => {
-      // Version revert is now handled by the API
-      // This local function is kept for compatibility but does nothing
-      // Use the API endpoint POST /tasks/{task_id}/artifact/revert/{version} instead
-      console.warn('[useCanvasState] revertToVersion called locally - use API instead')
-    },
-    []
-  )
-
-  // Content management - updates local state only (for streaming updates)
-  // Backend handles version history automatically when artifact is saved
+  // Content management - updates local state only
   const updateContent = useCallback(
     (content: string) => {
       if (!artifact) return
-
-      // Update content locally - version history is managed by backend
-      const updatedArtifact: Artifact = {
-        ...artifact,
-        content,
-      }
-
-      setArtifact(updatedArtifact)
+      setArtifact({ ...artifact, content })
     },
     [artifact, setArtifact]
   )
@@ -113,16 +102,20 @@ export function useCanvasState(options: UseCanvasStateOptions = {}): CanvasState
   const updateTitle = useCallback(
     (title: string) => {
       if (!artifact) return
-
-      const updatedArtifact: Artifact = {
-        ...artifact,
-        title,
-      }
-
-      setArtifact(updatedArtifact)
+      setArtifact({ ...artifact, title })
     },
     [artifact, setArtifact]
   )
+
+  // Reset all state
+  const reset = useCallback(() => {
+    setArtifactInternal(null)
+    setSubtaskId(null)
+    setCanvasEnabled(false)
+    setIsLoading(false)
+    setError(null)
+    setIsFullscreen(false)
+  }, [])
 
   return {
     // Canvas state
@@ -144,17 +137,20 @@ export function useCanvasState(options: UseCanvasStateOptions = {}): CanvasState
     error,
     setError,
 
-    // Version management
+    // Version info
     currentVersion,
     versions,
-    revertToVersion,
 
     // Content management
     updateContent,
     updateTitle,
 
-    // Highlighted text
-    highlightedText,
-    setHighlightedText,
+    // Fullscreen
+    isFullscreen,
+    setIsFullscreen,
+    toggleFullscreen,
+
+    // Reset
+    reset,
   }
 }

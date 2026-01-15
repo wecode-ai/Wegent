@@ -166,6 +166,7 @@ class StreamingState:
         include_value: bool = True,
         include_thinking: bool = True,
         slim_thinking: bool = False,
+        for_storage: bool = False,
     ) -> dict[str, Any]:
         """Get current result with thinking steps and sources for WebSocket emission.
 
@@ -179,6 +180,9 @@ class StreamingState:
             slim_thinking: Whether to slim down thinking data for Chat mode.
                           When True, removes large fields like input/output details
                           that frontend doesn't need for simple display.
+            for_storage: Whether this result is for database storage.
+                        When True, truncates artifact content in thinking to save space
+                        (full artifact is stored separately in task.json["canvas"]).
 
         Returns:
             Result dictionary with shell_type, and optionally value, thinking, sources.
@@ -194,7 +198,9 @@ class StreamingState:
                     # For Chat mode: slim down thinking data to reduce payload size
                     # Frontend SimpleThinkingView only needs: title, run_id, details.type,
                     # details.status, details.tool_name, and optionally count for web_search
-                    result["thinking"] = self._slim_thinking_data(self.thinking)
+                    result["thinking"] = self._slim_thinking_data(
+                        self.thinking, for_storage=for_storage
+                    )
                 else:
                     result["thinking"] = self.thinking
             if self.sources:
@@ -205,12 +211,17 @@ class StreamingState:
         return result
 
     def _slim_thinking_data(
-        self, thinking: list[dict[str, Any]]
+        self, thinking: list[dict[str, Any]], for_storage: bool = False
     ) -> list[dict[str, Any]]:
         """Slim down thinking data for Chat mode to reduce payload size.
 
         Frontend SimpleThinkingView only needs minimal fields for display.
         This removes large fields like full input/output that aren't displayed.
+
+        Args:
+            thinking: List of thinking steps to slim down.
+            for_storage: When True, truncates artifact content to first 10 chars + "..."
+                        since full artifact is stored separately in task.json["canvas"].
         """
         slimmed = []
         for step in thinking:
@@ -259,19 +270,56 @@ class StreamingState:
                         except (json.JSONDecodeError, TypeError):
                             pass
 
-                # For create_artifact/update_artifact tool_result, preserve full output
-                # Frontend needs artifact data to display in Canvas panel
+                # For create_artifact/update_artifact tool_result, handle artifact content
+                # During streaming: preserve full output for Canvas real-time display
+                # For storage: truncate content to first 10 chars + "..." (full artifact in task.json["canvas"])
                 if details.get("type") == "tool_result" and slim_details[
                     "tool_name"
                 ] in ("create_artifact", "update_artifact"):
                     output = details.get("output") or details.get("content")
                     if output:
-                        slim_details["output"] = output
+                        if for_storage:
+                            # Truncate artifact content for DB storage
+                            slim_details["output"] = self._truncate_artifact_output(
+                                output
+                            )
+                        else:
+                            # Preserve full output for streaming (Canvas real-time display)
+                            slim_details["output"] = output
 
                 slim_step["details"] = slim_details
 
             slimmed.append(slim_step)
         return slimmed
+
+    def _truncate_artifact_output(self, output: str | dict) -> dict:
+        """Truncate artifact content in tool output for DB storage.
+
+        Keeps only the first 10 characters of content + "..." to save space.
+        Full artifact is stored separately in task.json["canvas"].
+        """
+        import json
+
+        try:
+            if isinstance(output, str):
+                output_data = json.loads(output)
+            else:
+                output_data = output
+
+            if isinstance(output_data, dict) and "artifact" in output_data:
+                artifact = output_data["artifact"]
+                if isinstance(artifact, dict) and "content" in artifact:
+                    content = artifact.get("content", "")
+                    # Truncate content to first 10 chars + "..."
+                    if len(content) > 10:
+                        truncated_artifact = {
+                            **artifact,
+                            "content": content[:10] + "...",
+                        }
+                        return {"artifact": truncated_artifact}
+            return output_data
+        except (json.JSONDecodeError, TypeError):
+            return {"truncated": True}
 
 
 @dataclass
@@ -491,11 +539,13 @@ class StreamingCore:
             await self.emitter.emit_cancelled(self.state.subtask_id)
             # Use COMPLETED status to ensure Task status is properly updated
             # The partial response is preserved in the result
+            # Use for_storage=True to truncate artifact content for DB
             is_chat_mode = self.state.shell_type == "Chat"
             result = self.state.get_current_result(
                 include_value=True,
                 include_thinking=True,
                 slim_thinking=is_chat_mode,
+                for_storage=True,  # Truncate artifact content for DB storage
             )
             await self._storage.update_subtask_status(
                 self.state.subtask_id,
@@ -572,11 +622,13 @@ class StreamingCore:
         # Save to DB with thinking data
         if current_time - self.state.last_db_save >= self.config.db_save_interval:
             # For Chat mode with tools, use slim_thinking to reduce payload size
+            # Use for_storage=True to truncate artifact content (saves DB space)
             is_chat_mode = self.state.shell_type == "Chat"
             result = self.state.get_current_result(
                 include_value=True,
                 include_thinking=True,  # Always include thinking (may have tool calls)
                 slim_thinking=is_chat_mode,  # Slim down for Chat mode
+                for_storage=True,  # Truncate artifact content for DB storage
             )
             result["streaming"] = True
             # Use update_subtask_status to save the complete result
@@ -596,10 +648,22 @@ class StreamingCore:
         # For Chat mode with tools, use slim_thinking to reduce payload size
         # For Chat mode without tools, thinking will be empty anyway
         is_chat_mode = self.state.shell_type == "Chat"
-        result = self.state.get_current_result(
+
+        # Result for frontend (emit_done) - full artifact content for Canvas display
+        result_for_frontend = self.state.get_current_result(
             include_value=True,
             include_thinking=True,  # Always include thinking (may have tool calls)
             slim_thinking=is_chat_mode,  # Slim down for Chat mode
+            for_storage=False,  # Keep full artifact for frontend Canvas
+        )
+
+        # Result for DB storage - truncated artifact content to save space
+        # Full artifact is stored separately in task.json["canvas"]
+        result_for_storage = self.state.get_current_result(
+            include_value=True,
+            include_thinking=True,  # Always include thinking (may have tool calls)
+            slim_thinking=is_chat_mode,  # Slim down for Chat mode
+            for_storage=True,  # Truncate artifact content for DB
         )
 
         # Save final content to Redis for streaming recovery
@@ -608,18 +672,19 @@ class StreamingCore:
             self.state.full_response,
         )
 
-        # Publish done signal
+        # Publish done signal (uses frontend result for any listeners)
         await self._storage.publish_streaming_done(
             self.state.subtask_id,
-            result,
+            result_for_frontend,
         )
 
         # Update subtask status to COMPLETED (persists to DB)
         # Database is the single source of truth for chat history
+        # Uses truncated result to save DB space
         await self._storage.update_subtask_status(
             self.state.subtask_id,
             "COMPLETED",
-            result=result,
+            result=result_for_storage,
         )
 
         # Use message_id from state if available, otherwise fetch from DB
@@ -630,15 +695,16 @@ class StreamingCore:
             )
 
         # Emit done event with message_id for proper ordering
+        # Uses full result for frontend Canvas display
         await self.emitter.emit_done(
             self.state.task_id,
             self.state.subtask_id,
             self.state.offset,
-            result,
+            result_for_frontend,
             message_id=message_id,
         )
 
-        return result
+        return result_for_frontend
 
     async def handle_error(self, error: Exception) -> None:
         """Handle streaming error.

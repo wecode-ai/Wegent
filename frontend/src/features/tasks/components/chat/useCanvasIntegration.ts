@@ -4,8 +4,9 @@
 
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import type { Artifact } from '@/features/canvas/types'
+import { useCanvasState } from '@/features/canvas/hooks/useCanvasState'
 import { extractArtifact } from '@/features/canvas/hooks/useArtifact'
 
 interface UseCanvasIntegrationOptions {
@@ -43,51 +44,38 @@ interface CanvasIntegrationReturn {
 
   // Process stream data to extract artifacts
   processSubtaskResult: (result: unknown) => void
+
+  // Fetch artifact with versions from API (call after streaming completes)
+  fetchArtifactWithVersions: () => Promise<void>
 }
 
 /**
  * Hook to integrate Canvas functionality with ChatArea
- * Handles canvas state, artifact extraction from stream, and quick actions
+ *
+ * This hook builds on useCanvasState and adds:
+ * - API integration for version revert
+ * - Stream data processing for artifact extraction
+ * - Quick action message generation
+ * - Task change handling
  */
 export function useCanvasIntegration(
   options: UseCanvasIntegrationOptions = {}
 ): CanvasIntegrationReturn {
   const { taskId, onSendMessage, onReset } = options
 
-  // Canvas visibility
-  const [canvasEnabled, setCanvasEnabled] = useState(false)
-
-  // Artifact state
-  const [artifact, setArtifact] = useState<Artifact | null>(null)
-  const [subtaskId, setSubtaskId] = useState<number | null>(null)
-
-  // Loading state
-  const [isCanvasLoading, setIsCanvasLoading] = useState(false)
-
-  // Fullscreen state
-  const [isFullscreen, setIsFullscreen] = useState(false)
-
-  // Toggle canvas
-  const toggleCanvas = useCallback(() => {
-    console.log('[useCanvasIntegration] toggleCanvas called, current:', canvasEnabled)
-    setCanvasEnabled(prev => !prev)
-  }, [canvasEnabled])
-
-  // Toggle fullscreen
-  const toggleFullscreen = useCallback(() => {
-    setIsFullscreen(prev => !prev)
-  }, [])
+  // Use base canvas state hook
+  const canvasState = useCanvasState()
 
   // Handle version revert - calls API to get version content and revert
   const handleVersionRevert = useCallback(
     async (version: number) => {
-      if (!artifact || !taskId) return
+      if (!canvasState.artifact || !taskId) return
 
       // If reverting to current version, do nothing
-      if (version === artifact.version) return
+      if (version === canvasState.artifact.version) return
 
       try {
-        setIsCanvasLoading(true)
+        canvasState.setIsLoading(true)
 
         // Call API to revert to target version
         const response = await fetch(`/api/canvas/tasks/${taskId}/artifact/revert/${version}`, {
@@ -103,18 +91,19 @@ export function useCanvasIntegration(
 
         const data = await response.json()
         if (data.artifact) {
-          setArtifact(data.artifact)
+          canvasState.setArtifact(data.artifact)
         }
       } catch (error) {
         console.error('[useCanvasIntegration] Version revert failed:', error)
+        canvasState.setError(error instanceof Error ? error.message : 'Failed to revert')
       } finally {
-        setIsCanvasLoading(false)
+        canvasState.setIsLoading(false)
       }
     },
-    [artifact, taskId]
+    [canvasState, taskId]
   )
 
-  // Handle quick action
+  // Handle quick action - sends message through chat
   const handleQuickAction = useCallback(
     (actionId: string, optionValue?: string) => {
       if (!onSendMessage) return
@@ -136,60 +125,91 @@ export function useCanvasIntegration(
     (result: unknown) => {
       const extractedArtifact = extractArtifact(result)
       if (extractedArtifact) {
-        console.log('[useCanvasIntegration] Updating artifact:', extractedArtifact.id, 'version:', extractedArtifact.version)
-        setArtifact(extractedArtifact)
+        canvasState.setArtifact(extractedArtifact)
         // Auto-enable canvas when artifact is generated
-        if (!canvasEnabled) {
-          setCanvasEnabled(true)
+        if (!canvasState.canvasEnabled) {
+          canvasState.setCanvasEnabled(true)
         }
       }
     },
-    [canvasEnabled]
+    [canvasState]
   )
+
+  // Fetch artifact with versions from API
+  // Call this after streaming completes to get the full artifact with version history
+  const fetchArtifactWithVersions = useCallback(async () => {
+    if (!taskId) return
+
+    // Only fetch if we have an artifact (streaming has produced one)
+    if (!canvasState.artifact) return
+
+    try {
+      const response = await fetch(`/api/canvas/tasks/${taskId}/artifact`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+
+      if (!response.ok) {
+        // 404 is expected if no artifact was created
+        if (response.status === 404) return
+        throw new Error(`Failed to fetch artifact: ${response.statusText}`)
+      }
+
+      const data = await response.json()
+      if (data.artifact) {
+        console.log(
+          '[useCanvasIntegration] Fetched artifact with versions:',
+          data.artifact.id,
+          'versions count:',
+          data.artifact.versions?.length
+        )
+        canvasState.setArtifact(data.artifact)
+      }
+    } catch (error) {
+      console.error('[useCanvasIntegration] Failed to fetch artifact with versions:', error)
+      // Don't set error state - we still have the artifact from streaming
+    }
+  }, [taskId, canvasState])
 
   // Close fullscreen on escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isFullscreen) {
-        setIsFullscreen(false)
+      if (e.key === 'Escape' && canvasState.isFullscreen) {
+        canvasState.setIsFullscreen(false)
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isFullscreen])
+  }, [canvasState])
 
   // Reset state when taskId changes
   useEffect(() => {
-    // Reset artifact and canvas state when switching tasks
-    console.log('[useCanvasIntegration] Task changed to:', taskId, '- resetting state')
-    setArtifact(null)
-    setSubtaskId(null)
-    setCanvasEnabled(false)
-    setIsCanvasLoading(false)
-    setIsFullscreen(false)
+    canvasState.reset()
     onReset?.()
-  }, [taskId, onReset])
+  }, [taskId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     // Canvas visibility
-    canvasEnabled,
-    setCanvasEnabled,
-    toggleCanvas,
+    canvasEnabled: canvasState.canvasEnabled,
+    setCanvasEnabled: canvasState.setCanvasEnabled,
+    toggleCanvas: canvasState.toggleCanvas,
 
     // Current artifact
-    artifact,
-    setArtifact,
-    subtaskId,
-    setSubtaskId,
+    artifact: canvasState.artifact,
+    setArtifact: canvasState.setArtifact,
+    subtaskId: canvasState.subtaskId,
+    setSubtaskId: canvasState.setSubtaskId,
 
-    // Loading state
-    isCanvasLoading,
-    setIsCanvasLoading,
+    // Loading state (renamed for clarity)
+    isCanvasLoading: canvasState.isLoading,
+    setIsCanvasLoading: canvasState.setIsLoading,
 
     // Fullscreen
-    isFullscreen,
-    toggleFullscreen,
+    isFullscreen: canvasState.isFullscreen,
+    toggleFullscreen: canvasState.toggleFullscreen,
 
     // Version management
     handleVersionRevert,
@@ -199,5 +219,8 @@ export function useCanvasIntegration(
 
     // Process stream data
     processSubtaskResult,
+
+    // Fetch artifact with versions from API
+    fetchArtifactWithVersions,
   }
 }
