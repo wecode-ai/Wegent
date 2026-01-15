@@ -56,6 +56,8 @@ export interface GitInfo {
   git_login?: string
   /** Git email */
   git_email?: string
+  /** Authentication type for Gerrit: 'digest' or 'basic' */
+  auth_type?: 'digest' | 'basic'
 }
 
 // Bot Types

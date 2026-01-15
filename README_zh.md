@@ -86,6 +86,7 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
 ## 📞 支持
 
 - 🐛 问题反馈：[GitHub Issues](https://github.com/wecode-ai/wegent/issues)
+- 💬 Discord：[加入社区](https://discord.gg/MVzJzyqEUp)
 
 ## 👥 贡献者
 

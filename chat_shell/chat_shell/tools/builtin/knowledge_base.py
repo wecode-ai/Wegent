@@ -82,7 +82,6 @@ class KnowledgeBaseTool(BaseTool):
     injection_mode: str = (
         InjectionMode.HYBRID
     )  # Default: auto-decide based on token count
-    aggressive_cleaning: bool = True
     min_chunk_score: float = 0.5
     max_direct_chunks: int = 500
     context_buffer_ratio: float = 0.1
@@ -101,7 +100,6 @@ class KnowledgeBaseTool(BaseTool):
                 model_id=self.model_id,
                 context_window=self.context_window,
                 injection_mode=self.injection_mode,
-                aggressive_cleaning=self.aggressive_cleaning,
                 min_chunk_score=self.min_chunk_score,
                 max_direct_chunks=self.max_direct_chunks,
                 context_buffer_ratio=self.context_buffer_ratio,
@@ -201,7 +199,7 @@ class KnowledgeBaseTool(BaseTool):
 
                 if injection_result["mode"] == InjectionMode.DIRECT_INJECTION:
                     logger.info(
-                        f"[KnowledgeBaseTool] ✅ Direct injection: {len(injection_result.get('chunks_used', []))} chunks"
+                        f"[KnowledgeBaseTool] Direct injection: {len(injection_result.get('chunks_used', []))} chunks"
                     )
                     return self._format_direct_injection_result(injection_result, query)
                 else:
@@ -397,12 +395,13 @@ class KnowledgeBaseTool(BaseTool):
                     )
 
                     # Process chunks into the expected format
+                    # Direct injection uses null score to indicate non-RAG retrieval
                     processed_chunks = []
                     for chunk in chunks:
                         processed_chunk = {
                             "content": chunk.get("content", ""),
                             "source": chunk.get("title", "Unknown"),
-                            "score": 1.0,  # All chunks have equal score for direct injection
+                            "score": None,  # null for direct injection (not RAG similarity)
                             "knowledge_base_id": kb_id,
                         }
                         processed_chunks.append(processed_chunk)
@@ -462,13 +461,13 @@ class KnowledgeBaseTool(BaseTool):
                         f"[KnowledgeBaseTool] HTTP retrieved all {len(chunks)} chunks from KB {kb_id}"
                     )
 
-                    # Process chunks
+                    # Process chunks with null score for direct injection
                     processed_chunks = []
                     for chunk in chunks:
                         processed_chunk = {
                             "content": chunk.get("content", ""),
                             "source": chunk.get("title", "Unknown"),
-                            "score": 1.0,
+                            "score": None,  # null for direct injection (not RAG similarity)
                             "knowledge_base_id": kb_id,
                         }
                         processed_chunks.append(processed_chunk)
@@ -654,6 +653,41 @@ class KnowledgeBaseTool(BaseTool):
             ],
         }
 
+    def _build_extracted_data(
+        self,
+        chunks: List[Dict[str, Any]],
+        source_references: List[Dict[str, Any]],
+        kb_id: int,
+    ) -> str:
+        """Build structured JSON for extracted_text field.
+
+        Args:
+            chunks: List of chunks with content and metadata
+            source_references: List of source references
+            kb_id: Knowledge base ID to filter by
+
+        Returns:
+            JSON string with structured data
+        """
+        # Filter chunks and sources for this KB
+        kb_chunks = [c for c in chunks if c.get("knowledge_base_id") == kb_id]
+        kb_sources = [s for s in source_references if s.get("kb_id") == kb_id]
+
+        extracted_data = {
+            "chunks": [
+                {
+                    "content": c.get("content", ""),
+                    "source": c.get("source", "Unknown"),
+                    "score": c.get("score"),  # None for direct injection
+                    "knowledge_base_id": kb_id,
+                    "source_index": c.get("source_index", 0),
+                }
+                for c in kb_chunks
+            ],
+            "sources": kb_sources,  # [{index, title, kb_id}, ...]
+        }
+        return json.dumps(extracted_data, ensure_ascii=False)
+
     def _format_direct_injection_result(
         self,
         injection_result: Dict[str, Any],
@@ -668,12 +702,42 @@ class KnowledgeBaseTool(BaseTool):
         Returns:
             JSON string with injection result
         """
+        # Extract chunks used for persistence
+        chunks_used = injection_result.get("chunks_used", [])
+
+        # Build source references from chunks_used
+        source_references = []
+        seen_sources: dict[tuple[int, str], int] = {}
+        source_index = 1
+
+        for chunk in chunks_used:
+            kb_id = chunk.get("knowledge_base_id")
+            source_file = chunk.get("source", "Unknown")
+            source_key = (kb_id, source_file)
+
+            if source_key not in seen_sources:
+                seen_sources[source_key] = source_index
+                source_references.append(
+                    {
+                        "index": source_index,
+                        "title": source_file,
+                        "kb_id": kb_id,
+                    }
+                )
+                source_index += 1
+
+        # Persist RAG results if user_subtask_id is available
+        if self.user_subtask_id and chunks_used:
+            self._persist_rag_results_sync(chunks_used, query)
+
         return json.dumps(
             {
                 "query": query,
                 "mode": "direct_injection",
                 "injected_content": injection_result["injected_content"],
-                "chunks_used": len(injection_result["chunks_used"]),
+                "chunks_used": len(chunks_used),
+                "count": len(chunks_used),
+                "sources": source_references,
                 "decision_details": injection_result["decision_details"],
                 "strategy_stats": self.injection_strategy.get_injection_statistics(),
                 "message": "All knowledge base content has been fully injected above. "
@@ -732,14 +796,18 @@ class KnowledgeBaseTool(BaseTool):
                 )
 
         # Sort by score (descending)
-        all_chunks.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+        all_chunks.sort(key=lambda x: x.get("score", 0.0) or 0.0, reverse=True)
 
         # Limit total results
         all_chunks = all_chunks[:max_results]
 
         logger.info(
-            f"[KnowledgeBaseTool] ✅ RAG fallback: returning {len(all_chunks)} results with {len(source_references)} unique sources for query: {query}"
+            f"[KnowledgeBaseTool] RAG fallback: returning {len(all_chunks)} results with {len(source_references)} unique sources for query: {query}"
         )
+
+        # Persist RAG results if user_subtask_id is available
+        if self.user_subtask_id and all_chunks:
+            await self._persist_rag_results(all_chunks, source_references, query)
 
         return json.dumps(
             {
@@ -752,3 +820,244 @@ class KnowledgeBaseTool(BaseTool):
             },
             ensure_ascii=False,
         )
+
+    async def _persist_rag_results(
+        self,
+        all_chunks: List[Dict[str, Any]],
+        source_references: List[Dict[str, Any]],
+        query: str,
+    ) -> None:
+        """Persist RAG retrieval results to context database.
+
+        This method saves the retrieved chunks to the SubtaskContext record
+        so that subsequent conversations can include them in history.
+
+        Supports both package mode (direct DB access) and HTTP mode (via API).
+
+        Args:
+            all_chunks: List of retrieved chunks with content and metadata
+            source_references: List of source references with title and kb_id
+            query: Original search query
+        """
+        # Group chunks by knowledge_base_id for per-KB persistence
+        chunks_by_kb: Dict[int, List[Dict[str, Any]]] = {}
+        for chunk in all_chunks:
+            kb_id = chunk.get("knowledge_base_id")
+            if kb_id is not None:
+                if kb_id not in chunks_by_kb:
+                    chunks_by_kb[kb_id] = []
+                chunks_by_kb[kb_id].append(chunk)
+
+        # Try package mode first (direct DB access)
+        try:
+            from app.services.context.context_service import context_service
+
+            # Package mode: use context_service directly
+            for kb_id, chunks in chunks_by_kb.items():
+                await self._persist_rag_result_package_mode(
+                    kb_id, chunks, source_references, query
+                )
+            return
+
+        except ImportError:
+            # HTTP mode: use HTTP API
+            for kb_id, chunks in chunks_by_kb.items():
+                await self._persist_rag_result_http_mode(
+                    kb_id, chunks, source_references, query
+                )
+
+    async def _persist_rag_result_package_mode(
+        self,
+        kb_id: int,
+        chunks: List[Dict[str, Any]],
+        source_references: List[Dict[str, Any]],
+        query: str,
+    ) -> None:
+        """Persist RAG result using direct database access (package mode).
+
+        Args:
+            kb_id: Knowledge base ID
+            chunks: Chunks from this knowledge base
+            source_references: Source references
+            query: Original search query
+        """
+        import asyncio
+
+        from app.services.context.context_service import context_service
+
+        # Build structured JSON for extracted_text
+        extracted_text = self._build_extracted_data(chunks, source_references, kb_id)
+
+        # Filter source references for this KB
+        kb_sources = [s for s in source_references if s.get("kb_id") == kb_id]
+
+        def _persist():
+            # Find context record for this subtask and KB
+            context = context_service.get_knowledge_base_context_by_subtask_and_kb_id(
+                db=self.db_session,
+                subtask_id=self.user_subtask_id,
+                knowledge_id=kb_id,
+            )
+
+            if context is None:
+                logger.warning(
+                    f"[KnowledgeBaseTool] No context found for subtask_id={self.user_subtask_id}, kb_id={kb_id}"
+                )
+                return
+
+            # Update context with RAG results
+            context_service.update_knowledge_base_retrieval_result(
+                db=self.db_session,
+                context_id=context.id,
+                extracted_text=extracted_text,
+                sources=kb_sources,
+            )
+
+            logger.info(
+                f"[KnowledgeBaseTool] Persisted RAG result: context_id={context.id}, "
+                f"subtask_id={self.user_subtask_id}, kb_id={kb_id}, text_length={len(extracted_text)}"
+            )
+
+        # Run synchronous database operation in thread pool
+        await asyncio.to_thread(_persist)
+
+    async def _persist_rag_result_http_mode(
+        self,
+        kb_id: int,
+        chunks: List[Dict[str, Any]],
+        source_references: List[Dict[str, Any]],
+        query: str,
+    ) -> None:
+        """Persist RAG result via HTTP API (HTTP mode).
+
+        Args:
+            kb_id: Knowledge base ID
+            chunks: Chunks from this knowledge base
+            source_references: Source references
+            query: Original search query
+        """
+        import httpx
+
+        from chat_shell.core.config import settings
+
+        # Build structured JSON for extracted_text
+        extracted_text = self._build_extracted_data(chunks, source_references, kb_id)
+
+        # Filter source references for this KB
+        kb_sources = [s for s in source_references if s.get("kb_id") == kb_id]
+
+        # Get backend API URL
+        remote_url = getattr(settings, "REMOTE_STORAGE_URL", "")
+        if remote_url:
+            backend_url = remote_url.replace("/api/internal", "")
+        else:
+            backend_url = getattr(settings, "BACKEND_API_URL", "http://localhost:8000")
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{backend_url}/api/internal/rag/save-result",
+                    json={
+                        "user_subtask_id": self.user_subtask_id,
+                        "knowledge_base_id": kb_id,
+                        "extracted_text": extracted_text,
+                        "sources": kb_sources,
+                    },
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("success"):
+                        logger.info(
+                            f"[KnowledgeBaseTool] Persisted RAG result via HTTP: "
+                            f"context_id={data.get('context_id')}, subtask_id={self.user_subtask_id}, "
+                            f"kb_id={kb_id}, text_length={len(extracted_text)}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[KnowledgeBaseTool] Failed to persist RAG result: {data.get('message')}"
+                        )
+                else:
+                    logger.warning(
+                        f"[KnowledgeBaseTool] HTTP persist failed: status={response.status_code}, "
+                        f"body={response.text[:200]}"
+                    )
+
+        except Exception as e:
+            logger.warning(
+                f"[KnowledgeBaseTool] HTTP persist error for kb_id={kb_id}: {e}"
+            )
+
+    def _persist_rag_results_sync(
+        self,
+        chunks_used: List[Dict[str, Any]],
+        query: str,
+    ) -> None:
+        """Synchronous wrapper for RAG result persistence (used by direct injection).
+
+        Since direct injection mode uses sync methods, we need to handle
+        async persistence differently.
+
+        Args:
+            chunks_used: Chunks used in direct injection
+            query: Original search query
+        """
+        import asyncio
+
+        # Build source references from chunks
+        source_references = []
+        seen_sources: dict[tuple[int, str], int] = {}
+        source_index = 1
+
+        # Add source_index to each chunk
+        chunks_with_index = []
+        for chunk in chunks_used:
+            kb_id = chunk.get("knowledge_base_id")
+            source_file = chunk.get("source", "Unknown")
+            source_key = (kb_id, source_file)
+
+            if source_key not in seen_sources:
+                seen_sources[source_key] = source_index
+                source_references.append(
+                    {
+                        "index": source_index,
+                        "title": source_file,
+                        "kb_id": kb_id,
+                    }
+                )
+                source_index += 1
+
+            chunk_with_index = chunk.copy()
+            chunk_with_index["source_index"] = seen_sources[source_key]
+            chunks_with_index.append(chunk_with_index)
+
+        # Helper callback to log exceptions from fire-and-forget tasks
+        def _log_task_exception(task: asyncio.Task) -> None:
+            if task.exception():
+                logger.warning(
+                    f"[KnowledgeBaseTool] RAG persistence failed: {task.exception()}"
+                )
+
+        # Try to run async persist in event loop
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If event loop is running, create a task with exception handler
+                task = asyncio.create_task(
+                    self._persist_rag_results(
+                        chunks_with_index, source_references, query
+                    )
+                )
+                task.add_done_callback(_log_task_exception)
+            else:
+                # Run synchronously
+                loop.run_until_complete(
+                    self._persist_rag_results(
+                        chunks_with_index, source_references, query
+                    )
+                )
+        except RuntimeError:
+            # No event loop, create a new one
+            asyncio.run(
+                self._persist_rag_results(chunks_with_index, source_references, query)
+            )

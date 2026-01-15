@@ -4,6 +4,8 @@
 
 This directory contains YAML configuration files for initializing the Wegent system. The system automatically scans this directory on startup and applies all YAML resources using the batch service API.
 
+**Note**: This directory is **built into the Docker image** by default. Users can deploy Wegent with just the `docker-compose.yml` file - no local code repository required.
+
 ## How It Works
 
 1. **Auto-scan**: On startup, the backend scans `INIT_DATA_DIR` (default: `/app/init_data`) for all `.yaml` and `.yml` files
@@ -131,16 +133,49 @@ status:
 
 ## Docker Integration
 
-The directory is mounted as read-only in `docker-compose.yml`:
+### Self-Contained Deployment
 
-```yaml
-volumes:
-  - ./backend/init_data:/app/init_data:ro
+The `init_data` directory is **built into the Docker image**, allowing users to deploy Wegent with just the `docker-compose.yml` file:
+
+```bash
+# Download docker-compose.yml and start Wegent
+curl -O https://raw.githubusercontent.com/wecode-ai/Wegent/main/docker-compose.yml
+docker-compose up -d
 ```
 
-To add custom resources:
-1. Add YAML files to `backend/init_data/`
-2. Restart the backend container
+No local code repository is required - the image contains all default resources and skills.
+
+### Customizing Init Data
+
+To override the built-in init data with your own configuration:
+
+1. Create a custom directory with your YAML files:
+   ```bash
+   mkdir custom_init_data
+   cp my-custom-resources.yaml custom_init_data/
+   ```
+
+2. Uncomment and modify the volume mount in `docker-compose.yml`:
+   ```yaml
+   backend:
+     volumes:
+       - ./custom_init_data:/app/init_data:ro
+   ```
+
+3. Restart the backend container:
+   ```bash
+   docker-compose restart backend
+   ```
+
+### Environment Variables
+
+Control initialization behavior with these environment variables:
+
+```yaml
+environment:
+  INIT_DATA_ENABLED: "True"   # Enable/disable initialization
+  INIT_DATA_DIR: /app/init_data  # Directory path (default)
+```
 
 ## Advantages
 

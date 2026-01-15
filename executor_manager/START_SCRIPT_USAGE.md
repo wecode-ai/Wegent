@@ -20,7 +20,7 @@ cd executor_manager
 ### Change Executor Image
 
 ```bash
-./start.sh --executor-image ghcr.io/wecode-ai/wegent-executor:1.0.18
+./start.sh --executor-image ghcr.io/wecode-ai/wegent-executor:latest
 ```
 
 ### Change Backend API Domain
@@ -48,7 +48,7 @@ Usage: ./start.sh [OPTIONS]
 Options:
   --port PORT              Executor Manager port (default: 8001)
   --host HOST              Executor Manager host (default: 0.0.0.0)
-  --executor-image IMAGE   Executor Docker image (default: ghcr.io/wecode-ai/wegent-executor:1.0.16)
+  --executor-image IMAGE   Executor Docker image (default: ghcr.io/wecode-ai/wegent-executor:latest)
   --task-api-domain URL    Backend API domain (default: http://localhost:8000)
   -h, --help               Show this help message
 
@@ -196,7 +196,7 @@ sudo systemctl start docker
 
 A: Use the `--executor-image` parameter:
 ```bash
-./start.sh --executor-image ghcr.io/wecode-ai/wegent-executor:1.0.18
+./start.sh --executor-image ghcr.io/wecode-ai/wegent-executor:latest
 ./start.sh --executor-image my-custom-executor:latest
 ```
 
@@ -241,7 +241,7 @@ Start the service on a different port.
 ### Scenario 3: Using Custom Executor Image
 
 ```bash
-./start.sh --executor-image ghcr.io/wecode-ai/wegent-executor:1.0.18
+./start.sh --executor-image ghcr.io/wecode-ai/wegent-executor:latest
 ```
 
 Use a specific version of the executor image.

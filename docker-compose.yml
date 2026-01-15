@@ -7,6 +7,8 @@ services:
     image: mysql:9.4
     container_name: wegent-mysql
     restart: always
+    command:
+      - --sort_buffer_size=16M
     environment:
       MYSQL_ROOT_PASSWORD: 123456
       MYSQL_DATABASE: task_manager
@@ -68,13 +70,14 @@ services:
   backend:
     # build:
       # dockerfile: docker/backend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-backend:1.1.1
+    image: ghcr.io/wecode-ai/wegent-backend:latest
     container_name: wegent-backend
     restart: always
     ports:
       - "8000:8000"
-    volumes:
-      - ./backend/init_data:/app/init_data:ro
+    # volumes:
+      # To customize init data, uncomment the following line to override the built-in data:
+      # - ./custom_init_data:/app/init_data:ro
     environment:
       ENVIRONMENT: development
       DB_AUTO_MIGRATE: "True"
@@ -115,7 +118,7 @@ services:
   frontend:
     # build:
     #   dockerfile: docker/frontend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-web:1.1.1
+    image: ghcr.io/wecode-ai/wegent-web:latest
     container_name: wegent-frontend
     restart: always
     ports:
@@ -146,7 +149,7 @@ services:
       - wegent-network
 
   chat_shell:
-    image: ghcr.io/wecode-ai/wegent-chat-shell:1.1.1
+    image: ghcr.io/wecode-ai/wegent-chat-shell:latest
     container_name: wegent-chat-shell
     restart: always
     ports:
@@ -157,6 +160,7 @@ services:
       - CHAT_SHELL_MODE=http
       - CHAT_SHELL_STORAGE_TYPE=remote
       - CHAT_SHELL_REMOTE_STORAGE_URL=http://backend:8000/api/internal
+      - EXECUTOR_MANAGER_URL=http://executor_manager:8001
       # - CHAT_SHELL_REMOTE_STORAGE_TOKEN=${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
       # OpenTelemetry Configuration (uncomment to enable)
       # - OTEL_ENABLED=true
@@ -176,7 +180,7 @@ services:
   executor_manager:
     #build:
       #dockerfile: docker/frontend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-executor-manager:1.1.1
+    image: ghcr.io/wecode-ai/wegent-executor-manager:latest
     extra_hosts:
       - "host.docker.internal:host-gateway"
     container_name: wegent-executor-manager
@@ -186,6 +190,8 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - TASK_API_DOMAIN=http://backend:8000
+      - EXECUTOR_MANAGER_EXTERNAL_URL=http://executor_manager:8001
+      - REDIS_URL=redis://redis:6379/0
       - MAX_CONCURRENT_TASKS=30
       - PORT=8001
       - CALLBACK_HOST=http://executor_manager:8001
@@ -203,6 +209,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - backend
+      - redis
     networks:
       - wegent-network
 
