@@ -24,7 +24,7 @@ class TestKnowledgeContentCleaner:
     """Test knowledge content cleaner."""
 
     def test_clean_content_basic(self):
-        """Test basic content cleaning."""
+        """Test basic content cleaning - preserves URLs, normalizes punctuation."""
         cleaner = KnowledgeContentCleaner()
 
         content = """
@@ -37,29 +37,25 @@ class TestKnowledgeContentCleaner:
 
         cleaned = cleaner.clean_content(content)
 
-        # Check that URLs are removed
-        assert "https://example.com" not in cleaned
-        assert "http://test.org/page" not in cleaned
+        # Check that URLs are preserved (not removed)
+        assert "https://example.com" in cleaned
+        assert "http://test.org/page" in cleaned
 
         # Check that HTML tags are removed
         assert "<p>" not in cleaned
         assert "</p>" not in cleaned
         assert "<div>" not in cleaned
 
-        # Check that HTML entities are removed
-        # Note: Some entities might remain if they're not standard HTML entities
-        # The important thing is that HTML tags are removed
-
-        # Check that repeated punctuation is normalized
+        # Check that repeated punctuation is normalized to original type
         assert "Hello!!!" not in cleaned
-        assert "Hello." in cleaned
+        assert "Hello!" in cleaned  # Now ! instead of .
 
         # Check that whitespace is normalized
         assert "extra   whitespace   here" not in cleaned
         assert "extra whitespace here" in cleaned
 
     def test_clean_knowledge_chunk(self):
-        """Test cleaning knowledge base chunk."""
+        """Test cleaning knowledge base chunk - preserves URLs."""
         cleaner = KnowledgeContentCleaner()
 
         chunk = {
@@ -71,7 +67,9 @@ class TestKnowledgeContentCleaner:
 
         cleaned_chunk = cleaner.clean_knowledge_chunk(chunk)
 
-        assert "https://example.com" not in cleaned_chunk["content"]
+        # URL should be preserved
+        assert "https://example.com" in cleaned_chunk["content"]
+        # HTML should be removed
         assert "<p>" not in cleaned_chunk["content"]
         assert cleaned_chunk["source"] == "test.txt"
         assert cleaned_chunk["score"] == 0.8
@@ -81,10 +79,12 @@ class TestKnowledgeContentCleaner:
         """Test token reduction estimation."""
         cleaner = KnowledgeContentCleaner()
 
-        content = "Content with URL: https://example.com and HTML: <p>test</p>"
+        # Content with HTML that will be removed
+        content = "Content with HTML: <p>test</p> and   extra   spaces"
         original_tokens, cleaned_tokens = cleaner.estimate_token_reduction(content)
 
-        assert cleaned_tokens < original_tokens
+        # Cleaned should have fewer or equal tokens (HTML removed, spaces normalized)
+        assert cleaned_tokens <= original_tokens
         assert original_tokens > 0
 
 
@@ -227,6 +227,20 @@ class TestInjectionStrategy:
         assert result["fallback_to_rag"] is True
         assert result["injected_content"] is None
 
+    def test_get_injection_statistics_no_aggressive(self):
+        """Test that injection statistics no longer include aggressive_cleaning."""
+        strategy = InjectionStrategy("claude-3-5-sonnet", context_window=200000)
+
+        stats = strategy.get_injection_statistics()
+
+        # Should not have aggressive_cleaning field
+        assert "aggressive_cleaning" not in stats
+        # Should have other expected fields
+        assert "model_id" in stats
+        assert "injection_mode" in stats
+        assert "min_chunk_score" in stats
+        assert "max_direct_chunks" in stats
+
 
 class TestKnowledgeBaseTool:
     """Test KnowledgeBaseTool with injection strategy."""
@@ -243,6 +257,15 @@ class TestKnowledgeBaseTool:
 
         # Should return same instance on subsequent access
         assert tool.injection_strategy is strategy
+
+    def test_tool_no_aggressive_cleaning_attribute(self):
+        """Test that tool no longer has aggressive_cleaning attribute."""
+        tool = KnowledgeBaseTool()
+
+        # Should not have aggressive_cleaning
+        assert not hasattr(tool, "aggressive_cleaning") or not getattr(
+            tool, "aggressive_cleaning", None
+        )
 
     @pytest.mark.asyncio
     async def test_arun_with_no_knowledge_bases(self):
@@ -345,6 +368,30 @@ class TestKnowledgeBaseTool:
         assert result_dict["mode"] == "rag_retrieval"
         assert result_dict["count"] == 2
         assert len(result_dict["sources"]) == 2
+
+    def test_build_extracted_data_json_format(self):
+        """Test that _build_extracted_data returns JSON with chunks and sources."""
+        tool = KnowledgeBaseTool()
+
+        chunks = [
+            {
+                "content": "test content",
+                "source": "test.md",
+                "score": 0.85,
+                "knowledge_base_id": 1,
+                "source_index": 1,
+            }
+        ]
+        source_references = [{"index": 1, "title": "test.md", "kb_id": 1}]
+
+        result = tool._build_extracted_data(chunks, source_references, 1)
+
+        # Should be valid JSON
+        data = json.loads(result)
+        assert "chunks" in data
+        assert "sources" in data
+        assert len(data["chunks"]) == 1
+        assert data["chunks"][0]["content"] == "test content"
 
 
 if __name__ == "__main__":

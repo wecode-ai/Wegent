@@ -6,10 +6,10 @@
 Tests for GerritProvider authentication type handling
 """
 
-import pytest
-import requests
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+import requests
 from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 
 from app.repository.gerrit_provider import GerritProvider
@@ -150,9 +150,7 @@ class TestGerritProviderAuthType:
         auth = call_args[1]["auth"]
         assert isinstance(auth, HTTPDigestAuth)
 
-    def test_make_request_uses_basic_auth_when_specified(
-        self, gerrit_provider, mocker
-    ):
+    def test_make_request_uses_basic_auth_when_specified(self, gerrit_provider, mocker):
         """Test that _make_request uses HTTPBasicAuth when auth_type='basic'"""
         mock_response = Mock()
         mock_response.status_code = 200
@@ -402,16 +400,16 @@ class TestGerritProviderGetBranches:
             captured_auth_type[0] = kwargs.get("auth_type")
             mock_response = Mock()
             mock_response.status_code = 200
-            mock_response.text = ')]}\'\n[{"ref": "refs/heads/main"}, {"ref": "refs/heads/develop"}]'
+            mock_response.text = (
+                ')]}\'\n[{"ref": "refs/heads/main"}, {"ref": "refs/heads/develop"}]'
+            )
             mock_response.raise_for_status = Mock()
             return mock_response
 
         mocker.patch.object(
             gerrit_provider, "_make_request", side_effect=mock_make_request
         )
-        mocker.patch.object(
-            gerrit_provider, "_get_default_branch", return_value="main"
-        )
+        mocker.patch.object(gerrit_provider, "_get_default_branch", return_value="main")
 
         await gerrit_provider.get_branches(
             mock_user_basic_auth, "test-project", "gerrit.example.com"

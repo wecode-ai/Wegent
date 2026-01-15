@@ -230,14 +230,23 @@ def _process_tool_output(
         if isinstance(tool_output, str):
             try:
                 parsed = json.loads(tool_output)
+                logger.info(
+                    f"[TOOL_OUTPUT] knowledge_base_search parsed output: "
+                    f"has_sources={'sources' in parsed}, "
+                    f"sources_count={len(parsed.get('sources', []))}, "
+                    f"sources={parsed.get('sources', [])}"
+                )
                 if isinstance(parsed, dict) and "sources" in parsed:
                     kb_sources = parsed.get("sources", [])
                     if isinstance(kb_sources, list):
                         sources.extend(kb_sources)
+                        logger.info(
+                            f"[TOOL_OUTPUT] Extracted {len(kb_sources)} sources from knowledge_base_search"
+                        )
                     result_count = parsed.get("count", 0)
                     title = f"检索完成，找到 {result_count} 条结果"
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                logger.warning(f"[TOOL_OUTPUT] Failed to parse tool output: {e}")
 
     # Extract sources from web_search results
     elif tool_name == "web_search":

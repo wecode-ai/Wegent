@@ -17,6 +17,7 @@ from shared.telemetry.context import (
     SpanNames,
     set_request_context,
     set_user_context,
+    set_websocket_context,
 )
 from shared.telemetry.core import is_telemetry_enabled
 
@@ -63,6 +64,9 @@ def trace_websocket_event(
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def wrapper(self, event: str, sid: str, *args):
+            # Mark this as WebSocket context to filter Redis spans
+            set_websocket_context(True)
+
             # Skip tracing for excluded events
             if event in exclude_events:
                 return await func(self, event, sid, *args)

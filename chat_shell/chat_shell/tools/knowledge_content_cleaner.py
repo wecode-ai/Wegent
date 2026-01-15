@@ -5,7 +5,8 @@
 """Content cleaning utilities for knowledge base chunks.
 
 This module provides functionality to clean knowledge base content
-by removing URLs, HTML tags, and meaningless characters to reduce token usage.
+by removing HTML tags and normalizing whitespace to reduce token usage
+while preserving important content like URLs, code blocks, and emails.
 """
 
 import logging
@@ -19,16 +20,12 @@ class KnowledgeContentCleaner:
     """Content cleaner for knowledge base chunks.
 
     This class provides methods to clean text content by removing
-    unnecessary elements that consume tokens but add little value.
+    unnecessary elements that consume tokens but add little value,
+    while preserving important content like URLs, code blocks, and emails.
     """
 
     def __init__(self):
         """Initialize the content cleaner with pre-compiled regex patterns."""
-        # URL patterns
-        self.url_pattern = re.compile(
-            r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
-        )
-
         # HTML tag patterns
         self.html_tag_pattern = re.compile(r"<[^>]+>")
 
@@ -38,45 +35,56 @@ class KnowledgeContentCleaner:
         # Meaningless whitespace patterns (multiple spaces, tabs, newlines)
         self.whitespace_pattern = re.compile(r"\s+")
 
-        # Meaningless punctuation patterns (repeated punctuation)
-        self.repeated_punctuation_pattern = re.compile(r"[.!?]{2,}")
-
         # Non-printable characters
         self.non_printable_pattern = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
-        # Email patterns (optional, can be kept if needed)
-        self.email_pattern = re.compile(
-            r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
-        )
+    def _normalize_repeated_punctuation(self, text: str) -> str:
+        """Normalize repeated punctuation to single character.
 
-        # Code block markers
-        self.code_block_pattern = re.compile(r"```[\s\S]*?```")
+        Converts !!! -> !, ??? -> ?, ... -> .
+        Preserves mixed punctuation like ?! or !?
 
-        # Inline code markers
-        self.inline_code_pattern = re.compile(r"`[^`]*`")
+        Args:
+            text: Text to normalize
+
+        Returns:
+            Text with repeated punctuation normalized
+        """
+        # Normalize repeated exclamation marks: !!! -> !
+        text = re.sub(r"(!)\1+", r"\1", text)
+        # Normalize repeated question marks: ??? -> ?
+        text = re.sub(r"(\?)\1+", r"\1", text)
+        # Normalize repeated periods: ... -> .
+        text = re.sub(r"(\.)\1+", r"\1", text)
+        return text
 
     def clean_content(
         self,
         content: str,
-        remove_urls: bool = True,
         remove_html: bool = True,
-        remove_emails: bool = False,
-        remove_code_blocks: bool = False,
         normalize_whitespace: bool = True,
-        remove_repeated_punctuation: bool = True,
+        normalize_punctuation: bool = True,
         remove_non_printable: bool = True,
-        aggressive: bool = False,
     ) -> str:
         """Clean content by removing specified elements.
 
+        This method preserves:
+        - URLs (http://, https://)
+        - Code blocks (``` and `)
+        - Email addresses
+
+        This method removes/normalizes:
+        - HTML tags (<p>, <div>, etc.)
+        - HTML entities (&nbsp;, &#123;, etc.)
+        - Repeated punctuation (!!! -> !, ??? -> ?, ... -> .)
+        - Multiple whitespace (spaces, newlines -> single space)
+        - Non-printable characters
+
         Args:
             content: The content to clean
-            remove_urls: Whether to remove URLs
             remove_html: Whether to remove HTML tags and entities
-            remove_emails: Whether to remove email addresses
-            remove_code_blocks: Whether to remove code blocks
             normalize_whitespace: Whether to normalize whitespace
-            remove_repeated_punctuation: Whether to remove repeated punctuation
+            normalize_punctuation: Whether to normalize repeated punctuation
             remove_non_printable: Whether to remove non-printable characters
 
         Returns:
@@ -87,37 +95,14 @@ class KnowledgeContentCleaner:
 
         cleaned = content
 
-        # Remove URLs
-        if remove_urls:
-            cleaned = self.url_pattern.sub("", cleaned)
-
         # Remove HTML tags and entities
         if remove_html:
             cleaned = self.html_tag_pattern.sub("", cleaned)
             cleaned = self.html_entity_pattern.sub("", cleaned)
 
-        # If aggressive mode, remove more content
-        if aggressive:
-            # Remove emails in aggressive mode
-            if not remove_emails:
-                cleaned = self.email_pattern.sub("", cleaned)
-            # Remove code blocks in aggressive mode
-            if not remove_code_blocks:
-                cleaned = self.code_block_pattern.sub("[Code Block]", cleaned)
-                cleaned = self.inline_code_pattern.sub("[Code]", cleaned)
-
-        # Remove email addresses
-        if remove_emails:
-            cleaned = self.email_pattern.sub("", cleaned)
-
-        # Remove code blocks
-        if remove_code_blocks:
-            cleaned = self.code_block_pattern.sub("[Code Block]", cleaned)
-            cleaned = self.inline_code_pattern.sub("[Code]", cleaned)
-
-        # Remove repeated punctuation
-        if remove_repeated_punctuation:
-            cleaned = self.repeated_punctuation_pattern.sub(".", cleaned)
+        # Normalize repeated punctuation (preserve original type)
+        if normalize_punctuation:
+            cleaned = self._normalize_repeated_punctuation(cleaned)
 
         # Remove non-printable characters
         if remove_non_printable:
@@ -133,13 +118,11 @@ class KnowledgeContentCleaner:
     def clean_knowledge_chunk(
         self,
         chunk: dict,
-        aggressive: bool = False,
     ) -> dict:
         """Clean a knowledge base chunk.
 
         Args:
             chunk: Knowledge base chunk dictionary
-            aggressive: Whether to use aggressive cleaning (removes more content)
 
         Returns:
             Cleaned chunk dictionary
@@ -154,18 +137,8 @@ class KnowledgeContentCleaner:
         if not content:
             return cleaned_chunk
 
-        # Determine cleaning parameters based on aggressiveness
-        cleaned_content = self.clean_content(
-            content,
-            remove_urls=True,
-            remove_html=True,
-            remove_emails=aggressive,
-            remove_code_blocks=aggressive,
-            normalize_whitespace=True,
-            remove_repeated_punctuation=True,
-            remove_non_printable=True,
-            aggressive=aggressive,
-        )
+        # Clean content with default settings
+        cleaned_content = self.clean_content(content)
 
         # Update chunk content
         cleaned_chunk["content"] = cleaned_content
@@ -187,13 +160,11 @@ class KnowledgeContentCleaner:
     def clean_knowledge_chunks(
         self,
         chunks: list[dict],
-        aggressive: bool = False,
     ) -> list[dict]:
         """Clean multiple knowledge base chunks.
 
         Args:
             chunks: List of knowledge base chunk dictionaries
-            aggressive: Whether to use aggressive cleaning
 
         Returns:
             List of cleaned chunks
@@ -206,7 +177,7 @@ class KnowledgeContentCleaner:
         total_cleaned_length = 0
 
         for chunk in chunks:
-            cleaned_chunk = self.clean_knowledge_chunk(chunk, aggressive)
+            cleaned_chunk = self.clean_knowledge_chunk(chunk)
             cleaned_chunks.append(cleaned_chunk)
 
             # Track statistics
@@ -231,14 +202,12 @@ class KnowledgeContentCleaner:
     def estimate_token_reduction(
         self,
         content: str,
-        aggressive: bool = False,
         chars_per_token: float = 4.0,
     ) -> tuple[int, int]:
         """Estimate token reduction after cleaning.
 
         Args:
             content: Content to analyze
-            aggressive: Whether to use aggressive cleaning
             chars_per_token: Average characters per token for estimation
 
         Returns:
@@ -250,7 +219,7 @@ class KnowledgeContentCleaner:
         original_tokens = int(len(content) / chars_per_token)
 
         # Clean content
-        cleaned_content = self.clean_content(content, aggressive=aggressive)
+        cleaned_content = self.clean_content(content)
         cleaned_tokens = int(len(cleaned_content) / chars_per_token)
 
         return original_tokens, cleaned_tokens
@@ -272,29 +241,27 @@ def get_content_cleaner() -> KnowledgeContentCleaner:
     return _content_cleaner
 
 
-def clean_content(content: str, aggressive: bool = False) -> str:
+def clean_content(content: str) -> str:
     """Convenience function to clean content.
 
     Args:
         content: Content to clean
-        aggressive: Whether to use aggressive cleaning
 
     Returns:
         Cleaned content
     """
     cleaner = get_content_cleaner()
-    return cleaner.clean_content(content, aggressive=aggressive)
+    return cleaner.clean_content(content)
 
 
-def clean_knowledge_chunks(chunks: list[dict], aggressive: bool = False) -> list[dict]:
+def clean_knowledge_chunks(chunks: list[dict]) -> list[dict]:
     """Convenience function to clean knowledge chunks.
 
     Args:
         chunks: List of knowledge base chunks
-        aggressive: Whether to use aggressive cleaning
 
     Returns:
         List of cleaned chunks
     """
     cleaner = get_content_cleaner()
-    return cleaner.clean_knowledge_chunks(chunks, aggressive=aggressive)
+    return cleaner.clean_knowledge_chunks(chunks)

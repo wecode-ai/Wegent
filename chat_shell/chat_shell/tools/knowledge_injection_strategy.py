@@ -41,7 +41,6 @@ class InjectionStrategy:
         model_id: str,
         context_window: int | None = None,
         injection_mode: str = InjectionMode.RAG_ONLY,
-        aggressive_cleaning: bool = False,
         min_chunk_score: float = 0.5,
         max_direct_chunks: int = 500,
         context_buffer_ratio: float = 0.1,
@@ -53,14 +52,12 @@ class InjectionStrategy:
             context_window: Context window size from Model CRD.
                 If not provided, uses DEFAULT_CONTEXT_WINDOW (128000).
             injection_mode: Injection mode (rag_only, direct_injection, hybrid)
-            aggressive_cleaning: Whether to use aggressive content cleaning
             min_chunk_score: Minimum score threshold for chunks
             max_direct_chunks: Maximum chunks to inject directly
             context_buffer_ratio: Ratio of context to keep as buffer (0.0-1.0)
         """
         self.model_id = model_id
         self.injection_mode = injection_mode
-        self.aggressive_cleaning = aggressive_cleaning
         self.min_chunk_score = min_chunk_score
         self.max_direct_chunks = max_direct_chunks
         self.context_buffer_ratio = context_buffer_ratio
@@ -138,9 +135,7 @@ class InjectionStrategy:
         for chunk in chunks:
             content = chunk.get("content", "")
             if clean_chunks:
-                content = self.content_cleaner.clean_content(
-                    content, aggressive=self.aggressive_cleaning
-                )
+                content = self.content_cleaner.clean_content(content)
             total_chars += len(content)
 
         # Estimate tokens (add overhead for formatting)
@@ -171,22 +166,38 @@ class InjectionStrategy:
         if not chunks:
             return []
 
-        # Filter by minimum score
-        filtered_chunks = [
-            chunk for chunk in chunks if chunk.get("score", 0.0) >= self.min_chunk_score
-        ]
+        # Handle score-based filtering carefully to support chunks without scores
+        # Direct injection uses None score to indicate non-RAG retrieval, so we must
+        # not fail on comparison and should not drop those chunks solely due to score.
+        has_numeric_scores = any(
+            isinstance(chunk.get("score"), (int, float)) for chunk in chunks
+        )
 
-        # Sort by score (descending)
-        filtered_chunks.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+        if has_numeric_scores:
+            # Filter by minimum score for chunks that have numeric scores
+            filtered_chunks = [
+                chunk
+                for chunk in chunks
+                if (chunk.get("score") if chunk.get("score") is not None else 0.0)
+                >= self.min_chunk_score
+            ]
+
+            # Sort by score (descending), treating None as 0.0
+            filtered_chunks.sort(
+                key=lambda x: (x.get("score") if x.get("score") is not None else 0.0),
+                reverse=True,
+            )
+        else:
+            # No numeric scores available (e.g., direct injection chunks only),
+            # skip score filtering and keep original order.
+            filtered_chunks = list(chunks)
 
         # Limit number of chunks
         if max_chunks:
             filtered_chunks = filtered_chunks[:max_chunks]
 
         # Clean chunks
-        cleaned_chunks = self.content_cleaner.clean_knowledge_chunks(
-            filtered_chunks, aggressive=self.aggressive_cleaning
-        )
+        cleaned_chunks = self.content_cleaner.clean_knowledge_chunks(filtered_chunks)
 
         logger.info(
             "[InjectionStrategy] Prepared chunks: %d -> %d (score >= %.2f, max=%d)",
@@ -220,13 +231,22 @@ class InjectionStrategy:
         for i, chunk in enumerate(chunks):
             content = chunk.get("content", "")
             source = chunk.get("source", "Unknown")
-            score = chunk.get("score", 0.0)
+            score = chunk.get("score")
             kb_id = chunk.get("knowledge_base_id", 0)
 
             # Format chunk with metadata
             chunk_header = f"[Knowledge Chunk {i+1}]"
             if include_sources:
-                chunk_header += f" (Source: {source}, Score: {score:.2f})"
+                # Score may be None for direct injection chunks (non-RAG retrieval)
+                if score is None:
+                    score_str = "N/A"
+                else:
+                    try:
+                        score_str = f"{float(score):.2f}"
+                    except (TypeError, ValueError):
+                        score_str = "N/A"
+
+                chunk_header += f" (Source: {source}, Score: {score_str})"
 
             formatted_chunk = f"{chunk_header}\n{content}\n"
             formatted_parts.append(formatted_chunk)
@@ -277,7 +297,6 @@ class InjectionStrategy:
 
         # Check if we can fit all chunks
         can_fit_all = estimated_tokens <= available_space
-
         # Additional checks for direct injection
         chunks_not_too_many = len(chunks) <= self.max_direct_chunks
         reasonable_token_count = (
@@ -466,7 +485,6 @@ class InjectionStrategy:
         return {
             "model_id": self.model_id,
             "injection_mode": self.injection_mode,
-            "aggressive_cleaning": self.aggressive_cleaning,
             "min_chunk_score": self.min_chunk_score,
             "max_direct_chunks": self.max_direct_chunks,
             "context_buffer_ratio": self.context_buffer_ratio,
