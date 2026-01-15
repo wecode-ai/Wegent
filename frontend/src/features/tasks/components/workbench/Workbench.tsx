@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import {
   Disclosure,
   DisclosureButton,
@@ -159,6 +159,7 @@ export default function Workbench({
   const [loadingStateIndex, setLoadingStateIndex] = useState(0)
   const [tipIndex, setTipIndex] = useState(0)
   const [isTimelineExpanded, setIsTimelineExpanded] = useState(false) // Timeline collapse state
+  const prevAppRef = useRef<TaskApp | null | undefined>(undefined) // Track previous app state
   const { theme } = useTheme()
   const { t } = useTranslation()
 
@@ -419,6 +420,16 @@ export default function Workbench({
       setIsTimelineExpanded(false)
     }
   }, [displayData?.status, timelineSteps.length])
+
+  // Auto-switch to preview tab when app data first becomes available
+  useEffect(() => {
+    // Check if app just became available (was null/undefined, now has value)
+    if (!prevAppRef.current && app) {
+      setActiveTab('preview')
+    }
+    // Update the ref to track current app state
+    prevAppRef.current = app
+  }, [app])
 
   // Generate collapsed timeline summary
   const getTimelineSummary = (): string => {
