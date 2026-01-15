@@ -486,6 +486,9 @@ def _trigger_chat_shell_response(
     This function creates the necessary context and triggers the AI response
     using the same mechanism as WebSocket chat:send.
 
+    The function is protected by a circuit breaker to prevent cascading failures
+    when the AI service is degraded or unavailable.
+
     Args:
         db: Database session
         task_id: Task ID
@@ -493,11 +496,31 @@ def _trigger_chat_shell_response(
         user: User object
         message: User message
         execution_id: FlowExecution ID for status updates
+
+    Raises:
+        CircuitBreakerOpenError: When the circuit breaker is open
+        Exception: When AI response fails
     """
+    # Check circuit breaker state before proceeding
+    import pybreaker
+
+    from app.core.circuit_breaker import (
+        CircuitBreakerOpenError,
+        ai_service_breaker,
+    )
     from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
     from app.models.task import TaskResource
     from app.services.chat.trigger.core import StreamTaskData, _stream_chat_response
     from app.services.chat.trigger.emitter import FlowEventEmitter
+
+    if ai_service_breaker.current_state == pybreaker.STATE_OPEN:
+        logger.error(
+            f"[flow_tasks] Circuit breaker is OPEN, skipping AI call for task {task_id}"
+        )
+        raise CircuitBreakerOpenError(
+            "ai_service",
+            f"AI service circuit breaker is open. Will reset in {ai_service_breaker.reset_timeout}s",
+        )
 
     # Get the assistant subtask that was created
     assistant_subtask = (
@@ -561,7 +584,7 @@ def _trigger_chat_shell_response(
     # completes or fails
     flow_emitter = FlowEventEmitter(execution_id=execution_id)
 
-    # Run the streaming in event loop
+    # Run the streaming in event loop with circuit breaker protection
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -578,8 +601,12 @@ def _trigger_chat_shell_response(
                 event_emitter=flow_emitter,
             )
         )
+        # Record success in circuit breaker
+        ai_service_breaker._success()
         logger.info(f"[flow_tasks] Chat Shell AI response completed for task {task_id}")
     except Exception as e:
+        # Record failure in circuit breaker
+        ai_service_breaker._failure(e)
         logger.error(
             f"[flow_tasks] Error in Chat Shell response for task {task_id}: {str(e)}",
             exc_info=True,

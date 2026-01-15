@@ -139,6 +139,10 @@ class Settings(BaseSettings):
     FLOW_DEFAULT_RETRY_COUNT: int = 3
     FLOW_EXECUTION_PAGE_LIMIT: int = 50
 
+    # Circuit breaker configuration
+    CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures
+    CIRCUIT_BREAKER_RESET_TIMEOUT: int = 60  # Try to recover after 60 seconds
+
     # Service extension module (empty = disabled)
     SERVICE_EXTENSION: str = ""
 

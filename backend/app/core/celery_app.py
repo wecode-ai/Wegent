@@ -8,6 +8,12 @@ Celery application configuration for Flow Scheduler.
 This module configures Celery for distributed task execution,
 separating trigger from execution to enable parallel processing
 and avoid blocking the scheduler.
+
+Features:
+- Distributed task queue with Redis broker
+- Beat scheduler for periodic tasks
+- Dead letter queue for failed tasks (via signals)
+- Circuit breaker for external service calls
 """
 
 from celery import Celery
@@ -39,6 +45,7 @@ celery_app.conf.update(
     task_soft_time_limit=settings.FLOW_DEFAULT_TIMEOUT_SECONDS,  # Soft limit for graceful handling
     worker_prefetch_multiplier=1,  # Fair scheduling, one task at a time per worker
     task_acks_late=True,  # Acknowledge after execution for reliability
+    task_reject_on_worker_lost=True,  # Requeue tasks if worker crashes
     # Result backend
     result_expires=3600,  # Results expire after 1 hour
     # Retry settings
@@ -51,3 +58,7 @@ celery_app.conf.update(
         },
     },
 )
+
+# Import dead letter queue handlers to register signal handlers
+# This must be done after celery_app is created
+import app.core.dead_letter_queue  # noqa: E402, F401
