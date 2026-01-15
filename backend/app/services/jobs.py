@@ -5,6 +5,10 @@
 """
 Background jobs for the application.
 This module contains all background jobs that run periodically.
+
+Note: Flow scheduling has been migrated to Celery. See:
+- app/core/celery_app.py - Celery configuration
+- app/tasks/flow_tasks.py - Flow execution tasks
 """
 
 import asyncio
@@ -17,7 +21,6 @@ from app.core.cache import cache_manager
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.services.adapters.executor_job import job_service
-from app.services.flow_scheduler import start_flow_scheduler, stop_flow_scheduler
 from app.services.repository_job import repository_job_service
 
 logger = logging.getLogger(__name__)
@@ -182,8 +185,10 @@ def start_background_jobs(app):
     app.state.repo_update_thread.start()
     logger.info("[job] repository update worker started")
 
-    # Start flow scheduler thread
-    start_flow_scheduler(app)
+    # Note: Flow scheduler is now handled by Celery Beat
+    # Start celery worker and beat separately:
+    # - celery -A app.core.celery_app worker --loglevel=info
+    # - celery -A app.core.celery_app beat --loglevel=info
 
 
 def stop_background_jobs(app):
@@ -211,5 +216,5 @@ def stop_background_jobs(app):
         repo_thread.join(timeout=5.0)
     logger.info("[job] repository update worker stopped")
 
-    # Stop flow scheduler thread gracefully
-    stop_flow_scheduler(app)
+    # Note: Flow scheduler is now handled by Celery Beat
+    # Celery worker/beat are managed separately

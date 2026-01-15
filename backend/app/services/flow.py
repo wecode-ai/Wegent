@@ -114,10 +114,12 @@ class FlowService:
                     detail=f"Workspace with id {flow_in.workspace_id} not found",
                 )
 
-        # Generate webhook token for event-type flows
+        # Generate webhook token and secret for event-type flows
         webhook_token = None
+        webhook_secret = None
         if flow_in.trigger_type == FlowTriggerType.EVENT:
             webhook_token = secrets.token_urlsafe(32)
+            webhook_secret = secrets.token_urlsafe(32)  # HMAC signing secret
 
         # Build CRD JSON
         flow_crd = self._build_flow_crd(flow_in, team, workspace, webhook_token)
@@ -140,6 +142,7 @@ class FlowService:
             team_id=flow_in.team_id,
             workspace_id=flow_in.workspace_id,
             webhook_token=webhook_token,
+            webhook_secret=webhook_secret,
             next_execution_time=next_execution_time,
         )
 
@@ -334,7 +337,7 @@ class FlowService:
 
         # Save changes
         flow.json = flow_crd.model_dump(mode="json")
-        flow.updated_at = datetime.now()
+        flow.updated_at = datetime.utcnow()
         flag_modified(flow, "json")
 
         db.commit()
@@ -366,7 +369,7 @@ class FlowService:
         # Soft delete
         flow.is_active = False
         flow.enabled = False
-        flow.updated_at = datetime.now()
+        flow.updated_at = datetime.utcnow()
 
         db.commit()
 
@@ -406,7 +409,7 @@ class FlowService:
             flow.next_execution_time = None
 
         flow.json = flow_crd.model_dump(mode="json")
-        flow.updated_at = datetime.now()
+        flow.updated_at = datetime.utcnow()
         flag_modified(flow, "json")
 
         db.commit()
@@ -498,7 +501,10 @@ class FlowService:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
     ) -> tuple[List[FlowExecutionInDB], int]:
-        """List Flow executions (timeline view)."""
+        """List Flow executions (timeline view).
+
+        Optimized to avoid N+1 queries by batch loading related flows and teams.
+        """
         query = db.query(FlowExecution).filter(FlowExecution.user_id == user_id)
 
         if flow_id:
@@ -521,43 +527,48 @@ class FlowService:
             .all()
         )
 
-        # Enrich with flow details
-        result = []
+        if not executions:
+            return [], total
+
+        # Batch load all related flows (fixes N+1 query issue)
+        flow_ids = list(set(e.flow_id for e in executions))
+        flows = db.query(FlowResource).filter(FlowResource.id.in_(flow_ids)).all()
+        flow_map = {f.id: f for f in flows}
+
+        # Build flow cache with parsed CRD data
         flow_cache = {}
+        for flow in flows:
+            flow_crd = Flow.model_validate(flow.json)
+            flow_cache[flow.id] = {
+                "name": flow.name,
+                "display_name": flow_crd.spec.displayName,
+                "task_type": flow_crd.spec.taskType.value,
+                "team_id": flow.team_id,
+            }
+
+        # Batch load all related teams (fixes N+1 query issue)
+        team_ids = list(
+            set(fc["team_id"] for fc in flow_cache.values() if fc["team_id"])
+        )
+        team_map = {}
+        if team_ids:
+            teams = db.query(Kind).filter(Kind.id.in_(team_ids)).all()
+            team_map = {t.id: t for t in teams}
+
+        # Build result list (no additional queries)
+        result = []
         for exec in executions:
             exec_dict = self._convert_execution_to_dict(exec)
-
-            # Get flow details (cached)
-            if exec.flow_id not in flow_cache:
-                flow = (
-                    db.query(FlowResource)
-                    .filter(FlowResource.id == exec.flow_id)
-                    .first()
-                )
-                if flow:
-                    flow_crd = Flow.model_validate(flow.json)
-                    flow_cache[exec.flow_id] = {
-                        "name": flow.name,
-                        "display_name": flow_crd.spec.displayName,
-                        "task_type": flow_crd.spec.taskType.value,
-                    }
 
             flow_info = flow_cache.get(exec.flow_id, {})
             exec_dict["flow_name"] = flow_info.get("name")
             exec_dict["flow_display_name"] = flow_info.get("display_name")
             exec_dict["task_type"] = flow_info.get("task_type")
 
-            # Get team name if available
-            if exec.flow_id in flow_cache:
-                flow = (
-                    db.query(FlowResource)
-                    .filter(FlowResource.id == exec.flow_id)
-                    .first()
-                )
-                if flow and flow.team_id:
-                    team = db.query(Kind).filter(Kind.id == flow.team_id).first()
-                    if team:
-                        exec_dict["team_name"] = team.name
+            # Get team name from cache
+            team_id = flow_info.get("team_id")
+            if team_id and team_id in team_map:
+                exec_dict["team_name"] = team_map[team_id].name
 
             result.append(FlowExecutionInDB(**exec_dict))
 
@@ -619,13 +630,16 @@ class FlowService:
         if not execution:
             return
 
+        # Use UTC for all timestamps
+        now_utc = datetime.utcnow()
+
         execution.status = status.value
-        execution.updated_at = datetime.now()
+        execution.updated_at = now_utc
 
         if status == FlowExecutionStatus.RUNNING:
-            execution.started_at = datetime.now()
+            execution.started_at = now_utc
         elif status in (FlowExecutionStatus.COMPLETED, FlowExecutionStatus.FAILED):
-            execution.completed_at = datetime.now()
+            execution.completed_at = now_utc
 
         if result_summary:
             execution.result_summary = result_summary
@@ -638,7 +652,7 @@ class FlowService:
             db.query(FlowResource).filter(FlowResource.id == execution.flow_id).first()
         )
         if flow:
-            flow.last_execution_time = datetime.now()
+            flow.last_execution_time = now_utc
             flow.last_execution_status = status.value
             flow.execution_count += 1
 
@@ -651,7 +665,7 @@ class FlowService:
             flow_crd = Flow.model_validate(flow.json)
             if flow_crd.status is None:
                 flow_crd.status = FlowStatus()
-            flow_crd.status.lastExecutionTime = datetime.now()
+            flow_crd.status.lastExecutionTime = now_utc
             flow_crd.status.lastExecutionStatus = status
             flow_crd.status.executionCount = flow.execution_count
             flow_crd.status.successCount = flow.success_count
@@ -885,20 +899,24 @@ class FlowService:
 
         For example, if cron is "0 9 * * *" with timezone "Asia/Shanghai",
         it means 9:00 AM Shanghai time, which is 1:00 AM UTC.
+
+        All returned datetimes are naive UTC (no tzinfo) for database storage.
         """
+        from zoneinfo import ZoneInfo
+
         trigger_type_enum = (
             trigger_type
             if isinstance(trigger_type, FlowTriggerType)
             else FlowTriggerType(trigger_type)
         )
 
-        now = datetime.now()
+        # Use UTC as the reference time
+        utc_tz = ZoneInfo("UTC")
+        now_utc = datetime.now(utc_tz)
 
         if trigger_type_enum == FlowTriggerType.CRON:
             # Use croniter to calculate next run with timezone support
             try:
-                from zoneinfo import ZoneInfo
-
                 from croniter import croniter
 
                 cron_expr = trigger_config.get("expression", "0 9 * * *")
@@ -911,22 +929,30 @@ class FlowService:
                     logger.warning(
                         f"Invalid timezone '{timezone_str}', falling back to UTC"
                     )
-                    user_tz = ZoneInfo("UTC")
+                    user_tz = utc_tz
 
-                # Use local time for cron calculation
-                now_local = datetime.now()
+                # Convert current UTC time to user's timezone
+                now_user_tz = now_utc.astimezone(user_tz)
 
-                # Calculate next execution in local timezone
-                iter = croniter(cron_expr, now_local)
-                next_local = iter.get_next(datetime)
+                # Calculate next execution in user's timezone
+                iter = croniter(cron_expr, now_user_tz)
+                next_user_tz = iter.get_next(datetime)
+
+                # Ensure the result has timezone info
+                if next_user_tz.tzinfo is None:
+                    next_user_tz = next_user_tz.replace(tzinfo=user_tz)
+
+                # Convert back to UTC
+                next_utc = next_user_tz.astimezone(utc_tz)
 
                 logger.debug(
                     f"Cron calculation: expr={cron_expr}, tz={timezone_str}, "
-                    f"now_local={now_local}, next_local={next_local}"
+                    f"now_utc={now_utc}, now_user_tz={now_user_tz}, "
+                    f"next_user_tz={next_user_tz}, next_utc={next_utc}"
                 )
 
-                # Return the next execution time in local timezone
-                return next_local
+                # Return naive UTC datetime for database storage
+                return next_utc.replace(tzinfo=None)
             except Exception as e:
                 logger.warning(f"Failed to parse cron expression: {e}")
                 return None
@@ -935,18 +961,28 @@ class FlowService:
             value = trigger_config.get("value", 1)
             unit = trigger_config.get("unit", "hours")
 
+            # Calculate interval from UTC now
+            now_naive_utc = now_utc.replace(tzinfo=None)
             if unit == "minutes":
-                return now + timedelta(minutes=value)
+                return now_naive_utc + timedelta(minutes=value)
             elif unit == "hours":
-                return now + timedelta(hours=value)
+                return now_naive_utc + timedelta(hours=value)
             elif unit == "days":
-                return now + timedelta(days=value)
+                return now_naive_utc + timedelta(days=value)
 
         elif trigger_type_enum == FlowTriggerType.ONE_TIME:
             execute_at = trigger_config.get("execute_at")
             if execute_at:
                 if isinstance(execute_at, str):
-                    return datetime.fromisoformat(execute_at.replace("Z", "+00:00"))
+                    # Parse ISO format, handle both timezone-aware and naive
+                    parsed = datetime.fromisoformat(execute_at.replace("Z", "+00:00"))
+                    if parsed.tzinfo is not None:
+                        # Convert to UTC and strip tzinfo
+                        return parsed.astimezone(utc_tz).replace(tzinfo=None)
+                    # Assume naive datetime is already UTC
+                    return parsed
+                elif hasattr(execute_at, "tzinfo") and execute_at.tzinfo is not None:
+                    return execute_at.astimezone(utc_tz).replace(tzinfo=None)
                 return execute_at
 
         # Event triggers don't have scheduled next execution

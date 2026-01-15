@@ -54,6 +54,7 @@ class FlowResource(Base):
 
     # Webhook support
     webhook_token = Column(String(255), nullable=True, unique=True)
+    webhook_secret = Column(String(255), nullable=True)  # HMAC signing secret
 
     # Execution statistics
     last_execution_time = Column(DateTime, nullable=True)

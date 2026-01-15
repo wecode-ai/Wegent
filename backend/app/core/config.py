@@ -129,6 +129,16 @@ class Settings(BaseSettings):
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
 
+    # Celery configuration
+    CELERY_BROKER_URL: str = ""  # If empty, uses REDIS_URL
+    CELERY_RESULT_BACKEND: str = ""  # If empty, uses REDIS_URL
+
+    # Flow scheduler configuration
+    FLOW_SCHEDULER_INTERVAL_SECONDS: int = 60
+    FLOW_DEFAULT_TIMEOUT_SECONDS: int = 600  # 10 minutes
+    FLOW_DEFAULT_RETRY_COUNT: int = 3
+    FLOW_EXECUTION_PAGE_LIMIT: int = 50
+
     # Service extension module (empty = disabled)
     SERVICE_EXTENSION: str = ""
 

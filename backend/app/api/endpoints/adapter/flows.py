@@ -5,11 +5,13 @@
 """
 API endpoints for AI Flow (智能流) module.
 """
+import hashlib
+import hmac
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -147,9 +149,10 @@ def get_execution(
 
 
 @router.post("/webhook/{webhook_token}", response_model=FlowExecutionInDB)
-def trigger_flow_webhook(
+async def trigger_flow_webhook(
     webhook_token: str,
-    payload: Optional[Dict[str, Any]] = None,
+    request: Request,
+    x_webhook_signature: Optional[str] = Header(None, alias="X-Webhook-Signature"),
     db: Session = Depends(get_db),
 ):
     """
@@ -158,12 +161,76 @@ def trigger_flow_webhook(
     This endpoint is called by external systems to trigger event-based flows.
     The payload will be available as {{webhook_data}} in the prompt template.
 
-    No authentication required - the webhook_token acts as the secret.
+    If the Flow has a webhook_secret configured, the request must include
+    a valid HMAC-SHA256 signature in the X-Webhook-Signature header.
+
+    Signature format: sha256=<hex_digest>
+
+    To generate the signature:
+    1. Get the raw request body
+    2. Compute HMAC-SHA256 using the webhook secret
+    3. Set header: X-Webhook-Signature: sha256=<hex_digest>
     """
+    # Get the flow first to check if signature verification is required
+    flow = flow_service.get_flow_by_webhook_token(db, webhook_token=webhook_token)
+    if not flow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Flow not found or disabled",
+        )
+
+    # Read the raw body for signature verification
+    body = await request.body()
+
+    # Verify signature if the flow has a secret configured
+    if flow.webhook_secret:
+        if not x_webhook_signature:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing X-Webhook-Signature header",
+            )
+
+        # Parse signature (format: sha256=<hex_digest>)
+        if not x_webhook_signature.startswith("sha256="):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid signature format. Expected: sha256=<hex_digest>",
+            )
+
+        provided_signature = x_webhook_signature[7:]  # Remove "sha256=" prefix
+
+        # Compute expected signature
+        expected_signature = hmac.new(
+            flow.webhook_secret.encode("utf-8"),
+            body,
+            hashlib.sha256,
+        ).hexdigest()
+
+        # Constant-time comparison to prevent timing attacks
+        if not hmac.compare_digest(provided_signature, expected_signature):
+            logger.warning(
+                f"[webhook] Invalid signature for flow {flow.id}, token={webhook_token[:8]}..."
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid signature",
+            )
+
+    # Parse the payload
+    payload = {}
+    if body:
+        try:
+            import json
+
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            # If not valid JSON, treat as empty payload
+            pass
+
     return flow_service.trigger_flow_by_webhook(
         db=db,
         webhook_token=webhook_token,
-        payload=payload or {},
+        payload=payload,
     )
 
 

@@ -138,6 +138,12 @@ class FlowSpec(BaseModel):
         description="Prompt template with variable support ({{date}}, {{time}}, etc.)",
     )
     retryCount: int = Field(0, ge=0, le=3, description="Retry count on failure (0-3)")
+    timeoutSeconds: int = Field(
+        600,
+        ge=60,
+        le=3600,
+        description="Execution timeout in seconds (60-3600, default: 600)",
+    )
     enabled: bool = Field(True, description="Whether the flow is enabled")
     description: Optional[str] = Field(None, description="Flow description")
 

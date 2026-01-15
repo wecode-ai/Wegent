@@ -211,6 +211,66 @@ services:
     networks:
       - wegent-network
 
+  # Celery Worker for Flow task execution
+  celery_worker:
+    image: ghcr.io/wecode-ai/wegent-backend:1.1.1
+    container_name: wegent-celery-worker
+    restart: always
+    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=4
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: mysql+pymysql://task_user:task_password@mysql:3306/task_manager
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      SECRET_KEY: your-secret-key-here
+      CHAT_SHELL_MODE: http
+      CHAT_SHELL_URL: http://chat_shell:8100
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    networks:
+      - wegent-network
+
+  # Celery Beat for periodic task scheduling
+  celery_beat:
+    image: ghcr.io/wecode-ai/wegent-backend:1.1.1
+    container_name: wegent-celery-beat
+    restart: always
+    command: celery -A app.core.celery_app beat --loglevel=info
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: mysql+pymysql://task_user:task_password@mysql:3306/task_manager
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - wegent-network
+
+  # Flower for Celery monitoring (optional)
+  flower:
+    image: mher/flower:2.0
+    container_name: wegent-flower
+    restart: always
+    profiles:
+      - monitoring
+    command: celery --broker=redis://redis:6379/0 flower --port=5555
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+    networks:
+      - wegent-network
+
 volumes:
   mysql_data:
     driver: local

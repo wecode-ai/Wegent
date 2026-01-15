@@ -83,6 +83,16 @@ dependencies = [
     "emoji>=2.9.0",
     "mcp>=1.0.0",
 
+    # Task queue (Celery)
+    "celery[redis]>=5.3.0",
+    "flower>=2.0.0",  # Celery monitoring
+
+    # Prometheus metrics
+    "prometheus-client>=0.19.0",
+
+    # Cron expression parsing
+    "croniter>=2.0.0",
+
     # WebSocket support
     "python-socketio>=5.10.0",
 
