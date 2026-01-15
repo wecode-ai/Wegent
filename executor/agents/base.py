@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from executor.callback.callback_client import CallbackClient
 from executor.config import config
+from executor.tasks.task_processor import write_auth_file
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.utils import git_util
@@ -54,6 +55,9 @@ class Agent:
         )  # Task type (e.g., "validation" for validation tasks)
         self.execution_status = TaskStatus.INITIALIZED
         self.project_path = None
+
+        # Write auth file for skills to use
+        write_auth_file(task_data)
 
     def handle(
         self, pre_executed: Optional[TaskStatus] = None
