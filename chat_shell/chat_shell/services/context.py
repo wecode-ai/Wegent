@@ -565,20 +565,6 @@ class ChatContext:
                 len(self._request.table_contexts),
             )
 
-        # Add ExposeServiceTool for all chat sessions (enabled by default)
-        # This tool allows AI to publish service information like host, previewUrl, mysql
-        if self._request.task_id:
-            from chat_shell.tools.builtin import ExposeServiceTool
-
-            expose_service_tool = ExposeServiceTool(
-                task_id=self._request.task_id,
-            )
-            extra_tools.append(expose_service_tool)
-            logger.debug(
-                "[CHAT_CONTEXT] Added ExposeServiceTool for task_id=%d",
-                self._request.task_id,
-            )
-
         # === External Tools ===
 
         # Add KB tools

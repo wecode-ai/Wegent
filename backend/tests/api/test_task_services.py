@@ -79,11 +79,11 @@ class TestInternalServicesAPI:
         request = ServiceUpdateRequest(
             task_id=123,
             name="Test App",
-            host="localhost",
+            address="localhost",
         )
         assert request.task_id == 123
         assert request.name == "Test App"
-        assert request.host == "localhost"
+        assert request.address == "localhost"
         assert request.previewUrl is None
         assert request.mysql is None
 
