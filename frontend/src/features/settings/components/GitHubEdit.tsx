@@ -68,6 +68,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
   const [token, setToken] = useState('')
   const [username, setUsername] = useState('')
   const [type, setType] = useState<GitInfo['type']>('github')
+  const [authType, setAuthType] = useState<'digest' | 'basic'>('digest')
   const [tokenSaving, setTokenSaving] = useState(false)
   const isGitlabLike = type === 'gitlab' || type === 'gitee'
   const isGitea = type === 'gitea'
@@ -103,12 +104,14 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
         setToken(editInfo.git_token)
         setUsername(editInfo.user_name || '')
         setType(editInfo.type)
+        setAuthType(editInfo.auth_type || 'digest')
       } else {
         // For add mode, default to github.com when type is github
         setDomain('github.com')
         setToken('')
         setUsername('')
         setType('github')
+        setAuthType('digest')
       }
     }
   }, [isOpen, user, mode, editInfo])
@@ -151,7 +154,17 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
     try {
       // Pass existing id when editing to update instead of create new record
       const existingId = mode === 'edit' && editInfo?.id ? editInfo.id : undefined
-      await saveGitToken(user, domainToSave, tokenToSave, usernameToSave, type, existingId)
+      // Pass authType for Gerrit
+      const authTypeToSave = isGerrit ? authType : undefined
+      await saveGitToken(
+        user,
+        domainToSave,
+        tokenToSave,
+        usernameToSave,
+        type,
+        existingId,
+        authTypeToSave
+      )
       onClose()
       await refresh()
     } catch (error) {
@@ -279,6 +292,36 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               placeholder={t('common:github.username') || 'Username'}
               className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
             />
+          </div>
+        )}
+        {/* Authentication type selection (Gerrit only) */}
+        {isGerrit && (
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-2">
+              {t('common:github.auth_type') || 'Authentication Method'}
+            </label>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-1 text-sm text-text-primary">
+                <input
+                  type="radio"
+                  name="authType"
+                  value="digest"
+                  checked={authType === 'digest'}
+                  onChange={() => setAuthType('digest')}
+                />
+                {t('common:github.auth_type_digest') || 'Digest Auth'}
+              </label>
+              <label className="flex items-center gap-1 text-sm text-text-primary">
+                <input
+                  type="radio"
+                  name="authType"
+                  value="basic"
+                  checked={authType === 'basic'}
+                  onChange={() => setAuthType('basic')}
+                />
+                {t('common:github.auth_type_basic') || 'Basic Auth'}
+              </label>
+            </div>
           </div>
         )}
         {/* Token input */}

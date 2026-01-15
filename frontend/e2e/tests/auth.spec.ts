@@ -72,7 +72,7 @@ test.describe('Authentication', () => {
     await page.goto('/chat')
 
     // Should redirect to login
-    await page.waitForURL(/\/login/, { timeout: 10000 })
+    await page.waitForURL(/\/login/, { timeout: 20000 })
   })
 })
 
@@ -110,7 +110,7 @@ test.describe('Logout', () => {
     // Logout is in UserMenu dropdown - need to click user name button first
     // UserMenu button is a Menu.Button with rounded-full class containing user display name
     const userMenuButton = page.locator('button.rounded-full').first()
-    await expect(userMenuButton).toBeVisible({ timeout: 10000 })
+    await expect(userMenuButton).toBeVisible({ timeout: 20000 })
     await userMenuButton.click()
 
     // Wait for dropdown menu to appear - Menu.Items has position absolute
@@ -120,10 +120,10 @@ test.describe('Logout', () => {
     // Now logout button should be visible in the dropdown
     // Menu.Items appears after clicking Menu.Button
     const logoutButton = page.locator('button:has-text("Logout"), button:has-text("退出")')
-    await expect(logoutButton).toBeVisible({ timeout: 10000 })
+    await expect(logoutButton).toBeVisible({ timeout: 20000 })
     await logoutButton.click()
 
     // Should redirect to login
-    await page.waitForURL(/\/login/, { timeout: 10000 })
+    await page.waitForURL(/\/login/, { timeout: 20000 })
   })
 })

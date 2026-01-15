@@ -23,9 +23,11 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Loader2, RefreshCw } from 'lucide-react'
+import { Loader2, RefreshCw, ChevronDown, Check } from 'lucide-react'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { EyeIcon, EyeSlashIcon, BeakerIcon } from '@heroicons/react/24/outline'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 import {
   modelApis,
   ModelCRD,
@@ -166,12 +168,17 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [fetchingModels, setFetchingModels] = useState(false)
   const [fetchedModels, setFetchedModels] = useState<AvailableModel[]>([])
   const [fetchError, setFetchError] = useState('')
+  const [modelIdSearch, setModelIdSearch] = useState('')
+  const [modelIdPopoverOpen, setModelIdPopoverOpen] = useState(false)
 
   // Model list cache (in-memory, expires after 5 minutes)
   const modelCacheRef = React.useRef<Map<string, { models: AvailableModel[]; timestamp: number }>>(
     new Map()
   )
   const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
+
+  // Ref for dialog content to use as Popover container (fixes pointer-events issue in Dialog)
+  const dialogContentRef = React.useRef<HTMLDivElement>(null)
 
   // Reset form when dialog opens/closes or model changes
   useEffect(() => {
@@ -288,6 +295,19 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     return baseModelOptions
   }, [fetchedModels, baseModelOptions])
 
+  // Filtered model options based on search
+  const filteredModelOptions = React.useMemo(() => {
+    if (!modelIdSearch.trim()) {
+      return modelOptions
+    }
+    const searchLower = modelIdSearch.toLowerCase()
+    return modelOptions.filter(
+      option =>
+        option.value.toLowerCase().includes(searchLower) ||
+        option.label.toLowerCase().includes(searchLower)
+    )
+  }, [modelOptions, modelIdSearch])
+
   // Get available protocols for current category type
   const availableProtocols = PROTOCOL_BY_CATEGORY[modelCategoryType] || []
 
@@ -295,6 +315,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   useEffect(() => {
     setFetchedModels([])
     setFetchError('')
+    setModelIdSearch('')
   }, [providerType, baseUrl])
 
   // Handle model category type change
@@ -694,7 +715,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={open => !open && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent ref={dialogContentRef} className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {isEditing ? t('common:models.edit_title') : t('common:models.create_title')}
@@ -815,18 +836,67 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                   )}
                 </Button>
               </div>
-              <Select value={modelId} onValueChange={setModelId}>
-                <SelectTrigger className="bg-base">
-                  <SelectValue placeholder={t('common:models.select_model_id')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {modelOptions.map(option => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Popover open={modelIdPopoverOpen} onOpenChange={setModelIdPopoverOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={modelIdPopoverOpen}
+                    className="w-full justify-between bg-base font-normal"
+                  >
+                    {modelId
+                      ? modelOptions.find(option => option.value === modelId)?.label || modelId
+                      : t('common:models.select_model_id')}
+                    <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-[--radix-popover-trigger-width] p-0"
+                  align="start"
+                  onOpenAutoFocus={e => e.preventDefault()}
+                  container={dialogContentRef.current}
+                >
+                  <div className="p-2 border-b">
+                    <Input
+                      placeholder={t('common:models.search_model_id', '搜索模型...')}
+                      value={modelIdSearch}
+                      onChange={e => setModelIdSearch(e.target.value)}
+                      className="h-8"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="p-1" style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                    {filteredModelOptions.length === 0 ? (
+                      <div className="py-4 text-center text-sm text-text-muted">
+                        {t('common:branches.no_match', '没有找到匹配项')}
+                      </div>
+                    ) : (
+                      filteredModelOptions.map(option => (
+                        <div
+                          key={option.value}
+                          className={cn(
+                            'relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground',
+                            modelId === option.value && 'bg-accent'
+                          )}
+                          onClick={() => {
+                            setModelId(option.value)
+                            setModelIdPopoverOpen(false)
+                            setModelIdSearch('')
+                          }}
+                        >
+                          <Check
+                            className={cn(
+                              'mr-2 h-4 w-4',
+                              modelId === option.value ? 'opacity-100' : 'opacity-0'
+                            )}
+                          />
+                          {option.label}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
               {fetchError && <p className="text-xs text-error">{fetchError}</p>}
               {!apiKey.trim() && (
                 <p className="text-xs text-text-muted">

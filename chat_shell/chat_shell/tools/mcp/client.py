@@ -32,6 +32,7 @@ from langchain_mcp_adapters.sessions import (
     StdioConnection,
     StreamableHttpConnection,
 )
+from shared.telemetry.decorators import add_span_event, trace_async
 from shared.utils.mcp_utils import replace_mcp_server_variables
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
@@ -254,6 +255,14 @@ class MCPClient:
         """Async context manager exit - disconnect from servers."""
         await self.disconnect()
 
+    @trace_async(
+        span_name="mcp_client.connect",
+        tracer_name="chat_shell.tools.mcp",
+        extract_attributes=lambda self, *args, **kwargs: {
+            "mcp.servers_count": len(self.connections),
+            "mcp.server_names": list(self.connections.keys()),
+        },
+    )
     async def connect(self) -> None:
         """Connect to all configured MCP servers and load tools.
 
@@ -262,13 +271,22 @@ class MCPClient:
         - Exception isolation (errors return error messages instead of raising)
         """
         if not self.connections:
+            add_span_event("no_connections_skipped")
             return
 
+        add_span_event("creating_multi_server_client")
         self._client = MultiServerMCPClient(connections=self.connections)
+
+        add_span_event("loading_tools_started")
         raw_tools = await self._client.get_tools()
+        add_span_event("loading_tools_completed", {"raw_tools_count": len(raw_tools)})
 
         # Wrap all tools with protection mechanisms
+        add_span_event("wrapping_tools_started")
         self._tools = [wrap_tool_with_protection(tool) for tool in raw_tools]
+        add_span_event(
+            "wrapping_tools_completed", {"protected_tools_count": len(self._tools)}
+        )
 
         for tool in self._tools:
             logger.debug(

@@ -47,6 +47,8 @@ class ChatRequest:
     message_id: Optional[int] = None  # Assistant's message_id for frontend ordering
     user_message_id: Optional[int] = None  # User's message_id for history exclusion
     is_group_chat: bool = False
+    # User subtask ID for RAG result persistence (different from subtask_id which is AI response's subtask)
+    user_subtask_id: Optional[int] = None
 
     # Model configuration
     model_config: dict = field(default_factory=dict)
@@ -80,6 +82,9 @@ class ChatRequest:
     # Knowledge base configuration
     knowledge_base_ids: Optional[list] = None  # Knowledge base IDs to search
     document_ids: Optional[list] = None  # Document IDs to filter retrieval
+    is_user_selected_kb: bool = (
+        True  # True = strict mode (user selected), False = relaxed mode (inherited)
+    )
 
     # Table configuration
     table_contexts: list = field(

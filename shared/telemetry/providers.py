@@ -92,11 +92,12 @@ class BusinessContextSpanProcessor(SpanProcessor):
 
 class FilteringParentBasedSampler(Sampler):
     """
-    A custom sampler that filters out internal ASGI spans (http send/receive).
+    A custom sampler that filters out internal ASGI spans and Redis spans in WebSocket context.
 
-    This sampler wraps a parent-based sampler and adds filtering logic to
-    drop spans with names like "http send" or "http receive" which are
-    created by the ASGI middleware for each SSE chunk in streaming responses.
+    This sampler wraps a parent-based sampler and adds filtering logic to:
+    1. Drop spans with names like "http send" or "http receive" which are
+       created by the ASGI middleware for each SSE chunk in streaming responses.
+    2. Drop Redis command spans when in WebSocket context to reduce noise.
 
     This significantly reduces trace noise for streaming endpoints like
     /api/chat/stream where each chunk would otherwise create a separate span.
@@ -111,6 +112,46 @@ class FilteringParentBasedSampler(Sampler):
             "HTTP receive",
             "asgi.send",
             "asgi.receive",
+        ]
+    )
+
+    # Redis command span names (uppercase command names)
+    REDIS_COMMANDS = frozenset(
+        [
+            "GET",
+            "SET",
+            "DEL",
+            "MGET",
+            "MSET",
+            "HGET",
+            "HSET",
+            "HDEL",
+            "HGETALL",
+            "LPUSH",
+            "RPUSH",
+            "LPOP",
+            "RPOP",
+            "LRANGE",
+            "SADD",
+            "SREM",
+            "SMEMBERS",
+            "ZADD",
+            "ZREM",
+            "ZRANGE",
+            "PUBLISH",
+            "SUBSCRIBE",
+            "PSUBSCRIBE",
+            "UNSUBSCRIBE",
+            "PUNSUBSCRIBE",
+            "PING",
+            "EXISTS",
+            "EXPIRE",
+            "TTL",
+            "KEYS",
+            "SCAN",
+            "DBSIZE",
+            "SETNX",
+            "SETEX",
         ]
     )
 
@@ -142,8 +183,9 @@ class FilteringParentBasedSampler(Sampler):
         """
         Determine if a span should be sampled.
 
-        Filters out internal ASGI spans (http send/receive) to reduce noise
-        from streaming endpoints.
+        Filters out:
+        1. Internal ASGI spans (http send/receive) to reduce noise from streaming endpoints
+        2. Redis command spans when in WebSocket context
         """
         # Filter out internal ASGI spans if enabled
         if self._filter_internal_spans and name in self.FILTERED_SPAN_NAMES:
@@ -152,6 +194,20 @@ class FilteringParentBasedSampler(Sampler):
                 attributes=None,
                 trace_state=trace_state,
             )
+
+        # Filter out Redis spans in WebSocket context
+        if name in self.REDIS_COMMANDS:
+            try:
+                from shared.telemetry.context.span import is_websocket_context
+
+                if is_websocket_context():
+                    return SamplingResult(
+                        decision=Decision.DROP,
+                        attributes=None,
+                        trace_state=trace_state,
+                    )
+            except Exception:
+                pass  # If check fails, don't filter
 
         # Delegate to the root sampler for all other spans
         return self._root_sampler.should_sample(
@@ -192,8 +248,9 @@ def init_tracer_provider(
     set_global_textmap(propagator)
     logger.debug("Global propagator configured for W3C Trace Context")
 
-    # Create sampler
-    sampler = ParentBasedTraceIdRatio(sampler_ratio)
+    # Create sampler with filtering for internal spans and WebSocket Redis
+    base_sampler = ParentBasedTraceIdRatio(sampler_ratio)
+    sampler = FilteringParentBasedSampler(base_sampler, filter_internal_spans=True)
 
     # Create TracerProvider
     tracer_provider = SDKTracerProvider(resource=resource, sampler=sampler)

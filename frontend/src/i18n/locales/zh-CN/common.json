@@ -579,6 +579,12 @@
     "cannotUndo": "此操作无法撤销",
     "coming_soon": "即将推出"
   },
+  "dialog": {
+    "confirm_close_title": "确认关闭",
+    "confirm_close_description": "您有未保存的更改，确定要关闭吗？",
+    "confirm_close_cancel": "取消",
+    "confirm_close_confirm": "确认关闭"
+  },
   "correction": {
     "result_title": "纠正结果"
   },
@@ -645,7 +651,10 @@
       }
     },
     "saving": "保存中...",
-    "save_token": "保存令牌"
+    "save_token": "保存令牌",
+    "auth_type": "认证方式",
+    "auth_type_digest": "Digest Auth（摘要认证）",
+    "auth_type_basic": "Basic Auth（基本认证）"
   },
   "skills": {
     "title": "技能",
