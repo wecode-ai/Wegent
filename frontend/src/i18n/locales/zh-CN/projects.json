@@ -9,20 +9,20 @@
   "dropHere": "放置到此项目",
   "section": {
     "title": "对话分组",
-    "empty": "暂无项目，点击 + 创建",
-    "noTasks": "暂无对话"
+    "empty": "暂无分组，点击 + 创建",
+    "noTasks": "暂无对话，可拖拽加入"
   },
   "actions": {
     "edit": "编辑",
     "delete": "删除"
   },
   "create": {
-    "title": "新建项目",
-    "description": "创建一个新项目来组织你的任务",
-    "nameLabel": "项目名称",
-    "namePlaceholder": "输入项目名称",
+    "title": "新建分组",
+    "description": "创建一个新分组来组织你的对话",
+    "nameLabel": "分组名称",
+    "namePlaceholder": "输入分组名称",
     "descriptionLabel": "描述（可选）",
-    "descriptionPlaceholder": "输入项目描述",
+    "descriptionPlaceholder": "输入分组描述",
     "colorLabel": "颜色",
     "submit": "创建",
     "cancel": "取消"

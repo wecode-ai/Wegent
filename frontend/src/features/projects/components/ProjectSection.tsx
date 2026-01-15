@@ -6,7 +6,16 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronDown, ChevronRight, FolderPlus, MoreHorizontal, Pencil, Trash2, FolderOpen, Folder } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronRight,
+  FolderPlus,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+  FolderOpen,
+  Folder,
+} from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useProjectContext } from '../contexts/projectContext'
 import { ProjectCreateDialog } from './ProjectCreateDialog'
@@ -34,7 +43,14 @@ interface ProjectSectionProps {
 export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
   const { t } = useTranslation('projects')
   const router = useRouter()
-  const { projects, isLoading, expandedProjects, toggleProjectExpanded, selectedProjectTaskId, setSelectedProjectTaskId } = useProjectContext()
+  const {
+    projects,
+    isLoading,
+    expandedProjects,
+    toggleProjectExpanded,
+    selectedProjectTaskId,
+    setSelectedProjectTaskId,
+  } = useProjectContext()
   const { clearAllStreams } = useChatStreamContext()
   const { setSelectedTask } = useTaskContext()
 
@@ -101,11 +117,11 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
         <Button
           variant="ghost"
           size="sm"
-          className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="h-6 w-6 p-0"
           onClick={() => setCreateDialogOpen(true)}
           title={t('create.title')}
         >
-          <FolderPlus className="w-3.5 h-3.5" />
+          <FolderPlus className="w-3.5 h-3.5 text-text-muted" />
         </Button>
       </div>
 
@@ -113,13 +129,9 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
       {!sectionCollapsed && (
         <div className="space-y-0.5">
           {isLoading ? (
-            <div className="px-4 py-2 text-xs text-text-muted">
-              {t('common:loading')}
-            </div>
+            <div className="px-4 py-2 text-xs text-text-muted">{t('common:loading')}</div>
           ) : projects.length === 0 ? (
-            <div className="px-4 py-2 text-xs text-text-muted">
-              {t('section.empty')}
-            </div>
+            <div className="px-4 py-2 text-xs text-text-muted">{t('section.empty')}</div>
           ) : (
             projects.map(project => (
               <DroppableProject key={project.id} projectId={project.id}>
@@ -202,18 +214,11 @@ function ProjectItem({
           className="flex items-center justify-center w-5 h-5"
           style={{ color: project.color || 'var(--color-text-secondary)' }}
         >
-          {isExpanded ? (
-            <FolderOpen className="w-4 h-4" />
-          ) : (
-            <Folder className="w-4 h-4" />
-          )}
+          {isExpanded ? <FolderOpen className="w-4 h-4" /> : <Folder className="w-4 h-4" />}
         </div>
 
         {/* Project Name */}
-        <span
-          className="flex-1 text-sm text-text-primary truncate"
-          onClick={onToggleExpand}
-        >
+        <span className="flex-1 text-sm text-text-primary truncate" onClick={onToggleExpand}>
           {project.name}
         </span>
 
@@ -265,7 +270,9 @@ function ProjectItem({
                       : 'text-text-secondary hover:text-text-primary hover:bg-surface'
                   )}
                 >
-                  <span className="truncate">{projectTask.task_title || `Task #${projectTask.task_id}`}</span>
+                  <span className="truncate">
+                    {projectTask.task_title || `Task #${projectTask.task_id}`}
+                  </span>
                 </div>
               </DraggableProjectTask>
             )
@@ -275,9 +282,7 @@ function ProjectItem({
 
       {/* Empty State (when expanded but no tasks) */}
       {isExpanded && taskCount === 0 && (
-        <div className="ml-6 px-2 py-1 text-xs text-text-muted">
-          {t('section.noTasks')}
-        </div>
+        <div className="ml-6 px-2 py-1 text-xs text-text-muted">{t('section.noTasks')}</div>
       )}
     </div>
   )
