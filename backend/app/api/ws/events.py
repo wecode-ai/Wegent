@@ -68,6 +68,7 @@ class ServerEvents:
     TASK_STATUS = "task:status"
     TASK_SHARED = "task:shared"
     TASK_INVITED = "task:invited"  # User invited to group chat
+    TASK_APP_UPDATE = "task:app_update"  # App data updated (to task room)
     UNREAD_COUNT = "unread:count"
 
     # Generic Skill Events
@@ -344,6 +345,16 @@ class TaskInvitedPayload(BaseModel):
     invited_by: Dict[str, Any]
     is_group_chat: bool = True
     created_at: str
+
+
+class TaskAppUpdatePayload(BaseModel):
+    """Payload for task:app_update event (app preview data updated)."""
+
+    task_id: int
+    app: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="App data (name, address, previewUrl)",
+    )
 
 
 class UnreadCountPayload(BaseModel):

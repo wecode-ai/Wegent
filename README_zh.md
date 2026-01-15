@@ -45,10 +45,10 @@
 ## 🚀 快速开始
 
 ```bash
-git clone https://github.com/wecode-ai/wegent.git && cd wegent
-docker-compose up -d
-# 访问 http://localhost:3000
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
 ```
+
+然后在浏览器中访问 http://localhost:3000
 
 > 可选：启用 RAG 功能 `docker compose --profile rag up -d`
 

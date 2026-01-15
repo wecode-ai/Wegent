@@ -9,7 +9,7 @@ import { Search, Brain, Sparkles, Loader2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { CorrectionStage } from '@/types/socket'
-import MarkdownWithMermaid from '@/components/common/MarkdownWithMermaid'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { useTheme } from '@/features/theme/ThemeProvider'
 
 /** Streaming content for correction fields */
@@ -127,13 +127,13 @@ export default function CorrectionProgressIndicator({
       {/* Streaming content display - only show improved_answer, summary is in collapsible */}
       {hasStreamingContent && stage === 'generating_improvement' && (
         <div className="mt-2 text-text-primary">
-          {/* Improved answer streaming - use MarkdownWithMermaid for consistent rendering */}
+          {/* Improved answer streaming - use EnhancedMarkdown for consistent rendering */}
           <div className="border-l-2 border-primary/50 pl-3">
             <div className="text-xs text-text-muted mb-1">
               {t('correction.streaming.improved_answer')}
             </div>
             <div className="text-sm max-h-60 overflow-y-auto relative">
-              <MarkdownWithMermaid
+              <EnhancedMarkdown
                 source={streamingContent.improved_answer}
                 theme={theme as 'light' | 'dark'}
               />

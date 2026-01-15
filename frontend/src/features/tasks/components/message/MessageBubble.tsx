@@ -29,7 +29,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import MarkdownEditor from '@uiw/react-markdown-editor'
-import MarkdownWithMermaid from '@/components/common/MarkdownWithMermaid'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { ThinkingDisplay, ReasoningDisplay } from './thinking'
 import ClarificationForm from '../clarification/ClarificationForm'
 import FinalPromptMessage from './FinalPromptMessage'
@@ -499,7 +499,7 @@ const MessageBubble = memo(
       const shouldEnableCollapse = !isStreaming && msg.subtaskStatus !== 'RUNNING' && isGroupChat
 
       const markdownContent = (
-        <MarkdownWithMermaid
+        <EnhancedMarkdown
           source={normalizedResult}
           theme={theme}
           components={
@@ -1296,7 +1296,7 @@ const MessageBubble = memo(
         <div className="space-y-2">
           {contentToRender ? (
             <>
-              <MarkdownWithMermaid
+              <EnhancedMarkdown
                 source={contentToRender}
                 theme={theme}
                 components={{

@@ -11,13 +11,13 @@ import type { TextSegment, ParsedLine, LineType, TableAlignment } from './types'
 
 /**
  * Parse inline markdown formatting and return styled segments
- * Supports: **bold**, *italic*, `code`, [link](url), ~~strikethrough~~
+ * Supports: **bold**, *italic*, `code`, [link](url), ~~strikethrough~~, $math$
  */
 export function parseInlineMarkdown(text: string): TextSegment[] {
   const segments: TextSegment[] = []
   let remaining = text
 
-  // Regex patterns for inline markdown
+  // Regex patterns for inline markdown (order matters - more specific patterns first)
   const patterns: Array<{
     regex: RegExp
     bold?: boolean
@@ -25,7 +25,10 @@ export function parseInlineMarkdown(text: string): TextSegment[] {
     code?: boolean
     strikethrough?: boolean
     isLink?: boolean
+    math?: boolean
   }> = [
+    // Inline math: $...$  (must not be escaped \$)
+    { regex: /(?<!\\)\$([^$\n]+?)(?<!\\)\$/, math: true },
     // Bold + Italic (must come before bold and italic)
     { regex: /\*\*\*(.+?)\*\*\*/, bold: true, italic: true },
     { regex: /___(.+?)___/, bold: true, italic: true },
@@ -54,6 +57,12 @@ export function parseInlineMarkdown(text: string): TextSegment[] {
           let segment: TextSegment
           if (pattern.isLink) {
             segment = { text: match[1], link: match[2] }
+          } else if (pattern.math) {
+            segment = {
+              text: match[1],
+              math: true,
+              mathDisplay: false,
+            }
           } else {
             segment = {
               text: match[1],
@@ -222,4 +231,68 @@ export function parseLineType(line: string, context?: { inTable?: boolean }): Pa
 
   // Regular paragraph
   return { type: 'paragraph', content: trimmed }
+}
+
+/**
+ * Check if a line is the start of a display math block ($$)
+ */
+export function isDisplayMathStart(line: string): boolean {
+  const trimmed = line.trim()
+  return trimmed.startsWith('$$') && !trimmed.endsWith('$$')
+}
+
+/**
+ * Check if a line is the end of a display math block ($$)
+ */
+export function isDisplayMathEnd(line: string): boolean {
+  const trimmed = line.trim()
+  return trimmed.endsWith('$$') && !trimmed.startsWith('$$')
+}
+
+/**
+ * Check if a line is a single-line display math block ($$...$$)
+ */
+export function isSingleLineDisplayMath(line: string): boolean {
+  const trimmed = line.trim()
+  return trimmed.startsWith('$$') && trimmed.endsWith('$$') && trimmed.length > 4
+}
+
+/**
+ * Check if a line is the start of a LaTeX environment (\begin{...})
+ */
+export function isLatexEnvStart(line: string): boolean {
+  return /\\begin\{[^}]+\}/.test(line)
+}
+
+/**
+ * Check if a line is the end of a LaTeX environment (\end{...})
+ * Uses string matching instead of regex to avoid ReDoS vulnerabilities
+ */
+export function isLatexEnvEnd(line: string, envName: string): boolean {
+  // Use string matching instead of regex to avoid ReDoS from malicious input
+  const expectedEnd = `\\end{${envName}}`
+  return line.includes(expectedEnd)
+}
+
+/**
+ * Extract environment name from \begin{envName}
+ */
+export function extractLatexEnvName(line: string): string | null {
+  const match = line.match(/\\begin\{([^}]+)\}/)
+  return match ? match[1] : null
+}
+
+/**
+ * Extract math content from a display math block
+ */
+export function extractDisplayMathContent(content: string): string {
+  // Remove $$ from start and end
+  let math = content.trim()
+  if (math.startsWith('$$')) {
+    math = math.slice(2)
+  }
+  if (math.endsWith('$$')) {
+    math = math.slice(0, -2)
+  }
+  return math.trim()
 }
