@@ -8,7 +8,6 @@
 
 import json
 import os
-from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from executor.agents import Agent, AgentFactory
@@ -25,42 +24,6 @@ from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
 logger = setup_logger("task_processor")
-
-# Auth file path for skills to read authentication info
-AUTH_FILE_PATH = Path.home() / ".wegent" / "auth.json"
-
-
-def write_auth_file(task_data: Dict[str, Any]) -> Optional[Path]:
-    """
-    Extract auth info from task data and write to file for skills to use.
-
-    Args:
-        task_data: Task data dictionary containing auth_token and user info
-
-    Returns:
-        Path to the auth file if successful, None otherwise
-    """
-    try:
-        user = task_data.get("user", {})
-
-        auth_info = {
-            "auth_token": task_data.get("auth_token"),
-            "user_id": user.get("id"),
-            "user_name": user.get("user_name") or user.get("name"),
-        }
-
-        # Create parent directory if not exists
-        AUTH_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-        # Write auth info to file
-        AUTH_FILE_PATH.write_text(json.dumps(auth_info, indent=2))
-
-        logger.info(f"Auth file written to {AUTH_FILE_PATH}")
-        return AUTH_FILE_PATH
-
-    except Exception as e:
-        logger.error(f"Failed to write auth file: {e}")
-        return None
 
 
 def read_task_data() -> Dict[str, Any]:
