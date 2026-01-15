@@ -19,6 +19,7 @@ from typing import Optional, Set
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
+from shared.utils.markdown_util import remap_markdown_headings
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +227,9 @@ class LoadSkillTool(BaseTool):
 
         parts = []
         for skill_name, prompt in self._loaded_skill_prompts.items():
-            parts.append(f"\n\n## Skill: {skill_name}\n\n{prompt}")
+            parts.append(
+                f"\n\n## Skill: {skill_name}\n\n{remap_markdown_headings(prompt, 2)}"
+            )
 
         return (
             "\n\n# Loaded Skill Instructions\n\nThe following skills have been loaded. "

@@ -521,7 +521,7 @@ def get_knowledge_base_meta_prompt(
     kb_list_str = "\n".join(kb_lines)
 
     prompt = f"""
-Available Knowledge Bases (from conversation context):
+## Available Knowledge Bases (from conversation context):
 {kb_list_str}
 
 Note: The knowledge base content has been pre-filled from history. If the provided information is insufficient, you can use the knowledge_base_search tool to retrieve more relevant content.

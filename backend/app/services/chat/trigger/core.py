@@ -288,6 +288,7 @@ async def _stream_chat_response(
     span_manager.enter_span()
 
     from chat_shell.agent import ChatAgent
+    from shared.utils.markdown_util import remap_markdown_headings
 
     from app.services.chat.config import ChatConfigBuilder, WebSocketStreamConfig
     from app.services.chat.streaming import WebSocketBridge, WebSocketStreamingHandler
@@ -365,7 +366,7 @@ async def _stream_chat_response(
         # Unified context processing: process both attachments and knowledge bases
         # from the user subtask's associated contexts
         final_message = message
-        enhanced_system_prompt = chat_config.system_prompt
+        enhanced_system_prompt = remap_markdown_headings(chat_config.system_prompt)
         extra_tools = []
 
         logger.info(
@@ -389,7 +390,7 @@ async def _stream_chat_response(
                 user_subtask_id=user_subtask_id,
                 user_id=stream_data.user_id,
                 message=message,
-                base_system_prompt=chat_config.system_prompt,
+                base_system_prompt=enhanced_system_prompt,
                 task_id=stream_data.task_id,
             )
             logger.info(

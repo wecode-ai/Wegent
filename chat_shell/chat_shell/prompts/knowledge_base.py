@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from shared.utils.markdown_util import remap_markdown_headings
+
 """Knowledge base prompt templates.
 
 This module provides prompt templates for knowledge base tool usage:
@@ -50,3 +52,13 @@ You have access to knowledge bases from previous conversations in this task. You
 - If the knowledge base doesn't contain relevant information, feel free to answer using your general knowledge
 - Clearly indicate when your answer is based on knowledge base content vs. general knowledge
 - The knowledge base is a helpful resource, but you are not limited to it when it doesn't have relevant information"""
+
+
+def get_kb_prompt_relaxed() -> str:
+    """
+    Get the kb prompt relaxed.
+
+    Returns:
+        The kb prompt relaxed string to append to system prompt.
+    """
+    return remap_markdown_headings(KB_PROMPT_RELAXED)

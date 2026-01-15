@@ -26,6 +26,7 @@ from .builder import (
 from .knowledge_base import (
     KB_PROMPT_RELAXED,
     KB_PROMPT_STRICT,
+    get_kb_prompt_relaxed,
 )
 
 __all__ = [
@@ -39,6 +40,7 @@ __all__ = [
     "get_clarification_prompt",
     "append_clarification_prompt",
     "get_deep_thinking_prompt",
+    "get_kb_prompt_relaxed",
     "append_deep_thinking_prompt",
     "append_skill_metadata_prompt",
     "build_system_prompt",

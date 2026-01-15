@@ -8,8 +8,9 @@ Responsible for creating knowledge base search tools and enhancing system prompt
 """
 
 import logging
-from typing import Any, List, Optional
+from typing import List, Optional
 
+from shared.utils.markdown_util import remap_markdown_headings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -89,18 +90,18 @@ async def prepare_knowledge_base_tools(
     extra_tools.append(kb_tool)
 
     # Import shared prompt constants from chat_shell prompts module
-    from chat_shell.prompts import KB_PROMPT_RELAXED, KB_PROMPT_STRICT
+    from chat_shell.prompts import get_kb_prompt_relaxed
 
     # Choose prompt based on whether KB is user-selected or inherited from task
     if is_user_selected:
         # Strict mode: User explicitly selected KB for this message
-        kb_instruction = KB_PROMPT_STRICT
+        kb_instruction = ""
         logger.info(
             "[knowledge_factory] Using STRICT mode prompt (user explicitly selected KB)"
         )
     else:
         # Relaxed mode: KB inherited from task, AI can use general knowledge as fallback
-        kb_instruction = KB_PROMPT_RELAXED
+        kb_instruction = get_kb_prompt_relaxed()
         logger.info(
             "[knowledge_factory] Using RELAXED mode prompt (KB inherited from task)"
         )
@@ -149,7 +150,9 @@ async def _build_historical_kb_meta_prompt(
         from chat_shell.history.loader import get_knowledge_base_meta_prompt
 
         # Run sync function in thread pool
-        return await asyncio.to_thread(get_knowledge_base_meta_prompt, db, task_id)
+        return remap_markdown_headings(
+            await asyncio.to_thread(get_knowledge_base_meta_prompt, db, task_id)
+        )
     except Exception as e:
         logger.warning(f"Failed to get KB meta prompt for task {task_id}: {e}")
         return ""

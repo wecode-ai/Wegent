@@ -18,6 +18,7 @@ import logging
 from typing import Any, List, Optional, Tuple
 
 from langchain_core.tools import BaseTool
+from shared.utils.markdown_util import remap_markdown_headings
 from sqlalchemy.orm import Session
 
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
@@ -49,6 +50,17 @@ The user has selected specific knowledge bases for this conversation. You MUST u
 
 The user expects answers based on the selected knowledge base content only."""
 
+
+def get_kb_prompt_strict() -> str:
+    """
+    Get the kb prompt strict.
+
+    Returns:
+        The kb prompt strict string to append to system prompt.
+    """
+    return remap_markdown_headings(KB_PROMPT_STRICT)
+
+
 # Relaxed mode prompt: KB inherited from task, AI can use general knowledge as fallback
 KB_PROMPT_RELAXED = """
 
@@ -67,6 +79,17 @@ You have access to knowledge bases from previous conversations in this task. You
 - If the knowledge base doesn't contain relevant information, feel free to answer using your general knowledge
 - Clearly indicate when your answer is based on knowledge base content vs. general knowledge
 - The knowledge base is a helpful resource, but you are not limited to it when it doesn't have relevant information"""
+
+
+def get_kb_prompt_relaxed() -> str:
+    """
+    Get the kb prompt relaxed.
+
+    Returns:
+        The kb prompt relaxed string to append to system prompt.
+    """
+    return remap_markdown_headings(KB_PROMPT_RELAXED)
+
 
 # Table context prompt template - will be dynamically generated with table info
 TABLE_PROMPT_TEMPLATE = """
@@ -93,6 +116,16 @@ The user has selected data table(s) for this conversation. This indicates that t
 3. Present the results
 
 The user explicitly selected these table(s) - prioritize table operations over any other tools."""
+
+
+def get_table_prompt_template() -> str:
+    """
+    Get the table prompt template.
+
+    Returns:
+        The table prompt template string to append to system prompt.
+    """
+    return remap_markdown_headings(TABLE_PROMPT_TEMPLATE)
 
 
 def build_table_prompt(table_contexts: List[dict]) -> str:
@@ -122,7 +155,7 @@ def build_table_prompt(table_contexts: List[dict]) -> str:
         )
 
     tables_info = "\n".join(tables_info_lines)
-    return TABLE_PROMPT_TEMPLATE.format(tables_info=tables_info)
+    return get_table_prompt_template().format(tables_info=tables_info)
 
 
 async def process_contexts(
@@ -875,14 +908,14 @@ def _prepare_kb_tools_from_contexts(
     # Choose prompt based on whether KB is user-selected or inherited from task
     if is_user_selected_kb:
         # Strict mode: User explicitly selected KB for this message
-        kb_instruction = KB_PROMPT_STRICT
+        kb_instruction = get_kb_prompt_strict()
         logger.info(
             "[_prepare_kb_tools_from_contexts] Using STRICT mode prompt "
             "(user explicitly selected KB)"
         )
     else:
         # Relaxed mode: KB inherited from task, AI can use general knowledge as fallback
-        kb_instruction = KB_PROMPT_RELAXED
+        kb_instruction = get_kb_prompt_relaxed()
         logger.info(
             "[_prepare_kb_tools_from_contexts] Using RELAXED mode prompt "
             "(KB inherited from task)"
