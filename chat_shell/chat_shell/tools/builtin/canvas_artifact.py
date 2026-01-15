@@ -22,9 +22,32 @@ from datetime import datetime
 from typing import ClassVar, Literal
 
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
+
+# ============================================
+# Configuration Constants
+# ============================================
+
+# Maximum content size (1MB) - keep in sync with backend
+MAX_CONTENT_SIZE = 1024 * 1024
+
+# Maximum title length
+MAX_TITLE_LENGTH = 200
+
+# Supported programming languages for validation
+SUPPORTED_LANGUAGES = {
+    "python", "javascript", "typescript", "java", "go", "rust", "c", "cpp",
+    "csharp", "php", "ruby", "swift", "kotlin", "scala", "shell", "bash",
+    "sql", "html", "css", "json", "yaml", "xml", "markdown", "text",
+}
+
+# Valid quick actions
+VALID_QUICK_ACTIONS = {
+    "add_comments", "add_logs", "fix_bugs", "convert_language",
+    "improve", "simplify", "expand", "read_aloud", "shorten", "change_tone",
+}
 
 
 class CreateArtifactInput(BaseModel):
@@ -34,13 +57,43 @@ class CreateArtifactInput(BaseModel):
         description="Type of artifact: 'code' for source code or 'text' for documents/markdown"
     )
     title: str = Field(
-        description="Title of the artifact, e.g., 'fibonacci.py' or 'API Documentation'"
+        description="Title of the artifact, e.g., 'fibonacci.py' or 'API Documentation'",
+        max_length=MAX_TITLE_LENGTH,
     )
     content: str = Field(description="The content of the artifact (code or text)")
     language: str | None = Field(
         default=None,
         description="Programming language for code artifacts (e.g., 'python', 'javascript', 'typescript')",
     )
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, v: str) -> str:
+        """Validate title is not empty and not too long."""
+        if not v or not v.strip():
+            raise ValueError("Title cannot be empty")
+        return v.strip()
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, v: str) -> str:
+        """Validate content size."""
+        if not v:
+            raise ValueError("Content cannot be empty")
+        if len(v.encode("utf-8")) > MAX_CONTENT_SIZE:
+            raise ValueError(f"Content too large. Maximum size is {MAX_CONTENT_SIZE // 1024}KB")
+        return v
+
+    @field_validator("language")
+    @classmethod
+    def validate_language(cls, v: str | None) -> str | None:
+        """Validate language is supported (warning only)."""
+        if v and v.lower() not in SUPPORTED_LANGUAGES:
+            logger.warning(
+                "[CreateArtifactInput] Unsupported language: %s. Proceeding anyway.",
+                v,
+            )
+        return v.lower() if v else None
 
 
 class UpdateArtifactInput(BaseModel):
@@ -49,6 +102,40 @@ class UpdateArtifactInput(BaseModel):
     artifact_id: str = Field(description="ID of the artifact to update")
     content: str = Field(description="Updated content")
     title: str | None = Field(default=None, description="New title (optional)")
+
+    @field_validator("artifact_id")
+    @classmethod
+    def validate_artifact_id(cls, v: str) -> str:
+        """Validate artifact_id is a valid UUID."""
+        if not v or not v.strip():
+            raise ValueError("Artifact ID cannot be empty")
+        try:
+            uuid.UUID(v)
+        except ValueError:
+            raise ValueError(f"Invalid artifact ID format: {v}")
+        return v.strip()
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, v: str) -> str:
+        """Validate content size."""
+        if not v:
+            raise ValueError("Content cannot be empty")
+        if len(v.encode("utf-8")) > MAX_CONTENT_SIZE:
+            raise ValueError(f"Content too large. Maximum size is {MAX_CONTENT_SIZE // 1024}KB")
+        return v
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, v: str | None) -> str | None:
+        """Validate title if provided."""
+        if v is not None:
+            if not v.strip():
+                raise ValueError("Title cannot be empty if provided")
+            if len(v) > MAX_TITLE_LENGTH:
+                raise ValueError(f"Title too long. Maximum length is {MAX_TITLE_LENGTH}")
+            return v.strip()
+        return v
 
 
 class ArtifactQuickActionInput(BaseModel):
@@ -62,6 +149,31 @@ class ArtifactQuickActionInput(BaseModel):
         default=None,
         description="Optional parameter for the action (e.g., target language for 'convert_language')",
     )
+
+    @field_validator("artifact_id")
+    @classmethod
+    def validate_artifact_id(cls, v: str) -> str:
+        """Validate artifact_id is a valid UUID."""
+        if not v or not v.strip():
+            raise ValueError("Artifact ID cannot be empty")
+        try:
+            uuid.UUID(v)
+        except ValueError:
+            raise ValueError(f"Invalid artifact ID format: {v}")
+        return v.strip()
+
+    @field_validator("action")
+    @classmethod
+    def validate_action(cls, v: str) -> str:
+        """Validate action is a known quick action."""
+        if not v or not v.strip():
+            raise ValueError("Action cannot be empty")
+        action = v.strip().lower()
+        if action not in VALID_QUICK_ACTIONS:
+            raise ValueError(
+                f"Unknown action: {action}. Valid actions: {', '.join(sorted(VALID_QUICK_ACTIONS))}"
+            )
+        return action
 
 
 class CreateArtifactTool(BaseTool):

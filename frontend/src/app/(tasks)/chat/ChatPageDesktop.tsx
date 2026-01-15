@@ -99,7 +99,7 @@ export function ChatPageDesktop() {
   // Canvas state - two separate concerns:
   // 1. canvasEnabled: session-level toggle (locked once chat starts)
   // 2. isCanvasOpen: whether the canvas panel is visible
-  const [canvasEnabled, setCanvasEnabled] = useState(false)
+  // Note: canvasEnabled is now managed by useCanvasIntegration for unified state
   const [isCanvasOpen, setIsCanvasOpen] = useState(false)
 
   // Get stream state for current task - this will update when messages change
@@ -108,7 +108,6 @@ export function ChatPageDesktop() {
   // Canvas integration hook - reset lastProcessedArtifactRef when task changes
   const handleCanvasReset = useCallback(() => {
     lastProcessedArtifactRef.current = null
-    setCanvasEnabled(false)
     setIsCanvasOpen(false)
   }, [])
 
@@ -214,7 +213,7 @@ export function ChatPageDesktop() {
         lastProcessedArtifactRef.current = artifactKey
       }
     }
-  }, [selectedTaskDetail?.id, currentTaskStreamState, canvas])
+  }, [selectedTaskDetail?.id, currentTaskStreamState?.messages, canvas.processSubtaskResult])
 
   // Track previous streaming state to detect when streaming completes
   const wasStreamingRef = useRef(false)
@@ -231,7 +230,7 @@ export function ChatPageDesktop() {
     }
 
     wasStreamingRef.current = isCurrentlyStreaming
-  }, [currentTaskStreamState?.messages, canvas])
+  }, [currentTaskStreamState?.messages, canvas.artifact, canvas.fetchArtifactWithVersions])
 
   // Search dialog state (controlled from page level for global shortcut support)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
@@ -351,8 +350,8 @@ export function ChatPageDesktop() {
               taskType="chat"
               onShareButtonRender={handleShareButtonRender}
               onRefreshTeams={handleRefreshTeams}
-              canvasEnabled={canvasEnabled}
-              onCanvasEnabledChange={setCanvasEnabled}
+              canvasEnabled={canvas.canvasEnabled}
+              onCanvasEnabledChange={canvas.setCanvasEnabled}
               isCanvasOpen={isCanvasOpen}
               onCanvasOpenChange={setIsCanvasOpen}
             />

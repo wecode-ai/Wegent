@@ -11,7 +11,13 @@ Instead of storing complete content for each version, we store:
 - Current content (full)
 - History as diffs (compact)
 
-This approach typically reduces storage by 75%+ for text content.
+This approach typically reduces storage by 50-80% for text content,
+depending on the nature of changes. For large rewrites, diff storage
+may be less efficient than full content storage.
+
+Configuration:
+- MAX_DIFF_RATIO: If diff size exceeds this ratio of content size,
+  consider storing full content instead (not implemented yet).
 """
 
 import difflib
@@ -19,6 +25,10 @@ import logging
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Configuration constants
+MAX_CONTENT_SIZE = 1024 * 1024  # 1MB max content size
+MAX_VERSION_HISTORY = 100  # Maximum number of versions to keep
 
 
 def create_diff(old_content: str, new_content: str) -> str:
@@ -172,73 +182,90 @@ def _parse_unified_diff(diff_lines: list[str]) -> list[dict]:
 def _apply_hunks(lines: list[str], hunks: list[dict], reverse: bool) -> list[str]:
     """Apply hunks to lines.
 
+    This function correctly handles unified diff hunks by:
+    1. Tracking the correct line positions for each hunk
+    2. Properly handling context lines (unchanged lines)
+    3. Maintaining correct offset as hunks modify line counts
+
     Args:
         lines: Original content lines.
         hunks: Parsed hunks from diff.
-        reverse: If True, swap + and - operations.
+        reverse: If True, apply the diff in reverse (new -> old).
 
     Returns:
         Modified lines after applying all hunks.
     """
     result = lines.copy()
-    offset = 0  # Track line offset as hunks modify line counts
+    offset = 0  # Track cumulative line offset as hunks modify line counts
 
     for hunk in hunks:
+        # Determine start position based on direction
         if reverse:
-            # When reversing, we're going from new to old
+            # When reversing: we have "new" content, want to get "old" content
+            # So we use new_start as our reference
             start_line = hunk["new_start"] - 1 + offset
         else:
-            # Normal: going from old to new
+            # Normal: we have "old" content, want to get "new" content
+            # So we use old_start as our reference
             start_line = hunk["old_start"] - 1 + offset
 
-        # Calculate what to remove and what to add
-        to_remove = []
-        to_add = []
-
-        for change_type, content in hunk["changes"]:
-            if reverse:
-                # Reverse the operation
-                if change_type == "-":
-                    to_add.append(content)
-                elif change_type == "+":
-                    to_remove.append(content)
-                else:
-                    to_add.append(content)
-                    to_remove.append(content)
-            else:
-                # Normal operation
-                if change_type == "-":
-                    to_remove.append(content)
-                elif change_type == "+":
-                    to_add.append(content)
-                else:
-                    to_remove.append(content)
-                    to_add.append(content)
-
-        # Apply the changes
-        # Remove old lines
-        end_line = start_line + len([c for c in hunk["changes"] if c[0] != "+"])
-        if reverse:
-            end_line = start_line + len([c for c in hunk["changes"] if c[0] != "-"])
-
-        # Build new section
+        # Count lines to remove from current content
+        # In normal mode: remove '-' lines and context ' ' lines from old
+        # In reverse mode: remove '+' lines and context ' ' lines from new
+        lines_to_remove = 0
         new_section = []
+
         for change_type, content in hunk["changes"]:
             if reverse:
-                if change_type != "+":
+                # Reverse: '+' becomes removal, '-' becomes addition
+                if change_type == "+":
+                    # This was added in the diff, so it exists in current (new) content
+                    # We need to remove it to get back to old
+                    lines_to_remove += 1
+                elif change_type == "-":
+                    # This was removed in the diff, so it doesn't exist in current
+                    # We need to add it back to get to old
+                    new_section.append(content)
+                else:  # context line ' '
+                    # Context lines exist in both, count as removal and add back
+                    lines_to_remove += 1
                     new_section.append(content)
             else:
-                if change_type != "-":
+                # Normal: '-' is removal, '+' is addition
+                if change_type == "-":
+                    # Remove this line from old content
+                    lines_to_remove += 1
+                elif change_type == "+":
+                    # Add this line to new content
                     new_section.append(content)
+                else:  # context line ' '
+                    # Context lines exist in both, count as removal and add back
+                    lines_to_remove += 1
+                    new_section.append(content)
+
+        # Calculate end position
+        end_line = start_line + lines_to_remove
+
+        # Validate bounds
+        if start_line < 0:
+            logger.warning(
+                "[DIFF] Invalid start_line %d, adjusting to 0", start_line
+            )
+            start_line = 0
+        if end_line > len(result):
+            logger.warning(
+                "[DIFF] end_line %d exceeds result length %d, adjusting",
+                end_line, len(result)
+            )
+            end_line = len(result)
 
         # Replace section
         result = result[:start_line] + new_section + result[end_line:]
 
         # Update offset for next hunk
-        if reverse:
-            offset += hunk["old_count"] - hunk["new_count"]
-        else:
-            offset += hunk["new_count"] - hunk["old_count"]
+        # offset = (lines added) - (lines removed)
+        lines_added = len(new_section)
+        offset += lines_added - lines_to_remove
 
     return result
 
@@ -271,6 +298,10 @@ def get_version_content(
     sorted_history = sorted(history, key=lambda x: x["version"], reverse=True)
     current_version = sorted_history[0]["version"]
 
+    if target_version < 1:
+        logger.warning("[DIFF] Invalid target version: %d", target_version)
+        return None
+
     if target_version == current_version:
         return current_content
 
@@ -292,9 +323,85 @@ def get_version_content(
             break
 
         if diff:
-            content = apply_diff(content, diff, reverse=True)
-            if content is None:
+            result = apply_diff(content, diff, reverse=True)
+            if result is None:
                 logger.error("[DIFF] Failed to reverse diff for version %d", version)
                 return None
+            content = result
 
     return content
+
+
+def validate_content_size(content: str) -> bool:
+    """Validate that content size is within limits.
+
+    Args:
+        content: The content to validate.
+
+    Returns:
+        True if content is within size limits, False otherwise.
+    """
+    return len(content.encode('utf-8')) <= MAX_CONTENT_SIZE
+
+
+def should_trim_history(history: list[dict]) -> bool:
+    """Check if version history should be trimmed.
+
+    Args:
+        history: List of version history entries.
+
+    Returns:
+        True if history exceeds MAX_VERSION_HISTORY, False otherwise.
+    """
+    return len(history) > MAX_VERSION_HISTORY
+
+
+def trim_history(history: list[dict]) -> list[dict]:
+    """Trim version history to keep only recent versions.
+
+    Keeps the most recent MAX_VERSION_HISTORY versions.
+    Note: This means older versions will no longer be recoverable.
+
+    Args:
+        history: List of version history entries.
+
+    Returns:
+        Trimmed history list.
+    """
+    if len(history) <= MAX_VERSION_HISTORY:
+        return history
+
+    # Keep most recent versions
+    sorted_history = sorted(history, key=lambda x: x["version"], reverse=True)
+    trimmed = sorted_history[:MAX_VERSION_HISTORY]
+
+    # Sort back to ascending order
+    return sorted(trimmed, key=lambda x: x["version"])
+
+
+def get_diff_stats(diff: str) -> dict:
+    """Get statistics about a diff.
+
+    Args:
+        diff: The unified diff string.
+
+    Returns:
+        Dictionary with 'additions', 'deletions', 'size_bytes' keys.
+    """
+    if not diff:
+        return {"additions": 0, "deletions": 0, "size_bytes": 0}
+
+    additions = 0
+    deletions = 0
+
+    for line in diff.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            additions += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            deletions += 1
+
+    return {
+        "additions": additions,
+        "deletions": deletions,
+        "size_bytes": len(diff.encode('utf-8')),
+    }

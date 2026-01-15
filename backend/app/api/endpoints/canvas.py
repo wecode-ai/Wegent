@@ -44,11 +44,22 @@ from app.core import security
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.task_member_service import task_member_service
-from app.utils import create_diff, get_version_content
+from app.utils import create_diff, get_version_content, validate_content_size, trim_history, should_trim_history, MAX_CONTENT_SIZE, MAX_VERSION_HISTORY
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ============================================
+# Configuration Constants
+# ============================================
+
+# Maximum content size (1MB) - imported from diff_utils
+# MAX_CONTENT_SIZE = 1024 * 1024
+
+# Maximum number of versions to keep - imported from diff_utils
+# MAX_VERSION_HISTORY = 100
 
 
 # ============================================
@@ -96,6 +107,7 @@ class UpdateArtifactRequest(BaseModel):
     content: str
     title: Optional[str] = None
     create_version: bool = True  # Whether to create a new version
+    expected_version: Optional[int] = None  # For optimistic locking
 
 
 class ArtifactResponse(BaseModel):
@@ -242,6 +254,13 @@ def create_task_artifact(
             status_code=400, detail="Artifact already exists. Use PUT to update."
         )
 
+    # Validate content size
+    if not validate_content_size(request.content):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Content too large. Maximum size is {MAX_CONTENT_SIZE // 1024}KB."
+        )
+
     # Create artifact
     now = datetime.utcnow().isoformat()
     artifact_data = {
@@ -277,6 +296,10 @@ def update_task_artifact(
     """
     Update an existing artifact.
     Creates a new version with diff if create_version is True.
+
+    Supports optimistic locking via expected_version parameter.
+    If expected_version is provided and doesn't match current version,
+    returns 409 Conflict.
     """
     task = check_task_access(db, task_id, current_user.id)
     canvas_data = get_canvas_data(task)
@@ -285,8 +308,24 @@ def update_task_artifact(
     if not artifact_data:
         raise HTTPException(status_code=404, detail="No artifact found to update")
 
+    # Validate content size
+    if not validate_content_size(request.content):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Content too large. Maximum size is {MAX_CONTENT_SIZE // 1024}KB."
+        )
+
     history = canvas_data.get("history", [])
     now = datetime.utcnow().isoformat()
+    current_version = artifact_data.get("version", 1)
+
+    # Optimistic locking check
+    if request.expected_version is not None:
+        if request.expected_version != current_version:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Version conflict: expected {request.expected_version}, but current is {current_version}. Please refresh and try again."
+            )
 
     if request.create_version:
         # Create diff from old to new content
@@ -294,13 +333,22 @@ def update_task_artifact(
         diff = create_diff(old_content, request.content)
 
         # Create new version entry
-        new_version_num = artifact_data.get("version", 1) + 1
+        new_version_num = current_version + 1
         history.append({
             "version": new_version_num,
             "diff": diff,
             "created_at": now,
         })
         artifact_data["version"] = new_version_num
+
+        # Trim history if needed
+        if should_trim_history(history):
+            logger.info(
+                "[Canvas] Trimming history for task %d, current size: %d",
+                task_id,
+                len(history),
+            )
+            history = trim_history(history)
 
         logger.debug(
             "[Canvas] Created version %d for task %d, diff_len=%d",
