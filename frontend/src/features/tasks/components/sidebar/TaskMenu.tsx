@@ -9,6 +9,7 @@ import {
   ClipboardDocumentIcon,
   TrashIcon,
   ArrowRightOnRectangleIcon,
+  PencilIcon,
 } from '@heroicons/react/24/outline'
 import { HiOutlineEllipsisVertical } from 'react-icons/hi2'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -17,6 +18,7 @@ interface TaskMenuProps {
   taskId: number
   handleCopyTaskId: (taskId: number) => void
   handleDeleteTask: (taskId: number) => void
+  handleRename?: (taskId: number) => void
   isGroupChat?: boolean
 }
 
@@ -24,6 +26,7 @@ export default function TaskMenu({
   taskId,
   handleCopyTaskId,
   handleDeleteTask,
+  handleRename,
   isGroupChat = false,
 }: TaskMenuProps) {
   const { t } = useTranslation()
@@ -54,6 +57,22 @@ export default function TaskMenu({
             </button>
           )}
         </Menu.Item>
+        {handleRename && (
+          <Menu.Item>
+            {({ active }) => (
+              <button
+                onClick={e => {
+                  e.stopPropagation()
+                  handleRename(taskId)
+                }}
+                className={`w-full px-3 py-2 text-xs text-left text-text-primary flex items-center ${active ? 'bg-muted' : ''}`}
+              >
+                <PencilIcon className="h-3.5 w-3.5 mr-2" />
+                {t('common:tasks.rename_task')}
+              </button>
+            )}
+          </Menu.Item>
+        )}
         <Menu.Item>
           {({ active }) => (
             <button
