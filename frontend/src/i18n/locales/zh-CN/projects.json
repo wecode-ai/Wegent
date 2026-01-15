@@ -44,7 +44,8 @@
     "delete": "删除",
     "removeTask": "从项目移除",
     "moveToGroup": "移至分组",
-    "createGroup": "创建分组"
+    "createGroup": "创建分组",
+    "removeFromGroup": "从当前分组中移除"
   },
   "toast": {
     "createSuccess": "项目创建成功",

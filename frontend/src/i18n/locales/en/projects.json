@@ -44,7 +44,8 @@
     "delete": "Delete",
     "removeTask": "Remove from project",
     "moveToGroup": "Move to Group",
-    "createGroup": "Create Group"
+    "createGroup": "Create Group",
+    "removeFromGroup": "Remove from Group"
   },
   "toast": {
     "createSuccess": "Project created successfully",

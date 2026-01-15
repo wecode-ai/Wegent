@@ -23,6 +23,7 @@ import { ProjectEditDialog } from './ProjectEditDialog'
 import { ProjectDeleteDialog } from './ProjectDeleteDialog'
 import { DroppableProject } from './DroppableProject'
 import { DraggableProjectTask } from './DraggableProjectTask'
+import { ProjectTaskMenu } from './ProjectTaskMenu'
 import { ProjectWithTasks, ProjectTask } from '@/types/api'
 import {
   DropdownMenu,
@@ -263,16 +264,19 @@ function ProjectItem({
                 <div
                   onClick={() => onTaskClick(projectTask)}
                   className={cn(
-                    'flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer',
+                    'group/task flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer',
                     'text-sm transition-colors',
                     isSelected
                       ? 'bg-primary/10 text-text-primary'
                       : 'text-text-secondary hover:text-text-primary hover:bg-surface'
                   )}
                 >
-                  <span className="truncate">
+                  <span className="flex-1 truncate">
                     {projectTask.task_title || `Task #${projectTask.task_id}`}
                   </span>
+                  <div className="opacity-0 group-hover/task:opacity-100 transition-opacity">
+                    <ProjectTaskMenu taskId={projectTask.task_id} projectId={project.id} />
+                  </div>
                 </div>
               </DraggableProjectTask>
             )
