@@ -10,7 +10,7 @@
   "section": {
     "title": "对话分组",
     "empty": "暂无项目，点击 + 创建",
-    "noTasks": "暂无任务"
+    "noTasks": "暂无对话"
   },
   "actions": {
     "edit": "编辑",
