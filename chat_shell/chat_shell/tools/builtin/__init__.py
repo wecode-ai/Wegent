@@ -4,6 +4,12 @@
 
 """Built-in tools module."""
 
+from .canvas_artifact import (
+    ArtifactQuickActionTool,
+    CreateArtifactTool,
+    UpdateArtifactTool,
+    create_canvas_tools,
+)
 from .data_table import DataTableTool
 from .evaluation import SubmitEvaluationResultTool
 from .file_reader import FileListSkill, FileReaderSkill
@@ -19,4 +25,8 @@ __all__ = [
     "FileListSkill",
     "SubmitEvaluationResultTool",
     "LoadSkillTool",
+    "CreateArtifactTool",
+    "UpdateArtifactTool",
+    "ArtifactQuickActionTool",
+    "create_canvas_tools",
 ]

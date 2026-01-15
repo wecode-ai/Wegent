@@ -28,6 +28,8 @@ import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { getLastTeamIdByMode, saveLastTeamByMode } from '@/utils/userPreferences'
+import { CanvasPanel, CanvasToggleButton } from '@/features/canvas'
+import { useCanvasIntegration } from './useCanvasIntegration'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -82,6 +84,14 @@ function ChatAreaContent({
     teams,
     taskType,
     selectedTeamForNewTask,
+  })
+
+  // Canvas integration - for artifact display and quick actions
+  const canvas = useCanvasIntegration({
+    taskId: selectedTaskDetail?.id,
+    onSendMessage: async (message: string) => {
+      // Will be connected to streamHandlers after it's initialized
+    },
   })
 
   // Compute subtask info for scroll management
@@ -546,20 +556,22 @@ function ChatAreaContent({
   return (
     <div
       ref={chatAreaRef}
-      className="flex-1 flex flex-col min-h-0 w-full relative"
+      className="flex-1 flex min-h-0 w-full relative"
       style={{ height: '100%', boxSizing: 'border-box' }}
     >
-      {/* Pipeline Stage Indicator - shows current stage progress for pipeline mode */}
-      {hasMessages && selectedTaskDetail?.id && (
-        <PipelineStageIndicator
-          taskId={selectedTaskDetail.id}
-          taskStatus={selectedTaskDetail.status || null}
-          collaborationModel={
-            selectedTaskDetail.team?.workflow?.mode || chatState.selectedTeam?.workflow?.mode
-          }
-          onStageInfoChange={setPipelineStageInfo}
-        />
-      )}
+      {/* Main Chat Area */}
+      <div className={`flex-1 flex flex-col min-h-0 min-w-0 ${canvas.canvasEnabled && hasMessages ? 'max-w-[60%]' : 'w-full'} transition-all duration-300`}>
+        {/* Pipeline Stage Indicator - shows current stage progress for pipeline mode */}
+        {hasMessages && selectedTaskDetail?.id && (
+          <PipelineStageIndicator
+            taskId={selectedTaskDetail.id}
+            taskStatus={selectedTaskDetail.status || null}
+            collaborationModel={
+              selectedTaskDetail.team?.workflow?.mode || chatState.selectedTeam?.workflow?.mode
+            }
+            onStageInfoChange={setPipelineStageInfo}
+          />
+        )}
 
       {/* Messages Area: always mounted to keep scroll container stable */}
       <div className={hasMessages ? 'relative flex-1 min-h-0' : 'relative'}>
@@ -642,7 +654,7 @@ function ChatAreaContent({
             className="fixed bottom-0 z-50"
             style={{
               left: floatingMetrics.left,
-              width: floatingMetrics.width,
+              width: canvas.canvasEnabled ? `calc(${floatingMetrics.width} * 0.6)` : floatingMetrics.width,
             }}
           >
             <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
@@ -651,6 +663,32 @@ function ChatAreaContent({
           </div>
         )}
       </div>
+      </div>
+
+      {/* Canvas Panel - show when enabled and has messages */}
+      {canvas.canvasEnabled && hasMessages && (
+        <div className="w-[40%] h-full shrink-0 border-l">
+          <CanvasPanel
+            artifact={canvas.artifact}
+            isLoading={canvas.isCanvasLoading}
+            onClose={canvas.toggleCanvas}
+            onArtifactUpdate={canvas.setArtifact}
+            onQuickAction={canvas.handleQuickAction}
+            onVersionRevert={canvas.handleVersionRevert}
+            isFullscreen={canvas.isFullscreen}
+            onToggleFullscreen={canvas.toggleFullscreen}
+          />
+        </div>
+      )}
+
+      {/* Canvas Toggle Button - show when has messages and task type is chat */}
+      {hasMessages && taskType === 'chat' && !canvas.canvasEnabled && (
+        <CanvasToggleButton
+          enabled={canvas.canvasEnabled}
+          onToggle={canvas.toggleCanvas}
+          className="fixed right-4 top-20 z-40"
+        />
+      )}
     </div>
   )
 }
