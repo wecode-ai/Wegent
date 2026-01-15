@@ -22,6 +22,8 @@ from app.schemas.shared_team import (
     TeamShareResponse,
 )
 from app.schemas.team import (
+    CopyToGroupRequest,
+    CopyToGroupResponse,
     TeamCreate,
     TeamDetail,
     TeamInDB,
@@ -174,6 +176,28 @@ def share_team(
         db=db,
         team_id=team_id,
         user_id=current_user.id,
+    )
+
+
+@router.post("/{team_id}/copy-to-group", response_model=CopyToGroupResponse)
+def copy_team_to_group(
+    team_id: int,
+    request: CopyToGroupRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Copy a personal team to a group.
+
+    The user must:
+    - Be the owner of the source team
+    - Have Developer or higher role in the target group
+    """
+    return team_kinds_service.copy_to_group(
+        db=db,
+        team_id=team_id,
+        user_id=current_user.id,
+        target_group_name=request.target_group_name,
     )
 
 

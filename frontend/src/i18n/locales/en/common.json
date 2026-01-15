@@ -265,6 +265,21 @@
       "confirm_suffix": " to execute tasks?",
       "join_description_prefix": "After confirmation, ",
       "join_description_suffix": " will be added to your team list, and you can use this team to create and execute tasks."
+    },
+    "copy_to_group": {
+      "button": "Copy to Group",
+      "title": "Copy to Group",
+      "description": "Copy agent \"{{teamName}}\" to a group. You must have Developer or higher role in the target group.",
+      "select_group": "Select Target Group",
+      "select_placeholder": "Choose a group...",
+      "no_groups": "No available groups",
+      "no_groups_hint": "You need Developer or higher role in at least one group to copy agents.",
+      "confirm": "Copy",
+      "copying": "Copying...",
+      "copy_failed": "Failed to copy agent to group",
+      "load_groups_failed": "Failed to load groups",
+      "success_title": "Copy Successful",
+      "success_description": "Agent has been copied to group \"{{groupName}}\""
     }
   },
   "team": {

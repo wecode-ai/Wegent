@@ -112,3 +112,34 @@ class TeamListResponse(BaseModel):
 
     total: int
     items: list[TeamInDB]
+
+
+class CopyToGroupRequest(BaseModel):
+    """Request model for copying a team to a group"""
+
+    target_group_name: str  # Target group name to copy the team to
+
+
+class CopiedBotInfo(BaseModel):
+    """Information about a copied bot"""
+
+    original_bot_id: int
+    new_bot_id: int
+    name: str
+
+
+class ReferencedBotInfo(BaseModel):
+    """Information about a referenced (not copied) bot"""
+
+    bot_id: int
+    name: str
+
+
+class CopyToGroupResponse(BaseModel):
+    """Response model for copy team to group operation"""
+
+    id: int  # New team ID
+    name: str  # Team name
+    namespace: str  # Target group namespace
+    copied_bots: List[CopiedBotInfo]  # Bots that were copied
+    referenced_bots: List[ReferencedBotInfo]  # Bots that were referenced

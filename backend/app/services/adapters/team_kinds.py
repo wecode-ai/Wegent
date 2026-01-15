@@ -1996,5 +1996,330 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             # has_parameters is true as long as external API bot exists, even if API call fails
             return {"has_parameters": True, "parameters": []}
 
+    def copy_to_group(
+        self,
+        db: Session,
+        *,
+        team_id: int,
+        user_id: int,
+        target_group_name: str,
+    ) -> Dict[str, Any]:
+        """
+        Copy a personal team to a group.
+
+        Args:
+            db: Database session
+            team_id: Team ID to copy
+            user_id: User ID (must be the team owner)
+            target_group_name: Target group name to copy to
+
+        Returns:
+            Dictionary with copy result including new team ID and copied/referenced bots
+
+        Raises:
+            HTTPException: If validation fails
+        """
+        from app.schemas.namespace import GroupRole
+        from app.services.group_permission import check_group_permission
+
+        # Get the source team
+        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        # Validate source team ownership - must be personal team owned by user
+        if team.namespace != "default":
+            raise HTTPException(
+                status_code=400,
+                detail="Only personal teams can be copied to groups",
+            )
+
+        if team.user_id != user_id:
+            raise HTTPException(
+                status_code=403, detail="You can only copy your own teams"
+            )
+
+        # Validate target group permission (Developer+)
+        if not check_group_permission(
+            db, user_id, target_group_name, GroupRole.Developer
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"You need at least Developer role in group '{target_group_name}' to copy teams",
+            )
+
+        # Check if target group exists
+        from app.models.namespace import Namespace
+
+        target_group = (
+            db.query(Namespace)
+            .filter(
+                Namespace.name == target_group_name,
+                Namespace.is_active == True,
+            )
+            .first()
+        )
+        if not target_group:
+            raise HTTPException(status_code=404, detail="Target group does not exist")
+
+        # Check if team with same name already exists in target group
+        existing_team = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Team",
+                Kind.name == team.name,
+                Kind.namespace == target_group_name,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if existing_team:
+            raise HTTPException(
+                status_code=400,
+                detail=f"A team with name '{team.name}' already exists in group '{target_group_name}'",
+            )
+
+        # Parse source team
+        team_crd = Team.model_validate(team.json)
+
+        # Process bots - check accessibility and decide copy/reference
+        copied_bots = []
+        referenced_bots = []
+        inaccessible_bots = []
+        new_members = []
+
+        for member in team_crd.spec.members:
+            bot_name = member.botRef.name
+            bot_namespace = member.botRef.namespace
+
+            # Get the bot - first try user's bots, then public bots
+            bot = kindReader.get_by_name_and_namespace(
+                db, user_id, KindType.BOT, bot_namespace, bot_name
+            )
+
+            # If not found and namespace is default, try public bots (user_id=0)
+            if not bot and bot_namespace == "default":
+                bot = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == 0,
+                        Kind.kind == "Bot",
+                        Kind.namespace == bot_namespace,
+                        Kind.name == bot_name,
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+
+            if not bot:
+                inaccessible_bots.append(bot_name)
+                continue
+
+            # Determine how to handle this bot
+            if bot.user_id == 0:
+                # Public bot - directly reference
+                referenced_bots.append({"bot_id": bot.id, "name": bot_name})
+                new_members.append(member)
+            elif bot.namespace == target_group_name:
+                # Bot already in target group - directly reference
+                referenced_bots.append({"bot_id": bot.id, "name": bot_name})
+                new_members.append(member)
+            elif bot.namespace == "default" and bot.user_id == user_id:
+                # Personal bot - copy to target group
+                new_bot = self._copy_bot_to_group(db, bot, user_id, target_group_name)
+                copied_bots.append(
+                    {
+                        "original_bot_id": bot.id,
+                        "new_bot_id": new_bot.id,
+                        "name": bot_name,
+                    }
+                )
+                # Update member reference to new bot
+                from app.schemas.kind import BotTeamRef, TeamMember
+
+                new_member = TeamMember(
+                    botRef=BotTeamRef(name=bot_name, namespace=target_group_name),
+                    prompt=member.prompt,
+                    role=member.role,
+                    requireConfirmation=member.requireConfirmation,
+                )
+                new_members.append(new_member)
+            else:
+                # Bot is in another group - inaccessible
+                inaccessible_bots.append(bot_name)
+
+        # Check for inaccessible bots
+        if inaccessible_bots:
+            raise HTTPException(
+                status_code=400,
+                detail=f"The following bots are not accessible in the target group: {', '.join(inaccessible_bots)}",
+            )
+
+        # Create new team in target group
+        new_team_json = {
+            "kind": "Team",
+            "spec": {
+                "members": [m.model_dump() for m in new_members],
+                "collaborationModel": team_crd.spec.collaborationModel,
+            },
+            "status": {"state": "Available"},
+            "metadata": {"name": team.name, "namespace": target_group_name},
+            "apiVersion": "agent.wecode.io/v1",
+        }
+
+        # Copy optional fields
+        if team_crd.spec.bind_mode:
+            new_team_json["spec"]["bind_mode"] = team_crd.spec.bind_mode
+        if team_crd.spec.description:
+            new_team_json["spec"]["description"] = team_crd.spec.description
+        if team_crd.spec.icon:
+            new_team_json["spec"]["icon"] = team_crd.spec.icon
+
+        new_team = Kind(
+            user_id=user_id,
+            kind="Team",
+            name=team.name,
+            namespace=target_group_name,
+            json=new_team_json,
+            is_active=True,
+        )
+        db.add(new_team)
+        db.commit()
+        db.refresh(new_team)
+
+        return {
+            "id": new_team.id,
+            "name": new_team.name,
+            "namespace": target_group_name,
+            "copied_bots": copied_bots,
+            "referenced_bots": referenced_bots,
+        }
+
+    def _copy_bot_to_group(
+        self,
+        db: Session,
+        bot: Kind,
+        user_id: int,
+        target_namespace: str,
+    ) -> Kind:
+        """
+        Copy a personal bot to a target group namespace.
+
+        This copies the Bot and its Ghost (prompt). The Shell and Model remain
+        referenced as they are shared resources.
+
+        Args:
+            db: Database session
+            bot: Source bot Kind object
+            user_id: User ID
+            target_namespace: Target group namespace
+
+        Returns:
+            The newly created Bot Kind object
+        """
+        bot_crd = Bot.model_validate(bot.json)
+
+        # Check if bot with same name already exists in target namespace
+        existing_bot = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Bot",
+                Kind.name == bot.name,
+                Kind.namespace == target_namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if existing_bot:
+            # Bot already exists in target namespace, return it
+            return existing_bot
+
+        # Get source ghost
+        source_ghost = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Ghost",
+                Kind.name == bot_crd.spec.ghostRef.name,
+                Kind.namespace == bot_crd.spec.ghostRef.namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        # Copy ghost to target namespace
+        new_ghost_name = f"{bot.name}-ghost"
+        if source_ghost:
+            ghost_crd = Ghost.model_validate(source_ghost.json)
+            new_ghost_json = {
+                "kind": "Ghost",
+                "spec": {
+                    "systemPrompt": ghost_crd.spec.systemPrompt,
+                    "mcpServers": ghost_crd.spec.mcpServers or {},
+                },
+                "status": {"state": "Available"},
+                "metadata": {"name": new_ghost_name, "namespace": target_namespace},
+                "apiVersion": "agent.wecode.io/v1",
+            }
+            if ghost_crd.spec.skills:
+                new_ghost_json["spec"]["skills"] = ghost_crd.spec.skills
+            if ghost_crd.spec.preload_skills:
+                new_ghost_json["spec"]["preload_skills"] = ghost_crd.spec.preload_skills
+        else:
+            # Create minimal ghost if source doesn't exist
+            new_ghost_json = {
+                "kind": "Ghost",
+                "spec": {"systemPrompt": "", "mcpServers": {}},
+                "status": {"state": "Available"},
+                "metadata": {"name": new_ghost_name, "namespace": target_namespace},
+                "apiVersion": "agent.wecode.io/v1",
+            }
+
+        new_ghost = Kind(
+            user_id=user_id,
+            kind="Ghost",
+            name=new_ghost_name,
+            namespace=target_namespace,
+            json=new_ghost_json,
+            is_active=True,
+        )
+        db.add(new_ghost)
+
+        # Create new bot referencing the copied ghost but keeping original shell and model refs
+        new_bot_json = {
+            "kind": "Bot",
+            "spec": {
+                "ghostRef": {"name": new_ghost_name, "namespace": target_namespace},
+                "shellRef": {
+                    "name": bot_crd.spec.shellRef.name,
+                    "namespace": bot_crd.spec.shellRef.namespace,
+                },
+            },
+            "status": {"state": "Available"},
+            "metadata": {"name": bot.name, "namespace": target_namespace},
+            "apiVersion": "agent.wecode.io/v1",
+        }
+
+        # Add modelRef if present
+        if bot_crd.spec.modelRef:
+            new_bot_json["spec"]["modelRef"] = {
+                "name": bot_crd.spec.modelRef.name,
+                "namespace": bot_crd.spec.modelRef.namespace,
+            }
+
+        new_bot = Kind(
+            user_id=user_id,
+            kind="Bot",
+            name=bot.name,
+            namespace=target_namespace,
+            json=new_bot_json,
+            is_active=True,
+        )
+        db.add(new_bot)
+        db.flush()  # Get the new bot's ID
+
+        return new_bot
+
 
 team_kinds_service = TeamKindsService(Kind)
