@@ -7,6 +7,10 @@ Internal RAG API endpoints for chat_shell service.
 
 Provides a simplified RAG retrieval endpoint for chat_shell HTTP mode.
 These endpoints are intended for service-to-service communication.
+
+Authentication:
+- Uses JWT token verification for all endpoints
+- JWT token should be passed in Authorization header: "Bearer <token>"
 """
 
 import logging
@@ -16,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
+from app.api.dependencies import get_db, verify_internal_jwt
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +55,11 @@ class InternalRetrieveResponse(BaseModel):
     total: int
 
 
-@router.post("/retrieve", response_model=InternalRetrieveResponse)
+@router.post(
+    "/retrieve",
+    response_model=InternalRetrieveResponse,
+    dependencies=[Depends(verify_internal_jwt)],
+)
 async def internal_retrieve(
     request: InternalRetrieveRequest,
     db: Session = Depends(get_db),
@@ -174,7 +182,11 @@ class KnowledgeBaseSizeResponse(BaseModel):
     total_estimated_tokens: int  # Sum of all estimated tokens
 
 
-@router.post("/kb-size", response_model=KnowledgeBaseSizeResponse)
+@router.post(
+    "/kb-size",
+    response_model=KnowledgeBaseSizeResponse,
+    dependencies=[Depends(verify_internal_jwt)],
+)
 async def get_knowledge_base_size(
     request: KnowledgeBaseSizeRequest,
     db: Session = Depends(get_db),
@@ -274,7 +286,11 @@ class SaveRagResultResponse(BaseModel):
     message: str = ""
 
 
-@router.post("/save-result", response_model=SaveRagResultResponse)
+@router.post(
+    "/save-result",
+    response_model=SaveRagResultResponse,
+    dependencies=[Depends(verify_internal_jwt)],
+)
 async def save_rag_result(
     request: SaveRagResultRequest,
     db: Session = Depends(get_db),
@@ -378,7 +394,11 @@ class AllChunksResponse(BaseModel):
     total: int
 
 
-@router.post("/all-chunks", response_model=AllChunksResponse)
+@router.post(
+    "/all-chunks",
+    response_model=AllChunksResponse,
+    dependencies=[Depends(verify_internal_jwt)],
+)
 async def get_all_chunks(
     request: AllChunksRequest,
     db: Session = Depends(get_db),

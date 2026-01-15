@@ -8,7 +8,8 @@ Provides internal API for chat_shell to download skill binaries.
 These endpoints are intended for service-to-service communication.
 
 Authentication:
-- In production, should be protected by network-level security
+- Uses JWT token verification for all endpoints
+- JWT token should be passed in Authorization header: "Bearer <token>"
 """
 
 import io
@@ -18,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
+from app.api.dependencies import get_db, verify_internal_jwt
 from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/skills", tags=["internal-skills"])
 
 
-@router.get("/{skill_id}/binary")
+@router.get("/{skill_id}/binary", dependencies=[Depends(verify_internal_jwt)])
 def get_skill_binary(
     skill_id: int,
     db: Session = Depends(get_db),

@@ -16,6 +16,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
+from ..auth_utils import get_backend_auth_headers
 from ..knowledge_content_cleaner import get_content_cleaner
 from ..knowledge_injection_strategy import InjectionMode, InjectionStrategy
 
@@ -340,9 +341,13 @@ class KnowledgeBaseTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
+                # Get authentication headers
+                headers = get_backend_auth_headers()
+
                 response = await client.post(
                     f"{backend_url}/api/internal/rag/kb-size",
                     json={"knowledge_base_ids": self.knowledge_base_ids},
+                    headers=headers,
                 )
 
                 if response.status_code == 200:
@@ -441,11 +446,15 @@ class KnowledgeBaseTool(BaseTool):
             backend_url = getattr(settings, "BACKEND_API_URL", "http://localhost:8000")
 
         async with httpx.AsyncClient(timeout=60.0) as client:
+            # Get authentication headers
+            headers = get_backend_auth_headers()
+
             for kb_id in self.knowledge_base_ids:
                 try:
                     response = await client.post(
                         f"{backend_url}/api/internal/rag/all-chunks",
                         json={"knowledge_base_id": kb_id, "max_chunks": 10000},
+                        headers=headers,
                     )
 
                     if response.status_code != 200:
@@ -578,6 +587,9 @@ class KnowledgeBaseTool(BaseTool):
             backend_url = getattr(settings, "BACKEND_API_URL", "http://localhost:8000")
 
         async with httpx.AsyncClient(timeout=30.0) as client:
+            # Get authentication headers
+            headers = get_backend_auth_headers()
+
             for kb_id in self.knowledge_base_ids:
                 try:
                     payload = {
@@ -591,6 +603,7 @@ class KnowledgeBaseTool(BaseTool):
                     response = await client.post(
                         f"{backend_url}/api/internal/rag/retrieve",
                         json=payload,
+                        headers=headers,
                     )
 
                     if response.status_code != 200:
@@ -955,6 +968,9 @@ class KnowledgeBaseTool(BaseTool):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
+                # Get authentication headers
+                headers = get_backend_auth_headers()
+
                 response = await client.post(
                     f"{backend_url}/api/internal/rag/save-result",
                     json={
@@ -963,6 +979,7 @@ class KnowledgeBaseTool(BaseTool):
                         "extracted_text": extracted_text,
                         "sources": kb_sources,
                     },
+                    headers=headers,
                 )
 
                 if response.status_code == 200:

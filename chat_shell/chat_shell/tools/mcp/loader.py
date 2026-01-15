@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from chat_shell.core.config import settings
+from chat_shell.tools.auth_utils import get_backend_auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -165,15 +166,11 @@ async def _get_bot_mcp_servers(bot_name: str, bot_namespace: str) -> dict[str, A
         MCP servers configuration dict
     """
     base_url = settings.REMOTE_STORAGE_URL.rstrip("/")
-    auth_token = settings.REMOTE_STORAGE_TOKEN
 
-    # Build headers
-    headers = {
-        "X-Service-Name": "chat-shell",
-        "Content-Type": "application/json",
-    }
-    if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}"
+    # Get authentication headers
+    headers = get_backend_auth_headers()
+    headers["X-Service-Name"] = "chat-shell"
+    headers["Content-Type"] = "application/json"
 
     # Build URL: /internal/bots/{bot_name}/mcp?namespace={bot_namespace}
     url = f"{base_url}/bots/{bot_name}/mcp"

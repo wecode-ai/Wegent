@@ -4,7 +4,7 @@
 
 from typing import Generator, Optional
 
-from fastapi import Path
+from fastapi import Depends, Header, HTTPException, Path, status
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
@@ -108,3 +108,51 @@ def with_task_subtask_telemetry(
     except Exception:
         pass
     return task_id, subtask_id
+
+
+def verify_internal_jwt(
+    authorization: str = Header(default=""), db: Session = Depends(get_db)
+) -> None:
+    """
+    Verify JWT token for internal API endpoints.
+
+    This dependency ensures that all internal API endpoints (used by chat_shell)
+    are protected with JWT authentication. It verifies:
+    1. Authorization header is present and starts with "Bearer "
+    2. JWT token is valid and not expired
+    3. User exists in database and is active
+
+    This is the recommended authentication method for service-to-service communication,
+    as it provides full user context for audit trails and access control.
+
+    Args:
+        authorization: Authorization header value
+        db: Database session
+
+    Raises:
+        HTTPException: 401 if authentication fails
+
+    Usage:
+        @router.get("/internal/endpoint", dependencies=[Depends(verify_internal_jwt)])
+        async def internal_endpoint():
+            ...
+    """
+    from app.core import security
+
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid Authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = authorization[7:].strip()
+
+    # Verify JWT token and get user
+    user = security.get_current_user_from_token(token, db)
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
