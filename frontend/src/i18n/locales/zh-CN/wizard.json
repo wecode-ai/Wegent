@@ -1,5 +1,7 @@
 {
   "title": "创建AI助手",
+  "confirm_close_title": "确定要放弃创建吗？",
+  "confirm_close_description": "您已填写的内容将不会被保存",
   "intro_title": "什么是智能体？",
   "intro_description": "智能体是一个专属于你的AI助手，它会按照你设定的方式工作，帮你处理特定类型的任务。通过这个向导，你可以快速创建一个符合你需求的智能体。",
   "intro_when_to_create": "什么时候应该创建新的智能体？",

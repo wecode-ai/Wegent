@@ -359,6 +359,27 @@ export default function TeamCreationWizard({
     await generatePrompt()
   }, [generatePrompt])
 
+  // Check if there are any unsaved changes in the wizard
+  const hasUnsavedChanges = useCallback(() => {
+    // Check if user has entered any meaningful data
+    const hasCoreAnswers =
+      state.coreAnswers.purpose.trim() !== '' ||
+      (state.coreAnswers.special_requirements?.trim() ?? '') !== ''
+
+    const hasFollowupData = state.followupRounds.length > 0
+
+    const hasPromptData =
+      state.systemPrompt !== '' || state.agentName !== '' || state.agentDescription !== ''
+
+    return hasCoreAnswers || hasFollowupData || hasPromptData
+  }, [
+    state.coreAnswers,
+    state.followupRounds,
+    state.systemPrompt,
+    state.agentName,
+    state.agentDescription,
+  ])
+
   // Render current step content
   const renderStepContent = () => {
     switch (state.currentStep) {
@@ -436,6 +457,12 @@ export default function TeamCreationWizard({
         className={`max-w-5xl overflow-hidden flex flex-col ${
           isPreviewStep ? 'h-[90vh]' : 'max-h-[90vh]'
         }`}
+        preventEscapeClose
+        preventOutsideClick
+        onBeforeClose={hasUnsavedChanges}
+        onConfirmClose={handleClose}
+        confirmTitle={t('wizard:confirm_close_title')}
+        confirmDescription={t('wizard:confirm_close_description')}
       >
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">

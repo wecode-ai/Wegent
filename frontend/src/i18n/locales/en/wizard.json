@@ -1,5 +1,7 @@
 {
   "title": "Create AI Assistant",
+  "confirm_close_title": "Discard creation?",
+  "confirm_close_description": "Your entered content will not be saved",
   "intro_title": "What is an Agent?",
   "intro_description": "An Agent is your personal AI assistant that works according to your specifications to handle specific types of tasks. This wizard helps you quickly create an agent tailored to your needs.",
   "intro_when_to_create": "When should you create a new agent?",

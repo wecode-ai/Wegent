@@ -74,8 +74,12 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 # Gerrit requires username parameter for validation
                 if provider_type == "gerrit":
                     username = git_item.get("user_name")
+                    auth_type = git_item.get("auth_type") or "digest"
                     validation_result = provider.validate_token(
-                        plain_token, git_domain=git_domain, user_name=username
+                        plain_token,
+                        git_domain=git_domain,
+                        user_name=username,
+                        auth_type=auth_type,
                     )
                 else:
                     validation_result = provider.validate_token(
@@ -83,6 +87,10 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                     )
 
                 if not validation_result.get("valid", False):
+                    # Check for auth method mismatch error
+                    error_msg = validation_result.get("message", "")
+                    if error_msg:
+                        raise ValidationException(error_msg)
                     raise ValidationException(f"Invalid {provider_type} token")
 
                 user_data = validation_result.get("user", {})

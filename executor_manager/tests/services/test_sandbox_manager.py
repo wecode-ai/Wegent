@@ -312,9 +312,11 @@ class TestSandboxManager:
         mocker.patch.object(
             manager._health_checker, "check_health_sync", return_value=True
         )
+        mock_executor = MagicMock()
+        mock_executor.delete_executor.return_value = {"status": "success"}
         mocker.patch(
-            "executor_manager.services.sandbox.manager.delete_container",
-            return_value={"status": "success"},
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+            return_value=mock_executor,
         )
 
         success, message = await manager.terminate_sandbox("12345")
@@ -349,9 +351,11 @@ class TestSandboxManager:
         mocker.patch.object(
             manager._health_checker, "check_health_sync", return_value=True
         )
+        mock_executor = MagicMock()
+        mock_executor.delete_executor.return_value = {"status": "success"}
         mocker.patch(
-            "executor_manager.services.sandbox.manager.delete_container",
-            return_value={"status": "success"},
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+            return_value=mock_executor,
         )
 
         await manager.terminate_sandbox("12345")
@@ -809,10 +813,12 @@ class TestSandboxManager:
             return_value=mock_heartbeat,
         )
 
-        # Mock delete_container to avoid actual Docker calls
-        mock_delete_container = mocker.patch(
-            "executor_manager.services.sandbox.manager.delete_container",
-            return_value={"status": "success"},
+        # Mock ExecutorDispatcher to avoid actual Docker calls
+        mock_executor = MagicMock()
+        mock_executor.delete_executor.return_value = {"status": "success"}
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+            return_value=mock_executor,
         )
 
         await manager._handle_executor_dead("12345", 1704067000.0)
@@ -820,7 +826,7 @@ class TestSandboxManager:
         # Verify heartbeat key was deleted
         mock_heartbeat.delete_heartbeat.assert_called_once()
         # Verify container deletion was attempted
-        mock_delete_container.assert_called_once()
+        mock_executor.delete_executor.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_collect_expired_sandboxes_terminates_old(

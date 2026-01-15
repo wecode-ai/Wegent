@@ -19,10 +19,10 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from shared.logger import setup_logger
 
 from executor_manager.common.config import get_config
+from executor_manager.common.distributed_lock import get_distributed_lock
 from executor_manager.common.singleton import SingletonMeta
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
-from executor_manager.executors.docker.utils import delete_container
 from executor_manager.models.sandbox import (Execution, ExecutionStatus,
                                              Sandbox, SandboxStatus)
 from executor_manager.services.heartbeat_manager import get_heartbeat_manager
@@ -376,7 +376,8 @@ class SandboxManager(metaclass=SingletonMeta):
 
             # Try to delete container (might already be gone)
             try:
-                delete_container(sandbox.container_name)
+                executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+                executor.delete_executor(sandbox.container_name)
             except Exception:
                 pass  # Container might already be deleted
 
@@ -413,7 +414,8 @@ class SandboxManager(metaclass=SingletonMeta):
 
         # Delete container
         try:
-            result = delete_container(sandbox.container_name)
+            executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+            result = executor.delete_executor(sandbox.container_name)
             if result.get("status") != "success":
                 logger.warning(
                     f"[SandboxManager] Failed to delete container: {result.get('error_msg')}"
@@ -894,6 +896,8 @@ class SandboxManager(metaclass=SingletonMeta):
         if sandbox:
             sandbox.set_failed("SubAgent crashed")
             self._repository.save_sandbox(sandbox)
+            # Remove from active set to prevent repeated heartbeat checks
+            self._repository.remove_from_active_set(sandbox_id)
             logger.info(
                 f"[SandboxManager] Marked sandbox {sandbox_id} as failed, "
                 "data preserved for client polling"
@@ -901,7 +905,8 @@ class SandboxManager(metaclass=SingletonMeta):
 
             # Try to delete container (but don't delete Redis data)
             try:
-                result = delete_container(sandbox.container_name)
+                executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+                result = executor.delete_executor(sandbox.container_name)
                 if result.get("status") != "success":
                     logger.warning(
                         f"[SandboxManager] Failed to delete container: {result.get('error_msg')}"
@@ -909,47 +914,61 @@ class SandboxManager(metaclass=SingletonMeta):
             except Exception as e:
                 logger.warning(f"[SandboxManager] Error deleting container: {e}")
 
+    async def _terminate_expired_sandbox(self, task_id_str: str) -> None:
+        """Terminate a single expired sandbox.
+
+        Args:
+            task_id_str: Task ID as string
+        """
+        sandbox = self._repository.load_sandbox(task_id_str)
+        if sandbox is None:
+            # Clean up orphaned ZSet entry
+            self._repository.remove_from_active_set(task_id_str)
+            logger.debug(f"[SandboxManager] Cleaned orphaned ZSet entry: {task_id_str}")
+            return
+
+        logger.info(
+            f"[SandboxManager] Terminating expired sandbox: {sandbox.sandbox_id}, "
+            f"last_activity={sandbox.last_activity_at}"
+        )
+        await self.terminate_sandbox(task_id_str)
+
     async def _collect_expired_sandboxes(self) -> None:
         """Terminate expired sandboxes.
 
         Uses repository to efficiently find sandboxes whose last_activity_timestamp
         is older than the configured TTL.
         """
-        logger.info("[SandboxManager] Running sandbox GC...")
-        expired_task_ids = self._repository.get_expired_sandbox_ids(
-            self._config.timeout.redis_ttl
-        )
-
-        if not expired_task_ids:
-            logger.info("[SandboxManager] No expired sandboxes found")
+        lock = get_distributed_lock()
+        if not lock.acquire("sandbox_gc", expire_seconds=300):
+            logger.info(
+                "[SandboxManager] Sandbox GC already running on another instance, skipping"
+            )
             return
 
-        logger.info(
-            f"[SandboxManager] Found {len(expired_task_ids)} expired sandboxes to clean up"
-        )
+        try:
+            logger.info("[SandboxManager] Running sandbox GC...")
+            expired_task_ids = self._repository.get_expired_sandbox_ids(
+                self._config.timeout.redis_ttl
+            )
 
-        for task_id_str in expired_task_ids:
-            try:
-                sandbox = self._repository.load_sandbox(task_id_str)
-                if sandbox is None:
-                    # Clean up orphaned ZSet entry
-                    self._repository.remove_from_active_set(task_id_str)
-                    logger.debug(
-                        f"[SandboxManager] Cleaned orphaned ZSet entry: {task_id_str}"
+            if not expired_task_ids:
+                logger.info("[SandboxManager] No expired sandboxes found")
+                return
+
+            logger.info(
+                f"[SandboxManager] Found {len(expired_task_ids)} expired sandboxes to clean up"
+            )
+
+            for task_id_str in expired_task_ids:
+                try:
+                    await self._terminate_expired_sandbox(task_id_str)
+                except Exception as e:
+                    logger.warning(
+                        f"[SandboxManager] Failed to terminate expired sandbox {task_id_str}: {e}"
                     )
-                    continue
-
-                logger.info(
-                    f"[SandboxManager] Terminating expired sandbox: {sandbox.sandbox_id}, "
-                    f"last_activity={sandbox.last_activity_at}"
-                )
-                await self.terminate_sandbox(task_id_str)
-
-            except Exception as e:
-                logger.warning(
-                    f"[SandboxManager] Failed to terminate expired sandbox {task_id_str}: {e}"
-                )
-                continue
+        finally:
+            lock.release("sandbox_gc")
 
 
 def get_sandbox_manager() -> SandboxManager:

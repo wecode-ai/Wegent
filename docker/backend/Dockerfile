@@ -33,6 +33,13 @@ COPY backend /app
 # Also copy shared to /app/shared for PYTHONPATH imports
 COPY shared /app/shared
 
+# Copy init_data directory with default resources and skills into the image
+# This includes:
+# - 01-default-resources.yaml: Default Ghost, Model, Shell, Bot, Team resources
+# - 02-public-shells.yaml: Public shell configurations
+# - skills/: Skill packages (mermaid-diagram, wiki_submit, subagent)
+COPY backend/init_data /app/init_data
+
 # Create .env file (if it doesn't exist)
 RUN if [ ! -f .env ]; then cp .env.example .env; fi
 

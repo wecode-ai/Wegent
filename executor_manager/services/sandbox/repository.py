@@ -85,6 +85,8 @@ class SandboxRepository(metaclass=SingletonMeta):
                 "sandbox_id": sandbox.sandbox_id,
                 "container_name": sandbox.container_name,
                 "base_url": sandbox.base_url,
+                "status": sandbox.status.value,
+                "error_message": sandbox.error_message,
                 "created_at": sandbox.created_at,
                 "shell_type": sandbox.shell_type,
                 "user_id": sandbox.user_id,
@@ -131,8 +133,11 @@ class SandboxRepository(metaclass=SingletonMeta):
             container_name = sandbox_info["container_name"]
             base_url = sandbox_info.get("base_url")
 
-            # Determine status based on base_url availability
-            if base_url:
+            # Determine status: use saved status if available, otherwise infer from base_url
+            saved_status = sandbox_info.get("status")
+            if saved_status:
+                status = SandboxStatus(saved_status)
+            elif base_url:
                 status = SandboxStatus.RUNNING
             else:
                 status = SandboxStatus.PENDING
