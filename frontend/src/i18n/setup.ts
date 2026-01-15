@@ -26,6 +26,7 @@ async function loadTranslations() {
     'knowledge',
     'shared-task',
     'promptTune',
+    'projects',
   ]
 
   for (const lng of supportedLanguages) {
@@ -75,6 +76,7 @@ export async function initI18n() {
       'knowledge',
       'shared-task',
       'promptTune',
+      'projects',
     ],
   })
 
