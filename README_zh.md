@@ -14,7 +14,11 @@
 
 <div align="center">
 
-<img src="./docs/assets/images/example.gif" width="75%" alt="演示"/>
+<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
+
+<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
+
+<img src="https://github.com/user-attachments/assets/00e14d3d-b028-46fb-be04-1b2e53c879d6" width="100%" alt="Knowledge Demo"/>
 
 [快速开始](#-快速开始) · [文档](docs/zh/README.md) · [开发指南](docs/zh/guides/developer/setup.md)
 
