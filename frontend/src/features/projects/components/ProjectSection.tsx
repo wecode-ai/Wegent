@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 
 interface ProjectSectionProps {
   onTaskSelect?: () => void
@@ -32,8 +33,9 @@ interface ProjectSectionProps {
 export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
   const { t } = useTranslation('projects')
   const router = useRouter()
-  const { projects, isLoading, expandedProjects, toggleProjectExpanded } = useProjectContext()
+  const { projects, isLoading, expandedProjects, toggleProjectExpanded, selectedProjectTaskId, setSelectedProjectTaskId } = useProjectContext()
   const { clearAllStreams } = useChatStreamContext()
+  const { setSelectedTask } = useTaskContext()
 
   // Dialog states
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -58,6 +60,12 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
   const handleTaskClick = (projectTask: ProjectTask) => {
     // Clear all stream states when switching tasks
     clearAllStreams()
+
+    // Set project task as selected (for project section highlight)
+    setSelectedProjectTaskId(projectTask.task_id)
+
+    // Clear TaskContext's selectedTask to remove highlight from history section
+    setSelectedTask(null)
 
     // Navigate to the appropriate page based on task type
     const params = new URLSearchParams()
@@ -121,6 +129,7 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
                   onEdit={() => handleEditProject(project)}
                   onDelete={() => handleDeleteProject(project)}
                   onTaskClick={handleTaskClick}
+                  selectedProjectTaskId={selectedProjectTaskId}
                 />
               </DroppableProject>
             ))
@@ -151,6 +160,7 @@ interface ProjectItemProps {
   onEdit: () => void
   onDelete: () => void
   onTaskClick: (projectTask: ProjectTask) => void
+  selectedProjectTaskId: number | null
 }
 
 function ProjectItem({
@@ -160,6 +170,7 @@ function ProjectItem({
   onEdit,
   onDelete,
   onTaskClick,
+  selectedProjectTaskId,
 }: ProjectItemProps) {
   const { t } = useTranslation('projects')
   const taskCount = project.tasks?.length || 0
@@ -235,19 +246,24 @@ function ProjectItem({
       {/* Task List (when expanded) */}
       {isExpanded && taskCount > 0 && (
         <div className="ml-6 space-y-0.5">
-          {project.tasks?.map(projectTask => (
-            <div
-              key={projectTask.id}
-              onClick={() => onTaskClick(projectTask)}
-              className={cn(
-                'flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer',
-                'text-sm text-text-secondary hover:text-text-primary hover:bg-surface',
-                'transition-colors'
-              )}
-            >
-              <span className="truncate">{projectTask.task_title || `Task #${projectTask.task_id}`}</span>
-            </div>
-          ))}
+          {project.tasks?.map(projectTask => {
+            const isSelected = selectedProjectTaskId === projectTask.task_id
+            return (
+              <div
+                key={projectTask.id}
+                onClick={() => onTaskClick(projectTask)}
+                className={cn(
+                  'flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer',
+                  'text-sm transition-colors',
+                  isSelected
+                    ? 'bg-primary/10 text-text-primary'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-surface'
+                )}
+              >
+                <span className="truncate">{projectTask.task_title || `Task #${projectTask.task_id}`}</span>
+              </div>
+            )
+          })}
         </div>
       )}
 

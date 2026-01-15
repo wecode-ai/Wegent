@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
+import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react'
 import { ProjectWithTasks, ProjectTask } from '@/types/api'
 import {
   projectApis,
@@ -33,6 +33,13 @@ interface ProjectContextValue {
   // UI state
   toggleProjectExpanded: (projectId: number) => void
   expandedProjects: Set<number>
+
+  // Highlight control - track which task is selected in project section
+  selectedProjectTaskId: number | null
+  setSelectedProjectTaskId: (taskId: number | null) => void
+
+  // Computed set of all task IDs in projects (for filtering in history list)
+  projectTaskIds: Set<number>
 }
 
 const ProjectContext = createContext<ProjectContextValue | undefined>(undefined)
@@ -45,6 +52,21 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expandedProjects, setExpandedProjects] = useState<Set<number>>(new Set())
+
+  // Track which task is selected in the project section (for highlight control)
+  const [selectedProjectTaskId, setSelectedProjectTaskId] = useState<number | null>(null)
+
+  // Compute the set of all task IDs that are in any project
+  // This is used to filter these tasks from the history list
+  const projectTaskIds = useMemo(() => {
+    const ids = new Set<number>()
+    projects.forEach(project => {
+      project.tasks?.forEach(task => {
+        ids.add(task.task_id)
+      })
+    })
+    return ids
+  }, [projects])
 
   // Fetch projects
   const refreshProjects = useCallback(async () => {
@@ -264,6 +286,9 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     removeTaskFromProject,
     toggleProjectExpanded,
     expandedProjects,
+    selectedProjectTaskId,
+    setSelectedProjectTaskId,
+    projectTaskIds,
   }
 
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>
