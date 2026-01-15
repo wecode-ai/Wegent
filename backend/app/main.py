@@ -273,7 +273,14 @@ async def lifespan(app: FastAPI):
     await shutdown_pending_request_registry()
     logger.info("✓ PendingRequestRegistry shutdown completed")
 
-    # Step 5: Shutdown OpenTelemetry
+    # Step 5: Shutdown Memory Service
+    from app.services.memory import get_memory_service
+
+    memory_service = get_memory_service()
+    await memory_service.close()
+    logger.info("✓ Memory service shutdown completed")
+
+    # Step 6: Shutdown OpenTelemetry
     from shared.telemetry.config import get_otel_config
     from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 

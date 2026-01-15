@@ -159,9 +159,6 @@ class TestTokenOperations:
         # Since create_access_token doesn't support negative values properly,
         # we'll create a token manually with past expiration
         import time
-        from datetime import datetime, timedelta
-
-        from jose import jwt
 
         expired_data = data.copy()
         # Use timestamp for expiration (1 minute ago)
