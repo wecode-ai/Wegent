@@ -437,19 +437,12 @@ def _build_history_message(
         # Check if this is an artifact result (from create_artifact/update_artifact tools)
         # Artifact results have structure: {"type": "artifact", "artifact": {...}}
         if subtask.result.get("type") == "artifact":
-            artifact = subtask.result.get("artifact", {})
-            artifact_content = artifact.get("content", "")
-            title = artifact.get("title", "Untitled")
-            artifact_type = artifact.get("artifact_type", "text")
-            language = artifact.get("language", "")
+            from app.utils import format_artifact_for_history
 
-            if artifact_content:
-                # Format artifact content with context for follow-up conversations
-                # This allows the AI to see and modify the artifact in subsequent messages
-                if artifact_type == "code" and language:
-                    formatted_content = f"[Created Artifact: {title}]\n```{language}\n{artifact_content}\n```"
-                else:
-                    formatted_content = f"[Created Artifact: {title}]\n{artifact_content}"
+            artifact = subtask.result.get("artifact", {})
+            if artifact.get("content"):
+                # Use shared formatting function
+                formatted_content = format_artifact_for_history(artifact)
                 return {"role": "assistant", "content": formatted_content}
 
         content = subtask.result.get("value", "")

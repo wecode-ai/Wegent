@@ -78,29 +78,40 @@ export function useCanvasIntegration(
     setIsFullscreen(prev => !prev)
   }, [])
 
-  // Handle version revert
+  // Handle version revert - calls API to get version content and revert
   const handleVersionRevert = useCallback(
-    (version: number) => {
-      if (!artifact) return
+    async (version: number) => {
+      if (!artifact || !taskId) return
 
-      const targetVersion = artifact.versions.find(v => v.version === version)
-      if (!targetVersion) return
+      // If reverting to current version, do nothing
+      if (version === artifact.version) return
 
-      const newVersionNumber = artifact.version + 1
-      const newVersion = {
-        version: newVersionNumber,
-        content: targetVersion.content,
-        created_at: new Date().toISOString(),
+      try {
+        setIsCanvasLoading(true)
+
+        // Call API to revert to target version
+        const response = await fetch(`/api/canvas/tasks/${taskId}/artifact/revert/${version}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        })
+
+        if (!response.ok) {
+          throw new Error(`Failed to revert: ${response.statusText}`)
+        }
+
+        const data = await response.json()
+        if (data.artifact) {
+          setArtifact(data.artifact)
+        }
+      } catch (error) {
+        console.error('[useCanvasIntegration] Version revert failed:', error)
+      } finally {
+        setIsCanvasLoading(false)
       }
-
-      setArtifact({
-        ...artifact,
-        content: targetVersion.content,
-        version: newVersionNumber,
-        versions: [...artifact.versions, newVersion],
-      })
     },
-    [artifact]
+    [artifact, taskId]
   )
 
   // Handle quick action

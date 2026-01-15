@@ -19,10 +19,6 @@ import {
 import { cn } from '@/lib/utils'
 import type { Artifact } from '../types'
 
-function classNames(...classes: string[]) {
-  return classes.filter(Boolean).join(' ')
-}
-
 interface CanvasPanelProps {
   artifact: Artifact | null
   isLoading?: boolean
@@ -157,7 +153,7 @@ export function CanvasPanel({
         <div className="flex items-center gap-4">
           <button
             onClick={() => setActiveTab('content')}
-            className={classNames(
+            className={cn(
               'text-sm font-medium',
               activeTab === 'content'
                 ? 'text-text-primary'
@@ -168,7 +164,7 @@ export function CanvasPanel({
           </button>
           <button
             onClick={() => setActiveTab('versions')}
-            className={classNames(
+            className={cn(
               'text-sm font-medium flex items-center gap-1',
               activeTab === 'versions'
                 ? 'text-text-primary'
@@ -297,7 +293,7 @@ export function CanvasPanel({
                     onVersionRevert?.(v.version)
                     setActiveTab('content')
                   }}
-                  className={classNames(
+                  className={cn(
                     'w-full text-left rounded border border-border bg-surface p-3 hover:bg-muted/50 transition-colors',
                     v.version === artifact.version ? 'ring-2 ring-primary' : ''
                   )}

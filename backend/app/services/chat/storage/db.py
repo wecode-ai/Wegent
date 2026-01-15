@@ -111,6 +111,9 @@ class DatabaseHandler:
 
                 if result is not None:
                     subtask.result = result
+                    # If result contains artifact, also store in task.json["canvas"]
+                    if result.get("type") == "artifact" and result.get("artifact"):
+                        self._save_artifact_to_canvas(db, subtask.task_id, result["artifact"])
                 if error is not None:
                     subtask.error_message = error
                 if status in _TERMINAL_STATUSES:
@@ -121,6 +124,101 @@ class DatabaseHandler:
             self._update_task_status_sync(task_id)
         except Exception:
             logger.exception("Error updating subtask %s status", subtask_id)
+
+    def _save_artifact_to_canvas(
+        self, db: Session, task_id: int, artifact: dict[str, Any]
+    ) -> None:
+        """Save artifact to task.json['canvas'] with diff-based history.
+
+        This method:
+        1. Gets or initializes canvas data in task.json
+        2. If artifact exists, creates diff and adds to history
+        3. Updates current artifact content
+        """
+        from app.models.task import TaskResource
+        from app.utils import create_diff
+
+        try:
+            task = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.id == task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active,
+                )
+                .first()
+            )
+            if not task:
+                logger.warning("[Canvas] Task %d not found for artifact save", task_id)
+                return
+
+            # Initialize task.json if needed
+            if task.json is None:
+                task.json = {}
+
+            # Initialize canvas structure
+            if "canvas" not in task.json:
+                task.json["canvas"] = {"enabled": True, "artifact": None, "history": []}
+
+            canvas_data = task.json["canvas"]
+            existing_artifact = canvas_data.get("artifact")
+            history = canvas_data.get("history", [])
+            now = datetime.now().isoformat()
+
+            if existing_artifact:
+                # Update existing artifact - create diff for version history
+                old_content = existing_artifact.get("content", "")
+                new_content = artifact.get("content", "")
+                diff = create_diff(old_content, new_content)
+
+                # Increment version
+                new_version = existing_artifact.get("version", 1) + 1
+                history.append({
+                    "version": new_version,
+                    "diff": diff,
+                    "created_at": now,
+                })
+
+                # Update artifact
+                existing_artifact["content"] = new_content
+                existing_artifact["version"] = new_version
+                if artifact.get("title"):
+                    existing_artifact["title"] = artifact["title"]
+
+                logger.debug(
+                    "[Canvas] Updated artifact for task %d: version=%d, diff_len=%d",
+                    task_id,
+                    new_version,
+                    len(diff) if diff else 0,
+                )
+            else:
+                # Create new artifact
+                canvas_data["artifact"] = {
+                    "id": artifact.get("id", ""),
+                    "artifact_type": artifact.get("artifact_type", "text"),
+                    "title": artifact.get("title", "Untitled"),
+                    "content": artifact.get("content", ""),
+                    "version": 1,
+                }
+                if artifact.get("language"):
+                    canvas_data["artifact"]["language"] = artifact["language"]
+
+                # Initialize history with first version
+                history = [{"version": 1, "diff": None, "created_at": now}]
+
+                logger.debug(
+                    "[Canvas] Created new artifact for task %d: id=%s",
+                    task_id,
+                    artifact.get("id", ""),
+                )
+
+            canvas_data["history"] = history
+            canvas_data["enabled"] = True
+            task.json["canvas"] = canvas_data
+            flag_modified(task, "json")
+
+        except Exception:
+            logger.exception("[Canvas] Error saving artifact to canvas for task %d", task_id)
 
     def _update_task_status_sync(self, task_id: int) -> None:
         """Update task status based on subtask status."""

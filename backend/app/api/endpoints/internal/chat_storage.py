@@ -199,33 +199,28 @@ def subtask_to_message(
         # For assistant, content is in result.value or result.artifact.content
         if subtask.result and isinstance(subtask.result, dict):
             # Debug logging
-            logger.info(
-                f"[subtask_to_message] Processing assistant subtask {subtask.id}, "
-                f"result keys: {list(subtask.result.keys())}, "
-                f"result type: {subtask.result.get('type', 'N/A')}"
+            logger.debug(
+                "[subtask_to_message] Processing assistant subtask %d, result keys: %s, result type: %s",
+                subtask.id,
+                list(subtask.result.keys()),
+                subtask.result.get("type", "N/A"),
             )
             # Check if this is an artifact result (from create_artifact/update_artifact tools)
             # Artifact results have structure: {"type": "artifact", "artifact": {...}}
             if subtask.result.get("type") == "artifact":
-                artifact = subtask.result.get("artifact", {})
-                artifact_content = artifact.get("content", "")
-                artifact_id = artifact.get("id", "")
-                title = artifact.get("title", "Untitled")
-                artifact_type = artifact.get("artifact_type", "text")
-                language = artifact.get("language", "")
+                from app.utils import format_artifact_for_history
 
-                logger.info(
-                    f"[subtask_to_message] Found artifact: id={artifact_id}, title={title}, "
-                    f"content_len={len(artifact_content)}, type={artifact_type}"
+                artifact = subtask.result.get("artifact", {})
+                logger.debug(
+                    "[subtask_to_message] Found artifact: id=%s, title=%s, content_len=%d",
+                    artifact.get("id", ""),
+                    artifact.get("title", ""),
+                    len(artifact.get("content", "")),
                 )
 
-                if artifact_content:
-                    # Format artifact content with context for follow-up conversations
-                    # Include artifact_id so AI can use update_artifact tool
-                    if artifact_type == "code" and language:
-                        content = f"[Created Artifact: {title} (artifact_id: {artifact_id})]\n```{language}\n{artifact_content}\n```"
-                    else:
-                        content = f"[Created Artifact: {title} (artifact_id: {artifact_id})]\n{artifact_content}"
+                if artifact.get("content"):
+                    # Use shared formatting function
+                    content = format_artifact_for_history(artifact)
                 else:
                     content = ""
             else:

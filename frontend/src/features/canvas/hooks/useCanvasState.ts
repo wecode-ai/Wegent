@@ -84,48 +84,25 @@ export function useCanvasState(options: UseCanvasStateOptions = {}): CanvasState
   const versions = useMemo(() => artifact?.versions ?? [], [artifact?.versions])
 
   const revertToVersion = useCallback(
-    (version: number) => {
-      if (!artifact) return
-
-      const targetVersion = artifact.versions.find(v => v.version === version)
-      if (!targetVersion) return
-
-      const newVersionNumber = artifact.version + 1
-      const newVersion: ArtifactVersion = {
-        version: newVersionNumber,
-        content: targetVersion.content,
-        created_at: new Date().toISOString(),
-      }
-
-      const updatedArtifact: Artifact = {
-        ...artifact,
-        content: targetVersion.content,
-        version: newVersionNumber,
-        versions: [...artifact.versions, newVersion],
-      }
-
-      setArtifact(updatedArtifact)
+    (_version: number) => {
+      // Version revert is now handled by the API
+      // This local function is kept for compatibility but does nothing
+      // Use the API endpoint POST /tasks/{task_id}/artifact/revert/{version} instead
+      console.warn('[useCanvasState] revertToVersion called locally - use API instead')
     },
-    [artifact, setArtifact]
+    []
   )
 
-  // Content management
+  // Content management - updates local state only (for streaming updates)
+  // Backend handles version history automatically when artifact is saved
   const updateContent = useCallback(
     (content: string) => {
       if (!artifact) return
 
-      const newVersionNumber = artifact.version + 1
-      const newVersion: ArtifactVersion = {
-        version: newVersionNumber,
-        content,
-        created_at: new Date().toISOString(),
-      }
-
+      // Update content locally - version history is managed by backend
       const updatedArtifact: Artifact = {
         ...artifact,
         content,
-        version: newVersionNumber,
-        versions: [...artifact.versions, newVersion],
       }
 
       setArtifact(updatedArtifact)

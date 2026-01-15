@@ -8,8 +8,11 @@ This tool enables the AI to generate artifacts (code or text documents)
 that are displayed in the Canvas panel. Artifacts support:
 - Code with syntax highlighting
 - Text/markdown documents
-- Version history
+- Version history (managed by backend)
 - Quick actions for modifications
+
+Note: The tools only generate artifact data. Version history and storage
+are managed by the backend (in TaskResource.json["canvas"]).
 """
 
 import json
@@ -67,6 +70,8 @@ class CreateArtifactTool(BaseTool):
     This tool creates a new artifact (code or text document) that will be
     displayed in the Canvas panel. The artifact data is returned in a
     structured format that the frontend can parse and display.
+
+    Note: Version history is managed by the backend, not by this tool.
     """
 
     name: str = "create_artifact"
@@ -105,8 +110,8 @@ Returns:
         **_,
     ) -> str:
         """Create a new artifact."""
-        logger.info(
-            "[CreateArtifactTool] _run called with: artifact_type=%s, title=%s, language=%s, content_length=%d",
+        logger.debug(
+            "[CreateArtifactTool] Creating artifact: type=%s, title=%s, language=%s, content_len=%d",
             artifact_type,
             title,
             language,
@@ -116,13 +121,14 @@ Returns:
             artifact_id = str(uuid.uuid4())
             now = datetime.utcnow().isoformat()
 
+            # Create artifact data (version history managed by backend)
             artifact = {
                 "id": artifact_id,
                 "artifact_type": artifact_type,
                 "title": title,
                 "content": content,
                 "version": 1,
-                "versions": [{"version": 1, "content": content, "created_at": now}],
+                "created_at": now,
             }
 
             if language and artifact_type == "code":
@@ -135,14 +141,12 @@ Returns:
                 "message": f"Created {artifact_type} artifact: {title}",
             }
 
-            logger.info(
-                "[CreateArtifactTool] Created artifact: id=%s, type=%s, title=%s, content_length=%d",
+            logger.debug(
+                "[CreateArtifactTool] Created artifact: id=%s, type=%s, title=%s",
                 artifact_id,
                 artifact_type,
                 title,
-                len(content),
             )
-            logger.info("[CreateArtifactTool] Returning result: %s", result)
 
             return json.dumps(result, ensure_ascii=False)
 
@@ -159,15 +163,20 @@ Returns:
         **_,
     ) -> str:
         """Async version - delegates to sync."""
-        logger.info("[CreateArtifactTool] _arun called, delegating to _run")
         return self._run(artifact_type, title, content, language)
 
 
 class UpdateArtifactTool(BaseTool):
     """Tool for updating existing Canvas artifacts.
 
-    This tool updates an existing artifact with new content, creating
-    a new version in the history.
+    This tool updates an existing artifact with new content.
+    Version history is managed by the backend (diff storage).
+
+    Note: This tool does NOT track state. It simply returns the updated
+    artifact data. The backend is responsible for:
+    - Computing diff between old and new content
+    - Storing the diff in history
+    - Managing version numbers
     """
 
     name: str = "update_artifact"
@@ -184,7 +193,7 @@ This creates a new version while preserving the original.
 
 Args:
     artifact_id: ID of the artifact to update
-    content: Updated content
+    content: Updated content (FULL content, not just changes)
     title: New title (optional)
 
 Returns:
@@ -192,54 +201,47 @@ Returns:
 """
     args_schema: type[BaseModel] = UpdateArtifactInput
 
-    # Store current artifacts for version tracking
-    _artifacts: dict = {}
-
     def _run(
         self, artifact_id: str, content: str, title: str | None = None, **_
     ) -> str:
-        """Update an existing artifact."""
+        """Update an existing artifact.
+
+        Note: We don't track version numbers here. The backend will:
+        1. Get the current artifact from task.json["canvas"]["artifact"]
+        2. Compute diff between old and new content
+        3. Store diff in history
+        4. Update the artifact with new content and incremented version
+        """
         try:
             now = datetime.utcnow().isoformat()
 
-            # Get existing artifact or create placeholder
-            existing = self._artifacts.get(artifact_id, {})
-            current_version = existing.get("version", 1)
-            new_version = current_version + 1
-
-            # Get existing versions or start fresh
-            versions = existing.get("versions", [])
-            versions.append({"version": new_version, "content": content, "created_at": now})
-
+            # Return updated artifact data
+            # Backend will handle version incrementing and diff storage
             artifact = {
                 "id": artifact_id,
-                "artifact_type": existing.get("artifact_type", "code"),
-                "title": title or existing.get("title", "Untitled"),
                 "content": content,
-                "language": existing.get("language"),
-                "version": new_version,
-                "versions": versions,
+                "updated_at": now,
             }
 
-            # Store updated artifact
-            self._artifacts[artifact_id] = artifact
+            if title:
+                artifact["title"] = title
 
             result = {
                 "type": "artifact",
                 "artifact": artifact,
-                "message": f"Updated artifact to version {new_version}",
+                "message": "Updated artifact content",
             }
 
-            logger.info(
-                "[UpdateArtifactTool] Updated artifact: id=%s, new_version=%d",
+            logger.debug(
+                "[UpdateArtifactTool] Updated artifact: id=%s, content_len=%d",
                 artifact_id,
-                new_version,
+                len(content),
             )
 
             return json.dumps(result, ensure_ascii=False)
 
         except Exception as e:
-            logger.exception("Error updating artifact")
+            logger.exception("[UpdateArtifactTool] Error updating artifact")
             return json.dumps({"error": f"Failed to update artifact: {e}"})
 
     async def _arun(
@@ -316,7 +318,7 @@ Returns instructions for performing the requested action.
                 "message": f"Please {action} the artifact and use update_artifact to save changes.",
             }
 
-            logger.info(
+            logger.debug(
                 "[ArtifactQuickActionTool] Quick action: artifact_id=%s, action=%s",
                 artifact_id,
                 action,
@@ -325,7 +327,7 @@ Returns instructions for performing the requested action.
             return json.dumps(result, ensure_ascii=False)
 
         except Exception as e:
-            logger.exception("Error processing quick action")
+            logger.exception("[ArtifactQuickActionTool] Error processing quick action")
             return json.dumps({"error": f"Failed to process quick action: {e}"})
 
     async def _arun(
@@ -341,11 +343,15 @@ def create_canvas_tools() -> list[BaseTool]:
     Returns:
         List of Canvas tools to register with the agent
     """
-    logger.info("[create_canvas_tools] Creating Canvas tools...")
+    logger.debug("[create_canvas_tools] Creating Canvas tools...")
     tools = [
         CreateArtifactTool(),
         UpdateArtifactTool(),
         ArtifactQuickActionTool(),
     ]
-    logger.info("[create_canvas_tools] Created %d Canvas tools: %s", len(tools), [t.name for t in tools])
+    logger.debug(
+        "[create_canvas_tools] Created %d Canvas tools: %s",
+        len(tools),
+        [t.name for t in tools],
+    )
     return tools

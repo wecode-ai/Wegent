@@ -266,7 +266,7 @@ export function ChatPageDesktop() {
           <div
             className="transition-all duration-300 ease-in-out flex flex-col min-h-0"
             style={{
-              width: hasOpenTask && hasMessages && isCanvasOpen ? '60%' : '100%',
+              width: isCanvasOpen ? '60%' : '100%',
             }}
           >
             <ChatArea
@@ -279,28 +279,26 @@ export function ChatPageDesktop() {
               onRefreshTeams={handleRefreshTeams}
               isCanvasOpen={isCanvasOpen}
               onCanvasToggle={() => setIsCanvasOpen(prev => !prev)}
-              showCanvasToggle={hasOpenTask && hasMessages}
+              showCanvasToggle={true}
             />
           </div>
 
-          {/* Canvas Panel - only show if there's a task with messages */}
-          {hasOpenTask && hasMessages && (
+          {/* Canvas Panel - show when canvas is open */}
+          {isCanvasOpen && (
             <div
               className="transition-all duration-300 ease-in-out bg-surface overflow-hidden"
-              style={{ width: isCanvasOpen ? '40%' : '0' }}
+              style={{ width: '40%' }}
             >
-              {isCanvasOpen && (
-                <CanvasPanel
-                  artifact={canvas.artifact}
-                  isLoading={canvas.isCanvasLoading}
-                  onClose={() => setIsCanvasOpen(false)}
-                  onArtifactUpdate={canvas.setArtifact}
-                  onQuickAction={canvas.handleQuickAction}
-                  onVersionRevert={canvas.handleVersionRevert}
-                  isFullscreen={canvas.isFullscreen}
-                  onToggleFullscreen={canvas.toggleFullscreen}
-                />
-              )}
+              <CanvasPanel
+                artifact={canvas.artifact}
+                isLoading={canvas.isCanvasLoading}
+                onClose={() => setIsCanvasOpen(false)}
+                onArtifactUpdate={canvas.setArtifact}
+                onQuickAction={canvas.handleQuickAction}
+                onVersionRevert={canvas.handleVersionRevert}
+                isFullscreen={canvas.isFullscreen}
+                onToggleFullscreen={canvas.toggleFullscreen}
+              />
             </div>
           )}
         </div>
