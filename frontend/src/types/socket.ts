@@ -50,6 +50,7 @@ export const ServerEvents = {
   TASK_STATUS: 'task:status',
   TASK_SHARED: 'task:shared',
   TASK_INVITED: 'task:invited', // User invited to group chat
+  TASK_APP_UPDATE: 'task:app_update', // App data updated (to task room)
   UNREAD_COUNT: 'unread:count',
 
   // Generic Skill Events
@@ -295,6 +296,16 @@ export interface TaskInvitedPayload {
   }
   is_group_chat: boolean
   created_at: string
+}
+
+export interface TaskAppUpdatePayload {
+  task_id: number
+  app: {
+    name: string
+    address: string
+    previewUrl: string
+    mysql?: string
+  }
 }
 
 export interface UnreadCountPayload {
