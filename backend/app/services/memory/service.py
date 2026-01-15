@@ -173,14 +173,14 @@ class MemoryService:
                 "task_id": task_id,
                 "workspace_id": workspace_id,
                 "is_group_chat": is_group_chat,
-                "team_id": team_id,  # 添加team_id便于未来查询
+                "team_id": team_id,  # Add team_id to facilitate future queries
             }
             if group_id:
                 metadata["group_id"] = group_id
             if sender_name:
                 metadata["sender_name"] = sender_name
 
-            await client.post(
+            response = await client.post(
                 "/memories",
                 json={
                     "messages": messages,
@@ -189,6 +189,7 @@ class MemoryService:
                     "metadata": metadata,
                 },
             )
+            response.raise_for_status()
             logger.debug(f"Memory stored for task={task_id}")
 
         except Exception as e:

@@ -422,9 +422,9 @@ async def _stream_chat_response(
                     enhanced_system_prompt = (
                         f"{enhanced_system_prompt}\n\n{memory_context}"
                     )
-                    logger.info(f"[ai_trigger] Injected long-term memory context")
-        except Exception:
-            pass  # Never block on memory
+                    logger.info("[ai_trigger] Injected long-term memory context")
+        except Exception as e:
+            logger.debug("Memory retrieval failed (non-blocking): %s", e, exc_info=True)
 
         # Emit chat:start event with shell_type using global emitter for cross-worker broadcasting
         logger.info(

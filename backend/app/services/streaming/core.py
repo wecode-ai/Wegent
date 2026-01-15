@@ -652,8 +652,8 @@ class StreamingCore:
                             )
                 finally:
                     db.close()
-        except Exception:
-            pass  # Never block on memory
+        except Exception as e:
+            logger.debug("Memory storage skipped (non-blocking): %s", e, exc_info=True)
 
         # Use message_id from state if available, otherwise fetch from DB
         message_id = self.state.message_id
