@@ -55,6 +55,7 @@ from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
     chat_storage_router,
     rag_router,
+    services_router,
     skills_router,
     tables_router,
 )
@@ -133,4 +134,7 @@ api_router.include_router(skills_router, prefix="/internal", tags=["internal-ski
 api_router.include_router(tables_router, prefix="/internal", tags=["internal-tables"])
 api_router.include_router(
     internal_bots_router, prefix="/internal", tags=["internal-bots"]
+)
+api_router.include_router(
+    services_router, prefix="/internal", tags=["internal-services"]
 )

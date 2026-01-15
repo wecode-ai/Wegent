@@ -589,6 +589,10 @@
   "correction": {
     "result_title": "Correction Result"
   },
+  "appPreview": {
+    "button": "Preview",
+    "title": "App Preview"
+  },
   "userSearch": {
     "placeholder": "Search username or email...",
     "selectedUsers": "{{count}} user(s) selected",
