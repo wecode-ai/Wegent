@@ -42,6 +42,9 @@ class ClientEvents:
 class ServerEvents:
     """Server -> Client event names."""
 
+    # Authentication events
+    AUTH_ERROR = "auth:error"  # Token expired or invalid
+
     # Chat streaming events (to task room)
     CHAT_START = "chat:start"
     CHAT_CHUNK = "chat:chunk"
