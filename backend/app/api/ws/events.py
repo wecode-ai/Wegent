@@ -489,3 +489,17 @@ class GenericAck(BaseModel):
 
     success: bool = True
     error: Optional[str] = None
+
+
+# ============================================================
+# Authentication Error Payloads
+# ============================================================
+
+
+class AuthErrorPayload(BaseModel):
+    """Payload for auth:error event."""
+
+    error: str = Field(..., description="Error message")
+    code: Literal["TOKEN_EXPIRED", "INVALID_TOKEN"] = Field(
+        ..., description="Error code for identifying the type of auth error"
+    )

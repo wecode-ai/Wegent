@@ -292,18 +292,23 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       setIsConnected(false)
 
       // Check if error message indicates auth failure
+      // Use specific auth-related error patterns to avoid false positives
       const errorMsg = error.message?.toLowerCase() || ''
-      if (
+      const isAuthError =
         errorMsg.includes('expired') ||
-        errorMsg.includes('invalid') ||
         errorMsg.includes('unauthorized') ||
-        errorMsg.includes('token')
-      ) {
+        errorMsg.includes('jwt') ||
+        errorMsg.includes('authentication')
+
+      if (isAuthError) {
         console.log('[Socket.IO] Auth error on connect, redirecting to login')
         removeToken()
 
         const loginPath = paths.auth.login.getHref()
         if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
+          // Save current path for redirect after login (consistent with AUTH_ERROR handler)
+          const currentPath = window.location.pathname + window.location.search
+          sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
           window.location.href = loginPath
         }
       }
