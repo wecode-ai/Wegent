@@ -91,3 +91,13 @@ class SpanAttributes:
     TOOL_OUTPUT = "tool.output"
     TOOL_DURATION_MS = "tool.duration_ms"
     TOOL_STATUS = "tool.status"
+
+    # Authentication attributes
+    AUTH_METHOD = "auth.method"  # "jwt", "api_key_personal", "api_key_service"
+    AUTH_TOKEN_TYPE = "auth.token_type"  # "bearer", "api_key"
+    AUTH_SOURCE = "auth.source"  # Where the auth came from: "header", "query", etc.
+    AUTH_API_KEY_NAME = "auth.api_key.name"  # Name of the API key used
+    AUTH_API_KEY_TYPE = "auth.api_key.type"  # "personal", "service"
+    AUTH_USER_CREATED = "auth.user.created"  # Whether user was auto-created
+    AUTH_RESULT = "auth.result"  # "success", "failure", "user_inactive", etc.
+    AUTH_FAILURE_REASON = "auth.failure.reason"  # Detailed failure reason

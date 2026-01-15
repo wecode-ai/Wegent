@@ -2,6 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+# Redis instrumentation must be set up BEFORE importing redis module
+from shared.telemetry.config import get_otel_config as _get_otel_config_early
+
+if _get_otel_config_early("wegent-backend").enabled:
+    try:
+        from opentelemetry.instrumentation.redis import RedisInstrumentor
+
+        RedisInstrumentor().instrument()
+    except Exception:
+        pass
+
 import asyncio
 import logging
 import signal
@@ -329,7 +340,6 @@ def create_app():
             setup_opentelemetry_instrumentation(
                 app=app,
                 logger=logger,
-                enable_sqlalchemy=True,
                 sqlalchemy_engine=engine,
             )
         except Exception as e:

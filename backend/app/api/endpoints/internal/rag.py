@@ -252,6 +252,105 @@ async def get_knowledge_base_size(
     )
 
 
+class SaveRagResultRequest(BaseModel):
+    """Request for saving RAG retrieval results to context database."""
+
+    user_subtask_id: int = Field(..., description="User subtask ID")
+    knowledge_base_id: int = Field(
+        ..., description="Knowledge base ID that was searched"
+    )
+    extracted_text: str = Field(..., description="Concatenated retrieval text")
+    sources: list[dict] = Field(
+        default_factory=list,
+        description="List of source info dicts with title, kb_id, score",
+    )
+
+
+class SaveRagResultResponse(BaseModel):
+    """Response for save RAG result endpoint."""
+
+    success: bool
+    context_id: Optional[int] = None
+    message: str = ""
+
+
+@router.post("/save-result", response_model=SaveRagResultResponse)
+async def save_rag_result(
+    request: SaveRagResultRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Save RAG retrieval results to context database.
+
+    This endpoint is called by chat_shell in HTTP mode after RAG retrieval
+    to persist the results for historical context.
+
+    Args:
+        request: Request with subtask ID, KB ID, and retrieval results
+        db: Database session
+
+    Returns:
+        Success status and context ID if saved
+    """
+    try:
+        from app.services.context.context_service import context_service
+
+        # Find the context record for this subtask and knowledge base
+        context = context_service.get_knowledge_base_context_by_subtask_and_kb_id(
+            db=db,
+            subtask_id=request.user_subtask_id,
+            knowledge_id=request.knowledge_base_id,
+        )
+
+        if context is None:
+            logger.warning(
+                "[internal_rag] No context found for subtask_id=%d, kb_id=%d",
+                request.user_subtask_id,
+                request.knowledge_base_id,
+            )
+            return SaveRagResultResponse(
+                success=False,
+                message=f"No context found for subtask_id={request.user_subtask_id}, kb_id={request.knowledge_base_id}",
+            )
+
+        # Update the context with RAG results
+        updated_context = context_service.update_knowledge_base_retrieval_result(
+            db=db,
+            context_id=context.id,
+            extracted_text=request.extracted_text,
+            sources=request.sources,
+        )
+
+        if updated_context:
+            logger.info(
+                "[internal_rag] Saved RAG result: context_id=%d, subtask_id=%d, kb_id=%d, text_length=%d",
+                updated_context.id,
+                request.user_subtask_id,
+                request.knowledge_base_id,
+                len(request.extracted_text),
+            )
+            return SaveRagResultResponse(
+                success=True,
+                context_id=updated_context.id,
+                message="RAG result saved successfully",
+            )
+        else:
+            return SaveRagResultResponse(
+                success=False,
+                message="Failed to update context record",
+            )
+
+    except Exception as e:
+        logger.error(
+            "[internal_rag] Save RAG result failed: subtask_id=%d, kb_id=%d, error=%s",
+            request.user_subtask_id,
+            request.knowledge_base_id,
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 class AllChunksRequest(BaseModel):
     """Request for getting all chunks from a knowledge base."""
 
