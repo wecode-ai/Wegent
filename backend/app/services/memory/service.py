@@ -60,18 +60,14 @@ class MemoryService:
         try:
             client = await self._get_client()
 
-            # Build filters
-            filters = {"OR": [{"task_id": task_id}]}
-            if group_id:
-                filters["OR"].append({"group_id": group_id})
-
+            # Use run_id for task-level session isolation (mem0 best practice)
             response = await client.post(
                 "/search",
                 json={
                     "query": query,
                     "user_id": f"user_{user_id}",
                     "agent_id": f"team_{team_id}",
-                    "filters": filters,
+                    "run_id": f"task_{task_id}",
                     "limit": settings.MEMORY_SEARCH_LIMIT,
                 },
             )
@@ -186,6 +182,7 @@ class MemoryService:
                     "messages": messages,
                     "user_id": f"user_{user_id}",
                     "agent_id": f"team_{team_id}",
+                    "run_id": f"task_{task_id}",
                     "metadata": metadata,
                 },
             )
@@ -211,12 +208,30 @@ class MemoryService:
         try:
             client = await self._get_client()
 
-            # Search all memories with this task_id
+            # Try using delete_all endpoint if available (more efficient)
+            # This follows mem0 best practice for run_id based deletion
+            try:
+                response = await client.post(
+                    "/v1/memories/delete",
+                    json={
+                        "run_id": f"task_{task_id}",
+                    },
+                )
+                if response.status_code == 200:
+                    logger.info(
+                        f"Deleted all memories for task={task_id} using bulk delete"
+                    )
+                    return
+            except Exception:
+                # Fallback to search-and-delete approach
+                pass
+
+            # Fallback: Search all memories with this task_id and delete individually
             response = await client.post(
                 "/search",
                 json={
                     "query": "",
-                    "filters": {"task_id": task_id},
+                    "run_id": f"task_{task_id}",
                     "limit": 1000,  # Get all
                 },
             )
