@@ -173,6 +173,7 @@ class MemoryService:
                 "task_id": task_id,
                 "workspace_id": workspace_id,
                 "is_group_chat": is_group_chat,
+                "team_id": team_id,  # 添加team_id便于未来查询
             }
             if group_id:
                 metadata["group_id"] = group_id
