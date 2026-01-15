@@ -34,7 +34,9 @@
     "thinking": "AI is thinking...",
     "error": "Failed to send message",
     "connecting": "Connecting...",
-    "disconnected": "Disconnected"
+    "disconnected": "Disconnected",
+    "reconnecting": "Reconnecting... (attempt {{count}})",
+    "reconnected": "Reconnected"
   },
   "messages": {
     "assistant": "AI Assistant",
