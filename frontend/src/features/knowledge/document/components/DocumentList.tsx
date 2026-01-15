@@ -17,10 +17,13 @@ import {
   Target,
   FileUp,
   RefreshCw,
+  Info,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { DocumentDetailDialog } from './DocumentDetailDialog'
 import { DocumentItem } from './DocumentItem'
 import { DocumentUpload, type TableDocument } from './DocumentUpload'
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
@@ -51,6 +54,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
 
   const [showUpload, setShowUpload] = useState(false)
   const [showRetrievalTest, setShowRetrievalTest] = useState(false)
+  const [viewingDoc, setViewingDoc] = useState<KnowledgeDocument | null>(null)
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -192,6 +196,8 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
     }
   }
 
+  const longSummary = knowledgeBase.summary?.long_summary
+
   return (
     <div className="space-y-4">
       {/* Header - Wegent style */}
@@ -206,16 +212,34 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
         )}
         <FolderOpen className="w-5 h-5 text-primary flex-shrink-0" />
         <div className="flex-1 min-w-0">
-          <h2 className="text-base font-medium text-text-primary truncate">{knowledgeBase.name}</h2>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-base font-medium text-text-primary truncate">
+              {knowledgeBase.name}
+            </h2>
+            {/* Summary tooltip - next to title */}
+            {longSummary && (
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <button className="flex-shrink-0 p-0.5 rounded text-text-muted hover:text-primary hover:bg-surface transition-colors">
+                      <Info className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" align="start" className="max-w-md">
+                    <p className="text-sm leading-relaxed">{longSummary}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
           {knowledgeBase.description && (
             <p className="text-xs text-text-muted truncate">{knowledgeBase.description}</p>
           )}
         </div>
       </div>
 
-      {/* Search bar */}
+      {/* Search bar and action buttons */}
       <div className="flex items-center gap-3 flex-wrap">
-        {/* Search by name */}
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
           <input
@@ -337,6 +361,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
               <DocumentItem
                 key={doc.id}
                 document={doc}
+                onViewDetail={setViewingDoc}
                 onEdit={setEditingDoc}
                 onDelete={setDeletingDoc}
                 canManage={canManage}
@@ -365,6 +390,13 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
       )}
 
       {/* Dialogs */}
+      <DocumentDetailDialog
+        open={!!viewingDoc}
+        onOpenChange={open => !open && setViewingDoc(null)}
+        document={viewingDoc}
+        knowledgeBaseId={knowledgeBase.id}
+      />
+
       <DocumentUpload
         open={showUpload}
         onOpenChange={setShowUpload}

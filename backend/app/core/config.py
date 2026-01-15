@@ -273,6 +273,10 @@ class Settings(BaseSettings):
     # See backend/app/services/tables/DATA_TABLE_CONFIG_EXAMPLE.md for details
     DATA_TABLE_CONFIG: str = ""
 
+    # Knowledge base and document summary configuration
+    # Enable/disable automatic summary generation after document indexing
+    SUMMARY_ENABLED: bool = True
+
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there

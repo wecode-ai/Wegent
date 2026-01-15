@@ -75,7 +75,8 @@
   "user": {
     "default_name": "User",
     "logout": "Logout",
-    "login": "Login"
+    "login": "Login",
+    "menu": "User menu"
   },
   "chat": {
     "placeholder_chat": "Use the Agent team to explore and discover",
