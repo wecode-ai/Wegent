@@ -24,6 +24,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis } from '@/apis/tasks'
 import { isTaskUnread } from '@/utils/taskViewStatus'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useProjectContext } from '@/features/projects'
 
 interface TaskListSectionProps {
   tasks: Task[]
@@ -56,6 +57,7 @@ export default function TaskListSection({
   } = useTaskContext()
   const { clearAllStreams } = useChatStreamContext()
   const { t } = useTranslation()
+  const { setSelectedProjectTaskId } = useProjectContext()
   // Use viewStatusVersion to trigger re-render when task view status changes
   // This is needed to update the unread dot immediately when a task is clicked
   const _viewStatusVersion = viewStatusVersion
@@ -91,6 +93,9 @@ export default function TaskListSection({
     // This is simpler and more reliable than using task timestamps which may vary
     // between list items and task details
     markTaskAsViewed(task.id, task.status)
+
+    // Clear project section selection to remove highlight from project area
+    setSelectedProjectTaskId(null)
 
     // IMPORTANT: Set selected task immediately to prevent visual flicker
     // This ensures the task is highlighted before navigation completes
