@@ -266,9 +266,12 @@ export function isLatexEnvStart(line: string): boolean {
 
 /**
  * Check if a line is the end of a LaTeX environment (\end{...})
+ * Uses string matching instead of regex to avoid ReDoS vulnerabilities
  */
 export function isLatexEnvEnd(line: string, envName: string): boolean {
-  return new RegExp(`\\\\end\\{${envName}\\}`).test(line)
+  // Use string matching instead of regex to avoid ReDoS from malicious input
+  const expectedEnd = `\\end{${envName}}`
+  return line.includes(expectedEnd)
 }
 
 /**

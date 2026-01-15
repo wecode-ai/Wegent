@@ -35,7 +35,7 @@ export function renderMathFormula(
     renderDisplayMath(ctx, latex, startX, maxWidth)
   } else {
     // Inline math: render as styled text inline
-    renderInlineMath(ctx, latex)
+    renderInlineMath(ctx, latex, startX)
   }
 }
 
@@ -43,7 +43,7 @@ export function renderMathFormula(
  * Render inline math formula
  * Displays the formula in a code-like style
  */
-function renderInlineMath(ctx: RenderContext, latex: string): void {
+function renderInlineMath(ctx: RenderContext, latex: string, startX: number): void {
   const { pdf } = ctx
 
   // Set styling for math formulas (similar to code but with math indicator)
@@ -51,9 +51,12 @@ function renderInlineMath(ctx: RenderContext, latex: string): void {
   pdf.setTextColor(COLORS.code.r, COLORS.code.g, COLORS.code.b)
   pdf.setFont('courier', 'normal')
 
-  // Render the formula text
+  // Render the formula text with brackets to indicate math
   const formulaText = `[${latex}]`
-  pdf.text(formulaText, ctx.yPosition, ctx.yPosition)
+  pdf.text(formulaText, startX, ctx.yPosition)
+
+  // Update Y position for next content
+  ctx.yPosition += LINE_HEIGHTS.paragraph
 }
 
 /**
