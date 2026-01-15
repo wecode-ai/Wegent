@@ -6,7 +6,7 @@
 
 This tool allows AI to publish or expose service information such as
 application name, service address, preview URL, and database connection strings.
-The data is stored in the Task's app field in the backend.
+The data is stored in the Task's status.app field in the backend.
 """
 
 import json
@@ -52,7 +52,7 @@ class ExposeServiceTool(BaseTool):
     - User needs to set or share a service address
     - User creates a database and needs to share the MySQL connection info
 
-    The service information is stored in the Task's app field in the backend.
+    The service information is stored in the Task's status.app field in the backend.
     """
 
     name: str = "expose_service"
