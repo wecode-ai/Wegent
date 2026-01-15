@@ -18,6 +18,8 @@
 
 <img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
 
+<img src="https://github.com/user-attachments/assets/efb2e62a-9170-4483-8d1f-a9beb1fbf6b3" width="100%" alt="Knowledge Demo"/>
+
 [快速开始](#-快速开始) · [文档](docs/zh/README.md) · [开发指南](docs/zh/guides/developer/setup.md)
 
 </div>
