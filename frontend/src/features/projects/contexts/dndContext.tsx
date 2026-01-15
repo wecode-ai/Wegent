@@ -129,6 +129,21 @@ export function TaskDndProvider({ children }: TaskDndProviderProps) {
         await addTaskToProject(projectId, taskId)
       } else if (
         over &&
+        over.data.current?.type === 'project' &&
+        activeData?.type === 'project-task'
+      ) {
+        // Dragging from one project to another project - move task between projects
+        const targetProjectId = over.data.current.projectId as number
+        const sourceProjectId = activeData.projectId as number
+        const taskId = activeData.taskId as number
+
+        // Only move if dropping on a different project
+        if (targetProjectId !== sourceProjectId) {
+          // Add task to target project (this will update the project_id)
+          await addTaskToProject(targetProjectId, taskId)
+        }
+      } else if (
+        over &&
         over.data.current?.type === 'history' &&
         activeData?.type === 'project-task'
       ) {
