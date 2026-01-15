@@ -254,6 +254,9 @@ class HTTPAdapter(ChatInterface):
                                 logger.debug(
                                     "[HTTP_ADAPTER] Terminal event received, ending stream"
                                 )
+                                # Properly close the response before returning
+                                # to avoid "async generator ignored GeneratorExit" warning
+                                await response.aclose()
                                 return
 
             except httpx.TimeoutException as e:
@@ -338,6 +341,9 @@ class HTTPAdapter(ChatInterface):
                                 ChatEventType.ERROR,
                                 ChatEventType.CANCELLED,
                             ):
+                                # Properly close the response before returning
+                                # to avoid "async generator ignored GeneratorExit" warning
+                                await response.aclose()
                                 return
 
             except Exception as e:

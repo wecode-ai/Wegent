@@ -14,6 +14,7 @@ interface DocumentItemProps {
   document: KnowledgeDocument
   onEdit?: (doc: KnowledgeDocument) => void
   onDelete?: (doc: KnowledgeDocument) => void
+  onViewDetail?: (doc: KnowledgeDocument) => void
   canManage?: boolean
   showBorder?: boolean
   selected?: boolean
@@ -24,6 +25,7 @@ export function DocumentItem({
   document,
   onEdit,
   onDelete,
+  onViewDetail,
   canManage = true,
   showBorder = true,
   selected = false,
@@ -53,6 +55,10 @@ export function DocumentItem({
     onSelect?.(document, checked)
   }
 
+  const handleCheckboxClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+  }
+
   const handleEdit = (e: React.MouseEvent) => {
     e.stopPropagation()
     onEdit?.(document)
@@ -77,14 +83,18 @@ export function DocumentItem({
     isTable && document.source_config?.url && typeof document.source_config.url === 'string'
       ? document.source_config.url
       : null
+  const handleRowClick = () => {
+    onViewDetail?.(document)
+  }
 
   return (
     <div
-      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group ${showBorder ? 'border-b border-border' : ''}`}
+      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group ${showBorder ? 'border-b border-border' : ''} ${onViewDetail ? 'cursor-pointer' : ''}`}
+      onClick={handleRowClick}
     >
       {/* Checkbox for batch selection */}
       {canManage && (
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0" onClick={handleCheckboxClick}>
           <Checkbox
             checked={selected}
             onCheckedChange={handleCheckboxChange}
