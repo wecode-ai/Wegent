@@ -24,6 +24,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis } from '@/apis/tasks'
 import { isTaskUnread } from '@/utils/taskViewStatus'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useDraggable } from '@dnd-kit/core'
+import { cn } from '@/lib/utils'
 
 interface TaskListSectionProps {
   tasks: Task[]
@@ -32,10 +34,49 @@ interface TaskListSectionProps {
   onTaskClick?: () => void
   isCollapsed?: boolean
   showTitle?: boolean
+  enableDrag?: boolean
 }
 
 import { useRouter } from 'next/navigation'
 import { paths } from '@/config/paths'
+
+// Draggable task item wrapper component
+function DraggableTaskItem({
+  task,
+  children,
+  enableDrag,
+}: {
+  task: Task
+  children: React.ReactNode
+  enableDrag: boolean
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: task.id,
+    data: {
+      type: 'task',
+      task,
+    },
+    disabled: !enableDrag,
+  })
+
+  if (!enableDrag) {
+    return <>{children}</>
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      className={cn(
+        'relative group/drag cursor-grab active:cursor-grabbing',
+        isDragging && 'opacity-50 ring-2 ring-primary ring-inset rounded-xl'
+      )}
+    >
+      {children}
+    </div>
+  )
+}
 
 export default function TaskListSection({
   tasks,
@@ -44,6 +85,7 @@ export default function TaskListSection({
   onTaskClick,
   isCollapsed = false,
   showTitle = true,
+  enableDrag = false,
 }: TaskListSectionProps) {
   const router = useRouter()
   const {
@@ -440,76 +482,78 @@ export default function TaskListSection({
           })()
 
           return (
-            <TooltipProvider key={task.id}>
-              <Tooltip delayDuration={500}>
-                <TooltipTrigger asChild>
-                  <div
-                    className={`flex items-center gap-2 py-1.5 px-3 h-8 rounded-xl cursor-pointer ${
-                      selectedTask?.id === task.id || selectedTaskDetail?.id === task.id
-                        ? 'bg-primary/10'
-                        : 'hover:bg-hover'
-                    }`}
-                    onClick={() => handleTaskClick(task)}
-                    onTouchStart={handleTouchStart(task)}
-                    onTouchMove={handleTouchMove}
-                    onTouchEnd={handleTouchEnd(task)}
-                    onMouseEnter={() => setHoveredTaskId(task.id)}
-                    onMouseLeave={() => setHoveredTaskId(null)}
-                    style={{
-                      touchAction: 'pan-y',
-                      WebkitTapHighlightColor: 'transparent',
-                      userSelect: 'none',
-                    }}
-                  >
-                    {/* Task type icon on the left */}
-                    <div className="flex-shrink-0">{getTaskTypeIcon(task)}</div>
+            <DraggableTaskItem key={task.id} task={task} enableDrag={enableDrag}>
+              <TooltipProvider>
+                <Tooltip delayDuration={500}>
+                  <TooltipTrigger asChild>
+                    <div
+                      className={`flex items-center gap-2 py-1.5 px-3 h-8 rounded-xl cursor-pointer ${
+                        selectedTask?.id === task.id || selectedTaskDetail?.id === task.id
+                          ? 'bg-primary/10'
+                          : 'hover:bg-hover'
+                      }`}
+                      onClick={() => handleTaskClick(task)}
+                      onTouchStart={handleTouchStart(task)}
+                      onTouchMove={handleTouchMove}
+                      onTouchEnd={handleTouchEnd(task)}
+                      onMouseEnter={() => setHoveredTaskId(task.id)}
+                      onMouseLeave={() => setHoveredTaskId(null)}
+                      style={{
+                        touchAction: 'pan-y',
+                        WebkitTapHighlightColor: 'transparent',
+                        userSelect: 'none',
+                      }}
+                    >
+                      {/* Task type icon on the left */}
+                      <div className="flex-shrink-0">{getTaskTypeIcon(task)}</div>
 
-                    {/* Task title in the middle */}
-                    <p className="flex-1 min-w-0 text-sm text-text-primary leading-tight truncate m-0">
-                      {task.title}
-                    </p>
+                      {/* Task title in the middle */}
+                      <p className="flex-1 min-w-0 text-sm text-text-primary leading-tight truncate m-0">
+                        {task.title}
+                      </p>
 
-                    {/* Status icon on the right - only render container when needed */}
-                    {(shouldShowStatusIcon(task) || isTaskUnread(task)) && (
-                      <div className="flex-shrink-0 relative">
-                        <div className="w-4 h-4 flex items-center justify-center">
-                          {shouldShowStatusIcon(task) && getStatusIcon(task.status)}
+                      {/* Status icon on the right - only render container when needed */}
+                      {(shouldShowStatusIcon(task) || isTaskUnread(task)) && (
+                        <div className="flex-shrink-0 relative">
+                          <div className="w-4 h-4 flex items-center justify-center">
+                            {shouldShowStatusIcon(task) && getStatusIcon(task.status)}
+                          </div>
+                          {isTaskUnread(task) && (
+                            <span
+                              className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task)} animate-pulse-dot`}
+                            />
+                          )}
                         </div>
-                        {isTaskUnread(task) && (
-                          <span
-                            className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task)} animate-pulse-dot`}
-                          />
-                        )}
-                      </div>
-                    )}
+                      )}
 
-                    <div className="flex-shrink-0">
-                      <div
-                        className={`transition-opacity duration-150 [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto ${
-                          showMenu ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                        }`}
-                        onTouchStart={e => e.stopPropagation()}
-                        onTouchEnd={e => e.stopPropagation()}
-                        onClick={e => e.stopPropagation()}
-                      >
-                        <TaskMenu
-                          taskId={task.id}
-                          handleCopyTaskId={handleCopyTaskId}
-                          handleDeleteTask={handleDeleteTask}
-                          isGroupChat={task.is_group_chat}
-                        />
+                      <div className="flex-shrink-0">
+                        <div
+                          className={`transition-opacity duration-150 [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto ${
+                            showMenu ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                          }`}
+                          onTouchStart={e => e.stopPropagation()}
+                          onTouchEnd={e => e.stopPropagation()}
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <TaskMenu
+                            taskId={task.id}
+                            handleCopyTaskId={handleCopyTaskId}
+                            handleDeleteTask={handleDeleteTask}
+                            isGroupChat={task.is_group_chat}
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="left" className="max-w-xs">
-                  <p className="font-medium">{task.title}</p>
-                  <p className="text-xs text-text-muted">
-                    {taskTypeLabel} · {formatTimeAgo(task.created_at)}
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+                  </TooltipTrigger>
+                  <TooltipContent side="left" className="max-w-xs">
+                    <p className="font-medium">{task.title}</p>
+                    <p className="text-xs text-text-muted">
+                      {taskTypeLabel} · {formatTimeAgo(task.created_at)}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </DraggableTaskItem>
           )
         })}
       </div>
