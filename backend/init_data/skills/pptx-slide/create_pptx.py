@@ -190,7 +190,7 @@ The generated file is automatically stored and can be downloaded via the provide
             )
             error_result = {
                 "success": False,
-                "error": f"Unexpected error: {str(e)}",
+                "error": f"Unexpected error: {e!s}",
                 "suggestion": (
                     "An unexpected error occurred during PPT generation. "
                     "Please try again with a simpler content structure."
@@ -369,7 +369,7 @@ The generated file is automatically stored and can be downloaded via the provide
                         "title_frame = title_box.text_frame",
                         "title_para = title_frame.paragraphs[0]",
                         "title_para.alignment = PP_ALIGN.CENTER",
-                        f"title_run = title_para.add_run()",
+                        "title_run = title_para.add_run()",
                         f'title_run.text = """{self._escape_string(slide_title)}"""',
                         "set_text_style(title_run, 44, TITLE_COLOR, bold=True)",
                         "",
@@ -448,13 +448,12 @@ The generated file is automatically stored and can be downloaded via the provide
                                 ]
                             )
 
-                        indent = "0.5" if is_sub_item else "0"
                         font_size = "18" if is_sub_item else "20"
                         code_lines.extend(
                             [
                                 f"para.level = {1 if is_sub_item else 0}",
-                                f"para.space_before = Pt(8)",
-                                f"para.space_after = Pt(4)",
+                                "para.space_before = Pt(8)",
+                                "para.space_after = Pt(4)",
                                 "run = para.add_run()",
                                 f'run.text = "• " + """{self._escape_string(bullet_text)}"""',
                                 f"set_text_style(run, {font_size}, TEXT_COLOR)",
@@ -654,7 +653,7 @@ The generated file is automatically stored and can be downloaded via the provide
                 logger.error("[PPTXTool] E2B_API_KEY not configured")
                 raise ValueError("E2B_API_KEY environment variable is not set")
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             # Create sandbox in thread pool
             sandbox = await loop.run_in_executor(
@@ -714,10 +713,10 @@ The generated file is automatically stored and can be downloaded via the provide
                 logger.debug("[PPTXTool] Sandbox closed")
 
         except ImportError as e:
-            logger.error(f"[PPTXTool] E2B SDK not available: {e}")
+            logger.exception("[PPTXTool] E2B SDK not available")
             raise RuntimeError(
                 "E2B SDK not installed. Please install e2b-code-interpreter."
-            )
+            ) from e
         except Exception as e:
             logger.error(f"[PPTXTool] Sandbox execution failed: {e}", exc_info=True)
             raise
@@ -751,7 +750,7 @@ The generated file is automatically stored and can be downloaded via the provide
 
             try:
                 # Use context service to upload attachment
-                context, truncation_info = context_service.upload_attachment(
+                context, _truncation_info = context_service.upload_attachment(
                     db=db,
                     user_id=self.user_id,
                     filename=filename,
@@ -794,7 +793,7 @@ The generated file is automatically stored and can be downloaded via the provide
             )
             return {
                 "success": False,
-                "error": f"Failed to store attachment: {str(e)}",
+                "error": f"Failed to store attachment: {e!s}",
             }
 
     async def _emit_tool_status(

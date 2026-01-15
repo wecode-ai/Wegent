@@ -9,10 +9,13 @@ CreatePPTXTool instances for skills that need to generate
 PowerPoint presentations using E2B sandbox execution.
 """
 
+import logging
 from typing import Any, Optional
 
 from chat_shell.skills import SkillToolContext, SkillToolProvider
 from langchain_core.tools import BaseTool
+
+logger = logging.getLogger(__name__)
 
 
 class PPTXToolProvider(SkillToolProvider):
@@ -70,10 +73,6 @@ class PPTXToolProvider(SkillToolProvider):
         Raises:
             ValueError: If tool_name is unknown
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         logger.info(
             f"[PPTXProvider] Creating tool: tool_name={tool_name}, "
             f"task_id={context.task_id}, subtask_id={context.subtask_id}, "

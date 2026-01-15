@@ -11,4 +11,4 @@ using E2B sandbox execution of python-pptx code.
 from .create_pptx import CreatePPTXTool
 from .provider import PPTXToolProvider
 
-__all__ = ["PPTXToolProvider", "CreatePPTXTool"]
+__all__ = ["CreatePPTXTool", "PPTXToolProvider"]
