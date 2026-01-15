@@ -105,7 +105,7 @@ class SummaryService:
     # ==================== Model Configuration ====================
 
     def _get_model_config_from_kb(
-        self, kb: Kind, user_id: int
+        self, kb: Kind, user_id: int, user_name: str
     ) -> Optional[Dict[str, Any]]:
         """
         Get model configuration from knowledge base spec.
@@ -118,11 +118,14 @@ class SummaryService:
         Args:
             kb: Knowledge base Kind object
             user_id: User ID (for user model lookup)
+            user_name: Username for placeholder resolution
 
         Returns:
             Processed model config dict or None if not configured
         """
-        from app.services.chat.config.model_resolver import _extract_model_config
+        from app.services.chat.config.model_resolver import (
+            extract_and_process_model_config,
+        )
 
         kb_json = kb.json or {}
         spec = kb_json.get("spec", {})
@@ -196,7 +199,13 @@ class SummaryService:
         # Extract and process model config (decrypt API key, resolve placeholders, etc.)
         if model_spec:
             try:
-                processed_config = _extract_model_config(model_spec)
+                # Use extract_and_process_model_config to support full placeholder resolution
+                # This handles ${user.xxx} placeholders in addition to env var placeholders
+                processed_config = extract_and_process_model_config(
+                    model_spec=model_spec,
+                    user_id=user_id,
+                    user_name=user_name,
+                )
                 logger.info(
                     f"[SummaryService] Model config processed successfully: "
                     f"model_id={processed_config.get('model_id')}, "
@@ -216,7 +225,7 @@ class SummaryService:
     # ==================== Document Summary ====================
 
     async def trigger_document_summary(
-        self, document_id: int, user_id: int
+        self, document_id: int, user_id: int, user_name: str
     ) -> Optional[BackgroundTaskResult]:
         """
         Trigger document summary generation.
@@ -224,6 +233,7 @@ class SummaryService:
         Args:
             document_id: Document ID
             user_id: Triggering user ID
+            user_name: Username for placeholder resolution
 
         Returns:
             BackgroundTaskResult or None (if trigger conditions not met)
@@ -277,7 +287,7 @@ class SummaryService:
             return None
 
         # 5. Get model configuration from knowledge base
-        model_config = self._get_model_config_from_kb(kb, user_id)
+        model_config = self._get_model_config_from_kb(kb, user_id, user_name)
         if not model_config:
             logger.warning(
                 f"[SummaryService] No model configured for summary generation in KB: {kb.id}"
@@ -365,7 +375,9 @@ class SummaryService:
                 logger.info(
                     f"[SummaryService] Checking KB summary trigger: kb_id={document.kind_id}"
                 )
-                await self._check_and_trigger_kb_summary(document.kind_id, user_id)
+                await self._check_and_trigger_kb_summary(
+                    document.kind_id, user_id, user_name
+                )
 
             return result
 
@@ -405,10 +417,10 @@ class SummaryService:
         return DocumentSummary(**document.summary)
 
     async def refresh_document_summary(
-        self, document_id: int, user_id: int
+        self, document_id: int, user_id: int, user_name: str
     ) -> Optional[BackgroundTaskResult]:
         """Manually refresh document summary."""
-        return await self.trigger_document_summary(document_id, user_id)
+        return await self.trigger_document_summary(document_id, user_id, user_name)
 
     # ==================== Knowledge Base Summary ====================
 
@@ -416,6 +428,7 @@ class SummaryService:
         self,
         kb_id: int,
         user_id: int,
+        user_name: str,
         force: bool = False,
         clear_if_empty: bool = False,
     ) -> Optional[BackgroundTaskResult]:
@@ -425,6 +438,7 @@ class SummaryService:
         Args:
             kb_id: Knowledge base ID (Kind.id)
             user_id: Triggering user ID
+            user_name: Username for placeholder resolution
             force: Whether to force trigger (ignore change threshold)
             clear_if_empty: If True and no active documents exist, clear the summary
                            (used after document deletion)
@@ -480,7 +494,7 @@ class SummaryService:
 
         # 4. Get model configuration from knowledge base
         # Only needed if we have documents to summarize
-        model_config = self._get_model_config_from_kb(kb, user_id)
+        model_config = self._get_model_config_from_kb(kb, user_id, user_name)
         if not model_config:
             logger.warning(
                 f"[SummaryService] No model configured for summary generation in KB: {kb_id}"
@@ -607,10 +621,10 @@ class SummaryService:
         return KnowledgeBaseSummary(**summary_data)
 
     async def refresh_kb_summary(
-        self, kb_id: int, user_id: int
+        self, kb_id: int, user_id: int, user_name: str
     ) -> Optional[BackgroundTaskResult]:
         """Manually refresh knowledge base summary."""
-        return await self.trigger_kb_summary(kb_id, user_id, force=True)
+        return await self.trigger_kb_summary(kb_id, user_id, user_name, force=True)
 
     # ==================== Helper Methods ====================
 
@@ -720,7 +734,9 @@ class SummaryService:
         # any completed document summaries to aggregate
         return True
 
-    async def _check_and_trigger_kb_summary(self, kb_id: int, user_id: int):
+    async def _check_and_trigger_kb_summary(
+        self, kb_id: int, user_id: int, user_name: str
+    ):
         """Check if knowledge base summary needs to be triggered after document summary completes.
 
         This method directly delegates to trigger_kb_summary which handles:
@@ -733,7 +749,7 @@ class SummaryService:
         )
         # Directly call trigger_kb_summary - it handles all the logic including
         # KB fetch with lock, trigger condition check, and aggregation
-        result = await self.trigger_kb_summary(kb_id, user_id, force=False)
+        result = await self.trigger_kb_summary(kb_id, user_id, user_name, force=False)
 
         if result:
             logger.info(
