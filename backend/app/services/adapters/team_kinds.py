@@ -2258,41 +2258,67 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Copy ghost to target namespace
         new_ghost_name = f"{bot.name}-ghost"
-        if source_ghost:
-            ghost_crd = Ghost.model_validate(source_ghost.json)
-            new_ghost_json = {
-                "kind": "Ghost",
-                "spec": {
-                    "systemPrompt": ghost_crd.spec.systemPrompt,
-                    "mcpServers": ghost_crd.spec.mcpServers or {},
-                },
-                "status": {"state": "Available"},
-                "metadata": {"name": new_ghost_name, "namespace": target_namespace},
-                "apiVersion": "agent.wecode.io/v1",
-            }
-            if ghost_crd.spec.skills:
-                new_ghost_json["spec"]["skills"] = ghost_crd.spec.skills
-            if ghost_crd.spec.preload_skills:
-                new_ghost_json["spec"]["preload_skills"] = ghost_crd.spec.preload_skills
-        else:
-            # Create minimal ghost if source doesn't exist
-            new_ghost_json = {
-                "kind": "Ghost",
-                "spec": {"systemPrompt": "", "mcpServers": {}},
-                "status": {"state": "Available"},
-                "metadata": {"name": new_ghost_name, "namespace": target_namespace},
-                "apiVersion": "agent.wecode.io/v1",
-            }
 
-        new_ghost = Kind(
-            user_id=user_id,
-            kind="Ghost",
-            name=new_ghost_name,
-            namespace=target_namespace,
-            json=new_ghost_json,
-            is_active=True,
+        # Check if ghost with same name already exists in target namespace
+        existing_ghost = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Ghost",
+                Kind.name == new_ghost_name,
+                Kind.namespace == target_namespace,
+                Kind.is_active == True,
+            )
+            .first()
         )
-        db.add(new_ghost)
+
+        if existing_ghost:
+            # Ghost already exists - check if user owns it and can reuse
+            if existing_ghost.user_id == user_id:
+                # User owns the existing ghost, reuse it for the new bot
+                pass  # Will use existing_ghost's name in bot reference
+            else:
+                # Ghost exists but owned by different user, cannot copy
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"A ghost with name '{new_ghost_name}' already exists in group '{target_namespace}'",
+                )
+        else:
+            # Create new ghost
+            if source_ghost:
+                ghost_crd = Ghost.model_validate(source_ghost.json)
+                new_ghost_json = {
+                    "kind": "Ghost",
+                    "spec": {
+                        "systemPrompt": ghost_crd.spec.systemPrompt,
+                        "mcpServers": ghost_crd.spec.mcpServers or {},
+                    },
+                    "status": {"state": "Available"},
+                    "metadata": {"name": new_ghost_name, "namespace": target_namespace},
+                    "apiVersion": "agent.wecode.io/v1",
+                }
+                if ghost_crd.spec.skills:
+                    new_ghost_json["spec"]["skills"] = ghost_crd.spec.skills
+                if ghost_crd.spec.preload_skills:
+                    new_ghost_json["spec"]["preload_skills"] = ghost_crd.spec.preload_skills
+            else:
+                # Create minimal ghost if source doesn't exist
+                new_ghost_json = {
+                    "kind": "Ghost",
+                    "spec": {"systemPrompt": "", "mcpServers": {}},
+                    "status": {"state": "Available"},
+                    "metadata": {"name": new_ghost_name, "namespace": target_namespace},
+                    "apiVersion": "agent.wecode.io/v1",
+                }
+
+            new_ghost = Kind(
+                user_id=user_id,
+                kind="Ghost",
+                name=new_ghost_name,
+                namespace=target_namespace,
+                json=new_ghost_json,
+                is_active=True,
+            )
+            db.add(new_ghost)
 
         # Create new bot referencing the copied ghost but keeping original shell and model refs
         new_bot_json = {
