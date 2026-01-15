@@ -14,11 +14,11 @@ English | [简体中文](README_zh.md)
 
 <div align="center">
 
+<img src="https://github.com/user-attachments/assets/85e08e2f-5f52-4275-b349-0b5703664c2c" width="100%" alt="Knowledge Demo"/>
+
 <img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
 
 <img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
-
-<img src="https://github.com/user-attachments/assets/00e14d3d-b028-46fb-be04-1b2e53c879d6" width="100%" alt="Knowledge Demo"/>
 
 [Quick Start](#-quick-start) · [Documentation](docs/en/README.md) · [Development Guide](docs/en/guides/developer/setup.md)
 
@@ -28,7 +28,7 @@ English | [简体中文](README_zh.md)
 
 ## ✨ Core Modes
 
-| 💬 Chat Mode | 💻 Code Mode | 📚 Knowledge Mode *(Experimental)* |
+| 💬 Chat Mode | 💻 Code Mode | 📚 Knowledge Mode |
 |:-------------|:-------------|:-----------------------------------|
 | **LLM**: Supports Claude / OpenAI / Gemini and other mainstream models<br>**Multimodal**: Supports automatic parsing of images / PPT / Word / PDF / Excel files<br>**Web Search**: Supports integration with various search engines<br>**Deep Research**: Supports deep research mode with automatic search, organization, and report generation<br>**Error Correction**: Multiple AIs automatically detect and correct errors in responses<br>**Follow-up Mode**: AI proactively asks clarifying questions to ensure accurate understanding<br>**Extensions**: Supports Skill packages / MCP tools / Custom tools | **Multi-platform Integration**: Supports GitHub / GitLab / Gitea / Gitee / Gerrit platforms<br>**Automated AI Workflow**: Branch → Code → Commit → PR automation<br>**Requirement Clarification**: AI proactively asks questions to ensure accurate understanding<br>**Wiki Generation**: Automatic codebase documentation generation | **RAG Retrieval**: Vector / Keyword / Hybrid retrieval<br>**Storage Backends**: Elasticsearch / Qdrant<br>**Document Parsing**: PDF / Markdown / DOCX / Code files<br>**Wiki**: Automatic codebase documentation generation |
 
