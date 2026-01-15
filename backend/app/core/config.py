@@ -136,7 +136,7 @@ class Settings(BaseSettings):
     # Flow scheduler configuration
     FLOW_SCHEDULER_INTERVAL_SECONDS: int = 60
     FLOW_DEFAULT_TIMEOUT_SECONDS: int = 600  # 10 minutes
-    FLOW_DEFAULT_RETRY_COUNT: int = 3
+    FLOW_DEFAULT_RETRY_COUNT: int = 1
     FLOW_EXECUTION_PAGE_LIMIT: int = 50
 
     # Circuit breaker configuration

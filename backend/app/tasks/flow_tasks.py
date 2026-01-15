@@ -197,7 +197,7 @@ def check_due_flows(self):
 @shared_task(
     bind=True,
     name="app.tasks.flow_tasks.execute_flow_task",
-    max_retries=3,
+    max_retries=1,
     default_retry_delay=60,
     retry_backoff=True,
     retry_backoff_max=600,
