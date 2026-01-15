@@ -1553,7 +1553,7 @@ class ReadMermaidReferenceTool(BaseTool):
     """
 
     name: str = "read_mermaid_reference"
-    display_name: str = "查阅参考文档"
+    display_name: str = "tools.read_reference.display_name"
     description: str = (
         "Read documentation and examples for specific Mermaid diagram types."
     )

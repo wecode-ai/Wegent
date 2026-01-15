@@ -44,7 +44,7 @@ class KnowledgeBaseTool(BaseTool):
     """
 
     name: str = "knowledge_base_search"
-    display_name: str = "检索知识库"
+    display_name: str = "tools.knowledge_base.display_name"
     description: str = (
         "Search the knowledge base for relevant information. "
         "This tool uses intelligent context injection - it may inject content directly "

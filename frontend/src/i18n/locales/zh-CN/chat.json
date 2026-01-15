@@ -472,5 +472,40 @@
     "proceeding_to_stage": "正在进入阶段: {{stage}}",
     "pipeline_completed": "流水线已完成",
     "no_task_id": "没有可用的任务 ID"
+  },
+  "tools": {
+    "using": "正在使用工具: {{name}}",
+    "knowledge_base": {
+      "display_name": "检索知识库",
+      "completed": "检索完成，找到 {{count}} 条结果"
+    },
+    "web_search": {
+      "display_name": "搜索网页",
+      "searching": "正在搜索: {{query}}",
+      "searching_default": "正在进行网页搜索",
+      "completed": "搜索完成，找到 {{count}} 个结果"
+    },
+    "load_skill": {
+      "display_name": "加载技能",
+      "completed_with_name": "加载技能：{{name}}"
+    },
+    "data_table": {
+      "display_name": "查询数据表"
+    },
+    "file_reader": {
+      "display_name": "读取文件"
+    },
+    "list_files": {
+      "display_name": "列出文件"
+    },
+    "evaluation": {
+      "display_name": "提交评估结果"
+    },
+    "render_mermaid": {
+      "display_name": "渲染图表"
+    },
+    "read_reference": {
+      "display_name": "查阅参考文档"
+    }
   }
 }

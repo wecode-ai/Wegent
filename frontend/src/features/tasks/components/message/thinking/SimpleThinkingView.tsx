@@ -7,6 +7,7 @@
 import { memo, useState, useMemo } from 'react'
 import { Search, ChevronDown, ChevronUp } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { parseI18nTitle, type I18nTitle } from '@/utils/i18nTitle'
 import type { ThinkingStep } from './types'
 import { extractToolCalls, isRunningStatus, isTerminalStatus } from './utils/thinkingUtils'
 
@@ -22,10 +23,10 @@ interface ToolEntry {
   resultCount?: number
   startIndex: number
   endIndex?: number
-  // Display name from backend (e.g., "正在渲染图表", "正在搜索网页")
-  displayTitle?: string
-  // Completed display title from backend (e.g., "渲染图表完成", "搜索网页完成")
-  completedTitle?: string
+  // Display name from backend (can be i18n key or object with key and params)
+  displayTitle?: I18nTitle
+  // Completed display title from backend (can be i18n key or object with key and params)
+  completedTitle?: I18nTitle
   // Error message for failed status
   errorMessage?: string
 }
@@ -69,8 +70,8 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
             query = titleStr || toolName
           }
 
-          // Get display title from backend (e.g., "正在渲染图表")
-          const displayTitle = typeof step.title === 'string' ? step.title : undefined
+          // Get display title from backend (can be string or object with i18n key)
+          const displayTitle = step.title as I18nTitle | undefined
 
           toolStartMap.set(runId, entries.length)
           entries.push({
@@ -117,8 +118,8 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
             }
           }
 
-          // Get completed title from backend (e.g., "渲染图表完成" or "任务失败: xxx")
-          const completedTitle = typeof step.title === 'string' ? step.title : undefined
+          // Get completed title from backend (can be string or object with i18n key)
+          const completedTitle = step.title as I18nTitle | undefined
           // Get error message if failed
           const errorMessage =
             details.status === 'failed' ? (details.error as string | undefined) : undefined
@@ -209,9 +210,11 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
                     }`}
                   >
                     {entry.status === 'running'
-                      ? entry.displayTitle ||
+                      ? parseI18nTitle(entry.displayTitle, t) ||
                         `${t('chat:messages.using_tool') || 'Using tool'}: ${entry.toolName}`
-                      : entry.completedTitle || entry.displayTitle || entry.toolName}
+                      : parseI18nTitle(entry.completedTitle, t) ||
+                        parseI18nTitle(entry.displayTitle, t) ||
+                        entry.toolName}
                   </div>
                 </div>
               </div>

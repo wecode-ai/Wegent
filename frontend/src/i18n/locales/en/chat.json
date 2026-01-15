@@ -472,5 +472,40 @@
     "proceeding_to_stage": "Proceeding to stage: {{stage}}",
     "pipeline_completed": "Pipeline completed",
     "no_task_id": "No task ID available"
+  },
+  "tools": {
+    "using": "Using tool: {{name}}",
+    "knowledge_base": {
+      "display_name": "Searching Knowledge Base",
+      "completed": "Retrieval complete, found {{count}} results"
+    },
+    "web_search": {
+      "display_name": "Web Search",
+      "searching": "Searching: {{query}}",
+      "searching_default": "Searching the web",
+      "completed": "Search complete, found {{count}} results"
+    },
+    "load_skill": {
+      "display_name": "Loading Skill",
+      "completed_with_name": "Loaded skill: {{name}}"
+    },
+    "data_table": {
+      "display_name": "Querying Data Table"
+    },
+    "file_reader": {
+      "display_name": "Reading File"
+    },
+    "list_files": {
+      "display_name": "Listing Files"
+    },
+    "evaluation": {
+      "display_name": "Submitting Evaluation"
+    },
+    "render_mermaid": {
+      "display_name": "Rendering Diagram"
+    },
+    "read_reference": {
+      "display_name": "Reading Reference"
+    }
   }
 }

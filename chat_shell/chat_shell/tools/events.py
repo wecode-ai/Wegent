@@ -244,7 +244,7 @@ def _process_tool_output(
                             f"[TOOL_OUTPUT] Extracted {len(kb_sources)} sources from knowledge_base_search"
                         )
                     result_count = parsed.get("count", 0)
-                    title = f"检索完成，找到 {result_count} 条结果"
+                    title = {"key": "tools.knowledge_base.completed", "params": {"count": result_count}}
             except json.JSONDecodeError as e:
                 logger.warning(f"[TOOL_OUTPUT] Failed to parse tool output: {e}")
 
@@ -257,7 +257,7 @@ def _process_tool_output(
             urls = re.findall(r'https?://[^\s<>"{}|\\^`\[\]]+', tool_output)
             for url in urls[:5]:  # Limit to 5 sources
                 sources.append({"type": "url", "url": url})
-            title = f"搜索完成，找到 {len(urls)} 个结果"
+            title = {"key": "tools.web_search.completed", "params": {"count": len(urls)}}
 
     return title, sources
 
@@ -324,9 +324,12 @@ def _build_tool_start_title(
         query = (
             serializable_input if isinstance(serializable_input, dict) else {}
         ).get("query", "")
-        title = f"正在搜索: {query}" if query else "正在进行网页搜索"
+        if query:
+            title = {"key": "tools.web_search.searching", "params": {"query": query}}
+        else:
+            title = "tools.web_search.searching_default"
     else:
-        title = f"正在使用工具: {tool_name}"
+        title = {"key": "tools.using", "params": {"name": tool_name}}
 
     return title
 
@@ -350,11 +353,8 @@ def _build_tool_end_title(
     if not display_name:
         return default_title
 
-    # Remove "正在" prefix for cleaner display
-    if display_name.startswith("正在"):
-        base_title = display_name[2:]
-    else:
-        base_title = display_name
+    # Use display_name as base title (now it's an i18n key)
+    base_title = display_name
 
     # For load_skill, append the skill's friendly display name
     if tool_name == "load_skill" and tool_instance:
@@ -373,7 +373,7 @@ def _build_tool_end_title(
                         skill_display = tool_instance.get_skill_display_name(
                             skill_name_param
                         )
-                        return f"{base_title}：{skill_display}"
+                        return {"key": "tools.load_skill.completed_with_name", "params": {"name": skill_display}}
                 break
 
     return base_title

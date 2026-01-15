@@ -45,7 +45,7 @@ class FileReaderSkill(BaseTool):
     """Read file contents with chunked pagination support."""
 
     name: str = "read_file"
-    display_name: str = "读取文件"
+    display_name: str = "tools.file_reader.display_name"
     description: str = (
         "Read file content with pagination. Returns lines range with metadata."
     )
@@ -126,7 +126,7 @@ class FileListSkill(BaseTool):
     """List files in a directory with optional pattern filtering."""
 
     name: str = "list_files"
-    display_name: str = "列出文件"
+    display_name: str = "tools.list_files.display_name"
     description: str = (
         "List files in a directory. Returns file names, sizes, and modification times."
     )

@@ -44,7 +44,7 @@ class LoadSkillTool(BaseTool):
     """
 
     name: str = "load_skill"
-    display_name: str = "加载技能"
+    display_name: str = "tools.load_skill.display_name"
     description: str = (
         "Load a skill's full instructions when you need specialized guidance. "
         "Call this tool when your task matches one of the available skills' descriptions. "
