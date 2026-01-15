@@ -109,7 +109,11 @@ export function renderStyledText(
 
     pdf.setFontSize(baseFontSize)
 
-    if (segment.code) {
+    if (segment.math) {
+      // Math formulas: render in a distinct style
+      pdf.setTextColor(100, 50, 150) // Purple-ish color for math
+      pdf.setFont('courier', 'normal')
+    } else if (segment.code) {
       pdf.setTextColor(COLORS.code.r, COLORS.code.g, COLORS.code.b)
       pdf.setFont('courier', 'normal')
     } else if (segment.link) {
