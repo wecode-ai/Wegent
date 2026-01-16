@@ -262,6 +262,7 @@ export function KnowledgeBaseChatPageDesktop() {
           onTaskDeleted={handleTaskDeleted}
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={isCollapsed}
+          hideGroupChatOptions={true}
         >
           {shareButton}
           <GithubStarButton />
