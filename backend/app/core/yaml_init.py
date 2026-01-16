@@ -670,11 +670,11 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
         # Step 1: Apply public shells and skills (only once, not per-user)
         summary = scan_and_apply_yaml_directory(user_id, init_dir, db, force=force)
 
-        # Step 2: Apply default user resources for admin user (only if newly created)
-        # This uses the same logic as creating new users, ensuring consistency
-        if is_new_user:
+        # Step 2: Apply default user resources for admin user
+        # Only apply if: newly created user OR force mode is enabled
+        if is_new_user or force:
             logger.info(
-                f"Applying default user resources for new admin user (id={user_id})..."
+                f"Applying default user resources for admin user (id={user_id}, is_new_user={is_new_user}, force={force})..."
             )
             user_resource_results = apply_default_resources_sync(user_id)
             if user_resource_results:
