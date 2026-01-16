@@ -29,7 +29,13 @@ import { isTaskUnread } from '@/utils/taskViewStatus'
 import MobileSidebar from '@/features/layout/MobileSidebar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
-import { ProjectSection, ProjectProvider, TaskDndProvider, useProjectContext, DroppableHistory } from '@/features/projects'
+import {
+  ProjectSection,
+  ProjectProvider,
+  TaskDndProvider,
+  useProjectContext,
+  DroppableHistory,
+} from '@/features/projects'
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
@@ -474,30 +480,28 @@ export default function TaskSidebar({
                 })()
               )
             ) : (
-              <DroppableHistory>
-                <TaskHistorySection
-                  groupTasks={groupTasks}
-                  personalTasks={personalTasks}
-                  isCollapsed={isCollapsed}
-                  isGroupChatsExpanded={isGroupChatsExpanded}
-                  setIsGroupChatsExpanded={setIsGroupChatsExpanded}
-                  maxVisibleGroupChats={maxVisibleGroupChats}
-                  hasMoreGroupTasks={hasMoreGroupTasks}
-                  hasMorePersonalTasks={hasMorePersonalTasks}
-                  loadMoreGroupTasks={loadMoreGroupTasks}
-                  loadMorePersonalTasks={loadMorePersonalTasks}
-                  loadingMoreGroupTasks={loadingMoreGroupTasks}
-                  loadingMorePersonalTasks={loadingMorePersonalTasks}
-                  viewStatusVersion={viewStatusVersion}
-                  getUnreadCount={getUnreadCount}
-                  totalUnreadCount={totalUnreadCount}
-                  handleMarkAllAsViewed={handleMarkAllAsViewed}
-                  handleOpenSearchDialog={handleOpenSearchDialog}
-                  shortcutDisplayText={shortcutDisplayText}
-                  setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-                  t={t}
-                />
-              </DroppableHistory>
+              <TaskHistorySection
+                groupTasks={groupTasks}
+                personalTasks={personalTasks}
+                isCollapsed={isCollapsed}
+                isGroupChatsExpanded={isGroupChatsExpanded}
+                setIsGroupChatsExpanded={setIsGroupChatsExpanded}
+                maxVisibleGroupChats={maxVisibleGroupChats}
+                hasMoreGroupTasks={hasMoreGroupTasks}
+                hasMorePersonalTasks={hasMorePersonalTasks}
+                loadMoreGroupTasks={loadMoreGroupTasks}
+                loadMorePersonalTasks={loadMorePersonalTasks}
+                loadingMoreGroupTasks={loadingMoreGroupTasks}
+                loadingMorePersonalTasks={loadingMorePersonalTasks}
+                viewStatusVersion={viewStatusVersion}
+                getUnreadCount={getUnreadCount}
+                totalUnreadCount={totalUnreadCount}
+                handleMarkAllAsViewed={handleMarkAllAsViewed}
+                handleOpenSearchDialog={handleOpenSearchDialog}
+                shortcutDisplayText={shortcutDisplayText}
+                setIsMobileSidebarOpen={setIsMobileSidebarOpen}
+                t={t}
+              />
             )}
             {loadingMore && isSearchResult && (
               <div className="text-center py-2 text-xs text-text-muted">
@@ -605,9 +609,7 @@ function TaskHistorySection({
 
   if (filteredGroupTasks.length === 0 && filteredPersonalTasks.length === 0) {
     return (
-      <div className="text-center py-8 text-xs text-text-muted">
-        {t('common:tasks.no_tasks')}
-      </div>
+      <div className="text-center py-8 text-xs text-text-muted">{t('common:tasks.no_tasks')}</div>
     )
   }
 
@@ -726,7 +728,7 @@ function TaskHistorySection({
       )}
       {/* History Section (Personal Tasks) */}
       {filteredPersonalTasks.length > 0 && (
-        <>
+        <DroppableHistory>
           {!isCollapsed && (
             <div
               className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${filteredGroupTasks.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}`}
@@ -787,9 +789,7 @@ function TaskHistorySection({
             >
               <ChevronDown className="h-3.5 w-3.5" />
               <span>
-                {loadingMorePersonalTasks
-                  ? t('common:tasks.loading')
-                  : t('common:tasks.load_more')}
+                {loadingMorePersonalTasks ? t('common:tasks.loading') : t('common:tasks.load_more')}
               </span>
             </button>
           )}
@@ -798,7 +798,7 @@ function TaskHistorySection({
               {t('common:tasks.loading')}
             </div>
           )}
-        </>
+        </DroppableHistory>
       )}
     </>
   )
