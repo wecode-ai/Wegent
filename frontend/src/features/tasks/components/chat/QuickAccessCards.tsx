@@ -42,6 +42,7 @@ interface QuickAccessCardsProps {
   hideSelected?: boolean // Whether to hide the selected team from the cards
   onRefreshTeams?: () => Promise<Team[]>
   showWizardButton?: boolean // Whether to show the wizard button (only for chat mode)
+  defaultTeam?: Team | null // The default team for current mode (will be hidden from quick access cards)
 }
 
 export function QuickAccessCards({
@@ -54,6 +55,7 @@ export function QuickAccessCards({
   hideSelected = false,
   onRefreshTeams,
   showWizardButton = false,
+  defaultTeam,
 }: QuickAccessCardsProps) {
   const router = useRouter()
   const { t } = useTranslation(['common', 'wizard'])
@@ -122,11 +124,14 @@ export function QuickAccessCards({
       : // Fallback: show first teams from filtered list if no quick access configured
         filteredTeams.map(t => ({ ...t, is_system: false }) as DisplayTeam)
 
-  // Filter out selected team if hideSelected is true
-  const teamsAfterFilter =
-    hideSelected && selectedTeam
-      ? allDisplayTeams.filter(t => t.id !== selectedTeam.id)
-      : allDisplayTeams
+  // Filter out selected team if hideSelected is true, and always filter out default team
+  const teamsAfterFilter = allDisplayTeams.filter(t => {
+    // Always hide default team from quick access cards
+    if (defaultTeam && t.id === defaultTeam.id) return false
+    // Hide selected team if hideSelected is true
+    if (hideSelected && selectedTeam && t.id === selectedTeam.id) return false
+    return true
+  })
 
   // Limit display teams to MAX_QUICK_ACCESS_CARDS
   const displayTeams = teamsAfterFilter.slice(0, MAX_QUICK_ACCESS_CARDS)
@@ -249,7 +254,9 @@ export function QuickAccessCards({
     )
   }
 
-  if (displayTeams.length === 0) {
+  // Only show empty state when user truly has no teams available for current mode
+  // Don't show it when teams exist but are just filtered out (e.g., default team hidden)
+  if (filteredTeams.length === 0) {
     // Show empty state guidance card when no teams are available
     return (
       <>
@@ -433,8 +440,8 @@ export function QuickAccessCards({
         className="flex flex-wrap items-center justify-start gap-2.5 mt-6"
         data-tour="quick-access-cards"
       >
-        {/* Show selected team first with highlighted style */}
-        {selectedTeam && (
+        {/* Show selected team first with highlighted style (only if not the default team) */}
+        {selectedTeam && (!defaultTeam || selectedTeam.id !== defaultTeam.id) && (
           <div className="flex items-center gap-1.5 h-[42px] px-4 rounded-full border border-primary bg-primary/5 text-primary">
             <TeamIconDisplay
               iconId={selectedTeam.icon}

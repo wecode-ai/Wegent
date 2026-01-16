@@ -172,6 +172,9 @@ class TaskLite(BaseModel):
     team_id: Optional[int] = None
     git_repo: Optional[str] = None
     is_group_chat: bool = False  # Whether this is a group chat task
+    knowledge_base_id: Optional[int] = (
+        None  # Knowledge base ID for knowledge type tasks
+    )
 
     class Config:
         from_attributes = True

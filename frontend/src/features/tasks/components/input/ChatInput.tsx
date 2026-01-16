@@ -213,7 +213,12 @@ export default function ChatInput({
     // 2. nativeEvent.isComposing - native browser flag (more reliable in some browsers)
     // 3. compositionJustEndedRef - handles Safari where compositionend fires before keydown
     //    This prevents the Enter key that confirms IME selection from also sending the message
-    if (isInputDisabled || isComposing || e.nativeEvent.isComposing || compositionJustEndedRef.current)
+    if (
+      isInputDisabled ||
+      isComposing ||
+      e.nativeEvent.isComposing ||
+      compositionJustEndedRef.current
+    )
       return
 
     // On mobile, Enter always creates new line (no easy Shift+Enter on mobile keyboards)
@@ -489,60 +494,60 @@ export default function ChatInput({
   }, [sendKey, t])
 
   return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div className="w-full relative" data-tour="task-input">
-            {/* Placeholder - shown when empty */}
-            {showPlaceholder && (
-              <div
-                className="absolute pointer-events-none text-text-muted text-base leading-[26px]"
-                style={{
-                  top: '0.25rem',
-                  left: badge ? `${badgeWidth}px` : '0',
-                }}
-              >
-                {placeholder}
-              </div>
-            )}
+    <div className="w-full relative" data-tour="task-input">
+      {/* Placeholder - shown when empty */}
+      {showPlaceholder && (
+        <div
+          className="absolute pointer-events-none text-text-muted text-base leading-[26px]"
+          style={{
+            top: '0.25rem',
+            left: badge ? `${badgeWidth}px` : '0',
+          }}
+        >
+          {placeholder}
+        </div>
+      )}
 
-            {/* Mention autocomplete menu */}
-            {showMentionMenu && isGroupChat && team && (
-              <MentionAutocomplete
-                team={team}
-                query={mentionQuery}
-                onSelect={handleMentionSelect}
-                onClose={() => {
-                  setShowMentionMenu(false)
-                  setMentionQuery('')
-                }}
-                position={mentionMenuPosition}
-              />
-            )}
+      {/* Mention autocomplete menu */}
+      {showMentionMenu && isGroupChat && team && (
+        <MentionAutocomplete
+          team={team}
+          query={mentionQuery}
+          onSelect={handleMentionSelect}
+          onClose={() => {
+            setShowMentionMenu(false)
+            setMentionQuery('')
+          }}
+          position={mentionMenuPosition}
+        />
+      )}
 
-            {/* Scrollable container that includes both badge and editable content */}
-            <div
-              className="w-full custom-scrollbar"
-              style={{
-                minHeight,
-                maxHeight,
-                overflowY: 'auto',
-              }}
+      {/* Scrollable container that includes both badge and editable content */}
+      <div
+        className="w-full custom-scrollbar"
+        style={{
+          minHeight,
+          maxHeight,
+          overflowY: 'auto',
+        }}
+      >
+        {/* Inner content wrapper with badge and text */}
+        <div className="relative">
+          {/* Badge - positioned absolutely so it doesn't affect text flow */}
+          {badge && (
+            <span
+              ref={badgeRef}
+              className="absolute left-0 top-0.5 pointer-events-auto z-10"
+              style={{ userSelect: 'none' }}
             >
-              {/* Inner content wrapper with badge and text */}
-              <div className="relative">
-                {/* Badge - positioned absolutely so it doesn't affect text flow */}
-                {badge && (
-                  <span
-                    ref={badgeRef}
-                    className="absolute left-0 top-0.5 pointer-events-auto z-10"
-                    style={{ userSelect: 'none' }}
-                  >
-                    {badge}
-                  </span>
-                )}
+              {badge}
+            </span>
+          )}
 
-                {/* Editable content area */}
+          {/* Editable content area - wrapped in Tooltip for send shortcut hint */}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
                 <div
                   ref={editableRef}
                   contentEditable={!isInputDisabled}
@@ -566,14 +571,14 @@ export default function ChatInput({
                   }}
                   suppressContentEditableWarning
                 />
-              </div>
-            </div>
-          </div>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="text-xs">
-          <p>{tooltipText}</p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">
+                <p>{tooltipText}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
+      </div>
+    </div>
   )
 }
