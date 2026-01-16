@@ -11,7 +11,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { useTraceAction } from '@/hooks/useTraceAction'
-import { parseError } from '@/utils/errorParser'
+import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
 import { taskApis } from '@/apis/tasks'
 import { isChatShell } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
@@ -339,11 +339,12 @@ export function useChatStreamHandlers({
       const parsedError = parseError(error)
       lastFailedMessageRef.current = message
 
+      // Use getErrorDisplayMessage for consistent error display logic
+      const errorMessage = getErrorDisplayMessage(error, (key: string) => t(`chat:${key}`))
+
       toast({
         variant: 'destructive',
-        title: parsedError.retryable
-          ? t('chat:errors.request_failed_retry')
-          : t('chat:errors.model_unsupported'),
+        title: errorMessage,
         action: parsedError.retryable
           ? createRetryButton(() => {
               if (lastFailedMessageRef.current && handleSendMessageRef.current) {
@@ -601,7 +602,7 @@ export function useChatStreamHandlers({
       if (!message.subtaskId) {
         toast({
           variant: 'destructive',
-          title: t('chat:errors.request_failed_retry'),
+          title: t('chat:errors.generic_error'),
           description: 'Subtask ID not found',
         })
         return
@@ -610,7 +611,7 @@ export function useChatStreamHandlers({
       if (!selectedTaskDetail?.id) {
         toast({
           variant: 'destructive',
-          title: t('chat:errors.request_failed_retry'),
+          title: t('chat:errors.generic_error'),
           description: 'Task ID not found',
         })
         return
@@ -639,16 +640,22 @@ export function useChatStreamHandlers({
             )
 
             if (result.error) {
+              const errorMessage = getErrorDisplayMessage(result.error, (key: string) =>
+                t(`chat:${key}`)
+              )
               toast({
                 variant: 'destructive',
-                title: t('chat:errors.request_failed_retry'),
+                title: errorMessage,
               })
             }
           } catch (error) {
             console.error('[ChatStreamHandlers] Retry failed:', error)
+            const errorMessage = getErrorDisplayMessage(error as Error, (key: string) =>
+              t(`chat:${key}`)
+            )
             toast({
               variant: 'destructive',
-              title: t('chat:errors.request_failed_retry'),
+              title: errorMessage,
             })
             throw error
           }
