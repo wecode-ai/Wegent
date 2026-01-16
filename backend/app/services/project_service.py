@@ -48,11 +48,12 @@ def create_project(
     next_sort_order = (max_sort_order or 0) + 1
 
     # Create project
+    # Use empty string for color if not provided, since DB column is NOT NULL DEFAULT ''
     new_project = Project(
         user_id=user_id,
         name=project_data.name,
         description=project_data.description,
-        color=project_data.color,
+        color=project_data.color or "",
         sort_order=next_sort_order,
         is_expanded=True,
         is_active=True,
