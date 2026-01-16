@@ -2,22 +2,23 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
 from datetime import datetime, timedelta
-from jose import jwt
+
+import pytest
 from fastapi import HTTPException
+from jose import jwt
 from sqlalchemy.orm import Session
 
-from app.core.security import (
-    verify_password,
-    get_password_hash,
-    create_access_token,
-    verify_token,
-    authenticate_user,
-    get_current_user,
-    get_admin_user
-)
 from app.core.config import settings
+from app.core.security import (
+    authenticate_user,
+    create_access_token,
+    get_admin_user,
+    get_current_user,
+    get_password_hash,
+    verify_password,
+    verify_token,
+)
 from app.models.user import User
 
 
@@ -85,36 +86,41 @@ class TestTokenOperations:
         assert isinstance(token, str)
 
         # Verify token can be decoded
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
         assert payload["sub"] == "testuser"
         assert "exp" in payload
 
     def test_create_access_token_with_custom_expiration(self):
         """Test creating access token with custom expiration"""
         import time
+
         data = {"sub": "testuser"}
         expires_delta = 60  # 60 minutes
-        
+
         # Get current time as Unix timestamp
         before_timestamp = time.time()
         token = create_access_token(data, expires_delta=expires_delta)
         after_timestamp = time.time()
 
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
 
         # Verify that the token contains the expected data
         assert payload["sub"] == "testuser"
-        
+
         # Verify that exp field exists
         assert "exp" in payload
-        
+
         # The exp field should be approximately 60 minutes from now
         # Calculate expected expiration range
         expected_exp_min = before_timestamp + (expires_delta * 60)
         expected_exp_max = after_timestamp + (expires_delta * 60)
-        
+
         exp_timestamp = payload["exp"]
-        
+
         # Verify expiration is within expected range (with 1 second tolerance)
         assert expected_exp_min - 1 <= exp_timestamp <= expected_exp_max + 1
 
@@ -123,7 +129,9 @@ class TestTokenOperations:
         data = {"sub": "testuser", "role": "admin", "email": "test@example.com"}
         token = create_access_token(data)
 
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
         assert payload["sub"] == "testuser"
         assert payload["role"] == "admin"
         assert payload["email"] == "test@example.com"
@@ -150,17 +158,16 @@ class TestTokenOperations:
         # Create a token with very short expiration and wait for it to expire
         # Since create_access_token doesn't support negative values properly,
         # we'll create a token manually with past expiration
-        from jose import jwt
-        from datetime import datetime, timedelta
         import time
-        
+        from datetime import datetime, timedelta
+
+        from jose import jwt
+
         expired_data = data.copy()
         # Use timestamp for expiration (1 minute ago)
         expired_data["exp"] = (datetime.now() - timedelta(minutes=1)).timestamp()
         expired_token = jwt.encode(
-            expired_data,
-            settings.SECRET_KEY,
-            algorithm=settings.ALGORITHM
+            expired_data, settings.SECRET_KEY, algorithm=settings.ALGORITHM
         )
 
         # jwt.decode will raise JWTError for expired tokens, which verify_token catches
@@ -185,7 +192,9 @@ class TestTokenOperations:
 class TestAuthenticateUser:
     """Test user authentication function"""
 
-    def test_authenticate_user_with_valid_credentials(self, test_db: Session, test_user: User):
+    def test_authenticate_user_with_valid_credentials(
+        self, test_db: Session, test_user: User
+    ):
         """Test authenticating user with valid credentials"""
         user = authenticate_user(test_db, "testuser", "testpassword123")
 
@@ -193,7 +202,9 @@ class TestAuthenticateUser:
         assert user.user_name == "testuser"
         assert user.email == "test@example.com"
 
-    def test_authenticate_user_with_invalid_password(self, test_db: Session, test_user: User):
+    def test_authenticate_user_with_invalid_password(
+        self, test_db: Session, test_user: User
+    ):
         """Test authenticating user with invalid password"""
         user = authenticate_user(test_db, "testuser", "wrongpassword")
 
@@ -211,7 +222,9 @@ class TestAuthenticateUser:
 
         assert user is None
 
-    def test_authenticate_user_with_empty_password(self, test_db: Session, test_user: User):
+    def test_authenticate_user_with_empty_password(
+        self, test_db: Session, test_user: User
+    ):
         """Test authenticating with empty password"""
         user = authenticate_user(test_db, "testuser", "")
 
@@ -223,7 +236,9 @@ class TestAuthenticateUser:
 
         assert user is None
 
-    def test_authenticate_inactive_user_raises_exception(self, test_db: Session, test_inactive_user: User):
+    def test_authenticate_inactive_user_raises_exception(
+        self, test_db: Session, test_inactive_user: User
+    ):
         """Test authenticating inactive user raises HTTPException"""
         with pytest.raises(HTTPException) as exc_info:
             authenticate_user(test_db, "inactiveuser", "inactive123")
@@ -236,14 +251,19 @@ class TestAuthenticateUser:
 class TestGetCurrentUser:
     """Test get_current_user dependency function"""
 
-    def test_get_current_user_with_valid_token(self, test_db: Session, test_user: User, test_token: str, mocker):
+    def test_get_current_user_with_valid_token(
+        self, test_db: Session, test_user: User, test_token: str, mocker
+    ):
         """Test getting current user with valid token"""
         # Mock the oauth2_scheme dependency to return the token
         mock_oauth2 = mocker.patch("app.core.security.oauth2_scheme")
         mock_oauth2.return_value = test_token
-        
+
         # Mock decrypt_user_git_info to handle None git_info
-        mocker.patch("app.services.user.UserService.decrypt_user_git_info", side_effect=lambda user: user)
+        mocker.patch(
+            "app.services.user.UserService.decrypt_user_git_info",
+            side_effect=lambda user: user,
+        )
 
         user = get_current_user(token=test_token, db=test_db)
 
@@ -270,12 +290,17 @@ class TestGetCurrentUser:
         assert exc_info.value.status_code == 404
         assert "not found" in exc_info.value.detail
 
-    def test_get_current_user_with_inactive_user(self, test_db: Session, test_inactive_user: User, mocker):
+    def test_get_current_user_with_inactive_user(
+        self, test_db: Session, test_inactive_user: User, mocker
+    ):
         """Test getting current user when user is inactive"""
         token = create_access_token({"sub": "inactiveuser"})
-        
+
         # Mock decrypt_user_git_info to handle None git_info
-        mocker.patch("app.services.user.UserService.decrypt_user_git_info", side_effect=lambda user: user)
+        mocker.patch(
+            "app.services.user.UserService.decrypt_user_git_info",
+            side_effect=lambda user: user,
+        )
 
         with pytest.raises(HTTPException) as exc_info:
             get_current_user(token=token, db=test_db)
