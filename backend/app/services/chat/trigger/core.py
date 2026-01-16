@@ -1021,10 +1021,47 @@ async def _stream_with_http_adapter(
                 # This is critical for persistence - without this, messages show as "running" after refresh
                 from app.services.chat.storage.db import db_handler
 
+                # Save full artifact to task.json["canvas"] FIRST (before truncation)
+                # This ensures the complete artifact is stored in canvas
+                # Use synchronous save to ensure it completes before we truncate
+                logger.info(
+                    "[HTTP_ADAPTER] DONE event - result keys: %s, has artifact: %s",
+                    list(result.keys()),
+                    "artifact" in result,
+                )
+                if result.get("artifact"):
+                    logger.info(
+                        "[HTTP_ADAPTER] Saving artifact to canvas: task_id=%d, artifact_id=%s, content_len=%d",
+                        task_id,
+                        result["artifact"].get("id", ""),
+                        len(result["artifact"].get("content", "")),
+                    )
+                    await db_handler.save_artifact_to_canvas(
+                        task_id, result["artifact"]
+                    )
+                else:
+                    logger.warning(
+                        "[HTTP_ADAPTER] No artifact in result to save to canvas, result keys: %s",
+                        list(result.keys()),
+                    )
+
+                # For DB storage, truncate artifact content to save space
+                # Full artifact is already stored separately in task.json["canvas"]
+                result_for_storage = result.copy()
+                if result_for_storage.get("artifact"):
+                    artifact = result_for_storage["artifact"]
+                    content = artifact.get("content", "")
+                    if len(content) > 10:
+                        result_for_storage["artifact"] = {
+                            **artifact,
+                            "content": content[:10] + "...",
+                        }
+
                 await db_handler.update_subtask_status(
                     subtask_id=subtask_id,
                     status="COMPLETED",
-                    result=result,
+                    result=result_for_storage,
+                    skip_artifact_save=True,  # Already saved above
                 )
 
                 await ws_emitter.emit_chat_done(

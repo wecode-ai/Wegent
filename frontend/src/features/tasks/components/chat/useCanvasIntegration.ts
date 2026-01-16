@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useMemo } from 'react'
 import type { Artifact } from '@/features/canvas/types'
 import { useCanvasState } from '@/features/canvas/hooks/useCanvasState'
 import { extractArtifact } from '@/features/canvas/hooks/useArtifact'
+import { getToken } from '@/apis/user'
 
 // Error messages for user-friendly display
 const ERROR_MESSAGES = {
@@ -80,6 +81,7 @@ async function fetchWithRetry(
   retries: number = RETRY_CONFIG.maxRetries
 ): Promise<Response> {
   let lastError: Error | null = null
+  const token = getToken()
 
   for (let i = 0; i <= retries; i++) {
     try {
@@ -89,6 +91,10 @@ async function fetchWithRetry(
       const response = await fetch(url, {
         ...options,
         signal: controller.signal,
+        headers: {
+          ...options.headers,
+          ...(token && { Authorization: `Bearer ${token}` }),
+        },
       })
 
       clearTimeout(timeoutId)
@@ -286,11 +292,50 @@ export function useCanvasIntegration(
     onReset?.()
   }, [canvasState, onReset])
 
-  // Reset state when taskId changes
+  // Load saved artifact when taskId changes
+  // This handles page refresh and task switching scenarios
   useEffect(() => {
     reset()
+
+    // Try to load saved artifact from backend
+    const loadSavedArtifact = async () => {
+      if (!taskId) return
+      if (isFetchingRef.current) return
+      isFetchingRef.current = true
+
+      try {
+        const response = await fetch(`/api/canvas/tasks/${taskId}/artifact`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(getToken() && { Authorization: `Bearer ${getToken()}` }),
+          },
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          if (data.artifact) {
+            console.log(
+              '[useCanvasIntegration] Loaded saved artifact:',
+              data.artifact.id,
+              'versions count:',
+              data.artifact.versions?.length
+            )
+            canvasState.setArtifact(data.artifact)
+            canvasState.setCanvasEnabled(true)
+          }
+        }
+        // 404 is expected if no artifact exists for this task
+      } catch (error) {
+        console.error('[useCanvasIntegration] Error loading saved artifact:', error)
+      } finally {
+        isFetchingRef.current = false
+      }
+    }
+
+    loadSavedArtifact()
   }, [taskId]) // eslint-disable-line react-hooks/exhaustive-deps
-  // Note: We intentionally only depend on taskId here to trigger reset on task change
+  // Note: We intentionally only depend on taskId here to trigger reset and load on task change
 
   // Return stable object using useMemo to prevent unnecessary re-renders
   return useMemo(

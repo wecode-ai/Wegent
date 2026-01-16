@@ -84,10 +84,11 @@ class DatabaseHandler:
         status: str,
         result: dict[str, Any] | None = None,
         error: str | None = None,
+        skip_artifact_save: bool = False,
     ) -> None:
         """Update subtask status asynchronously."""
         await self._run_in_executor(
-            self._update_subtask_sync, subtask_id, status, result, error
+            self._update_subtask_sync, subtask_id, status, result, error, skip_artifact_save
         )
 
     def _update_subtask_sync(
@@ -96,6 +97,7 @@ class DatabaseHandler:
         status: str,
         result: dict[str, Any] | None = None,
         error: str | None = None,
+        skip_artifact_save: bool = False,
     ) -> None:
         """Synchronous subtask update (runs in thread pool)."""
         from app.models.subtask import Subtask, SubtaskStatus
@@ -112,7 +114,8 @@ class DatabaseHandler:
                 if result is not None:
                     subtask.result = result
                     # If result contains artifact, also store in task.json["canvas"]
-                    if result.get("type") == "artifact" and result.get("artifact"):
+                    # Skip if caller already saved the artifact separately
+                    if not skip_artifact_save and result.get("type") == "artifact" and result.get("artifact"):
                         self._save_artifact_to_canvas(db, subtask.task_id, result["artifact"])
                 if error is not None:
                     subtask.error_message = error
@@ -219,6 +222,42 @@ class DatabaseHandler:
 
         except Exception:
             logger.exception("[Canvas] Error saving artifact to canvas for task %d", task_id)
+
+    def _save_artifact_to_canvas_async(self, task_id: int, artifact: dict[str, Any]) -> None:
+        """Save artifact to task.json['canvas'] asynchronously.
+
+        This is a fire-and-forget method that saves the artifact in a thread pool.
+        Used when we need to save the full artifact before truncating for subtask storage.
+        """
+        try:
+            # Run in thread pool executor
+            _db_executor.submit(self._save_artifact_to_canvas_sync, task_id, artifact)
+        except Exception:
+            logger.exception("[Canvas] Error scheduling artifact save for task %d", task_id)
+
+    async def save_artifact_to_canvas(self, task_id: int, artifact: dict[str, Any]) -> None:
+        """Save artifact to task.json['canvas'] asynchronously (awaitable).
+
+        This method waits for the save to complete before returning.
+        Used when we need to ensure the full artifact is saved before truncating.
+        """
+        logger.info(
+            "[Canvas] save_artifact_to_canvas called: task_id=%d, artifact_id=%s, content_len=%d",
+            task_id,
+            artifact.get("id", ""),
+            len(artifact.get("content", "")),
+        )
+        await self._run_in_executor(self._save_artifact_to_canvas_sync, task_id, artifact)
+
+    def _save_artifact_to_canvas_sync(self, task_id: int, artifact: dict[str, Any]) -> None:
+        """Synchronous wrapper for _save_artifact_to_canvas with its own session."""
+        logger.info("[Canvas] _save_artifact_to_canvas_sync started: task_id=%d", task_id)
+        try:
+            with _db_session() as db:
+                self._save_artifact_to_canvas(db, task_id, artifact)
+            logger.info("[Canvas] _save_artifact_to_canvas_sync completed: task_id=%d", task_id)
+        except Exception:
+            logger.exception("[Canvas] Error in sync artifact save for task %d", task_id)
 
     def _update_task_status_sync(self, task_id: int) -> None:
         """Update task status based on subtask status."""

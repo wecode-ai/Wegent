@@ -1,9 +1,9 @@
 # Canvas 画布架构设计文档
 
-> 版本: 1.1
+> 版本: 1.2
 > 分支: human/20260115_panda
 > 日期: 2026-01-16
-> 更新: v1.1 添加问题修复记录
+> 更新: v1.2 修复artifact存储冗余和页面刷新加载问题
 
 ---
 
@@ -1940,6 +1940,86 @@ useEffect(() => { ... }, [
 | 输入验证 | P1 | 已修复 | 安全性 |
 | 历史清理 | P2 | 已修复 | 长期存储 |
 | useEffect依赖 | P2 | 已修复 | 性能 |
+| **顶层artifact冗余存储** | P1 | 已修复 (v1.2) | 存储空间 |
+| **页面刷新后artifact不加载** | P0 | 已修复 (v1.2) | 用户体验 |
+
+#### A.5 v1.2 新增修复 (2026-01-16)
+
+##### A.5.1 顶层artifact内容冗余存储
+
+**问题**: 在 `trigger/core.py` 中，保存到数据库时 `result["artifact"]` 包含完整内容，与 `task.json["canvas"]` 中的数据形成冗余。
+
+**修复位置**: `backend/app/services/chat/trigger/core.py`
+
+**修复方案**:
+```python
+# 修复前: 直接保存完整result
+await db_handler.update_subtask_status(
+    subtask_id=subtask_id,
+    status="COMPLETED",
+    result=result,  # artifact.content 是完整内容
+)
+
+# 修复后: 截断artifact内容后保存
+result_for_storage = result.copy()
+if result_for_storage.get("artifact"):
+    artifact = result_for_storage["artifact"]
+    content = artifact.get("content", "")
+    if len(content) > 10:
+        result_for_storage["artifact"] = {
+            **artifact,
+            "content": content[:10] + "...",
+        }
+
+await db_handler.update_subtask_status(
+    subtask_id=subtask_id,
+    status="COMPLETED",
+    result=result_for_storage,  # artifact.content 已截断
+)
+```
+
+##### A.5.2 页面刷新后artifact不加载
+
+**问题**: 页面刷新或切换task后，没有从后端加载已保存的artifact，导致版本历史不显示。
+
+**修复位置**:
+- `frontend/src/features/tasks/components/chat/useCanvasIntegration.ts`
+- `frontend/src/app/(tasks)/chat/ChatPageDesktop.tsx`
+
+**修复方案**:
+
+1. **useCanvasIntegration.ts** - 添加taskId变化时加载已保存artifact:
+```typescript
+// Load saved artifact when taskId changes
+useEffect(() => {
+  reset()
+
+  const loadSavedArtifact = async () => {
+    if (!taskId) return
+
+    const response = await fetch(`/api/canvas/tasks/${taskId}/artifact`)
+    if (response.ok) {
+      const data = await response.json()
+      if (data.artifact) {
+        canvasState.setArtifact(data.artifact)
+        canvasState.setCanvasEnabled(true)
+      }
+    }
+  }
+
+  loadSavedArtifact()
+}, [taskId])
+```
+
+2. **ChatPageDesktop.tsx** - 添加artifact加载时自动打开面板:
+```typescript
+// Auto-open canvas panel when artifact is loaded
+useEffect(() => {
+  if (canvas.artifact && !isCanvasOpen) {
+    setIsCanvasOpen(true)
+  }
+}, [canvas.artifact])
+```
 
 ---
 
@@ -2008,6 +2088,6 @@ useEffect(() => { ... }, [
 
 ---
 
-> 文档版本: 1.1
+> 文档版本: 1.2
 > 最后更新: 2026-01-16
 > 作者: AI Assistant

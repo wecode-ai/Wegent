@@ -232,6 +232,14 @@ export function ChatPageDesktop() {
     wasStreamingRef.current = isCurrentlyStreaming
   }, [currentTaskStreamState?.messages, canvas.artifact, canvas.fetchArtifactWithVersions])
 
+  // Auto-open canvas panel when artifact is loaded (from streaming or saved data)
+  useEffect(() => {
+    if (canvas.artifact && !isCanvasOpen) {
+      setIsCanvasOpen(true)
+    }
+  }, [canvas.artifact]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Note: Only trigger when artifact changes, not when isCanvasOpen changes
+
   // Search dialog state (controlled from page level for global shortcut support)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
 
