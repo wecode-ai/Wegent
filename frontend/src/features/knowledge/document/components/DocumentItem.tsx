@@ -4,9 +4,15 @@
 
 'use client'
 
-import { FileText, Trash2, Pencil, ExternalLink, Table2 } from 'lucide-react'
+import { FileText, Trash2, Pencil, ExternalLink, Table2, MoreVertical } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -90,11 +96,11 @@ export function DocumentItem({
     onViewDetail?.(document)
   }
 
-  // Compact mode: Card layout for sidebar
+  // Compact mode: Card layout for sidebar (notebook mode)
   if (compact) {
     return (
       <div
-        className={`flex items-center gap-3 px-3 py-2.5 bg-base hover:bg-surface transition-colors rounded-lg border border-border group ${onViewDetail ? 'cursor-pointer' : ''}`}
+        className={`flex items-center gap-2 px-2 py-2 bg-base hover:bg-surface transition-colors rounded-lg border border-border group ${onViewDetail ? 'cursor-pointer' : ''}`}
         onClick={handleRowClick}
       >
         {/* Checkbox for batch selection */}
@@ -103,58 +109,49 @@ export function DocumentItem({
             <Checkbox
               checked={selected}
               onCheckedChange={handleCheckboxChange}
-              className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+              className="data-[state=checked]:bg-primary data-[state=checked]:border-primary h-3.5 w-3.5"
             />
           </div>
         )}
 
-        {/* File icon */}
-        <div className="p-1.5 bg-primary/10 rounded flex-shrink-0">
-          {isTable ? (
-            <Table2 className="w-3.5 h-3.5 text-primary" />
-          ) : (
-            <FileText className="w-3.5 h-3.5 text-primary" />
-          )}
-        </div>
-
         {/* File name and info */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
-            <span className="text-sm font-medium text-text-primary truncate">{document.name}</span>
+          <div className="flex items-center gap-1">
+            <span className="text-xs font-medium text-text-primary truncate">{document.name}</span>
             {tableUrl && (
               <button
                 className="p-0.5 rounded text-primary hover:bg-primary/10 transition-colors flex-shrink-0"
                 onClick={handleOpenLink}
                 title={t('knowledge:document.document.openLink')}
               >
-                <ExternalLink className="w-3 h-3" />
+                <ExternalLink className="w-2.5 h-2.5" />
               </button>
             )}
           </div>
-          <div className="flex items-center gap-2 mt-0.5">
+          <div className="flex items-center gap-1.5 mt-0.5">
             {/* Type badge */}
             {isTable ? (
               <Badge
                 variant="default"
                 size="sm"
-                className="bg-blue-500/10 text-blue-600 border-blue-500/20 text-[10px] px-1.5 py-0"
+                className="bg-blue-500/10 text-blue-600 border-blue-500/20 text-[9px] px-1 py-0"
               >
                 {t('knowledge:document.document.type.table')}
               </Badge>
             ) : (
-              <span className="text-[10px] text-text-muted uppercase">
+              <span className="text-[9px] text-text-muted uppercase">
                 {document.file_extension}
               </span>
             )}
             {/* Size */}
             {!isTable && (
-              <span className="text-[10px] text-text-muted">
+              <span className="text-[9px] text-text-muted">
                 {formatFileSize(document.file_size)}
               </span>
             )}
             {/* Status indicator */}
             <span
-              className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${document.is_active ? 'bg-green-500' : 'bg-yellow-500'}`}
+              className={`w-1 h-1 rounded-full flex-shrink-0 ${document.is_active ? 'bg-green-500' : 'bg-yellow-500'}`}
               title={
                 document.is_active
                   ? t('knowledge:document.document.indexStatus.available')
@@ -164,25 +161,44 @@ export function DocumentItem({
           </div>
         </div>
 
-        {/* Action buttons */}
-        {canManage && (
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
-              className="p-1 rounded text-primary hover:bg-primary/10 transition-colors"
-              onClick={handleEdit}
-              title={t('common:actions.edit')}
-            >
-              <Pencil className="w-3.5 h-3.5" />
-            </button>
-            <button
-              className="p-1 rounded text-text-muted hover:text-error hover:bg-error/10 transition-colors"
-              onClick={handleDelete}
-              title={t('common:actions.delete')}
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+        {/* File icon / More actions - icon shown by default, more actions on hover */}
+        <div className="flex-shrink-0 relative w-6 h-6 flex items-center justify-center">
+          {/* File icon - hidden on hover when canManage */}
+          <div
+            className={`p-1 bg-primary/10 rounded ${canManage ? 'group-hover:opacity-0' : ''} transition-opacity`}
+          >
+            {isTable ? (
+              <Table2 className="w-3 h-3 text-primary" />
+            ) : (
+              <FileText className="w-3 h-3 text-primary" />
+            )}
           </div>
-        )}
+          {/* More actions dropdown - shown on hover, replaces icon */}
+          {canManage && (
+            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface transition-colors"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <MoreVertical className="w-3.5 h-3.5" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-[120px]">
+                  <DropdownMenuItem onClick={handleEdit}>
+                    <Pencil className="w-3.5 h-3.5 mr-2" />
+                    {t('common:actions.edit')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem danger onClick={handleDelete}>
+                    <Trash2 className="w-3.5 h-3.5 mr-2" />
+                    {t('common:actions.delete')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
+        </div>
       </div>
     )
   }
