@@ -16,7 +16,7 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 
 **Core principles:**
 - Kubernetes-inspired CRD design (Ghost, Model, Shell, Bot, Team, Task, Skill, Workspace)
-- Choose simplest working solution - prioritize code simplicity and extensibility
+- System should be simple AFTER your work - prioritize code simplicity and extensibility
 
 **📚 Documentation Principle:**
 - **AGENTS.md**: Core concepts, coding principles, and quick reference only

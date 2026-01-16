@@ -12,6 +12,7 @@ import {
   Cog6ToothIcon,
   CheckIcon,
   MagnifyingGlassIcon,
+  SparklesIcon,
 } from '@heroicons/react/24/outline'
 import { Wand2 } from 'lucide-react'
 import { userApis } from '@/apis/user'
@@ -19,6 +20,7 @@ import { QuickAccessTeam, Team } from '@/types/api'
 import { saveLastTeamByMode } from '@/utils/userPreferences'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tag } from '@/components/ui/tag'
+import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { paths } from '@/config/paths'
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
@@ -248,7 +250,53 @@ export function QuickAccessCards({
   }
 
   if (displayTeams.length === 0) {
-    return null
+    // Show empty state guidance card when no teams are available
+    return (
+      <>
+        <div className="flex flex-col items-center justify-center mt-8 mb-4">
+          {/* Empty state guidance card */}
+          <div className="w-full max-w-md bg-surface border border-border rounded-2xl p-6 text-center">
+            <div className="flex justify-center mb-4">
+              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+                <SparklesIcon className="w-6 h-6 text-primary" />
+              </div>
+            </div>
+            <h3 className="text-lg font-semibold text-text-primary mb-2">
+              {t('teams.no_teams_title')}
+            </h3>
+            <p className="text-sm text-text-muted mb-6">{t('teams.no_teams_description')}</p>
+            <Button onClick={() => setShowWizard(true)} className="w-full sm:w-auto">
+              <Wand2 className="w-4 h-4 mr-2" />
+              {t('teams.create_first_team')}
+            </Button>
+          </div>
+        </div>
+
+        {/* Team Creation Wizard Dialog */}
+        <TeamCreationWizard
+          open={showWizard}
+          onClose={() => setShowWizard(false)}
+          onSuccess={async (teamId, teamName) => {
+            // Refresh teams list first to get the new team
+            if (onRefreshTeams) {
+              const refreshedTeams = await onRefreshTeams()
+              // Find and select the new team from refreshed list
+              const newTeam = refreshedTeams.find(t => t.id === teamId)
+              if (newTeam) {
+                onTeamSelect(newTeam)
+              }
+            } else {
+              // Fallback: try to find in current teams (may not work for newly created)
+              const newTeam = teams.find(t => t.id === teamId)
+              if (newTeam) {
+                onTeamSelect(newTeam)
+              }
+            }
+            console.log(`Created team: ${teamName} (ID: ${teamId})`)
+          }}
+        />
+      </>
+    )
   }
 
   // Render a single team card with optional tooltip

@@ -53,6 +53,9 @@ export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskIn
 
   // Ref for container width measurement
   inputControlsRef?: React.RefObject<HTMLDivElement | null>
+
+  // Whether there are no available teams (shows disabled state)
+  hasNoTeams?: boolean
 }
 
 /**
@@ -90,6 +93,7 @@ export function ChatInputCard({
   handleSendMessage,
   onPasteFile,
   inputControlsRef,
+  hasNoTeams = false,
   // ChatInputControls props
   selectedModel,
   setSelectedModel,
@@ -202,6 +206,7 @@ export function ChatInputCard({
               isGroupChat={isGroupChat}
               team={selectedTeam}
               onPasteFile={onPasteFile}
+              hasNoTeams={hasNoTeams}
             />
           </div>
         )}
@@ -256,6 +261,7 @@ export function ChatInputCard({
             isSubtaskStreaming={isSubtaskStreaming}
             onStopStream={onStopStream}
             onSendMessage={onSendMessage}
+            hasNoTeams={hasNoTeams}
           />
         </div>
       </div>

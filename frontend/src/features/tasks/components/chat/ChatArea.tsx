@@ -541,6 +541,8 @@ function ChatAreaContent({
       }
       streamHandlers.handleSendMessage(message)
     },
+    // Whether there are no available teams for current mode
+    hasNoTeams: filteredTeams.length === 0,
   }
 
   return (
