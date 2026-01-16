@@ -105,7 +105,7 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
       <div className="flex items-center justify-between px-1 py-1.5 group">
         <button
           onClick={() => setSectionCollapsed(!sectionCollapsed)}
-          className="flex items-center gap-1 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors"
+          className="flex items-center gap-1 text-xs font-medium text-text-muted hover:text-text-primary transition-colors"
         >
           {sectionCollapsed ? (
             <ChevronRight className="w-3.5 h-3.5" />
