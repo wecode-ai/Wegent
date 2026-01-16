@@ -30,9 +30,15 @@ export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskIn
   // Restore to default team
   onRestoreDefaultTeam?: () => void
 
+  // Whether the current team is the default team (hide badge when true)
+  isUsingDefaultTeam?: boolean
+
   // Task type
   taskType: 'chat' | 'code' | 'knowledge'
   autoFocus?: boolean
+
+  // Knowledge base ID to exclude from context selector (used in notebook mode)
+  knowledgeBaseId?: number
 
   // Tips
   tipText: ChatTipItem | null
@@ -84,8 +90,10 @@ export function ChatInputCard({
   onExternalApiParamsChange,
   onAppModeChange,
   onRestoreDefaultTeam,
+  isUsingDefaultTeam = false,
   taskType,
   autoFocus = false,
+  knowledgeBaseId,
   tipText,
   isGroupChat,
   isDragging,
@@ -207,7 +215,7 @@ export function ChatInputCard({
               canSubmit={canSubmit}
               tipText={tipText}
               badge={
-                selectedTeam ? (
+                selectedTeam && !isUsingDefaultTeam ? (
                   <SelectedTeamBadge
                     team={selectedTeam}
                     showClearButton={true}
@@ -223,8 +231,8 @@ export function ChatInputCard({
           </div>
         )}
 
-        {/* Selected Team Badge only - show when chat input is hidden (workflow mode) */}
-        {shouldHideChatInput && selectedTeam && (
+        {/* Selected Team Badge only - show when chat input is hidden (workflow mode) and not using default team */}
+        {shouldHideChatInput && selectedTeam && !isUsingDefaultTeam && (
           <div className="px-4 pt-3">
             <SelectedTeamBadge
               team={selectedTeam}
@@ -278,6 +286,7 @@ export function ChatInputCard({
             onStopStream={onStopStream}
             onSendMessage={onSendMessage}
             hasNoTeams={hasNoTeams}
+            knowledgeBaseId={knowledgeBaseId}
           />
         </div>
       </div>

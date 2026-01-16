@@ -505,6 +505,7 @@ function ChatAreaContent({
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,
     onAppModeChange: chatState.handleAppModeChange,
     onRestoreDefaultTeam: chatState.restoreDefaultTeam,
+    isUsingDefaultTeam: chatState.isUsingDefaultTeam,
     taskType,
     tipText: chatState.randomTip,
     isGroupChat: selectedTaskDetail?.is_group_chat || false,
@@ -570,6 +571,8 @@ function ChatAreaContent({
     },
     // Whether there are no available teams for current mode
     hasNoTeams: filteredTeams.length === 0,
+    // Knowledge base ID to exclude from context selector (used in notebook mode)
+    knowledgeBaseId,
   }
 
   return (
@@ -664,6 +667,7 @@ function ChatAreaContent({
                   hideSelected={true}
                   onRefreshTeams={onRefreshTeams}
                   showWizardButton={taskType === 'chat'}
+                  defaultTeam={chatState.defaultTeam}
                 />
               )}
             </div>

@@ -28,7 +28,11 @@ export interface UseChatAreaStateOptions {
   teams: Team[]
   taskType: 'chat' | 'code' | 'knowledge'
   selectedTeamForNewTask?: Team | null
-  /** Initial knowledge base to pre-select when starting a new chat from knowledge page */
+  /**
+   * Initial knowledge base to pre-select when starting a new chat from knowledge page.
+   * Note: In notebook mode (taskType === 'knowledge'), this is NOT added to selectedContexts
+   * because the notebook's knowledge base is automatically bound to the task on creation.
+   */
   initialKnowledgeBase?: {
     id: number
     name: string
@@ -149,6 +153,10 @@ export function useChatAreaState({
   selectedTeamForNewTask,
   initialKnowledgeBase,
 }: UseChatAreaStateOptions): ChatAreaState {
+  // In notebook mode (taskType === 'knowledge'), don't show the current notebook's KB in selectedContexts
+  // because it's automatically bound to the task on creation
+  const shouldShowInitialKbInContexts = taskType !== 'knowledge'
+
   const { selectedTaskDetail } = useTaskContext()
 
   // Pre-load team preference from localStorage to use as initial value
@@ -421,12 +429,20 @@ export function useChatAreaState({
 
   // Initialize selectedContexts with initialKnowledgeBase when starting a new chat
   // This is used when opening chat from knowledge base page
+  // Note: In notebook mode (taskType === 'knowledge'), we don't add the current KB to selectedContexts
+  // because it's automatically bound to the task on creation and shown in the header
   useEffect(() => {
     // Only initialize when:
     // 1. We have an initialKnowledgeBase
     // 2. No task is currently selected (new chat)
     // 3. selectedContexts is empty (not already initialized)
-    if (initialKnowledgeBase && !selectedTaskDetail && selectedContexts.length === 0) {
+    // 4. Not in notebook mode (shouldShowInitialKbInContexts is true)
+    if (
+      shouldShowInitialKbInContexts &&
+      initialKnowledgeBase &&
+      !selectedTaskDetail &&
+      selectedContexts.length === 0
+    ) {
       const kbContext: ContextItem = {
         id: initialKnowledgeBase.id,
         name: initialKnowledgeBase.name,
@@ -435,7 +451,12 @@ export function useChatAreaState({
       }
       setSelectedContexts([kbContext])
     }
-  }, [initialKnowledgeBase, selectedTaskDetail, selectedContexts.length])
+  }, [
+    shouldShowInitialKbInContexts,
+    initialKnowledgeBase,
+    selectedTaskDetail,
+    selectedContexts.length,
+  ])
 
   // Compute UI flags
   const shouldHideQuotaUsage = useMemo(() => {
