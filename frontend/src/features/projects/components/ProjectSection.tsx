@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   ChevronDown,
@@ -36,6 +36,8 @@ import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { TaskInlineRename } from '@/components/common/TaskInlineRename'
+import { taskApis } from '@/apis/tasks'
 
 interface ProjectSectionProps {
   onTaskSelect?: () => void
@@ -51,6 +53,7 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
     toggleProjectExpanded,
     selectedProjectTaskId,
     setSelectedProjectTaskId,
+    refreshProjects,
   } = useProjectContext()
   const { clearAllStreams } = useChatStreamContext()
   const { setSelectedTask } = useTaskContext()
@@ -144,6 +147,7 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
                   onDelete={() => handleDeleteProject(project)}
                   onTaskClick={handleTaskClick}
                   selectedProjectTaskId={selectedProjectTaskId}
+                  onRefreshProjects={refreshProjects}
                 />
               </DroppableProject>
             ))
@@ -175,6 +179,7 @@ interface ProjectItemProps {
   onDelete: () => void
   onTaskClick: (projectTask: ProjectTask) => void
   selectedProjectTaskId: number | null
+  onRefreshProjects: () => Promise<void>
 }
 
 function ProjectItem({
@@ -185,9 +190,33 @@ function ProjectItem({
   onDelete,
   onTaskClick,
   selectedProjectTaskId,
+  onRefreshProjects,
 }: ProjectItemProps) {
   const { t } = useTranslation('projects')
   const taskCount = project.tasks?.length || 0
+
+  // Track which task is being renamed
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
+
+  // Handle double-click to start renaming
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent, taskId: number) => {
+      e.stopPropagation()
+      e.preventDefault()
+      setEditingTaskId(taskId)
+    },
+    []
+  )
+
+  // Handle rename save
+  const handleRenameSave = useCallback(
+    async (taskId: number, newTitle: string) => {
+      await taskApis.updateTask(taskId, { title: newTitle })
+      // Refresh projects to update task_title
+      await onRefreshProjects()
+    },
+    [onRefreshProjects]
+  )
 
   return (
     <div className="group">
@@ -255,6 +284,7 @@ function ProjectItem({
         <div className="ml-6 space-y-0.5">
           {project.tasks?.map(projectTask => {
             const isSelected = selectedProjectTaskId === projectTask.task_id
+            const isEditing = editingTaskId === projectTask.task_id
             return (
               <DraggableProjectTask
                 key={projectTask.task_id}
@@ -262,7 +292,12 @@ function ProjectItem({
                 projectTask={projectTask}
               >
                 <div
-                  onClick={() => onTaskClick(projectTask)}
+                  onClick={() => {
+                    // Don't navigate when editing
+                    if (!isEditing) {
+                      onTaskClick(projectTask)
+                    }
+                  }}
                   className={cn(
                     'group/task flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer',
                     'text-sm transition-colors',
@@ -271,11 +306,30 @@ function ProjectItem({
                       : 'text-text-secondary hover:text-text-primary hover:bg-surface'
                   )}
                 >
-                  <span className="flex-1 truncate">
-                    {projectTask.task_title || `Task #${projectTask.task_id}`}
-                  </span>
+                  {isEditing ? (
+                    <TaskInlineRename
+                      taskId={projectTask.task_id}
+                      initialTitle={projectTask.task_title || `Task #${projectTask.task_id}`}
+                      isEditing={true}
+                      onEditEnd={() => setEditingTaskId(null)}
+                      onSave={async (newTitle: string) => {
+                        await handleRenameSave(projectTask.task_id, newTitle)
+                      }}
+                    />
+                  ) : (
+                    <span
+                      className="flex-1 truncate"
+                      onDoubleClick={e => handleDoubleClick(e, projectTask.task_id)}
+                    >
+                      {projectTask.task_title || `Task #${projectTask.task_id}`}
+                    </span>
+                  )}
                   <div className="opacity-0 group-hover/task:opacity-100 transition-opacity">
-                    <ProjectTaskMenu taskId={projectTask.task_id} projectId={project.id} />
+                    <ProjectTaskMenu
+                      taskId={projectTask.task_id}
+                      projectId={project.id}
+                      onRename={() => setEditingTaskId(projectTask.task_id)}
+                    />
                   </div>
                 </div>
               </DraggableProjectTask>
