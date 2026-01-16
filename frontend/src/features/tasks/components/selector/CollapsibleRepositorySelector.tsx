@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Folder, ChevronDown } from 'lucide-react'
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -50,19 +50,24 @@ export function CollapsibleRepositorySelector({
   const hasSelectedRepo = !!(selectedRepo?.git_repo || selectedTaskDetail?.git_repo)
   const [isOpen, setIsOpen] = useState(hasSelectedRepo)
 
-  // Update open state when repo selection changes
+  // Track previous hasSelectedRepo to detect transition (only auto-open on no-repo -> has-repo)
+  const prevHasSelectedRepo = useRef(hasSelectedRepo)
+
+  // Update open state only when transitioning from no-repo to has-repo
   useEffect(() => {
-    if (hasSelectedRepo && !isOpen) {
+    if (hasSelectedRepo && !prevHasSelectedRepo.current) {
       setIsOpen(true)
     }
-  }, [hasSelectedRepo, isOpen])
+    prevHasSelectedRepo.current = hasSelectedRepo
+  }, [hasSelectedRepo])
 
   // Generate summary text for collapsed state
   const getSummaryText = () => {
     const repoName = selectedRepo?.git_repo || selectedTaskDetail?.git_repo
     if (!repoName) return null
 
-    const branchName = selectedBranch?.name || selectedTaskDetail?.branch_name || 'default'
+    const branchName =
+      selectedBranch?.name || selectedTaskDetail?.branch_name || t('common:branches.default')
     // Truncate repo name if too long
     const truncatedRepo = repoName.length > 25 ? `...${repoName.slice(-22)}` : repoName
     return `${truncatedRepo}:${branchName}`
@@ -123,6 +128,7 @@ export function CollapsibleRepositorySelector({
               handleBranchChange={setSelectedBranch}
               disabled={disabled}
               compact={compact}
+              taskDetail={selectedTaskDetail}
             />
           )}
         </div>
