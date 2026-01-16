@@ -111,13 +111,6 @@ export default function TaskListSection({
   // Local task titles for optimistic update during rename
   const [localTitles, setLocalTitles] = useState<Record<number, string>>({})
 
-  // Double-click detection state
-  const [clickState, setClickState] = useState<{
-    taskId: number | null
-    lastClickTime: number
-  }>({ taskId: null, lastClickTime: 0 })
-  const DOUBLE_CLICK_THRESHOLD = 300 // ms
-
   // Touch interaction state
   const [touchState, setTouchState] = useState<{
     startX: number
@@ -336,28 +329,6 @@ export default function TaskListSection({
   const handleCancelRename = useCallback(() => {
     setEditingTaskId(null)
   }, [])
-
-  // Handle title click with double-click detection
-  const handleTitleClick = useCallback(
-    (task: Task, e: React.MouseEvent) => {
-      e.stopPropagation()
-
-      const now = Date.now()
-      if (clickState.taskId === task.id && now - clickState.lastClickTime < DOUBLE_CLICK_THRESHOLD) {
-        // Double-click detected - enter edit mode
-        e.preventDefault()
-        handleStartRename(task.id)
-        setClickState({ taskId: null, lastClickTime: 0 })
-      } else {
-        // First click - record it and handle as single click
-        setClickState({ taskId: task.id, lastClickTime: now })
-        // Delay single click action to allow for double-click detection
-        // Note: We don't trigger task selection here to avoid conflict
-        // Single click on the row (not title) will still select the task
-      }
-    },
-    [clickState, handleStartRename, DOUBLE_CLICK_THRESHOLD]
-  )
 
   if (tasks.length === 0) return null
 
@@ -584,17 +555,16 @@ export default function TaskListSection({
                           onCancel={handleCancelRename}
                         />
                       ) : (
-                        <p
-                          className="flex-1 min-w-0 text-sm text-text-primary leading-tight truncate m-0"
+                        <span
+                          className="flex-1 min-w-0 text-sm text-text-primary leading-tight truncate"
                           onDoubleClick={e => {
                             e.stopPropagation()
                             e.preventDefault()
                             handleStartRename(task.id)
                           }}
-                          onClick={e => handleTitleClick(task, e)}
                         >
                           {localTitles[task.id] ?? task.title}
-                        </p>
+                        </span>
                       )}
 
                       {/* Status icon on the right - only render container when needed */}
