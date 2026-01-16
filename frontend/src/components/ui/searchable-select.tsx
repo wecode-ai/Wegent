@@ -153,7 +153,12 @@ export function SearchableSelect({
                 'placeholder:text-text-muted text-sm'
               )}
             />
-            <CommandList className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1">
+            <CommandList
+              className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1"
+              onWheel={e => {
+                e.stopPropagation()
+              }}
+            >
               {error ? (
                 <div className="py-4 px-3 text-center text-sm text-error">{error}</div>
               ) : items.length === 0 ? (

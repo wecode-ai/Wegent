@@ -136,7 +136,11 @@ export function SummaryModelSelector({
         <PopoverContent className="w-[400px] p-0" align="start">
           <Command>
             <CommandInput placeholder={t('document.summary.modelPlaceholder')} />
-            <CommandList>
+            <CommandList
+              onWheel={e => {
+                e.stopPropagation()
+              }}
+            >
               <CommandEmpty>{t('common:noResults', 'No results found')}</CommandEmpty>
               <CommandGroup>
                 {models.map(model => {
