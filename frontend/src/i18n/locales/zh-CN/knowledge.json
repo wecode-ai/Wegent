@@ -72,7 +72,7 @@
       },
       "indexStatus": {
         "available": "可用",
-        "unavailable": "不可用"
+        "unavailable": "索引不可用"
       },
       "openLink": "打开链接",
       "columns": {
@@ -106,6 +106,7 @@
       "uploadSuccess": "文件上传成功",
       "batch": {
         "selected": "已选择 {{count}} 项",
+        "selectAll": "选择所有",
         "enable": "批量启用",
         "disable": "批量停用",
         "delete": "批量删除"
@@ -185,7 +186,9 @@
         "provider": {
           "dingtalk": "钉钉多维表"
         }
-      }
+      },
+      "documentCount": "文档数量",
+      "notebookLimitReached": "Notebook 模式知识库最多支持 50 篇文档"
     },
     "permission": {
       "noAccess": "您没有操作权限"
@@ -337,6 +340,7 @@
     "backToList": "返回",
     "notFound": "知识库未找到",
     "createTaskError": "创建对话失败",
-    "bindKnowledgeBaseError": "绑定知识库失败"
+    "bindKnowledgeBaseError": "绑定知识库失败",
+    "newNote": "新笔记"
   }
 }

@@ -67,6 +67,9 @@ export interface UseChatStreamHandlersOptions {
 
   // Callback when a new task is created (used for binding knowledge base)
   onTaskCreated?: (taskId: number) => void
+
+  // Selected document IDs from DocumentPanel (for notebook mode context injection)
+  selectedDocumentIds?: number[]
 }
 
 export interface ChatStreamHandlers {
@@ -141,6 +144,7 @@ export function useChatStreamHandlers({
   selectedContexts = [],
   resetContexts,
   onTaskCreated,
+  selectedDocumentIds,
 }: UseChatStreamHandlersOptions): ChatStreamHandlers {
   const { toast } = useToast()
   const { t } = useTranslation()
@@ -421,7 +425,10 @@ export function useChatStreamHandlers({
 
         // Convert selected contexts to backend format
         // Each context item contains type and data fields
-        const contextItems = selectedContexts.map(ctx => {
+        const contextItems: Array<{
+          type: 'knowledge_base' | 'table' | 'selected_documents'
+          data: Record<string, unknown>
+        }> = selectedContexts.map(ctx => {
           if (ctx.type === 'knowledge_base') {
             return {
               type: 'knowledge_base' as const,
@@ -442,6 +449,23 @@ export function useChatStreamHandlers({
             },
           }
         })
+
+        // Add selected document IDs as a context for notebook mode
+        // This allows direct content injection of selected documents
+        if (
+          taskType === 'knowledge' &&
+          selectedDocumentIds &&
+          selectedDocumentIds.length > 0 &&
+          knowledgeBaseId
+        ) {
+          contextItems.push({
+            type: 'selected_documents' as const,
+            data: {
+              knowledge_base_id: knowledgeBaseId,
+              document_ids: selectedDocumentIds,
+            },
+          })
+        }
 
         // Build pending contexts for immediate display (SubtaskContextBrief format)
         // This includes attachments, knowledge bases, and tables
@@ -602,6 +626,7 @@ export function useChatStreamHandlers({
       setTaskInputMessage,
       externalApiParams,
       onTaskCreated,
+      selectedDocumentIds,
     ]
   )
 

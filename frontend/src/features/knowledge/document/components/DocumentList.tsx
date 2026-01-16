@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   ArrowLeft,
   Upload,
@@ -18,6 +18,8 @@ import {
   FileUp,
   RefreshCw,
   Info,
+  CheckSquare,
+  Square,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -39,6 +41,8 @@ interface DocumentListProps {
   canManage?: boolean
   /** Compact mode for sidebar display - uses card layout instead of table */
   compact?: boolean
+  /** Callback when document selection changes (for notebook mode context injection) */
+  onSelectionChange?: (documentIds: number[]) => void
 }
 
 type SortField = 'name' | 'size' | 'date'
@@ -49,6 +53,7 @@ export function DocumentList({
   onBack,
   canManage = true,
   compact = false,
+  onSelectionChange,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
@@ -70,6 +75,25 @@ export function DocumentList({
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [batchLoading, setBatchLoading] = useState(false)
   const [showSearchPopover, setShowSearchPopover] = useState(false)
+  // Track if initial selection has been done
+  const [initialSelectionDone, setInitialSelectionDone] = useState(false)
+
+  // Default select all documents when documents load (for notebook mode)
+  useEffect(() => {
+    if (onSelectionChange && documents.length > 0 && !initialSelectionDone) {
+      const allIds = new Set(documents.map(doc => doc.id))
+      setSelectedIds(allIds)
+      onSelectionChange(Array.from(allIds))
+      setInitialSelectionDone(true)
+    }
+  }, [documents, onSelectionChange, initialSelectionDone])
+
+  // Notify parent when selection changes (after initial selection)
+  useEffect(() => {
+    if (onSelectionChange && initialSelectionDone) {
+      onSelectionChange(Array.from(selectedIds))
+    }
+  }, [selectedIds, onSelectionChange, initialSelectionDone])
 
   const filteredAndSortedDocuments = useMemo(() => {
     let result = [...documents]
@@ -335,8 +359,8 @@ export function DocumentList({
         </div>
       ) : filteredAndSortedDocuments.length > 0 ? (
         <>
-          {/* Batch action bar - shown when items are selected */}
-          {canManage && selectedIds.size > 0 && (
+          {/* Batch action bar - shown when items are selected (not in notebook mode where selection is for context injection) */}
+          {canManage && selectedIds.size > 0 && !onSelectionChange && (
             <div
               className={`flex items-center gap-3 ${compact ? 'px-2 py-2' : 'px-4 py-2.5'} bg-primary/5 border border-primary/20 rounded-lg`}
             >
@@ -359,6 +383,25 @@ export function DocumentList({
           {/* Compact mode: Card layout */}
           {compact ? (
             <div className="space-y-2">
+              {/* Select all control bar for notebook mode */}
+              {onSelectionChange && filteredAndSortedDocuments.length > 0 && (
+                <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-muted">
+                  <button
+                    onClick={() => handleSelectAll(!isAllSelected)}
+                    className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
+                  >
+                    {isAllSelected ? (
+                      <CheckSquare className="w-3.5 h-3.5 text-primary" />
+                    ) : (
+                      <Square className="w-3.5 h-3.5" />
+                    )}
+                    <span>{t('document.document.batch.selectAll')}</span>
+                  </button>
+                  <span className="text-text-muted">
+                    ({selectedIds.size}/{filteredAndSortedDocuments.length})
+                  </span>
+                </div>
+              )}
               {filteredAndSortedDocuments.map(doc => (
                 <DocumentItem
                   key={doc.id}
@@ -474,6 +517,8 @@ export function DocumentList({
         onOpenChange={setShowUpload}
         onUploadComplete={handleUploadComplete}
         onTableAdd={handleTableAdd}
+        kbType={knowledgeBase.kb_type}
+        currentDocumentCount={documents.length}
       />
 
       <EditDocumentDialog
