@@ -2,14 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Default resources for admin user (user_id: 1)
+# Default resources for new users 
 ---
 apiVersion: agent.wecode.io/v1
 kind: Ghost
 metadata:
   name: developer-ghost
   namespace: default
-  user_id: 1
 spec:
   systemPrompt: |
     You are a senior software engineer, proficient in Git, branch management, and code submission workflows. You will use the specified programming language to generate executable code and complete the branch submission and PR (Pull Request) process. Please follow the steps :
@@ -48,7 +47,6 @@ kind: Bot
 metadata:
   name: developer-bot
   namespace: default
-  user_id: 1
 spec:
   ghostRef:
     name: developer-ghost
@@ -64,7 +62,6 @@ kind: Team
 metadata:
   name: dev-team
   namespace: default
-  user_id: 1
 spec:
   description: A development team for code generation, Git branch management, and PR workflows.
   members:
@@ -86,7 +83,6 @@ kind: Ghost
 metadata:
   name: spec-ghost
   namespace: default
-  user_id: 1
 spec:
   systemPrompt: |
     You are an experienced Software Requirements Analyst specializing in requirement specification clarification. Your goal is to help users refine vague requirements into clear, actionable development tasks through structured questioning.
@@ -305,7 +301,6 @@ kind: Bot
 metadata:
   name: spec-bot
   namespace: default
-  user_id: 1
 spec:
   ghostRef:
     name: spec-ghost
@@ -321,7 +316,6 @@ kind: Team
 metadata:
   name: spec-dev-team
   namespace: default
-  user_id: 1
 spec:
   description: A development team for clarification, code generation, Git branch management, and PR workflows.
   members:
@@ -350,7 +344,6 @@ kind: Ghost
 metadata:
   name: translator-ghost
   namespace: default
-  user_id: 1
 spec:
   mcpServers: {}
   systemPrompt: |
@@ -391,7 +384,6 @@ kind: Bot
 metadata:
   name: translator-bot
   namespace: default
-  user_id: 1
 spec:
   ghostRef:
     name: translator-ghost
@@ -407,7 +399,6 @@ kind: Team
 metadata:
   name: translator
   namespace: default
-  user_id: 1
 spec:
   description: A professional translation assistant for multilingual communication.
   members:
@@ -429,7 +420,6 @@ kind: Ghost
 metadata:
   name: wiki-ghost
   namespace: default
-  user_id: 1
 spec:
   mcpServers: {}
   skills:
@@ -468,7 +458,6 @@ kind: Bot
 metadata:
   name: wiki-bot
   namespace: default
-  user_id: 1
 spec:
   ghostRef:
     name: wiki-ghost
@@ -484,7 +473,6 @@ kind: Team
 metadata:
   name: wiki-team
   namespace: default
-  user_id: 1
 spec:
   description: A team for generating comprehensive wiki documentation for code repositories.
   members:
@@ -505,7 +493,6 @@ kind: Ghost
 metadata:
   name: chat-ghost
   namespace: default
-  user_id: 1
 spec:
   mcpServers: {}
   skills:
@@ -561,7 +548,6 @@ kind: Bot
 metadata:
   name: chat-bot
   namespace: default
-  user_id: 1
 spec:
   ghostRef:
     name: chat-ghost
@@ -577,7 +563,6 @@ kind: Team
 metadata:
   name: chat-team
   namespace: default
-  user_id: 1
 spec:
   description: A general-purpose chat team for helpful, harmless, and honest AI assistance.
   members:
