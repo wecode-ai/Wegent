@@ -636,6 +636,65 @@ async def create_task_and_subtasks(
     if assistant_subtask:
         db.refresh(assistant_subtask)
 
+    # Store user message in long-term memory (fire-and-forget)
+    # WebSocket chat (web) always enables memory by default
+    # This runs in background and doesn't block the main flow
+    import asyncio
+
+    from app.services.memory import get_memory_manager
+
+    memory_manager = get_memory_manager()
+    if memory_manager.is_enabled:
+        task_crd = Task.model_validate(task.json)
+        workspace_id = (
+            f"{task_crd.spec.workspaceRef.namespace}/{task_crd.spec.workspaceRef.name}"
+            if task_crd.spec.workspaceRef
+            else None
+        )
+        is_group_chat = task_crd.spec.is_group_chat
+
+        # Create task with proper exception handling
+        def _log_memory_task_exception(task_obj: asyncio.Task) -> None:
+            """Log exceptions from background memory storage task."""
+            try:
+                exc = task_obj.exception()
+                if exc is not None:
+                    logger.error(
+                        "[create_task_and_subtasks] Memory storage task failed for user %d, task %d, subtask %d: %s",
+                        user.id,
+                        task.id,
+                        user_subtask.id,
+                        exc,
+                        exc_info=exc,
+                    )
+            except asyncio.CancelledError:
+                logger.info(
+                    "[create_task_and_subtasks] Memory storage task cancelled for user %d, task %d, subtask %d",
+                    user.id,
+                    task.id,
+                    user_subtask.id,
+                )
+
+        memory_save_task = asyncio.create_task(
+            memory_manager.save_user_message_async(
+                user_id=str(user.id),
+                team_id=str(team.id),
+                task_id=str(task.id),
+                subtask_id=str(user_subtask.id),
+                message=message,
+                workspace_id=workspace_id,
+                group_id=None,  # Future: extract from task spec
+                is_group_chat=is_group_chat,
+            )
+        )
+        memory_save_task.add_done_callback(_log_memory_task_exception)
+        logger.info(
+            "[create_task_and_subtasks] Started background task to store memory for user %d, task %d, subtask %d",
+            user.id,
+            task.id,
+            user_subtask.id,
+        )
+
     # Initialize Redis chat history from existing subtasks if needed
     if existing_subtasks:
         await initialize_redis_chat_history(task_id, existing_subtasks)

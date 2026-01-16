@@ -281,6 +281,18 @@ class Settings(BaseSettings):
     # Enable/disable automatic summary generation after document indexing
     SUMMARY_ENABLED: bool = True
 
+    # Long-term memory configuration (mem0)
+    # Enable/disable long-term memory feature
+    MEMORY_ENABLED: bool = False
+    # mem0 service base URL
+    MEMORY_BASE_URL: str = "http://localhost:8080"
+    # Optional API key for mem0 service authentication
+    MEMORY_API_KEY: str = ""
+    # Search timeout in seconds (to avoid blocking chat flow)
+    MEMORY_TIMEOUT_SECONDS: float = 2.0
+    # Maximum number of memories to inject into system prompt
+    MEMORY_MAX_RESULTS: int = 5
+
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there

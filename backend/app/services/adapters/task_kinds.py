@@ -1810,6 +1810,69 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         task.is_active = False
         flag_modified(task, "json")
 
+        # Clean up long-term memories associated with this task (fire-and-forget)
+        # This runs in background and doesn't block task deletion
+        from app.services.memory import get_memory_manager
+
+        memory_manager = get_memory_manager()
+        if memory_manager.is_enabled:
+            def _log_cleanup_exception(task_or_future):
+                """Log any exceptions from cleanup task."""
+                try:
+                    if hasattr(task_or_future, "exception"):
+                        exc = task_or_future.exception()
+                        if exc:
+                            logger.error(
+                                "[delete_task] Memory cleanup failed for task %d: %s",
+                                task_id,
+                                exc,
+                                exc_info=exc,
+                            )
+                except Exception as e:
+                    logger.error(
+                        "[delete_task] Error checking cleanup task status: %s", e
+                    )
+
+            # Try to get the running event loop
+            try:
+                loop = asyncio.get_running_loop()
+                cleanup_task = loop.create_task(
+                    memory_manager.cleanup_task_memories(
+                        user_id=str(task.user_id), task_id=str(task_id)
+                    )
+                )
+                cleanup_task.add_done_callback(_log_cleanup_exception)
+                logger.info(
+                    "[delete_task] Started background task to cleanup memories for task %d",
+                    task_id,
+                )
+            except RuntimeError:
+                # No event loop running - try to schedule on main loop
+                try:
+                    from app.services.chat.ws_emitter import get_main_event_loop
+
+                    main_loop = get_main_event_loop()
+                    if main_loop and main_loop.is_running():
+                        future = asyncio.run_coroutine_threadsafe(
+                            memory_manager.cleanup_task_memories(
+                                user_id=str(task.user_id), task_id=str(task_id)
+                            ),
+                            main_loop,
+                        )
+                        future.add_done_callback(_log_cleanup_exception)
+                        logger.info(
+                            "[delete_task] Scheduled memory cleanup on main loop for task %d",
+                            task_id,
+                        )
+                    else:
+                        logger.warning(
+                            "[delete_task] Cannot cleanup memories: no running event loop"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "[delete_task] Failed to schedule memory cleanup: %s", e
+                    )
+
         db.commit()
 
     async def cancel_task(
