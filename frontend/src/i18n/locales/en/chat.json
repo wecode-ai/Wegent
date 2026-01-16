@@ -226,7 +226,9 @@
     "question": "Q",
     "required_field": "This question is required",
     "additional_thoughts": "Additional Thoughts or Remarks",
-    "additional_placeholder": "Enter additional thoughts, requirements, or special notes here..."
+    "additional_placeholder": "Enter additional thoughts, requirements, or special notes here...",
+    "restore_original": "Restore Original",
+    "edited": "(Edited)"
   },
   "export": {
     "export": "Export",
