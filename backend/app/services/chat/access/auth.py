@@ -62,9 +62,7 @@ def is_token_expired(token: str) -> bool:
         True if token is expired or invalid, False otherwise
     """
     try:
-        jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
+        jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         return False
     except ExpiredSignatureError:
         return True

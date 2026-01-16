@@ -591,3 +591,38 @@ export type {
   KnowledgeBase,
   KnowledgeBaseListResponse as KnowledgeBasesResponse,
 } from './knowledge'
+
+// Project Types
+/** Task within a project */
+export interface ProjectTask {
+  task_id: number
+  task_title: string
+  task_status: TaskStatus
+  is_group_chat: boolean
+  project_id: number
+}
+
+/** Project for organizing tasks */
+export interface Project {
+  id: number
+  user_id: number
+  name: string
+  description: string
+  color: string | null
+  sort_order: number
+  is_expanded: boolean
+  task_count: number
+  created_at: string
+  updated_at: string
+}
+
+/** Project with its tasks */
+export interface ProjectWithTasks extends Project {
+  tasks: ProjectTask[]
+}
+
+/** Project list response */
+export interface ProjectListResponse {
+  total: number
+  items: ProjectWithTasks[]
+}
