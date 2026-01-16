@@ -5,6 +5,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { Users, User, Plus, FileText, Globe, ArrowLeft, Search } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { Card } from '@/components/ui/card'
@@ -13,7 +14,6 @@ import { GroupCard } from './GroupCard'
 import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
 import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
 import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
-import { DocumentList } from './DocumentList'
 import { useTranslation } from '@/hooks/useTranslation'
 import { listGroups } from '@/apis/groups'
 import { useKnowledgeBases } from '../hooks/useKnowledgeBases'
@@ -50,10 +50,10 @@ const tabs: DocumentTab[] = [
 
 export function KnowledgeDocumentPage() {
   const { t } = useTranslation()
+  const router = useRouter()
   const [activeTab, setActiveTab] = useState<DocumentTabType>('personal')
   const [groups, setGroups] = useState<Group[]>([])
   const [loadingGroups, setLoadingGroups] = useState(true)
-  const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null)
 
   // Dialog states
   const [showCreateDialog, setShowCreateDialog] = useState(false)
@@ -157,18 +157,9 @@ export function KnowledgeDocumentPage() {
     setDeletingKb(null)
   }
 
-  // Show document list if a knowledge base is selected
-  if (selectedKb) {
-    return (
-      <DocumentList
-        knowledgeBase={selectedKb}
-        onBack={() => {
-          setSelectedKb(null)
-          personalKb.refresh()
-        }}
-        canManage={canManageKnowledgeBase(selectedKb)}
-      />
-    )
+  // Navigate to knowledge base chat page
+  const handleSelectKb = (kb: KnowledgeBase) => {
+    router.push(`/knowledge/document/${kb.id}`)
   }
 
   return (
@@ -211,7 +202,7 @@ export function KnowledgeDocumentPage() {
           <PersonalKnowledgeContent
             knowledgeBases={personalKb.knowledgeBases}
             loading={personalKb.loading}
-            onSelectKb={setSelectedKb}
+            onSelectKb={handleSelectKb}
             onEditKb={setEditingKb}
             onDeleteKb={setDeletingKb}
             onCreateKb={() => handleCreateKb(null)}
@@ -223,7 +214,7 @@ export function KnowledgeDocumentPage() {
             groups={groups}
             loadingGroups={loadingGroups}
             refreshKey={groupRefreshKey}
-            onSelectKb={setSelectedKb}
+            onSelectKb={handleSelectKb}
             onEditKb={setEditingKb}
             onDeleteKb={setDeletingKb}
             onCreateKb={handleCreateKb}

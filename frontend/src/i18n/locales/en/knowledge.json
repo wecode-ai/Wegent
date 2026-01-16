@@ -319,5 +319,17 @@
       "loadFailed": "Failed to load data tables"
     },
     "analyzing": "Analyzing data table..."
+  },
+  "chatPage": {
+    "title": "Knowledge Base Chat",
+    "summary": "Summary",
+    "contextHint": "This knowledge base is bound to your conversation. Ask questions about its documents.",
+    "documents": "Documents",
+    "showDocuments": "Show Documents",
+    "hideDocuments": "Hide Documents",
+    "backToList": "Back",
+    "notFound": "Knowledge base not found",
+    "createTaskError": "Failed to create conversation",
+    "bindKnowledgeBaseError": "Failed to bind knowledge base"
   }
 }

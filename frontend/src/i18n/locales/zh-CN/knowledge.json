@@ -319,5 +319,17 @@
       "loadFailed": "加载数据表失败"
     },
     "analyzing": "正在分析数据表..."
+  },
+  "chatPage": {
+    "title": "知识库对话",
+    "summary": "摘要",
+    "contextHint": "此知识库已绑定到您的对话。可以询问有关其文档的问题。",
+    "documents": "文档",
+    "showDocuments": "显示文档",
+    "hideDocuments": "隐藏文档",
+    "backToList": "返回",
+    "notFound": "知识库未找到",
+    "createTaskError": "创建对话失败",
+    "bindKnowledgeBaseError": "绑定知识库失败"
   }
 }
