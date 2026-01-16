@@ -56,7 +56,6 @@ export function KnowledgeBaseChatPageMobile() {
     knowledgeBase,
     loading: kbLoading,
     error: kbError,
-    refresh: refreshKb,
   } = useKnowledgeBaseDetail({
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
