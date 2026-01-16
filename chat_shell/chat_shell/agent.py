@@ -59,6 +59,7 @@ class AgentConfig:
     # Prompt enhancement options (handled internally by ChatAgent)
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
+    enable_canvas: bool = True  # Enable Canvas artifact mode for content creation
     skills: list[dict[str, Any]] | None = None  # All skill configs (with preload field)
 
 
@@ -362,12 +363,31 @@ class ChatAgent:
         if config:
             from .prompts import build_system_prompt
 
+            logger.info(
+                "[ChatAgent] Building system prompt with config: "
+                "enable_clarification=%s, enable_deep_thinking=%s, enable_canvas=%s",
+                config.enable_clarification,
+                config.enable_deep_thinking,
+                config.enable_canvas,
+            )
+
             final_prompt = build_system_prompt(
                 base_prompt=system_prompt,
                 enable_clarification=config.enable_clarification,
                 enable_deep_thinking=config.enable_deep_thinking,
+                enable_canvas=config.enable_canvas,
                 skills=config.skills,
             )
+
+            # Log if Canvas prompt was injected
+            if config.enable_canvas and "Canvas Artifact System" in final_prompt:
+                logger.info("[ChatAgent] Canvas Artifact prompt successfully injected")
+            elif config.enable_canvas:
+                logger.warning(
+                    "[ChatAgent] Canvas enabled but prompt not found in final_prompt"
+                )
+            else:
+                logger.info("[ChatAgent] Canvas is disabled in config")
 
         # Determine inject_datetime value:
         # - If explicitly provided, use it

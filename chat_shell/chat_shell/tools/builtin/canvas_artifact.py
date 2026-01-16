@@ -455,13 +455,13 @@ def create_canvas_tools() -> list[BaseTool]:
     Returns:
         List of Canvas tools to register with the agent
     """
-    logger.debug("[create_canvas_tools] Creating Canvas tools...")
+    logger.info("[create_canvas_tools] Creating Canvas tools...")
     tools = [
         CreateArtifactTool(),
         UpdateArtifactTool(),
         ArtifactQuickActionTool(),
     ]
-    logger.debug(
+    logger.info(
         "[create_canvas_tools] Created %d Canvas tools: %s",
         len(tools),
         [t.name for t in tools],

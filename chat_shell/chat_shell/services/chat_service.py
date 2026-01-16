@@ -194,6 +194,7 @@ class ChatService(ChatInterface):
                 )
 
             add_span_event("building_agent_config")
+            print(f"[DEBUG] Building AgentConfig: enable_canvas={request.enable_canvas}", flush=True)
             agent_config = AgentConfig(
                 model_config=request.model_config or {"model": "gpt-4"},
                 system_prompt=ctx_result.system_prompt,
@@ -202,8 +203,10 @@ class ChatService(ChatInterface):
                 streaming=True,
                 enable_clarification=request.enable_clarification,
                 enable_deep_thinking=request.enable_deep_thinking,
+                enable_canvas=request.enable_canvas,
                 skills=request.skills,
             )
+            print(f"[DEBUG] AgentConfig created: enable_canvas={agent_config.enable_canvas}", flush=True)
 
             # Build messages for the agent
             add_span_event("building_messages")

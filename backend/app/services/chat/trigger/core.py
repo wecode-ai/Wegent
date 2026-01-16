@@ -483,6 +483,7 @@ async def _stream_chat_response(
             # Prompt enhancement options
             enable_clarification=chat_config.enable_clarification,
             enable_deep_thinking=chat_config.enable_deep_thinking,
+            enable_canvas=True,  # Always enable Canvas for artifact creation
             skills=skill_metadata,  # Skill metadata for prompt injection
             has_table_context=has_table_context,  # Pass table context flag
         )
@@ -720,6 +721,7 @@ async def _stream_with_http_adapter(
         enable_web_search=enable_web_search,
         enable_clarification=ws_config.enable_clarification,
         enable_deep_thinking=ws_config.enable_deep_thinking,
+        enable_canvas=ws_config.enable_canvas,  # Use enable_canvas from ws_config
         search_engine=ws_config.search_engine,
         bot_name=ws_config.bot_name,
         bot_namespace=ws_config.bot_namespace,
@@ -1358,7 +1360,21 @@ async def _stream_with_bridge(
             load_skill_tool=load_skill_tool,
             enable_clarification=ws_config.enable_clarification,
             enable_deep_thinking=ws_config.enable_deep_thinking,
+            enable_canvas=ws_config.enable_canvas,  # Use enable_canvas from ws_config
             skills=ws_config.skills,
+        )
+
+        logger.info(
+            "[BRIDGE] AgentConfig created: task_id=%d, subtask_id=%d, "
+            "enable_clarification=%s, enable_deep_thinking=%s, enable_canvas=%s, "
+            "extra_tools_count=%d, tools=%s",
+            task_id,
+            subtask_id,
+            agent_config.enable_clarification,
+            agent_config.enable_deep_thinking,
+            agent_config.enable_canvas,
+            len(extra_tools),
+            [t.name for t in extra_tools],
         )
 
         # Build messages

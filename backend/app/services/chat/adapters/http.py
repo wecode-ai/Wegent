@@ -125,6 +125,7 @@ class HTTPAdapter(ChatInterface):
             "web_search": request.enable_web_search,
             "clarification": request.enable_clarification,
             "deep_thinking": request.enable_deep_thinking,
+            "canvas": request.enable_canvas,
         }
         if request.search_engine:
             features["search_engine"] = request.search_engine

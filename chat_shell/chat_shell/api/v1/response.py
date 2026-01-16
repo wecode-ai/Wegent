@@ -274,6 +274,9 @@ async def _stream_response(
             enable_deep_thinking=(
                 request.features.deep_thinking if request.features else False
             ),
+            enable_canvas=(
+                request.features.canvas if request.features and hasattr(request.features, 'canvas') else True
+            ),
             search_engine=(
                 request.features.search_engine if request.features else None
             ),

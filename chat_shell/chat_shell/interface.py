@@ -63,6 +63,7 @@ class ChatRequest:
     enable_web_search: bool = False
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
+    enable_canvas: bool = True  # Enable Canvas for artifact creation
     search_engine: Optional[str] = None
 
     # Bot configuration

@@ -59,6 +59,7 @@ class WebSocketStreamConfig:
     # Prompt enhancement options
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
+    enable_canvas: bool = True  # Enable Canvas artifact mode for content creation
     skills: list[dict] = field(
         default_factory=list
     )  # Skill metadata for prompt injection
