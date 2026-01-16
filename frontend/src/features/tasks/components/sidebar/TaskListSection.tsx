@@ -4,9 +4,10 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Task, TaskType } from '@/types/api'
 import TaskMenu from './TaskMenu'
+import TaskInlineEdit from './TaskInlineEdit'
 import {
   CheckCircle2,
   XCircle,
@@ -106,6 +107,16 @@ export default function TaskListSection({
   const [hoveredTaskId, setHoveredTaskId] = useState<number | null>(null)
   const [_loading, setLoading] = useState(false)
   const [longPressTaskId, setLongPressTaskId] = useState<number | null>(null)
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
+  // Local task titles for optimistic update during rename
+  const [localTitles, setLocalTitles] = useState<Record<number, string>>({})
+
+  // Double-click detection state
+  const [clickState, setClickState] = useState<{
+    taskId: number | null
+    lastClickTime: number
+  }>({ taskId: null, lastClickTime: 0 })
+  const DOUBLE_CLICK_THRESHOLD = 300 // ms
 
   // Touch interaction state
   const [touchState, setTouchState] = useState<{
@@ -303,6 +314,51 @@ export default function TaskListSection({
     }
   }
 
+  // Start inline editing for a task
+  const handleStartRename = useCallback((taskId: number) => {
+    setEditingTaskId(taskId)
+    setLongPressTaskId(null) // Close long press menu
+  }, [])
+
+  // Save renamed task
+  const handleSaveRename = useCallback(
+    (taskId: number, newTitle: string) => {
+      // Optimistic update: update local state immediately
+      setLocalTitles(prev => ({ ...prev, [taskId]: newTitle }))
+      setEditingTaskId(null)
+      // Refresh tasks to sync with server
+      refreshTasks()
+    },
+    [refreshTasks]
+  )
+
+  // Cancel rename
+  const handleCancelRename = useCallback(() => {
+    setEditingTaskId(null)
+  }, [])
+
+  // Handle title click with double-click detection
+  const handleTitleClick = useCallback(
+    (task: Task, e: React.MouseEvent) => {
+      e.stopPropagation()
+
+      const now = Date.now()
+      if (clickState.taskId === task.id && now - clickState.lastClickTime < DOUBLE_CLICK_THRESHOLD) {
+        // Double-click detected - enter edit mode
+        e.preventDefault()
+        handleStartRename(task.id)
+        setClickState({ taskId: null, lastClickTime: 0 })
+      } else {
+        // First click - record it and handle as single click
+        setClickState({ taskId: task.id, lastClickTime: now })
+        // Delay single click action to allow for double-click detection
+        // Note: We don't trigger task selection here to avoid conflict
+        // Single click on the row (not title) will still select the task
+      }
+    },
+    [clickState, handleStartRename, DOUBLE_CLICK_THRESHOLD]
+  )
+
   if (tasks.length === 0) return null
 
   const getStatusIcon = (status: string) => {
@@ -492,12 +548,19 @@ export default function TaskListSection({
                 <Tooltip delayDuration={500}>
                   <TooltipTrigger asChild>
                     <div
-                      className={`flex items-center gap-2 py-1.5 px-3 h-8 rounded-xl cursor-pointer ${
+                      className={`flex items-center gap-2 py-1.5 px-3 rounded-xl cursor-pointer ${
+                        editingTaskId === task.id ? 'h-12' : 'h-8'
+                      } ${
                         selectedTask?.id === task.id || selectedTaskDetail?.id === task.id
                           ? 'bg-primary/10'
                           : 'hover:bg-hover'
                       }`}
-                      onClick={() => handleTaskClick(task)}
+                      onClick={() => {
+                        // Don't trigger task click when editing
+                        if (editingTaskId !== task.id) {
+                          handleTaskClick(task)
+                        }
+                      }}
                       onTouchStart={handleTouchStart(task)}
                       onTouchMove={handleTouchMove}
                       onTouchEnd={handleTouchEnd(task)}
@@ -512,13 +575,30 @@ export default function TaskListSection({
                       {/* Task type icon on the left */}
                       <div className="flex-shrink-0">{getTaskTypeIcon(task)}</div>
 
-                      {/* Task title in the middle */}
-                      <p className="flex-1 min-w-0 text-sm text-text-primary leading-tight truncate m-0">
-                        {task.title}
-                      </p>
+                      {/* Task title in the middle - supports inline editing */}
+                      {editingTaskId === task.id ? (
+                        <TaskInlineEdit
+                          taskId={task.id}
+                          initialTitle={localTitles[task.id] ?? task.title}
+                          onSave={newTitle => handleSaveRename(task.id, newTitle)}
+                          onCancel={handleCancelRename}
+                        />
+                      ) : (
+                        <p
+                          className="flex-1 min-w-0 text-sm text-text-primary leading-tight truncate m-0"
+                          onDoubleClick={e => {
+                            e.stopPropagation()
+                            e.preventDefault()
+                            handleStartRename(task.id)
+                          }}
+                          onClick={e => handleTitleClick(task, e)}
+                        >
+                          {localTitles[task.id] ?? task.title}
+                        </p>
+                      )}
 
                       {/* Status icon on the right - only render container when needed */}
-                      {(shouldShowStatusIcon(task) || isTaskUnread(task)) && (
+                      {(shouldShowStatusIcon(task) || isTaskUnread(task)) && editingTaskId !== task.id && (
                         <div className="flex-shrink-0 relative">
                           <div className="w-4 h-4 flex items-center justify-center">
                             {shouldShowStatusIcon(task) && getStatusIcon(task.status)}
@@ -531,27 +611,30 @@ export default function TaskListSection({
                         </div>
                       )}
 
-                      <div className="flex-shrink-0">
-                        <div
-                          className={`transition-opacity duration-150 [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto ${
-                            showMenu ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                          }`}
-                          onTouchStart={e => e.stopPropagation()}
-                          onTouchEnd={e => e.stopPropagation()}
-                          onClick={e => e.stopPropagation()}
-                        >
-                          <TaskMenu
-                            taskId={task.id}
-                            handleCopyTaskId={handleCopyTaskId}
-                            handleDeleteTask={handleDeleteTask}
-                            isGroupChat={task.is_group_chat}
-                          />
+                      {editingTaskId !== task.id && (
+                        <div className="flex-shrink-0">
+                          <div
+                            className={`transition-opacity duration-150 [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto ${
+                              showMenu ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                            }`}
+                            onTouchStart={e => e.stopPropagation()}
+                            onTouchEnd={e => e.stopPropagation()}
+                            onClick={e => e.stopPropagation()}
+                          >
+                            <TaskMenu
+                              taskId={task.id}
+                              handleCopyTaskId={handleCopyTaskId}
+                              handleDeleteTask={handleDeleteTask}
+                              onRename={() => handleStartRename(task.id)}
+                              isGroupChat={task.is_group_chat}
+                            />
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   </TooltipTrigger>
                   <TooltipContent side="left" className="max-w-xs">
-                    <p className="font-medium">{task.title}</p>
+                    <p className="font-medium">{localTitles[task.id] ?? task.title}</p>
                     <p className="text-xs text-text-muted">
                       {taskTypeLabel} · {formatTimeAgo(task.created_at)}
                     </p>
