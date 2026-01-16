@@ -24,6 +24,9 @@ export const ClientEvents = {
 // Server -> Client Events
 // ============================================================
 export const ServerEvents = {
+  // Authentication events
+  AUTH_ERROR: 'auth:error', // Token expired or invalid
+
   // Chat streaming events (to task room)
   CHAT_START: 'chat:start',
   CHAT_CHUNK: 'chat:chunk',
@@ -133,6 +136,11 @@ export interface HistorySyncPayload {
 // ============================================================
 // Server -> Client Payloads
 // ============================================================
+
+export interface AuthErrorPayload {
+  error: string
+  code: 'TOKEN_EXPIRED' | 'INVALID_TOKEN' | string
+}
 
 export interface SourceReference {
   /** Source index number (e.g., 1, 2, 3) */

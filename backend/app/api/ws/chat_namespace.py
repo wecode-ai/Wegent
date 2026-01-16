@@ -54,6 +54,7 @@ from app.schemas.kind import Task, Team
 from app.services.chat.access import (
     can_access_task,
     get_active_streaming,
+    get_token_expiry,
     verify_jwt_token,
 )
 from app.services.chat.operations import (
@@ -101,6 +102,44 @@ class ChatNamespace(socketio.AsyncNamespace):
             "history:sync": "on_history_sync",
             "skill:response": "on_skill_response",
         }
+
+    async def _check_token_expiry(self, sid: str) -> bool:
+        """
+        Check if session token is expired.
+
+        Args:
+            sid: Socket ID
+
+        Returns:
+            True if token is expired, False otherwise
+        """
+        session = await self.get_session(sid)
+        token_exp = session.get("token_exp")
+        if not token_exp:
+            # No expiry stored, assume expired
+            return True
+        return datetime.now().timestamp() > token_exp
+
+    async def _handle_token_expired(self, sid: str) -> dict:
+        """
+        Handle token expiry: emit auth_error event and disconnect client.
+
+        Args:
+            sid: Socket ID
+
+        Returns:
+            Error dict to return to client
+        """
+        logger.warning(f"[WS] Token expired for sid={sid}, disconnecting")
+        from app.api.ws.events import ServerEvents
+
+        await self.emit(
+            ServerEvents.AUTH_ERROR,
+            {"error": "Token expired", "code": "TOKEN_EXPIRED"},
+            to=sid,
+        )
+        await self.disconnect(sid)
+        return {"error": "Token expired"}
 
     @trace_websocket_event(
         exclude_events={"connect"},  # connect is handled separately in on_connect
@@ -188,6 +227,9 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.warning(f"[WS] Invalid token sid={sid}")
             raise ConnectionRefusedError("Invalid or expired token")
 
+        # Extract token expiry for later validation
+        token_exp = get_token_expiry(token)
+
         # Save user info to session
         await self.save_session(
             sid,
@@ -195,6 +237,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 "user_id": user.id,
                 "user_name": user.user_name,
                 "request_id": request_id,
+                "token_exp": token_exp,  # Store token expiry for later checks
             },
         )
 
@@ -250,6 +293,10 @@ class ChatNamespace(socketio.AsyncNamespace):
         payload = data  # Already validated by decorator
 
         logger.info(f"[WS] task:join received: sid={sid}, task_id={payload.task_id}")
+
+        # Check token expiry before processing
+        if await self._check_token_expiry(sid):
+            return await self._handle_token_expired(sid)
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
@@ -347,6 +394,10 @@ class ChatNamespace(socketio.AsyncNamespace):
             {"task_id": int, "subtask_id": int} or {"error": "..."}
         """
         logger.info(f"[WS] chat:send received sid={sid} data={data}")
+
+        # Check token expiry before processing
+        if await self._check_token_expiry(sid):
+            return await self._handle_token_expired(sid)
 
         payload = data  # Already validated by decorator
         logger.info(
@@ -830,6 +881,10 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         payload = data  # Already validated by decorator
 
+        # Check token expiry before processing
+        if await self._check_token_expiry(sid):
+            return await self._handle_token_expired(sid)
+
         session = await self.get_session(sid)
         user_id = session.get("user_id")
 
@@ -1021,6 +1076,10 @@ class ChatNamespace(socketio.AsyncNamespace):
             f"force_override_bot_model={payload.force_override_bot_model} (type={type(payload.force_override_bot_model)}), "
             f"force_override_bot_model_type={payload.force_override_bot_model_type} (type={type(payload.force_override_bot_model_type)})"
         )
+
+        # Check token expiry before processing
+        if await self._check_token_expiry(sid):
+            return await self._handle_token_expired(sid)
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
