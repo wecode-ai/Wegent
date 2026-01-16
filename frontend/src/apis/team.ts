@@ -12,7 +12,7 @@ export interface CreateTeamRequest {
   description?: string
   bots?: TeamBot[]
   workflow?: Record<string, unknown>
-  bind_mode?: ('chat' | 'code')[]
+  bind_mode?: ('chat' | 'code' | 'knowledge')[]
   is_active?: boolean
   namespace?: string // Group namespace, defaults to 'default' for personal teams
   icon?: string // Icon ID from preset icon library

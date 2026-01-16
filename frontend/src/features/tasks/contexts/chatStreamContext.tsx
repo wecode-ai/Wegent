@@ -205,7 +205,9 @@ export interface ChatMessageRequest {
   git_repo_id?: number
   git_domain?: string
   branch_name?: string
-  task_type?: 'chat' | 'code'
+  task_type?: 'chat' | 'code' | 'knowledge'
+  // Knowledge base ID for knowledge type tasks
+  knowledge_base_id?: number
 }
 
 /**
@@ -1227,6 +1229,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         git_domain: request.git_domain,
         branch_name: request.branch_name,
         task_type: request.task_type,
+        // Knowledge base ID for knowledge type tasks
+        knowledge_base_id: request.knowledge_base_id,
       }
 
       try {

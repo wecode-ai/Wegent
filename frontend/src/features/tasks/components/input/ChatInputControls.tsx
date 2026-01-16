@@ -89,6 +89,9 @@ export interface ChatInputControlsProps {
   // Actions
   onStopStream: () => void
   onSendMessage: () => void
+
+  // Whether there are no available teams (shows disabled state)
+  hasNoTeams?: boolean
 }
 
 /**
@@ -146,6 +149,7 @@ export function ChatInputControls({
   isSubtaskStreaming,
   onStopStream,
   onSendMessage,
+  hasNoTeams = false,
 }: ChatInputControlsProps) {
   // Always use compact mode (icon only) to save space
   const shouldUseCompactQuota = true
@@ -158,6 +162,7 @@ export function ChatInputControls({
       isStreaming ||
       isModelSelectionRequired ||
       !isAttachmentReadyToSend ||
+      hasNoTeams ||
       (shouldHideChatInput ? false : !taskInputMessage.trim())
 
     if (isStreaming || isStopping) {
@@ -255,6 +260,7 @@ export function ChatInputControls({
         isSubtaskStreaming={isSubtaskStreaming}
         onStopStream={onStopStream}
         onSendMessage={onSendMessage}
+        hasNoTeams={hasNoTeams}
       />
     )
   }

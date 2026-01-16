@@ -656,6 +656,10 @@ class KnowledgeBaseSpec(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
+    kbType: Optional[str] = Field(
+        "notebook",
+        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+    )
     document_count: Optional[int] = Field(
         default=0, description="Cached document count"
     )

@@ -77,7 +77,7 @@
     },
     "confirm": {
       "delete_title": "Delete User",
-      "delete_message": "Are you sure you want to delete user \"{{name}}\"? This action will deactivate the account.",
+      "delete_message": "Are you sure you want to delete user \"{{name}}\"? This action will delete the account.",
       "reset_password_title": "Reset Password",
       "reset_password_message": "Enter new password for user \"{{name}}\"",
       "toggle_status_title": "Toggle Status",

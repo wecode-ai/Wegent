@@ -274,7 +274,7 @@ async def delete_user(
     current_user: User = Depends(get_admin_user),
 ):
     """
-    Delete a user (soft delete by setting is_active=False)
+    Delete a user (hard delete - permanently removes the user from database)
     """
     # Query user directly to avoid decrypt_user_git_info modifying the object
     user = db.query(User).filter(User.id == user_id).first()
@@ -291,8 +291,8 @@ async def delete_user(
             detail="Cannot delete your own account",
         )
 
-    # Soft delete
-    user.is_active = False
+    # Hard delete - permanently remove the user
+    db.delete(user)
     db.commit()
 
     return None
