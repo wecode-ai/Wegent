@@ -247,8 +247,10 @@ jobs:
           tags: |
             ${{ env.IMAGE_PREFIX }}/wegent-web:${{ needs.prepare-release.outputs.new_version }}
             ${{ env.IMAGE_PREFIX }}/wegent-web:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+          build-args: |
+            NEXT_TELEMETRY_DISABLED=1
 
   build-chat-shell:
     needs: prepare-release
