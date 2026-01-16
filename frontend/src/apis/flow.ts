@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * AI Flow (智能流) API client.
+ * AI Flow (关注) API client.
  */
 import { apiClient } from './client'
 import type {

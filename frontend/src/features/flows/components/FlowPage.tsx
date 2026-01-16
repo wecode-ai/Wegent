@@ -8,13 +8,28 @@
  * Main Flow page component - Twitter/Weibo style feed.
  * Displays AI agent activities as a pure social media-like feed.
  */
-import { FlowProvider } from '../contexts/flowContext'
+import { useState, useCallback } from 'react'
+import { FlowProvider, useFlowContext } from '../contexts/flowContext'
 import { FlowTimeline } from './FlowTimeline'
+import { FlowForm } from './FlowForm'
 
 function FlowPageContent() {
+  const [isFormOpen, setIsFormOpen] = useState(false)
+  const { refreshFlows, refreshExecutions } = useFlowContext()
+
+  const handleCreateFlow = useCallback(() => {
+    setIsFormOpen(true)
+  }, [])
+
+  const handleFormSuccess = useCallback(() => {
+    refreshFlows()
+    refreshExecutions()
+  }, [refreshFlows, refreshExecutions])
+
   return (
     <div className="h-full bg-surface/30">
-      <FlowTimeline />
+      <FlowTimeline onCreateFlow={handleCreateFlow} />
+      <FlowForm open={isFormOpen} onOpenChange={setIsFormOpen} onSuccess={handleFormSuccess} />
     </div>
   )
 }

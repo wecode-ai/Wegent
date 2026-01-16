@@ -18,7 +18,9 @@ import {
   Clock,
   Loader2,
   MessageSquare,
+  Plus,
   RefreshCw,
+  Settings,
   Sparkles,
   XCircle,
   Zap,
@@ -28,6 +30,11 @@ import { Button } from '@/components/ui/button'
 import { useFlowContext } from '../contexts/flowContext'
 import type { FlowExecution, FlowExecutionStatus } from '@/types/flow'
 import { parseUTCDate } from '@/lib/utils'
+import { paths } from '@/config/paths'
+
+interface FlowTimelineProps {
+  onCreateFlow?: () => void
+}
 
 const statusConfig: Record<
   FlowExecutionStatus,
@@ -65,7 +72,7 @@ const statusConfig: Record<
   },
 }
 
-export function FlowTimeline() {
+export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
   const { t } = useTranslation('flow')
   const router = useRouter()
   const { executions, executionsLoading, executionsTotal, loadMoreExecutions } = useFlowContext()
@@ -286,7 +293,23 @@ export function FlowTimeline() {
             </div>
             <div className="text-center">
               <p className="font-medium text-text-primary text-lg mb-1">{t('feed.empty_title')}</p>
-              <p className="text-sm max-w-xs">{t('feed.empty_hint')}</p>
+              <p className="text-sm max-w-xs mb-4">{t('feed.empty_hint')}</p>
+              {onCreateFlow && (
+                <Button onClick={onCreateFlow} className="mb-3">
+                  <Plus className="h-4 w-4 mr-1.5" />
+                  {t('create_flow')}
+                </Button>
+              )}
+              <p className="text-xs text-text-muted">
+                {t('feed.empty_settings_hint')}{' '}
+                <button
+                  onClick={() => router.push(paths.flowSubscriptions.getHref())}
+                  className="text-primary hover:underline inline-flex items-center gap-0.5"
+                >
+                  <Settings className="h-3 w-3" />
+                  {t('feed.manage_flows')}
+                </button>
+              </p>
             </div>
           </div>
         ) : (

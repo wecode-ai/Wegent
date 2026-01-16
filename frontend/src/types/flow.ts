@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * AI Flow (智能流) related types.
+ * AI Flow (关注) related types.
  */
 
 // Flow task type enumeration

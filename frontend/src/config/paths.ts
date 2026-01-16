@@ -35,6 +35,9 @@ export const paths = {
   flow: {
     getHref: () => '/flow',
   },
+  flowSubscriptions: {
+    getHref: () => '/flow/subscriptions',
+  },
   settings: {
     root: {
       getHref: () => '/settings',

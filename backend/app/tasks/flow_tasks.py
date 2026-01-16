@@ -249,15 +249,28 @@ async def _create_flow_task(
 
 
 def _add_flow_labels_to_task(
-    db: Session, task: Any, flow_id: int, execution_id: int
+    db: Session,
+    task: Any,
+    flow_id: int,
+    execution_id: int,
+    supports_direct_chat: bool = False,
 ) -> None:
-    """Add flow-specific labels to the task."""
+    """Add flow-specific labels to the task.
+
+    Args:
+        db: Database session
+        task: Task resource
+        flow_id: Flow ID
+        execution_id: Execution ID
+        supports_direct_chat: Not used anymore. Kept for backward compatibility.
+            We no longer override the source label - it stays as 'chat_shell'
+            (set by create_chat_task), which ensures executor_manager won't
+            pick up Chat Shell type tasks.
+    """
     from app.core.constants import (
-        FLOW_SOURCE,
         LABEL_EXECUTION_ID,
         LABEL_FLOW_EXECUTION_ID,
         LABEL_FLOW_ID,
-        LABEL_SOURCE,
     )
     from app.schemas.kind import Task
 
@@ -266,7 +279,8 @@ def _add_flow_labels_to_task(
         task_crd.metadata.labels[LABEL_FLOW_ID] = str(flow_id)
         task_crd.metadata.labels[LABEL_EXECUTION_ID] = str(execution_id)
         task_crd.metadata.labels[LABEL_FLOW_EXECUTION_ID] = str(execution_id)
-        task_crd.metadata.labels[LABEL_SOURCE] = FLOW_SOURCE
+        # Don't override source label - keep it as 'chat_shell' from create_chat_task
+        # This ensures executor_manager won't pick up Chat Shell type Flow tasks
     task.json = task_crd.model_dump(mode="json")
     db.commit()
 
@@ -778,7 +792,9 @@ def execute_flow_task(
                 task_id = task.id
 
                 # Add flow labels to task
-                _add_flow_labels_to_task(db, task, flow_id, execution_id)
+                _add_flow_labels_to_task(
+                    db, task, flow_id, execution_id, supports_direct_chat
+                )
 
                 # Link task to execution
                 _link_task_to_execution(db, ctx.execution, task_id)
@@ -1064,7 +1080,9 @@ def execute_flow_task_sync(
                 task_id = task.id
 
                 # Add flow labels to task
-                _add_flow_labels_to_task(db, task, flow_id, execution_id)
+                _add_flow_labels_to_task(
+                    db, task, flow_id, execution_id, supports_direct_chat
+                )
 
                 # Link task to execution
                 _link_task_to_execution(db, ctx.execution, task_id)

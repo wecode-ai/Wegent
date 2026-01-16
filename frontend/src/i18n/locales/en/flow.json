@@ -129,6 +129,8 @@
     "title": "Feed",
     "empty_title": "No activities yet",
     "empty_hint": "AI activities will appear here after you create flows",
+    "empty_settings_hint": "Or click",
+    "manage_flows": "Manage Flows",
     "just_now": "Just now",
     "minutes_ago": "{{count}}m ago",
     "hours_ago": "{{count}}h ago",

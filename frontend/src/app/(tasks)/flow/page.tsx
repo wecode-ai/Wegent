@@ -24,7 +24,7 @@ import { ThemeToggle } from '@/features/theme/ThemeToggle'
 /**
  * AI Flow Page with Sidebar
  *
- * Main page for AI Flow (智能流) module with left sidebar.
+ * Main page for AI Flow (关注) module with left sidebar.
  * Allows users to configure automated task triggers and view execution results.
  */
 export default function FlowPage() {
