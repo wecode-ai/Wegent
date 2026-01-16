@@ -362,10 +362,49 @@ async def _stream_chat_response(
         # Add model info to span
         span_manager.set_model_attributes(chat_config.model_config)
 
+        # Search for relevant memories (with timeout, graceful degradation)
+        # WebSocket chat (web) always enables memory by default
+        # This runs before context processing to inject memory context
+        from app.services.memory import get_memory_manager
+
+        memory_manager = get_memory_manager()
+        relevant_memories = []
+
+        if memory_manager.is_enabled:
+            try:
+                logger.info(
+                    "[ai_trigger] Searching for relevant memories: user_id=%d",
+                    stream_data.user_id,
+                )
+                relevant_memories = await memory_manager.search_memories(
+                    user_id=str(stream_data.user_id),
+                    query=message,
+                    group_id=None,  # Future: extract from task spec
+                )
+                logger.info(
+                    "[ai_trigger] Found %d relevant memories", len(relevant_memories)
+                )
+            except Exception as e:
+                logger.error(
+                    "[ai_trigger] Failed to search memories: %s", e, exc_info=True
+                )
+
+        # Inject memories into system prompt if any found
+        # This happens before context processing to ensure memories are included
+        base_system_prompt_with_memory = chat_config.system_prompt
+        if relevant_memories:
+            base_system_prompt_with_memory = memory_manager.inject_memories_to_prompt(
+                base_prompt=chat_config.system_prompt, memories=relevant_memories
+            )
+            logger.info(
+                "[ai_trigger] Injected %d memories into system prompt",
+                len(relevant_memories),
+            )
+
         # Unified context processing: process both attachments and knowledge bases
         # from the user subtask's associated contexts
         final_message = message
-        enhanced_system_prompt = chat_config.system_prompt
+        enhanced_system_prompt = base_system_prompt_with_memory
         extra_tools = []
 
         logger.info(
@@ -389,7 +428,7 @@ async def _stream_chat_response(
                 user_subtask_id=user_subtask_id,
                 user_id=stream_data.user_id,
                 message=message,
-                base_system_prompt=chat_config.system_prompt,
+                base_system_prompt=base_system_prompt_with_memory,  # Use prompt with memories
                 task_id=stream_data.task_id,
             )
             logger.info(

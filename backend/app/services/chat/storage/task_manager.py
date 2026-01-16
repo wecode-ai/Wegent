@@ -674,6 +674,125 @@ async def create_task_and_subtasks(
     if assistant_subtask:
         db.refresh(assistant_subtask)
 
+    # Store user message in long-term memory (fire-and-forget)
+    # WebSocket chat (web) always enables memory by default
+    # This runs in background and doesn't block the main flow
+    import asyncio
+
+    from app.core.config import settings
+    from app.services.memory import get_memory_manager
+
+    memory_manager = get_memory_manager()
+    if memory_manager.is_enabled:
+        task_crd = Task.model_validate(task.json)
+        workspace_id = (
+            f"{task_crd.spec.workspaceRef.namespace}/{task_crd.spec.workspaceRef.name}"
+            if task_crd.spec.workspaceRef
+            else None
+        )
+        is_group_chat = task_crd.spec.is_group_chat
+
+        # Build context messages (recent history + current message)
+        context_messages = []
+        context_limit = settings.MEMORY_CONTEXT_MESSAGES
+
+        # Collect recent completed messages for context
+        # Filter for completed USER and ASSISTANT messages only
+        completed_subtasks = [
+            st
+            for st in existing_subtasks
+            if st.status == SubtaskStatus.COMPLETED
+            and st.role in (SubtaskRole.USER, SubtaskRole.ASSISTANT)
+        ]
+
+        # Get the last (context_limit - 1) completed messages as history
+        history_count = min(context_limit - 1, len(completed_subtasks))
+        for i in range(history_count):
+            subtask = completed_subtasks[i]
+            role = "user" if subtask.role == SubtaskRole.USER else "assistant"
+
+            # Extract content based on role
+            if subtask.role == SubtaskRole.USER:
+                content = subtask.prompt or ""
+            else:  # ASSISTANT
+                content = ""
+                if subtask.result and isinstance(subtask.result, dict):
+                    content = subtask.result.get("value", "")
+
+            # Skip empty messages
+            if not content:
+                continue
+
+            # For group chat user messages, add sender name prefix if not already present
+            if role == "user" and is_group_chat:
+                # Get sender user_name from user table
+                sender = (
+                    db.query(User).filter(User.id == subtask.sender_user_id).first()
+                )
+                sender_name = (
+                    sender.user_name if sender else f"User{subtask.sender_user_id}"
+                )
+                # Add prefix if not already present
+                if not content.startswith(f"User[{sender_name}]:"):
+                    content = f"User[{sender_name}]: {content}"
+
+            context_messages.append({"role": role, "content": content})
+
+        # Reverse to maintain chronological order (oldest to newest)
+        context_messages.reverse()
+
+        # Add current user message
+        current_content = message
+        if is_group_chat:
+            # Add sender name prefix to current message
+            sender_name = user.user_name
+            if not current_content.startswith(f"User[{sender_name}]:"):
+                current_content = f"User[{sender_name}]: {current_content}"
+
+        context_messages.append({"role": "user", "content": current_content})
+
+        # Create task with proper exception handling
+        def _log_memory_task_exception(task_obj: asyncio.Task) -> None:
+            """Log exceptions from background memory storage task."""
+            try:
+                exc = task_obj.exception()
+                if exc is not None:
+                    logger.error(
+                        "[create_task_and_subtasks] Memory storage task failed for user %d, task %d, subtask %d: %s",
+                        user.id,
+                        task.id,
+                        user_subtask.id,
+                        exc,
+                        exc_info=exc,
+                    )
+            except asyncio.CancelledError:
+                logger.info(
+                    "[create_task_and_subtasks] Memory storage task cancelled for user %d, task %d, subtask %d",
+                    user.id,
+                    task.id,
+                    user_subtask.id,
+                )
+
+        memory_save_task = asyncio.create_task(
+            memory_manager.save_user_message_async(
+                user_id=str(user.id),
+                team_id=str(team.id),
+                task_id=str(task.id),
+                subtask_id=str(user_subtask.id),
+                messages=context_messages,
+                workspace_id=workspace_id,
+                group_id=None,  # Future: extract from task spec
+                is_group_chat=is_group_chat,
+            )
+        )
+        memory_save_task.add_done_callback(_log_memory_task_exception)
+        logger.info(
+            "[create_task_and_subtasks] Started background task to store memory for user %d, task %d, subtask %d",
+            user.id,
+            task.id,
+            user_subtask.id,
+        )
+
     # Initialize Redis chat history from existing subtasks if needed
     if existing_subtasks:
         await initialize_redis_chat_history(task_id, existing_subtasks)
