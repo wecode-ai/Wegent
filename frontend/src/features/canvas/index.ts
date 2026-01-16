@@ -6,5 +6,8 @@
 export * from './types'
 export * from './hooks/useCanvasState'
 export * from './hooks/useArtifact'
+export * from './hooks/useContentDiff'
+export * from './utils/diff'
 export * from './components/CanvasPanel'
+export * from './components/DiffHighlighter'
 export { CanvasToggle, CanvasPanelToggle } from './components/CanvasToggle'

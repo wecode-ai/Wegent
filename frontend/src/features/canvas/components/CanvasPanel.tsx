@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -18,6 +18,8 @@ import {
 } from '@heroicons/react/24/outline'
 import { cn } from '@/lib/utils'
 import type { Artifact } from '../types'
+import { useContentDiff } from '../hooks/useContentDiff'
+import { CodeBlockDiffHighlighter, TextDiffHighlighter } from './DiffHighlighter'
 
 interface CanvasPanelProps {
   artifact: Artifact | null
@@ -42,6 +44,36 @@ export function CanvasPanel({
 }: CanvasPanelProps) {
   const [copied, setCopied] = useState(false)
   const [activeTab, setActiveTab] = useState<'content' | 'versions'>('content')
+
+  // Track the artifact ID to detect artifact changes vs content updates
+  const lastArtifactIdRef = useRef<string | null>(null)
+
+  // Use content diff hook for change highlighting
+  const {
+    segments,
+    isAnimating,
+    updateContent,
+    resetContent,
+  } = useContentDiff(artifact?.content || '')
+
+  // Handle artifact content changes
+  useEffect(() => {
+    if (!artifact) {
+      resetContent('')
+      lastArtifactIdRef.current = null
+      return
+    }
+
+    // If this is a different artifact (e.g., task switch), reset without animation
+    if (lastArtifactIdRef.current !== artifact.id) {
+      resetContent(artifact.content)
+      lastArtifactIdRef.current = artifact.id
+      return
+    }
+
+    // Same artifact, content updated - trigger diff animation
+    updateContent(artifact.content)
+  }, [artifact?.id, artifact?.content, artifact?.version, resetContent, updateContent])
 
   // Copy content to clipboard
   const handleCopy = useCallback(async () => {
@@ -270,15 +302,17 @@ export function CanvasPanel({
         ) : activeTab === 'content' ? (
           <div className="p-3 h-full">
             {artifact?.artifact_type === 'code' ? (
-              <pre className="text-sm font-mono bg-muted/30 p-3 rounded h-full overflow-auto">
-                <code className="text-text-primary whitespace-pre-wrap break-words">
-                  {artifact.content}
-                </code>
-              </pre>
+              <CodeBlockDiffHighlighter
+                segments={segments}
+                isAnimating={isAnimating}
+                wrapperClassName="h-full"
+              />
             ) : (
-              <div className="text-sm text-text-primary whitespace-pre-wrap break-words leading-relaxed h-full overflow-auto">
-                {artifact?.content}
-              </div>
+              <TextDiffHighlighter
+                segments={segments}
+                isAnimating={isAnimating}
+                className="h-full overflow-auto"
+              />
             )}
           </div>
         ) : (
