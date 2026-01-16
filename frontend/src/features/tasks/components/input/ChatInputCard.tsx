@@ -12,6 +12,7 @@ import ExternalApiParamsInput from '../params/ExternalApiParamsInput'
 import { SelectedTeamBadge } from '../selector/SelectedTeamBadge'
 import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls'
 import { QuoteCard } from '../text-selection'
+import { ConnectionStatusBanner } from './ConnectionStatusBanner'
 import type { Team, ChatTipItem } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -181,6 +182,9 @@ export function ChatInputCard({
 
         {/* Quote Card - shows quoted text from text selection */}
         {!shouldHideChatInput && <QuoteCard />}
+
+        {/* Connection Status Banner - shows WebSocket connection status */}
+        {!shouldHideChatInput && <ConnectionStatusBanner />}
 
         {/* Chat Input with inline badge */}
         {!shouldHideChatInput && (
