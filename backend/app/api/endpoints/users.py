@@ -347,7 +347,7 @@ def parse_default_team_config(config_value: str) -> Optional[DefaultTeamConfig]:
 
 @router.get("/default-teams", response_model=DefaultTeamsResponse)
 async def get_default_teams(
-    current_user: User = Depends(security.get_current_user),
+    _current_user: User = Depends(security.get_current_user),  # noqa: ARG001
 ):
     """
     Get default team configuration for each mode (chat, code, knowledge).

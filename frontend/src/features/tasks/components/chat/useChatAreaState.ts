@@ -321,14 +321,22 @@ export function useChatAreaState({
   const isTeamCompatibleWithMode = useCallback(
     (team: Team): boolean => {
       if (!team.bind_mode || team.bind_mode.length === 0) return false
-      return team.bind_mode.includes(taskType)
+      // Knowledge mode uses chat mode teams
+      const modeToCheck = taskType === 'knowledge' ? 'chat' : taskType
+      return team.bind_mode.includes(modeToCheck)
     },
     [taskType]
   )
 
+  // Get teams compatible with current mode
+  const compatibleTeams = useMemo(() => {
+    return _teams.filter(isTeamCompatibleWithMode)
+  }, [_teams, isTeamCompatibleWithMode])
+
   // Find default team for current mode from teams list
   const findDefaultTeamForMode = useCallback(
     (teams: Team[]): Team | null => {
+      if (teams.length === 0) return null
       if (!defaultTeamsConfig) return teams[0] || null
 
       // Get the default config for current mode
@@ -367,10 +375,10 @@ export function useChatAreaState({
     [defaultTeamsConfig, taskType]
   )
 
-  // Compute default team for current mode
+  // Compute default team for current mode (only from compatible teams)
   const defaultTeam = useMemo(() => {
-    return findDefaultTeamForMode(_teams)
-  }, [findDefaultTeamForMode, _teams])
+    return findDefaultTeamForMode(compatibleTeams)
+  }, [findDefaultTeamForMode, compatibleTeams])
 
   // Restore to default team
   const restoreDefaultTeam = useCallback(() => {

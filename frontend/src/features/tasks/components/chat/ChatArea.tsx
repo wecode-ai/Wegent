@@ -504,7 +504,8 @@ function ChatAreaContent({
     onTeamChange: chatState.handleTeamChange,
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,
     onAppModeChange: chatState.handleAppModeChange,
-    onRestoreDefaultTeam: chatState.restoreDefaultTeam,
+    // Only enable restore when default team exists
+    onRestoreDefaultTeam: chatState.defaultTeam ? chatState.restoreDefaultTeam : undefined,
     taskType,
     tipText: chatState.randomTip,
     isGroupChat: selectedTaskDetail?.is_group_chat || false,
