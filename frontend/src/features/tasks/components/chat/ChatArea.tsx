@@ -139,7 +139,6 @@ function ChatAreaContent({
   // Extract values for dependency array
   const selectedTeam = chatState.selectedTeam
   const handleTeamChange = chatState.handleTeamChange
-  const defaultTeam = chatState.defaultTeam
   const findDefaultTeamForMode = chatState.findDefaultTeamForMode
 
   // Team selection logic - using default team from server configuration
