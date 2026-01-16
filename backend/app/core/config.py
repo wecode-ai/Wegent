@@ -159,6 +159,10 @@ class Settings(BaseSettings):
         False  # Force re-initialize YAML resources (delete and recreate)
     )
 
+    # Default resource file path for new user initialization
+    # Path to JSON file containing default resources to apply when creating new users
+    DEFAULT_RESOURCE_FILE_PATH: str = ""
+
     # default header
     EXECUTOR_ENV: str = '{"DEFAULT_HEADERS":{"user":"${task_data.user.name}"}}'
 
