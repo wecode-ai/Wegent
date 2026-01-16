@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Task, TaskType } from '@/types/api'
 import TaskMenu from './TaskMenu'
 import {
@@ -24,6 +24,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis } from '@/apis/tasks'
 import { isTaskUnread } from '@/utils/taskViewStatus'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { toast } from 'sonner'
 
 interface TaskListSectionProps {
   tasks: Task[]
@@ -62,6 +63,12 @@ export default function TaskListSection({
   const [hoveredTaskId, setHoveredTaskId] = useState<number | null>(null)
   const [_loading, setLoading] = useState(false)
   const [longPressTaskId, setLongPressTaskId] = useState<number | null>(null)
+
+  // Inline rename editing state
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
+  const [editingTitle, setEditingTitle] = useState<string>('')
+  const [isRenaming, setIsRenaming] = useState(false)
+  const editInputRef = useRef<HTMLInputElement>(null)
 
   // Touch interaction state
   const [touchState, setTouchState] = useState<{
@@ -255,6 +262,90 @@ export default function TaskListSection({
       setLoading(false)
     }
   }
+
+  // Maximum title length
+  const MAX_TITLE_LENGTH = 100
+
+  // Start inline rename editing
+  const handleRename = useCallback((taskId: number) => {
+    const task = tasks.find(t => t.id === taskId)
+    if (task) {
+      setEditingTaskId(taskId)
+      setEditingTitle(task.title)
+      // Focus input in next tick after render
+      setTimeout(() => {
+        editInputRef.current?.focus()
+        editInputRef.current?.select()
+      }, 0)
+    }
+  }, [tasks])
+
+  // Cancel rename editing
+  const handleCancelRename = useCallback(() => {
+    setEditingTaskId(null)
+    setEditingTitle('')
+  }, [])
+
+  // Save renamed title
+  const handleSaveRename = useCallback(async () => {
+    if (editingTaskId === null) return
+
+    const trimmedTitle = editingTitle.trim()
+
+    // Validation: title cannot be empty
+    if (!trimmedTitle) {
+      toast.error(t('common:tasks.title_required'))
+      return
+    }
+
+    // Get original task to check if title changed
+    const originalTask = tasks.find(t => t.id === editingTaskId)
+    if (!originalTask || originalTask.title === trimmedTitle) {
+      // No change, just cancel
+      handleCancelRename()
+      return
+    }
+
+    setIsRenaming(true)
+    try {
+      const updatedTask = await taskApis.updateTask(editingTaskId, { title: trimmedTitle })
+
+      // Update local state
+      if (selectedTask?.id === editingTaskId) {
+        setSelectedTask(updatedTask)
+      }
+
+      // Refresh tasks to sync the updated title
+      await refreshTasks()
+
+      handleCancelRename()
+    } catch (err) {
+      console.error('Rename failed', err)
+    } finally {
+      setIsRenaming(false)
+    }
+  }, [editingTaskId, editingTitle, tasks, selectedTask, setSelectedTask, refreshTasks, handleCancelRename])
+
+  // Handle key press in edit input
+  const handleEditKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleSaveRename()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      handleCancelRename()
+    }
+  }, [handleSaveRename, handleCancelRename])
+
+  // Handle blur (click outside) - save the changes
+  const handleEditBlur = useCallback(() => {
+    // Small delay to allow click events to process first
+    setTimeout(() => {
+      if (editingTaskId !== null) {
+        handleSaveRename()
+      }
+    }, 100)
+  }, [editingTaskId, handleSaveRename])
 
   if (tasks.length === 0) return null
 
@@ -464,10 +555,31 @@ export default function TaskListSection({
                     {/* Task type icon on the left */}
                     <div className="flex-shrink-0">{getTaskTypeIcon(task)}</div>
 
-                    {/* Task title in the middle */}
-                    <p className="flex-1 min-w-0 text-sm text-text-primary leading-tight truncate m-0">
-                      {task.title}
-                    </p>
+                    {/* Task title in the middle - show input when editing */}
+                    {editingTaskId === task.id ? (
+                      <div className="flex-1 min-w-0 flex items-center gap-1">
+                        <input
+                          ref={editInputRef}
+                          type="text"
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value.slice(0, MAX_TITLE_LENGTH))}
+                          onKeyDown={handleEditKeyDown}
+                          onBlur={handleEditBlur}
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex-1 min-w-0 text-sm bg-transparent border border-primary rounded px-1 py-0.5 h-6 min-h-[44px] md:min-h-0 focus:outline-none focus:ring-1 focus:ring-primary text-text-primary"
+                          disabled={isRenaming}
+                          maxLength={MAX_TITLE_LENGTH}
+                          placeholder={t('common:tasks.title_placeholder')}
+                        />
+                        {isRenaming && (
+                          <span className="flex-shrink-0 w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                        )}
+                      </div>
+                    ) : (
+                      <p className="flex-1 min-w-0 text-sm text-text-primary leading-tight truncate m-0">
+                        {task.title}
+                      </p>
+                    )}
 
                     {/* Status icon on the right - only render container when needed */}
                     {(shouldShowStatusIcon(task) || isTaskUnread(task)) && (
@@ -496,6 +608,7 @@ export default function TaskListSection({
                           taskId={task.id}
                           handleCopyTaskId={handleCopyTaskId}
                           handleDeleteTask={handleDeleteTask}
+                          handleRename={handleRename}
                           isGroupChat={task.is_group_chat}
                         />
                       </div>
