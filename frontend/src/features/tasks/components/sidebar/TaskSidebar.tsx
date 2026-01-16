@@ -361,11 +361,6 @@ export default function TaskSidebar({
             className={`flex-1 ${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 overflow-y-auto task-list-scrollbar border-t border-border mt-3`}
             ref={scrollRef}
           >
-            {/* Projects Section - displayed above group chats */}
-            {!isCollapsed && !isSearchResult && (
-              <ProjectSection onTaskSelect={() => setIsMobileSidebarOpen(false)} />
-            )}
-
             {/* Auto-refresh indicator - shows when refreshing after page visibility or reconnect */}
             {isRefreshing && !isCollapsed && (
               <div className="px-1 pb-2">
@@ -501,6 +496,8 @@ export default function TaskSidebar({
                 shortcutDisplayText={shortcutDisplayText}
                 setIsMobileSidebarOpen={setIsMobileSidebarOpen}
                 t={t}
+                isSearchResult={isSearchResult}
+                onTaskSelect={() => setIsMobileSidebarOpen(false)}
               />
             )}
             {loadingMore && isSearchResult && (
@@ -568,6 +565,8 @@ interface TaskHistorySectionProps {
   shortcutDisplayText: string
   setIsMobileSidebarOpen: (open: boolean) => void
   t: (key: string, options?: Record<string, unknown>) => string
+  isSearchResult: boolean
+  onTaskSelect: () => void
 }
 
 // Import Task type for the component
@@ -594,6 +593,8 @@ function TaskHistorySection({
   shortcutDisplayText,
   setIsMobileSidebarOpen,
   t,
+  isSearchResult,
+  onTaskSelect,
 }: TaskHistorySectionProps) {
   const { projectTaskIds } = useProjectContext()
 
@@ -726,13 +727,19 @@ function TaskHistorySection({
           )}
         </>
       )}
+
+      {/* Projects Section - displayed between group chats and history */}
+      {!isCollapsed && !isSearchResult && (
+        <div className={filteredGroupTasks.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}>
+          <ProjectSection onTaskSelect={onTaskSelect} />
+        </div>
+      )}
+
       {/* History Section (Personal Tasks) */}
       {filteredPersonalTasks.length > 0 && (
         <DroppableHistory>
           {!isCollapsed && (
-            <div
-              className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${filteredGroupTasks.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}`}
-            >
+            <div className="px-1 pb-1 pt-3 mt-2 border-t border-border text-xs font-medium text-text-muted flex items-center justify-between">
               <div className="flex items-center gap-1">
                 <span>{t('common:tasks.history_title')}</span>
                 <TooltipProvider>

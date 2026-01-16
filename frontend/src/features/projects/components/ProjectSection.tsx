@@ -100,7 +100,7 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
   }
 
   return (
-    <div className="pb-3 mb-2 border-b border-border">
+    <div className="pb-3 mb-2">
       {/* Section Header */}
       <div className="flex items-center justify-between px-2 py-1.5 group">
         <button
