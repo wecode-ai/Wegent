@@ -17,8 +17,12 @@ from shared.logger import setup_logger
 logger = setup_logger("envd_server")
 
 # Import service handlers
-from .filesystem_service import FilesystemServiceHandler, ConnectError as FilesystemConnectError
-from .process_service import ProcessServiceHandler, ConnectError
+from .service import (
+    ConnectError,
+    FilesystemConnectError,
+    FilesystemServiceHandler,
+    ProcessServiceHandler,
+)
 
 # Global handlers
 _process_handler: ProcessServiceHandler = None
@@ -187,6 +191,10 @@ def register_envd_routes(app: FastAPI):
     logger.info("Registered envd Connect RPC routes:")
     logger.info("  Process service: /process.Process/*")
     logger.info("  Filesystem service: /filesystem.Filesystem/*")
+
+    # Register REST API endpoints
+    from .api import register_rest_api
+    register_rest_api(app)
 
 
 async def _handle_unary(request: Request, handler, req_class, resp_class):
@@ -374,3 +382,4 @@ async def _handle_client_stream(request: Request, handler, req_class, resp_class
             status_code=500,
             media_type="application/json"
         )
+
