@@ -215,20 +215,43 @@ def load_resources_from_yaml_directory(directory: Path) -> List[Dict[str, Any]]:
     return resources
 
 
+def get_new_user_resource_directory() -> Path:
+    """
+    Get the directory for new user default resources.
+
+    Uses INIT_DATA_DIR/new_user as the default location for new user resources.
+
+    Returns:
+        Path to the new user resource directory
+    """
+    init_data_dir = Path(settings.INIT_DATA_DIR)
+
+    # Handle local development: try relative path if absolute path doesn't exist
+    if not init_data_dir.exists() and init_data_dir.is_absolute():
+        # Try relative path for local development
+        relative_dir = Path(__file__).parent.parent.parent / "init_data"
+        if relative_dir.exists():
+            init_data_dir = relative_dir
+            logger.info(f"Using relative path for local development: {init_data_dir}")
+
+    return init_data_dir / "new_user"
+
+
 async def apply_default_resources_async(user_id: int):
     """
     Asynchronous version of apply_default_resources.
-    Loads YAML resources from NEW_USER_INIT_DATA_DIR and applies them for the user.
+    Loads YAML resources from new user resource directory and applies them for the user.
+
+    Default directory: INIT_DATA_DIR/new_user
+    Can be overridden by: NEW_USER_INIT_DATA_DIR
     """
     try:
-        resource_dir = settings.NEW_USER_INIT_DATA_DIR
-        if not resource_dir:
+        directory = get_new_user_resource_directory()
+        if not directory:
             logger.info(
-                f"NEW_USER_INIT_DATA_DIR not configured, skipping default resources for user_id={user_id}"
+                f"New user resource directory not available, skipping default resources for user_id={user_id}"
             )
             return None
-
-        directory = Path(resource_dir)
         logger.info(f"Loading resources from {directory} for user_id={user_id}")
 
         resources = load_resources_from_yaml_directory(directory)
@@ -278,18 +301,19 @@ async def apply_user_resources_async(user_id: int, resources: List[Dict[str, Any
 def apply_default_resources_sync(user_id: int):
     """
     Synchronous version of apply_default_resources_async.
-    Loads YAML resources from NEW_USER_INIT_DATA_DIR and applies them for the user.
+    Loads YAML resources from new user resource directory and applies them for the user.
     Used when default resources need to be applied synchronously during user creation.
+
+    Default directory: INIT_DATA_DIR/new_user
+    Can be overridden by: NEW_USER_INIT_DATA_DIR
     """
     try:
-        resource_dir = settings.NEW_USER_INIT_DATA_DIR
-        if not resource_dir:
+        directory = get_new_user_resource_directory()
+        if not directory:
             logger.info(
-                f"NEW_USER_INIT_DATA_DIR not configured, skipping default resources for user_id={user_id}"
+                f"New user resource directory not available, skipping default resources for user_id={user_id}"
             )
             return None
-
-        directory = Path(resource_dir)
         logger.info(f"Loading resources from {directory} for user_id={user_id}")
 
         resources = load_resources_from_yaml_directory(directory)

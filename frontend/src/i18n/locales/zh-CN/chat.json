@@ -4,6 +4,9 @@
     "input": "在此输入您的消息...",
     "empty": "还没有消息。开始对话吧！"
   },
+  "input": {
+    "no_team_placeholder": "请先选择或创建智能体"
+  },
   "actions": {
     "send": "发送",
     "clear": "清空聊天",
