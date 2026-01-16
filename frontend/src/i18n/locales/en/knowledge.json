@@ -72,7 +72,7 @@
       },
       "indexStatus": {
         "available": "Indexed",
-        "unavailable": "Not Indexed"
+        "unavailable": "Index Unavailable"
       },
       "openLink": "Open Link",
       "columns": {
@@ -106,6 +106,7 @@
       "uploadSuccess": "File uploaded successfully",
       "batch": {
         "selected": "{{count}} selected",
+        "selectAll": "Select All",
         "enable": "Enable",
         "disable": "Disable",
         "delete": "Delete"
@@ -185,7 +186,9 @@
         "provider": {
           "dingtalk": "DingTalk Table"
         }
-      }
+      },
+      "documentCount": "Document Count",
+      "notebookLimitReached": "Notebook mode knowledge base supports up to 50 documents"
     },
     "permission": {
       "noAccess": "You do not have permission to perform this action"
@@ -337,6 +340,7 @@
     "backToList": "Back",
     "notFound": "Knowledge base not found",
     "createTaskError": "Failed to create conversation",
-    "bindKnowledgeBaseError": "Failed to bind knowledge base"
+    "bindKnowledgeBaseError": "Failed to bind knowledge base",
+    "newNote": "New Note"
   }
 }

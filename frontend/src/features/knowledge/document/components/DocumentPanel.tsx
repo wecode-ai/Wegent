@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, PanelRightClose, PanelRightOpen, BookOpen } from 'lucide-react'
+import { ArrowLeft, PanelRightClose, PanelRightOpen, BookOpen, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DocumentList } from './DocumentList'
 import type { KnowledgeBase } from '@/types/knowledge'
@@ -51,11 +51,15 @@ const getInitialCollapsed = (storageKey: string, defaultCollapsed: boolean): boo
 interface DocumentPanelProps {
   knowledgeBase: KnowledgeBase
   canManage?: boolean
+  /** Callback when document selection changes */
+  onDocumentSelectionChange?: (documentIds: number[]) => void
+  /** Callback when new chat button is clicked */
+  onNewChat?: () => void
 }
 
 const MIN_WIDTH = 280
 const MAX_WIDTH = 600
-const DEFAULT_WIDTH = 380
+const DEFAULT_WIDTH = 420
 const STORAGE_KEY_WIDTH = 'kb-document-panel-width'
 const STORAGE_KEY_COLLAPSED = 'kb-document-panel-collapsed'
 
@@ -68,7 +72,12 @@ const STORAGE_KEY_COLLAPSED = 'kb-document-panel-collapsed'
  * - Collapsible to save space
  * - Width and collapsed state persisted in localStorage
  */
-export function DocumentPanel({ knowledgeBase, canManage = true }: DocumentPanelProps) {
+export function DocumentPanel({
+  knowledgeBase,
+  canManage = true,
+  onDocumentSelectionChange,
+  onNewChat,
+}: DocumentPanelProps) {
   const { t } = useTranslation('knowledge')
 
   // Initialize state with localStorage values
@@ -199,7 +208,7 @@ export function DocumentPanel({ knowledgeBase, canManage = true }: DocumentPanel
         <div className="absolute inset-y-0 -left-1 -right-1 opacity-0 group-hover:opacity-100 transition-opacity" />
       </div>
 
-      {/* Panel Header with Back Button */}
+      {/* Panel Header with Back Button and New Chat Button */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2">
           {/* Back button */}
@@ -214,15 +223,31 @@ export function DocumentPanel({ knowledgeBase, canManage = true }: DocumentPanel
             <span className="text-sm">{t('chatPage.backToList')}</span>
           </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={toggleCollapsed}
-          className="h-8 w-8 p-0"
-          title={t('chatPage.hideDocuments')}
-        >
-          <PanelRightClose className="w-4 h-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {/* New Note button */}
+          {onNewChat && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onNewChat}
+              className="h-8 px-2 gap-1"
+              title={t('chatPage.newNote')}
+            >
+              <Plus className="w-4 h-4" />
+              <span className="text-sm">{t('chatPage.newNote')}</span>
+            </Button>
+          )}
+          {/* Collapse button */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggleCollapsed}
+            className="h-8 w-8 p-0"
+            title={t('chatPage.hideDocuments')}
+          >
+            <PanelRightClose className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Document List */}
@@ -231,6 +256,7 @@ export function DocumentPanel({ knowledgeBase, canManage = true }: DocumentPanel
           knowledgeBase={knowledgeBase}
           canManage={canManage}
           compact={true}
+          onSelectionChange={onDocumentSelectionChange}
           // No onBack in panel mode - always show document list
         />
       </div>
