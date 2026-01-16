@@ -5,7 +5,8 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { ChevronLeft, ChevronRight, FileText } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { ArrowLeft, PanelRightClose, PanelRightOpen, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DocumentList } from './DocumentList'
 import type { KnowledgeBase } from '@/types/knowledge'
@@ -143,6 +144,13 @@ export function DocumentPanel({ knowledgeBase, canManage = true }: DocumentPanel
     }
   }, [isResizing, saveWidth])
 
+  const router = useRouter()
+
+  // Handle back to knowledge list
+  const handleBack = useCallback(() => {
+    router.push('/knowledge')
+  }, [router])
+
   // When collapsed, show a floating button to expand
   if (isCollapsed) {
     return (
@@ -154,7 +162,7 @@ export function DocumentPanel({ knowledgeBase, canManage = true }: DocumentPanel
           className="h-24 w-10 flex flex-col items-center justify-center gap-2 rounded-lg shadow-lg border-border bg-surface hover:bg-hover"
           title={t('chatPage.showDocuments')}
         >
-          <ChevronLeft className="w-4 h-4" />
+          <PanelRightOpen className="w-4 h-4" />
           <FileText className="w-4 h-4" />
         </Button>
       </div>
@@ -175,13 +183,20 @@ export function DocumentPanel({ knowledgeBase, canManage = true }: DocumentPanel
         <div className="absolute inset-y-0 -left-1 -right-1 opacity-0 group-hover:opacity-100 transition-opacity" />
       </div>
 
-      {/* Panel Header */}
+      {/* Panel Header with Back Button */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2">
-          <FileText className="w-4 h-4 text-text-muted" />
-          <span className="text-sm font-medium text-text-primary">
-            {t('chatPage.documents')}
-          </span>
+          {/* Back button */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleBack}
+            className="h-8 px-2 gap-1"
+            title={t('chatPage.backToList')}
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span className="text-sm">{t('chatPage.backToList')}</span>
+          </Button>
         </div>
         <Button
           variant="ghost"
@@ -190,8 +205,14 @@ export function DocumentPanel({ knowledgeBase, canManage = true }: DocumentPanel
           className="h-8 w-8 p-0"
           title={t('chatPage.hideDocuments')}
         >
-          <ChevronRight className="w-4 h-4" />
+          <PanelRightClose className="w-4 h-4" />
         </Button>
+      </div>
+
+      {/* Documents Title */}
+      <div className="flex items-center gap-2 px-4 py-2">
+        <FileText className="w-4 h-4 text-text-muted" />
+        <span className="text-sm font-medium text-text-primary">{t('chatPage.documents')}</span>
       </div>
 
       {/* Document List */}
@@ -199,6 +220,7 @@ export function DocumentPanel({ knowledgeBase, canManage = true }: DocumentPanel
         <DocumentList
           knowledgeBase={knowledgeBase}
           canManage={canManage}
+          compact={true}
           // No onBack in panel mode - always show document list
         />
       </div>

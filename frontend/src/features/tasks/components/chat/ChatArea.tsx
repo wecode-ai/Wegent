@@ -40,9 +40,20 @@ interface ChatAreaProps {
   isTeamsLoading: boolean
   selectedTeamForNewTask?: Team | null
   showRepositorySelector?: boolean
-  taskType?: 'chat' | 'code'
+  taskType?: 'chat' | 'code' | 'knowledge'
   onShareButtonRender?: (button: React.ReactNode) => void
   onRefreshTeams?: () => Promise<Team[]>
+  /** Initial knowledge base to pre-select when starting a new chat from knowledge page */
+  initialKnowledgeBase?: {
+    id: number
+    name: string
+    namespace: string
+    document_count?: number
+  } | null
+  /** Callback when a new task is created (used for binding knowledge base) */
+  onTaskCreated?: (taskId: number) => void
+  /** Knowledge base ID for knowledge type tasks */
+  knowledgeBaseId?: number
 }
 
 /**
@@ -57,6 +68,9 @@ function ChatAreaContent({
   taskType = 'chat',
   onShareButtonRender,
   onRefreshTeams,
+  initialKnowledgeBase,
+  onTaskCreated,
+  knowledgeBaseId,
 }: ChatAreaProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -82,6 +96,7 @@ function ChatAreaContent({
     teams,
     taskType,
     selectedTeamForNewTask,
+    initialKnowledgeBase,
   })
 
   // Compute subtask info for scroll management
@@ -108,14 +123,17 @@ function ChatAreaContent({
   const lastSyncedTaskIdRef = useRef<number | null>(null)
 
   // Filter teams by bind_mode based on current mode
+  // For knowledge type, use 'chat' mode teams since knowledge chat is essentially chat mode
   const filteredTeams = useMemo(() => {
     const teamsWithValidBindMode = teams.filter(team => {
       if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
       return true
     })
+    // Knowledge type uses chat mode teams
+    const modeToFilter = taskType === 'knowledge' ? 'chat' : taskType
     return teamsWithValidBindMode.filter(team => {
       if (!team.bind_mode) return true
-      return team.bind_mode.includes(taskType)
+      return team.bind_mode.includes(modeToFilter)
     })
   }, [teams, taskType])
 
@@ -270,10 +288,12 @@ function ChatAreaContent({
     resetAttachment: chatState.resetAttachment,
     isAttachmentReadyToSend: chatState.isAttachmentReadyToSend,
     taskType,
+    knowledgeBaseId,
     shouldHideChatInput: chatState.shouldHideChatInput,
     scrollToBottom,
     selectedContexts: chatState.selectedContexts,
     resetContexts: chatState.resetContexts,
+    onTaskCreated,
   })
 
   // Determine if there are messages to display (full computation)
@@ -610,27 +630,33 @@ function ChatAreaContent({
         {/* Center area for input when no messages */}
         {!hasMessages && (
           <div
-            className="flex-1 flex items-center justify-center w-full"
-            style={{ marginBottom: '20vh' }}
+            className={
+              taskType === 'knowledge'
+                ? 'flex-1 flex items-end justify-center w-full pb-6'
+                : 'flex-1 flex items-center justify-center w-full'
+            }
+            style={taskType === 'knowledge' ? undefined : { marginBottom: '20vh' }}
           >
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
-              <SloganDisplay slogan={chatState.randomSlogan} />
+              {taskType !== 'knowledge' && <SloganDisplay slogan={chatState.randomSlogan} />}
               <ChatInputCard
                 {...inputCardProps}
                 autoFocus={!hasMessages}
                 inputControlsRef={inputControlsRef}
               />
-              <QuickAccessCards
-                teams={teams}
-                selectedTeam={chatState.selectedTeam}
-                onTeamSelect={handleTeamSelect}
-                currentMode={taskType}
-                isLoading={isTeamsLoading}
-                isTeamsLoading={isTeamsLoading}
-                hideSelected={true}
-                onRefreshTeams={onRefreshTeams}
-                showWizardButton={taskType === 'chat'}
-              />
+              {taskType !== 'knowledge' && (
+                <QuickAccessCards
+                  teams={teams}
+                  selectedTeam={chatState.selectedTeam}
+                  onTeamSelect={handleTeamSelect}
+                  currentMode={taskType}
+                  isLoading={isTeamsLoading}
+                  isTeamsLoading={isTeamsLoading}
+                  hideSelected={true}
+                  onRefreshTeams={onRefreshTeams}
+                  showWizardButton={taskType === 'chat'}
+                />
+              )}
             </div>
           </div>
         )}

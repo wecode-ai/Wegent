@@ -98,7 +98,9 @@ export interface ChatSendPayload {
   git_repo_id?: number
   git_domain?: string
   branch_name?: string
-  task_type?: 'chat' | 'code'
+  task_type?: 'chat' | 'code' | 'knowledge'
+  // Knowledge base ID for knowledge type tasks
+  knowledge_base_id?: number
 }
 
 export interface ChatCancelPayload {

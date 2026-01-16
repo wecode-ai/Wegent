@@ -19,7 +19,6 @@ import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
 import type { Model } from '../selector/ModelSelector'
 import type { Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api'
 import type { ContextItem } from '@/types/context'
-
 export interface UseChatStreamHandlersOptions {
   // Team and model
   selectedTeam: Team | null
@@ -51,7 +50,10 @@ export interface UseChatStreamHandlersOptions {
   isAttachmentReadyToSend: boolean
 
   // Task type
-  taskType: 'chat' | 'code'
+  taskType: 'chat' | 'code' | 'knowledge'
+
+  // Knowledge base ID (for knowledge type tasks)
+  knowledgeBaseId?: number
 
   // UI flags
   shouldHideChatInput: boolean
@@ -62,6 +64,9 @@ export interface UseChatStreamHandlersOptions {
   // Context selection (knowledge bases)
   selectedContexts?: ContextItem[]
   resetContexts?: () => void
+
+  // Callback when a new task is created (used for binding knowledge base)
+  onTaskCreated?: (taskId: number) => void
 }
 
 export interface ChatStreamHandlers {
@@ -130,10 +135,12 @@ export function useChatStreamHandlers({
   resetAttachment,
   isAttachmentReadyToSend,
   taskType,
+  knowledgeBaseId,
   shouldHideChatInput,
   scrollToBottom,
   selectedContexts = [],
   resetContexts,
+  onTaskCreated,
 }: UseChatStreamHandlersOptions): ChatStreamHandlers {
   const { toast } = useToast()
   const { t } = useTranslation()
@@ -506,6 +513,7 @@ export function useChatStreamHandlers({
               ? selectedBranch?.name || selectedTaskDetail?.branch_name
               : undefined,
             task_type: taskType,
+            knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
             contexts: contextItems.length > 0 ? contextItems : undefined,
           },
           {
@@ -514,7 +522,6 @@ export function useChatStreamHandlers({
             pendingContexts: pendingContexts.length > 0 ? pendingContexts : undefined,
             immediateTaskId: immediateTaskId,
             currentUserId: user?.id,
-            currentUserName: user?.user_name,
             onMessageSent: (
               _localMessageId: string,
               completedTaskId: number,
@@ -522,6 +529,12 @@ export function useChatStreamHandlers({
             ) => {
               if (completedTaskId > 0) {
                 setPendingTaskId(completedTaskId)
+              }
+
+              // Call onTaskCreated callback when a new task is created
+              // This is used for binding knowledge base to the task
+              if (completedTaskId && !selectedTaskDetail?.id && onTaskCreated) {
+                onTaskCreated(completedTaskId)
               }
 
               if (completedTaskId && !selectedTaskDetail?.id) {
@@ -579,14 +592,15 @@ export function useChatStreamHandlers({
       selectedRepo,
       selectedBranch,
       taskType,
+      knowledgeBaseId,
       markTaskAsViewed,
       user?.id,
-      user?.user_name,
       handleSendError,
       scrollToBottom,
       setIsLoading,
       setTaskInputMessage,
       externalApiParams,
+      onTaskCreated,
     ]
   )
 

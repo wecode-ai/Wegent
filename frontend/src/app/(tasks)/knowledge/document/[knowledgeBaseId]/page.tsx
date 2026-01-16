@@ -4,10 +4,12 @@
 
 'use client'
 
+import { Suspense } from 'react'
 import dynamic from 'next/dynamic'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { TaskParamSync } from '@/features/tasks/components/params'
 
 // Dynamic imports for mobile and desktop page components with code splitting
 const KnowledgeBaseChatPageDesktop = dynamic(
@@ -44,5 +46,13 @@ export default function KnowledgeBaseChatPage() {
   const isMobile = useIsMobile()
 
   // Route to mobile or desktop component based on screen size
-  return isMobile ? <KnowledgeBaseChatPageMobile /> : <KnowledgeBaseChatPageDesktop />
+  return (
+    <>
+      {/* TaskParamSync handles URL taskId parameter synchronization with TaskContext */}
+      <Suspense>
+        <TaskParamSync />
+      </Suspense>
+      {isMobile ? <KnowledgeBaseChatPageMobile /> : <KnowledgeBaseChatPageDesktop />}
+    </>
+  )
 }

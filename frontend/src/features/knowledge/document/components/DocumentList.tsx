@@ -37,12 +37,19 @@ interface DocumentListProps {
   knowledgeBase: KnowledgeBase
   onBack?: () => void
   canManage?: boolean
+  /** Compact mode for sidebar display - uses card layout instead of table */
+  compact?: boolean
 }
 
 type SortField = 'name' | 'size' | 'date'
 type SortOrder = 'asc' | 'desc'
 
-export function DocumentList({ knowledgeBase, onBack, canManage = true }: DocumentListProps) {
+export function DocumentList({
+  knowledgeBase,
+  onBack,
+  canManage = true,
+  compact = false,
+}: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
     knowledgeBaseId: knowledgeBase.id,
@@ -260,8 +267,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
 
         {/* Retrieval test button */}
         <Button variant="outline" size="sm" onClick={() => setShowRetrievalTest(true)}>
-          <Target className="w-4 h-4 mr-1" />
-          {t('document.retrievalTest.button')}
+          <Target className="w-4 h-4" />
         </Button>
 
         {/* Upload button */}
@@ -289,7 +295,9 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
         <>
           {/* Batch action bar - shown when items are selected */}
           {canManage && selectedIds.size > 0 && (
-            <div className="flex items-center gap-3 px-4 py-2.5 bg-primary/5 border border-primary/20 rounded-lg">
+            <div
+              className={`flex items-center gap-3 ${compact ? 'px-2 py-2' : 'px-4 py-2.5'} bg-primary/5 border border-primary/20 rounded-lg`}
+            >
               <span className="text-sm text-text-primary">
                 {t('document.document.batch.selected', { count: selectedIds.size })}
               </span>
@@ -301,76 +309,98 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
                 disabled={batchLoading}
               >
                 <Trash2 className="w-4 h-4 mr-1" />
-                {t('document.document.batch.delete')}
+                {compact ? '' : t('document.document.batch.delete')}
               </Button>
             </div>
           )}
-          <div className="border border-border rounded-lg overflow-hidden">
-            {/* Table header */}
-            <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium">
-              {/* Checkbox for select all */}
-              {canManage && (
-                <div className="flex-shrink-0">
-                  <Checkbox
-                    checked={isAllSelected}
-                    onCheckedChange={handleSelectAll}
-                    className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                    {...(isPartialSelected ? { 'data-state': 'indeterminate' } : {})}
-                  />
-                </div>
-              )}
-              {/* Icon placeholder */}
-              <div className="w-8 flex-shrink-0" />
-              <div
-                className="flex-1 min-w-[120px] cursor-pointer hover:text-text-primary select-none"
-                onClick={() => handleSort('name')}
-              >
-                {t('document.document.columns.name')}
-                <SortIcon field="name" />
-              </div>
-              {/* Spacer to match DocumentItem middle area */}
-              <div className="w-48 flex-shrink-0" />
-              <div className="w-20 flex-shrink-0 text-center">
-                {t('document.document.columns.type')}
-              </div>
-              <div
-                className="w-20 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                onClick={() => handleSort('size')}
-              >
-                {t('document.document.columns.size')}
-                <SortIcon field="size" />
-              </div>
-              <div
-                className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                onClick={() => handleSort('date')}
-              >
-                {t('document.document.columns.date')}
-                <SortIcon field="date" />
-              </div>
-              <div className="w-24 flex-shrink-0 text-center">
-                {t('document.document.columns.indexStatus')}
-              </div>
-              {canManage && (
-                <div className="w-16 flex-shrink-0 text-center">
-                  {t('document.document.columns.actions')}
-                </div>
-              )}
+
+          {/* Compact mode: Card layout */}
+          {compact ? (
+            <div className="space-y-2">
+              {filteredAndSortedDocuments.map(doc => (
+                <DocumentItem
+                  key={doc.id}
+                  document={doc}
+                  onViewDetail={setViewingDoc}
+                  onEdit={setEditingDoc}
+                  onDelete={setDeletingDoc}
+                  canManage={canManage}
+                  showBorder={false}
+                  selected={selectedIds.has(doc.id)}
+                  onSelect={handleSelectDoc}
+                  compact={true}
+                />
+              ))}
             </div>
-            {/* Document rows */}
-            {filteredAndSortedDocuments.map((doc, index) => (
-              <DocumentItem
-                key={doc.id}
-                document={doc}
-                onViewDetail={setViewingDoc}
-                onEdit={setEditingDoc}
-                onDelete={setDeletingDoc}
-                canManage={canManage}
-                showBorder={index < filteredAndSortedDocuments.length - 1}
-                selected={selectedIds.has(doc.id)}
-                onSelect={handleSelectDoc}
-              />
-            ))}
-          </div>
+          ) : (
+            /* Normal mode: Table layout */
+            <div className="border border-border rounded-lg overflow-hidden">
+              {/* Table header */}
+              <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium">
+                {/* Checkbox for select all */}
+                {canManage && (
+                  <div className="flex-shrink-0">
+                    <Checkbox
+                      checked={isAllSelected}
+                      onCheckedChange={handleSelectAll}
+                      className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                      {...(isPartialSelected ? { 'data-state': 'indeterminate' } : {})}
+                    />
+                  </div>
+                )}
+                {/* Icon placeholder */}
+                <div className="w-8 flex-shrink-0" />
+                <div
+                  className="flex-1 min-w-[120px] cursor-pointer hover:text-text-primary select-none"
+                  onClick={() => handleSort('name')}
+                >
+                  {t('document.document.columns.name')}
+                  <SortIcon field="name" />
+                </div>
+                {/* Spacer to match DocumentItem middle area */}
+                <div className="w-48 flex-shrink-0" />
+                <div className="w-20 flex-shrink-0 text-center">
+                  {t('document.document.columns.type')}
+                </div>
+                <div
+                  className="w-20 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
+                  onClick={() => handleSort('size')}
+                >
+                  {t('document.document.columns.size')}
+                  <SortIcon field="size" />
+                </div>
+                <div
+                  className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
+                  onClick={() => handleSort('date')}
+                >
+                  {t('document.document.columns.date')}
+                  <SortIcon field="date" />
+                </div>
+                <div className="w-24 flex-shrink-0 text-center">
+                  {t('document.document.columns.indexStatus')}
+                </div>
+                {canManage && (
+                  <div className="w-16 flex-shrink-0 text-center">
+                    {t('document.document.columns.actions')}
+                  </div>
+                )}
+              </div>
+              {/* Document rows */}
+              {filteredAndSortedDocuments.map((doc, index) => (
+                <DocumentItem
+                  key={doc.id}
+                  document={doc}
+                  onViewDetail={setViewingDoc}
+                  onEdit={setEditingDoc}
+                  onDelete={setDeletingDoc}
+                  canManage={canManage}
+                  showBorder={index < filteredAndSortedDocuments.length - 1}
+                  selected={selectedIds.has(doc.id)}
+                  onSelect={handleSelectDoc}
+                />
+              ))}
+            </div>
+          )}
         </>
       ) : searchQuery ? (
         <div className="flex flex-col items-center justify-center py-12 text-text-secondary">

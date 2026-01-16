@@ -29,6 +29,8 @@ import { ChatArea } from '@/features/tasks/components/chat'
 import { teamService } from '@/features/tasks/service/teamService'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { DocumentList, KnowledgeBaseSummaryCard } from '@/features/knowledge/document/components'
+import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-chat'
+import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import type { Team } from '@/types/api'
 
 /**
@@ -56,6 +58,7 @@ export function KnowledgeBaseChatPageMobile() {
     knowledgeBase,
     loading: kbLoading,
     error: kbError,
+    refresh: _refreshKb,
   } = useKnowledgeBaseDetail({
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
@@ -68,12 +71,8 @@ export function KnowledgeBaseChatPageMobile() {
   const { user } = useUser()
 
   // Task context
-  const {
-    refreshTasks,
-    selectedTaskDetail,
-    setSelectedTask,
-    refreshSelectedTaskDetail,
-  } = useTaskContext()
+  const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
+    useTaskContext()
 
   // Get current task title
   const currentTaskTitle = selectedTaskDetail?.title
@@ -201,6 +200,9 @@ export function KnowledgeBaseChatPageMobile() {
           activePage="wiki"
           variant="with-sidebar"
           title={currentTaskTitle || knowledgeBase.name}
+          titleSuffix={
+            hasOpenTask ? <BoundKnowledgeBaseSummary knowledgeBase={knowledgeBase} /> : undefined
+          }
           taskDetail={selectedTaskDetail}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           onTaskDeleted={handleTaskDeleted}
@@ -241,9 +243,28 @@ export function KnowledgeBaseChatPageMobile() {
             teams={filteredTeams}
             isTeamsLoading={isTeamsLoading}
             showRepositorySelector={false}
-            taskType="chat"
+            taskType="knowledge"
+            knowledgeBaseId={knowledgeBase.id}
             onShareButtonRender={handleShareButtonRender}
             onRefreshTeams={handleRefreshTeams}
+            initialKnowledgeBase={{
+              id: knowledgeBase.id,
+              name: knowledgeBase.name,
+              namespace: knowledgeBase.namespace,
+              document_count: knowledgeBase.document_count,
+            }}
+            onTaskCreated={async (taskId: number) => {
+              // Bind the knowledge base to the newly created task
+              try {
+                await taskKnowledgeBaseApi.bindKnowledgeBase(
+                  taskId,
+                  knowledgeBase.name,
+                  knowledgeBase.namespace
+                )
+              } catch (error) {
+                console.error('Failed to bind knowledge base to task:', error)
+              }
+            }}
           />
         </div>
       </div>

@@ -27,6 +27,8 @@ import { ChatArea } from '@/features/tasks/components/chat'
 import { teamService } from '@/features/tasks/service/teamService'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { DocumentPanel, KnowledgeBaseSummaryCard } from '@/features/knowledge/document/components'
+import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-chat'
+import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import type { Team } from '@/types/api'
 
 /**
@@ -66,12 +68,8 @@ export function KnowledgeBaseChatPageDesktop() {
   const { user } = useUser()
 
   // Task context
-  const {
-    refreshTasks,
-    selectedTaskDetail,
-    setSelectedTask,
-    refreshSelectedTaskDetail,
-  } = useTaskContext()
+  const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
+    useTaskContext()
 
   // Get current task title for navigation
   const currentTaskTitle = selectedTaskDetail?.title
@@ -230,22 +228,15 @@ export function KnowledgeBaseChatPageDesktop() {
           activePage="wiki"
           variant="with-sidebar"
           title={currentTaskTitle || knowledgeBase.name}
+          titleSuffix={
+            hasOpenTask ? <BoundKnowledgeBaseSummary knowledgeBase={knowledgeBase} /> : undefined
+          }
           taskDetail={selectedTaskDetail}
           onMobileSidebarToggle={() => {}}
           onTaskDeleted={handleTaskDeleted}
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={isCollapsed}
         >
-          {/* Back button */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleBack}
-            className="gap-1 h-8 px-2 rounded-[7px] text-sm"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            <span className="hidden sm:inline">{t('chatPage.backToList')}</span>
-          </Button>
           {shareButton}
           <GithubStarButton />
         </TopNavigation>
@@ -264,17 +255,33 @@ export function KnowledgeBaseChatPageDesktop() {
               teams={filteredTeams}
               isTeamsLoading={isTeamsLoading}
               showRepositorySelector={false}
-              taskType="chat"
+              taskType="knowledge"
+              knowledgeBaseId={knowledgeBase.id}
               onShareButtonRender={handleShareButtonRender}
               onRefreshTeams={handleRefreshTeams}
+              initialKnowledgeBase={{
+                id: knowledgeBase.id,
+                name: knowledgeBase.name,
+                namespace: knowledgeBase.namespace,
+                document_count: knowledgeBase.document_count,
+              }}
+              onTaskCreated={async (taskId: number) => {
+                // Bind the knowledge base to the newly created task
+                try {
+                  await taskKnowledgeBaseApi.bindKnowledgeBase(
+                    taskId,
+                    knowledgeBase.name,
+                    knowledgeBase.namespace
+                  )
+                } catch (error) {
+                  console.error('Failed to bind knowledge base to task:', error)
+                }
+              }}
             />
           </div>
 
           {/* Right panel - Document management */}
-          <DocumentPanel
-            knowledgeBase={knowledgeBase}
-            canManage={canManageKb}
-          />
+          <DocumentPanel knowledgeBase={knowledgeBase} canManage={canManageKb} />
         </div>
       </div>
 

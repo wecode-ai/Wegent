@@ -139,7 +139,7 @@ export interface Team {
   agent_type?: string // agno, claude, dify, etc.
   is_mix_team?: boolean // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
   recommended_mode?: 'chat' | 'code' | 'both' // Recommended usage mode (for QuickAccess)
-  bind_mode?: ('chat' | 'code')[] // Allowed modes for this team
+  bind_mode?: ('chat' | 'code' | 'knowledge')[] // Allowed modes for this team
   icon?: string // Icon ID from preset icon library
   user?: {
     user_name: string
@@ -172,7 +172,7 @@ export type TaskStatus =
   | 'CANCELLING'
   | 'DELETE'
   | 'PENDING_CONFIRMATION' // Pipeline stage completed, waiting for user confirmation
-export type TaskType = 'chat' | 'code'
+export type TaskType = 'chat' | 'code' | 'knowledge'
 
 // Git commit statistics
 interface CommitStats {
@@ -363,6 +363,7 @@ export interface Task {
   updated_at: string
   completed_at: string
   is_group_chat?: boolean // Whether this task is a group chat
+  knowledge_base_id?: number // Knowledge base ID for knowledge type tasks
 }
 
 /** GitHub repository new structure */

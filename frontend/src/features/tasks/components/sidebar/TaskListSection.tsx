@@ -16,6 +16,7 @@ import {
   Code2,
   MessageSquare,
   Users,
+  BookOpen,
 } from 'lucide-react'
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
@@ -104,7 +105,10 @@ export default function TaskListSection({
       // If task_type is not set, infer from git information
       let targetPath = paths.chat.getHref() // default to chat
 
-      if (task.task_type === 'code') {
+      if (task.task_type === 'knowledge' && task.knowledge_base_id) {
+        // Knowledge type tasks navigate to the knowledge base page
+        targetPath = `/knowledge/document/${task.knowledge_base_id}`
+      } else if (task.task_type === 'code') {
         targetPath = paths.code.getHref()
       } else if (task.task_type === 'chat') {
         targetPath = paths.chat.getHref()
@@ -351,7 +355,9 @@ export default function TaskListSection({
       return <Users className="w-3.5 h-3.5 text-text-primary" />
     }
 
-    if (taskType === 'code') {
+    if (taskType === 'knowledge') {
+      return <BookOpen className="w-3.5 h-3.5 text-text-primary" />
+    } else if (taskType === 'code') {
       return <Code2 className="w-3.5 h-3.5 text-text-primary" />
     } else {
       return <MessageSquare className="w-3.5 h-3.5 text-text-primary" />
@@ -384,6 +390,9 @@ export default function TaskListSection({
                 } else {
                   taskType = 'chat'
                 }
+              }
+              if (taskType === 'knowledge') {
+                return t('common:navigation.wiki')
               }
               return taskType === 'code' ? t('common:navigation.code') : t('common:navigation.chat')
             })()
@@ -435,6 +444,9 @@ export default function TaskListSection({
               } else {
                 taskType = 'chat'
               }
+            }
+            if (taskType === 'knowledge') {
+              return t('common:navigation.wiki')
             }
             return taskType === 'code' ? t('common:navigation.code') : t('common:navigation.chat')
           })()
