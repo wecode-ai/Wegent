@@ -168,10 +168,26 @@ class DatabaseHandler:
             history = canvas_data.get("history", [])
             now = datetime.now().isoformat()
 
+            logger.info(
+                "[Canvas] _save_artifact_to_canvas: task_id=%d, has_existing=%s, artifact_id=%s, content_len=%d",
+                task_id,
+                bool(existing_artifact),
+                artifact.get("id", ""),
+                len(artifact.get("content", ""))
+            )
+
             if existing_artifact:
                 # Update existing artifact - create diff for version history
                 old_content = existing_artifact.get("content", "")
                 new_content = artifact.get("content", "")
+
+                logger.info(
+                    "[Canvas] Updating existing artifact: old_len=%d, new_len=%d, artifact_id=%s",
+                    len(old_content),
+                    len(new_content),
+                    artifact.get("id", "")
+                )
+
                 diff = create_diff(old_content, new_content)
 
                 # Increment version
@@ -188,14 +204,23 @@ class DatabaseHandler:
                 if artifact.get("title"):
                     existing_artifact["title"] = artifact["title"]
 
-                logger.debug(
-                    "[Canvas] Updated artifact for task %d: version=%d, diff_len=%d",
+                logger.info(
+                    "[Canvas] Updated artifact for task %d: version=%d, diff_len=%d, content_preview=%s",
                     task_id,
                     new_version,
                     len(diff) if diff else 0,
+                    new_content[:100] + "..." if len(new_content) > 100 else new_content
                 )
             else:
                 # Create new artifact
+                logger.info(
+                    "[Canvas] Creating new artifact: id=%s, type=%s, title=%s, content_len=%d",
+                    artifact.get("id", ""),
+                    artifact.get("artifact_type", "text"),
+                    artifact.get("title", "Untitled"),
+                    len(artifact.get("content", ""))
+                )
+
                 canvas_data["artifact"] = {
                     "id": artifact.get("id", ""),
                     "artifact_type": artifact.get("artifact_type", "text"),
@@ -209,10 +234,11 @@ class DatabaseHandler:
                 # Initialize history with first version
                 history = [{"version": 1, "diff": None, "created_at": now}]
 
-                logger.debug(
-                    "[Canvas] Created new artifact for task %d: id=%s",
+                logger.info(
+                    "[Canvas] Created new artifact for task %d: id=%s, content_preview=%s",
                     task_id,
                     artifact.get("id", ""),
+                    artifact.get("content", "")[:100] + "..." if len(artifact.get("content", "")) > 100 else artifact.get("content", "")
                 )
 
             canvas_data["history"] = history
@@ -308,7 +334,13 @@ class DatabaseHandler:
                     new_status = task_crd.status.status
                     progress = task_crd.status.progress
 
-                task.json = task_crd.model_dump(mode="json")
+                # IMPORTANT: Don't completely replace task.json as it may contain
+                # additional fields like "canvas" that are not part of the Task model.
+                # Instead, update only the fields that changed.
+                task_crd_dict = task_crd.model_dump(mode="json")
+                for key, value in task_crd_dict.items():
+                    task.json[key] = value
+
                 task.updated_at = datetime.now()
                 flag_modified(task, "json")
 

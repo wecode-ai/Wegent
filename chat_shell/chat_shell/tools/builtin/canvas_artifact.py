@@ -295,17 +295,27 @@ class UpdateArtifactTool(BaseTool):
     display_name: str = "更新画布内容"
     description: str = """Update an existing artifact with new content.
 
-Use this tool when the user asks you to:
-- Modify existing code or text
-- Fix bugs or improve code
-- Add or remove content
-- Change formatting or style
+⚠️ CRITICAL: Use this tool IMMEDIATELY when the user asks to modify, edit, change, or update the artifact content.
 
-This creates a new version while preserving the original.
+Common modification requests:
+- "把这句话改成..." (Change this sentence to...)
+- "把XXX改下：...可以改成..." (Change XXX: ... to ...)
+- "删除/移除这段" (Delete this paragraph)
+- "扩充/添加一段" (Expand/add a paragraph)
+- "修改第X段" (Modify paragraph X)
+- "改写/重写" (Rewrite)
+- Any request to change the artifact content
+
+When the user provides OLD content and NEW content, you should:
+1. Find the OLD content in the current artifact
+2. Replace it with NEW content
+3. Call this tool with the COMPLETE updated artifact content
+
+DO NOT just reply with suggestions - EXECUTE the change by calling this tool!
 
 Args:
-    artifact_id: ID of the artifact to update
-    content: Updated content (FULL content, not just changes)
+    artifact_id: ID of the artifact to update (from conversation history)
+    content: Updated content (FULL COMPLETE content, not just the changes)
     title: New title (optional)
 
 Returns:
@@ -325,6 +335,18 @@ Returns:
         4. Update the artifact with new content and incremented version
         """
         try:
+            logger.info(
+                "[UpdateArtifactTool] ===== UPDATE ARTIFACT CALLED =====\n"
+                "  artifact_id: %s\n"
+                "  title: %s\n"
+                "  content_length: %d\n"
+                "  content_preview: %s",
+                artifact_id,
+                title or "(no title change)",
+                len(content),
+                content[:200] + "..." if len(content) > 200 else content
+            )
+
             now = datetime.utcnow().isoformat()
 
             # Return updated artifact data
@@ -344,8 +366,8 @@ Returns:
                 "message": "Updated artifact content",
             }
 
-            logger.debug(
-                "[UpdateArtifactTool] Updated artifact: id=%s, content_len=%d",
+            logger.info(
+                "[UpdateArtifactTool] Returning result with artifact: id=%s, content_len=%d",
                 artifact_id,
                 len(content),
             )

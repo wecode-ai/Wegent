@@ -277,14 +277,26 @@ class StreamingState:
                     "tool_name"
                 ] in ("create_artifact", "update_artifact"):
                     output = details.get("output") or details.get("content")
+                    logger.info(
+                        "[StreamingState] Processing artifact tool_result: tool=%s, for_storage=%s, has_output=%s",
+                        slim_details["tool_name"],
+                        for_storage,
+                        bool(output)
+                    )
                     if output:
                         if for_storage:
                             # Truncate artifact content for DB storage
-                            slim_details["output"] = self._truncate_artifact_output(
-                                output
+                            truncated = self._truncate_artifact_output(output)
+                            logger.info(
+                                "[StreamingState] Truncated artifact output for storage: %s",
+                                truncated
                             )
+                            slim_details["output"] = truncated
                         else:
                             # Preserve full output for streaming (Canvas real-time display)
+                            logger.debug(
+                                "[StreamingState] Preserving full artifact output for streaming"
+                            )
                             slim_details["output"] = output
 
                 slim_step["details"] = slim_details

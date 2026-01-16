@@ -129,6 +129,8 @@ export function ChatPageDesktop() {
     if (!thinking || !Array.isArray(thinking)) return null
 
     // Iterate in reverse to find the latest artifact
+    console.log('[ChatPageDesktop] extractArtifactFromThinking: processing', thinking?.length, 'thinking steps')
+
     for (let i = thinking.length - 1; i >= 0; i--) {
       const step = thinking[i] as {
         details?: {
@@ -138,33 +140,54 @@ export function ChatPageDesktop() {
         }
       }
 
+      console.log('[ChatPageDesktop] Step', i, ':', {
+        type: step.details?.type,
+        tool_name: step.details?.tool_name,
+        has_output: !!step.details?.output,
+        output_type: typeof step.details?.output
+      })
+
       // Check if this is a tool_result for create_artifact or update_artifact
       if (
         step.details?.type === 'tool_result' &&
         (step.details.tool_name === 'create_artifact' || step.details.tool_name === 'update_artifact')
       ) {
         const output = step.details.output
+        console.log('[ChatPageDesktop] Found artifact tool_result:', step.details.tool_name, 'output:', output)
         if (!output) continue
 
         try {
           // Output can be a string (JSON) or already parsed object
           let artifactData: { artifact?: Artifact }
           if (typeof output === 'string') {
+            console.log('[ChatPageDesktop] Parsing output string, length:', output.length)
             artifactData = JSON.parse(output)
           } else {
+            console.log('[ChatPageDesktop] Output is already an object')
             artifactData = output
           }
 
           if (artifactData.artifact) {
+            console.log('[ChatPageDesktop] Extracted artifact:', {
+              id: artifactData.artifact.id,
+              type: artifactData.artifact.artifact_type,
+              title: artifactData.artifact.title,
+              content_length: artifactData.artifact.content?.length,
+              version: artifactData.artifact.version
+            })
             return artifactData.artifact
+          } else {
+            console.warn('[ChatPageDesktop] No artifact in parsed data:', artifactData)
           }
-        } catch {
+        } catch (err) {
           // JSON parse error, skip this step
+          console.error('[ChatPageDesktop] Failed to parse artifact output:', err)
           continue
         }
       }
     }
 
+    console.log('[ChatPageDesktop] No artifact found in thinking steps')
     return null
   }
 
@@ -179,24 +202,46 @@ export function ChatPageDesktop() {
     // Find the latest AI message with artifact data
     let latestArtifact: Artifact | null = null
 
+    console.log('[ChatPageDesktop] Processing stream messages, count:', currentTaskStreamState.messages.size)
+
     for (const msg of currentTaskStreamState.messages.values()) {
       if (msg.type === 'ai') {
+        console.log('[ChatPageDesktop] Processing AI message:', {
+          has_result: !!msg.result,
+          result_type: msg.result ? (msg.result as any).type : undefined
+        })
+
         // First check the result field (for completed messages)
         if (msg.result) {
           const result = msg.result as { type?: string; artifact?: Artifact; thinking?: unknown[] }
           if (result.type === 'artifact' && result.artifact) {
+            console.log('[ChatPageDesktop] Found artifact in result field:', {
+              id: result.artifact.id,
+              version: result.artifact.version,
+              content_length: result.artifact.content?.length
+            })
             latestArtifact = result.artifact
           }
 
           // Also check thinking steps for real-time updates during streaming
           const thinkingArtifact = extractArtifactFromThinking(result.thinking)
           if (thinkingArtifact) {
+            console.log('[ChatPageDesktop] Found artifact in thinking:', {
+              id: thinkingArtifact.id,
+              version: thinkingArtifact.version,
+              content_length: thinkingArtifact.content?.length,
+              vs_latest: latestArtifact ? `latest v${latestArtifact.version} len${latestArtifact.content?.length}` : 'none'
+            })
+
             // Use thinking artifact if it has more recent content (longer or same version)
             if (!latestArtifact ||
                 thinkingArtifact.version > latestArtifact.version ||
                 (thinkingArtifact.version === latestArtifact.version &&
                  thinkingArtifact.content.length > latestArtifact.content.length)) {
+              console.log('[ChatPageDesktop] Using thinking artifact (more recent)')
               latestArtifact = thinkingArtifact
+            } else {
+              console.log('[ChatPageDesktop] Keeping previous artifact (newer or longer)')
             }
           }
         }

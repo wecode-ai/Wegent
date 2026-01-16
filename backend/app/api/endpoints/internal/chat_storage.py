@@ -208,19 +208,50 @@ def subtask_to_message(
             # Check if this is an artifact result (from create_artifact/update_artifact tools)
             # Artifact results have structure: {"type": "artifact", "artifact": {...}}
             if subtask.result.get("type") == "artifact":
+                from app.models.task import TaskResource
                 from app.utils import format_artifact_for_history
 
                 artifact = subtask.result.get("artifact", {})
+                artifact_id = artifact.get("id", "")
+
                 logger.debug(
                     "[subtask_to_message] Found artifact: id=%s, title=%s, content_len=%d",
-                    artifact.get("id", ""),
+                    artifact_id,
                     artifact.get("title", ""),
                     len(artifact.get("content", "")),
                 )
 
-                if artifact.get("content"):
+                # IMPORTANT: subtask.result may contain truncated artifact content (first 10 chars + "...")
+                # to save DB space. We need to load the FULL artifact from task.json["canvas"]
+                full_artifact = None
+                if artifact_id and subtask.task_id:
+                    task = db.query(TaskResource).filter(
+                        TaskResource.id == subtask.task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active.is_(True),
+                    ).first()
+
+                    if task and task.json and "canvas" in task.json:
+                        canvas_artifact = task.json["canvas"].get("artifact")
+                        if canvas_artifact and canvas_artifact.get("id") == artifact_id:
+                            full_artifact = canvas_artifact
+                            logger.info(
+                                "[subtask_to_message] Loaded FULL artifact from canvas: artifact_id=%s, content_len=%d (was: %d)",
+                                artifact_id,
+                                len(full_artifact.get("content", "")),
+                                len(artifact.get("content", ""))
+                            )
+
+                # Use full artifact if available, otherwise fall back to truncated version
+                artifact_to_format = full_artifact if full_artifact else artifact
+
+                if artifact_to_format.get("content"):
                     # Use shared formatting function
-                    content = format_artifact_for_history(artifact)
+                    content = format_artifact_for_history(artifact_to_format)
+                    logger.debug(
+                        "[subtask_to_message] Formatted artifact content_len=%d",
+                        len(content)
+                    )
                 else:
                     content = ""
             else:
