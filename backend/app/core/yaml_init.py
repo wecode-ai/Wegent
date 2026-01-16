@@ -46,7 +46,7 @@ def load_yaml_documents(file_path: Path) -> List[Dict[str, Any]]:
         return []
 
 
-def ensure_default_user(db: Session) -> int:
+def ensure_default_user(db: Session) -> tuple[int, bool]:
     """
     Ensure the default admin user exists.
 
@@ -54,7 +54,7 @@ def ensure_default_user(db: Session) -> int:
         db: Database session
 
     Returns:
-        User ID of the default admin user
+        Tuple of (User ID of the default admin user, is_newly_created)
     """
     # Check for admin user
     admin_user = db.query(User).filter(User.user_name == "admin").first()
@@ -74,10 +74,10 @@ def ensure_default_user(db: Session) -> int:
         db.commit()
         db.refresh(admin_user)
         logger.info(f"Created default admin user with ID: {admin_user.id}")
+        return admin_user.id, True
     else:
         logger.info(f"Default admin user already exists with ID: {admin_user.id}")
-
-    return admin_user.id
+        return admin_user.id, False
 
 
 def apply_yaml_resources(
@@ -641,8 +641,10 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
     # Ensure default admin user exists
     try:
         logger.info("Ensuring default admin user exists...")
-        user_id = ensure_default_user(db)
-        logger.info(f"Default admin user ready with ID: {user_id}")
+        user_id, is_new_user = ensure_default_user(db)
+        logger.info(
+            f"Default admin user ready with ID: {user_id}, is_new_user: {is_new_user}"
+        )
     except Exception as e:
         logger.error(f"Failed to create default user: {e}", exc_info=True)
         return {"status": "error", "reason": "failed to create default user"}
@@ -668,15 +670,21 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
         # Step 1: Apply public shells and skills (only once, not per-user)
         summary = scan_and_apply_yaml_directory(user_id, init_dir, db, force=force)
 
-        # Step 2: Apply default user resources for admin user
+        # Step 2: Apply default user resources for admin user (only if newly created)
         # This uses the same logic as creating new users, ensuring consistency
-        # The apply_default_resources_sync checks if resources already exist
-        logger.info(f"Applying default user resources for admin user (id={user_id})...")
-        user_resource_results = apply_default_resources_sync(user_id)
-        if user_resource_results:
-            logger.info(f"Admin user resources applied: {user_resource_results}")
+        if is_new_user:
+            logger.info(
+                f"Applying default user resources for new admin user (id={user_id})..."
+            )
+            user_resource_results = apply_default_resources_sync(user_id)
+            if user_resource_results:
+                logger.info(f"Admin user resources applied: {user_resource_results}")
+            else:
+                logger.info("No admin user resources to apply")
         else:
-            logger.info("No admin user resources to apply or already exists")
+            logger.info(
+                "Admin user already exists, skipping default resources initialization"
+            )
 
         logger.info(f"YAML initialization completed: {summary}")
         return summary
