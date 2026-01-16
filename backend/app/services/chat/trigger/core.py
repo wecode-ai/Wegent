@@ -942,9 +942,14 @@ async def _stream_with_http_adapter(
                             and step.get("details", {}).get("status") == "started"
                         ):
                             orig_title = step.get("title", "")
-                            if orig_title.startswith("正在"):
-                                display_name = orig_title[2:]
-                            else:
+                            # Handle both string and i18n object format
+                            if isinstance(orig_title, str):
+                                if orig_title.startswith("正在"):
+                                    display_name = orig_title[2:]
+                                else:
+                                    display_name = orig_title
+                            elif isinstance(orig_title, dict):
+                                # i18n object format - use as-is
                                 display_name = orig_title
                             break
                     if not display_name:

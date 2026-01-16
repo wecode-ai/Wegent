@@ -312,7 +312,7 @@ def _build_tool_start_title(
 
     if display_name:
         title = display_name
-        # For load_skill, append the skill's friendly display name
+        # For load_skill, append the skill's friendly display name using i18n format
         if tool_name == "load_skill" and tool_instance:
             skill_name_param = (
                 serializable_input.get("skill_name", "")
@@ -328,7 +328,11 @@ def _build_tool_start_title(
                         )
                     except Exception:
                         pass
-                title = f"{display_name}：{skill_display}"
+                # Use i18n object format for proper frontend translation
+                title = {
+                    "key": "tools.load_skill.completed_with_name",
+                    "params": {"name": skill_display},
+                }
     elif tool_name == "web_search":
         query = (
             serializable_input if isinstance(serializable_input, dict) else {}
