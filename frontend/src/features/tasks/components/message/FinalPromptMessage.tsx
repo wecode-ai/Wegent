@@ -184,6 +184,15 @@ export default function FinalPromptMessage({
   }
 
   const handleSaveEdit = () => {
+    // Validate non-empty prompt before saving
+    const trimmed = editedPrompt.trim()
+    if (!trimmed) {
+      toast({
+        variant: 'destructive',
+        title: t('clarification.prompt_empty_error'),
+      })
+      return
+    }
     // Save the edited prompt
     setSavedPrompt(editedPrompt)
     setIsEditing(false)

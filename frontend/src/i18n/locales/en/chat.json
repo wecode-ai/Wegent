@@ -228,7 +228,8 @@
     "additional_thoughts": "Additional Thoughts or Remarks",
     "additional_placeholder": "Enter additional thoughts, requirements, or special notes here...",
     "restore_original": "Restore Original",
-    "edited": "(Edited)"
+    "edited": "(Edited)",
+    "prompt_empty_error": "Prompt cannot be empty"
   },
   "export": {
     "export": "Export",
