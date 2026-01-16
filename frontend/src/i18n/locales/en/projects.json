@@ -1,0 +1,74 @@
+{
+  "title": "Projects",
+  "newProject": "New Project",
+  "noProjects": "No projects yet",
+  "noProjectsDesc": "Create a project to organize your tasks",
+  "taskCount": "{{count}} tasks",
+  "emptyProject": "No tasks",
+  "emptyProjectDesc": "Drag tasks here",
+  "dropHere": "Drop to this project",
+  "section": {
+    "title": "Chat Groups",
+    "empty": "No projects, click + to create",
+    "noTasks": "No tasks"
+  },
+  "actions": {
+    "edit": "Edit",
+    "delete": "Delete"
+  },
+  "create": {
+    "title": "New Project",
+    "description": "Create a new project to organize your tasks",
+    "nameLabel": "Project Name",
+    "namePlaceholder": "Enter project name",
+    "descriptionLabel": "Description (optional)",
+    "descriptionPlaceholder": "Enter project description",
+    "colorLabel": "Color",
+    "submit": "Create",
+    "cancel": "Cancel"
+  },
+  "edit": {
+    "title": "Edit Project",
+    "description": "Modify project information",
+    "submit": "Save",
+    "cancel": "Cancel"
+  },
+  "delete": {
+    "title": "Delete Project",
+    "description": "Are you sure you want to delete project \"{{name}}\"? Tasks in the project will not be deleted, only the association will be removed.",
+    "confirm": "Delete",
+    "cancel": "Cancel"
+  },
+  "menu": {
+    "edit": "Edit",
+    "delete": "Delete",
+    "removeTask": "Remove from project",
+    "moveToGroup": "Move to Group",
+    "createGroup": "Create Group",
+    "removeFromGroup": "Remove from Group"
+  },
+  "toast": {
+    "createSuccess": "Project created successfully",
+    "createSuccessDesc": "Project \"{{name}}\" has been created",
+    "createFailed": "Failed to create project",
+    "updateSuccess": "Project updated successfully",
+    "updateFailed": "Failed to update project",
+    "deleteSuccess": "Project deleted successfully",
+    "deleteFailed": "Failed to delete project",
+    "addTaskSuccess": "Task added to project",
+    "addTaskFailed": "Failed to add task",
+    "removeTaskSuccess": "Task removed from project",
+    "removeTaskFailed": "Failed to remove task",
+    "groupChatNotSupported": "Group chats cannot be added to chat groups"
+  },
+  "colors": {
+    "red": "Red",
+    "orange": "Orange",
+    "yellow": "Yellow",
+    "green": "Green",
+    "blue": "Blue",
+    "purple": "Purple",
+    "pink": "Pink",
+    "gray": "Gray"
+  }
+}
