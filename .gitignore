@@ -80,3 +80,4 @@ coverage/
 # claude
 .claude/settings.local.json
 .history
+.wegentrc
