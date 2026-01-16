@@ -8,8 +8,7 @@ import React, { useState } from 'react'
 import { CircleStop, Settings2 } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
 import type { Model } from '../selector/ModelSelector'
-import MobileRepositorySelector from '../selector/MobileRepositorySelector'
-import MobileBranchSelector from '../selector/MobileBranchSelector'
+import MobileCollapsibleRepositorySelector from '../selector/MobileCollapsibleRepositorySelector'
 import MobileClarificationToggle from '../clarification/MobileClarificationToggle'
 import MobileCorrectionModeToggle from '../MobileCorrectionModeToggle'
 import ChatContextInput from '../chat/ChatContextInput'
@@ -238,29 +237,20 @@ export function MobileChatInputControls({
               />
             )}
 
-            {/* Repository Selector - full row clickable */}
+            {/* Repository and Branch Selector - collapsible wrapper */}
             {showRepositorySelector && (
               <>
                 {/* Only show separator if there's content above (chat shell features) */}
                 {isChatShell(selectedTeam) && <DropdownMenuSeparator />}
-                <MobileRepositorySelector
+                <MobileCollapsibleRepositorySelector
                   selectedRepo={selectedRepo}
-                  handleRepoChange={setSelectedRepo}
-                  disabled={hasMessages}
+                  setSelectedRepo={setSelectedRepo}
+                  selectedBranch={selectedBranch}
+                  setSelectedBranch={setSelectedBranch}
                   selectedTaskDetail={selectedTaskDetail}
+                  disabled={hasMessages}
                 />
               </>
-            )}
-
-            {/* Branch Selector - full row clickable */}
-            {showRepositorySelector && selectedRepo && (
-              <MobileBranchSelector
-                selectedRepo={selectedRepo}
-                selectedBranch={selectedBranch}
-                handleBranchChange={setSelectedBranch}
-                disabled={hasMessages}
-                taskDetail={selectedTaskDetail}
-              />
             )}
           </DropdownMenuContent>
         </DropdownMenu>

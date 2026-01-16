@@ -7,8 +7,7 @@
 import React from 'react'
 import { CircleStop } from 'lucide-react'
 import ModelSelector, { Model } from '../selector/ModelSelector'
-import RepositorySelector from '../selector/RepositorySelector'
-import BranchSelector from '../selector/BranchSelector'
+import CollapsibleRepositorySelector from '../selector/CollapsibleRepositorySelector'
 import ClarificationToggle from '../clarification/ClarificationToggle'
 import CorrectionModeToggle from '../CorrectionModeToggle'
 import ChatContextInput from '../chat/ChatContextInput'
@@ -317,27 +316,17 @@ export function ChatInputControls({
           />
         )}
 
-        {/* Repository and Branch Selectors - inside input box */}
+        {/* Repository and Branch Selectors - collapsible wrapper */}
         {showRepositorySelector && (
-          <>
-            <RepositorySelector
-              selectedRepo={selectedRepo}
-              handleRepoChange={setSelectedRepo}
-              disabled={hasMessages}
-              selectedTaskDetail={selectedTaskDetail}
-              compact={shouldCollapseSelectors}
-            />
-
-            {selectedRepo && (
-              <BranchSelector
-                selectedRepo={selectedRepo}
-                selectedBranch={selectedBranch}
-                handleBranchChange={setSelectedBranch}
-                disabled={hasMessages}
-                compact={shouldCollapseSelectors}
-              />
-            )}
-          </>
+          <CollapsibleRepositorySelector
+            selectedRepo={selectedRepo}
+            setSelectedRepo={setSelectedRepo}
+            selectedBranch={selectedBranch}
+            setSelectedBranch={setSelectedBranch}
+            selectedTaskDetail={selectedTaskDetail}
+            disabled={hasMessages}
+            compact={shouldCollapseSelectors}
+          />
         )}
       </div>
 

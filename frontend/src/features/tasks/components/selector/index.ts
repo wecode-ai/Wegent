@@ -8,6 +8,7 @@ export {
 export type { Model, ModelRegion, TeamWithBotDetails, ModelSelectorProps } from './ModelSelector'
 export { default as BranchSelector } from './BranchSelector'
 export { default as RepositorySelector } from './RepositorySelector'
+export { default as CollapsibleRepositorySelector } from './CollapsibleRepositorySelector'
 export { default as SearchEngineSelector } from './SearchEngineSelector'
 export { default as DifyAppSelector } from './DifyAppSelector'
 export { SelectedTeamBadge } from './SelectedTeamBadge'

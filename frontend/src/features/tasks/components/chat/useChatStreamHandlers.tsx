@@ -370,7 +370,8 @@ export function useChatStreamHandlers({
         return
       }
 
-      // For code type tasks, repository is required
+      // Repository is now optional for code tasks
+      // effectiveRepo is used for passing repo info when available
       const effectiveRepo =
         selectedRepo ||
         (selectedTaskDetail
@@ -381,14 +382,6 @@ export function useChatStreamHandlers({
               git_domain: selectedTaskDetail.git_domain,
             }
           : null)
-
-      if (taskType === 'code' && showRepositorySelector && !effectiveRepo?.git_repo) {
-        toast({
-          variant: 'destructive',
-          title: 'Please select a repository for code tasks',
-        })
-        return
-      }
 
       setIsLoading(true)
 
