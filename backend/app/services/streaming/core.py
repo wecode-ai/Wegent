@@ -613,6 +613,56 @@ class StreamingCore:
             result=result,
         )
 
+        # Store in long-term memory (fire-and-forget, non-blocking)
+        try:
+            from app.db.session import SessionLocal
+            from app.models.subtask import Subtask
+            from app.services.memory import get_memory_service
+
+            memory_service = get_memory_service()
+            if memory_service.enabled:
+                db = SessionLocal()
+                try:
+                    # Get assistant and user subtasks
+                    assistant_subtask = (
+                        db.query(Subtask)
+                        .filter(Subtask.id == self.state.subtask_id)
+                        .first()
+                    )
+                    if assistant_subtask and assistant_subtask.parent_id:
+                        # Fix: Add task_id filter to ensure we get the correct subtask
+                        user_subtask = (
+                            db.query(Subtask)
+                            .filter(
+                                Subtask.task_id == self.state.task_id,
+                                Subtask.message_id == assistant_subtask.parent_id,
+                            )
+                            .first()
+                        )
+                        if user_subtask and user_subtask.prompt:
+                            # Fire and forget - non-blocking
+                            memory_service.store_exchange(
+                                user_id=self.state.user_id,
+                                team_id=assistant_subtask.team_id,
+                                task_id=self.state.task_id,
+                                user_message=user_subtask.prompt,
+                                assistant_message=self.state.full_response,
+                                workspace_id=None,  # Could be fetched from task if needed
+                                group_id=self.state.group_id
+                                if self.state.is_group_chat
+                                else None,
+                                is_group_chat=self.state.is_group_chat,
+                                sender_name=self.state.user_name
+                                if self.state.is_group_chat
+                                else None,
+                            )
+                finally:
+                    db.close()
+        except Exception as e:
+            logger.debug(
+                "[STREAMING] Memory storage skipped: %s", e, exc_info=True
+            )
+
         # Use message_id from state if available, otherwise fetch from DB
         message_id = self.state.message_id
         if message_id is None:

@@ -1790,6 +1790,18 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     f"Failed to delete executor task ns={executor_namespace} name={executor_name}: {str(e)}"
                 )
 
+        # Delete long-term memories (fire-and-forget)
+        try:
+            from app.services.memory import get_memory_service
+
+            memory_service = get_memory_service()
+            if memory_service.enabled:
+                memory_service.delete_by_task(task_id)
+        except Exception as e:
+            logger.debug(
+                "Memory cleanup skipped for task %d: %s", task_id, e, exc_info=True
+            )
+
         # Update all subtasks to DELETE status
         db.query(Subtask).filter(Subtask.task_id == task_id).update(
             {
