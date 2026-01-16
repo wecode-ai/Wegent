@@ -711,12 +711,14 @@ class ClaudeCodeAgent(Agent):
                     # Setup Claude.md symlink from Agents.md if exists
                     self._setup_claude_md_symlink(self.project_path)
 
-                    # Setup SubAgent configuration files for coordinate mode
-                    self._setup_coordinate_mode()
-
                 except Exception as e:
                     logger.warning(f"Failed to process custom instructions: {e}")
                     # Continue execution with original systemPrompt
+
+            # Setup SubAgent configuration files for coordinate mode
+            # This is called outside the project_path check because coordinate mode
+            # can work without a git repo (e.g., with attachments only)
+            self._setup_coordinate_mode()
 
             # Download attachments for this task
             self._download_attachments()
@@ -1605,36 +1607,54 @@ class ClaudeCodeAgent(Agent):
         work among members (bot[1:]). This method generates .claude/agents/*.md
         configuration files for each member bot so that Claude Code can invoke
         them as SubAgents.
+
+        SubAgent config files are placed in {target_path}/.claude/agents/ where
+        target_path is determined by priority:
+        1. self.project_path (if git repo was cloned)
+        2. self.options["cwd"] (if already set)
+        3. Default workspace: /workspace/{task_id}
         """
         bots = self.task_data.get("bot", [])
         mode = self.task_data.get("mode")
 
         # Only setup for coordinate mode with multiple bots
         if mode != "coordinate" or len(bots) <= 1:
+            logger.debug(
+                f"Skipping SubAgent setup: mode={mode}, bots_count={len(bots)}"
+            )
             return
 
-        if not self.project_path:
-            return
+        # Determine target path for SubAgent configs
+        # Priority: project_path > options["cwd"] > default workspace
+        target_path = self.project_path or self.options.get("cwd")
+        if not target_path:
+            # Create default workspace directory
+            target_path = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
+            os.makedirs(target_path, exist_ok=True)
+            # Also update options["cwd"] so Claude Code uses this directory
+            self.options["cwd"] = target_path
+            logger.info(f"Created default workspace for SubAgent configs: {target_path}")
 
         # Leader is bot[0], members are bot[1:]
         member_bots = bots[1:]
 
         if not member_bots:
+            logger.debug("Skipping SubAgent setup: no member bots after leader")
             return
 
         # Create .claude/agents directory
-        agents_dir = os.path.join(self.project_path, ".claude", "agents")
+        agents_dir = os.path.join(target_path, ".claude", "agents")
         os.makedirs(agents_dir, exist_ok=True)
 
         # Generate SubAgent config file for each member
         for bot in member_bots:
             self._generate_subagent_file(agents_dir, bot)
 
-        # Add to git exclude to prevent showing in git diff
-        self._add_to_git_exclude(self.project_path, ".claude/agents/")
+        # Add to git exclude to prevent showing in git diff (only if .git exists)
+        self._add_to_git_exclude(target_path, ".claude/agents/")
 
         logger.info(
-            f"Generated {len(member_bots)} SubAgent config files for coordinate mode"
+            f"Generated {len(member_bots)} SubAgent config files for coordinate mode in {agents_dir}"
         )
 
     def _generate_subagent_file(self, agents_dir: str, bot: Dict[str, Any]) -> None:
@@ -1677,8 +1697,8 @@ class ClaudeCodeAgent(Agent):
         escaped_description = f'"{escaped_description}"'
 
         # Build SubAgent config content
-        # - model: inherit -> use same model as Leader
-        # - tools: omitted -> inherit all tools from Leader (including MCP)
+        # - model: inherit -> use same model as Leader (inherit from parent)
+        # - tools: omitted -> inherits all tools from Leader (per Claude Code docs)
         content = f"""---
 name: {name}
 description: {escaped_description}
