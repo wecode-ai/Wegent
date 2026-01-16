@@ -637,6 +637,7 @@ function ChatAreaContent({
               pendingTaskId={streamHandlers.pendingTaskId}
               isPendingConfirmation={pipelineStageInfo?.is_pending_confirmation}
               onContextReselect={handleContextReselect}
+              hideGroupChatOptions={taskType === 'knowledge'}
             />
           </div>
         </div>
