@@ -11,6 +11,7 @@ This module provides configuration builders for chat sessions and model resoluti
 from chat_shell.models import LangChainModelFactory
 
 from .chat_config import ChatConfig, ChatConfigBuilder
+from .features import Features
 from .model_resolver import (
     build_default_headers_with_placeholders,
     extract_and_process_model_config,
@@ -29,6 +30,7 @@ from .stream_config import WebSocketStreamConfig
 __all__ = [
     "ChatConfig",
     "ChatConfigBuilder",
+    "Features",
     "WebSocketStreamConfig",
     "LangChainModelFactory",
     "get_model_config_for_bot",

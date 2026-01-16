@@ -289,7 +289,11 @@ async def _stream_chat_response(
 
     from chat_shell.agent import ChatAgent
 
-    from app.services.chat.config import ChatConfigBuilder, WebSocketStreamConfig
+    from app.services.chat.config import (
+        ChatConfigBuilder,
+        Features,
+        WebSocketStreamConfig,
+    )
     from app.services.chat.streaming import WebSocketBridge, WebSocketStreamingHandler
 
     db = SessionLocal()
@@ -464,6 +468,12 @@ async def _stream_chat_response(
             extra_tools.extend(skill_tools)
 
         # Create WebSocket stream config
+        # Build Features object from payload
+        features = Features.from_payload(payload)
+        # Override enable_clarification and enable_deep_thinking from chat_config
+        features.enable_clarification = chat_config.enable_clarification
+        features.enable_deep_thinking = chat_config.enable_deep_thinking
+
         ws_config = WebSocketStreamConfig(
             task_id=stream_data.task_id,
             subtask_id=stream_data.subtask_id,
@@ -471,19 +481,13 @@ async def _stream_chat_response(
             user_id=stream_data.user_id,
             user_name=stream_data.user_name,
             is_group_chat=payload.is_group_chat,
-            enable_tools=True,  # Deep thinking enables tools
-            enable_web_search=payload.enable_web_search,
-            search_engine=payload.search_engine,
             message_id=stream_data.assistant_message_id,
             user_message_id=stream_data.user_message_id,  # For history exclusion
             bot_name=chat_config.bot_name,
             bot_namespace=chat_config.bot_namespace,
             shell_type=chat_config.shell_type,  # Pass shell_type from chat_config
             extra_tools=extra_tools,  # Pass extra tools including KnowledgeBaseTool
-            # Prompt enhancement options
-            enable_clarification=chat_config.enable_clarification,
-            enable_deep_thinking=chat_config.enable_deep_thinking,
-            enable_canvas=True,  # Always enable Canvas for artifact creation
+            features=features,  # Unified feature flags
             skills=skill_metadata,  # Skill metadata for prompt injection
             has_table_context=has_table_context,  # Pass table context flag
         )
