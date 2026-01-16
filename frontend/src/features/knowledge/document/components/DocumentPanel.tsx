@@ -42,7 +42,6 @@ const getInitialCollapsed = (storageKey: string, defaultCollapsed: boolean): boo
 interface DocumentPanelProps {
   knowledgeBase: KnowledgeBase
   canManage?: boolean
-  onRefresh?: () => void
 }
 
 const MIN_WIDTH = 280
@@ -60,7 +59,7 @@ const STORAGE_KEY_COLLAPSED = 'kb-document-panel-collapsed'
  * - Collapsible to save space
  * - Width and collapsed state persisted in localStorage
  */
-export function DocumentPanel({ knowledgeBase, canManage = true, onRefresh }: DocumentPanelProps) {
+export function DocumentPanel({ knowledgeBase, canManage = true }: DocumentPanelProps) {
   const { t } = useTranslation('knowledge')
 
   // Initialize state with localStorage values

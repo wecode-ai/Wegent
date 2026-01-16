@@ -23,13 +23,11 @@ import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
-import { paths } from '@/config/paths'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { teamService } from '@/features/tasks/service/teamService'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { DocumentPanel, KnowledgeBaseSummaryCard } from '@/features/knowledge/document/components'
 import type { Team } from '@/types/api'
-import type { KnowledgeBase } from '@/types/knowledge'
 
 /**
  * Desktop-specific implementation of Knowledge Base Chat Page
@@ -55,7 +53,7 @@ export function KnowledgeBaseChatPageDesktop() {
     knowledgeBase,
     loading: kbLoading,
     error: kbError,
-    refresh: refreshKb,
+    refresh: _refreshKb,
   } = useKnowledgeBaseDetail({
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
@@ -276,7 +274,6 @@ export function KnowledgeBaseChatPageDesktop() {
           <DocumentPanel
             knowledgeBase={knowledgeBase}
             canManage={canManageKb}
-            onRefresh={refreshKb}
           />
         </div>
       </div>
