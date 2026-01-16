@@ -562,7 +562,8 @@ export function DocumentUpload({
 
   // Check if notebook mode has reached document limit
   const isNotebookMode = kbType === 'notebook'
-  const isAtLimit = isNotebookMode && currentDocumentCount >= NOTEBOOK_MAX_DOCUMENTS
+  const totalDocumentCount = currentDocumentCount + successCount
+  const isAtLimit = isNotebookMode && totalDocumentCount >= NOTEBOOK_MAX_DOCUMENTS
 
   // Render file upload mode
   const renderFileMode = () => (
@@ -827,11 +828,11 @@ export function DocumentUpload({
             <div className="flex items-center justify-between text-sm">
               <span className="text-text-secondary">{t('document.upload.documentCount')}</span>
               <span className={cn('font-medium', isAtLimit ? 'text-error' : 'text-text-primary')}>
-                {currentDocumentCount + successCount}/{NOTEBOOK_MAX_DOCUMENTS}
+                {totalDocumentCount}/{NOTEBOOK_MAX_DOCUMENTS}
               </span>
             </div>
             <Progress
-              value={((currentDocumentCount + successCount) / NOTEBOOK_MAX_DOCUMENTS) * 100}
+              value={(totalDocumentCount / NOTEBOOK_MAX_DOCUMENTS) * 100}
               className={cn('h-2', isAtLimit && '[&>div]:bg-error')}
             />
             {isAtLimit && (
