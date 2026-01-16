@@ -11,13 +11,14 @@ import type {
   ChatSloganItem,
   ChatTipItem,
   MultiAttachmentUploadState,
+  DefaultTeamsResponse,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { Model } from '../selector/ModelSelector'
 import { useMultiAttachment } from '@/hooks/useMultiAttachment'
 import { userApis } from '@/apis/user'
 import { correctionApis } from '@/apis/correction'
-import { getLastTeamIdByMode, saveLastTeamByMode, saveLastRepo } from '@/utils/userPreferences'
+import { saveLastRepo } from '@/utils/userPreferences'
 import { useTaskContext } from '../../contexts/taskContext'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 
@@ -41,6 +42,12 @@ export interface ChatAreaState {
   selectedTeam: Team | null
   setSelectedTeam: (team: Team | null) => void
   handleTeamChange: (team: Team | null) => void
+
+  // Default team state
+  defaultTeamsConfig: DefaultTeamsResponse | null
+  defaultTeam: Team | null
+  isUsingDefaultTeam: boolean
+  restoreDefaultTeam: () => void
 
   // Repository state
   selectedRepo: GitRepoInfo | null
@@ -119,6 +126,7 @@ export interface ChatAreaState {
 
   // Helper functions
   isTeamCompatibleWithMode: (team: Team) => boolean
+  findDefaultTeamForMode: (teams: Team[]) => Team | null
 }
 
 /**
@@ -145,13 +153,15 @@ export function useChatAreaState({
 
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null)
-  if (initialTeamIdRef.current === null && typeof window !== 'undefined') {
-    initialTeamIdRef.current = getLastTeamIdByMode(taskType)
-  }
 
   // Team state
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false)
+
+  // Default teams configuration (from server)
+  const [defaultTeamsConfig, setDefaultTeamsConfig] = useState<DefaultTeamsResponse | null>(null)
+  // Track if user is using default team or manually selected one
+  const [isUsingDefaultTeam, setIsUsingDefaultTeam] = useState(true)
 
   // Repository and branch state
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
@@ -222,6 +232,20 @@ export function useChatAreaState({
     }
 
     fetchWelcomeConfig()
+  }, [])
+
+  // Fetch default teams configuration
+  useEffect(() => {
+    const fetchDefaultTeams = async () => {
+      try {
+        const response = await userApis.getDefaultTeams()
+        setDefaultTeamsConfig(response)
+      } catch (error) {
+        console.error('Failed to fetch default teams config:', error)
+      }
+    }
+
+    fetchDefaultTeams()
   }, [])
 
   // Get random slogan for display
@@ -302,7 +326,65 @@ export function useChatAreaState({
     [taskType]
   )
 
-  // Handle team change with localStorage persistence
+  // Find default team for current mode from teams list
+  const findDefaultTeamForMode = useCallback(
+    (teams: Team[]): Team | null => {
+      if (!defaultTeamsConfig) return teams[0] || null
+
+      // Get the default config for current mode
+      const modeKey = taskType as keyof DefaultTeamsResponse
+      const defaultConfig = defaultTeamsConfig[modeKey]
+
+      if (!defaultConfig) {
+        // No default configured, use first team
+        return teams[0] || null
+      }
+
+      // Find team by name + namespace (exact match)
+      const matchedTeam = teams.find(
+        team =>
+          team.name === defaultConfig.name &&
+          (team.namespace || 'default') === defaultConfig.namespace
+      )
+
+      if (matchedTeam) {
+        console.log(
+          '[useChatAreaState] Found default team for mode:',
+          taskType,
+          matchedTeam.name,
+          matchedTeam.namespace
+        )
+        return matchedTeam
+      }
+
+      // No match found, use first team
+      console.log(
+        '[useChatAreaState] Default team not found in list, using first team for mode:',
+        taskType
+      )
+      return teams[0] || null
+    },
+    [defaultTeamsConfig, taskType]
+  )
+
+  // Compute default team for current mode
+  const defaultTeam = useMemo(() => {
+    return findDefaultTeamForMode(_teams)
+  }, [findDefaultTeamForMode, _teams])
+
+  // Restore to default team
+  const restoreDefaultTeam = useCallback(() => {
+    if (defaultTeam) {
+      console.log('[useChatAreaState] Restoring to default team:', defaultTeam.name)
+      setSelectedTeam(defaultTeam)
+      setIsUsingDefaultTeam(true)
+      // Reset external API params when restoring
+      setExternalApiParams({})
+      setAppMode(undefined)
+    }
+  }, [defaultTeam])
+
+  // Handle team change - marks user as not using default team
   const handleTeamChange = useCallback(
     (team: Team | null) => {
       console.log('[ChatArea] handleTeamChange called:', team?.name || 'null', team?.id || 'null')
@@ -312,13 +394,15 @@ export function useChatAreaState({
       setExternalApiParams({})
       setAppMode(undefined)
 
-      // Save team preference to localStorage by mode
-      if (team && team.id) {
-        console.log('[ChatArea] Saving team to localStorage for mode:', taskType, team.id)
-        saveLastTeamByMode(team.id, taskType)
+      // Check if the selected team is the same as the default team
+      if (team && defaultTeam && team.id === defaultTeam.id) {
+        setIsUsingDefaultTeam(true)
+      } else {
+        // User manually selected a different team
+        setIsUsingDefaultTeam(false)
       }
     },
-    [taskType]
+    [defaultTeam]
   )
 
   // Save repository preference when it changes
@@ -373,6 +457,12 @@ export function useChatAreaState({
     selectedTeam,
     setSelectedTeam,
     handleTeamChange,
+
+    // Default team state
+    defaultTeamsConfig,
+    defaultTeam,
+    isUsingDefaultTeam,
+    restoreDefaultTeam,
 
     // Repository state
     selectedRepo,
@@ -451,6 +541,7 @@ export function useChatAreaState({
 
     // Helper functions
     isTeamCompatibleWithMode,
+    findDefaultTeamForMode,
   }
 }
 

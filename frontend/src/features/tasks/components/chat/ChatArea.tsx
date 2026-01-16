@@ -27,7 +27,6 @@ import { Button } from '@/components/ui/button'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
-import { getLastTeamIdByMode, saveLastTeamByMode } from '@/utils/userPreferences'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -140,8 +139,10 @@ function ChatAreaContent({
   // Extract values for dependency array
   const selectedTeam = chatState.selectedTeam
   const handleTeamChange = chatState.handleTeamChange
+  const defaultTeam = chatState.defaultTeam
+  const findDefaultTeamForMode = chatState.findDefaultTeamForMode
 
-  // Team selection logic - simplified and direct
+  // Team selection logic - using default team from server configuration
   useEffect(() => {
     if (filteredTeams.length === 0) return
 
@@ -191,21 +192,19 @@ function ChatAreaContent({
       }
     }
 
-    // Case 2: New chat (no taskId in URL) - restore from localStorage
+    // Case 2: New chat (no taskId in URL) - use default team from server config
     if (!taskIdFromUrl && !hasInitializedTeamRef.current) {
-      const lastTeamId = getLastTeamIdByMode(taskType)
-      if (lastTeamId) {
-        const lastTeam = filteredTeams.find(t => t.id === lastTeamId)
-        if (lastTeam) {
-          console.log('[ChatArea] Restoring team from localStorage:', lastTeam.name)
-          handleTeamChange(lastTeam)
-          hasInitializedTeamRef.current = true
-          lastSyncedTaskIdRef.current = null
-          return
-        }
+      // Use the default team computed from server config
+      const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
+      if (defaultTeamForMode) {
+        console.log('[ChatArea] Using default team from server config:', defaultTeamForMode.name)
+        handleTeamChange(defaultTeamForMode)
+        hasInitializedTeamRef.current = true
+        lastSyncedTaskIdRef.current = null
+        return
       }
-      // No saved preference or team not found, select first team
-      if (!selectedTeam) {
+      // No default found, select first team
+      if (!selectedTeam && filteredTeams.length > 0) {
         console.log('[ChatArea] Selecting first team:', filteredTeams[0].name)
         handleTeamChange(filteredTeams[0])
       }
@@ -218,15 +217,24 @@ function ChatAreaContent({
     if (selectedTeam) {
       const exists = filteredTeams.some(t => t.id === selectedTeam.id)
       if (!exists) {
-        console.log('[ChatArea] Current team not in filtered list, selecting first')
-        handleTeamChange(filteredTeams[0])
+        console.log('[ChatArea] Current team not in filtered list, selecting default')
+        const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
+        handleTeamChange(defaultTeamForMode || filteredTeams[0])
       }
     } else if (!taskIdFromUrl) {
-      // No selection and no task - select first team
-      console.log('[ChatArea] No selection, selecting first team')
-      handleTeamChange(filteredTeams[0])
+      // No selection and no task - select default team
+      console.log('[ChatArea] No selection, selecting default team')
+      const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
+      handleTeamChange(defaultTeamForMode || filteredTeams[0])
     }
-  }, [filteredTeams, selectedTaskDetail, taskIdFromUrl, selectedTeam, handleTeamChange, taskType])
+  }, [
+    filteredTeams,
+    selectedTaskDetail,
+    taskIdFromUrl,
+    selectedTeam,
+    handleTeamChange,
+    findDefaultTeamForMode,
+  ])
 
   // Reset initialization when switching from task to new chat
   useEffect(() => {
@@ -235,13 +243,12 @@ function ChatAreaContent({
     }
   }, [taskIdFromUrl])
 
-  // Save team preference when user manually selects (via QuickAccessCards)
+  // Handle team selection from QuickAccessCards
   const handleTeamSelect = useCallback(
     (team: Team) => {
       handleTeamChange(team)
-      saveLastTeamByMode(team.id, taskType)
     },
-    [handleTeamChange, taskType]
+    [handleTeamChange]
   )
 
   // Use scroll management hook - consolidates 4 useEffect calls
@@ -498,6 +505,7 @@ function ChatAreaContent({
     onTeamChange: chatState.handleTeamChange,
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,
     onAppModeChange: chatState.handleAppModeChange,
+    onRestoreDefaultTeam: chatState.restoreDefaultTeam,
     taskType,
     tipText: chatState.randomTip,
     isGroupChat: selectedTaskDetail?.is_group_chat || false,

@@ -27,6 +27,9 @@ export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskIn
   onExternalApiParamsChange: (params: Record<string, string>) => void
   onAppModeChange: (mode: string | undefined) => void
 
+  // Restore to default team
+  onRestoreDefaultTeam?: () => void
+
   // Task type
   taskType: 'chat' | 'code' | 'knowledge'
   autoFocus?: boolean
@@ -80,6 +83,7 @@ export function ChatInputCard({
   externalApiParams,
   onExternalApiParamsChange,
   onAppModeChange,
+  onRestoreDefaultTeam,
   taskType,
   autoFocus = false,
   tipText,
@@ -202,7 +206,15 @@ export function ChatInputCard({
               autoFocus={autoFocus}
               canSubmit={canSubmit}
               tipText={tipText}
-              badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
+              badge={
+                selectedTeam ? (
+                  <SelectedTeamBadge
+                    team={selectedTeam}
+                    showClearButton={true}
+                    onClear={onRestoreDefaultTeam}
+                  />
+                ) : undefined
+              }
               isGroupChat={isGroupChat}
               team={selectedTeam}
               onPasteFile={onPasteFile}
@@ -214,7 +226,11 @@ export function ChatInputCard({
         {/* Selected Team Badge only - show when chat input is hidden (workflow mode) */}
         {shouldHideChatInput && selectedTeam && (
           <div className="px-4 pt-3">
-            <SelectedTeamBadge team={selectedTeam} />
+            <SelectedTeamBadge
+              team={selectedTeam}
+              showClearButton={true}
+              onClear={onRestoreDefaultTeam}
+            />
           </div>
         )}
 
