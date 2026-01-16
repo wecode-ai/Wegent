@@ -19,12 +19,16 @@ const getInitialWidth = (
   maxWidth: number
 ): number => {
   if (typeof window === 'undefined') return defaultWidth
-  const savedWidth = localStorage.getItem(storageKey)
-  if (savedWidth) {
-    const width = parseInt(savedWidth, 10)
-    if (width >= minWidth && width <= maxWidth) {
-      return width
+  try {
+    const savedWidth = localStorage.getItem(storageKey)
+    if (savedWidth) {
+      const width = parseInt(savedWidth, 10)
+      if (width >= minWidth && width <= maxWidth) {
+        return width
+      }
     }
+  } catch {
+    // localStorage may be unavailable in private browsing mode
   }
   return defaultWidth
 }
@@ -32,9 +36,13 @@ const getInitialWidth = (
 // Helper function to get initial collapsed state from localStorage
 const getInitialCollapsed = (storageKey: string, defaultCollapsed: boolean): boolean => {
   if (typeof window === 'undefined') return defaultCollapsed
-  const saved = localStorage.getItem(storageKey)
-  if (saved !== null) {
-    return saved === 'true'
+  try {
+    const saved = localStorage.getItem(storageKey)
+    if (saved !== null) {
+      return saved === 'true'
+    }
+  } catch {
+    // localStorage may be unavailable in private browsing mode
   }
   return defaultCollapsed
 }
@@ -86,12 +94,20 @@ export function DocumentPanel({ knowledgeBase, canManage = true }: DocumentPanel
 
   // Save width to localStorage
   const saveWidth = useCallback((width: number) => {
-    localStorage.setItem(STORAGE_KEY_WIDTH, width.toString())
+    try {
+      localStorage.setItem(STORAGE_KEY_WIDTH, width.toString())
+    } catch {
+      // localStorage may be unavailable
+    }
   }, [])
 
   // Save collapsed state to localStorage
   const saveCollapsed = useCallback((collapsed: boolean) => {
-    localStorage.setItem(STORAGE_KEY_COLLAPSED, collapsed.toString())
+    try {
+      localStorage.setItem(STORAGE_KEY_COLLAPSED, collapsed.toString())
+    } catch {
+      // localStorage may be unavailable
+    }
   }, [])
 
   // Toggle collapsed state

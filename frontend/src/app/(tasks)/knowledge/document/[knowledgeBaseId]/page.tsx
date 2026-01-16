@@ -8,6 +8,16 @@ import dynamic from 'next/dynamic'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { Spinner } from '@/components/ui/spinner'
+
+// Loading fallback component for dynamic imports
+function PageLoadingFallback() {
+  return (
+    <div className="flex h-screen items-center justify-center bg-base">
+      <Spinner />
+    </div>
+  )
+}
 
 // Dynamic imports for mobile and desktop page components with code splitting
 const KnowledgeBaseChatPageDesktop = dynamic(
@@ -17,6 +27,7 @@ const KnowledgeBaseChatPageDesktop = dynamic(
     })),
   {
     ssr: false,
+    loading: PageLoadingFallback,
   }
 )
 
@@ -27,6 +38,7 @@ const KnowledgeBaseChatPageMobile = dynamic(
     })),
   {
     ssr: false,
+    loading: PageLoadingFallback,
   }
 )
 

@@ -19,7 +19,9 @@ export function useKnowledgeBaseDetail(options: UseKnowledgeBaseDetailOptions) {
   const { knowledgeBaseId, autoLoad = true } = options
 
   const [knowledgeBase, setKnowledgeBase] = useState<KnowledgeBase | null>(null)
-  const [loading, setLoading] = useState(false)
+  // Initialize loading to true when autoLoad is enabled and we have a valid ID
+  // This prevents brief flash of error/empty state before the effect fires
+  const [loading, setLoading] = useState(autoLoad && !!knowledgeBaseId)
   const [error, setError] = useState<string | null>(null)
 
   const fetchKnowledgeBase = useCallback(async () => {
