@@ -10,7 +10,6 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from shared.utils.crypto import (
     decrypt_attachment,
     encrypt_attachment,
@@ -133,7 +132,8 @@ class TestAttachmentEncryption:
 
         # Act
         with patch.dict(
-            os.environ, {"ATTACHMENT_AES_KEY": custom_key, "ATTACHMENT_AES_IV": custom_iv}
+            os.environ,
+            {"ATTACHMENT_AES_KEY": custom_key, "ATTACHMENT_AES_IV": custom_iv},
         ):
             # Force key reload
             from shared.utils import crypto

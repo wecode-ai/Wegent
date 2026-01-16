@@ -2,11 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import json
+import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import BackgroundTasks, HTTPException, status
+from fastapi import HTTPException, status
 from shared.utils.crypto import decrypt_git_token, encrypt_git_token, is_token_encrypted
 from sqlalchemy.orm import Session
 
@@ -124,7 +126,6 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         db: Session,
         *,
         obj_in: UserCreate,
-        background_tasks: Optional[BackgroundTasks] = None,
     ) -> User:
         """
         Create new user with git token validation
@@ -159,9 +160,12 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         db.commit()
         db.refresh(db_obj)
 
-        # Schedule the async task to run in the background using FastAPI BackgroundTasks
-        if background_tasks:
-            background_tasks.add_task(apply_default_resources_async, db_obj.id)
+        # Apply default resources for the new user in a background thread
+        def run_async_task():
+            asyncio.run(apply_default_resources_async(db_obj.id))
+
+        thread = threading.Thread(target=run_async_task, daemon=True)
+        thread.start()
 
         return db_obj
 

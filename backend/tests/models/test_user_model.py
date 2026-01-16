@@ -3,11 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
-from app.models.user import User
 from app.core.security import get_password_hash
+from app.models.user import User
 
 
 @pytest.mark.unit
@@ -21,12 +21,14 @@ class TestUserModel:
             password_hash=get_password_hash("password123"),
             email="newuser@example.com",
             is_active=True,
-            git_info=[{
-                "type": "github",
-                "git_token": "token123",
-                "git_domain": "github.com",
-                "git_login": "newuser"
-            }]
+            git_info=[
+                {
+                    "type": "github",
+                    "git_token": "token123",
+                    "git_domain": "github.com",
+                    "git_login": "newuser",
+                }
+            ],
         )
 
         test_db.add(user)
@@ -43,10 +45,7 @@ class TestUserModel:
 
     def test_create_user_with_minimum_fields(self, test_db: Session):
         """Test creating a user with minimum required fields"""
-        user = User(
-            user_name="minuser",
-            password_hash=get_password_hash("password123")
-        )
+        user = User(user_name="minuser", password_hash=get_password_hash("password123"))
 
         test_db.add(user)
         test_db.commit()
@@ -61,7 +60,7 @@ class TestUserModel:
         """Test that username must be unique"""
         duplicate_user = User(
             user_name=test_user.user_name,  # Same username
-            password_hash=get_password_hash("anotherpassword")
+            password_hash=get_password_hash("anotherpassword"),
         )
 
         test_db.add(duplicate_user)
@@ -82,13 +81,13 @@ class TestUserModel:
         """Test that git_info can store JSON data"""
         git_info = [
             {"type": "github", "git_login": "user1"},
-            {"type": "gitlab", "git_login": "user2"}
+            {"type": "gitlab", "git_login": "user2"},
         ]
 
         user = User(
             user_name="jsonuser",
             password_hash=get_password_hash("password123"),
-            git_info=git_info
+            git_info=git_info,
         )
 
         test_db.add(user)
@@ -101,8 +100,7 @@ class TestUserModel:
     def test_user_is_active_default_value(self, test_db: Session):
         """Test that is_active defaults to True"""
         user = User(
-            user_name="activeuser",
-            password_hash=get_password_hash("password123")
+            user_name="activeuser", password_hash=get_password_hash("password123")
         )
 
         test_db.add(user)
@@ -114,8 +112,7 @@ class TestUserModel:
     def test_user_timestamps_auto_set(self, test_db: Session):
         """Test that created_at and updated_at are automatically set"""
         user = User(
-            user_name="timestampuser",
-            password_hash=get_password_hash("password123")
+            user_name="timestampuser", password_hash=get_password_hash("password123")
         )
 
         test_db.add(user)

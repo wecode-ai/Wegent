@@ -5,12 +5,12 @@
 """
 Batch operation service for Kubernetes-style API
 """
-import asyncio
 import json
 import logging
 import os
 from typing import Any, Dict, List
 
+from app.core.config import settings
 from app.core.exceptions import ValidationException
 from app.services.kind import kind_service
 
@@ -172,7 +172,13 @@ def load_resources_from_file(file_path: str):
 async def apply_default_resources_async(user_id: int):
 
     try:
-        resource_file_path = "/app/resource.json"
+        resource_file_path = settings.DEFAULT_RESOURCE_FILE_PATH
+        if not resource_file_path:
+            logger.info(
+                f"DEFAULT_RESOURCE_FILE_PATH not configured, skipping default resources for user_id={user_id}"
+            )
+            return None
+
         logger.info(
             f"Loading resources from {resource_file_path} for user_id={user_id}"
         )
@@ -232,7 +238,13 @@ def apply_default_resources_sync(user_id: int):
     Used when default resources need to be applied synchronously during user creation.
     """
     try:
-        resource_file_path = "/app/resource.json"
+        resource_file_path = settings.DEFAULT_RESOURCE_FILE_PATH
+        if not resource_file_path:
+            logger.info(
+                f"DEFAULT_RESOURCE_FILE_PATH not configured, skipping default resources for user_id={user_id}"
+            )
+            return None
+
         logger.info(
             f"Loading resources from {resource_file_path} for user_id={user_id}"
         )

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 'use client'
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import React, { createContext, useContext, useEffect, useState, ReactNode, useRef } from 'react'
 import { userApis } from '@/apis/user'
 import { User } from '@/types/api'
 import { useRouter } from 'next/navigation'
@@ -30,7 +30,14 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  // Use ref to avoid closure issues in setInterval callback
+  const userRef = useRef<User | null>(null)
   // Using antd message.error for unified error handling, no local error state needed
+
+  // Keep userRef in sync with user state
+  useEffect(() => {
+    userRef.current = user
+  }, [user])
 
   const redirectToLogin = () => {
     const loginPath = paths.auth.login.getHref()
@@ -100,7 +107,8 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     // Periodically check if token is expired (check every 10 seconds)
     const tokenCheckInterval = setInterval(() => {
       const isAuth = userApis.isAuthenticated()
-      if (!isAuth && user) {
+      // Use userRef.current to avoid closure capturing stale user state
+      if (!isAuth && userRef.current) {
         console.log('Token expired, auto logout')
         setUser(null)
         redirectToLogin()

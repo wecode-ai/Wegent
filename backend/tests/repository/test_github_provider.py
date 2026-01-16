@@ -2,9 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from unittest.mock import Mock, patch
+
 import pytest
 import requests
-from unittest.mock import Mock, patch
 
 from app.repository.github_provider import GitHubProvider
 
@@ -24,12 +25,14 @@ class TestGitHubProvider:
             "id": 12345,
             "login": "testuser",
             "email": "test@example.com",
-            "name": "Test User"
+            "name": "Test User",
         }
         mock_response.raise_for_status = Mock()
 
         # Mock decrypt_git_token to return the token as-is
-        mocker.patch("shared.utils.crypto.decrypt_git_token", return_value="valid_token")
+        mocker.patch(
+            "shared.utils.crypto.decrypt_git_token", return_value="valid_token"
+        )
         mocker.patch("shared.utils.crypto.is_token_encrypted", return_value=True)
         mock_get = mocker.patch("requests.get", return_value=mock_response)
 
@@ -49,7 +52,9 @@ class TestGitHubProvider:
         mock_response.status_code = 401
 
         # Mock decrypt_git_token to return the token as-is
-        mocker.patch("shared.utils.crypto.decrypt_git_token", return_value="invalid_token")
+        mocker.patch(
+            "shared.utils.crypto.decrypt_git_token", return_value="invalid_token"
+        )
         mocker.patch("shared.utils.crypto.is_token_encrypted", return_value=True)
         mock_get = mocker.patch("requests.get", return_value=mock_response)
 
@@ -64,17 +69,17 @@ class TestGitHubProvider:
         # Mock decrypt_git_token to return the token as-is
         mocker.patch("shared.utils.crypto.decrypt_git_token", return_value="any_token")
         mocker.patch("shared.utils.crypto.is_token_encrypted", return_value=True)
-        
+
         # Mock requests.get to raise RequestException
         mock_get = mocker.patch(
             "requests.get",
-            side_effect=requests.exceptions.RequestException("Network error")
+            side_effect=requests.exceptions.RequestException("Network error"),
         )
 
         # The method should raise HTTPException with 502 status code
         with pytest.raises(Exception) as exc_info:
             provider.validate_token("any_token", git_domain="github.com")
-        
+
         # Verify it's an HTTPException with status 502
         assert exc_info.value.status_code == 502
 
@@ -87,18 +92,19 @@ class TestGitHubProvider:
         mock_response.json.return_value = {
             "id": 99999,
             "login": "enterpriseuser",
-            "email": "user@enterprise.com"
+            "email": "user@enterprise.com",
         }
         mock_response.raise_for_status = Mock()
 
         # Mock decrypt_git_token to return the token as-is
-        mocker.patch("shared.utils.crypto.decrypt_git_token", return_value="enterprise_token")
+        mocker.patch(
+            "shared.utils.crypto.decrypt_git_token", return_value="enterprise_token"
+        )
         mocker.patch("shared.utils.crypto.is_token_encrypted", return_value=True)
         mock_get = mocker.patch("requests.get", return_value=mock_response)
 
         result = provider.validate_token(
-            "enterprise_token",
-            git_domain="github.enterprise.com"
+            "enterprise_token", git_domain="github.enterprise.com"
         )
 
         assert result["valid"] is True
@@ -115,7 +121,7 @@ class TestGitHubProvider:
         mock_response.json.return_value = {
             "id": 54321,
             "login": "no_email_user",
-            "email": None  # No public email
+            "email": None,  # No public email
         }
         mock_response.raise_for_status = Mock()
 
