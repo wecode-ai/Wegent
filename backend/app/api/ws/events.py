@@ -132,6 +132,9 @@ class ChatSendPayload(BaseModel):
     task_type: Optional[Literal["chat", "code", "knowledge"]] = Field(
         None, description="Task type: chat, code, or knowledge"
     )
+    knowledge_base_id: Optional[int] = Field(
+        None, description="Knowledge base ID for knowledge type tasks"
+    )
     preload_skills: Optional[List[str]] = Field(
         None, description="List of skill names to preload into system prompt"
     )

@@ -547,6 +547,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     git_domain=payload.git_domain,
                     branch_name=payload.branch_name,
                     task_type=payload.task_type,
+                    knowledge_base_id=payload.knowledge_base_id,
                 )
 
                 result = await create_task_and_subtasks(
