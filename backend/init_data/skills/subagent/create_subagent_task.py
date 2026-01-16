@@ -19,135 +19,19 @@ E2B SDK Flow:
 import asyncio
 import json
 import logging
-import os
 import time
 from typing import Any, Optional
 
 import httpx
 from langchain_core.callbacks import CallbackManagerForToolRun
-from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 # Default configuration
-DEFAULT_EXECUTOR_MANAGER_URL = "http://localhost:8001"
-DEFAULT_SANDBOX_TIMEOUT = 1800  # 30 minutes
 DEFAULT_EXECUTION_TIMEOUT = 7200  # 2 hours
 POLL_INTERVAL = 2  # seconds between polls
 MAX_POLL_COUNT = 3600  # max polls (2 hours at 2s interval)
-
-# E2B SDK patching - must be done before any e2b imports
-# Setup environment variables first
-_executor_manager_url = os.getenv("EXECUTOR_MANAGER_URL", DEFAULT_EXECUTOR_MANAGER_URL)
-os.environ["E2B_API_URL"] = _executor_manager_url.rstrip("/") + "/executor-manager/e2b"
-os.environ["E2B_API_KEY"] = os.getenv(
-    "E2B_API_KEY", "test-api-key"
-)  # Default matches executor_manager
-
-# Enable debug mode for HTTP
-if os.environ["E2B_API_URL"].startswith("http://"):
-    os.environ["E2B_DEBUG"] = "true"
-
-# Import E2B SDK classes for patching
-try:
-    import httpx
-    from e2b import ConnectionConfig
-    from e2b.api.client_async import AsyncTransportWithLogger
-    from e2b.api.client_sync import TransportWithLogger
-    from e2b.sandbox.main import SandboxBase
-
-    # Define patch functions at module level (not nested)
-    def _patched_sandbox_get_host(self, port: int) -> str:
-        """Get host for sandbox using Wegent path-based routing.
-
-        Original E2B format:  <port>-<sandboxID>.E2B_DOMAIN
-        Wegent protocol:      domain/executor-manager/e2b/proxy/<sandboxID>/<port>
-        """
-        domain = self.sandbox_domain
-        if domain.startswith("http://"):
-            domain = domain[7:]
-        elif domain.startswith("https://"):
-            domain = domain[8:]
-        return f"{domain}/executor-manager/e2b/proxy/{self.sandbox_id}/{port}"
-
-    def _patched_connection_config_get_host(
-        self, sandbox_id: str, sandbox_domain: str, port: int
-    ) -> str:
-        """Get host for connection using Wegent path-based routing."""
-        domain = sandbox_domain
-        if domain.startswith("http://"):
-            domain = domain[7:]
-        elif domain.startswith("https://"):
-            domain = domain[8:]
-        return f"{domain}/executor-manager/e2b/proxy/{sandbox_id}/{port}"
-
-    def _patched_connection_config_get_sandbox_url(
-        self, sandbox_id: str, sandbox_domain: str
-    ) -> str:
-        """Get full sandbox URL for Wegent path-based routing.
-
-        This method constructs the complete URL including protocol and port,
-        ensuring SDK logs show the correct full URL.
-
-        sandbox_domain from server includes protocol (e.g., "http://127.0.0.1:8001")
-        """
-        # sandbox_domain already includes protocol, use it directly
-        domain = sandbox_domain
-        # Ensure we have a protocol
-        if not domain.startswith("http://") and not domain.startswith("https://"):
-            domain = f"{'http' if self.debug else 'https'}://{domain}"
-        return f"{domain}/executor-manager/e2b/proxy/{sandbox_id}/{self.envd_port}"
-
-    def _build_url_with_port(request) -> str:
-        """Build URL string with port for logging.
-
-        E2B SDK's TransportWithLogger has a bug where it doesn't include the port
-        in the logged URL. This helper function fixes that.
-        """
-        port = request.url.port
-        port_str = f":{port}" if port and port not in (80, 443) else ""
-        return f"{request.url.scheme}://{request.url.host}{port_str}{request.url.path}"
-
-    def _patched_sync_transport_handle_request(self, request):
-        """Patched sync transport handler with correct URL logging."""
-        _logger = logging.getLogger("e2b.api.client_sync")
-
-        url = _build_url_with_port(request)
-        _logger.info(f"Request: {request.method} {url}")
-
-        response = httpx.HTTPTransport.handle_request(self, request)
-
-        _logger.info(f"Response: {response.status_code} {url}")
-        return response
-
-    async def _patched_async_transport_handle_request(self, request):
-        """Patched async transport handler with correct URL logging."""
-        _logger = logging.getLogger("e2b.api.client_async")
-
-        url = _build_url_with_port(request)
-        _logger.info(f"Request: {request.method} {url}")
-
-        response = await httpx.AsyncHTTPTransport.handle_async_request(self, request)
-
-        _logger.info(f"Response: {response.status_code} {url}")
-        return response
-
-    # Apply patches immediately at module load time
-    SandboxBase.get_host = _patched_sandbox_get_host
-    ConnectionConfig.get_host = _patched_connection_config_get_host
-    ConnectionConfig.get_sandbox_url = _patched_connection_config_get_sandbox_url
-    TransportWithLogger.handle_request = _patched_sync_transport_handle_request
-    AsyncTransportWithLogger.handle_async_request = (
-        _patched_async_transport_handle_request
-    )
-
-    logger.info("[SubAgentTool] E2B SDK patched for Wegent protocol")
-    _e2b_patched = True
-
-except ImportError as e:
-    logger.warning(f"[SubAgentTool] E2B SDK not available, will fail at runtime: {e}")
-    _e2b_patched = False
 
 
 class CreateSubAgentTaskInput(BaseModel):
@@ -173,7 +57,28 @@ class CreateSubAgentTaskInput(BaseModel):
     )
 
 
-class CreateSubAgentTaskTool(BaseTool):
+# Import base class here - use try/except to handle both direct and dynamic loading
+try:
+    # Try relative import (for direct usage)
+    from ._base import BaseSubAgentTool, patch_e2b_sdk
+except ImportError:
+    # Try absolute import (for dynamic loading as skill_pkg_subagent)
+    import sys
+
+    # Get the package name dynamically
+    package_name = __name__.rsplit(".", 1)[0]  # e.g., 'skill_pkg_subagent'
+    _base_module = sys.modules.get(f"{package_name}._base")
+    if _base_module:
+        BaseSubAgentTool = _base_module.BaseSubAgentTool
+        patch_e2b_sdk = _base_module.patch_e2b_sdk
+    else:
+        raise ImportError(f"Cannot import _base from {package_name}")
+
+# Ensure E2B SDK is patched
+patch_e2b_sdk()
+
+
+class CreateSubAgentTaskTool(BaseSubAgentTool):
     """Tool for creating SubAgent tasks using E2B SDK.
 
     This tool delegates complex tasks to SubAgents running in Docker containers.
@@ -213,25 +118,6 @@ Returns:
 Note: This operation may take several minutes for complex tasks."""
 
     args_schema: type[BaseModel] = CreateSubAgentTaskInput
-
-    # Injected dependencies - set when creating the tool instance
-    task_id: int = 0
-    subtask_id: int = 0
-    ws_emitter: Any = None
-    user_id: int = 0
-    user_name: str = ""
-    bot_config: list = []  # Bot config list [{shell_type, agent_config}, ...]
-
-    # Configuration
-    default_shell_type: str = "ClaudeCode"
-    timeout: int = DEFAULT_EXECUTION_TIMEOUT
-
-    # Sandbox management - cache sandbox instance
-    _sandbox: Any = None  # Cached E2B Sandbox instance
-    _sandbox_shell_type: Optional[str] = None  # Track shell type for reuse check
-
-    class Config:
-        arbitrary_types_allowed = True
 
     def _run(
         self,
@@ -307,20 +193,29 @@ Note: This operation may take several minutes for complex tasks."""
                 logger.warning(f"[SubAgentTool] Failed to emit tool status: {e}")
 
         try:
-            # E2B SDK is patched at module load time, just import and use
-            from e2b_code_interpreter import Sandbox
+            # Get sandbox manager from base class
+            sandbox_manager = self._get_sandbox_manager()
 
             # Step 1: Get or create sandbox
             logger.info(f"[SubAgentTool] STEP 1: Getting or creating sandbox...")
-            sandbox, error = await self._get_or_create_sandbox(
-                Sandbox=Sandbox,
+            sandbox, error = await sandbox_manager.get_or_create_sandbox(
                 shell_type=effective_shell_type,
                 workspace_ref=workspace_ref,
+                task_type="subagent",
             )
 
             if error:
                 logger.error(f"[SubAgentTool] STEP 1 FAILED: {error}")
-                result = self._format_error(f"Failed to create sandbox: {error}")
+                result = self._format_error(
+                    f"Failed to create sandbox: {error}",
+                    suggestion=(
+                        "The SubAgent task could not be executed. "
+                        "Inform the user about this issue and suggest alternatives: "
+                        "1) Try describing the task differently, "
+                        "2) Break down complex tasks into simpler steps, "
+                        "3) Check if the required resources (workspace, files) are available."
+                    ),
+                )
                 await self._emit_tool_status("failed", error)
                 return result
 
@@ -361,7 +256,13 @@ Note: This operation may take several minutes for complex tasks."""
             )
             error_msg = "E2B SDK not available. Please install e2b-code-interpreter."
             await self._emit_tool_status("failed", error_msg)
-            return self._format_error(error_msg)
+            return self._format_error(
+                error_msg,
+                suggestion=(
+                    "The SubAgent task could not be executed. "
+                    "Inform the user about this issue and suggest alternatives."
+                ),
+            )
         except Exception as e:
             logger.error(
                 f"[SubAgentTool] Unexpected error: task_id={self.task_id}, error={e}, type={type(e).__name__}",
@@ -369,74 +270,13 @@ Note: This operation may take several minutes for complex tasks."""
             )
             error_msg = f"Unexpected error: {e}"
             await self._emit_tool_status("failed", error_msg)
-            return self._format_error(error_msg)
-
-    async def _get_or_create_sandbox(
-        self,
-        Sandbox,
-        shell_type: str,
-        workspace_ref: Optional[str],
-    ) -> tuple[Any, Optional[str]]:
-        """Get existing sandbox or create a new one using E2B SDK.
-
-        Sandboxes are reused within the same task context if shell_type matches.
-
-        Args:
-            Sandbox: E2B Sandbox class
-            shell_type: Execution environment type
-            workspace_ref: Optional workspace reference
-
-        Returns:
-            Tuple of (sandbox_instance, error_message or None)
-        """
-        # Check if we have an existing sandbox with matching shell_type
-        if self._sandbox and self._sandbox_shell_type == shell_type:
-            try:
-                # Try to extend sandbox timeout to verify it's still alive
-                self._sandbox.set_timeout(DEFAULT_SANDBOX_TIMEOUT)
-                logger.info(
-                    f"[SubAgentTool] Reusing existing sandbox: {self._sandbox.sandbox_id}"
-                )
-                return self._sandbox, None
-            except Exception as e:
-                logger.warning(f"[SubAgentTool] Failed to reuse sandbox: {e}")
-                self._sandbox = None
-                self._sandbox_shell_type = None
-
-        # Create new sandbox using E2B SDK
-        logger.info(
-            f"[SubAgentTool] Creating sandbox: shell_type={shell_type}, "
-            f"user={self.user_name}"
-        )
-
-        try:
-            # Run sandbox creation in thread pool since E2B SDK is sync
-            loop = asyncio.get_event_loop()
-            sandbox = await loop.run_in_executor(
-                None,
-                lambda: Sandbox.create(
-                    template=shell_type,
-                    timeout=DEFAULT_SANDBOX_TIMEOUT,
-                    metadata={
-                        "task_type": "subagent",  # Required for proxy routing
-                        "task_id": self.task_id,
-                        "user_id": self.user_id,
-                        "user_name": self.user_name,
-                        "workspace_ref": workspace_ref,
-                    },
+            return self._format_error(
+                error_msg,
+                suggestion=(
+                    "The SubAgent task could not be executed. "
+                    "Inform the user about this issue and suggest alternatives."
                 ),
             )
-
-            # Cache sandbox for reuse
-            self._sandbox = sandbox
-            self._sandbox_shell_type = shell_type
-
-            logger.info(f"[SubAgentTool] Sandbox created: {sandbox.sandbox_id}")
-            return sandbox, None
-
-        except Exception as e:
-            logger.error(f"[SubAgentTool] Sandbox creation failed: {e}", exc_info=True)
-            return None, str(e)
 
     async def _execute_task(
         self,
@@ -684,67 +524,3 @@ Note: This operation may take several minutes for complex tasks."""
             }
 
         return json.dumps(response, ensure_ascii=False, indent=2)
-
-    def _format_error(self, error_message: str) -> str:
-        """Format error response.
-
-        Args:
-            error_message: Error description
-
-        Returns:
-            JSON string with error information
-        """
-        response = {
-            "success": False,
-            "error": error_message,
-            "suggestion": (
-                "The SubAgent task could not be executed. "
-                "Inform the user about this issue and suggest alternatives: "
-                "1) Try describing the task differently, "
-                "2) Break down complex tasks into simpler steps, "
-                "3) Check if the required resources (workspace, files) are available."
-            ),
-        }
-        return json.dumps(response, ensure_ascii=False, indent=2)
-
-    async def _emit_tool_status(
-        self, status: str, message: str = "", result: dict = None
-    ) -> None:
-        """Emit tool status update to frontend via WebSocket.
-
-        Args:
-            status: Status string ("completed", "failed", etc.)
-            message: Optional status message
-            result: Optional result data for completed status
-        """
-        if not self.ws_emitter:
-            return
-
-        try:
-            tool_output = {"message": message}
-            if result:
-                tool_output.update(result)
-
-            await self.ws_emitter.emit_tool_call(
-                task_id=self.task_id,
-                tool_name=self.name,
-                tool_input={},
-                tool_output=tool_output,
-                status=status,
-            )
-        except Exception as e:
-            logger.warning(f"[SubAgentTool] Failed to emit tool status: {e}")
-
-    def kill_sandbox(self) -> None:
-        """Kill the cached sandbox if it exists."""
-        if self._sandbox:
-            try:
-                self._sandbox.kill()
-                logger.info(
-                    f"[SubAgentTool] Sandbox killed: {self._sandbox.sandbox_id}"
-                )
-            except Exception as e:
-                logger.warning(f"[SubAgentTool] Failed to kill sandbox: {e}")
-            finally:
-                self._sandbox = None
-                self._sandbox_shell_type = None

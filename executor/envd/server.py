@@ -201,11 +201,17 @@ async def _handle_unary(request: Request, handler, req_class, resp_class):
     """Handle unary (request-response) RPC"""
     try:
         content_type = request.headers.get("content-type", "")
+        content_encoding = request.headers.get("content-encoding", "identity")
         body = await request.body()
+
+        # Handle compression
+        if content_encoding == "gzip":
+            import gzip
+            body = gzip.decompress(body)
 
         # Parse request
         if "application/json" in content_type or "application/connect+json" in content_type:
-            data = json.loads(body)
+            data = json.loads(body.decode('utf-8'))
             req_obj = ParseDict(data, req_class())
         else:
             req_obj = req_class()
@@ -283,11 +289,28 @@ async def _handle_server_stream(request: Request, handler, req_class, resp_class
         content_type = request.headers.get("content-type", "")
         body = await request.body()
 
-        # Parse request
-        if "application/json" in content_type or "application/connect+json" in content_type:
-            data = json.loads(body)
+        # Parse request - handle Connect protocol envelope format
+        if "application/connect+json" in content_type:
+            # Decode envelope: 5-byte header (1 byte flags + 4 bytes length) + data
+            if len(body) < 5:
+                raise ValueError("Invalid envelope: body too short")
+            flags = body[0]
+            data_len = int.from_bytes(body[1:5], byteorder='big')
+            data = body[5:5+data_len]
+
+            # Check if data is compressed (flag bit 0)
+            if flags & 0b00000001:
+                import gzip
+                data = gzip.decompress(data)
+
+            json_data = json.loads(data.decode('utf-8'))
+            req_obj = ParseDict(json_data, req_class())
+        elif "application/json" in content_type:
+            # Direct JSON without envelope
+            data = json.loads(body.decode('utf-8'))
             req_obj = ParseDict(data, req_class())
         else:
+            # Protobuf format
             req_obj = req_class()
             req_obj.ParseFromString(body)
 
@@ -295,20 +318,38 @@ async def _handle_server_stream(request: Request, handler, req_class, resp_class
         async def generate():
             try:
                 async for response in handler(req_obj):
-                    if "application/json" in content_type or "application/connect+json" in content_type:
+                    if "application/connect+json" in content_type:
+                        # Connect protocol envelope format
+                        response_data = MessageToDict(
+                            response,
+                            preserving_proto_field_name=True
+                        )
+                        data = json.dumps(response_data).encode('utf-8')
+                        flags = 0  # No compression, not end stream
+                        # Yield envelope: 1 byte flags + 4 bytes length + data
+                        yield bytes([flags]) + len(data).to_bytes(4, byteorder='big') + data
+                    elif "application/json" in content_type:
+                        # Direct JSON without envelope (for non-Connect clients)
                         response_data = MessageToDict(
                             response,
                             preserving_proto_field_name=True
                         )
                         yield json.dumps(response_data) + "\n"
                     else:
+                        # Protobuf format
                         serialized = response.SerializeToString()
                         length = len(serialized)
                         yield length.to_bytes(4, byteorder='big')
                         yield serialized
             except Exception as e:
                 logger.exception(f"Error in stream: {e}")
-                yield json.dumps({"code": "internal", "message": str(e)}) + "\n"
+                # Send error in envelope format with end_stream flag
+                if "application/connect+json" in content_type:
+                    error_data = json.dumps({"error": {"code": "internal", "message": str(e)}}).encode('utf-8')
+                    flags = 0b00000010  # end_stream flag
+                    yield bytes([flags]) + len(error_data).to_bytes(4, byteorder='big') + error_data
+                else:
+                    yield json.dumps({"code": "internal", "message": str(e)}) + "\n"
 
         media_type = "application/connect+json" if "json" in content_type else "application/proto"
         return StreamingResponse(

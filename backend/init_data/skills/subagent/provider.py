@@ -52,9 +52,17 @@ class SubAgentToolProvider(SkillToolProvider):
         """Return the list of tools this provider can create.
 
         Returns:
-            List containing "create_subagent_task"
+            List containing supported tool names
         """
-        return ["create_subagent_task"]
+        return [
+            "create_subagent_task",
+            "sandbox_command",
+            "sandbox_list_files",
+            "sandbox_read_file",
+            "sandbox_write_file",
+            "sandbox_make_dir",
+            "sandbox_remove_file",
+        ]
 
     def create_tool(
         self,
@@ -130,6 +138,147 @@ class SubAgentToolProvider(SkillToolProvider):
             logger.info(
                 f"[SubAgentProvider] ===== TOOL INSTANCE CREATED ===== "
                 f"has_bot_config={bool(tool_instance.bot_config)}, "
+                f"tool_name={tool_instance.name}, "
+                f"display_name={tool_instance.display_name}"
+            )
+
+            return tool_instance
+        elif tool_name == "sandbox_command":
+            # Import sandbox command tool
+            from .command_tool import SandboxCommandTool
+
+            config = tool_config or {}
+
+            tool_instance = SandboxCommandTool(
+                task_id=context.task_id,
+                subtask_id=context.subtask_id,
+                ws_emitter=context.ws_emitter,
+                user_id=context.user_id,
+                user_name=context.user_name,
+                default_shell_type=config.get("default_shell_type", "ClaudeCode"),
+                timeout=config.get("timeout", 7200),
+                default_command_timeout=config.get("command_timeout", 300),
+            )
+
+            logger.info(
+                f"[SubAgentProvider] ===== TOOL INSTANCE CREATED ===== "
+                f"tool_name={tool_instance.name}, "
+                f"display_name={tool_instance.display_name}"
+            )
+
+            return tool_instance
+        elif tool_name == "sandbox_list_files":
+            # Import sandbox list files tool
+            from .list_files_tool import SandboxListFilesTool
+
+            config = tool_config or {}
+
+            tool_instance = SandboxListFilesTool(
+                task_id=context.task_id,
+                subtask_id=context.subtask_id,
+                ws_emitter=context.ws_emitter,
+                user_id=context.user_id,
+                user_name=context.user_name,
+                default_shell_type=config.get("default_shell_type", "ClaudeCode"),
+                timeout=config.get("timeout", 7200),
+            )
+
+            logger.info(
+                f"[SubAgentProvider] ===== TOOL INSTANCE CREATED ===== "
+                f"tool_name={tool_instance.name}, "
+                f"display_name={tool_instance.display_name}"
+            )
+
+            return tool_instance
+        elif tool_name == "sandbox_read_file":
+            # Import sandbox read file tool
+            from .read_file_tool import SandboxReadFileTool
+
+            config = tool_config or {}
+
+            tool_instance = SandboxReadFileTool(
+                task_id=context.task_id,
+                subtask_id=context.subtask_id,
+                ws_emitter=context.ws_emitter,
+                user_id=context.user_id,
+                user_name=context.user_name,
+                default_shell_type=config.get("default_shell_type", "ClaudeCode"),
+                timeout=config.get("timeout", 7200),
+                max_size=config.get("max_file_size", 1048576),  # 1MB default
+            )
+
+            logger.info(
+                f"[SubAgentProvider] ===== TOOL INSTANCE CREATED ===== "
+                f"tool_name={tool_instance.name}, "
+                f"display_name={tool_instance.display_name}"
+            )
+
+            return tool_instance
+        elif tool_name == "sandbox_write_file":
+            # Import sandbox write file tool
+            from .write_file_tool import SandboxWriteFileTool
+
+            config = tool_config or {}
+
+            tool_instance = SandboxWriteFileTool(
+                task_id=context.task_id,
+                subtask_id=context.subtask_id,
+                ws_emitter=context.ws_emitter,
+                user_id=context.user_id,
+                user_name=context.user_name,
+                default_shell_type=config.get("default_shell_type", "ClaudeCode"),
+                timeout=config.get("timeout", 7200),
+                max_size=config.get("max_file_size", 10485760),  # 10MB default
+            )
+
+            logger.info(
+                f"[SubAgentProvider] ===== TOOL INSTANCE CREATED ===== "
+                f"tool_name={tool_instance.name}, "
+                f"display_name={tool_instance.display_name}"
+            )
+
+            return tool_instance
+        elif tool_name == "sandbox_make_dir":
+            # Import sandbox make dir tool
+            from .make_dir_tool import SandboxMakeDirTool
+
+            config = tool_config or {}
+
+            tool_instance = SandboxMakeDirTool(
+                task_id=context.task_id,
+                subtask_id=context.subtask_id,
+                ws_emitter=context.ws_emitter,
+                user_id=context.user_id,
+                user_name=context.user_name,
+                default_shell_type=config.get("default_shell_type", "ClaudeCode"),
+                timeout=config.get("timeout", 7200),
+            )
+
+            logger.info(
+                f"[SubAgentProvider] ===== TOOL INSTANCE CREATED ===== "
+                f"tool_name={tool_instance.name}, "
+                f"display_name={tool_instance.display_name}"
+            )
+
+            return tool_instance
+        elif tool_name == "sandbox_remove_file":
+            # Import sandbox remove file tool
+            from .remove_file_tool import SandboxRemoveFileTool
+
+            config = tool_config or {}
+
+            tool_instance = SandboxRemoveFileTool(
+                task_id=context.task_id,
+                subtask_id=context.subtask_id,
+                ws_emitter=context.ws_emitter,
+                user_id=context.user_id,
+                user_name=context.user_name,
+                default_shell_type=config.get("default_shell_type", "ClaudeCode"),
+                timeout=config.get("timeout", 7200),
+            )
+
+            logger.info(
+                f"[SubAgentProvider] ===== TOOL INSTANCE CREATED ===== "
                 f"tool_name={tool_instance.name}, "
                 f"display_name={tool_instance.display_name}"
             )

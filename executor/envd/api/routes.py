@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from shared.logger import setup_logger
 
 from .models import EntryInfo, InitRequest, MetricsResponse
-from .state import get_state_manager
+from .state import AccessTokenAlreadySetError, get_state_manager
 from .utils import resolve_path, verify_access_token, verify_signature
 
 logger = setup_logger("envd_api_routes")
@@ -65,7 +65,13 @@ def register_rest_api(app: FastAPI):
         request: InitRequest,
         x_access_token: Optional[str] = Header(None)
     ):
-        """Initialize environment variables and metadata"""
+        """
+        Initialize environment variables and metadata
+
+        - Updates only if request is newer (based on timestamp)
+        - Returns 409 Conflict if access token is already set
+        - Thread-safe with lock protection
+        """
         verify_access_token(x_access_token)
 
         try:
@@ -78,7 +84,17 @@ def register_rest_api(app: FastAPI):
                 default_workdir=request.defaultWorkdir
             )
 
-            return Response(status_code=204)
+            # Set response headers as per reference implementation
+            return Response(
+                status_code=204,
+                headers={
+                    "Cache-Control": "no-store",
+                    "Content-Type": ""
+                }
+            )
+        except AccessTokenAlreadySetError as e:
+            logger.warning(f"Access token conflict: {e}")
+            raise HTTPException(status_code=409, detail=str(e))
         except Exception as e:
             logger.exception(f"Error initializing envd: {e}")
             raise HTTPException(status_code=500, detail=str(e))
