@@ -146,13 +146,16 @@ export function DocumentList({
     attachments: { attachment: { id: number; filename: string }; file: File }[],
     splitterConfig?: Partial<SplitterConfig>
   ) => {
+    // Track newly created document IDs for auto-selection
+    const newDocumentIds: number[] = []
+
     // Create documents sequentially to ensure all are created
     for (const { attachment, file } of attachments) {
       // Use attachment.filename (which may have been renamed) instead of file.name
       const documentName = attachment.filename || file.name
       const extension = documentName.split('.').pop() || ''
       try {
-        await create({
+        const created = await create({
           attachment_id: attachment.id,
           name: documentName,
           file_extension: extension,
@@ -160,10 +163,24 @@ export function DocumentList({
           splitter_config: splitterConfig,
           source_type: 'file',
         })
+        // Collect newly created document ID
+        if (created?.id) {
+          newDocumentIds.push(created.id)
+        }
       } catch {
         // Continue with next file even if one fails
       }
     }
+
+    // Auto-select newly uploaded documents (for notebook mode context injection)
+    if (onSelectionChange && newDocumentIds.length > 0) {
+      setSelectedIds(prev => {
+        const newSet = new Set(prev)
+        newDocumentIds.forEach(id => newSet.add(id))
+        return newSet
+      })
+    }
+
     setShowUpload(false)
   }
 

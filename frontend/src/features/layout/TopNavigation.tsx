@@ -24,6 +24,7 @@ type TopNavigationProps = {
   onTaskDeleted?: () => void
   onMembersChanged?: () => void // Callback to refresh task detail when converted to group chat
   isSidebarCollapsed?: boolean
+  hideGroupChatOptions?: boolean // Hide group chat management options (e.g., in notebook mode)
 }
 
 export default function TopNavigation({
@@ -37,6 +38,7 @@ export default function TopNavigation({
   onTaskDeleted,
   onMembersChanged,
   isSidebarCollapsed = false,
+  hideGroupChatOptions = false,
 }: TopNavigationProps) {
   const { t } = useTranslation()
   const isMobile = useIsMobile()
@@ -88,6 +90,7 @@ export default function TopNavigation({
             taskDetail={taskDetail}
             onTaskDeleted={onTaskDeleted}
             onMembersChanged={onMembersChanged}
+            hideGroupChatOptions={hideGroupChatOptions}
           />
         )}
 
