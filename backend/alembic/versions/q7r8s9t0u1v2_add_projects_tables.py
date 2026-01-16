@@ -34,7 +34,7 @@ def upgrade() -> None:
         id INT NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
         user_id INT NOT NULL DEFAULT 0 COMMENT 'Project owner user ID',
         name VARCHAR(100) NOT NULL DEFAULT '' COMMENT 'Project name',
-        description TEXT NOT NULL COMMENT 'Project description',
+        description VARCHAR(256) NOT NULL DEFAULT '' COMMENT 'Project description',
         color VARCHAR(20) NOT NULL DEFAULT '' COMMENT 'Project color identifier (e.g., #FF5733)',
         sort_order INT NOT NULL DEFAULT 0 COMMENT 'Sort order for display',
         is_expanded TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'Whether the project is expanded in UI',
