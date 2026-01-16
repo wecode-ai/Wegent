@@ -546,6 +546,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     git_repo_id=payload.git_repo_id,
                     git_domain=payload.git_domain,
                     branch_name=payload.branch_name,
+                    task_type=payload.task_type,
                 )
 
                 result = await create_task_and_subtasks(
@@ -574,8 +575,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                     f"[WS] chat:send calling task_kinds_service.create_task_or_append (supports_direct_chat=False)..."
                 )
 
-                # Auto-detect task type based on git_url presence
-                task_type = "code" if payload.git_url else "chat"
+                # Use provided task_type, or auto-detect based on git_url presence
+                task_type = payload.task_type or ("code" if payload.git_url else "chat")
 
                 # Build TaskCreate object
                 task_create = TaskCreate(

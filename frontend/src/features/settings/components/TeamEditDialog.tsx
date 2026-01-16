@@ -70,7 +70,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [mode, setMode] = useState<TeamMode>('solo')
-  const [bindMode, setBindMode] = useState<('chat' | 'code')[]>(['chat', 'code'])
+  const [bindMode, setBindMode] = useState<('chat' | 'code' | 'knowledge')[]>(['chat', 'code'])
   const [icon, setIcon] = useState<string | null>(null)
 
   // Bot selection state

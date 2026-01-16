@@ -78,6 +78,9 @@ export interface MobileChatInputControlsProps {
   // Actions
   onStopStream: () => void
   onSendMessage: () => void
+
+  // Whether there are no available teams (shows disabled state)
+  hasNoTeams?: boolean
 }
 
 /**
@@ -118,6 +121,7 @@ export function MobileChatInputControls({
   isSubtaskStreaming,
   onStopStream,
   onSendMessage,
+  hasNoTeams = false,
 }: MobileChatInputControlsProps) {
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
 
@@ -128,6 +132,7 @@ export function MobileChatInputControls({
       isStreaming ||
       isModelSelectionRequired ||
       !isAttachmentReadyToSend ||
+      hasNoTeams ||
       (shouldHideChatInput ? false : !taskInputMessage.trim())
 
     if (isStreaming || isStopping) {

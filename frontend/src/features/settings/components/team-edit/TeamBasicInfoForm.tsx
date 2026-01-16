@@ -15,8 +15,8 @@ interface TeamBasicInfoFormProps {
   setName: (name: string) => void
   description: string
   setDescription: (description: string) => void
-  bindMode: ('chat' | 'code')[]
-  setBindMode: (bindMode: ('chat' | 'code')[]) => void
+  bindMode: ('chat' | 'code' | 'knowledge')[]
+  setBindMode: (bindMode: ('chat' | 'code' | 'knowledge')[]) => void
   icon?: string | null
   setIcon?: (icon: string) => void
 }

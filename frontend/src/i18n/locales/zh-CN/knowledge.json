@@ -35,7 +35,14 @@
     "knowledgeBase": {
       "title": "知识库",
       "create": "创建知识库",
+      "createNotebook": "创建 Notebook",
+      "createClassic": "创建普通知识库",
       "createDesc": "创建您的第一个知识库",
+      "notebookDesc": "三列布局，支持对话和文档管理",
+      "classicDesc": "传统文档列表布局",
+      "type": "知识库类型",
+      "typeNotebook": "Notebook",
+      "typeClassic": "普通知识库",
       "edit": "编辑知识库",
       "delete": "删除知识库",
       "name": "知识库名称",
@@ -319,5 +326,17 @@
       "loadFailed": "加载数据表失败"
     },
     "analyzing": "正在分析数据表..."
+  },
+  "chatPage": {
+    "title": "知识库对话",
+    "summary": "摘要",
+    "contextHint": "此知识库已绑定到您的对话。可以询问有关其文档的问题。",
+    "documents": "文档",
+    "showDocuments": "显示文档",
+    "hideDocuments": "隐藏文档",
+    "backToList": "返回",
+    "notFound": "知识库未找到",
+    "createTaskError": "创建对话失败",
+    "bindKnowledgeBaseError": "绑定知识库失败"
   }
 }
