@@ -59,7 +59,7 @@ echo -e "${GREEN}All requirements satisfied.${NC}"
 echo ""
 
 # Download docker-compose.yml
-COMPOSE_URL="https://raw.githubusercontent.com/wecode-ai/Wegent/feat/docker-conpose-env/docker-compose.yml"
+COMPOSE_URL="https://raw.githubusercontent.com/wecode-ai/Wegent/main/docker-compose.yml"
 INSTALL_DIR="${WEGENT_INSTALL_DIR:-.}"
 
 echo -e "${YELLOW}Installing Wegent to ${INSTALL_DIR}...${NC}"
