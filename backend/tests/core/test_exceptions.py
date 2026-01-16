@@ -8,13 +8,13 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
 
 from app.core.exceptions import (
-    NotFoundException,
     ConflictException,
-    ValidationException,
     CustomHTTPException,
+    NotFoundException,
+    ValidationException,
     http_exception_handler,
+    python_exception_handler,
     validation_exception_handler,
-    python_exception_handler
 )
 
 
@@ -48,7 +48,7 @@ class TestCustomExceptions:
         exc = CustomHTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal error",
-            error_code=5001
+            error_code=5001,
         )
 
         assert exc.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -58,8 +58,7 @@ class TestCustomExceptions:
     def test_custom_http_exception_without_error_code(self):
         """Test CustomHTTPException without custom error code"""
         exc = CustomHTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Bad request"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Bad request"
         )
 
         assert exc.status_code == status.HTTP_400_BAD_REQUEST
@@ -88,7 +87,7 @@ class TestExceptionHandlers:
         exc = CustomHTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Server error",
-            error_code=5001
+            error_code=5001,
         )
 
         response = await http_exception_handler(request=None, exc=exc)

@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -50,7 +52,7 @@ from app.schemas.task import TaskCreate, TaskInDB
 from app.schemas.user import Token, UserInDB, UserInfo
 from app.services.adapters.public_retriever import public_retriever_service
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.k_batch import batch_service
+from app.services.k_batch import apply_default_resources_async, batch_service
 from app.services.kind import kind_service
 from app.services.user import user_service
 
@@ -165,10 +167,19 @@ async def create_user(
         role=user_data.role,
         auth_source=user_data.auth_source,
         is_active=True,
+        git_info=[],
+        preferences="{}",
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    # Apply default resources for the new user in a background thread
+    def run_async_task():
+        asyncio.run(apply_default_resources_async(new_user.id))
+
+    thread = threading.Thread(target=run_async_task, daemon=True)
+    thread.start()
 
     return AdminUserResponse(
         id=new_user.id,
