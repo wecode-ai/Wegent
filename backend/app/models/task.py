@@ -70,7 +70,8 @@ class TaskResource(Base):
     )
     project_id = Column(
         Integer,
-        nullable=True,
+        nullable=False,
+        default=0,
         index=True,
         comment="Project ID for task grouping",
     )

@@ -52,7 +52,7 @@ def upgrade() -> None:
     op.execute(
         """
         ALTER TABLE tasks
-        ADD COLUMN project_id INT DEFAULT NULL COMMENT 'Project ID for task grouping'
+        ADD COLUMN project_id INT NOT NULL DEFAULT 0 COMMENT 'Project ID for task grouping'
         """
     )
 
