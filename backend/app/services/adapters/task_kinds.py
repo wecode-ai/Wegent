@@ -604,6 +604,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             if not is_group_chat:
                 is_group_chat = member_counts.get(task.id, 0) > 0
 
+            # Extract knowledge_base_id from knowledgeBaseRefs for knowledge type tasks
+            knowledge_base_id = None
+            if task_type == "knowledge" and task_crd.spec.knowledgeBaseRefs:
+                # Get the first knowledge base reference's id
+                first_kb_ref = task_crd.spec.knowledgeBaseRefs[0]
+                knowledge_base_id = first_kb_ref.id
+
             result.append(
                 {
                     "id": task.id,
@@ -617,6 +624,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "team_id": team_id,
                     "git_repo": git_repo,
                     "is_group_chat": is_group_chat,
+                    "knowledge_base_id": knowledge_base_id,
                 }
             )
 
@@ -969,6 +977,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             if not is_group_chat:
                 is_group_chat = member_counts.get(task.id, 0) > 0
 
+            # Extract knowledge_base_id from knowledgeBaseRefs for knowledge type tasks
+            knowledge_base_id = None
+            if task_type == "knowledge" and task_crd.spec.knowledgeBaseRefs:
+                # Get the first knowledge base reference's id
+                first_kb_ref = task_crd.spec.knowledgeBaseRefs[0]
+                knowledge_base_id = first_kb_ref.id
+
             result.append(
                 {
                     "id": task.id,
@@ -982,6 +997,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "team_id": team_id,
                     "git_repo": git_repo,
                     "is_group_chat": is_group_chat,
+                    "knowledge_base_id": knowledge_base_id,
                 }
             )
 
@@ -1166,6 +1182,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             if not is_group_chat:
                 is_group_chat = member_counts.get(task.id, 0) > 0
 
+            # Extract knowledge_base_id from knowledgeBaseRefs for knowledge type tasks
+            knowledge_base_id = None
+            if task_type == "knowledge" and task_crd.spec.knowledgeBaseRefs:
+                # Get the first knowledge base reference's id
+                first_kb_ref = task_crd.spec.knowledgeBaseRefs[0]
+                knowledge_base_id = first_kb_ref.id
+
             result.append(
                 {
                     "id": task.id,
@@ -1179,6 +1202,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "team_id": team_id,
                     "git_repo": git_repo,
                     "is_group_chat": is_group_chat,
+                    "knowledge_base_id": knowledge_base_id,
                 }
             )
 

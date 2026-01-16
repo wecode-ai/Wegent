@@ -11,13 +11,14 @@ import type {
   ChatSloganItem,
   ChatTipItem,
   MultiAttachmentUploadState,
+  DefaultTeamsResponse,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { Model } from '../selector/ModelSelector'
 import { useMultiAttachment } from '@/hooks/useMultiAttachment'
 import { userApis } from '@/apis/user'
 import { correctionApis } from '@/apis/correction'
-import { getLastTeamIdByMode, saveLastTeamByMode, saveLastRepo } from '@/utils/userPreferences'
+import { saveLastRepo } from '@/utils/userPreferences'
 import { useTaskContext } from '../../contexts/taskContext'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 
@@ -27,7 +28,11 @@ export interface UseChatAreaStateOptions {
   teams: Team[]
   taskType: 'chat' | 'code' | 'knowledge'
   selectedTeamForNewTask?: Team | null
-  /** Initial knowledge base to pre-select when starting a new chat from knowledge page */
+  /**
+   * Initial knowledge base to pre-select when starting a new chat from knowledge page.
+   * Note: In notebook mode (taskType === 'knowledge'), this is NOT added to selectedContexts
+   * because the notebook's knowledge base is automatically bound to the task on creation.
+   */
   initialKnowledgeBase?: {
     id: number
     name: string
@@ -41,6 +46,12 @@ export interface ChatAreaState {
   selectedTeam: Team | null
   setSelectedTeam: (team: Team | null) => void
   handleTeamChange: (team: Team | null) => void
+
+  // Default team state
+  defaultTeamsConfig: DefaultTeamsResponse | null
+  defaultTeam: Team | null
+  isUsingDefaultTeam: boolean
+  restoreDefaultTeam: () => void
 
   // Repository state
   selectedRepo: GitRepoInfo | null
@@ -119,6 +130,7 @@ export interface ChatAreaState {
 
   // Helper functions
   isTeamCompatibleWithMode: (team: Team) => boolean
+  findDefaultTeamForMode: (teams: Team[]) => Team | null
 }
 
 /**
@@ -141,17 +153,23 @@ export function useChatAreaState({
   selectedTeamForNewTask,
   initialKnowledgeBase,
 }: UseChatAreaStateOptions): ChatAreaState {
+  // In notebook mode (taskType === 'knowledge'), don't show the current notebook's KB in selectedContexts
+  // because it's automatically bound to the task on creation
+  const shouldShowInitialKbInContexts = taskType !== 'knowledge'
+
   const { selectedTaskDetail } = useTaskContext()
 
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null)
-  if (initialTeamIdRef.current === null && typeof window !== 'undefined') {
-    initialTeamIdRef.current = getLastTeamIdByMode(taskType)
-  }
 
   // Team state
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false)
+
+  // Default teams configuration (from server)
+  const [defaultTeamsConfig, setDefaultTeamsConfig] = useState<DefaultTeamsResponse | null>(null)
+  // Track if user is using default team or manually selected one
+  const [isUsingDefaultTeam, setIsUsingDefaultTeam] = useState(true)
 
   // Repository and branch state
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
@@ -222,6 +240,20 @@ export function useChatAreaState({
     }
 
     fetchWelcomeConfig()
+  }, [])
+
+  // Fetch default teams configuration
+  useEffect(() => {
+    const fetchDefaultTeams = async () => {
+      try {
+        const response = await userApis.getDefaultTeams()
+        setDefaultTeamsConfig(response)
+      } catch (error) {
+        console.error('Failed to fetch default teams config:', error)
+      }
+    }
+
+    fetchDefaultTeams()
   }, [])
 
   // Get random slogan for display
@@ -297,12 +329,78 @@ export function useChatAreaState({
   const isTeamCompatibleWithMode = useCallback(
     (team: Team): boolean => {
       if (!team.bind_mode || team.bind_mode.length === 0) return false
-      return team.bind_mode.includes(taskType)
+      // Knowledge mode uses chat mode teams
+      const modeToCheck = taskType === 'knowledge' ? 'chat' : taskType
+      return team.bind_mode.includes(modeToCheck)
     },
     [taskType]
   )
 
-  // Handle team change with localStorage persistence
+  // Get teams compatible with current mode
+  const compatibleTeams = useMemo(() => {
+    return _teams.filter(isTeamCompatibleWithMode)
+  }, [_teams, isTeamCompatibleWithMode])
+
+  // Find default team for current mode from teams list
+  const findDefaultTeamForMode = useCallback(
+    (teams: Team[]): Team | null => {
+      if (teams.length === 0) return null
+      if (!defaultTeamsConfig) return teams[0] || null
+
+      // Get the default config for current mode
+      const modeKey = taskType as keyof DefaultTeamsResponse
+      const defaultConfig = defaultTeamsConfig[modeKey]
+
+      if (!defaultConfig) {
+        // No default configured, use first team
+        return teams[0] || null
+      }
+
+      // Find team by name + namespace (exact match)
+      const matchedTeam = teams.find(
+        team =>
+          team.name === defaultConfig.name &&
+          (team.namespace || 'default') === defaultConfig.namespace
+      )
+
+      if (matchedTeam) {
+        console.log(
+          '[useChatAreaState] Found default team for mode:',
+          taskType,
+          matchedTeam.name,
+          matchedTeam.namespace
+        )
+        return matchedTeam
+      }
+
+      // No match found, use first team
+      console.log(
+        '[useChatAreaState] Default team not found in list, using first team for mode:',
+        taskType
+      )
+      return teams[0] || null
+    },
+    [defaultTeamsConfig, taskType]
+  )
+
+  // Compute default team for current mode (only from compatible teams)
+  const defaultTeam = useMemo(() => {
+    return findDefaultTeamForMode(compatibleTeams)
+  }, [findDefaultTeamForMode, compatibleTeams])
+
+  // Restore to default team
+  const restoreDefaultTeam = useCallback(() => {
+    if (defaultTeam) {
+      console.log('[useChatAreaState] Restoring to default team:', defaultTeam.name)
+      setSelectedTeam(defaultTeam)
+      setIsUsingDefaultTeam(true)
+      // Reset external API params when restoring
+      setExternalApiParams({})
+      setAppMode(undefined)
+    }
+  }, [defaultTeam])
+
+  // Handle team change - marks user as not using default team
   const handleTeamChange = useCallback(
     (team: Team | null) => {
       console.log('[ChatArea] handleTeamChange called:', team?.name || 'null', team?.id || 'null')
@@ -312,13 +410,15 @@ export function useChatAreaState({
       setExternalApiParams({})
       setAppMode(undefined)
 
-      // Save team preference to localStorage by mode
-      if (team && team.id) {
-        console.log('[ChatArea] Saving team to localStorage for mode:', taskType, team.id)
-        saveLastTeamByMode(team.id, taskType)
+      // Check if the selected team is the same as the default team
+      if (team && defaultTeam && team.id === defaultTeam.id) {
+        setIsUsingDefaultTeam(true)
+      } else {
+        // User manually selected a different team
+        setIsUsingDefaultTeam(false)
       }
     },
-    [taskType]
+    [defaultTeam]
   )
 
   // Save repository preference when it changes
@@ -337,12 +437,20 @@ export function useChatAreaState({
 
   // Initialize selectedContexts with initialKnowledgeBase when starting a new chat
   // This is used when opening chat from knowledge base page
+  // Note: In notebook mode (taskType === 'knowledge'), we don't add the current KB to selectedContexts
+  // because it's automatically bound to the task on creation and shown in the header
   useEffect(() => {
     // Only initialize when:
     // 1. We have an initialKnowledgeBase
     // 2. No task is currently selected (new chat)
     // 3. selectedContexts is empty (not already initialized)
-    if (initialKnowledgeBase && !selectedTaskDetail && selectedContexts.length === 0) {
+    // 4. Not in notebook mode (shouldShowInitialKbInContexts is true)
+    if (
+      shouldShowInitialKbInContexts &&
+      initialKnowledgeBase &&
+      !selectedTaskDetail &&
+      selectedContexts.length === 0
+    ) {
       const kbContext: ContextItem = {
         id: initialKnowledgeBase.id,
         name: initialKnowledgeBase.name,
@@ -351,7 +459,12 @@ export function useChatAreaState({
       }
       setSelectedContexts([kbContext])
     }
-  }, [initialKnowledgeBase, selectedTaskDetail, selectedContexts.length])
+  }, [
+    shouldShowInitialKbInContexts,
+    initialKnowledgeBase,
+    selectedTaskDetail,
+    selectedContexts.length,
+  ])
 
   // Compute UI flags
   const shouldHideQuotaUsage = useMemo(() => {
@@ -373,6 +486,12 @@ export function useChatAreaState({
     selectedTeam,
     setSelectedTeam,
     handleTeamChange,
+
+    // Default team state
+    defaultTeamsConfig,
+    defaultTeam,
+    isUsingDefaultTeam,
+    restoreDefaultTeam,
 
     // Repository state
     selectedRepo,
@@ -451,6 +570,7 @@ export function useChatAreaState({
 
     // Helper functions
     isTeamCompatibleWithMode,
+    findDefaultTeamForMode,
   }
 }
 
