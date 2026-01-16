@@ -7,6 +7,7 @@
 import React from 'react'
 import { Label } from '@/components/ui/label'
 import { Bot, Team } from '@/types/api'
+import { UnifiedShell } from '@/apis/shells'
 import { TeamMode, AgentType } from '../team-modes'
 import { useTranslation } from '@/hooks/useTranslation'
 import { BotEditRef } from '../BotEdit'
@@ -19,6 +20,7 @@ import LeaderModeEditor from '../team-modes/LeaderModeEditor'
 interface TeamModeEditorProps {
   mode: TeamMode
   filteredBots: Bot[]
+  shells: UnifiedShell[]
   setBots: React.Dispatch<React.SetStateAction<Bot[]>>
   selectedBotKeys: React.Key[]
   setSelectedBotKeys: React.Dispatch<React.SetStateAction<React.Key[]>>
@@ -48,6 +50,7 @@ interface TeamModeEditorProps {
 export default function TeamModeEditor({
   mode,
   filteredBots,
+  shells,
   setBots,
   selectedBotKeys,
   setSelectedBotKeys,
@@ -122,6 +125,7 @@ export default function TeamModeEditor({
         {(mode === 'route' || mode === 'coordinate' || mode === 'collaborate') && (
           <LeaderModeEditor
             bots={filteredBots}
+            shells={shells}
             selectedBotKeys={selectedBotKeys}
             setSelectedBotKeys={setSelectedBotKeys}
             leaderBotId={leaderBotId}
