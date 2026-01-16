@@ -1,6 +1,6 @@
 # AI Flow 智能流 - 架构设计文档
 
-> 本文档描述 Wegent 项目中 AI Flow（智能流）功能的完整架构设计、流程图和 UML 图。
+> 本文档描述 Wegent 项目中 AI Flow（智能流）功能的完整架构设计，基于实际代码实现。
 
 ---
 
@@ -9,26 +9,29 @@
 1. [功能概述](#功能概述)
 2. [目录结构](#目录结构)
 3. [系统架构图](#系统架构图)
-4. [数据流程图](#数据流程图)
-5. [类图 (UML)](#类图-uml)
-6. [时序图](#时序图)
-7. [状态图](#状态图)
-8. [API 端点](#api-端点)
-9. [触发类型配置](#触发类型配置)
-10. [模板变量](#模板变量)
+4. [核心组件详解](#核心组件详解)
+5. [数据流程图](#数据流程图)
+6. [状态机设计](#状态机设计)
+7. [调度器架构](#调度器架构)
+8. [可靠性机制](#可靠性机制)
+9. [API 端点](#api-端点)
+10. [数据模型](#数据模型)
+11. [配置参数](#配置参数)
 
 ---
 
 ## 功能概述
 
-AI Flow 是一个自动化任务调度和执行系统，允许用户创建定时工作流来触发 AI Agent 任务。该功能以 Twitter/微博风格的社交媒体信息流展示 AI Agent 的活动，使 AI 自动化变得直观易用。
+AI Flow 是一个自动化任务调度和执行系统，允许用户创建定时工作流来触发 AI Agent 任务。
 
 ### 核心能力
 
 - **多种触发方式**：支持 Cron 定时、间隔执行、一次性执行、Webhook/Git Push 事件触发
 - **模板变量**：Prompt 模板支持动态变量替换（日期、时间、Webhook 数据等）
-- **执行追踪**：完整的执行记录和状态追踪
+- **执行追踪**：完整的执行记录和状态追踪（支持乐观锁和状态机）
 - **分布式调度**：支持多实例部署的分布式锁机制
+- **多后端支持**：支持 Celery Beat、APScheduler、XXL-JOB 三种调度后端
+- **可靠性保障**：熔断器、死信队列、过期任务清理
 
 ---
 
@@ -36,44 +39,50 @@ AI Flow 是一个自动化任务调度和执行系统，允许用户创建定时
 
 ```
 Wegent/
-├── frontend/
-│   └── src/
-│       ├── features/flows/
-│       │   ├── components/
-│       │   │   ├── FlowPage.tsx          # 主页面组件
-│       │   │   ├── FlowList.tsx          # Flow 配置列表
-│       │   │   ├── FlowTimeline.tsx      # Twitter 风格执行记录
-│       │   │   ├── FlowForm.tsx          # 创建/编辑对话框
-│       │   │   ├── CronSchedulePicker.tsx # Cron 表达式选择器
-│       │   │   └── index.ts              # 组件导出
-│       │   └── contexts/
-│       │       └── flowContext.tsx        # React Context 状态管理
-│       ├── apis/
-│       │   └── flow.ts                    # API 客户端
-│       ├── types/
-│       │   └── flow.ts                    # TypeScript 类型定义
-│       └── i18n/locales/
-│           ├── en/flow.json               # 英文翻译
-│           └── zh/flow.json               # 中文翻译
-│
 ├── backend/
 │   └── app/
 │       ├── models/
-│       │   └── flow.py                    # SQLAlchemy ORM 模型
+│       │   └── flow.py                    # SQLAlchemy ORM 模型 (FlowResource, FlowExecution)
 │       ├── schemas/
 │       │   └── flow.py                    # Pydantic Schemas (CRD 风格)
 │       ├── services/
-│       │   ├── flow.py                    # 核心 Flow 服务
-│       │   ├── flow_scheduler.py          # 后台调度器
-│       │   └── chat/trigger/
-│       │       └── emitter.py             # 事件发射器
+│       │   └── flow.py                    # 核心 Flow 服务 (FlowService)
+│       ├── tasks/
+│       │   └── flow_tasks.py              # Celery 任务 (check_due_flows, execute_flow_task)
+│       ├── core/
+│       │   ├── celery_app.py              # Celery 应用配置
+│       │   ├── circuit_breaker.py         # 熔断器实现
+│       │   ├── dead_letter_queue.py       # 死信队列
+│       │   ├── distributed_lock.py        # 分布式锁
+│       │   └── scheduler/                 # 多后端调度器
+│       │       ├── __init__.py            # 统一入口
+│       │       ├── base.py                # 基类定义
+│       │       ├── factory.py             # 工厂模式
+│       │       ├── celery_backend.py      # Celery Beat 后端
+│       │       ├── apscheduler_backend.py # APScheduler 后端
+│       │       └── xxljob_backend.py      # XXL-JOB 后端
 │       ├── api/endpoints/adapter/
 │       │   └── flows.py                   # FastAPI REST 端点
-│       └── tests/api/endpoints/
-│           └── test_flows.py              # API 端点测试
+│       └── services/chat/trigger/
+│           └── emitter.py                 # 事件发射器 (FlowEventEmitter)
+│
+├── frontend/src/
+│   ├── features/flows/
+│   │   ├── components/
+│   │   │   ├── FlowPage.tsx               # 主页面组件
+│   │   │   ├── FlowList.tsx               # Flow 配置列表
+│   │   │   ├── FlowTimeline.tsx           # 执行记录时间线
+│   │   │   ├── FlowForm.tsx               # 创建/编辑表单
+│   │   │   └── CronSchedulePicker.tsx     # Cron 表达式选择器
+│   │   └── contexts/
+│   │       └── flowContext.tsx            # React Context 状态管理
+│   ├── apis/flow.ts                       # API 客户端
+│   └── types/flow.ts                      # TypeScript 类型定义
 │
 └── backend/alembic/versions/
-    └── q7r8s9t0u1v2_add_flow_tables.py    # 数据库迁移
+    ├── q7r8s9t0u1v2_add_flow_tables.py         # flows 表迁移
+    ├── r8s9t0u1v2w3_add_webhook_secret_to_flows.py  # webhook secret 字段
+    └── s9t0u1v2w3x4_add_version_to_flow_executions.py   # 乐观锁 version 字段
 ```
 
 ---
@@ -82,313 +91,202 @@ Wegent/
 
 ```mermaid
 flowchart TB
-    subgraph Frontend["🖥️ 前端 Frontend"]
-        direction TB
-        FP["FlowPage.tsx<br/>主页面入口"]
-        FT["FlowTimeline.tsx<br/>Twitter风格执行记录"]
-        FL["FlowList.tsx<br/>Flow配置管理"]
-        FF["FlowForm.tsx<br/>创建/编辑表单"]
-        CP["CronSchedulePicker.tsx<br/>Cron表达式选择器"]
-        FC["flowContext.tsx<br/>React Context状态管理"]
-        FAPI["flow.ts<br/>API客户端"]
+    subgraph Frontend["前端 Frontend"]
+        FP["FlowPage.tsx"]
+        FT["FlowTimeline.tsx"]
+        FL["FlowList.tsx"]
+        FF["FlowForm.tsx"]
+        FC["flowContext.tsx"]
     end
 
-    subgraph Backend["⚙️ 后端 Backend"]
-        direction TB
-        EP["flows.py<br/>REST API端点"]
-        SVC["FlowService<br/>核心业务逻辑"]
-        SCH["flow_scheduler_worker<br/>后台定时调度器"]
-        EMT["FlowEventEmitter<br/>执行状态事件发射器"]
+    subgraph Backend["后端 Backend"]
+        subgraph API["API 层"]
+            EP["flows.py<br/>REST API"]
+        end
+
+        subgraph Service["服务层"]
+            SVC["FlowService<br/>核心业务逻辑"]
+        end
+
+        subgraph Tasks["任务层"]
+            CHK["check_due_flows<br/>定时检查任务"]
+            EXE["execute_flow_task<br/>执行任务"]
+        end
+
+        subgraph Scheduler["调度器层"]
+            SCH_CELERY["CeleryBeatBackend"]
+            SCH_APS["APSchedulerBackend"]
+            SCH_XXL["XXLJobBackend"]
+        end
+
+        subgraph Core["核心组件"]
+            CB["CircuitBreaker<br/>熔断器"]
+            DLQ["DeadLetterQueue<br/>死信队列"]
+            DL["DistributedLock<br/>分布式锁"]
+        end
     end
 
-    subgraph Database["💾 数据层 Database"]
-        direction TB
-        FR[("FlowResource<br/>flows表")]
-        FE[("FlowExecution<br/>flow_executions表")]
+    subgraph Data["数据层"]
+        DB_FLOW[("FlowResource")]
+        DB_EXEC[("FlowExecution")]
+        REDIS[("Redis<br/>锁/队列/缓存")]
     end
 
-    subgraph External["🔗 外部集成"]
-        WH["Webhook触发"]
-        TS["Task System<br/>任务系统"]
-        CS["Chat System<br/>聊天系统"]
-        CACHE["Cache Manager<br/>分布式锁"]
+    subgraph External["外部系统"]
+        WH["Webhook"]
+        CHAT["Chat System"]
+        TASK["Task System"]
     end
 
-    FP --> FC
-    FT --> FC
-    FL --> FC
-    FF --> FC
-    FF --> CP
-    FC --> FAPI
-
-    FAPI -->|"HTTP REST"| EP
+    FC --> EP
     EP --> SVC
-    SVC --> FR
-    SVC --> FE
-    SCH -->|"定时查询到期Flow"| SVC
-    SCH --> EMT
-    SCH --> CACHE
-    EMT -->|"更新执行状态"| FE
+    SVC --> DB_FLOW
+    SVC --> DB_EXEC
 
-    SVC -->|"创建Task"| TS
-    SVC -->|"触发AI响应"| CS
-    WH -->|"POST /webhook/{token}"| EP
+    SCH_CELERY --> CHK
+    SCH_APS --> CHK
+    SCH_XXL --> CHK
+
+    CHK --> DL
+    CHK --> SVC
+    CHK --> EXE
+
+    EXE --> SVC
+    EXE --> CB
+    EXE --> CHAT
+    EXE --> TASK
+
+    CB --> DLQ
+    DL --> REDIS
+    DLQ --> REDIS
+
+    WH --> EP
 ```
+
+---
+
+## 核心组件详解
+
+### 1. FlowService (flow.py)
+
+核心业务逻辑服务，负责：
+- Flow CRUD 操作
+- 执行记录管理
+- 状态机转换验证
+- 乐观锁并发控制
+- Prompt 模板变量解析
+- 下次执行时间计算
+
+**关键方法**：
+```python
+class FlowService:
+    def create_flow(db, flow_in, user_id) -> FlowInDB
+    def update_flow(db, flow_id, flow_in, user_id) -> FlowInDB
+    def trigger_flow_manually(db, flow_id, user_id) -> FlowExecutionInDB
+    def trigger_flow_by_webhook(db, webhook_token, payload) -> FlowExecutionInDB
+    def update_execution_status(db, execution_id, status, ...) -> bool
+    def create_execution(db, flow, user_id, trigger_type, ...) -> FlowExecutionInDB
+```
+
+### 2. Celery Tasks (flow_tasks.py)
+
+**check_due_flows**：每 60 秒运行一次的定时任务
+- 获取分布式锁防止多实例重复执行
+- 恢复过期的 PENDING 执行记录
+- 清理卡住的 RUNNING 执行记录
+- 批量处理到期的 Flow（每批 100 条）
+- 分发 execute_flow_task 任务
+
+**execute_flow_task**：实际执行 Flow 的任务
+- 加载执行上下文（flow, team, user, workspace）
+- 创建 Task 和 Subtasks
+- 触发 AI 响应（Chat Shell 类型）
+- 支持超时和重试
+- 更新执行状态和统计数据
+
+### 3. 调度器后端 (scheduler/)
+
+支持三种调度后端：
+
+| 后端 | 特点 | 适用场景 |
+|------|------|----------|
+| Celery Beat | 分布式，依赖 Redis | 生产环境多实例部署 |
+| APScheduler | 轻量级，内存/SQLite 存储 | 单实例开发环境 |
+| XXL-JOB | 企业级，独立调度中心 | 大规模企业部署 |
+
+### 4. 可靠性组件
+
+**CircuitBreaker**：防止 AI 服务故障级联
+- 连续 5 次失败后断开
+- 60 秒后尝试恢复
+- 支持同步和异步调用
+
+**DeadLetterQueue**：失败任务存储
+- 存储在 Redis，7 天 TTL
+- 支持查询和重试
+- Prometheus 指标监控
+
+**DistributedLock**：防止并发冲突
+- Redis SET NX 实现
+- 支持锁延期
+- 降级模式（Redis 不可用时允许执行）
 
 ---
 
 ## 数据流程图
 
-```mermaid
-flowchart TD
-    subgraph Create["📝 创建Flow"]
-        U1["用户填写FlowForm"] --> V1["前端验证"]
-        V1 --> API1["POST /api/flows"]
-        API1 --> SVC1["FlowService.create_flow()"]
-        SVC1 --> CRD["构建CRD JSON结构"]
-        CRD --> CALC["计算next_execution_time"]
-        CALC --> DB1[("保存FlowResource")]
-    end
-
-    subgraph Schedule["⏰ 定时调度"]
-        SCH1["flow_scheduler_worker<br/>每分钟运行"] --> LOCK["获取分布式锁"]
-        LOCK --> QUERY["查询到期的Flows<br/>next_execution_time <= now"]
-        QUERY --> EXEC["execute_flow()"]
-    end
-
-    subgraph Execute["🚀 执行流程"]
-        EXEC --> CREATE_EXE["创建FlowExecution记录<br/>状态: PENDING"]
-        CREATE_EXE --> RESOLVE["解析Prompt模板<br/>替换变量 {{date}}, {{time}}"]
-        RESOLVE --> TASK["创建Task"]
-        TASK --> TYPE{"任务类型?"}
-        TYPE -->|"Chat Shell"| CHAT["触发AI聊天响应"]
-        TYPE -->|"Executor"| EXECUTOR["executor_manager执行"]
-        CHAT --> STREAM["流式AI响应"]
-        EXECUTOR --> SUBTASK["执行子任务"]
-    end
-
-    subgraph Complete["✅ 完成处理"]
-        STREAM --> EMIT["FlowEventEmitter<br/>emit_chat_done()"]
-        SUBTASK --> EMIT
-        EMIT --> UPDATE["更新FlowExecution<br/>状态: COMPLETED/FAILED"]
-        UPDATE --> NEXT["计算下次执行时间"]
-        NEXT --> DB2[("更新FlowResource<br/>next_execution_time")]
-    end
-
-    subgraph Trigger["🔔 手动/Webhook触发"]
-        MANUAL["用户点击 Run Now"] --> API2["POST /api/flows/{id}/trigger"]
-        WEBHOOK["外部系统"] --> API3["POST /api/flows/webhook/{token}"]
-        API2 --> TRIGGER["FlowService.trigger_flow_manually()"]
-        API3 --> TRIGGER
-        TRIGGER --> CREATE_EXE
-    end
-
-    DB1 -.-> SCH1
-    DB2 -.-> SCH1
-```
-
----
-
-## 类图 (UML)
-
-```mermaid
-classDiagram
-    direction TB
-
-    class Flow {
-        <<CRD Schema>>
-        +String apiVersion
-        +String kind
-        +FlowMetadata metadata
-        +FlowSpec spec
-        +FlowStatus status
-    }
-
-    class FlowMetadata {
-        +String name
-        +String namespace
-        +Dict labels
-        +Dict annotations
-    }
-
-    class FlowSpec {
-        +String task_type
-        +String team_id
-        +String prompt_template
-        +FlowTriggerType trigger_type
-        +Dict trigger_config
-        +FlowRetryConfig retry_config
-    }
-
-    class FlowStatus {
-        +Bool enabled
-        +DateTime last_execution_time
-        +DateTime next_execution_time
-        +Int execution_count
-        +Int success_count
-        +Int failure_count
-    }
-
-    class FlowResource {
-        <<SQLAlchemy Model>>
-        +UUID id
-        +UUID user_id
-        +String kind
-        +String name
-        +String namespace
-        +JSON json
-        +Bool enabled
-        +String trigger_type
-        +UUID team_id
-        +String webhook_token
-        +DateTime next_execution_time
-        +Int execution_count
-    }
-
-    class FlowExecution {
-        <<SQLAlchemy Model>>
-        +UUID id
-        +UUID user_id
-        +UUID flow_id
-        +UUID task_id
-        +String trigger_type
-        +String trigger_reason
-        +String prompt
-        +FlowExecutionStatus status
-        +String result_summary
-        +String error_message
-        +Int retry_attempt
-        +DateTime started_at
-        +DateTime completed_at
-    }
-
-    class FlowService {
-        <<Service>>
-        +create_flow(user_id, flow)
-        +get_flow(flow_id)
-        +list_flows(user_id, filters)
-        +update_flow(flow_id, flow)
-        +delete_flow(flow_id)
-        +toggle_flow(flow_id, enabled)
-        +trigger_flow_manually(flow_id)
-        +trigger_flow_by_webhook(token, payload)
-        +list_executions(filters)
-        +update_execution_status(exec_id, status)
-        -_resolve_prompt_template(template, variables)
-        -_calculate_next_execution_time(trigger)
-        -_create_execution(flow, trigger_reason)
-    }
-
-    class FlowSchedulerWorker {
-        <<Background Worker>>
-        +start()
-        +stop()
-        -_run_scheduler_loop()
-        -_acquire_lock()
-        -_get_due_flows()
-        -_execute_flow(flow)
-    }
-
-    class FlowEventEmitter {
-        <<Event Emitter>>
-        +emit_chat_done(execution_id, result)
-        +emit_chat_error(execution_id, error)
-        +emit_status_update(execution_id, status)
-    }
-
-    class FlowTriggerType {
-        <<Enumeration>>
-        CRON
-        INTERVAL
-        ONE_TIME
-        EVENT
-    }
-
-    class FlowExecutionStatus {
-        <<Enumeration>>
-        PENDING
-        RUNNING
-        COMPLETED
-        FAILED
-        RETRYING
-        CANCELLED
-    }
-
-    Flow *-- FlowMetadata
-    Flow *-- FlowSpec
-    Flow *-- FlowStatus
-    FlowSpec --> FlowTriggerType
-    FlowResource ..> Flow : serializes
-    FlowExecution --> FlowExecutionStatus
-    FlowExecution --> FlowResource : belongs to
-    FlowService --> FlowResource : manages
-    FlowService --> FlowExecution : creates
-    FlowSchedulerWorker --> FlowService : uses
-    FlowSchedulerWorker --> FlowEventEmitter : uses
-    FlowEventEmitter --> FlowExecution : updates
-```
-
----
-
-## 时序图
-
-### 定时调度执行流程
+### Flow 执行流程
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    participant SCH as FlowSchedulerWorker
-    participant CACHE as CacheManager
+    participant SCH as 调度器
+    participant CHK as check_due_flows
+    participant DL as DistributedLock
     participant SVC as FlowService
-    participant DB as Database
-    participant TASK as TaskSystem
+    participant EXE as execute_flow_task
+    participant CB as CircuitBreaker
     participant CHAT as ChatSystem
-    participant EMT as FlowEventEmitter
+    participant DB as Database
 
     loop 每60秒
-        SCH->>CACHE: acquire_flow_scheduler_lock()
+        SCH->>CHK: 触发
+        CHK->>DL: acquire("check_due_flows", 120s)
         alt 获取锁成功
-            CACHE-->>SCH: lock acquired
-            SCH->>SVC: get_due_flows()
-            SVC->>DB: SELECT * FROM flows WHERE enabled=true AND next_execution_time <= now
-            DB-->>SVC: due_flows[]
+            CHK->>DB: 查询到期 Flows
+            CHK->>CHK: 恢复过期 PENDING
+            CHK->>CHK: 清理卡住 RUNNING
 
-            loop 对每个到期的Flow
-                SCH->>SVC: execute_flow(flow)
-                SVC->>DB: INSERT FlowExecution (status=PENDING)
-                DB-->>SVC: execution_id
-                SVC->>SVC: _resolve_prompt_template()
-                Note over SVC: 替换 {{date}}, {{time}}, {{flow_name}} 等变量
-
-                SVC->>TASK: task_kinds_service.create_task_or_append()
-                TASK-->>SVC: task_id
-                SVC->>DB: UPDATE FlowExecution SET task_id, status=RUNNING
-
-                alt Chat Shell 类型
-                    SVC->>CHAT: _trigger_chat_shell_response()
-                    CHAT->>CHAT: 流式AI响应生成
-                    CHAT->>EMT: emit_chat_done(execution_id, result)
-                else Executor 类型
-                    SVC->>TASK: 等待executor_manager处理
-                    TASK->>EMT: emit_status_update(execution_id)
-                end
-
-                EMT->>DB: UPDATE FlowExecution SET status=COMPLETED/FAILED
-                SVC->>SVC: _calculate_next_execution_time()
-                SVC->>DB: UPDATE FlowResource SET next_execution_time
+            loop 每个到期 Flow
+                CHK->>SVC: create_execution()
+                SVC->>DB: INSERT FlowExecution (PENDING)
+                CHK->>EXE: dispatch(flow_id, execution_id)
             end
 
-            SCH->>CACHE: release_lock()
+            CHK->>DL: release()
         else 锁被占用
-            CACHE-->>SCH: lock not acquired
-            Note over SCH: 跳过本次调度周期
+            CHK-->>SCH: 跳过
         end
     end
+
+    EXE->>SVC: load_context()
+    EXE->>SVC: create_task()
+    EXE->>DB: UPDATE FlowExecution (RUNNING)
+
+    alt Chat Shell 类型
+        EXE->>CB: call_ai_service()
+        CB->>CHAT: trigger_ai_response()
+        CHAT-->>CB: 完成
+        CB-->>EXE: 成功
+    else Executor 类型
+        EXE->>EXE: 等待 executor_manager
+    end
+
+    EXE->>SVC: update_execution_status(COMPLETED)
 ```
 
 ---
 
-## 状态图
+## 状态机设计
 
 ### FlowExecution 状态转换
 
@@ -396,41 +294,95 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> PENDING: 创建执行记录
 
-    PENDING --> RUNNING: 开始执行任务
+    PENDING --> RUNNING: 开始执行
     PENDING --> CANCELLED: 用户取消
+    PENDING --> FAILED: 验证失败
 
     RUNNING --> COMPLETED: 执行成功
     RUNNING --> FAILED: 执行失败
+    RUNNING --> RETRYING: 需要重试
     RUNNING --> CANCELLED: 用户取消
 
-    FAILED --> RETRYING: 重试 (retry_attempt < max_retries)
     RETRYING --> RUNNING: 重新执行
-    RETRYING --> FAILED: 重试次数耗尽
+    RETRYING --> FAILED: 重试耗尽
+    RETRYING --> CANCELLED: 用户取消
 
     COMPLETED --> [*]
     FAILED --> [*]
     CANCELLED --> [*]
-
-    note right of PENDING
-        初始状态
-        等待调度器执行
-    end note
-
-    note right of RUNNING
-        AI正在处理
-        实时更新进度
-    end note
-
-    note right of COMPLETED
-        执行成功
-        记录result_summary
-    end note
-
-    note right of FAILED
-        执行失败
-        记录error_message
-    end note
 ```
+
+**状态转换表**（来自 flow.py）：
+
+| 当前状态 | 允许的下一状态 |
+|----------|----------------|
+| PENDING | RUNNING, CANCELLED, FAILED |
+| RUNNING | COMPLETED, FAILED, RETRYING, CANCELLED |
+| RETRYING | RUNNING, FAILED, CANCELLED |
+| COMPLETED | (终态) |
+| FAILED | (终态) |
+| CANCELLED | (终态) |
+
+---
+
+## 调度器架构
+
+### 统一接口
+
+```python
+class SchedulerBackend(ABC):
+    @property
+    def backend_type(self) -> str: ...
+    @property
+    def state(self) -> SchedulerState: ...
+    def start(self) -> None: ...
+    def stop(self, wait: bool = True) -> None: ...
+    def pause(self) -> None: ...
+    def resume(self) -> None: ...
+    def schedule_job(...) -> ScheduledJob: ...
+    def remove_job(job_id: str) -> bool: ...
+    def get_job(job_id: str) -> Optional[ScheduledJob]: ...
+    def list_jobs() -> List[ScheduledJob]: ...
+```
+
+### 配置选择
+
+```python
+# 在 settings 中配置
+SCHEDULER_BACKEND = "celery"      # 默认
+SCHEDULER_BACKEND = "apscheduler" # 轻量级
+SCHEDULER_BACKEND = "xxljob"      # 企业级
+```
+
+---
+
+## 可靠性机制
+
+### 1. 过期执行恢复
+
+**PENDING 恢复**（默认 2 小时阈值）：
+- 检测 `created_at < now - 2h` 且 `task_id IS NULL` 的 PENDING 记录
+- 重新分发 execute_flow_task
+
+**RUNNING 清理**（默认 3 小时阈值）：
+- 检测 `started_at < now - 3h` 的 RUNNING 记录
+- 标记为 FAILED 并记录超时原因
+
+### 2. 熔断器保护
+
+```python
+ai_service_breaker = CircuitBreaker(
+    fail_max=5,           # 5 次失败后断开
+    reset_timeout=60,     # 60 秒后尝试恢复
+)
+```
+
+### 3. 乐观锁并发控制
+
+FlowExecution 表包含 `version` 字段：
+- 每次更新时检查版本
+- 版本不匹配抛出 OptimisticLockError
+- 防止并发更新冲突
 
 ---
 
@@ -438,247 +390,99 @@ stateDiagram-v2
 
 | 方法 | 端点 | 描述 |
 |------|------|------|
-| GET | `/api/flows` | 获取用户的 Flow 列表（分页） |
+| GET | `/api/flows` | 获取 Flow 列表（分页） |
 | POST | `/api/flows` | 创建新 Flow |
-| GET | `/api/flows/{id}` | 获取指定 Flow 详情 |
+| GET | `/api/flows/{id}` | 获取 Flow 详情 |
 | PUT | `/api/flows/{id}` | 更新 Flow |
 | DELETE | `/api/flows/{id}` | 软删除 Flow |
 | POST | `/api/flows/{id}/toggle` | 启用/禁用 Flow |
 | POST | `/api/flows/{id}/trigger` | 手动触发执行 |
-| GET | `/api/flows/executions` | 获取执行记录列表（时间线） |
-| GET | `/api/flows/executions/{id}` | 获取执行记录详情 |
-| POST | `/api/flows/webhook/{token}` | Webhook 触发（无需认证） |
+| GET | `/api/flows/executions` | 执行记录列表 |
+| GET | `/api/flows/executions/{id}` | 执行记录详情 |
+| DELETE | `/api/flows/executions/{id}/cancel` | 取消执行 |
+| GET | `/api/flows/executions/stale` | 获取过期执行（调试用） |
+| POST | `/api/flows/webhook/{token}` | Webhook 触发 |
 
 ---
 
-## 触发类型配置
+## 数据模型
 
-### Cron 触发
+### FlowResource 表
 
-```json
-{
-  "trigger_type": "cron",
-  "trigger_config": {
-    "expression": "0 9 * * *",
-    "timezone": "UTC"
-  }
-}
-```
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | Integer (PK) | 主键 |
+| user_id | Integer | 所属用户 |
+| kind | String(50) | 固定 "Flow" |
+| name | String(255) | Flow 名称 |
+| namespace | String(255) | 命名空间 |
+| json | JSON | 完整 CRD 结构 |
+| is_active | Boolean | 软删除标记 |
+| enabled | Boolean | 启用状态 |
+| trigger_type | String(50) | 触发类型 |
+| team_id | Integer | 关联 Team |
+| workspace_id | Integer | 关联 Workspace |
+| webhook_token | String(255) | Webhook 令牌 |
+| webhook_secret | String(255) | HMAC 签名密钥 |
+| next_execution_time | DateTime | 下次执行时间 |
+| execution_count | Integer | 总执行次数 |
+| success_count | Integer | 成功次数 |
+| failure_count | Integer | 失败次数 |
 
-### 间隔触发
+### FlowExecution 表
 
-```json
-{
-  "trigger_type": "interval",
-  "trigger_config": {
-    "value": 2,
-    "unit": "hours"
-  }
-}
-```
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | Integer (PK) | 主键 |
+| user_id | Integer | 所属用户 |
+| flow_id | Integer (FK) | 关联 Flow |
+| task_id | Integer | 关联 Task |
+| trigger_type | String(50) | 触发类型 |
+| trigger_reason | String(500) | 触发原因 |
+| prompt | Text | 解析后的 Prompt |
+| status | String(50) | 执行状态 |
+| result_summary | Text | 结果摘要 |
+| error_message | Text | 错误信息 |
+| retry_attempt | Integer | 重试次数 |
+| version | Integer | 乐观锁版本 |
+| started_at | DateTime | 开始时间 |
+| completed_at | DateTime | 完成时间 |
 
-支持的单位：`minutes` | `hours` | `days`
+---
 
-### 一次性触发
+## 配置参数
 
-```json
-{
-  "trigger_type": "one_time",
-  "trigger_config": {
-    "execute_at": "2025-01-15T10:00:00Z"
-  }
-}
-```
-
-### 事件触发
-
-```json
-{
-  "trigger_type": "event",
-  "trigger_config": {
-    "event_type": "webhook"
-  }
-}
-```
-
-支持的事件类型：`webhook` | `git_push`
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| SCHEDULER_BACKEND | "celery" | 调度后端类型 |
+| FLOW_SCHEDULER_INTERVAL_SECONDS | 60 | 调度检查间隔 |
+| FLOW_DEFAULT_TIMEOUT_SECONDS | 600 | 默认执行超时 |
+| FLOW_DEFAULT_RETRY_COUNT | 1 | 默认重试次数 |
+| FLOW_STALE_PENDING_HOURS | 2 | PENDING 过期阈值 |
+| FLOW_STALE_RUNNING_HOURS | 3 | RUNNING 过期阈值 |
+| CIRCUIT_BREAKER_FAIL_MAX | 5 | 熔断失败次数 |
+| CIRCUIT_BREAKER_RESET_TIMEOUT | 60 | 熔断恢复时间 |
+| EMBEDDED_CELERY_ENABLED | True | 嵌入式 Celery 开关 |
 
 ---
 
 ## 模板变量
 
-Prompt 模板支持以下变量替换：
-
 | 变量 | 说明 | 示例值 |
 |------|------|--------|
 | `{{date}}` | 当前日期 | `2025-01-15` |
 | `{{time}}` | 当前时间 | `10:30:00` |
-| `{{datetime}}` | 当前日期时间 | `2025-01-15 10:30:00` |
+| `{{datetime}}` | 日期时间 | `2025-01-15 10:30:00` |
 | `{{timestamp}}` | Unix 时间戳 | `1736937000` |
 | `{{flow_name}}` | Flow 显示名称 | `每日报告` |
-| `{{webhook_data}}` | Webhook 载荷（JSON） | `{"event": "push"}` |
-
-### 使用示例
-
-```
-请根据 {{date}} 的数据生成日报。
-当前时间：{{datetime}}
-Flow 名称：{{flow_name}}
-```
+| `{{webhook_data}}` | Webhook 载荷 | `{"event": "push"}` |
 
 ---
 
-## 关键技术点
+## Flow 任务可见性
 
-1. **CRD 风格数据模型**：借鉴 Kubernetes CRD 设计，使用 `apiVersion`、`kind`、`metadata`、`spec`、`status` 结构
+Flow 触发的任务默认不显示在用户历史对话列表：
 
-2. **分布式锁**：使用 CacheManager 实现分布式锁，确保多实例部署时只有一个调度器实例运行
-
-3. **事件发射器**：FlowEventEmitter 继承 NoOpEventEmitter，在 AI 聊天完成/失败时更新执行状态
-
-4. **模板解析**：支持动态变量替换，Webhook 触发时可注入外部数据
-
-5. **增量调度**：使用 `next_execution_time` 字段进行高效查询，避免全表扫描
-
----
-
-## 集成点
-
-1. **API Router**：在 `/api/flows` 注册，位于 `backend/app/api/api.py`
-
-2. **后台任务**：通过 `start_flow_scheduler()` 和 `stop_flow_scheduler()` 管理调度器生命周期
-
-3. **任务系统**：通过 `task_kinds_service.create_task_or_append()` 创建 Task
-
-4. **聊天系统**：Chat Shell 类型的 Team 通过聊天触发系统触发 AI 响应
-
----
-
-## Flow 任务历史对话可见性
-
-### 需求背景
-
-AI Flow 触发的任务默认不应该显示在用户的历史对话列表中，以避免自动任务干扰用户的对话历史。只有当用户主动与 Flow 任务交互（发送新消息）后，该任务才应该出现在历史对话列表中。
-
-### 设计方案
-
-#### Task Labels 标签体系
-
-Task 的 `metadata.labels` 包含以下标签：
-
-| 标签 | 值 | 说明 |
-|------|------|------|
-| `type` | `"online"` \| `"offline"` \| `"flow"` | 任务执行模式。`flow` 表示由 AI Flow 触发的任务 |
-| `taskType` | `"chat"` \| `"code"` | 任务类型 |
-| `source` | `"web"` \| `"api"` \| `"chat_shell"` | 任务来源（用户发起方式） |
-| `flowId` | `"123"` | Flow 任务特有，关联的 Flow ID |
-| `executionId` | `"456"` | Flow 任务特有，关联的执行记录 ID |
-| `userInteracted` | `"true"` \| `"false"` | Flow 任务特有，用户是否已交互 |
-
-#### 可见性规则
-
-1. **Flow 任务创建时**：
-   - `type` 设置为 `"flow"`
-   - `userInteracted` 设置为 `"false"`
-   - 任务不显示在历史对话列表
-
-2. **用户发送消息后**：
-   - `userInteracted` 更新为 `"true"`
-   - 任务显示在历史对话列表
-
-3. **历史对话列表查询**：
-   - 过滤条件：`type != "flow"` OR (`type == "flow"` AND `userInteracted == "true"`)
-
-### 数据流程图
-
-```mermaid
-flowchart TD
-    subgraph FlowTrigger["Flow 触发任务"]
-        FT1["Flow 调度器触发"] --> FT2["创建 Task"]
-        FT2 --> FT3["设置 labels:<br/>type='flow'<br/>userInteracted='false'"]
-        FT3 --> FT4["任务不显示在历史对话"]
-    end
-
-    subgraph UserView["用户查看会话"]
-        UV1["点击 Flow Execution<br/>'查看会话' 按钮"] --> UV2["弹出会话对话框"]
-        UV2 --> UV3{"用户是否发送消息?"}
-        UV3 -->|"否"| UV4["关闭对话框<br/>任务仍不显示"]
-        UV3 -->|"是"| UV5["更新 labels:<br/>userInteracted='true'"]
-        UV5 --> UV6["任务显示在历史对话"]
-    end
-
-    subgraph HistoryList["历史对话列表"]
-        HL1["查询用户任务"] --> HL2{"检查 type"}
-        HL2 -->|"online/offline"| HL3["显示在列表"]
-        HL2 -->|"flow"| HL4{"userInteracted?"}
-        HL4 -->|"true"| HL3
-        HL4 -->|"false"| HL5["不显示"]
-    end
-
-    FT4 -.-> UV1
-    UV6 -.-> HL1
-```
-
-### 时序图
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant User as 用户
-    participant FE as 前端
-    participant API as 后端 API
-    participant DB as 数据库
-
-    Note over User,DB: Flow 任务创建（自动触发）
-    API->>DB: 创建 Task (type='flow', userInteracted='false')
-    Note over DB: 任务不显示在历史对话列表
-
-    Note over User,DB: 用户查看 Flow Execution
-    User->>FE: 点击"查看会话"
-    FE->>API: GET /tasks/{task_id}
-    API-->>FE: 返回任务详情
-    FE->>FE: 弹出会话对话框
-
-    Note over User,DB: 用户发送新消息
-    User->>FE: 输入并发送消息
-    FE->>API: POST /chat (task_id, message)
-    API->>DB: 创建 Subtask
-    API->>DB: 更新 Task labels (userInteracted='true')
-    API-->>FE: 返回成功
-    Note over DB: 任务现在显示在历史对话列表
-
-    Note over User,DB: 历史对话列表查询
-    User->>FE: 打开历史对话
-    FE->>API: GET /tasks/lite
-    API->>DB: SELECT * WHERE type != 'flow'<br/>OR userInteracted = 'true'
-    DB-->>API: 任务列表
-    API-->>FE: 返回过滤后的列表
-```
-
-### 实现要点
-
-#### 后端修改
-
-1. **`flow_tasks.py`** - Flow 任务创建时设置标签：
-   ```python
-   # _add_flow_labels_to_task 函数中添加
-   task_crd.metadata.labels["type"] = "flow"
-   task_crd.metadata.labels["userInteracted"] = "false"
-   ```
-
-2. **`task_kinds.py`** - 历史对话列表查询时过滤：
-   ```python
-   # get_user_tasks_lite 等方法中添加过滤逻辑
-   # 过滤掉 type='flow' 且 userInteracted='false' 的任务
-   ```
-
-3. **`chat_namespace.py`** - 用户发送消息时更新标签：
-   ```python
-   # 处理 chat:send 时，如果任务有 flowId 标签
-   # 则更新 userInteracted='true'
-   ```
-
-#### 前端修改
-
-1. **`FlowTimeline.tsx`** - "查看会话"按钮点击时弹出对话框
-2. **对话框组件** - 使用现有会话页面组件，传入 task_id
+1. **创建时**：`type='flow'`, `userInteracted='false'`
+2. **用户交互后**：`userInteracted='true'`，任务显示在历史列表
+3. **查询过滤**：`type != 'flow' OR userInteracted = 'true'`

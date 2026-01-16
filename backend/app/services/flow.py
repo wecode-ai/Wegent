@@ -834,11 +834,11 @@ class FlowService:
         expected_version: Optional[int] = None,
     ) -> bool:
         """
-        Update execution status with optimistic locking and state machine validation.
+        Update execution status with atomic update and state machine validation.
 
         This method ensures:
         1. State transitions are valid (follows the state machine)
-        2. Concurrent updates are detected via optimistic locking
+        2. Concurrent updates are handled atomically via WHERE clause
         3. Statistics are updated atomically
 
         Args:
@@ -859,6 +859,7 @@ class FlowService:
         if isinstance(status, str):
             status = FlowExecutionStatus(status)
 
+        # First, get the current status to validate state transition
         execution = (
             db.query(FlowExecution).filter(FlowExecution.id == execution_id).first()
         )
@@ -870,6 +871,7 @@ class FlowService:
             return False
 
         current_status = FlowExecutionStatus(execution.status)
+        current_version = getattr(execution, "version", 0) or 0
 
         # Validate state transition
         if not validate_state_transition(current_status, status):
@@ -878,33 +880,57 @@ class FlowService:
                 f"{current_status.value} -> {status.value}, "
                 f"flow_id={execution.flow_id}, task_id={execution.task_id}"
             )
-            # Don't raise exception, just skip invalid transitions
-            # This prevents race conditions from causing errors
             return False
 
         # Check optimistic lock if expected_version is provided
-        current_version = getattr(execution, "version", 0) or 0
         if expected_version is not None and current_version != expected_version:
             raise OptimisticLockError(execution_id, expected_version, current_version)
 
         # Use UTC for all timestamps
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        # Update execution
-        execution.status = status.value
-        execution.updated_at = now_utc
-        execution.version = current_version + 1  # Increment version
+        # Build atomic update values
+        update_values = {
+            "status": status.value,
+            "updated_at": now_utc,
+            "version": current_version + 1,
+        }
 
         if status == FlowExecutionStatus.RUNNING:
-            execution.started_at = now_utc
+            update_values["started_at"] = now_utc
         elif status in (FlowExecutionStatus.COMPLETED, FlowExecutionStatus.FAILED):
-            execution.completed_at = now_utc
+            update_values["completed_at"] = now_utc
 
         if result_summary:
-            execution.result_summary = result_summary
+            update_values["result_summary"] = result_summary
 
         if error_message:
-            execution.error_message = error_message
+            update_values["error_message"] = error_message
+
+        # Atomic update with WHERE clause to prevent race conditions
+        # Only update if current status and version match what we read
+        rows_updated = (
+            db.query(FlowExecution)
+            .filter(
+                FlowExecution.id == execution_id,
+                FlowExecution.status == current_status.value,
+                FlowExecution.version == current_version,
+            )
+            .update(update_values, synchronize_session=False)
+        )
+
+        if rows_updated == 0:
+            # Another process updated the execution, refresh and check
+            db.refresh(execution)
+            logger.warning(
+                f"[Flow] Concurrent update detected for execution {execution_id}: "
+                f"expected status={current_status.value}, version={current_version}, "
+                f"actual status={execution.status}, version={execution.version}"
+            )
+            return False
+
+        # Refresh the execution object after atomic update
+        db.refresh(execution)
 
         # Update flow statistics (only for terminal states to avoid double counting)
         if status in (FlowExecutionStatus.COMPLETED, FlowExecutionStatus.FAILED):
@@ -994,6 +1020,13 @@ class FlowService:
             flow_crd.spec.displayName,
             extra_variables,
         )
+
+        # Validate resolved prompt is not empty
+        if not resolved_prompt or not resolved_prompt.strip():
+            raise ValueError(
+                f"Prompt template resolved to empty string for flow {flow.id} ({flow.name}). "
+                f"Template: '{flow_crd.spec.promptTemplate}'"
+            )
 
         execution = FlowExecution(
             user_id=user_id,

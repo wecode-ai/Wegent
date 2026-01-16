@@ -173,9 +173,10 @@ def with_circuit_breaker_async(
     """
     Async version of circuit breaker decorator.
 
-    Note: pybreaker doesn't natively support async functions. This wrapper provides:
-    - Circuit state checking (rejects requests when OPEN)
-    - Listener notifications for metrics tracking
+    This wrapper properly integrates with pybreaker by:
+    - Checking circuit state before calling (rejects requests when OPEN)
+    - Recording successes and failures to trigger state transitions
+    - Supporting fallback when circuit is open
 
     Usage:
         @with_circuit_breaker_async(ai_service_breaker)
@@ -205,12 +206,18 @@ def with_circuit_breaker_async(
 
             try:
                 result = await func(*args, **kwargs)
-                # Notify listeners of success for metrics tracking
+                # Record success to trigger state transition (e.g., HALF_OPEN -> CLOSED)
+                # Use _success_call to properly update the circuit breaker state
+                breaker._success_call()
+                # Also notify listeners for metrics tracking
                 for listener in breaker.listeners:
                     listener.success(breaker)
                 return result
             except Exception as e:
-                # Notify listeners of failure for metrics tracking
+                # Record failure to trigger state transition (e.g., CLOSED -> OPEN)
+                # Use _failure_call to properly update the circuit breaker state
+                breaker._failure_call()
+                # Also notify listeners for metrics tracking
                 for listener in breaker.listeners:
                     listener.failure(breaker, e)
                 raise

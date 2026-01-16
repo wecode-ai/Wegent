@@ -468,6 +468,12 @@ def check_due_flows(self):
                 dispatched = 0
                 offset = 0
 
+                # Track last lock extension time for watchdog pattern
+                import time
+
+                last_lock_extend_time = time.time()
+                LOCK_EXTEND_INTERVAL = 30  # Extend lock every 30 seconds
+
                 while offset < total_due:
                     # Query batch of due flows
                     due_flows = (
@@ -493,7 +499,19 @@ def check_due_flows(self):
                     if not due_flows:
                         break
 
-                    for flow in due_flows:
+                    for idx, flow in enumerate(due_flows):
+                        # Watchdog: extend lock periodically during processing
+                        current_time = time.time()
+                        if current_time - last_lock_extend_time >= LOCK_EXTEND_INTERVAL:
+                            distributed_lock.extend(
+                                "check_due_flows",
+                                expire_seconds=CHECK_DUE_FLOWS_LOCK_TIMEOUT,
+                            )
+                            last_lock_extend_time = current_time
+                            logger.debug(
+                                f"[flow_tasks] Extended lock during batch processing "
+                                f"(processed {offset + idx}/{total_due})"
+                            )
                         try:
                             flow_crd = Flow.model_validate(flow.json)
                             trigger_type = flow.trigger_type
@@ -536,12 +554,15 @@ def check_due_flows(self):
 
                     offset += len(due_flows)
 
-                    # Extend lock if processing takes a while
+                    # Additional lock extension between batches (backup to watchdog)
+                    # The watchdog pattern inside the loop handles most cases,
+                    # this is an extra safety measure
                     if offset < total_due:
                         distributed_lock.extend(
                             "check_due_flows",
                             expire_seconds=CHECK_DUE_FLOWS_LOCK_TIMEOUT,
                         )
+                        last_lock_extend_time = time.time()  # Reset watchdog timer
 
                 logger.info(
                     f"[flow_tasks] check_due_flows completed: {dispatched}/{total_due} flows dispatched, {recovered} pending recovered, {cleaned_running} running cleaned"
@@ -569,6 +590,10 @@ def _recover_stale_pending_executions(db: Session) -> int:
     2. The service crashed before dispatch_flow_execution was called
     3. The execution is now orphaned
 
+    Uses SELECT FOR UPDATE SKIP LOCKED to prevent race conditions:
+    - Multiple workers won't process the same execution
+    - Executions being processed by another worker are skipped
+
     Args:
         db: Database session
 
@@ -586,6 +611,8 @@ def _recover_stale_pending_executions(db: Session) -> int:
             hours=settings.FLOW_STALE_PENDING_HOURS
         )
 
+        # Use FOR UPDATE SKIP LOCKED to prevent race conditions
+        # This ensures only one worker processes each stale execution
         stale_executions = (
             db.query(FlowExecution)
             .filter(
@@ -593,6 +620,7 @@ def _recover_stale_pending_executions(db: Session) -> int:
                 FlowExecution.created_at < stale_threshold,
                 FlowExecution.task_id == None,  # Never linked to a task
             )
+            .with_for_update(skip_locked=True)
             .limit(50)  # Limit to avoid processing too many at once
             .all()
         )
@@ -641,6 +669,13 @@ def _recover_stale_pending_executions(db: Session) -> int:
                     )
                     continue
 
+                # Mark as RUNNING before dispatch to prevent duplicate recovery
+                # This is done within the same transaction that holds the row lock
+                execution.status = FlowExecutionStatus.RUNNING.value
+                execution.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                execution.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                db.commit()
+
                 # Re-dispatch the execution
                 from app.schemas.flow import FlowExecutionInDB
 
@@ -652,7 +687,7 @@ def _recover_stale_pending_executions(db: Session) -> int:
                     trigger_type=execution.trigger_type,
                     trigger_reason=execution.trigger_reason,
                     prompt=execution.prompt,
-                    status=FlowExecutionStatus(execution.status),
+                    status=FlowExecutionStatus.RUNNING,
                     result_summary=execution.result_summary,
                     error_message=execution.error_message,
                     retry_attempt=execution.retry_attempt,
@@ -676,6 +711,7 @@ def _recover_stale_pending_executions(db: Session) -> int:
                     f"[flow_tasks] Failed to recover execution {execution.id}: {e}",
                     exc_info=True,
                 )
+                db.rollback()
                 continue
 
         return recovered

@@ -140,7 +140,7 @@ class TestCreateChatTaskRouting:
 
         with (
             patch(
-                "app.services.chat.storage.task_manager.should_use_direct_chat",
+                "app.services.chat.config.should_use_direct_chat",
                 return_value=True,
             ),
             patch(
@@ -198,11 +198,11 @@ class TestCreateChatTaskRouting:
 
         with (
             patch(
-                "app.services.chat.storage.task_manager.should_use_direct_chat",
+                "app.services.chat.config.should_use_direct_chat",
                 return_value=False,
             ),
             patch(
-                "app.services.chat.storage.task_manager.task_kinds_service"
+                "app.services.adapters.task_kinds.task_kinds_service"
             ) as mock_service,
         ):
             mock_service.create_task_or_append.return_value = mock_task_dict
