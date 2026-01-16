@@ -28,7 +28,7 @@ export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskIn
   onAppModeChange: (mode: string | undefined) => void
 
   // Task type
-  taskType: 'chat' | 'code'
+  taskType: 'chat' | 'code' | 'knowledge'
   autoFocus?: boolean
 
   // Tips

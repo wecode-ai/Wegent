@@ -59,6 +59,10 @@ class KnowledgeBaseCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
     namespace: str = Field(default="default", max_length=255)
+    kb_type: Optional[str] = Field(
+        "notebook",
+        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+    )
     retrieval_config: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
     )
@@ -116,6 +120,10 @@ class KnowledgeBaseResponse(BaseModel):
     description: Optional[str] = None
     user_id: int
     namespace: str
+    kb_type: Optional[str] = Field(
+        "notebook",
+        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+    )
     document_count: int
     is_active: bool
     retrieval_config: Optional[RetrievalConfig] = Field(
@@ -149,12 +157,15 @@ class KnowledgeBaseResponse(BaseModel):
         summary = spec.get("summary")
         # Extract summary_model_ref from spec
         summary_model_ref = spec.get("summaryModelRef")
+        # Extract kb_type from spec, default to 'notebook' for backward compatibility
+        kb_type = spec.get("kbType", "notebook")
         return cls(
             id=kind.id,
             name=spec.get("name", ""),
             description=spec.get("description") or None,  # Convert empty string to None
             user_id=kind.user_id,
             namespace=kind.namespace,
+            kb_type=kb_type,
             document_count=document_count,
             retrieval_config=spec.get("retrievalConfig"),
             summary_enabled=spec.get("summaryEnabled", False),

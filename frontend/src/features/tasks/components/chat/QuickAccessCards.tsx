@@ -36,7 +36,7 @@ interface QuickAccessCardsProps {
   teams: Team[]
   selectedTeam: Team | null
   onTeamSelect: (team: Team) => void
-  currentMode: 'chat' | 'code'
+  currentMode: 'chat' | 'code' | 'knowledge'
   isLoading?: boolean
   isTeamsLoading?: boolean
   hideSelected?: boolean // Whether to hide the selected team from the cards
@@ -61,7 +61,7 @@ export function QuickAccessCards({
   const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([])
   const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true)
   const [clickedTeamId, setClickedTeamId] = useState<number | null>(null)
-  const [switchingToMode, setSwitchingToMode] = useState<'chat' | 'code' | null>(null)
+  const [switchingToMode, setSwitchingToMode] = useState<'chat' | 'code' | 'knowledge' | null>(null)
   const [showMoreTeams, setShowMoreTeams] = useState(false)
   const [showWizard, setShowWizard] = useState(false)
   const moreButtonRef = useRef<HTMLDivElement>(null)
@@ -178,7 +178,7 @@ export function QuickAccessCards({
   }, [showMoreTeams])
 
   // Determine the target mode for a team based on recommended_mode or bind_mode
-  const getTeamTargetMode = (team: DisplayTeam): 'chat' | 'code' | 'both' => {
+  const getTeamTargetMode = (team: DisplayTeam): 'chat' | 'code' | 'knowledge' | 'both' => {
     // First check recommended_mode (from quick access config)
     if (team.recommended_mode && team.recommended_mode !== 'both') {
       return team.recommended_mode

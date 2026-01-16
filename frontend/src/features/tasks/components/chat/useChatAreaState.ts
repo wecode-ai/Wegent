@@ -25,8 +25,15 @@ const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18
 
 export interface UseChatAreaStateOptions {
   teams: Team[]
-  taskType: 'chat' | 'code'
+  taskType: 'chat' | 'code' | 'knowledge'
   selectedTeamForNewTask?: Team | null
+  /** Initial knowledge base to pre-select when starting a new chat from knowledge page */
+  initialKnowledgeBase?: {
+    id: number
+    name: string
+    namespace: string
+    document_count?: number
+  } | null
 }
 
 export interface ChatAreaState {
@@ -132,6 +139,7 @@ export function useChatAreaState({
   teams: _teams,
   taskType,
   selectedTeamForNewTask,
+  initialKnowledgeBase,
 }: UseChatAreaStateOptions): ChatAreaState {
   const { selectedTaskDetail } = useTaskContext()
 
@@ -326,6 +334,24 @@ export function useChatAreaState({
       setSelectedTeam(selectedTeamForNewTask)
     }
   }, [selectedTeamForNewTask, selectedTaskDetail])
+
+  // Initialize selectedContexts with initialKnowledgeBase when starting a new chat
+  // This is used when opening chat from knowledge base page
+  useEffect(() => {
+    // Only initialize when:
+    // 1. We have an initialKnowledgeBase
+    // 2. No task is currently selected (new chat)
+    // 3. selectedContexts is empty (not already initialized)
+    if (initialKnowledgeBase && !selectedTaskDetail && selectedContexts.length === 0) {
+      const kbContext: ContextItem = {
+        id: initialKnowledgeBase.id,
+        name: initialKnowledgeBase.name,
+        type: 'knowledge_base',
+        document_count: initialKnowledgeBase.document_count,
+      }
+      setSelectedContexts([kbContext])
+    }
+  }, [initialKnowledgeBase, selectedTaskDetail, selectedContexts.length])
 
   // Compute UI flags
   const shouldHideQuotaUsage = useMemo(() => {
