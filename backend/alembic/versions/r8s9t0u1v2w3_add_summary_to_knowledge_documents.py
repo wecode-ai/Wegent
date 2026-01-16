@@ -4,7 +4,7 @@
 
 """Add summary field to knowledge_documents table
 
-Revision ID: q7r8s9t0u1v2
+Revision ID: r8s9t0u1v2w3
 Revises: p6q7r8s9t0u1
 Create Date: 2025-01-12 10:00:00.000000
 
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "q7r8s9t0u1v2"
+revision: str = "r8s9t0u1v2w3"
 down_revision: Union[str, None] = "p6q7r8s9t0u1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
