@@ -55,9 +55,9 @@
     "updateFailed": "更新项目失败",
     "deleteSuccess": "项目删除成功",
     "deleteFailed": "删除项目失败",
-    "addTaskSuccess": "任务已添加到项目",
+    "addTaskSuccess": "对话已添加到分组",
     "addTaskFailed": "添加任务失败",
-    "removeTaskSuccess": "任务已从项目移除",
+    "removeTaskSuccess": "对话已从分组移除",
     "removeTaskFailed": "移除任务失败",
     "groupChatNotSupported": "对话分组功能暂时不支持群聊加入"
   },
