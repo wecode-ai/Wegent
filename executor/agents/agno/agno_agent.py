@@ -23,6 +23,15 @@ from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
 
 from executor.agents.base import Agent
+from executor.callback.streaming_handler import (
+    StreamingCallbackState,
+    send_stream_chunk_callback,
+    send_stream_done_callback,
+    send_stream_error_callback,
+    send_stream_start_callback,
+    send_tool_done_callback,
+    send_tool_start_callback,
+)
 from executor.config.config import DEBUG_RUN, EXECUTOR_ENV
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
@@ -96,9 +105,8 @@ class AgnoAgent(Agent):
         # Accumulated reasoning content from DeepSeek R1 and similar models
         self.accumulated_reasoning_content: str = ""
 
-        # Streaming throttle control - avoid sending too many HTTP callbacks
-        self._last_content_report_time: float = 0
-        self._content_report_interval: float = 0.5  # Report at most every 500ms
+        # Streaming state for unified streaming callbacks
+        self.streaming_state = StreamingCallbackState(emit_interval=0.5)
 
         # Initialize thinking step manager first
         self.thinking_manager = ThinkingStepManager(
@@ -610,6 +618,19 @@ class AgnoAgent(Agent):
             if hasattr(run_response_event, "run_id"):
                 self.current_run_id = run_response_event.run_id
                 logger.info(f"Stored run_id: {self.current_run_id}")
+
+            # Send stream_start callback
+            if not self.streaming_state.stream_started:
+                send_stream_start_callback(
+                    task_id=self.task_id,
+                    subtask_id=self.subtask_id,
+                    shell_type="Agno",
+                    task_title=self.task_data.get("task_title", ""),
+                    subtask_title=self.task_data.get("subtask_title", ""),
+                )
+                self.streaming_state.stream_started = True
+
+            # Keep backward compatibility - send report_progress
             self.report_progress(
                 75,
                 TaskStatus.RUNNING.value,
@@ -628,6 +649,18 @@ class AgnoAgent(Agent):
             logger.info(f"🔧 AGENT TOOL STARTED: {run_response_event.tool.tool_name}")
             logger.info(f"   Args: {run_response_event.tool.tool_args}")
 
+            # Send tool_start callback
+            tool_id = getattr(run_response_event.tool, "id", "")
+            send_tool_start_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                tool_id=tool_id,
+                tool_name=run_response_event.tool.tool_name,
+                tool_input=run_response_event.tool.tool_args,
+                task_title=self.task_data.get("task_title", ""),
+                subtask_title=self.task_data.get("subtask_title", ""),
+            )
+
             # Build tool call details in target format
             tool_details = {
                 "type": "assistant",
@@ -638,7 +671,7 @@ class AgnoAgent(Agent):
                     "content": [
                         {
                             "type": "tool_use",
-                            "id": getattr(run_response_event.tool, "id", ""),
+                            "id": tool_id,
                             "name": run_response_event.tool.tool_name,
                             "input": run_response_event.tool.tool_args,
                         }
@@ -652,6 +685,7 @@ class AgnoAgent(Agent):
                 details=tool_details,
             )
 
+            # Keep backward compatibility - send report_progress
             self.report_progress(
                 80,
                 TaskStatus.RUNNING.value,
@@ -667,6 +701,18 @@ class AgnoAgent(Agent):
             logger.info(f"✅ AGENT TOOL COMPLETED: {tool_name}")
             logger.info(f"   Result: {tool_result[:100] if tool_result else 'None'}...")
 
+            # Send tool_done callback
+            tool_id = getattr(run_response_event.tool, "id", "")
+            send_tool_done_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                tool_id=tool_id,
+                tool_output=tool_result,
+                tool_error=None,
+                task_title=self.task_data.get("task_title", ""),
+                subtask_title=self.task_data.get("subtask_title", ""),
+            )
+
             # Build tool result details in target format
             tool_result_details = {
                 "type": "assistant",
@@ -677,7 +723,7 @@ class AgnoAgent(Agent):
                     "content": [
                         {
                             "type": "tool_result",
-                            "tool_use_id": getattr(run_response_event.tool, "id", ""),
+                            "tool_use_id": tool_id,
                             "content": run_response_event.tool.result,
                             "is_error": False,
                         }
@@ -696,24 +742,45 @@ class AgnoAgent(Agent):
             content_chunk = run_response_event.content
             if content_chunk:
                 result_content += str(content_chunk)
-                # Throttled report progress - only send if enough time has passed
-                current_time = time.time()
-                time_since_last = current_time - self._last_content_report_time
+
+                # Add content to streaming state and check if should emit
+                should_emit, chunk, offset = self.streaming_state.add_content(str(content_chunk))
+
                 logger.info(
                     f"Content chunk received, length={len(content_chunk)}, "
-                    f"total_length={len(result_content)}, time_since_last={time_since_last:.3f}s"
+                    f"total_length={len(result_content)}, should_emit={should_emit}"
                 )
-                if time_since_last >= self._content_report_interval:
-                    self._last_content_report_time = current_time
+
+                if should_emit:
                     logger.info(
-                        f"Sending streaming update, content_length={len(result_content)}"
+                        f"Sending streaming update, content_length={len(result_content)}, offset={offset}"
                     )
-                    # Include accumulated reasoning_content in streaming updates
+
+                    # Build result data for streaming update
                     reasoning_content = (
                         self.accumulated_reasoning_content
                         if self.accumulated_reasoning_content
                         else None
                     )
+                    result_data = {
+                        "thinking": [step.dict() for step in self.thinking_manager.get_thinking_steps()],
+                        "reasoning_content": reasoning_content,
+                    }
+
+                    # Send stream_chunk callback
+                    send_stream_chunk_callback(
+                        task_id=self.task_id,
+                        subtask_id=self.subtask_id,
+                        content=chunk,
+                        offset=offset,
+                        task_title=self.task_data.get("task_title", ""),
+                        subtask_title=self.task_data.get("subtask_title", ""),
+                        result_data=result_data,
+                    )
+
+                    self.streaming_state.mark_emitted()
+
+                    # Keep backward compatibility - send report_progress
                     self.report_progress(
                         85,
                         TaskStatus.RUNNING.value,
@@ -922,11 +989,40 @@ class AgnoAgent(Agent):
             if self.task_state_manager.is_cancelled(self.task_id):
                 return TaskStatus.COMPLETED
 
+            # Send final stream_done callback with complete result
+            reasoning_content = (
+                self.accumulated_reasoning_content
+                if self.accumulated_reasoning_content
+                else None
+            )
+            final_result_data = {
+                "value": result_content,
+                "thinking": [step.dict() for step in self.thinking_manager.get_thinking_steps()],
+                "reasoning_content": reasoning_content,
+            }
+
+            send_stream_done_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                offset=len(self.streaming_state.accumulated_content),
+                result_data=final_result_data,
+                task_title=self.task_data.get("task_title", ""),
+                subtask_title=self.task_data.get("subtask_title", ""),
+            )
+
             return self._handle_execution_result(
                 result_content, "agent streaming execution"
             )
 
         except Exception as e:
+            # Send stream_error callback
+            send_stream_error_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                error=str(e),
+                task_title=self.task_data.get("task_title", ""),
+                subtask_title=self.task_data.get("subtask_title", ""),
+            )
             return self._handle_execution_error(e, "agent streaming execution")
 
     async def _run_team_async(self, prompt: str) -> TaskStatus:
@@ -1043,11 +1139,40 @@ class AgnoAgent(Agent):
             if self.task_state_manager.is_cancelled(self.task_id):
                 return TaskStatus.COMPLETED
 
+            # Send final stream_done callback with complete result
+            reasoning_content = (
+                self.accumulated_reasoning_content
+                if self.accumulated_reasoning_content
+                else None
+            )
+            final_result_data = {
+                "value": result_content,
+                "thinking": [step.dict() for step in self.thinking_manager.get_thinking_steps()],
+                "reasoning_content": reasoning_content,
+            }
+
+            send_stream_done_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                offset=len(self.streaming_state.accumulated_content),
+                result_data=final_result_data,
+                task_title=self.task_data.get("task_title", ""),
+                subtask_title=self.task_data.get("subtask_title", ""),
+            )
+
             return self._handle_execution_result(
                 result_content, "team streaming execution"
             )
 
         except Exception as e:
+            # Send stream_error callback
+            send_stream_error_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                error=str(e),
+                task_title=self.task_data.get("task_title", ""),
+                subtask_title=self.task_data.get("subtask_title", ""),
+            )
             return self._handle_execution_error(e, "team streaming execution")
 
     async def _handle_team_streaming_event(
@@ -1125,6 +1250,19 @@ class AgnoAgent(Agent):
                 if hasattr(run_response_event, "run_id"):
                     self.current_run_id = run_response_event.run_id
                     logger.info(f"Stored run_id: {self.current_run_id}")
+
+                # Send stream_start callback
+                if not self.streaming_state.stream_started:
+                    send_stream_start_callback(
+                        task_id=self.task_id,
+                        subtask_id=self.subtask_id,
+                        shell_type="Agno",
+                        task_title=self.task_data.get("task_title", ""),
+                        subtask_title=self.task_data.get("subtask_title", ""),
+                    )
+                    self.streaming_state.stream_started = True
+
+                # Keep backward compatibility - send report_progress
                 self.report_progress(
                     75,
                     TaskStatus.RUNNING.value,
@@ -1139,6 +1277,18 @@ class AgnoAgent(Agent):
             logger.info(f"\n🔧 TEAM TOOL STARTED: {run_response_event.tool.tool_name}")
             logger.info(f"   Args: {run_response_event.tool.tool_args}")
 
+            # Send tool_start callback
+            tool_id = getattr(run_response_event.tool, "id", "")
+            send_tool_start_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                tool_id=tool_id,
+                tool_name=run_response_event.tool.tool_name,
+                tool_input=run_response_event.tool.tool_args,
+                task_title=self.task_data.get("task_title", ""),
+                subtask_title=self.task_data.get("subtask_title", ""),
+            )
+
             # Build team tool call details in target format
             team_tool_details = {
                 "type": "assistant",
@@ -1149,7 +1299,7 @@ class AgnoAgent(Agent):
                     "content": [
                         {
                             "type": "tool_use",
-                            "id": getattr(run_response_event.tool, "id", ""),
+                            "id": tool_id,
                             "name": run_response_event.tool.tool_name,
                             "input": run_response_event.tool.tool_args,
                         }
@@ -1162,6 +1312,8 @@ class AgnoAgent(Agent):
                 report_immediately=False,
                 details=team_tool_details,
             )
+
+            # Keep backward compatibility - send report_progress
             self.report_progress(
                 80,
                 TaskStatus.RUNNING.value,
@@ -1176,6 +1328,18 @@ class AgnoAgent(Agent):
             tool_result = run_response_event.tool.result
             logger.info(f"\n✅ TEAM TOOL COMPLETED: {tool_name}")
 
+            # Send tool_done callback
+            tool_id = getattr(run_response_event.tool, "id", "")
+            send_tool_done_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                tool_id=tool_id,
+                tool_output=tool_result,
+                tool_error=None,
+                task_title=self.task_data.get("task_title", ""),
+                subtask_title=self.task_data.get("subtask_title", ""),
+            )
+
             # Build team tool result details in target format
             team_tool_result_details = {
                 "type": "assistant",
@@ -1186,7 +1350,7 @@ class AgnoAgent(Agent):
                     "content": [
                         {
                             "type": "tool_result",
-                            "tool_use_id": getattr(run_response_event.tool, "id", ""),
+                            "tool_use_id": tool_id,
                             "content": tool_result,
                             "is_error": False,
                         }
@@ -1207,6 +1371,18 @@ class AgnoAgent(Agent):
             logger.info(f"   Tool: {run_response_event.tool.tool_name}")
             logger.info(f"   Args: {run_response_event.tool.tool_args}")
 
+            # Send tool_start callback
+            tool_id = getattr(run_response_event.tool, "id", "")
+            send_tool_start_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                tool_id=tool_id,
+                tool_name=run_response_event.tool.tool_name,
+                tool_input=run_response_event.tool.tool_args,
+                task_title=self.task_data.get("task_title", ""),
+                subtask_title=self.task_data.get("subtask_title", ""),
+            )
+
             # Build member tool call details in target format
             member_tool_details = {
                 "type": "assistant",
@@ -1217,7 +1393,7 @@ class AgnoAgent(Agent):
                     "content": [
                         {
                             "type": "tool_use",
-                            "id": getattr(run_response_event.tool, "id", ""),
+                            "id": tool_id,
                             "name": run_response_event.tool.tool_name,
                             "input": run_response_event.tool.tool_args,
                         }
@@ -1238,6 +1414,18 @@ class AgnoAgent(Agent):
             logger.info(f"   Tool: {tool_name}")
             logger.info(f"   Result: {tool_result[:100] if tool_result else 'None'}...")
 
+            # Send tool_done callback
+            tool_id = getattr(run_response_event.tool, "id", "")
+            send_tool_done_callback(
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                tool_id=tool_id,
+                tool_output=tool_result,
+                tool_error=None,
+                task_title=self.task_data.get("task_title", ""),
+                subtask_title=self.task_data.get("subtask_title", ""),
+            )
+
             # Build member tool result details in target format
             member_tool_result_details = {
                 "type": "assistant",
@@ -1248,7 +1436,7 @@ class AgnoAgent(Agent):
                     "content": [
                         {
                             "type": "tool_result",
-                            "tool_use_id": getattr(run_response_event.tool, "id", ""),
+                            "tool_use_id": tool_id,
                             "content": tool_result,
                             "is_error": False,
                         }
@@ -1267,24 +1455,45 @@ class AgnoAgent(Agent):
             content_chunk = run_response_event.content
             if content_chunk:
                 result_content += str(content_chunk)
-                # Throttled report progress - only send if enough time has passed
-                current_time = time.time()
-                time_since_last = current_time - self._last_content_report_time
+
+                # Add content to streaming state and check if should emit
+                should_emit, chunk, offset = self.streaming_state.add_content(str(content_chunk))
+
                 logger.info(
                     f"[Team] Content chunk received, length={len(content_chunk)}, "
-                    f"total_length={len(result_content)}, time_since_last={time_since_last:.3f}s"
+                    f"total_length={len(result_content)}, should_emit={should_emit}"
                 )
-                if time_since_last >= self._content_report_interval:
-                    self._last_content_report_time = current_time
+
+                if should_emit:
                     logger.info(
-                        f"[Team] Sending streaming update, content_length={len(result_content)}"
+                        f"[Team] Sending streaming update, content_length={len(result_content)}, offset={offset}"
                     )
-                    # Include accumulated reasoning_content in streaming updates
+
+                    # Build result data for streaming update
                     reasoning_content_update = (
                         self.accumulated_reasoning_content
                         if self.accumulated_reasoning_content
                         else None
                     )
+                    result_data = {
+                        "thinking": [step.dict() for step in self.thinking_manager.get_thinking_steps()],
+                        "reasoning_content": reasoning_content_update,
+                    }
+
+                    # Send stream_chunk callback
+                    send_stream_chunk_callback(
+                        task_id=self.task_id,
+                        subtask_id=self.subtask_id,
+                        content=chunk,
+                        offset=offset,
+                        task_title=self.task_data.get("task_title", ""),
+                        subtask_title=self.task_data.get("subtask_title", ""),
+                        result_data=result_data,
+                    )
+
+                    self.streaming_state.mark_emitted()
+
+                    # Keep backward compatibility - send report_progress
                     self.report_progress(
                         85,
                         TaskStatus.RUNNING.value,

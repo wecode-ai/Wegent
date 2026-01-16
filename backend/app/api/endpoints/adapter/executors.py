@@ -8,8 +8,10 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.schemas.streaming import StreamingEventRequest, StreamingEventResponse
 from app.schemas.subtask import SubtaskExecutorUpdate
 from app.services.adapters.executor_kinds import executor_kinds_service
+from app.services.executor_streaming import executor_streaming_service
 
 router = APIRouter()
 
@@ -66,4 +68,36 @@ async def update_subtask(
     """
     return await executor_kinds_service.update_subtask(
         db=db, subtask_update=subtask_update
+    )
+
+
+@router.post(
+    "/tasks/{task_id}/subtasks/{subtask_id}/stream",
+    response_model=StreamingEventResponse,
+)
+async def handle_streaming_event(
+    task_id: int,
+    subtask_id: int,
+    event: StreamingEventRequest,
+    db: Session = Depends(get_db),
+):
+    """Handle streaming events from executor manager
+
+    This endpoint receives streaming events (stream_start, stream_chunk, tool_start,
+    tool_done, stream_done, stream_error) from Claude Code and Agno executors
+    and processes them for real-time streaming output.
+
+    Args:
+        task_id: Task ID
+        subtask_id: Subtask ID
+        event: Streaming event data
+
+    Returns:
+        StreamingEventResponse indicating success/failure
+    """
+    return await executor_streaming_service.handle_streaming_event(
+        db=db,
+        task_id=task_id,
+        subtask_id=subtask_id,
+        event=event,
     )

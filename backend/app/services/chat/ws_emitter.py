@@ -319,6 +319,82 @@ class WebSocketEmitter:
         logger.debug(f"[WS] emit chat:system task={task_id} type={msg_type}")
 
     # ============================================================
+    # Tool Execution Events (to task room)
+    # ============================================================
+
+    async def emit_tool_start(
+        self,
+        task_id: int,
+        subtask_id: int,
+        tool_id: str,
+        tool_name: str,
+        tool_input: Dict[str, Any],
+    ) -> None:
+        """
+        Emit tool:start event to task room.
+
+        Called when an executor tool begins execution.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            tool_id: Unique tool execution ID
+            tool_name: Name of the tool being executed
+            tool_input: Tool input parameters
+        """
+        await self.sio.emit(
+            ServerEvents.TOOL_START,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "tool_id": tool_id,
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit tool:start task={task_id} subtask={subtask_id} tool={tool_name}"
+        )
+
+    async def emit_tool_done(
+        self,
+        task_id: int,
+        subtask_id: int,
+        tool_id: str,
+        tool_output: Optional[str] = None,
+        tool_error: Optional[str] = None,
+    ) -> None:
+        """
+        Emit tool:done event to task room.
+
+        Called when an executor tool completes execution.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            tool_id: Tool execution ID (matches tool:start)
+            tool_output: Tool output
+            tool_error: Error message if tool failed
+        """
+        await self.sio.emit(
+            ServerEvents.TOOL_DONE,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "tool_id": tool_id,
+                "tool_output": tool_output,
+                "tool_error": tool_error,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit tool:done task={task_id} subtask={subtask_id} tool_id={tool_id}"
+        )
+
+    # ============================================================
     # Task List Events (to user room)
     # ============================================================
 

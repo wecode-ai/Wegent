@@ -231,6 +231,47 @@ class CallbackRequest(BaseModel):
     subagent_metadata: Optional[Dict[str, Any]] = None  # SubAgent metadata from task
 
 
+async def _forward_streaming_callback(request: CallbackRequest):
+    """Forward streaming event callback to Backend streaming endpoint.
+
+    When the result contains a streaming_event, this function forwards it
+    to the dedicated streaming endpoint for real-time WebSocket emission.
+
+    Args:
+        request: Callback request containing streaming_event in result
+    """
+    import httpx
+
+    if not request.result or "streaming_event" not in request.result:
+        return False
+
+    streaming_event = request.result.get("streaming_event")
+    if not streaming_event:
+        return False
+
+    task_api_domain = os.getenv("TASK_API_DOMAIN", "http://localhost:8000")
+    stream_url = f"{task_api_domain}/api/executors/tasks/{request.task_id}/subtasks/{request.subtask_id}/stream"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(stream_url, json=streaming_event)
+            if response.status_code == 200:
+                logger.debug(
+                    f"[Streaming] Forwarded {streaming_event.get('event_type')} event: "
+                    f"task_id={request.task_id}, subtask_id={request.subtask_id}"
+                )
+                return True
+            else:
+                logger.warning(
+                    f"[Streaming] Failed to forward streaming event: "
+                    f"{response.status_code} {response.text}"
+                )
+                return False
+    except Exception as e:
+        logger.error(f"[Streaming] Error forwarding streaming event: {e}")
+        return False
+
+
 @api_router.post("/callback")
 async def callback_handler(request: CallbackRequest, http_request: Request):
     """
@@ -265,6 +306,27 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
 
         # Set task context for tracing (function handles OTEL enabled check internally)
         set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
+
+        # Check if this is a streaming event callback
+        # Streaming events are identified by having streaming_event in result
+        if request.result and "streaming_event" in request.result:
+            streaming_forwarded = await _forward_streaming_callback(request)
+            if streaming_forwarded:
+                # For pure streaming events, we don't need to update task status
+                # The streaming service handles the state and database updates
+                streaming_event = request.result.get("streaming_event", {})
+                event_type = streaming_event.get("event_type", "unknown")
+
+                # For stream_done and stream_error, also update task status via regular path
+                if event_type in ["stream_done", "stream_error"]:
+                    # Continue to regular task update for final status
+                    pass
+                else:
+                    # For stream_start, stream_chunk, tool_start, tool_done - just return
+                    return {
+                        "status": "success",
+                        "message": f"Streaming event {event_type} forwarded for task {request.task_id}",
+                    }
 
         # Check if this is a validation task callback
         # Primary check: task_type == "validation"
