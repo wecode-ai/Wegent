@@ -2,39 +2,43 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useMemo } from 'react';
-import { Transfer } from '@/components/ui/transfer';
-import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Tag } from '@/components/ui/tag';
-import { RiMagicLine } from 'react-icons/ri';
-import { Edit, Plus, Copy } from 'lucide-react';
-import { Bot } from '@/types/api';
-import { useTranslation } from '@/hooks/useTranslation';
-import { getPromptBadgeStyle, type PromptBadgeVariant } from '@/utils/styles';
+import React, { useCallback, useMemo } from 'react'
+import { Transfer } from '@/components/ui/transfer'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tag } from '@/components/ui/tag'
+import { Switch } from '@/components/ui/switch'
+import { RiMagicLine } from 'react-icons/ri'
+import { Edit, Plus, Copy } from 'lucide-react'
+import { Bot } from '@/types/api'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getPromptBadgeStyle, type PromptBadgeVariant } from '@/utils/styles'
 
 export interface BotTransferProps {
-  bots: Bot[];
-  selectedBotKeys: React.Key[];
-  setSelectedBotKeys: React.Dispatch<React.SetStateAction<React.Key[]>>;
-  leaderBotId?: number | null;
-  setLeaderBotId?: React.Dispatch<React.SetStateAction<number | null>>;
-  unsavedPrompts: Record<string, string>;
-  teamPromptMap: Map<number, boolean>;
-  isDifyLeader?: boolean;
-  selectedShellType?: string | null;
+  bots: Bot[]
+  selectedBotKeys: React.Key[]
+  setSelectedBotKeys: React.Dispatch<React.SetStateAction<React.Key[]>>
+  leaderBotId?: number | null
+  setLeaderBotId?: React.Dispatch<React.SetStateAction<number | null>>
+  unsavedPrompts: Record<string, string>
+  teamPromptMap: Map<number, boolean>
+  isDifyLeader?: boolean
+  selectedShellType?: string | null
   /** Whether to exclude leader from transfer list */
-  excludeLeader?: boolean;
+  excludeLeader?: boolean
   /** Whether to auto-set first selected bot as leader */
-  autoSetLeader?: boolean;
+  autoSetLeader?: boolean
   /** Whether to enable drag-and-drop sorting in the right list */
-  sortable?: boolean;
-  onEditBot: (botId: number) => void;
-  onCreateBot: () => void;
-  onCloneBot: (botId: number) => void;
-  onOpenPromptDrawer: () => void;
+  sortable?: boolean
+  /** Pipeline mode: requireConfirmation settings for each bot */
+  requireConfirmationMap?: Record<number, boolean>
+  setRequireConfirmationMap?: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
+  onEditBot: (botId: number) => void
+  onCreateBot: () => void
+  onCloneBot: (botId: number) => void
+  onOpenPromptDrawer: () => void
 }
 
 export default function BotTransfer({
@@ -50,61 +54,63 @@ export default function BotTransfer({
   excludeLeader = false,
   autoSetLeader = false,
   sortable = false,
+  requireConfirmationMap,
+  setRequireConfirmationMap,
   onEditBot,
   onCreateBot,
   onCloneBot,
   onOpenPromptDrawer,
 }: BotTransferProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
-  const configuredPromptBadgeStyle = useMemo(() => getPromptBadgeStyle('configured'), []);
+  const configuredPromptBadgeStyle = useMemo(() => getPromptBadgeStyle('configured'), [])
 
   // Calculate prompt summary
   const promptSummary = useMemo<{ label: string; variant: PromptBadgeVariant }>(() => {
-    let configuredCount = 0;
+    let configuredCount = 0
     teamPromptMap.forEach(value => {
-      if (value) configuredCount += 1;
-    });
+      if (value) configuredCount += 1
+    })
     const unsavedHasContent = Object.values(unsavedPrompts).some(
       value => (value ?? '').trim().length > 0
-    );
+    )
 
     if (unsavedHasContent) {
       const countText =
         configuredCount > 0
           ? ` - ${t('common:team.prompts_tag_configured', { count: configuredCount })}`
-          : '';
+          : ''
       return {
         label: `${t('common:team.prompts_tag_pending')}${countText}`,
         variant: 'pending',
-      };
+      }
     }
 
     if (configuredCount > 0) {
       return {
         label: t('common:team.prompts_tag_configured', { count: configuredCount }),
         variant: 'configured',
-      };
+      }
     }
 
     return {
       label: t('common:team.prompts_tag_none'),
       variant: 'none',
-    };
-  }, [teamPromptMap, unsavedPrompts, t]);
+    }
+  }, [teamPromptMap, unsavedPrompts, t])
 
   const promptSummaryStyle = useMemo(
     () => getPromptBadgeStyle(promptSummary.variant),
     [promptSummary.variant]
-  );
+  )
 
   // Data source for Transfer
   const transferData = useMemo(() => {
-    let filteredBots = bots;
+    let filteredBots = bots
 
     // Exclude leader if specified
     if (excludeLeader && leaderBotId !== null) {
-      filteredBots = bots.filter(b => b.id !== leaderBotId);
+      filteredBots = bots.filter(b => b.id !== leaderBotId)
     }
 
     return filteredBots.map(b => ({
@@ -115,8 +121,8 @@ export default function BotTransfer({
         isDifyLeader ||
         // Disable options not matching shell_type if already selected
         (selectedShellType !== null && b.shell_type !== selectedShellType),
-    }));
-  }, [bots, isDifyLeader, selectedShellType, excludeLeader, leaderBotId]);
+    }))
+  }, [bots, isDifyLeader, selectedShellType, excludeLeader, leaderBotId])
 
   // Transfer change handler
   const onTransferChange = (
@@ -125,15 +131,15 @@ export default function BotTransfer({
     moveKeys: string[]
   ) => {
     if (direction === 'right') {
-      const newKeys = [...new Set(selectedBotKeys.concat(moveKeys))];
-      setSelectedBotKeys(newKeys);
+      const newKeys = [...new Set(selectedBotKeys.concat(moveKeys))]
+      setSelectedBotKeys(newKeys)
       // Auto-set first bot as leader if enabled and no leader is set
       if (autoSetLeader && setLeaderBotId && leaderBotId === null && newKeys.length > 0) {
-        setLeaderBotId(Number(newKeys[0]));
+        setLeaderBotId(Number(newKeys[0]))
       }
-      return;
+      return
     }
-    setSelectedBotKeys(targetKeys);
+    setSelectedBotKeys(targetKeys)
     // If leader was removed and auto-set is enabled, set new leader
     if (
       autoSetLeader &&
@@ -142,21 +148,38 @@ export default function BotTransfer({
       !targetKeys.includes(String(leaderBotId))
     ) {
       if (targetKeys.length > 0) {
-        setLeaderBotId(Number(targetKeys[0]));
+        setLeaderBotId(Number(targetKeys[0]))
       } else {
-        setLeaderBotId(null);
+        setLeaderBotId(null)
       }
     }
-  };
+  }
 
   // Handle order change from drag-and-drop
   const onOrderChange = (newOrder: string[]) => {
-    setSelectedBotKeys(newOrder);
+    setSelectedBotKeys(newOrder)
     // If auto-set leader is enabled, update leader to first item
     if (autoSetLeader && setLeaderBotId && newOrder.length > 0) {
-      setLeaderBotId(Number(newOrder[0]));
+      setLeaderBotId(Number(newOrder[0]))
     }
-  };
+  }
+
+  // Handle requireConfirmation toggle for pipeline mode
+  const handleRequireConfirmationChange = useCallback(
+    (botId: number, checked: boolean) => {
+      if (setRequireConfirmationMap) {
+        setRequireConfirmationMap(prev => ({
+          ...prev,
+          [botId]: checked,
+        }))
+      }
+    },
+    [setRequireConfirmationMap]
+  )
+
+  // Check if pipeline mode features should be shown (when requireConfirmationMap is provided)
+  const showPipelineFeatures =
+    requireConfirmationMap !== undefined && setRequireConfirmationMap !== undefined
 
   return (
     <div className="flex flex-col min-h-0 mt-1 flex-1">
@@ -241,18 +264,38 @@ export default function BotTransfer({
                   </Tooltip>
                 )}
 
+                {/* Pipeline mode: requireConfirmation switch (only show for selected bots) */}
+                {showPipelineFeatures && selectedBotKeys.includes(item.key) && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center mr-2" onClick={e => e.stopPropagation()}>
+                        <Switch
+                          checked={requireConfirmationMap?.[Number(item.key)] ?? false}
+                          onCheckedChange={checked =>
+                            handleRequireConfirmationChange(Number(item.key), checked)
+                          }
+                          className="h-4 w-7 data-[state=checked]:bg-primary"
+                        />
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{t('common:team.require_confirmation_tooltip')}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+
                 <Edit
                   className="ml-2 h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
                   onClick={e => {
-                    e.stopPropagation();
-                    onEditBot(Number(item.key));
+                    e.stopPropagation()
+                    onEditBot(Number(item.key))
                   }}
                 />
                 <Copy
                   className="ml-3 h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
                   onClick={e => {
-                    e.stopPropagation();
-                    onCloneBot(Number(item.key));
+                    e.stopPropagation()
+                    onCloneBot(Number(item.key))
                   }}
                 />
               </div>
@@ -279,5 +322,5 @@ export default function BotTransfer({
         />
       </div>
     </div>
-  );
+  )
 }

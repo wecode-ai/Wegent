@@ -10,14 +10,33 @@
     "copy": "复制",
     "regenerate": "重新生成",
     "stop": "停止",
-    "retry": "重试"
+    "retry": "重试",
+    "edit": "编辑",
+    "save": "保存",
+    "cancel": "取消"
+  },
+  "edit": {
+    "tooltip": "编辑消息",
+    "success": "消息编辑成功",
+    "failed": "编辑消息失败",
+    "confirm_title": "确认编辑",
+    "confirm_description": "此编辑操作将清除本条消息及其后的所有消息，对话将从当前位置重新开始。确定要继续吗？",
+    "confirm_button": "确认",
+    "confirming": "处理中..."
+  },
+  "quote": {
+    "ask_wegent": "询问 Wegent",
+    "quoted_text": "引用内容",
+    "remove_quote": "移除引用"
   },
   "status": {
     "typing": "AI 正在输入...",
     "thinking": "AI 正在思考...",
     "error": "发送消息失败",
     "connecting": "连接中...",
-    "disconnected": "连接断开"
+    "disconnected": "连接断开",
+    "reconnecting": "正在重连...（第 {{count}} 次尝试）",
+    "reconnected": "已重新连接"
   },
   "messages": {
     "assistant": "AI 助手",
@@ -124,6 +143,8 @@
     "tool_call": "🔧 工具调用",
     "tool_use": "🔧 工具使用",
     "tool_result": "🔧 工具结果",
+    "tool_error": "❌ 工具错误",
+    "model_reasoning": "💭 模型思考",
     "text_response": "文本响应",
     "expand": "展开",
     "collapse": "折叠",
@@ -146,7 +167,8 @@
     "error_message": "错误信息",
     "execution_type": "执行类型",
     "mcp_init_fail": "❌ MCP 初始化失败。",
-    "attachments_downloaded": "📎 已下载附件"
+    "attachments_downloaded": "📎 已下载附件",
+    "generating_content": "✨ 正在生成内容"
   },
   "send_button": {
     "shortcut_title": "发送快捷键",
@@ -170,7 +192,8 @@
     "invalid_parameter": "参数错误：请求参数不正确，请检查输入内容",
     "network_error": "网络连接失败：请检查网络连接后重试",
     "timeout_error": "请求超时：服务响应时间过长，请稍后重试",
-    "generic_error": "请求失败：未知错误，请重试或联系管理员"
+    "generic_error": "请求失败：未知错误，请重试或联系管理员",
+    "copy_error": "复制错误详情"
   },
   "clarification": {
     "title": "智能追问 (Smart Follow-up)",
@@ -225,6 +248,7 @@
     "select_from_here": "从此处开始选择",
     "select_below": "选择以下所有",
     "attachments": "个附件",
+    "knowledge_bases": "个知识库",
     "preparing": "正在准备导出...",
     "font_load_failed": "字体加载失败，请重试",
     "retry": "重试"
@@ -237,6 +261,11 @@
   "deep_thinking": {
     "enable": "启用深度思考",
     "disable": "禁用深度思考"
+  },
+  "reasoning": {
+    "thinking": "思考中...",
+    "thought_process": "思考过程",
+    "chars": "字符"
   },
   "upload": {
     "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传"
@@ -252,8 +281,35 @@
     "longer_than_usual": "响应时间较长，请耐心等待"
   },
   "groupChat": {
+    "mentionHint": "在群聊中，请使用 @ 提及智能体来获取 AI 回复",
     "mentionToTrigger": "输入 @{{teamName}} 以获取 AI 回复",
     "messageSaved": "消息已保存",
+    "tabs": {
+      "members": "成员",
+      "knowledge": "知识库"
+    },
+    "knowledge": {
+      "title": "群聊知识库",
+      "groupKnowledgeBases": "群聊知识库",
+      "otherKnowledgeBases": "其他知识库",
+      "add": "添加",
+      "addTitle": "添加知识库",
+      "addDescription": "选择要绑定到此群聊的知识库。所有成员都可以访问绑定的知识库。",
+      "remove": "移除",
+      "empty": "暂未绑定知识库",
+      "noAvailable": "没有可用的知识库",
+      "limit": "已绑定 {{count}}/{{max}} 个",
+      "boundBy": "{{name}} 于 {{time}} 绑定",
+      "bindSuccess": "知识库「{{name}}」绑定成功",
+      "bindFailed": "绑定知识库失败",
+      "removeSuccess": "知识库「{{name}}」已移除",
+      "removeFailed": "移除知识库失败",
+      "loadFailed": "加载知识库失败",
+      "systemMessage": {
+        "bind": "{{userName}} 绑定了知识库「{{kbName}}」",
+        "unbind": "{{userName}} 移除了知识库「{{kbName}}」"
+      }
+    },
     "mentionAutocomplete": {
       "title": "提及",
       "noTeam": "无可用团队",
@@ -328,6 +384,10 @@
       "generateInviteLink": "生成邀请链接"
     }
   },
+  "knowledgeSummary": {
+    "totalDocuments": "共 {{count}} 个文档",
+    "manage": "管理知识库"
+  },
   "common": {
     "cancel": "取消",
     "close": "关闭"
@@ -386,5 +446,33 @@
       "summary": "总结评价",
       "improved_answer": "改进后的回答"
     }
+  },
+  "pipeline": {
+    "progress_label": "流水线进度",
+    "current_stage": "当前阶段",
+    "awaiting_confirmation": "等待确认",
+    "start_node": "开始",
+    "stage_started": "已开始",
+    "stage_completed": "已完成",
+    "stage_running": "执行中",
+    "stage_pending": "等待中",
+    "stage_failed": "已失败",
+    "stage_awaiting_confirmation": "等待确认",
+    "requires_confirmation": "需要确认",
+    "continue_to_next_stage": "继续到下一阶段",
+    "confirm_stage": "确认",
+    "stage_confirming": "处理中...",
+    "continue_clarifying": "继续澄清",
+    "edit_prompt": "编辑提示词",
+    "edit_prompt_placeholder": "在继续到下一阶段之前编辑提示词...",
+    "save_changes": "保存",
+    "confirmation_hint": "如需修改请编辑提示词，然后点击「继续到下一阶段」继续执行。",
+    "stage_confirmed": "阶段已确认",
+    "stage_retry": "返回继续澄清",
+    "confirm_failed": "确认阶段失败",
+    "retry_failed": "重试阶段失败",
+    "proceeding_to_stage": "正在进入阶段: {{stage}}",
+    "pipeline_completed": "流水线已完成",
+    "no_task_id": "没有可用的任务 ID"
   }
 }

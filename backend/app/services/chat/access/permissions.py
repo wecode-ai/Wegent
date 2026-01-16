@@ -108,12 +108,44 @@ async def get_active_streaming(task_id: int) -> Optional[Dict[str, Any]]:
     """
     Check if there's an active streaming session for a task.
 
+    Priority:
+    1. Check Redis task_streaming_status (real-time, set when stream starts)
+    2. Fall back to database query (delayed, updated every 5 seconds)
+
     Args:
         task_id: Task ID
 
     Returns:
         Streaming info dict if active, None otherwise
     """
+    from app.services.chat.storage import session_manager
+
+    logger.info(
+        f"[get_active_streaming] Checking streaming status for task_id={task_id}"
+    )
+
+    # First, check Redis for real-time streaming status
+    # This is set immediately when streaming starts, before DB update
+    redis_status = await session_manager.get_task_streaming_status(task_id)
+    logger.info(
+        f"[get_active_streaming] Redis task_streaming_status for task_id={task_id}: {redis_status}"
+    )
+
+    if redis_status:
+        subtask_id = redis_status.get("subtask_id")
+        # Also get cached content to verify stream is active
+        cached_content = await session_manager.get_streaming_content(subtask_id)
+        logger.info(
+            f"[get_active_streaming] Found Redis streaming status for task {task_id}: "
+            f"subtask_id={subtask_id}, cached_content_len={len(cached_content) if cached_content else 0}"
+        )
+        return redis_status
+
+    # Fall back to database query if Redis doesn't have the status
+    # This handles the case where Redis data expired or was cleared
+    logger.info(
+        f"[get_active_streaming] No Redis status, falling back to DB query for task_id={task_id}"
+    )
     db = SessionLocal()
     try:
         # Find running assistant subtask
@@ -129,6 +161,10 @@ async def get_active_streaming(task_id: int) -> Optional[Dict[str, Any]]:
         )
 
         if subtask:
+            logger.info(
+                f"[get_active_streaming] Found DB streaming subtask for task {task_id}: "
+                f"subtask_id={subtask.id}, status={subtask.status}"
+            )
             return {
                 "subtask_id": subtask.id,
                 "user_id": subtask.user_id,
@@ -137,6 +173,9 @@ async def get_active_streaming(task_id: int) -> Optional[Dict[str, Any]]:
                 ),
             }
 
+        logger.info(
+            f"[get_active_streaming] No active streaming found for task_id={task_id}"
+        )
         return None
 
     finally:

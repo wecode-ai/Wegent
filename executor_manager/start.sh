@@ -27,11 +27,44 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Get local IP address
+get_local_ip() {
+    # Try to get the local IP address, fallback to localhost if not available
+    local ip=""
+
+    # Method 1: Try Linux ip command (most reliable, works on Linux)
+    if command -v ip &> /dev/null; then
+        ip=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
+    fi
+
+    # Method 2: Try hostname -I (works on some Linux, gets first non-loopback IP)
+    if [ -z "$ip" ] && command -v hostname &> /dev/null; then
+        ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+
+    # Method 3: Try macOS/BSD ifconfig (works on macOS)
+    # Filter out docker/bridge interfaces (br-, docker, veth)
+    if [ -z "$ip" ] && command -v ifconfig &> /dev/null; then
+        ip=$(ifconfig | grep -A 1 "^en\|^eth" | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+        # If no en/eth interface, try any non-docker interface
+        if [ -z "$ip" ]; then
+            ip=$(ifconfig | grep -v "^br-\|^docker\|^veth" | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+        fi
+    fi
+
+    # Fallback to localhost if no IP found
+    if [ -z "$ip" ]; then
+        ip="localhost"
+    fi
+
+    echo "$ip"
+}
+
 # Default configuration
 DEFAULT_PORT=8001
 DEFAULT_HOST="0.0.0.0"
-DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:1.0.16"
-DEFAULT_TASK_API_DOMAIN="http://localhost:8000"
+DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:latest"
+DEFAULT_TASK_API_DOMAIN="http://$(get_local_ip):8000"
 PYTHON_PATH=""
 
 PORT=$DEFAULT_PORT
@@ -68,7 +101,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --port PORT              Executor Manager port (default: 8001)"
             echo "  --host HOST              Executor Manager host (default: 0.0.0.0)"
-            echo "  --executor-image IMAGE   Executor Docker image (default: ghcr.io/wecode-ai/wegent-executor:1.0.16)"
+            echo "  --executor-image IMAGE   Executor Docker image (default: ghcr.io/wecode-ai/wegent-executor:latest)"
             echo "  --task-api-domain URL    Backend API domain (default: http://localhost:8000)"
             echo "  --python PATH            Python executable path (default: auto-detect)"
             echo "  -h, --help               Show this help message"
@@ -166,9 +199,31 @@ fi
 # Step 1: Check Python version
 echo -e "${BLUE}[1/7] Checking Python version...${NC}"
 
+REQUIRED_VERSION="3.10"
+
+# Function to check if Python version meets requirement
+# Args: python_exec, need_exit (true/false)
+# Sets PYTHON_VERSION if valid
+# If need_exit is true, exits with error when version is invalid
+# If need_exit is false, returns 1 when version is invalid
+check_python_version() {
+    local python_exec="$1"
+    local need_exit="${2:-false}"
+    PYTHON_VERSION=$($python_exec --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
+    
+    if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$PYTHON_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
+        if [ "$need_exit" = "true" ]; then
+            echo -e "${RED}Error: Python $REQUIRED_VERSION or higher is required (found $PYTHON_VERSION)${NC}"
+            exit 1
+        fi
+        return 1
+    fi
+    return 0
+}
+
 # Determine which Python to use
 if [ -n "$PYTHON_PATH" ]; then
-    # User specified a Python path
+    # User specified a Python path - use it directly without fallback
     if [ ! -f "$PYTHON_PATH" ]; then
         echo -e "${RED}Error: Python executable not found at $PYTHON_PATH${NC}"
         exit 1
@@ -179,24 +234,43 @@ if [ -n "$PYTHON_PATH" ]; then
     fi
     PYTHON_EXEC="$PYTHON_PATH"
     echo -e "${GREEN}✓ Using specified Python: $PYTHON_EXEC${NC}"
+    check_python_version "$PYTHON_EXEC" true
 else
-    # Auto-detect Python
-    if ! command -v python3 &> /dev/null; then
-        echo -e "${RED}Error: python3 is not installed${NC}"
+    # Auto-detect Python with fallback logic
+    PYTHON_EXEC=""
+
+    if ! command -v python3 &> /dev/null && ! command -v python &> /dev/null; then
+        echo -e "${RED}Error: python3 or python is not installed${NC}"
         echo "Please install Python 3.10 or higher, or specify Python path with --python"
         exit 1
     fi
-    PYTHON_EXEC=$(which python3)
-    echo -e "${GREEN}✓ Using system Python: $PYTHON_EXEC${NC}"
-fi
-
-# Check Python version
-PYTHON_VERSION=$($PYTHON_EXEC --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
-REQUIRED_VERSION="3.10"
-
-if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$PYTHON_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
-    echo -e "${RED}Error: Python $REQUIRED_VERSION or higher is required (found $PYTHON_VERSION)${NC}"
-    exit 1
+    
+    # First try 'python'
+    if command -v python &> /dev/null; then
+        PYTHON_CANDIDATE=$(which python)
+        if check_python_version "$PYTHON_CANDIDATE" false; then
+            PYTHON_EXEC="$PYTHON_CANDIDATE"
+            echo -e "${GREEN}✓ Using system Python: $PYTHON_EXEC${NC}, Trying Python3"
+        fi
+    fi
+    
+    # If 'python' doesn't meet requirement, try 'python3'
+    if [ -z "$PYTHON_EXEC" ]; then
+        if command -v python3 &> /dev/null; then
+            PYTHON_CANDIDATE=$(which python3)
+            if check_python_version "$PYTHON_CANDIDATE" true; then
+                PYTHON_EXEC="$PYTHON_CANDIDATE"
+                echo -e "${GREEN}✓ Using system Python3: $PYTHON_EXEC${NC}"
+            fi
+        fi
+    fi
+    
+    # If neither works, exit with error
+    if [ -z "$PYTHON_EXEC" ]; then
+        echo -e "${RED}Error: No suitable Python found. Python $REQUIRED_VERSION or higher is required.${NC}"
+        echo "Please install Python 3.10 or higher, or specify Python path with --python"
+        exit 1
+    fi
 fi
 
 echo -e "${GREEN}✓ Python $PYTHON_VERSION detected${NC}"

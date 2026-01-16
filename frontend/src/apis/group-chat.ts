@@ -6,46 +6,48 @@
  * Group chat API client for real-time message synchronization
  */
 
-import client from './client';
-import { getToken } from './user';
+import client from './client'
+import { getToken } from './user'
+import type { SubtaskContextBrief } from '@/types/api'
 
 /**
  * Subtask with sender information
  */
 export interface SubtaskWithSender {
-  id: number;
-  task_id: number;
-  team_id: number;
-  title: string;
-  role: 'USER' | 'ASSISTANT';
-  prompt?: string;
-  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
-  progress: number;
-  result?: Record<string, unknown>;
-  error_message?: string;
-  sender_type?: 'USER' | 'TEAM';
-  sender_user_id?: number;
-  sender_username?: string;
-  created_at: string;
-  updated_at: string;
-  completed_at?: string;
+  id: number
+  task_id: number
+  team_id: number
+  title: string
+  role: 'USER' | 'ASSISTANT'
+  prompt?: string
+  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+  progress: number
+  result?: Record<string, unknown>
+  error_message?: string
+  sender_type?: 'USER' | 'TEAM'
+  sender_user_id?: number
+  sender_username?: string
+  contexts?: SubtaskContextBrief[]
+  created_at: string
+  updated_at: string
+  completed_at?: string
 }
 
 /**
  * Poll messages response
  */
 export interface PollMessagesResponse {
-  messages: SubtaskWithSender[];
-  has_streaming: boolean;
-  streaming_subtask_id?: number;
+  messages: SubtaskWithSender[]
+  has_streaming: boolean
+  streaming_subtask_id?: number
 }
 
 /**
  * Streaming status response
  */
 export interface StreamingStatus {
-  has_streaming: boolean;
-  streaming_subtask_id?: number;
+  has_streaming: boolean
+  streaming_subtask_id?: number
 }
 
 /**
@@ -61,18 +63,18 @@ export async function pollNewMessages(
   lastSubtaskId?: number,
   since?: string
 ): Promise<PollMessagesResponse> {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams()
   if (lastSubtaskId !== undefined) {
-    params.append('last_subtask_id', lastSubtaskId.toString());
+    params.append('last_subtask_id', lastSubtaskId.toString())
   }
   if (since) {
-    params.append('since', since);
+    params.append('since', since)
   }
 
   // client.get returns the data directly, not wrapped in { data: ... }
   return client.get<PollMessagesResponse>(
     `/subtasks/tasks/${taskId}/messages/poll?${params.toString()}`
-  );
+  )
 }
 
 /**
@@ -83,7 +85,7 @@ export async function pollNewMessages(
  */
 export async function getStreamingStatus(taskId: number): Promise<StreamingStatus> {
   // client.get returns the data directly, not wrapped in { data: ... }
-  return client.get<StreamingStatus>(`/subtasks/tasks/${taskId}/streaming-status`);
+  return client.get<StreamingStatus>(`/subtasks/tasks/${taskId}/streaming-status`)
 }
 
 /**
@@ -104,24 +106,24 @@ export function subscribeGroupStream(
   offset: number = 0
 ): EventSource {
   // Get auth token from localStorage
-  const token = getToken();
+  const token = getToken()
 
   const params = new URLSearchParams({
     task_id: taskId.toString(),
     subtask_id: subtaskId.toString(),
     offset: offset.toString(),
-  });
+  })
 
   // Pass token as query parameter since EventSource doesn't support custom headers
   if (token) {
-    params.append('token', token);
+    params.append('token', token)
   }
 
   // Use the Next.js API route proxy which reads token from query parameter
   // and forwards it as Authorization header to the backend
-  const url = `/api/subtasks/stream/subscribe?${params.toString()}`;
+  const url = `/api/subtasks/stream/subscribe?${params.toString()}`
 
   return new EventSource(url, {
     withCredentials: true,
-  });
+  })
 }

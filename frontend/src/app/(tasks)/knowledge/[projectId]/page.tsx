@@ -2,46 +2,46 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import TopNavigation from '@/features/layout/TopNavigation';
-import UserMenu from '@/features/layout/UserMenu';
-import '@/app/tasks/tasks.css';
-import '@/features/common/scrollbar.css';
-import { GithubStarButton } from '@/features/layout/GithubStarButton';
-import { useTranslation } from '@/hooks/useTranslation';
-import { saveLastTab } from '@/utils/userPreferences';
+import { useEffect } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import TopNavigation from '@/features/layout/TopNavigation'
+import UserMenu from '@/features/layout/UserMenu'
+import '@/app/tasks/tasks.css'
+import '@/features/common/scrollbar.css'
+import { GithubStarButton } from '@/features/layout/GithubStarButton'
+import { useTranslation } from '@/hooks/useTranslation'
+import { saveLastTab } from '@/utils/userPreferences'
 import {
   wikiStyles,
   WikiDetailSidebar,
   useMermaidInit,
   WikiContent,
   useWikiDetail,
-} from '@/features/knowledge';
+} from '@/features/knowledge'
 
 export default function WikiDetailPage() {
-  const { t: _t } = useTranslation();
-  const params = useParams();
-  const router = useRouter();
-  const projectId = Number(params.projectId);
+  const { t: _t } = useTranslation()
+  const params = useParams()
+  const router = useRouter()
+  const projectId = Number(params.projectId)
 
   // Use shared Hook to manage detail page data
   const { wikiDetail, loading, error, selectedContentId, selectedContent, handleSelectContent } =
-    useWikiDetail(projectId);
+    useWikiDetail(projectId)
 
   const handleBackToList = () => {
-    router.push('/knowledge');
-  };
+    router.push('/knowledge')
+  }
 
   // Save last active tab to localStorage
   useEffect(() => {
-    saveLastTab('wiki');
-  }, []);
+    saveLastTab('wiki')
+  }, [])
 
   // Use shared Mermaid initialization Hook
-  useMermaidInit(selectedContent);
+  useMermaidInit(selectedContent)
 
   return (
     <div>
@@ -73,5 +73,5 @@ export default function WikiDetailPage() {
         </div>
       </div>
     </div>
-  );
+  )
 }

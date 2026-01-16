@@ -36,6 +36,7 @@ env/
 .vscode/
 *.swp
 *.swo
+*.iml
 
 # Environment variables
 .env
@@ -43,6 +44,9 @@ env/
 # Logs
 logs/
 *.log
+
+# Start script runtime files
+.pids/
 
 # Coverage reports
 .coverage
@@ -72,3 +76,7 @@ Thumbs.db
 .python-version
 *.tsbuildinfo
 coverage/
+
+# claude
+.claude/settings.local.json
+.history

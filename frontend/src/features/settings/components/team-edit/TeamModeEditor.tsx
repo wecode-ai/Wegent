@@ -1,45 +1,48 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import { Label } from '@/components/ui/label';
-import { Bot, Team } from '@/types/api';
-import { TeamMode, AgentType } from '../team-modes';
-import { useTranslation } from '@/hooks/useTranslation';
-import { BotEditRef } from '../BotEdit';
+import React from 'react'
+import { Label } from '@/components/ui/label'
+import { Bot, Team } from '@/types/api'
+import { TeamMode, AgentType } from '../team-modes'
+import { useTranslation } from '@/hooks/useTranslation'
+import { BotEditRef } from '../BotEdit'
 
 // Import mode-specific editors
-import SoloModeEditor from '../team-modes/SoloModeEditor';
-import PipelineModeEditor from '../team-modes/PipelineModeEditor';
-import LeaderModeEditor from '../team-modes/LeaderModeEditor';
+import SoloModeEditor from '../team-modes/SoloModeEditor'
+import PipelineModeEditor from '../team-modes/PipelineModeEditor'
+import LeaderModeEditor from '../team-modes/LeaderModeEditor'
 
 interface TeamModeEditorProps {
-  mode: TeamMode;
-  filteredBots: Bot[];
-  setBots: React.Dispatch<React.SetStateAction<Bot[]>>;
-  selectedBotKeys: React.Key[];
-  setSelectedBotKeys: React.Dispatch<React.SetStateAction<React.Key[]>>;
-  leaderBotId: number | null;
-  setLeaderBotId: React.Dispatch<React.SetStateAction<number | null>>;
-  editingTeam: Team | null;
-  editingTeamId: number | null;
-  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
-  unsavedPrompts: Record<string, string>;
-  teamPromptMap: Map<number, boolean>;
-  isDifyLeader: boolean;
-  leaderOptions: Bot[];
-  allowedAgentsForMode?: AgentType[];
-  botEditRef: React.RefObject<BotEditRef | null>;
-  scope?: 'personal' | 'group' | 'all';
-  groupName?: string;
-  onEditBot: (botId: number) => void;
-  onCreateBot: () => void;
-  onCloneBot: (botId: number) => void;
-  onOpenPromptDrawer: () => void;
-  onLeaderChange: (botId: number) => void;
+  mode: TeamMode
+  filteredBots: Bot[]
+  setBots: React.Dispatch<React.SetStateAction<Bot[]>>
+  selectedBotKeys: React.Key[]
+  setSelectedBotKeys: React.Dispatch<React.SetStateAction<React.Key[]>>
+  leaderBotId: number | null
+  setLeaderBotId: React.Dispatch<React.SetStateAction<number | null>>
+  editingTeam: Team | null
+  editingTeamId: number | null
+  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
+  unsavedPrompts: Record<string, string>
+  teamPromptMap: Map<number, boolean>
+  isDifyLeader: boolean
+  leaderOptions: Bot[]
+  allowedAgentsForMode?: AgentType[]
+  botEditRef: React.RefObject<BotEditRef | null>
+  scope?: 'personal' | 'group' | 'all'
+  groupName?: string
+  /** Pipeline mode: requireConfirmation settings for each bot */
+  requireConfirmationMap?: Record<number, boolean>
+  setRequireConfirmationMap?: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
+  onEditBot: (botId: number) => void
+  onCreateBot: () => void
+  onCloneBot: (botId: number) => void
+  onOpenPromptDrawer: () => void
+  onLeaderChange: (botId: number) => void
 }
 
 export default function TeamModeEditor({
@@ -61,13 +64,15 @@ export default function TeamModeEditor({
   botEditRef,
   scope,
   groupName,
+  requireConfirmationMap,
+  setRequireConfirmationMap,
   onEditBot,
   onCreateBot,
   onCloneBot,
   onOpenPromptDrawer,
   onLeaderChange,
 }: TeamModeEditorProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   return (
     <div className="space-y-2">
@@ -104,6 +109,8 @@ export default function TeamModeEditor({
             unsavedPrompts={unsavedPrompts}
             teamPromptMap={teamPromptMap}
             isDifyLeader={isDifyLeader}
+            requireConfirmationMap={requireConfirmationMap}
+            setRequireConfirmationMap={setRequireConfirmationMap}
             toast={toast}
             onEditBot={onEditBot}
             onCreateBot={onCreateBot}
@@ -134,5 +141,5 @@ export default function TeamModeEditor({
         )}
       </div>
     </div>
-  );
+  )
 }

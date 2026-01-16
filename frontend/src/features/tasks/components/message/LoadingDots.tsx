@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import React from 'react';
+import React from 'react'
 
 export default function LoadingDots() {
   return (
@@ -20,5 +20,5 @@ export default function LoadingDots() {
         style={{ animationDelay: '300ms' }}
       />
     </div>
-  );
+  )
 }

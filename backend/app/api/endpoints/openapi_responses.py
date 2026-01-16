@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -31,7 +30,6 @@ from app.schemas.openapi_response import (
 )
 from app.schemas.task import TaskCreate
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.adapters.team_kinds import team_kinds_service
 from app.services.openapi.chat_response import (
     create_streaming_response,
     create_sync_response,
@@ -44,6 +42,7 @@ from app.services.openapi.helpers import (
     subtask_status_to_message_status,
     wegent_status_to_openai_status,
 )
+from app.services.readers.kinds import KindType, kindReader
 
 logger = logging.getLogger(__name__)
 
@@ -136,14 +135,15 @@ async def create_response(
         - model: Format "namespace#team_name" or "namespace#team_name#model_id"
         - input: The user prompt (string or list of messages)
         - stream: Whether to enable streaming output (default: False)
-        - tools: Optional Wegent tools:
-          - {"type": "wegent_deep_thinking"}: Enable deep thinking mode with web search
-            (web search requires WEB_SEARCH_ENABLED=true in system config)
+        - tools: Optional Wegent tools to enable server-side capabilities:
+          - {"type": "wegent_chat_bot"}: Enable all server-side capabilities
+            (deep thinking with web search, server MCP tools, message enhancement)
         - previous_response_id: Optional, for follow-up conversations
 
     Note:
-        - MCP tools are automatically loaded when CHAT_MCP_ENABLED=true (no user tool needed)
-        - Web search is enabled when wegent_deep_thinking is used AND WEB_SEARCH_ENABLED=true
+        - By default, API calls use "clean mode" without server-side enhancements
+        - Bot/Ghost MCP tools are always available (configured in the bot's Ghost CRD)
+        - Use wegent_chat_bot to enable full server-side capabilities
 
     Returns:
         ResponseObject with status 'completed' (Chat Shell)
@@ -195,8 +195,12 @@ async def create_response(
                 )
 
     # Verify team exists and user has access
-    team = team_kinds_service.get_team_by_name_and_namespace_with_public_group(
-        db, model_info["team_name"], model_info["namespace"], current_user.id
+    team = kindReader.get_by_name_and_namespace(
+        db,
+        current_user.id,
+        KindType.TEAM,
+        model_info["namespace"],
+        model_info["team_name"],
     )
     if not team:
         raise HTTPException(
@@ -209,57 +213,26 @@ async def create_response(
         model_name = model_info["model_id"]
         model_namespace = model_info["namespace"]
 
-        model_exists = False
+        model = kindReader.get_by_name_and_namespace(
+            db,
+            current_user.id,
+            KindType.MODEL,
+            model_namespace,
+            model_name,
+        )
 
-        if model_namespace == "default":
-            # First, query personal model (user's own model)
-            personal_model = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == current_user.id,
-                    Kind.kind == "Model",
-                    Kind.name == model_name,
-                    Kind.namespace == model_namespace,
-                    Kind.is_active == True,
-                )
-                .first()
+        # If not found and namespace is not default, try with default namespace
+        # This handles the case where user passes group#group_team#public_model_id
+        if not model and model_namespace != "default":
+            model = kindReader.get_by_name_and_namespace(
+                db,
+                current_user.id,
+                KindType.MODEL,
+                "default",
+                model_name,
             )
 
-            if personal_model:
-                model_exists = True
-            else:
-                # If personal model not found, query public model (user_id = 0)
-                public_model = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == 0,
-                        Kind.kind == "Model",
-                        Kind.name == model_name,
-                        Kind.namespace == model_namespace,
-                        Kind.is_active == True,
-                    )
-                    .first()
-                )
-
-                if public_model:
-                    model_exists = True
-        else:
-            # If namespace is not default, query group model
-            group_model = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Model",
-                    Kind.name == model_name,
-                    Kind.namespace == model_namespace,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-
-            if group_model:
-                model_exists = True
-
-        if not model_exists:
+        if not model:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Model '{model_namespace}/{model_name}' not found",
@@ -287,17 +260,13 @@ async def create_response(
                     detail=f"Team '{model_info['namespace']}#{model_info['team_name']}' has invalid bot reference",
                 )
 
-            # Query the bot from Kind table
-            bot_kind = (
-                db.query(Kind)
-                .filter(
-                    Kind.name == bot_name,
-                    Kind.namespace == bot_namespace,
-                    Kind.kind == "Bot",
-                    Kind.user_id == team.user_id,
-                    Kind.is_active == True,
-                )
-                .first()
+            # Query the bot using kindReader
+            bot_kind = kindReader.get_by_name_and_namespace(
+                db,
+                team.user_id,
+                KindType.BOT,
+                bot_namespace,
+                bot_name,
             )
 
             if not bot_kind:

@@ -11,10 +11,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Union
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
+from opentelemetry import trace
 from passlib.context import CryptContext
+from shared.telemetry.context import set_user_context
+from shared.telemetry.context.attributes import SpanAttributes
+from shared.telemetry.core import is_telemetry_enabled
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -24,9 +28,13 @@ from app.models.api_key import KEY_TYPE_PERSONAL, KEY_TYPE_SERVICE, APIKey
 from app.models.user import User
 from app.schemas.user import TokenData
 from app.services.k_batch import apply_default_resources_sync
+from app.services.readers.users import userReader
 from app.services.user import user_service
 
 logger = logging.getLogger(__name__)
+
+# Create a tracer for authentication operations
+_tracer = trace.get_tracer(__name__)
 
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -43,25 +51,61 @@ def get_current_user(
     token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
 ) -> User:
     """Get current authenticated user"""
-    # Verify token
-    token_data = verify_token(token)
-    username = token_data.get("username")
+    with _tracer.start_as_current_span("auth.get_current_user") as span:
+        # Set auth method attributes
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt")
+            span.set_attribute(SpanAttributes.AUTH_TOKEN_TYPE, "bearer")
+            span.set_attribute(SpanAttributes.AUTH_SOURCE, "authorization_header")
 
-    # Query user
-    user = user_service.get_user_by_name(db=db, user_name=username)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not activated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return user
+        try:
+            # Verify token
+            token_data = verify_token(token)
+            username = token_data.get("username")
+
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.USER_NAME, username)
+
+            # Query user
+            user = user_service.get_user_by_name(db=db, user_name=username)
+            if user is None:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_FAILURE_REASON, "user_not_found"
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Could not validate credentials",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            if not user.is_active:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_FAILURE_REASON, "user_inactive"
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User not activated",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+            # Set user context for tracing
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                set_user_context(user_id=str(user.id), user_name=user.user_name)
+
+            return user
+        except HTTPException:
+            raise
+        except Exception as e:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(SpanAttributes.AUTH_FAILURE_REASON, str(e)[:200])
+                span.record_exception(e)
+            raise
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -135,20 +179,49 @@ def authenticate_user(
     Returns:
         User object if authentication is successful, None otherwise
     """
-    if not username or not password:
-        return None
+    with _tracer.start_as_current_span("auth.authenticate_user") as span:
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_METHOD, "password")
+            span.set_attribute(SpanAttributes.AUTH_SOURCE, "login_form")
+            if username:
+                span.set_attribute(SpanAttributes.USER_NAME, username)
 
-    user = db.scalar(select(User).where(User.user_name == username))
-    if not user:
-        return None
+        if not username or not password:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(
+                    SpanAttributes.AUTH_FAILURE_REASON,
+                    "missing_credentials",
+                )
+            return None
 
-    if not user.is_active:
-        raise HTTPException(status_code=400, detail="User not activated")
+        user = db.scalar(select(User).where(User.user_name == username))
+        if not user:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(SpanAttributes.AUTH_FAILURE_REASON, "user_not_found")
+            return None
 
-    if not verify_password(password, user.password_hash):
-        return None
+        if not user.is_active:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(SpanAttributes.AUTH_FAILURE_REASON, "user_inactive")
+            raise HTTPException(status_code=400, detail="User not activated")
 
-    return user
+        if not verify_password(password, user.password_hash):
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(
+                    SpanAttributes.AUTH_FAILURE_REASON, "invalid_password"
+                )
+            return None
+
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+            span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+            set_user_context(user_id=str(user.id), user_name=user.user_name)
+
+        return user
 
 
 def verify_token(token: str) -> Dict[str, Any]:
@@ -191,8 +264,13 @@ def get_username_from_request(request) -> str:
         request: FastAPI Request object
 
     Returns:
-        Username or 'anonymous'/'invalid_token' if not found/invalid
+        Username or 'anonymous'/'internal-service' if not found/invalid
     """
+    # Check for internal service requests first
+    service_name = request.headers.get("X-Service-Name")
+    if service_name:
+        return f"[{service_name}]"
+
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         return "anonymous"
@@ -202,7 +280,7 @@ def get_username_from_request(request) -> str:
         token_data = verify_token(token)
         return token_data.get("username", "anonymous")
     except Exception:
-        return "invalid_token"
+        return "anonymous"
 
 
 def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
@@ -218,13 +296,30 @@ def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
     Raises:
         HTTPException: If user is not admin
     """
-    # Check user's role field to determine admin status
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied. Admin access required.",
-        )
-    return current_user
+    with _tracer.start_as_current_span("auth.get_admin_user") as span:
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.USER_ID, str(current_user.id))
+            span.set_attribute(SpanAttributes.USER_NAME, current_user.user_name)
+            span.set_attribute("auth.role_check", "admin")
+
+        # Check user's role field to determine admin status
+        if current_user.role != "admin":
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(
+                    SpanAttributes.AUTH_FAILURE_REASON, "insufficient_permissions"
+                )
+                span.set_attribute("auth.user_role", current_user.role or "user")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied. Admin access required.",
+            )
+
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+            span.set_attribute("auth.user_role", "admin")
+
+        return current_user
 
 
 def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
@@ -241,20 +336,54 @@ def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
     Returns:
         User object if token is valid and user exists, None otherwise
     """
-    try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
-        username: str = payload.get("sub")
-        if username is None:
-            return None
+    with _tracer.start_as_current_span("auth.get_current_user_from_token") as span:
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt")
+            span.set_attribute(SpanAttributes.AUTH_TOKEN_TYPE, "bearer")
 
-        user = user_service.get_user_by_name(db=db, user_name=username)
-        return user
-    except JWTError:
-        return None
-    except Exception:
-        return None
+        try:
+            payload = jwt.decode(
+                token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+            )
+            username: str = payload.get("sub")
+            if username is None:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_FAILURE_REASON, "missing_username_in_token"
+                    )
+                return None
+
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.USER_NAME, username)
+
+            user = user_service.get_user_by_name(db=db, user_name=username)
+            if user:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                    span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                    set_user_context(user_id=str(user.id), user_name=user.user_name)
+            else:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_FAILURE_REASON, "user_not_found"
+                    )
+            return user
+        except JWTError as e:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(
+                    SpanAttributes.AUTH_FAILURE_REASON, f"jwt_error:{str(e)[:100]}"
+                )
+            return None
+        except Exception as e:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(
+                    SpanAttributes.AUTH_FAILURE_REASON, f"error:{str(e)[:100]}"
+                )
+            return None
 
 
 def get_api_key_from_header(
@@ -301,11 +430,12 @@ def get_auth_context(
 
     Authentication logic:
     - Personal key: returns the key owner directly, ignores wegent-username
-    - Service key: requires wegent-username header to specify the user
+    - Service key: requires username via wegent-username header OR api_key#username format
 
     Args:
         db: Database session
         api_key: API key string (from X-API-Key, Authorization, or wegent-source header)
+                 For service keys, supports "api_key#username" format
         wegent_username: Username to impersonate (from wegent-username header, required for service keys)
 
     Returns:
@@ -314,112 +444,218 @@ def get_auth_context(
     Raises:
         HTTPException: If no authentication method succeeds
     """
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key is required",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    with _tracer.start_as_current_span("auth.get_auth_context") as span:
+        # Set initial auth attributes
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_METHOD, "api_key")
+            span.set_attribute(SpanAttributes.AUTH_TOKEN_TYPE, "api_key")
 
-    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-    api_key_record = (
-        db.query(APIKey)
-        .filter(
-            APIKey.key_hash == key_hash,
-            APIKey.is_active == True,
-        )
-        .first()
-    )
-
-    if not api_key_record:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-        )
-
-    # Check expiration
-    if api_key_record.expires_at < datetime.utcnow():
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key has expired",
-        )
-
-    # Update last_used_at
-    api_key_record.last_used_at = datetime.utcnow()
-    db.commit()
-
-    # Personal key: return the key owner directly
-    if api_key_record.key_type == KEY_TYPE_PERSONAL:
-        user = db.query(User).filter(User.id == api_key_record.user_id).first()
-        if user and user.is_active:
-            return AuthContext(user=user, api_key_name=api_key_record.name)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or inactive",
-        )
-
-    # Service key: require wegent-username header
-    if api_key_record.key_type == KEY_TYPE_SERVICE:
-        if not wegent_username:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="wegent-username header is required for service key authentication",
-            )
-
-        # Validate wegent_username format: only letters, numbers, underscores, hyphens
-        if not re.match(r"^[a-zA-Z0-9_-]+$", wegent_username):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="wegent-username can only contain letters, numbers, underscores, and hyphens",
-            )
-
-        # Try to find existing user
-        user = db.query(User).filter(User.user_name == wegent_username).first()
-
-        if user:
-            if not user.is_active:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"User '{wegent_username}' is inactive",
+        if not api_key:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(
+                    SpanAttributes.AUTH_FAILURE_REASON, "api_key_missing"
                 )
-            return AuthContext(user=user, api_key_name=api_key_record.name)
-
-        # User not found, auto-create for service key authentication
-        logger.info(
-            f"Auto-creating user '{wegent_username}' via service key '{api_key_record.name}'"
-        )
-
-        # Create new user with minimal info
-        # auth_source uses "api:{service_key_name}" to track which service key created this user
-        new_user = User(
-            user_name=wegent_username,
-            email=f"{wegent_username}@api.auto",  # Placeholder email
-            password_hash=get_password_hash(
-                str(uuid.uuid4())
-            ),  # Random password for security
-            git_info=[],
-            is_active=True,
-            preferences=json.dumps({}),
-            auth_source=f"api:{api_key_record.name}",  # Track which service key created this user
-        )
-        db.add(new_user)
-        db.commit()
-        db.refresh(new_user)
-
-        # Apply default resources synchronously for new API-created users
-        try:
-            apply_default_resources_sync(new_user.id)
-        except Exception as e:
-            logger.warning(
-                f"Failed to apply default resources for user {new_user.id}: {e}"
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key is required",
+                headers={"WWW-Authenticate": "Bearer"},
             )
 
-        return AuthContext(user=new_user, api_key_name=api_key_record.name)
+        # Parse api_key#username format
+        actual_api_key = api_key
+        username_from_key = None
+        if "#" in api_key:
+            parts = api_key.split("#", 1)
+            actual_api_key = parts[0]
+            username_from_key = parts[1] if len(parts) > 1 and parts[1] else None
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_SOURCE, "api_key_with_username")
+        else:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_SOURCE, "api_key_header")
 
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid authentication credentials",
-    )
+        key_hash = hashlib.sha256(actual_api_key.encode()).hexdigest()
+        api_key_record = (
+            db.query(APIKey)
+            .filter(
+                APIKey.key_hash == key_hash,
+                APIKey.is_active == True,
+            )
+            .first()
+        )
+
+        if not api_key_record:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(
+                    SpanAttributes.AUTH_FAILURE_REASON, "api_key_invalid"
+                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key",
+            )
+
+        # Set API key info in span
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_API_KEY_NAME, api_key_record.name)
+            span.set_attribute(
+                SpanAttributes.AUTH_API_KEY_TYPE, api_key_record.key_type
+            )
+
+        # Check expiration
+        if api_key_record.expires_at < datetime.utcnow():
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(
+                    SpanAttributes.AUTH_FAILURE_REASON, "api_key_expired"
+                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key has expired",
+            )
+
+        # Update last_used_at
+        api_key_record.last_used_at = datetime.utcnow()
+        db.commit()
+
+        # Personal key: return the key owner directly
+        if api_key_record.key_type == KEY_TYPE_PERSONAL:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_METHOD, "api_key_personal")
+
+            user = userReader.get_by_id(db, api_key_record.user_id)
+            if user and user.is_active:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                    span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                    span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
+                    set_user_context(user_id=str(user.id), user_name=user.user_name)
+                return AuthContext(user=user, api_key_name=api_key_record.name)
+
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(
+                    SpanAttributes.AUTH_FAILURE_REASON,
+                    "user_not_found" if not user else "user_inactive",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found or inactive",
+            )
+
+        # Service key: require username via header or api_key#username format
+        if api_key_record.key_type == KEY_TYPE_SERVICE:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_METHOD, "api_key_service")
+
+            # Priority: username_from_key (api_key#username) > wegent_username header
+            target_username = username_from_key or wegent_username
+            if not target_username:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_FAILURE_REASON,
+                        "username_required_for_service_key",
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Username is required for service key authentication (use wegent-username header)",
+                )
+
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.USER_NAME, target_username)
+
+            # Validate username format: only letters, numbers, underscores, hyphens
+            if not re.match(r"^[a-zA-Z0-9_-]+$", target_username):
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_FAILURE_REASON, "invalid_username_format"
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Username can only contain letters, numbers, underscores, and hyphens",
+                )
+
+            # Try to find existing user
+            user = userReader.get_by_name(db, target_username)
+
+            if user:
+                if not user.is_active:
+                    if is_telemetry_enabled():
+                        span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                        span.set_attribute(
+                            SpanAttributes.AUTH_FAILURE_REASON, "user_inactive"
+                        )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail=f"User '{target_username}' is inactive",
+                    )
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                    span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                    span.set_attribute(SpanAttributes.AUTH_USER_CREATED, False)
+                    set_user_context(user_id=str(user.id), user_name=user.user_name)
+                return AuthContext(user=user, api_key_name=api_key_record.name)
+
+            # User not found, auto-create for service key authentication
+            logger.info(
+                f"Auto-creating user '{target_username}' via service key '{api_key_record.name}'"
+            )
+
+            if is_telemetry_enabled():
+                span.add_event(
+                    "user_auto_created",
+                    {
+                        "username": target_username,
+                        "service_key": api_key_record.name,
+                    },
+                )
+
+            # Create new user with minimal info
+            # auth_source uses "api:{service_key_name}" to track which service key created this user
+            new_user = User(
+                user_name=target_username,
+                email=f"{target_username}@api.auto",  # Placeholder email
+                password_hash=get_password_hash(
+                    str(uuid.uuid4())
+                ),  # Random password for security
+                git_info=[],
+                is_active=True,
+                preferences=json.dumps({}),
+                auth_source=f"api:{api_key_record.name}",  # Track which service key created this user
+            )
+            db.add(new_user)
+            db.commit()
+            db.refresh(new_user)
+
+            # Apply default resources synchronously for new API-created users
+            try:
+                apply_default_resources_sync(new_user.id)
+                # Commit transaction after applying default resources to ensure
+                # initialized resources are visible to subsequent queries
+                db.commit()
+            except Exception as e:
+                logger.warning(
+                    f"Failed to apply default resources for user {new_user.id}: {e}"
+                )
+
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                span.set_attribute(SpanAttributes.USER_ID, str(new_user.id))
+                span.set_attribute(SpanAttributes.AUTH_USER_CREATED, True)
+                set_user_context(user_id=str(new_user.id), user_name=new_user.user_name)
+
+            return AuthContext(user=new_user, api_key_name=api_key_record.name)
+
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+            span.set_attribute(SpanAttributes.AUTH_FAILURE_REASON, "unknown_key_type")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+        )
 
 
 def get_current_user_flexible(

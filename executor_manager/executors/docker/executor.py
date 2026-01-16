@@ -48,6 +48,20 @@ from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
 
+from executor_manager.config.config import EXECUTOR_ENV
+from executor_manager.executors.base import Executor
+from executor_manager.executors.docker.constants import (
+    CONTAINER_OWNER, DEFAULT_API_ENDPOINT, DEFAULT_DOCKER_HOST, DEFAULT_LOCALE,
+    DEFAULT_PROGRESS_COMPLETE, DEFAULT_PROGRESS_RUNNING, DEFAULT_TASK_ID,
+    DEFAULT_TIMEZONE, DOCKER_SOCKET_PATH, WORKSPACE_MOUNT_PATH)
+from executor_manager.executors.docker.utils import (build_callback_url,
+                                                     check_container_ownership,
+                                                     delete_container,
+                                                     find_available_port,
+                                                     get_container_ports,
+                                                     get_running_task_details)
+from executor_manager.utils.executor_name import generate_executor_name
+
 logger = setup_logger(__name__)
 
 
@@ -101,6 +115,8 @@ class DockerExecutor(Executor):
 
         # Check if this is a validation task (validation tasks use negative task_id)
         is_validation_task = task.get("type") == "validation"
+        # Check if this is a SubAgent task (internal tasks with callback routing)
+        is_subagent_task = task.get("type") == "subagent"
 
         # Initialize execution status
         execution_status = {
@@ -126,10 +142,11 @@ class DockerExecutor(Executor):
             # Unified exception handling
             self._handle_execution_exception(e, task_id, execution_status)
 
-        # Call callback function only for regular tasks (not validation tasks)
-        # Validation tasks don't exist in the database, so we skip the callback
+        # Call callback function only for regular tasks (not validation or subagent tasks)
+        # Validation/SubAgent tasks don't exist in the database, so we skip the callback
         # to avoid 404 errors when trying to update non-existent task status
-        if not is_validation_task:
+        # SubAgent tasks use their own callback mechanism via task_type="subagent"
+        if not is_validation_task and not is_subagent_task:
             self._call_callback(
                 callback,
                 task_id,
@@ -166,6 +183,9 @@ class DockerExecutor(Executor):
         executor_name = status["executor_name"]
         port_info = self._get_container_port(executor_name)
 
+        if port_info is None:
+            raise ValueError(f"Container {executor_name} has no ports mapped")
+
         # Send HTTP request to container
         response = self._send_task_to_container(task, DEFAULT_DOCKER_HOST, port_info)
 
@@ -174,14 +194,22 @@ class DockerExecutor(Executor):
             status["progress"] = DEFAULT_PROGRESS_COMPLETE
             status["error_msg"] = response.json().get("error_msg", "")
 
-    def _get_container_port(self, executor_name: str) -> int:
-        """Get container port information"""
+    def _get_container_port(self, executor_name: str) -> Optional[int]:
+        """Get container port information.
+
+        Args:
+            executor_name: Container name
+
+        Returns:
+            Host port number if available, None otherwise
+        """
         port_result = get_container_ports(executor_name)
         logger.info(f"Container port info: {executor_name}, {port_result}")
 
         ports = port_result.get("ports", [])
         if not ports:
-            raise ValueError(f"Executor name {executor_name} not found or has no ports")
+            logger.warning(f"Container {executor_name} has no ports mapped")
+            return None
 
         return ports[0].get("host_port")
 
@@ -196,9 +224,7 @@ class DockerExecutor(Executor):
         headers = {}
         try:
             from shared.telemetry.context import (
-                get_request_id,
-                inject_trace_context_to_headers,
-            )
+                get_request_id, inject_trace_context_to_headers)
 
             # Inject W3C Trace Context headers for distributed tracing
             headers = inject_trace_context_to_headers(headers)
@@ -525,21 +551,30 @@ class DockerExecutor(Executor):
             f"aigc.weibo.com/task-type={task.get('type', 'online')}",
             "--label",
             f"subtask_next_id={task.get('subtask_next_id', '')}",
-            # Environment variables
-            "-e",
-            f"TASK_INFO={task_str}",
-            "-e",
-            f"EXECUTOR_NAME={executor_name}",
-            "-e",
-            f"TZ={DEFAULT_TIMEZONE}",
-            "-e",
-            f"LANG={DEFAULT_LOCALE}",
-            "-e",
-            f"EXECUTOR_ENV={EXECUTOR_ENV}",
-            # Mount
-            "-v",
-            f"{DOCKER_SOCKET_PATH}:{DOCKER_SOCKET_PATH}",
         ]
+
+        # Environment variables
+        # For sandbox type, do NOT set TASK_INFO to prevent auto-execution
+        # Sandbox containers should wait for execute requests via API
+        is_sandbox = task.get("type") == "sandbox"
+        if not is_sandbox:
+            cmd.extend(["-e", f"TASK_INFO={task_str}"])
+
+        cmd.extend(
+            [
+                "-e",
+                f"EXECUTOR_NAME={executor_name}",
+                "-e",
+                f"TZ={DEFAULT_TIMEZONE}",
+                "-e",
+                f"LANG={DEFAULT_LOCALE}",
+                "-e",
+                f"EXECUTOR_ENV={EXECUTOR_ENV}",
+                # Mount
+                "-v",
+                f"{DOCKER_SOCKET_PATH}:{DOCKER_SOCKET_PATH}",
+            ]
+        )
 
         # If using custom base_image, mount executor binary from Named Volume
         if base_image:
@@ -578,6 +613,9 @@ class DockerExecutor(Executor):
 
         # Add callback URL
         self._add_callback_url(cmd, task)
+
+        # Add sandbox-specific environment variables for heartbeat service
+        self._add_sandbox_env_vars(cmd, task)
 
         # Add OpenTelemetry trace context for distributed tracing
         self._add_trace_context(cmd)
@@ -699,6 +737,43 @@ class DockerExecutor(Executor):
         callback_url = build_callback_url(task)
         if callback_url:
             cmd.extend(["-e", f"CALLBACK_URL={callback_url}"])
+
+    def _add_sandbox_env_vars(self, cmd: List[str], task: Dict[str, Any]) -> None:
+        """Add sandbox-specific environment variables for heartbeat service.
+
+        For sandbox type tasks, this adds:
+        - SANDBOX_ID: Used by heartbeat service to identify the sandbox
+        - HEARTBEAT_ENABLED: Enable heartbeat service for sandbox containers
+        - EXECUTOR_MANAGER_HEARTBEAT_BASE_URL: Used by heartbeat service for heartbeat endpoint
+
+        Args:
+            cmd: Docker command list to extend
+            task: Task dictionary containing sandbox_metadata
+        """
+        is_sandbox = task.get("type") == "sandbox"
+        if not is_sandbox:
+            return
+
+        # Get sandbox_id from metadata
+        sandbox_metadata = task.get("sandbox_metadata", {})
+        sandbox_id = sandbox_metadata.get("sandbox_id")
+
+        if sandbox_id:
+            cmd.extend(["-e", f"SANDBOX_ID={sandbox_id}"])
+            cmd.extend(["-e", "HEARTBEAT_ENABLED=true"])
+
+            # Build heartbeat base URL from callback URL
+            callback_url = build_callback_url(task)
+            if callback_url and "/callback" in callback_url:
+                # Convert callback URL to base URL for heartbeat service
+                # From: http://host:port/executor-manager/callback
+                # To:   http://host:port/executor-manager
+                base_url = callback_url.replace("/callback", "")
+                cmd.extend(["-e", f"EXECUTOR_MANAGER_HEARTBEAT_BASE_URL={base_url}"])
+
+            logger.info(
+                f"Added sandbox env vars: SANDBOX_ID={sandbox_id}, HEARTBEAT_ENABLED=true"
+            )
 
     def _add_trace_context(self, cmd: List[str]) -> None:
         """
@@ -878,9 +953,7 @@ class DockerExecutor(Executor):
                 headers = {}
                 try:
                     from shared.telemetry.context import (
-                        get_request_id,
-                        inject_trace_context_to_headers,
-                    )
+                        get_request_id, inject_trace_context_to_headers)
 
                     # Inject W3C Trace Context headers for distributed tracing
                     headers = inject_trace_context_to_headers(headers)
@@ -960,6 +1033,37 @@ class DockerExecutor(Executor):
             return {
                 "status": "failed",
                 "error_msg": f"Error getting current task IDs: {str(e)}",
+            }
+
+    def get_container_address(self, executor_name: str) -> Dict[str, Any]:
+        """Get container base URL for sandbox proxy.
+
+        This method is called by SandboxManager to get the address for proxying
+        requests to the sandbox container.
+
+        Args:
+            executor_name: Container name
+
+        Returns:
+            Dict with status and base_url (e.g., http://localhost:8080)
+        """
+        try:
+            port = self._get_container_port(executor_name)
+            if not port:
+                return {
+                    "status": "failed",
+                    "error_msg": f"Container {executor_name} port not available",
+                }
+
+            return {
+                "status": "success",
+                "base_url": f"http://{DEFAULT_DOCKER_HOST}:{port}",
+            }
+        except Exception as e:
+            logger.error(f"Error getting container address for {executor_name}: {e}")
+            return {
+                "status": "failed",
+                "error_msg": f"Error getting container address: {str(e)}",
             }
 
     def _call_callback(

@@ -1,26 +1,26 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
-import '@/features/common/scrollbar.css';
+'use client'
+import '@/features/common/scrollbar.css'
 
-import React, { useEffect, useState, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Tag } from '@/components/ui/tag';
-import { ResourceListItem } from '@/components/common/ResourceListItem';
+import React, { useEffect, useState, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Tag } from '@/components/ui/tag'
+import { ResourceListItem } from '@/components/common/ResourceListItem'
 import {
   CircleStackIcon,
   PencilIcon,
   TrashIcon,
   BeakerIcon,
   GlobeAltIcon,
-} from '@heroicons/react/24/outline';
-import { Loader2 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { useTranslation } from '@/hooks/useTranslation';
-import RetrieverEditDialog from './RetrieverEditDialog';
+} from '@heroicons/react/24/outline'
+import { Loader2 } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
+import RetrieverEditDialog from './RetrieverEditDialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,15 +30,15 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { retrieverApis, UnifiedRetriever } from '@/apis/retrievers';
-import UnifiedAddButton from '@/components/common/UnifiedAddButton';
+} from '@/components/ui/alert-dialog'
+import { retrieverApis, UnifiedRetriever } from '@/apis/retrievers'
+import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 
 interface RetrieverListProps {
-  scope?: 'personal' | 'group' | 'all';
-  groupName?: string;
-  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>;
-  onEditResource?: (namespace: string) => void;
+  scope?: 'personal' | 'group' | 'all'
+  groupName?: string
+  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
+  onEditResource?: (namespace: string) => void
 }
 
 const RetrieverList: React.FC<RetrieverListProps> = ({
@@ -47,51 +47,51 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
   groupRoleMap,
   onEditResource,
 }) => {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const [retrievers, setRetrievers] = useState<UnifiedRetriever[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editingRetriever, setEditingRetriever] = useState<UnifiedRetriever | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const [retrievers, setRetrievers] = useState<UnifiedRetriever[]>([])
+  const [loading, setLoading] = useState(true)
+  const [editingRetriever, setEditingRetriever] = useState<UnifiedRetriever | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
   const [deleteConfirmRetriever, setDeleteConfirmRetriever] = useState<UnifiedRetriever | null>(
     null
-  );
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [testingRetrieverName, setTestingRetrieverName] = useState<string | null>(null);
+  )
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [testingRetrieverName, setTestingRetrieverName] = useState<string | null>(null)
 
   const fetchRetrievers = useCallback(async () => {
-    setLoading(true);
+    setLoading(true)
     try {
-      const response = await retrieverApis.getUnifiedRetrievers(scope, groupName);
-      setRetrievers(response.data || []);
+      const response = await retrieverApis.getUnifiedRetrievers(scope, groupName)
+      setRetrievers(response.data || [])
     } catch (error) {
-      console.error('Failed to fetch retrievers:', error);
+      console.error('Failed to fetch retrievers:', error)
       toast({
         variant: 'destructive',
         title: t('common:retrievers.errors.load_retrievers_failed'),
-      });
+      })
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [toast, t, scope, groupName]);
+  }, [toast, t, scope, groupName])
 
   useEffect(() => {
-    fetchRetrievers();
-  }, [fetchRetrievers, scope, groupName]);
+    fetchRetrievers()
+  }, [fetchRetrievers, scope, groupName])
 
   // Categorize retrievers by type
   const { groupRetrievers, userRetrievers, publicRetrievers } = React.useMemo(() => {
-    const group: UnifiedRetriever[] = [];
-    const user: UnifiedRetriever[] = [];
-    const publicList: UnifiedRetriever[] = [];
+    const group: UnifiedRetriever[] = []
+    const user: UnifiedRetriever[] = []
+    const publicList: UnifiedRetriever[] = []
 
     for (const retriever of retrievers) {
       if (retriever.type === 'group') {
-        group.push(retriever);
+        group.push(retriever)
       } else if (retriever.type === 'public') {
-        publicList.push(retriever);
+        publicList.push(retriever)
       } else {
-        user.push(retriever);
+        user.push(retriever)
       }
     }
 
@@ -99,34 +99,34 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
       groupRetrievers: group,
       userRetrievers: user,
       publicRetrievers: publicList,
-    };
-  }, [retrievers]);
+    }
+  }, [retrievers])
 
-  const totalRetrievers = groupRetrievers.length + userRetrievers.length + publicRetrievers.length;
+  const totalRetrievers = groupRetrievers.length + userRetrievers.length + publicRetrievers.length
 
   // Helper function to check permissions for a specific group resource
   const canEditGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false;
-    const role = groupRoleMap.get(namespace);
-    return role === 'Owner' || role === 'Maintainer' || role === 'Developer';
-  };
+    if (!groupRoleMap) return false
+    const role = groupRoleMap.get(namespace)
+    return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
+  }
 
   const canDeleteGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false;
-    const role = groupRoleMap.get(namespace);
-    return role === 'Owner' || role === 'Maintainer';
-  };
+    if (!groupRoleMap) return false
+    const role = groupRoleMap.get(namespace)
+    return role === 'Owner' || role === 'Maintainer'
+  }
 
   const canCreateInAnyGroup =
     groupRoleMap &&
-    Array.from(groupRoleMap.values()).some(role => role === 'Owner' || role === 'Maintainer');
+    Array.from(groupRoleMap.values()).some(role => role === 'Owner' || role === 'Maintainer')
 
   const handleTestConnection = async (retriever: UnifiedRetriever) => {
-    setTestingRetrieverName(retriever.name);
+    setTestingRetrieverName(retriever.name)
     try {
       // Fetch full retriever config
-      const fullRetriever = await retrieverApis.getRetriever(retriever.name, retriever.namespace);
-      const storageConfig = fullRetriever.spec.storageConfig;
+      const fullRetriever = await retrieverApis.getRetriever(retriever.name, retriever.namespace)
+      const storageConfig = fullRetriever.spec.storageConfig
 
       const result = await retrieverApis.testConnection({
         storage_type: storageConfig.type as 'elasticsearch' | 'qdrant',
@@ -134,87 +134,87 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
         username: storageConfig.username,
         password: storageConfig.password,
         api_key: storageConfig.apiKey,
-      });
+      })
 
       if (result.success) {
         toast({
           title: t('common:retrievers.test_success'),
           description: result.message,
-        });
+        })
       } else {
         toast({
           variant: 'destructive',
           title: t('common:retrievers.test_failed'),
           description: result.message,
-        });
+        })
       }
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('common:retrievers.test_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setTestingRetrieverName(null);
+      setTestingRetrieverName(null)
     }
-  };
+  }
 
   const handleDelete = async () => {
-    if (!deleteConfirmRetriever) return;
+    if (!deleteConfirmRetriever) return
 
-    setIsDeleting(true);
+    setIsDeleting(true)
     try {
       await retrieverApis.deleteRetriever(
         deleteConfirmRetriever.name,
         deleteConfirmRetriever.namespace
-      );
+      )
       toast({
         title: t('common:retrievers.delete_success'),
-      });
-      setDeleteConfirmRetriever(null);
-      fetchRetrievers();
+      })
+      setDeleteConfirmRetriever(null)
+      fetchRetrievers()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('common:retrievers.errors.delete_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setIsDeleting(false);
+      setIsDeleting(false)
     }
-  };
+  }
 
   const handleEdit = (retriever: UnifiedRetriever) => {
     // Notify parent to update group selector if editing a group resource
     if (onEditResource && retriever.namespace && retriever.namespace !== 'default') {
-      onEditResource(retriever.namespace);
+      onEditResource(retriever.namespace)
     }
 
-    setEditingRetriever(retriever);
-    setDialogOpen(true);
-  };
+    setEditingRetriever(retriever)
+    setDialogOpen(true)
+  }
 
   const handleEditClose = () => {
-    setEditingRetriever(null);
-    setDialogOpen(false);
-    fetchRetrievers();
-  };
+    setEditingRetriever(null)
+    setDialogOpen(false)
+    fetchRetrievers()
+  }
 
   const handleCreate = () => {
-    setEditingRetriever(null);
-    setDialogOpen(true);
-  };
+    setEditingRetriever(null)
+    setDialogOpen(true)
+  }
 
   const getStorageTypeLabel = (storageType: string) => {
     switch (storageType) {
       case 'elasticsearch':
-        return 'Elasticsearch';
+        return 'Elasticsearch'
       case 'qdrant':
-        return 'Qdrant';
+        return 'Qdrant'
       default:
-        return storageType;
+        return storageType
     }
-  };
+  }
 
   return (
     <div className="space-y-3">
@@ -497,7 +497,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-};
+  )
+}
 
-export default RetrieverList;
+export default RetrieverList

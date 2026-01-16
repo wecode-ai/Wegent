@@ -13,37 +13,12 @@
   transition: height 0.2s ease;
 }
 
-/* Custom scrollbar styles (for ChatInput, main area, etc.) */
-.auto-resize-textarea::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.auto-resize-textarea::-webkit-scrollbar-track {
-  background: rgb(var(--color-scrollbar-track));
-  border-radius: 3px;
-}
-
-.auto-resize-textarea::-webkit-scrollbar-thumb {
-  background: rgb(var(--color-scrollbar-thumb));
-  border-radius: 3px;
-}
-
-.auto-resize-textarea::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--color-border-strong));
-}
-
 /* Bot selector styles */
 .bot-selector-container {
   position: relative;
   margin-bottom: 8px;
 }
 
-/* Message area scrollbar styles */
-.messages-container {
-  scrollbar-width: thin;
-  scrollbar-color: rgb(var(--color-scrollbar-thumb)) rgb(var(--color-scrollbar-track));
-}
 /* Fix markdown code/pre overflow issue */
 .markdown-body pre,
 .markdown-body code {
@@ -54,10 +29,84 @@
   box-sizing: border-box;
 }
 
+/* Fix markdown table overflow on mobile - wrap tables in scrollable container */
+/* Apply to both .wmde-markdown (legacy @uiw/react-markdown-editor) and .markdown-content (new EnhancedMarkdown) */
+.wmde-markdown table,
+.markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1em;
+  display: table; /* Keep native table layout */
+}
+
+.wmde-markdown table th,
+.wmde-markdown table td,
+.markdown-content table th,
+.markdown-content table td {
+  padding: 0.5rem;
+  border: 1px solid rgb(var(--color-border));
+  word-break: break-word;
+  overflow-wrap: break-word;
+  white-space: normal; /* Allow text wrapping in cells */
+}
+
+.wmde-markdown table th,
+.markdown-content table th {
+  background-color: rgb(var(--color-bg-surface));
+  font-weight: 600;
+  text-align: left;
+}
+
+/* Responsive table wrapper for mobile - create scrollable container for each table */
+@media (max-width: 767px) {
+  /* Wrap each table in a scrollable container */
+  .wmde-markdown table,
+  .markdown-content table {
+    font-size: 0.75rem; /* Smaller text on mobile */
+    width: max-content; /* Allow table to expand based on content */
+    display: block; /* Allow overflow */
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Restore table layout for internal elements */
+  .wmde-markdown table thead,
+  .wmde-markdown table tbody,
+  .markdown-content table thead,
+  .markdown-content table tbody {
+    display: table-header-group;
+  }
+
+  .wmde-markdown table tbody,
+  .markdown-content table tbody {
+    display: table-row-group;
+  }
+
+  .wmde-markdown table tr,
+  .markdown-content table tr {
+    display: table-row;
+  }
+
+  .wmde-markdown table th,
+  .wmde-markdown table td,
+  .markdown-content table th,
+  .markdown-content table td {
+    display: table-cell;
+    padding: 0.375rem 0.5rem;
+    white-space: nowrap; /* Prevent text wrapping on mobile for better readability */
+  }
+}
+
 /* Unify markdown text size with thinking process */
-.wmde-markdown {
+/* .wmde-markdown provides base styles from @uiw/react-markdown-preview */
+/* These overrides customize font sizes for our design system */
+.wmde-markdown,
+.markdown-content,
+.enhanced-markdown {
   font-size: 0.875rem; /* text-sm = 14px */
   line-height: 1.5;
+  /* Reset background to transparent since wmde-markdown sets a background */
+  background-color: transparent;
 }
 
 .wmde-markdown h1,
@@ -73,9 +122,13 @@
 
 .wmde-markdown h1 {
   font-size: 1.25rem;
+  border-bottom: none;
+  padding-bottom: 0;
 } /* 20px */
 .wmde-markdown h2 {
   font-size: 1.125rem;
+  border-bottom: none;
+  padding-bottom: 0;
 } /* 18px */
 .wmde-markdown h3 {
   font-size: 1rem;
@@ -100,12 +153,46 @@
   margin-bottom: 0.25em;
 }
 
-.wmde-markdown code {
+/* Override code block styles to use our design system colors */
+.wmde-markdown code,
+.wmde-markdown tt {
   font-size: 0.875em;
+  background-color: rgb(var(--color-code-bg));
+  padding: 0.125em 0.375em;
+  border-radius: 0.25rem;
 }
 
-.wmde-markdown pre code {
+.wmde-markdown pre {
+  background-color: rgb(var(--color-code-bg));
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 0.75em 0;
+}
+
+.wmde-markdown pre code,
+.wmde-markdown pre tt {
   font-size: 0.8125rem; /* 13px */
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+/* Override blockquote styles to use our design system colors */
+.wmde-markdown blockquote {
+  border-left-color: rgb(var(--color-border));
+  color: rgb(var(--color-text-secondary));
+}
+
+/* Override link styles to use our design system colors */
+.wmde-markdown a {
+  color: rgb(var(--color-link));
+}
+
+/* Override hr styles */
+.wmde-markdown hr {
+  background-color: rgb(var(--color-border));
+  border-bottom-color: rgb(var(--color-border));
 }
 
 /* Search icon slide animation */

@@ -2,99 +2,99 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState, useEffect } from 'react';
-import { X, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
-import ContextBadge from '../chat/ContextBadge';
+import React, { useState, useEffect } from 'react'
+import { X, Loader2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
+import ContextBadge from '../chat/ContextBadge'
 import {
   formatFileSize,
   getFileIcon,
   isImageExtension,
   getAttachmentPreviewUrl,
-} from '@/apis/attachments';
-import { getToken } from '@/apis/user';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { Attachment, MultiAttachmentUploadState } from '@/types/api';
-import type { ContextItem } from '@/types/context';
+} from '@/apis/attachments'
+import { getToken } from '@/apis/user'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { Attachment, MultiAttachmentUploadState } from '@/types/api'
+import type { ContextItem } from '@/types/context'
 
 interface InputBadgeDisplayProps {
   /** Selected knowledge base contexts */
-  contexts: ContextItem[];
+  contexts: ContextItem[]
   /** Current attachments state */
-  attachmentState: MultiAttachmentUploadState;
+  attachmentState: MultiAttachmentUploadState
   /** Callback to remove a context */
-  onRemoveContext: (contextId: number | string) => void;
+  onRemoveContext: (contextId: number | string) => void
   /** Callback to remove an attachment */
-  onRemoveAttachment: (attachmentId: number) => void;
+  onRemoveAttachment: (attachmentId: number) => void
   /** Whether the component is disabled */
-  disabled?: boolean;
+  disabled?: boolean
 }
 
 /**
  * Custom hook to fetch image with authentication and return blob URL
  */
 function useAuthenticatedImageInline(attachmentId: number, isImage: boolean) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(false);
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState(false)
 
   useEffect(() => {
-    if (!isImage) return;
+    if (!isImage) return
 
-    let isMounted = true;
+    let isMounted = true
     const fetchImage = async () => {
-      setIsLoading(true);
-      setError(false);
+      setIsLoading(true)
+      setError(false)
 
       try {
-        const token = getToken();
+        const token = getToken()
         const response = await fetch(getAttachmentPreviewUrl(attachmentId), {
           headers: {
             ...(token && { Authorization: `Bearer ${token}` }),
           },
-        });
+        })
 
         if (!response.ok) {
-          throw new Error(`Failed to fetch image: ${response.status}`);
+          throw new Error(`Failed to fetch image: ${response.status}`)
         }
 
-        const blob = await response.blob();
+        const blob = await response.blob()
         if (isMounted) {
-          const url = URL.createObjectURL(blob);
-          setBlobUrl(url);
+          const url = URL.createObjectURL(blob)
+          setBlobUrl(url)
         }
       } catch (err) {
-        console.error('Failed to load image:', err);
+        console.error('Failed to load image:', err)
         if (isMounted) {
-          setError(true);
+          setError(true)
         }
       } finally {
         if (isMounted) {
-          setIsLoading(false);
+          setIsLoading(false)
         }
       }
-    };
+    }
 
-    fetchImage();
+    fetchImage()
 
     return () => {
-      isMounted = false;
-    };
-  }, [attachmentId, isImage]);
+      isMounted = false
+    }
+  }, [attachmentId, isImage])
 
   // Clean up blob URL when it changes or component unmounts
   useEffect(() => {
     return () => {
       if (blobUrl) {
-        URL.revokeObjectURL(blobUrl);
+        URL.revokeObjectURL(blobUrl)
       }
-    };
-  }, [blobUrl]);
+    }
+  }, [blobUrl])
 
-  return { blobUrl, isLoading, error };
+  return { blobUrl, isLoading, error }
 }
 /**
  * Inline attachment preview component
@@ -105,17 +105,17 @@ function AttachmentPreviewInline({
   onRemove,
   t,
 }: {
-  attachment: Attachment;
-  disabled?: boolean;
-  onRemove: () => void;
-  t: (key: string) => string;
+  attachment: Attachment
+  disabled?: boolean
+  onRemove: () => void
+  t: (key: string) => string
 }) {
-  const isImage = isImageExtension(attachment.file_extension);
+  const isImage = isImageExtension(attachment.file_extension)
   const {
     blobUrl: imageUrl,
     isLoading: imageLoading,
     error: imageError,
-  } = useAuthenticatedImageInline(attachment.id, isImage);
+  } = useAuthenticatedImageInline(attachment.id, isImage)
 
   // For images, show thumbnail preview
   if (isImage && !imageError) {
@@ -146,7 +146,7 @@ function AttachmentPreviewInline({
             </Button>
           )}
         </div>
-      );
+      )
     }
 
     // Show image once loaded
@@ -185,7 +185,7 @@ function AttachmentPreviewInline({
             </Button>
           )}
         </div>
-      );
+      )
     }
   }
 
@@ -226,7 +226,7 @@ function AttachmentPreviewInline({
         </Button>
       )}
     </div>
-  );
+  )
 }
 
 /**
@@ -240,15 +240,15 @@ export default function InputBadgeDisplay({
   onRemoveAttachment,
   disabled = false,
 }: InputBadgeDisplayProps) {
-  const { t } = useTranslation();
-  const hasContexts = contexts.length > 0;
-  const hasAttachments = attachmentState.attachments.length > 0;
-  const isUploading = attachmentState.uploadingFiles.size > 0;
-  const hasErrors = attachmentState.errors.size > 0;
+  const { t } = useTranslation()
+  const hasContexts = contexts.length > 0
+  const hasAttachments = attachmentState.attachments.length > 0
+  const isUploading = attachmentState.uploadingFiles.size > 0
+  const hasErrors = attachmentState.errors.size > 0
 
   // Only render if there are items to display
   if (!hasContexts && !hasAttachments && !isUploading && !hasErrors) {
-    return null;
+    return null
   }
 
   return (
@@ -271,7 +271,11 @@ export default function InputBadgeDisplay({
           {/* Knowledge base badges */}
           {contexts.map(context => (
             <div key={`context-${context.type}-${context.id}`} className="flex-shrink-0">
-              <ContextBadge context={context} onRemove={() => onRemoveContext(context.id)} />
+              <ContextBadge
+                context={context}
+                onRemove={() => onRemoveContext(context.id)}
+                disableUrlClick={true}
+              />
             </div>
           ))}
 
@@ -300,5 +304,5 @@ export default function InputBadgeDisplay({
         </div>
       )}
     </div>
-  );
+  )
 }

@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react'
 import {
   Disclosure,
   DisclosureButton,
@@ -12,7 +12,7 @@ import {
   Dialog,
   DialogPanel,
   DialogTitle,
-} from '@headlessui/react';
+} from '@headlessui/react'
 import {
   Bars3Icon,
   CheckIcon,
@@ -20,12 +20,13 @@ import {
   ClipboardDocumentIcon,
   XMarkIcon,
   ExclamationTriangleIcon,
-} from '@heroicons/react/24/outline';
-import MarkdownEditor from '@uiw/react-markdown-editor';
-import { useTheme } from '@/features/theme/ThemeProvider';
-import { useTranslation } from '@/hooks/useTranslation';
-import { taskApis, BranchDiffResponse } from '@/apis/tasks';
-import DiffViewer from '../message/DiffViewer';
+} from '@heroicons/react/24/outline'
+import MarkdownEditor from '@uiw/react-markdown-editor'
+import { useTheme } from '@/features/theme/ThemeProvider'
+import { useTranslation } from '@/hooks/useTranslation'
+import { taskApis, BranchDiffResponse } from '@/apis/tasks'
+import DiffViewer from '../message/DiffViewer'
+import { TaskApp } from '@/types/api'
 
 // Tool icon mapping
 const TOOL_ICONS: Record<string, string> = {
@@ -38,101 +39,102 @@ const TOOL_ICONS: Record<string, string> = {
   Task: '🤖',
   WebFetch: '🌐',
   WebSearch: '🔎',
-};
+}
 
 // Git commit statistics
 interface CommitStats {
-  files_changed: number;
-  insertions: number;
-  deletions: number;
+  files_changed: number
+  insertions: number
+  deletions: number
 }
 
 // Git commit information
 interface GitCommit {
-  commit_id: string;
-  short_id: string;
-  message: string;
-  author: string;
-  author_email: string;
-  committed_date: string;
-  stats: CommitStats;
+  commit_id: string
+  short_id: string
+  message: string
+  author: string
+  author_email: string
+  committed_date: string
+  stats: CommitStats
 }
 
 // Git information
 interface GitInfo {
-  initial_commit_id: string;
-  initial_commit_message: string;
-  task_commits: GitCommit[];
-  source_branch: string;
-  target_branch: string;
+  initial_commit_id: string
+  initial_commit_message: string
+  task_commits: GitCommit[]
+  source_branch: string
+  target_branch: string
 }
 
 // File change information
 interface FileChange {
-  old_path: string;
-  new_path: string;
-  new_file: boolean;
-  renamed_file: boolean;
-  deleted_file: boolean;
-  added_lines: number;
-  removed_lines: number;
-  diff_title: string;
+  old_path: string
+  new_path: string
+  new_file: boolean
+  renamed_file: boolean
+  deleted_file: boolean
+  added_lines: number
+  removed_lines: number
+  diff_title: string
 }
 
 // Workbench data structure
 interface WorkbenchData {
-  taskTitle: string;
-  taskNumber: string;
-  status: 'running' | 'completed' | 'failed';
-  completedTime: string;
-  repository: string;
-  branch: string;
-  sessions: number;
-  premiumRequests: number;
-  lastUpdated: string;
-  summary: string;
-  changes: string[];
-  originalPrompt: string;
-  file_changes: FileChange[];
-  git_info: GitInfo;
-  git_type?: 'github' | 'gitlab';
-  git_domain?: string;
+  taskTitle: string
+  taskNumber: string
+  status: 'running' | 'completed' | 'failed'
+  completedTime: string
+  repository: string
+  branch: string
+  sessions: number
+  premiumRequests: number
+  lastUpdated: string
+  summary: string
+  changes: string[]
+  originalPrompt: string
+  file_changes: FileChange[]
+  git_info: GitInfo
+  git_type?: 'github' | 'gitlab'
+  git_domain?: string
 }
 
 interface WorkbenchProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onOpen: () => void;
-  workbenchData?: WorkbenchData | null;
-  isLoading?: boolean;
-  taskTitle?: string;
-  taskNumber?: string;
+  isOpen: boolean
+  onClose: () => void
+  onOpen: () => void
+  workbenchData?: WorkbenchData | null
+  isLoading?: boolean
+  taskTitle?: string
+  taskNumber?: string
   thinking?: Array<{
-    title: string;
-    next_action: string;
-    details?: Record<string, unknown>;
-  }> | null;
+    title: string
+    next_action: string
+    details?: Record<string, unknown>
+  }> | null
+  app?: TaskApp | null
 }
 
 function classNames(...classes: string[]) {
-  return classes.filter(Boolean).join(' ');
+  return classes.filter(Boolean).join(' ')
 }
 
 function formatDateTime(dateString: string | undefined): string {
-  if (!dateString) return '';
+  if (!dateString) return ''
 
   try {
-    const date = new Date(dateString);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
+    const date = new Date(dateString)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    const seconds = String(date.getSeconds()).padStart(2, '0')
 
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
   } catch (_error) {
-    return dateString;
+    return dateString
   }
 }
 
@@ -145,49 +147,51 @@ export default function Workbench({
   taskTitle,
   taskNumber,
   thinking,
+  app,
 }: WorkbenchProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'files'>('overview');
-  const [showCommits, setShowCommits] = useState(false);
-  const [copiedCommitId, setCopiedCommitId] = useState<string | null>(null);
-  const [diffData, setDiffData] = useState<BranchDiffResponse | null>(null);
-  const [isDiffLoading, setIsDiffLoading] = useState(false);
-  const [diffLoadError, setDiffLoadError] = useState<string | null>(null);
-  const [showErrorDialog, setShowErrorDialog] = useState(false);
-  const [loadingStateIndex, setLoadingStateIndex] = useState(0);
-  const [tipIndex, setTipIndex] = useState(0);
-  const [isTimelineExpanded, setIsTimelineExpanded] = useState(false); // Timeline collapse state
-  const { theme } = useTheme();
-  const { t } = useTranslation();
+  const [activeTab, setActiveTab] = useState<'overview' | 'files' | 'preview'>('overview')
+  const [showCommits, setShowCommits] = useState(false)
+  const [copiedCommitId, setCopiedCommitId] = useState<string | null>(null)
+  const [diffData, setDiffData] = useState<BranchDiffResponse | null>(null)
+  const [isDiffLoading, setIsDiffLoading] = useState(false)
+  const [diffLoadError, setDiffLoadError] = useState<string | null>(null)
+  const [showErrorDialog, setShowErrorDialog] = useState(false)
+  const [loadingStateIndex, setLoadingStateIndex] = useState(0)
+  const [tipIndex, setTipIndex] = useState(0)
+  const [isTimelineExpanded, setIsTimelineExpanded] = useState(false) // Timeline collapse state
+  const prevAppRef = useRef<TaskApp | null | undefined>(undefined) // Track previous app state
+  const { theme } = useTheme()
+  const { t } = useTranslation()
 
   // Internal state: cache the latest workbench data
-  const [cachedWorkbenchData, setCachedWorkbenchData] = useState<WorkbenchData | null>(null);
+  const [cachedWorkbenchData, setCachedWorkbenchData] = useState<WorkbenchData | null>(null)
 
   // Use cached data for rendering
-  const displayData = cachedWorkbenchData;
+  const displayData = cachedWorkbenchData
 
   // Loading state rotation (4 seconds)
   useEffect(() => {
     if (!displayData) {
       const loadingStates = t('tasks:workbench.loading_states', {
         returnObjects: true,
-      }) as string[];
+      }) as string[]
       const interval = setInterval(() => {
-        setLoadingStateIndex(prev => (prev + 1) % loadingStates.length);
-      }, 4000);
-      return () => clearInterval(interval);
+        setLoadingStateIndex(prev => (prev + 1) % loadingStates.length)
+      }, 4000)
+      return () => clearInterval(interval)
     }
-  }, [displayData, t]);
+  }, [displayData, t])
 
   // Tips rotation (6 seconds, random)
   useEffect(() => {
     if (!displayData) {
-      const tips = t('tasks:workbench.tips', { returnObjects: true }) as string[];
+      const tips = t('tasks:workbench.tips', { returnObjects: true }) as string[]
       const interval = setInterval(() => {
-        setTipIndex(Math.floor(Math.random() * tips.length));
-      }, 6000);
-      return () => clearInterval(interval);
+        setTipIndex(Math.floor(Math.random() * tips.length))
+      }, 6000)
+      return () => clearInterval(interval)
     }
-  }, [displayData, t]);
+  }, [displayData, t])
 
   // Observer pattern: listen to workbenchData changes
   useEffect(() => {
@@ -195,27 +199,27 @@ export default function Workbench({
     if (workbenchData) {
       // Check if task has changed by comparing task numbers or IDs
       const taskChanged =
-        cachedWorkbenchData && cachedWorkbenchData.taskNumber !== workbenchData.taskNumber;
+        cachedWorkbenchData && cachedWorkbenchData.taskNumber !== workbenchData.taskNumber
 
-      setCachedWorkbenchData(workbenchData);
+      setCachedWorkbenchData(workbenchData)
 
       // Reset diff data when task changes
       if (taskChanged) {
-        setDiffData(null);
-        setIsDiffLoading(false);
-        setDiffLoadError(null);
+        setDiffData(null)
+        setIsDiffLoading(false)
+        setDiffLoadError(null)
       }
     }
     //If workbenchData is null/undefined, keep the previous state (don't update cache)
-  }, [workbenchData, cachedWorkbenchData]);
+  }, [workbenchData, cachedWorkbenchData])
 
   const loadDiffData = async () => {
     if (!cachedWorkbenchData || !cachedWorkbenchData.git_info.target_branch) {
-      return;
+      return
     }
 
-    setIsDiffLoading(true);
-    setDiffLoadError(null);
+    setIsDiffLoading(true)
+    setDiffLoadError(null)
     try {
       const response = await taskApis.getBranchDiff({
         git_repo: cachedWorkbenchData.repository,
@@ -223,18 +227,18 @@ export default function Workbench({
         target_branch: cachedWorkbenchData.git_info.target_branch,
         type: cachedWorkbenchData.git_type || 'github',
         git_domain: cachedWorkbenchData.git_domain || 'github.com',
-      });
-      setDiffData(response);
-      setDiffLoadError(null);
+      })
+      setDiffData(response)
+      setDiffLoadError(null)
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('Failed to load diff data:', errorMessage);
-      setDiffLoadError(errorMessage);
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      console.error('Failed to load diff data:', errorMessage)
+      setDiffLoadError(errorMessage)
       // Don't set diffData - let error state prevent retry
     } finally {
-      setIsDiffLoading(false);
+      setIsDiffLoading(false)
     }
-  };
+  }
 
   // Auto-load diff data when task is completed
   // Only load once per task - prevent infinite retry on error
@@ -246,7 +250,7 @@ export default function Workbench({
       !isDiffLoading &&
       !diffLoadError // Don't retry if there was an error
     ) {
-      loadDiffData();
+      loadDiffData()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -255,7 +259,7 @@ export default function Workbench({
     diffData,
     isDiffLoading,
     diffLoadError,
-  ]);
+  ])
 
   // Check if we should show diff data
   const shouldShowDiffData = () => {
@@ -266,8 +270,8 @@ export default function Workbench({
       !diffLoadError &&
       diffData.files &&
       diffData.files.length > 0
-    );
-  };
+    )
+  }
 
   const navigation = [
     {
@@ -283,58 +287,68 @@ export default function Workbench({
         ? diffData?.files?.length || 0
         : displayData?.file_changes?.length || 0,
     },
-  ];
+    // Preview tab - only shown when app data is available
+    ...(app
+      ? [
+          {
+            name: t('common:appPreview.button'),
+            value: 'preview' as const,
+            current: activeTab === 'preview',
+          },
+        ]
+      : []),
+  ]
 
   const getStatusColor = () => {
     switch (displayData?.status) {
       case 'completed':
-        return 'text-green-600';
+        return 'text-green-600'
       case 'failed':
-        return 'text-red-600';
+        return 'text-red-600'
       default:
-        return 'text-yellow-600';
+        return 'text-yellow-600'
     }
-  };
+  }
 
   const getStatusText = () => {
     switch (displayData?.status) {
       case 'completed':
-        return t('tasks:workbench.status.completed');
+        return t('tasks:workbench.status.completed')
       case 'failed':
-        return t('tasks:workbench.status.failed');
+        return t('tasks:workbench.status.failed')
       default:
-        return t('tasks:workbench.status.running');
+        return t('tasks:workbench.status.running')
     }
-  };
+  }
 
   // Build execution timeline from thinking data
   interface TimelineStep {
-    toolName: string;
-    count: number;
-    timestamp: string;
+    toolName: string
+    count: number
+    timestamp: string
   }
 
   const buildTimeline = (
     thinkingSteps: Array<{
-      title: string;
-      next_action: string;
-      details?: Record<string, unknown>;
+      title: string
+      next_action: string
+      details?: Record<string, unknown>
     }>
   ): TimelineStep[] => {
-    if (!thinkingSteps || thinkingSteps.length === 0) return [];
+    if (!thinkingSteps || thinkingSteps.length === 0) return []
 
-    const timeline: TimelineStep[] = [];
-    let currentTool: string | null = null;
-    let currentCount = 0;
-    let currentTimestamp = '';
+    const timeline: TimelineStep[] = []
+    let currentTool: string | null = null
+    let currentCount = 0
+    let currentTimestamp = ''
 
     thinkingSteps.forEach(step => {
-      let toolName: string | null = null;
-      let timestamp = '';
+      let toolName: string | null = null
+      let timestamp = ''
 
       // Extract tool name from details
       if (step.details?.type === 'tool_use' && typeof step.details?.name === 'string') {
-        toolName = step.details.name;
+        toolName = step.details.name
       } else if (
         step.details &&
         'message' in step.details &&
@@ -342,34 +356,34 @@ export default function Workbench({
         step.details.message !== null
       ) {
         const message = step.details.message as {
-          content?: Array<{ type: string; name?: string }>;
-        };
+          content?: Array<{ type: string; name?: string }>
+        }
         if (message.content && Array.isArray(message.content)) {
           for (const content of message.content) {
             if (content.type === 'tool_use' && content.name) {
-              toolName = content.name;
-              break;
+              toolName = content.name
+              break
             }
           }
         }
       }
 
       // Extract timestamp
-      const details = step.details as { timestamp?: string; created_at?: string } | undefined;
+      const details = step.details as { timestamp?: string; created_at?: string } | undefined
       if (details?.timestamp) {
         timestamp = new Date(details.timestamp).toLocaleTimeString('en-US', {
           hour12: false,
-        });
+        })
       } else if (details?.created_at) {
         timestamp = new Date(details.created_at).toLocaleTimeString('en-US', {
           hour12: false,
-        });
+        })
       }
 
       if (toolName) {
         if (toolName === currentTool) {
           // Same tool, increment count
-          currentCount++;
+          currentCount++
         } else {
           // Different tool, save previous and start new
           if (currentTool) {
@@ -377,14 +391,14 @@ export default function Workbench({
               toolName: currentTool,
               count: currentCount,
               timestamp: currentTimestamp,
-            });
+            })
           }
-          currentTool = toolName;
-          currentCount = 1;
-          currentTimestamp = timestamp || currentTimestamp;
+          currentTool = toolName
+          currentCount = 1
+          currentTimestamp = timestamp || currentTimestamp
         }
       }
-    });
+    })
 
     // Add last group
     if (currentTool) {
@@ -392,33 +406,43 @@ export default function Workbench({
         toolName: currentTool,
         count: currentCount,
         timestamp: currentTimestamp,
-      });
+      })
     }
 
-    return timeline;
-  };
+    return timeline
+  }
 
-  const timelineSteps = thinking ? buildTimeline(thinking) : [];
+  const timelineSteps = thinking ? buildTimeline(thinking) : []
 
   // Auto-collapse timeline when task is completed
   useEffect(() => {
     if (displayData?.status === 'completed' && timelineSteps.length > 0) {
-      setIsTimelineExpanded(false);
+      setIsTimelineExpanded(false)
     }
-  }, [displayData?.status, timelineSteps.length]);
+  }, [displayData?.status, timelineSteps.length])
+
+  // Auto-switch to preview tab when app data first becomes available
+  useEffect(() => {
+    // Check if app just became available (was null/undefined, now has value)
+    if (!prevAppRef.current && app) {
+      setActiveTab('preview')
+    }
+    // Update the ref to track current app state
+    prevAppRef.current = app
+  }, [app])
 
   // Generate collapsed timeline summary
   const getTimelineSummary = (): string => {
-    if (timelineSteps.length === 0) return '';
+    if (timelineSteps.length === 0) return ''
 
-    const summary: string[] = [];
+    const summary: string[] = []
     timelineSteps.forEach(step => {
-      const icon = TOOL_ICONS[step.toolName] || '⚡';
-      summary.push(`${icon}×${step.count}`);
-    });
+      const icon = TOOL_ICONS[step.toolName] || '⚡'
+      summary.push(`${icon}×${step.count}`)
+    })
 
-    return summary.join(' ');
-  };
+    return summary.join(' ')
+  }
 
   return (
     <>
@@ -645,12 +669,12 @@ export default function Workbench({
                           <div className="px-4 py-4">
                             <div className="relative space-y-4">
                               {timelineSteps.map((step, index) => {
-                                const isLast = index === timelineSteps.length - 1;
-                                const toolActionKey = `thinking.tool_actions.${step.toolName}`;
-                                const toolActionName = t(toolActionKey);
+                                const isLast = index === timelineSteps.length - 1
+                                const toolActionKey = `thinking.tool_actions.${step.toolName}`
+                                const toolActionName = t(toolActionKey)
                                 const displayName =
-                                  toolActionName !== toolActionKey ? toolActionName : step.toolName;
-                                const icon = TOOL_ICONS[step.toolName] || '⚡';
+                                  toolActionName !== toolActionKey ? toolActionName : step.toolName
+                                const icon = TOOL_ICONS[step.toolName] || '⚡'
 
                                 return (
                                   <div key={index} className="relative flex items-start gap-3">
@@ -684,7 +708,7 @@ export default function Workbench({
                                       )}
                                     </div>
                                   </div>
-                                );
+                                )
                               })}
                             </div>
                           </div>
@@ -738,9 +762,9 @@ export default function Workbench({
                                       </code>
                                       <button
                                         onClick={() => {
-                                          navigator.clipboard.writeText(commit.commit_id);
-                                          setCopiedCommitId(commit.commit_id);
-                                          setTimeout(() => setCopiedCommitId(null), 2000);
+                                          navigator.clipboard.writeText(commit.commit_id)
+                                          setCopiedCommitId(commit.commit_id)
+                                          setTimeout(() => setCopiedCommitId(null), 2000)
                                         }}
                                         className="p-1 hover:bg-muted rounded transition-colors"
                                         title={t('tasks:workbench.copy_commit_id')}
@@ -841,7 +865,7 @@ export default function Workbench({
                       </Disclosure>
                     )}
                   </div>
-                ) : (
+                ) : activeTab === 'files' ? (
                   // Files Changed Tab - with integrated diff support
                   <>
                     {isDiffLoading ? (
@@ -893,7 +917,20 @@ export default function Workbench({
                       </div>
                     )}
                   </>
-                )}
+                ) : activeTab === 'preview' && app ? (
+                  // Preview Tab - iframe for app preview
+                  <div className="h-full flex flex-col -mx-2 -mb-2 sm:-mx-3 lg:-mx-4">
+                    <div className="flex-1 min-h-0">
+                      <iframe
+                        src={app.previewUrl}
+                        title={app.name || t('common:appPreview.title')}
+                        className="w-full h-full border-0"
+                        style={{ minHeight: 'calc(100vh - 180px)' }}
+                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -937,10 +974,10 @@ export default function Workbench({
               </button>
               <button
                 onClick={() => {
-                  setShowErrorDialog(false);
-                  setDiffLoadError(null);
-                  setDiffData(null);
-                  loadDiffData();
+                  setShowErrorDialog(false)
+                  setDiffLoadError(null)
+                  setDiffData(null)
+                  loadDiffData()
                 }}
                 className="px-4 py-2 text-sm font-medium text-white bg-primary hover:bg-primary/90 rounded-md transition-colors"
               >
@@ -953,5 +990,5 @@ export default function Workbench({
 
       {/* Toggle button - fixed position - hidden on mobile */}
     </>
-  );
+  )
 }

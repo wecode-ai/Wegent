@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -9,12 +9,12 @@
  * system prompts in the wizard.
  */
 
-import { NextRequest } from 'next/server';
-import { createStreamProxy } from '@/lib/stream-proxy';
+import { NextRequest } from 'next/server'
+import { createStreamProxy } from '@/lib/stream-proxy'
 
 export async function POST(request: NextRequest) {
-  return createStreamProxy(request, '/api/wizard/test-prompt/stream');
+  return createStreamProxy(request, '/api/wizard/test-prompt/stream')
 }
 
 // Set max duration for serverless function (Vercel/Edge)
-export const maxDuration = 60;
+export const maxDuration = 60

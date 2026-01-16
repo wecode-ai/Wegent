@@ -14,7 +14,11 @@ English | [简体中文](README_zh.md)
 
 <div align="center">
 
-<img src="./docs/assets/images/example.gif" width="75%" alt="Demo"/>
+<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
+
+<img src="https://github.com/user-attachments/assets/85e08e2f-5f52-4275-b349-0b5703664c2c" width="100%" alt="Knowledge Demo"/>
+
+<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
 
 [Quick Start](#-quick-start) · [Documentation](docs/en/README.md) · [Development Guide](docs/en/guides/developer/setup.md)
 
@@ -24,7 +28,7 @@ English | [简体中文](README_zh.md)
 
 ## ✨ Core Modes
 
-| 💬 Chat Mode | 💻 Code Mode | 📚 Knowledge Mode *(Experimental)* |
+| 💬 Chat Mode | 💻 Code Mode | 📚 Knowledge Mode |
 |:-------------|:-------------|:-----------------------------------|
 | **LLM**: Supports Claude / OpenAI / Gemini and other mainstream models<br>**Multimodal**: Supports automatic parsing of images / PPT / Word / PDF / Excel files<br>**Web Search**: Supports integration with various search engines<br>**Deep Research**: Supports deep research mode with automatic search, organization, and report generation<br>**Error Correction**: Multiple AIs automatically detect and correct errors in responses<br>**Follow-up Mode**: AI proactively asks clarifying questions to ensure accurate understanding<br>**Extensions**: Supports Skill packages / MCP tools / Custom tools | **Multi-platform Integration**: Supports GitHub / GitLab / Gitea / Gitee / Gerrit platforms<br>**Automated AI Workflow**: Branch → Code → Commit → PR automation<br>**Requirement Clarification**: AI proactively asks questions to ensure accurate understanding<br>**Wiki Generation**: Automatic codebase documentation generation | **RAG Retrieval**: Vector / Keyword / Hybrid retrieval<br>**Storage Backends**: Elasticsearch / Qdrant<br>**Document Parsing**: PDF / Markdown / DOCX / Code files<br>**Wiki**: Automatic codebase documentation generation |
 
@@ -45,10 +49,10 @@ English | [简体中文](README_zh.md)
 ## 🚀 Quick Start
 
 ```bash
-git clone https://github.com/wecode-ai/wegent.git && cd wegent
-docker-compose up -d
-# Open http://localhost:3000
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
 ```
+
+Then open http://localhost:3000 in your browser.
 
 > Optional: Enable RAG features with `docker compose --profile rag up -d`
 
@@ -86,6 +90,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ## 📞 Support
 
 - 🐛 Issues: [GitHub Issues](https://github.com/wecode-ai/wegent/issues)
+- 💬 Discord: [Join our community](https://discord.gg/MVzJzyqEUp)
 
 ## 👥 Contributors
 
@@ -130,17 +135,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/moqimoqidea">
-            <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
-            <br />
-            <sub><b>Moqimoqidea</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/kissghosts">
             <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
             <br />
             <sub><b>Yanhe</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/moqimoqidea">
+            <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
+            <br />
+            <sub><b>Moqimoqidea</b></sub>
         </a>
     </td>
     <td align="center">
@@ -152,6 +157,20 @@ Thanks to the following developers for their contributions and efforts to make t
     </td></tr>
 <tr>
     <td align="center">
+        <a href="https://github.com/joyway1978">
+            <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
+            <br />
+            <sub><b>Joyway78</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/FicoHu">
+            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
+            <br />
+            <sub><b>FicoHu</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/junbaor">
             <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
             <br />
@@ -159,10 +178,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/joyway1978">
-            <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
+        <a href="https://github.com/icycrystal4">
+            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
             <br />
-            <sub><b>Joyway78</b></sub>
+            <sub><b>icycrystal4</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/maquan0927">
+            <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
+            <br />
+            <sub><b>Just Quan</b></sub>
         </a>
     </td>
     <td align="center">
@@ -185,12 +211,20 @@ Thanks to the following developers for their contributions and efforts to make t
             <br />
             <sub><b>Andrewzq777</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/graindt">
             <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
             <br />
             <sub><b>Graindt</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/parabala">
+            <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
+            <br />
+            <sub><b>parabala</b></sub>
         </a>
     </td></tr>
 </table>

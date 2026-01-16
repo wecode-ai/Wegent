@@ -5,97 +5,97 @@
 
 // Type definitions
 export interface BotData {
-  name: string;
-  kind: string;
-  apiVersion: string;
-  metadata: { name: string; namespace: string };
+  name: string
+  kind: string
+  apiVersion: string
+  metadata: { name: string; namespace: string }
   spec: {
-    description?: string;
-    ghostRef?: { name: string; namespace?: string };
-    shellRef?: { name: string; namespace?: string };
-    modelRef?: { name: string; namespace?: string };
+    description?: string
+    ghostRef?: { name: string; namespace?: string }
+    shellRef?: { name: string; namespace?: string }
+    modelRef?: { name: string; namespace?: string }
     agent_config?: {
-      bind_model?: string;
-      bind_model_type?: 'public' | 'user' | 'group';
-    };
-  };
+      bind_model?: string
+      bind_model_type?: 'public' | 'user' | 'group'
+    }
+  }
 }
 
 export interface ModelData {
-  name: string;
-  provider: string;
-  model_id: string;
-  api_key: string;
-  base_url: string;
-  description?: string;
-  is_custom_config?: boolean;
+  name: string
+  provider: string
+  model_id: string
+  api_key: string
+  base_url: string
+  description?: string
+  is_custom_config?: boolean
 }
 
 export interface TeamData {
-  name: string;
-  kind: string;
-  apiVersion: string;
-  metadata: { name: string; namespace: string };
+  name: string
+  kind: string
+  apiVersion: string
+  metadata: { name: string; namespace: string }
   spec: {
-    description?: string;
-    collaborationModel?: 'coordinate' | 'collaborate' | 'route';
+    description?: string
+    collaborationModel?: 'coordinate' | 'collaborate' | 'route'
     members?: Array<{
-      botRef: { name: string; namespace?: string };
-      prompt?: string;
-      role?: string;
-    }>;
-  };
+      botRef: { name: string; namespace?: string }
+      prompt?: string
+      role?: string
+    }>
+  }
 }
 
 export interface GroupData {
-  name: string;
-  display_name?: string;
-  description?: string;
-  visibility?: 'private' | 'internal' | 'public';
+  name: string
+  display_name?: string
+  description?: string
+  visibility?: 'private' | 'internal' | 'public'
 }
 
 export interface UserData {
-  user_name: string;
-  email?: string;
-  password: string;
-  role: 'admin' | 'user';
-  auth_source?: 'password' | 'oidc' | 'unknown';
+  user_name: string
+  email?: string
+  password: string
+  role: 'admin' | 'user'
+  auth_source?: 'password' | 'oidc' | 'unknown'
 }
 
 export interface TaskData {
-  title: string;
-  prompt: string;
-  teamRef: { name: string; namespace?: string };
-  workspaceRef?: { name: string; namespace?: string };
+  title: string
+  prompt: string
+  teamRef: { name: string; namespace?: string }
+  workspaceRef?: { name: string; namespace?: string }
 }
 
 export interface ShellData {
-  name: string;
-  kind: string;
-  apiVersion: string;
-  metadata: { name: string; namespace: string };
+  name: string
+  kind: string
+  apiVersion: string
+  metadata: { name: string; namespace: string }
   spec: {
-    shellType: 'ClaudeCode' | 'Agno' | 'Dify' | 'Chat';
-    description?: string;
-    baseImage?: string;
-    supportModel?: string[];
-    baseShellRef?: { name: string; namespace?: string };
-  };
+    shellType: 'ClaudeCode' | 'Agno' | 'Dify' | 'Chat'
+    description?: string
+    baseImage?: string
+    supportModel?: string[]
+    baseShellRef?: { name: string; namespace?: string }
+  }
 }
 
 export interface WorkspaceData {
-  name: string;
-  kind: string;
-  apiVersion: string;
-  metadata: { name: string; namespace: string };
+  name: string
+  kind: string
+  apiVersion: string
+  metadata: { name: string; namespace: string }
   spec: {
     repository: {
-      gitUrl: string;
-      gitRepo: string;
-      branchName: string;
-      gitDomain: string;
-    };
-  };
+      gitUrl: string
+      gitRepo: string
+      branchName: string
+      gitDomain: string
+    }
+  }
 }
 
 /**
@@ -106,21 +106,21 @@ export class DataBuilders {
    * Generate a unique ID for test data
    */
   static uniqueId(): string {
-    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
   }
 
   /**
    * Generate a unique test name with prefix
    */
   static uniqueName(prefix: string): string {
-    return `${prefix}-${this.uniqueId()}`;
+    return `${prefix}-${this.uniqueId()}`
   }
 
   /**
    * Create a Bot test data object
    */
   static bot(overrides?: Partial<BotData>): BotData {
-    const name = `e2e-bot-${this.uniqueId()}`;
+    const name = `e2e-bot-${this.uniqueId()}`
     return {
       name,
       kind: 'Bot',
@@ -139,7 +139,7 @@ export class DataBuilders {
         },
       },
       ...overrides,
-    };
+    }
   }
 
   /**
@@ -154,14 +154,14 @@ export class DataBuilders {
       base_url: 'https://api.openai.com/v1',
       description: `E2E test model created at ${new Date().toISOString()}`,
       ...overrides,
-    };
+    }
   }
 
   /**
    * Create a Team test data object
    */
   static team(overrides?: Partial<TeamData>): TeamData {
-    const name = `e2e-team-${this.uniqueId()}`;
+    const name = `e2e-team-${this.uniqueId()}`
     return {
       name,
       kind: 'Team',
@@ -176,7 +176,7 @@ export class DataBuilders {
         members: [],
       },
       ...overrides,
-    };
+    }
   }
 
   /**
@@ -189,7 +189,7 @@ export class DataBuilders {
       description: `E2E test group created at ${new Date().toISOString()}`,
       visibility: 'public',
       ...overrides,
-    };
+    }
   }
 
   /**
@@ -203,7 +203,7 @@ export class DataBuilders {
       role,
       auth_source: 'password',
       ...overrides,
-    };
+    }
   }
 
   /**
@@ -215,14 +215,14 @@ export class DataBuilders {
       prompt: `This is an E2E test task created at ${new Date().toISOString()}`,
       teamRef: { name: 'default-team' },
       ...overrides,
-    };
+    }
   }
 
   /**
    * Create a Shell test data object
    */
   static shell(overrides?: Partial<ShellData>): ShellData {
-    const name = `e2e-shell-${this.uniqueId()}`;
+    const name = `e2e-shell-${this.uniqueId()}`
     return {
       name,
       kind: 'Shell',
@@ -238,14 +238,14 @@ export class DataBuilders {
         supportModel: ['claude-sonnet'],
       },
       ...overrides,
-    };
+    }
   }
 
   /**
    * Create a Workspace test data object
    */
   static workspace(overrides?: Partial<WorkspaceData>): WorkspaceData {
-    const name = `e2e-workspace-${this.uniqueId()}`;
+    const name = `e2e-workspace-${this.uniqueId()}`
     return {
       name,
       kind: 'Workspace',
@@ -263,38 +263,38 @@ export class DataBuilders {
         },
       },
       ...overrides,
-    };
+    }
   }
 
   /**
    * Create hierarchical group name (for nested groups)
    */
   static hierarchicalGroupName(depth: number = 2): string {
-    const parts = [];
+    const parts = []
     for (let i = 0; i < depth; i++) {
-      parts.push(`level${i}-${Math.random().toString(36).substr(2, 4)}`);
+      parts.push(`level${i}-${Math.random().toString(36).substr(2, 4)}`)
     }
-    return parts.join('/');
+    return parts.join('/')
   }
 
   /**
    * Create a batch of bots
    */
   static bots(count: number, overrides?: Partial<BotData>): BotData[] {
-    return Array.from({ length: count }, () => this.bot(overrides));
+    return Array.from({ length: count }, () => this.bot(overrides))
   }
 
   /**
    * Create a batch of teams
    */
   static teams(count: number, overrides?: Partial<TeamData>): TeamData[] {
-    return Array.from({ length: count }, () => this.team(overrides));
+    return Array.from({ length: count }, () => this.team(overrides))
   }
 
   /**
    * Create a batch of models
    */
   static models(count: number, overrides?: Partial<ModelData>): ModelData[] {
-    return Array.from({ length: count }, () => this.model(overrides));
+    return Array.from({ length: count }, () => this.model(overrides))
   }
 }

@@ -93,6 +93,32 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Prevent horizontal overflow globally */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#__next {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+/* Ensure all text elements can truncate properly */
+p,
+span,
+div,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+}
+
 /* 100vh fallback for better mobile compatibility */
 html {
   height: 100%;
@@ -625,20 +651,50 @@ button:focus-visible {
   border-top-color: rgb(var(--color-bg-surface)) !important;
 }
 
-/* Badge scroll container styling */
-.badge-scroll::-webkit-scrollbar {
-  height: 6px;
+/* Badge scroll container - use default browser scrollbar */
+
+/* KaTeX Math Formula Styles */
+.katex-display {
+  margin: 1em 0;
+  text-align: center;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
-.badge-scroll::-webkit-scrollbar-thumb {
-  background: rgb(var(--color-border));
-  border-radius: 3px;
+.katex {
+  font-size: 1.1em;
 }
 
-.badge-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--color-border-strong));
+/* Ensure math formulas wrap properly on mobile */
+@media (max-width: 768px) {
+  .katex-display {
+    font-size: 0.9em;
+  }
+
+  .katex-display > .katex {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
 }
 
-.badge-scroll::-webkit-scrollbar-track {
-  background: transparent;
+/* Dark mode adjustments for math formulas */
+[data-theme='dark'] .katex {
+  color: rgb(var(--color-text-primary));
+}
+
+[data-theme='dark'] .katex-display {
+  background-color: transparent;
+}
+
+/* Inline math styling */
+.markdown-content .katex {
+  padding: 0 0.1em;
+}
+
+/* Block math styling */
+.markdown-content .katex-display {
+  padding: 0.5em 1em;
+  border-radius: var(--radius);
+  background-color: rgba(var(--color-bg-muted), 0.3);
 }

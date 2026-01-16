@@ -193,7 +193,8 @@ class QdrantBackend(BaseStorageBackend):
             ValueError: If retrieval_mode is not 'vector'
         """
         collection_name = self.get_index_name(knowledge_id, **kwargs)
-        top_k = retrieval_setting.get("top_k", 5)
+        # Increased default top_k from 5 to 20 for better RAG coverage
+        top_k = retrieval_setting.get("top_k", 20)
         score_threshold = retrieval_setting.get("score_threshold", 0.7)
         retrieval_mode = retrieval_setting.get("retrieval_mode", "vector")
 
@@ -492,3 +493,93 @@ class QdrantBackend(BaseStorageBackend):
             return True
         except Exception:
             return False
+
+    def get_all_chunks(
+        self, knowledge_id: str, max_chunks: int = 10000, **kwargs
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all chunks from a knowledge base in Qdrant.
+
+        Uses scroll API to efficiently retrieve all chunks for a knowledge base.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            max_chunks: Maximum number of chunks to retrieve (safety limit)
+            **kwargs: Additional parameters (e.g., user_id for per_user strategy)
+
+        Returns:
+            List of chunk dicts with content, title, chunk_id, doc_ref, metadata
+        """
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
+
+        # Build filter for knowledge_id
+        scroll_filter = qdrant_models.Filter(
+            must=[
+                qdrant_models.FieldCondition(
+                    key="knowledge_id",
+                    match=qdrant_models.MatchValue(value=knowledge_id),
+                )
+            ]
+        )
+
+        try:
+            # Check if collection exists
+            try:
+                self.client.get_collection(collection_name)
+            except Exception:
+                return []
+
+            # Scroll through all matching points
+            all_points = []
+            offset = None
+            batch_size = min(1000, max_chunks)
+
+            while len(all_points) < max_chunks:
+                results, offset = self.client.scroll(
+                    collection_name=collection_name,
+                    scroll_filter=scroll_filter,
+                    limit=batch_size,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                all_points.extend(results)
+                if offset is None or len(results) == 0:
+                    break
+
+            # Convert to chunk format
+            chunks = []
+            for point in all_points[:max_chunks]:
+                payload = point.payload or {}
+
+                # Normalize content to plain text. Qdrant stores the original
+                # LlamaIndex node payload in `_node_content`, which may be a
+                # serialized TextNode JSON. We use extract_chunk_text to
+                # extract the human-readable `text` field and drop internal
+                # fields (id_, relationships, embeddings, etc.).
+                raw_content = payload.get("_node_content", "")
+
+                chunks.append(
+                    {
+                        "content": self.extract_chunk_text(raw_content),
+                        "title": payload.get("source_file", ""),
+                        "chunk_id": payload.get("chunk_index", 0),
+                        "doc_ref": payload.get("doc_ref", ""),
+                        "metadata": payload,
+                    }
+                )
+
+            # Sort by doc_ref and chunk_index
+            chunks.sort(key=lambda x: (x.get("doc_ref", ""), x.get("chunk_id", 0)))
+
+            return chunks
+
+        except Exception as e:
+            # Log error but return empty list to allow fallback to RAG
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"[Qdrant] Failed to get all chunks for KB {knowledge_id}: {e}"
+            )
+            return []

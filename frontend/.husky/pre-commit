@@ -10,38 +10,107 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # Get staged Python files
 PYTHON_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.py$' || true)
 
+# Function to format Python files in a specific module directory
+format_python_module() {
+  MODULE_DIR="$1"
+  MODULE_FILES="$2"
+  MODULE_NAME="$3"
+
+  if [ -z "$MODULE_FILES" ]; then
+    return 0
+  fi
+
+  echo "  📦 Formatting $MODULE_NAME files..."
+  cd "$MODULE_DIR" || return 1
+
+  # Convert relative paths to absolute paths for formatting
+  ABSOLUTE_FILES=""
+  for file in $MODULE_FILES; do
+    ABSOLUTE_FILES="$ABSOLUTE_FILES $PROJECT_ROOT/$file"
+  done
+
+  # Run black to auto-fix staged Python files
+  if uv run black --version >/dev/null 2>&1; then
+    echo "$ABSOLUTE_FILES" | xargs uv run black 2>/dev/null
+    echo "    ✅ Black formatting applied for $MODULE_NAME"
+  else
+    echo "    ⚠️ Black not available via uv in $MODULE_NAME. Skipping."
+  fi
+
+  # Run isort to auto-fix staged Python files
+  if uv run isort --version >/dev/null 2>&1; then
+    echo "$ABSOLUTE_FILES" | xargs uv run isort 2>/dev/null
+    echo "    ✅ isort formatting applied for $MODULE_NAME"
+  else
+    echo "    ⚠️ isort not available via uv in $MODULE_NAME. Skipping."
+  fi
+
+  cd "$PROJECT_ROOT"
+}
+
 if [ -n "$PYTHON_FILES" ]; then
   echo "🐍 Formatting Python files with black and isort..."
 
-  # Change to backend directory for uv context
-  cd "$PROJECT_ROOT/backend" || exit 1
-
-  # Try uv run first (recommended for this project), then fall back to python -m
-  if command -v uv >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/backend/pyproject.toml" ]; then
-    # Use uv run with backend context
+  if command -v uv >/dev/null 2>&1; then
     echo "Using uv to run formatters..."
 
-    # Convert relative paths to absolute paths for formatting
-    ABSOLUTE_FILES=""
+    # Group Python files by their module directory
+    BACKEND_FILES=""
+    EXECUTOR_FILES=""
+    EXECUTOR_MANAGER_FILES=""
+    SHARED_FILES=""
+    CHAT_SHELL_FILES=""
+    OTHER_FILES=""
+
     for file in $PYTHON_FILES; do
-      ABSOLUTE_FILES="$ABSOLUTE_FILES $PROJECT_ROOT/$file"
+      case "$file" in
+        backend/*)
+          BACKEND_FILES="$BACKEND_FILES $file"
+          ;;
+        executor/*)
+          EXECUTOR_FILES="$EXECUTOR_FILES $file"
+          ;;
+        executor_manager/*)
+          EXECUTOR_MANAGER_FILES="$EXECUTOR_MANAGER_FILES $file"
+          ;;
+        shared/*)
+          SHARED_FILES="$SHARED_FILES $file"
+          ;;
+        chat_shell/*)
+          CHAT_SHELL_FILES="$CHAT_SHELL_FILES $file"
+          ;;
+        *)
+          OTHER_FILES="$OTHER_FILES $file"
+          ;;
+      esac
     done
 
-    # Run black to auto-fix staged Python files
-    if uv run black --version >/dev/null 2>&1; then
-      echo "$ABSOLUTE_FILES" | xargs uv run black 2>/dev/null
-      echo "✅ Black formatting applied"
-    else
-      echo "⚠️ Black not available via uv. Skipping black formatting."
+    # Format files in each module with its own pyproject.toml context
+    if [ -n "$BACKEND_FILES" ] && [ -f "$PROJECT_ROOT/backend/pyproject.toml" ]; then
+      format_python_module "$PROJECT_ROOT/backend" "$BACKEND_FILES" "backend"
     fi
 
-    # Run isort to auto-fix staged Python files
-    if uv run isort --version >/dev/null 2>&1; then
-      echo "$ABSOLUTE_FILES" | xargs uv run isort 2>/dev/null
-      echo "✅ isort formatting applied"
-    else
-      echo "⚠️ isort not available via uv. Skipping isort formatting."
+    if [ -n "$EXECUTOR_FILES" ] && [ -f "$PROJECT_ROOT/executor/pyproject.toml" ]; then
+      format_python_module "$PROJECT_ROOT/executor" "$EXECUTOR_FILES" "executor"
     fi
+
+    if [ -n "$EXECUTOR_MANAGER_FILES" ] && [ -f "$PROJECT_ROOT/executor_manager/pyproject.toml" ]; then
+      format_python_module "$PROJECT_ROOT/executor_manager" "$EXECUTOR_MANAGER_FILES" "executor_manager"
+    fi
+
+    if [ -n "$SHARED_FILES" ] && [ -f "$PROJECT_ROOT/shared/pyproject.toml" ]; then
+      format_python_module "$PROJECT_ROOT/shared" "$SHARED_FILES" "shared"
+    fi
+
+    if [ -n "$CHAT_SHELL_FILES" ] && [ -f "$PROJECT_ROOT/chat_shell/pyproject.toml" ]; then
+      format_python_module "$PROJECT_ROOT/chat_shell" "$CHAT_SHELL_FILES" "chat_shell"
+    fi
+
+    # For other files, try to use backend as fallback
+    if [ -n "$OTHER_FILES" ] && [ -f "$PROJECT_ROOT/backend/pyproject.toml" ]; then
+      format_python_module "$PROJECT_ROOT/backend" "$OTHER_FILES" "other"
+    fi
+
   else
     # Fall back to python -m approach
     echo "Using python -m to run formatters..."

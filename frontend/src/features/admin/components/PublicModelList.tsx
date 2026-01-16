@@ -2,20 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useEffect, useState, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Tag } from '@/components/ui/tag';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
-import { CpuChipIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
-import { Loader2 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { useTranslation } from '@/hooks/useTranslation';
+import React, { useEffect, useState, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Tag } from '@/components/ui/tag'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { Switch } from '@/components/ui/switch'
+import { CpuChipIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline'
+import { Loader2 } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,7 +25,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from '@/components/ui/alert-dialog'
 import {
   Dialog,
   DialogContent,
@@ -33,187 +33,187 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+} from '@/components/ui/dialog'
 import {
   adminApis,
   AdminPublicModel,
   AdminPublicModelCreate,
   AdminPublicModelUpdate,
-} from '@/apis/admin';
-import UnifiedAddButton from '@/components/common/UnifiedAddButton';
+} from '@/apis/admin'
+import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 
 const PublicModelList: React.FC = () => {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const [models, setModels] = useState<AdminPublicModel[]>([]);
-  const [_total, setTotal] = useState(0);
-  const [page, _setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const [models, setModels] = useState<AdminPublicModel[]>([])
+  const [_total, setTotal] = useState(0)
+  const [page, _setPage] = useState(1)
+  const [loading, setLoading] = useState(true)
 
   // Dialog states
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<AdminPublicModel | null>(null);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [selectedModel, setSelectedModel] = useState<AdminPublicModel | null>(null)
 
   // Form states
   const [formData, setFormData] = useState<{
-    name: string;
-    namespace: string;
-    config: string;
-    is_active: boolean;
+    name: string
+    namespace: string
+    config: string
+    is_active: boolean
   }>({
     name: '',
     namespace: 'default',
     config: '{}',
     is_active: true,
-  });
-  const [configError, setConfigError] = useState('');
-  const [saving, setSaving] = useState(false);
+  })
+  const [configError, setConfigError] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const fetchModels = useCallback(async () => {
-    setLoading(true);
+    setLoading(true)
     try {
       // Use a larger limit to display all public models without pagination
-      const response = await adminApis.getPublicModels(page, 100);
-      setModels(response.items);
-      setTotal(response.total);
+      const response = await adminApis.getPublicModels(page, 100)
+      setModels(response.items)
+      setTotal(response.total)
     } catch (_error) {
       toast({
         variant: 'destructive',
         title: t('admin:public_models.errors.load_failed'),
-      });
+      })
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [page, toast, t]);
+  }, [page, toast, t])
 
   useEffect(() => {
-    fetchModels();
-  }, [fetchModels]);
+    fetchModels()
+  }, [fetchModels])
 
   const validateConfig = (value: string): Record<string, unknown> | null => {
     if (!value.trim()) {
-      setConfigError(t('admin:public_models.errors.config_required'));
-      return null;
+      setConfigError(t('admin:public_models.errors.config_required'))
+      return null
     }
     try {
-      const parsed = JSON.parse(value);
+      const parsed = JSON.parse(value)
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        setConfigError(t('admin:public_models.errors.config_invalid_json'));
-        return null;
+        setConfigError(t('admin:public_models.errors.config_invalid_json'))
+        return null
       }
-      setConfigError('');
-      return parsed as Record<string, unknown>;
+      setConfigError('')
+      return parsed as Record<string, unknown>
     } catch {
-      setConfigError(t('admin:public_models.errors.config_invalid_json'));
-      return null;
+      setConfigError(t('admin:public_models.errors.config_invalid_json'))
+      return null
     }
-  };
+  }
 
   const handleCreateModel = async () => {
     if (!formData.name.trim()) {
       toast({
         variant: 'destructive',
         title: t('admin:public_models.errors.name_required'),
-      });
-      return;
+      })
+      return
     }
 
-    const config = validateConfig(formData.config);
+    const config = validateConfig(formData.config)
     if (!config) {
       toast({
         variant: 'destructive',
         title: t('admin:public_models.errors.config_invalid_json'),
-      });
-      return;
+      })
+      return
     }
 
-    setSaving(true);
+    setSaving(true)
     try {
       const createData: AdminPublicModelCreate = {
         name: formData.name.trim(),
         namespace: formData.namespace.trim() || 'default',
         json: config,
-      };
-      await adminApis.createPublicModel(createData);
-      toast({ title: t('admin:public_models.success.created') });
-      setIsCreateDialogOpen(false);
-      resetForm();
-      fetchModels();
+      }
+      await adminApis.createPublicModel(createData)
+      toast({ title: t('admin:public_models.success.created') })
+      setIsCreateDialogOpen(false)
+      resetForm()
+      fetchModels()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('admin:public_models.errors.create_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   const handleUpdateModel = async () => {
-    if (!selectedModel) return;
+    if (!selectedModel) return
 
-    const config = validateConfig(formData.config);
+    const config = validateConfig(formData.config)
     if (!config) {
       toast({
         variant: 'destructive',
         title: t('admin:public_models.errors.config_invalid_json'),
-      });
-      return;
+      })
+      return
     }
 
-    setSaving(true);
+    setSaving(true)
     try {
-      const updateData: AdminPublicModelUpdate = {};
+      const updateData: AdminPublicModelUpdate = {}
       if (formData.name !== selectedModel.name) {
-        updateData.name = formData.name;
+        updateData.name = formData.name
       }
       if (formData.namespace !== selectedModel.namespace) {
-        updateData.namespace = formData.namespace;
+        updateData.namespace = formData.namespace
       }
-      updateData.json = config;
+      updateData.json = config
       if (formData.is_active !== selectedModel.is_active) {
-        updateData.is_active = formData.is_active;
+        updateData.is_active = formData.is_active
       }
 
-      await adminApis.updatePublicModel(selectedModel.id, updateData);
-      toast({ title: t('admin:public_models.success.updated') });
-      setIsEditDialogOpen(false);
-      resetForm();
-      fetchModels();
+      await adminApis.updatePublicModel(selectedModel.id, updateData)
+      toast({ title: t('admin:public_models.success.updated') })
+      setIsEditDialogOpen(false)
+      resetForm()
+      fetchModels()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('admin:public_models.errors.update_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   const handleDeleteModel = async () => {
-    if (!selectedModel) return;
+    if (!selectedModel) return
 
-    setSaving(true);
+    setSaving(true)
     try {
-      await adminApis.deletePublicModel(selectedModel.id);
-      toast({ title: t('admin:public_models.success.deleted') });
-      setIsDeleteDialogOpen(false);
-      setSelectedModel(null);
-      fetchModels();
+      await adminApis.deletePublicModel(selectedModel.id)
+      toast({ title: t('admin:public_models.success.deleted') })
+      setIsDeleteDialogOpen(false)
+      setSelectedModel(null)
+      fetchModels()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('admin:public_models.errors.delete_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   const resetForm = () => {
     setFormData({
@@ -221,39 +221,39 @@ const PublicModelList: React.FC = () => {
       namespace: 'default',
       config: '{}',
       is_active: true,
-    });
-    setConfigError('');
-    setSelectedModel(null);
-  };
+    })
+    setConfigError('')
+    setSelectedModel(null)
+  }
 
   const openEditDialog = (model: AdminPublicModel) => {
-    setSelectedModel(model);
+    setSelectedModel(model)
     setFormData({
       name: model.name,
       namespace: model.namespace,
       config: JSON.stringify(model.json, null, 2),
       is_active: model.is_active,
-    });
-    setIsEditDialogOpen(true);
-  };
+    })
+    setIsEditDialogOpen(true)
+  }
 
   const getModelProvider = (json: Record<string, unknown>): string => {
-    const env = (json?.env as Record<string, unknown>) || {};
-    const model = env?.model as string;
-    if (model === 'openai') return 'OpenAI';
-    if (model === 'claude') return 'Anthropic';
-    return 'Unknown';
-  };
+    const env = (json?.env as Record<string, unknown>) || {}
+    const model = env?.model as string
+    if (model === 'openai') return 'OpenAI'
+    if (model === 'claude') return 'Anthropic'
+    return 'Unknown'
+  }
 
   const getModelId = (json: Record<string, unknown>): string => {
-    const env = (json?.env as Record<string, unknown>) || {};
-    return (env?.model_id as string) || 'N/A';
-  };
+    const env = (json?.env as Record<string, unknown>) || {}
+    return (env?.model_id as string) || 'N/A'
+  }
 
   const getDisplayName = (model: AdminPublicModel): string => {
     // Use display_name from API response if available, otherwise fall back to name
-    return model.display_name || model.name;
-  };
+    return model.display_name || model.name
+  }
 
   return (
     <div className="space-y-3">
@@ -335,8 +335,8 @@ const PublicModelList: React.FC = () => {
                       size="icon"
                       className="h-8 w-8 hover:text-error"
                       onClick={() => {
-                        setSelectedModel(model);
-                        setIsDeleteDialogOpen(true);
+                        setSelectedModel(model)
+                        setIsDeleteDialogOpen(true)
                       }}
                       title={t('admin:public_models.delete_model')}
                     >
@@ -393,8 +393,8 @@ const PublicModelList: React.FC = () => {
                 id="config"
                 value={formData.config}
                 onChange={e => {
-                  setFormData({ ...formData, config: e.target.value });
-                  validateConfig(e.target.value);
+                  setFormData({ ...formData, config: e.target.value })
+                  validateConfig(e.target.value)
                 }}
                 placeholder={t('admin:public_models.form.config_placeholder')}
                 className={`font-mono text-sm min-h-[200px] ${configError ? 'border-error' : ''}`}
@@ -445,8 +445,8 @@ const PublicModelList: React.FC = () => {
                 id="edit-config"
                 value={formData.config}
                 onChange={e => {
-                  setFormData({ ...formData, config: e.target.value });
-                  validateConfig(e.target.value);
+                  setFormData({ ...formData, config: e.target.value })
+                  validateConfig(e.target.value)
                 }}
                 placeholder={t('admin:public_models.form.config_placeholder')}
                 className={`font-mono text-sm min-h-[200px] ${configError ? 'border-error' : ''}`}
@@ -499,7 +499,7 @@ const PublicModelList: React.FC = () => {
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-};
+  )
+}
 
-export default PublicModelList;
+export default PublicModelList

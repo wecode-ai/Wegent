@@ -2,19 +2,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import { Button } from '@/components/ui/button';
-import Image from 'next/image';
-import { LogIn, MessageSquare } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
+import React from 'react'
+import { Button } from '@/components/ui/button'
+import Image from 'next/image'
+import { LogIn, MessageSquare } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface PublicTaskSidebarProps {
-  taskTitle: string;
-  sharerName: string;
-  onLoginClick: () => void;
-  isLoggedIn?: boolean;
+  taskTitle: string
+  sharerName: string
+  onLoginClick: () => void
+  isLoggedIn?: boolean
 }
 
 /**
@@ -27,7 +27,7 @@ export default function PublicTaskSidebar({
   onLoginClick,
   isLoggedIn = false,
 }: PublicTaskSidebarProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   return (
     <div className="flex flex-col bg-surface w-full h-full">
@@ -106,5 +106,5 @@ export default function PublicTaskSidebar({
         </Button>
       </div>
     </div>
-  );
+  )
 }

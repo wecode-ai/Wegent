@@ -2,20 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { memo } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { TodoListDisplayProps } from '../types';
+import { memo } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { TodoListDisplayProps } from '../types'
 
 /**
  * Component to display a todo list from TodoWrite tool
  */
 const TodoListDisplay = memo(function TodoListDisplay({ todos }: TodoListDisplayProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   if (!Array.isArray(todos) || todos.length === 0) {
-    return null;
+    return null
   }
 
   return (
@@ -62,11 +62,11 @@ const TodoListDisplay = memo(function TodoListDisplay({ todos }: TodoListDisplay
                 )}
               </div>
             </div>
-          );
+          )
         })}
       </div>
     </div>
-  );
-});
+  )
+})
 
-export default TodoListDisplay;
+export default TodoListDisplay

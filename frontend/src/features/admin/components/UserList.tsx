@@ -2,21 +2,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useEffect, useState, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Tag } from '@/components/ui/tag';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import React, { useEffect, useState, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Tag } from '@/components/ui/tag'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@/components/ui/select'
 import {
   UserIcon,
   PencilIcon,
@@ -24,11 +24,11 @@ import {
   KeyIcon,
   NoSymbolIcon,
   CheckCircleIcon,
-} from '@heroicons/react/24/outline';
-import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/solid';
-import { Loader2 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { useTranslation } from '@/hooks/useTranslation';
+} from '@heroicons/react/24/outline'
+import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/solid'
+import { Loader2 } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,7 +38,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from '@/components/ui/alert-dialog'
 import {
   Dialog,
   DialogContent,
@@ -46,37 +46,37 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { adminApis, AdminUser, AdminUserCreate, AdminUserUpdate, UserRole } from '@/apis/admin';
-import UnifiedAddButton from '@/components/common/UnifiedAddButton';
+} from '@/components/ui/dialog'
+import { adminApis, AdminUser, AdminUserCreate, AdminUserUpdate, UserRole } from '@/apis/admin'
+import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 
 const UserList: React.FC = () => {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [includeInactive, setIncludeInactive] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const pageSize = 20;
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const [users, setUsers] = useState<AdminUser[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [loading, setLoading] = useState(true)
+  const [includeInactive, setIncludeInactive] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const pageSize = 20
 
   // Debounce search input
   useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedSearch(searchQuery);
-      setPage(1); // Reset to first page when search changes
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
+      setDebouncedSearch(searchQuery)
+      setPage(1) // Reset to first page when search changes
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
 
   // Dialog states
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [isResetPasswordDialogOpen, setIsResetPasswordDialogOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [isResetPasswordDialogOpen, setIsResetPasswordDialogOpen] = useState(false)
+  const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null)
 
   // Form states
   const [formData, setFormData] = useState<AdminUserCreate>({
@@ -85,42 +85,42 @@ const UserList: React.FC = () => {
     email: '',
     role: 'user',
     auth_source: 'password',
-  });
-  const [newPassword, setNewPassword] = useState('');
-  const [saving, setSaving] = useState(false);
+  })
+  const [newPassword, setNewPassword] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const fetchUsers = useCallback(async () => {
-    setLoading(true);
+    setLoading(true)
     try {
       const response = await adminApis.getUsers(
         page,
         pageSize,
         includeInactive,
         debouncedSearch || undefined
-      );
-      setUsers(response.items);
-      setTotal(response.total);
+      )
+      setUsers(response.items)
+      setTotal(response.total)
     } catch (_error) {
       toast({
         variant: 'destructive',
         title: t('admin:users.errors.load_failed'),
-      });
+      })
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [page, pageSize, includeInactive, debouncedSearch, toast, t]);
+  }, [page, pageSize, includeInactive, debouncedSearch, toast, t])
 
   useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
+    fetchUsers()
+  }, [fetchUsers])
 
   const handleCreateUser = async () => {
     if (!formData.user_name.trim()) {
       toast({
         variant: 'destructive',
         title: t('admin:users.errors.username_required'),
-      });
-      return;
+      })
+      return
     }
 
     if (
@@ -130,121 +130,121 @@ const UserList: React.FC = () => {
       toast({
         variant: 'destructive',
         title: t('admin:users.errors.password_min_length'),
-      });
-      return;
+      })
+      return
     }
 
-    setSaving(true);
+    setSaving(true)
     try {
-      await adminApis.createUser(formData);
-      toast({ title: t('admin:users.success.created') });
-      setIsCreateDialogOpen(false);
-      resetForm();
-      fetchUsers();
+      await adminApis.createUser(formData)
+      toast({ title: t('admin:users.success.created') })
+      setIsCreateDialogOpen(false)
+      resetForm()
+      fetchUsers()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('admin:users.errors.create_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   const handleUpdateUser = async () => {
-    if (!selectedUser) return;
+    if (!selectedUser) return
 
-    setSaving(true);
+    setSaving(true)
     try {
-      const updateData: AdminUserUpdate = {};
+      const updateData: AdminUserUpdate = {}
       if (formData.user_name !== selectedUser.user_name) {
-        updateData.user_name = formData.user_name;
+        updateData.user_name = formData.user_name
       }
       if (formData.email !== selectedUser.email) {
-        updateData.email = formData.email || undefined;
+        updateData.email = formData.email || undefined
       }
       if (formData.role !== selectedUser.role) {
-        updateData.role = formData.role as UserRole;
+        updateData.role = formData.role as UserRole
       }
 
-      await adminApis.updateUser(selectedUser.id, updateData);
-      toast({ title: t('admin:users.success.updated') });
-      setIsEditDialogOpen(false);
-      resetForm();
-      fetchUsers();
+      await adminApis.updateUser(selectedUser.id, updateData)
+      toast({ title: t('admin:users.success.updated') })
+      setIsEditDialogOpen(false)
+      resetForm()
+      fetchUsers()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('admin:users.errors.update_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   const handleDeleteUser = async () => {
-    if (!selectedUser) return;
+    if (!selectedUser) return
 
-    setSaving(true);
+    setSaving(true)
     try {
-      await adminApis.deleteUser(selectedUser.id);
-      toast({ title: t('admin:users.success.deleted') });
-      setIsDeleteDialogOpen(false);
-      setSelectedUser(null);
-      fetchUsers();
+      await adminApis.deleteUser(selectedUser.id)
+      toast({ title: t('admin:users.success.deleted') })
+      setIsDeleteDialogOpen(false)
+      setSelectedUser(null)
+      fetchUsers()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('admin:users.errors.delete_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   const handleResetPassword = async () => {
     if (!selectedUser || newPassword.length < 6) {
       toast({
         variant: 'destructive',
         title: t('admin:users.errors.password_min_length'),
-      });
-      return;
+      })
+      return
     }
 
-    setSaving(true);
+    setSaving(true)
     try {
-      await adminApis.resetPassword(selectedUser.id, { new_password: newPassword });
-      toast({ title: t('admin:users.success.password_reset') });
-      setIsResetPasswordDialogOpen(false);
-      setNewPassword('');
-      setSelectedUser(null);
+      await adminApis.resetPassword(selectedUser.id, { new_password: newPassword })
+      toast({ title: t('admin:users.success.password_reset') })
+      setIsResetPasswordDialogOpen(false)
+      setNewPassword('')
+      setSelectedUser(null)
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('admin:users.errors.reset_password_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
-  };
+  }
 
   const handleToggleStatus = async (user: AdminUser) => {
     try {
-      await adminApis.toggleUserStatus(user.id);
-      toast({ title: t('admin:users.success.status_toggled') });
-      fetchUsers();
+      await adminApis.toggleUserStatus(user.id)
+      toast({ title: t('admin:users.success.status_toggled') })
+      fetchUsers()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('admin:users.errors.toggle_status_failed'),
         description: (error as Error).message,
-      });
+      })
     }
-  };
+  }
 
   const resetForm = () => {
     setFormData({
@@ -253,35 +253,35 @@ const UserList: React.FC = () => {
       email: '',
       role: 'user',
       auth_source: 'password',
-    });
-    setSelectedUser(null);
-  };
+    })
+    setSelectedUser(null)
+  }
 
   const openEditDialog = (user: AdminUser) => {
-    setSelectedUser(user);
+    setSelectedUser(user)
     setFormData({
       user_name: user.user_name,
       email: user.email || '',
       role: user.role,
       auth_source:
         user.auth_source === 'unknown' ? 'password' : (user.auth_source as 'password' | 'oidc'),
-    });
-    setIsEditDialogOpen(true);
-  };
+    })
+    setIsEditDialogOpen(true)
+  }
 
   const getRoleTag = (role: string) => {
     if (role === 'admin') {
-      return <Tag variant="info">{t('admin:users.roles.admin')}</Tag>;
+      return <Tag variant="info">{t('admin:users.roles.admin')}</Tag>
     }
-    return <Tag variant="default">{t('admin:users.roles.user')}</Tag>;
-  };
+    return <Tag variant="default">{t('admin:users.roles.user')}</Tag>
+  }
 
   const getStatusTag = (isActive: boolean) => {
     if (isActive) {
-      return <Tag variant="success">{t('admin:users.status.active')}</Tag>;
+      return <Tag variant="success">{t('admin:users.status.active')}</Tag>
     }
-    return <Tag variant="error">{t('admin:users.status.inactive')}</Tag>;
-  };
+    return <Tag variant="error">{t('admin:users.status.inactive')}</Tag>
+  }
 
   return (
     <div className="space-y-3">
@@ -383,8 +383,8 @@ const UserList: React.FC = () => {
                         size="icon"
                         className="h-8 w-8"
                         onClick={() => {
-                          setSelectedUser(user);
-                          setIsResetPasswordDialogOpen(true);
+                          setSelectedUser(user)
+                          setIsResetPasswordDialogOpen(true)
                         }}
                         title={t('admin:users.reset_password')}
                       >
@@ -409,8 +409,8 @@ const UserList: React.FC = () => {
                       size="icon"
                       className="h-8 w-8 hover:text-error"
                       onClick={() => {
-                        setSelectedUser(user);
-                        setIsDeleteDialogOpen(true);
+                        setSelectedUser(user)
+                        setIsDeleteDialogOpen(true)
                       }}
                       title={t('admin:users.delete_user')}
                     >
@@ -595,11 +595,11 @@ const UserList: React.FC = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
-              {t('common:common.cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button onClick={handleUpdateUser} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t('common:common.save')}
+              {t('common:actions.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -628,11 +628,11 @@ const UserList: React.FC = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsResetPasswordDialogOpen(false)}>
-              {t('common:common.cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button onClick={handleResetPassword} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t('common:common.reset')}
+              {t('common:actions.reset')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -648,15 +648,15 @@ const UserList: React.FC = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t('common:common.cancel')}</AlertDialogCancel>
+            <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteUser} className="bg-error hover:bg-error/90">
-              {t('common:common.delete')}
+              {t('common:actions.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-};
+  )
+}
 
-export default UserList;
+export default UserList

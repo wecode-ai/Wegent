@@ -2,25 +2,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { useTranslation } from 'react-i18next';
-import { adaptMcpConfigForAgent, type AgentType } from '../utils/mcpTypeAdapter';
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { useTranslation } from 'react-i18next'
+import { adaptMcpConfigForAgent, type AgentType } from '../utils/mcpTypeAdapter'
 
 interface McpConfigImportModalProps {
-  visible: boolean;
-  onClose: () => void;
-  onImport: (config: Record<string, unknown>, mode: 'replace' | 'append') => void;
-  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
-  agentType?: AgentType;
+  visible: boolean
+  onClose: () => void
+  onImport: (config: Record<string, unknown>, mode: 'replace' | 'append') => void
+  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
+  agentType?: AgentType
 }
 
 // Utility function to normalize MCP servers configuration
@@ -30,28 +30,28 @@ function normalizeMcpServers(
 ): Record<string, unknown> {
   const servers: Record<string, unknown> = (config.mcpServers ??
     config.mcp_servers ??
-    config) as Record<string, unknown>;
+    config) as Record<string, unknown>
   if (typeof servers !== 'object' || servers === null) {
-    throw new Error('Invalid MCP servers configuration');
+    throw new Error('Invalid MCP servers configuration')
   }
 
   Object.keys(servers).forEach(key => {
-    const server = servers[key] as Record<string, unknown>;
+    const server = servers[key] as Record<string, unknown>
     if (server.transport) {
-      server.type = server.transport;
-      delete server.transport;
+      server.type = server.transport
+      delete server.transport
     }
     if (!server.type) {
-      server.type = 'stdio';
+      server.type = 'stdio'
     }
-  });
+  })
 
   // Apply type adaptation if agent type is specified
   if (agentType) {
-    return adaptMcpConfigForAgent(servers, agentType);
+    return adaptMcpConfigForAgent(servers, agentType)
   }
 
-  return servers;
+  return servers
 }
 
 const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
@@ -61,57 +61,57 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
   toast,
   agentType,
 }) => {
-  const { t } = useTranslation();
-  const [importConfig, setImportConfig] = useState('');
-  const [importConfigError, setImportConfigError] = useState(false);
-  const [importMode, setImportMode] = useState<'replace' | 'append'>('replace');
+  const { t } = useTranslation()
+  const [importConfig, setImportConfig] = useState('')
+  const [importConfigError, setImportConfigError] = useState(false)
+  const [importMode, setImportMode] = useState<'replace' | 'append'>('replace')
 
   // Handle import configuration confirmation
   const handleImportConfirm = useCallback(() => {
-    const trimmed = importConfig.trim();
+    const trimmed = importConfig.trim()
     if (!trimmed) {
-      setImportConfigError(true);
+      setImportConfigError(true)
       toast({
         variant: 'destructive',
         title: t('common:bot.errors.mcp_config_json'),
-      });
-      return;
+      })
+      return
     }
 
     try {
       // Parse the imported configuration
-      const parsed = JSON.parse(trimmed);
+      const parsed = JSON.parse(trimmed)
       // Normalize the MCP servers configuration with agent type adaptation
-      const normalized = normalizeMcpServers(parsed, agentType);
+      const normalized = normalizeMcpServers(parsed, agentType)
 
       // Call parent component's import handler function
-      onImport(normalized, importMode);
+      onImport(normalized, importMode)
 
       // Reset state
-      setImportConfig('');
-      setImportConfigError(false);
+      setImportConfig('')
+      setImportConfigError(false)
     } catch (error) {
-      setImportConfigError(true);
+      setImportConfigError(true)
       if (error instanceof SyntaxError) {
         toast({
           variant: 'destructive',
           title: t('common:bot.errors.mcp_config_json'),
-        });
+        })
       } else {
         toast({
           variant: 'destructive',
           title: t('common:bot.errors.mcp_config_invalid'),
-        });
+        })
       }
     }
-  }, [importConfig, importMode, toast, onImport, t, agentType]);
+  }, [importConfig, importMode, toast, onImport, t, agentType])
 
   // Reset state when closing modal
   const handleCancel = () => {
-    setImportConfig('');
-    setImportConfigError(false);
-    onClose();
-  };
+    setImportConfig('')
+    setImportConfigError(false)
+    onClose()
+  }
 
   return (
     <Dialog open={visible} onOpenChange={open => !open && handleCancel()}>
@@ -153,8 +153,8 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
         <Textarea
           value={importConfig}
           onChange={e => {
-            setImportConfig(e.target.value);
-            setImportConfigError(false);
+            setImportConfig(e.target.value)
+            setImportConfigError(false)
           }}
           placeholder={`{
     "mcpServers": {
@@ -185,7 +185,7 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-};
+  )
+}
 
-export default McpConfigImportModal;
+export default McpConfigImportModal

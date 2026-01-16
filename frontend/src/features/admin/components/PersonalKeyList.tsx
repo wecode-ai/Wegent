@@ -2,18 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
-import '@/features/common/scrollbar.css';
+'use client'
+import '@/features/common/scrollbar.css'
 
-import React, { useEffect, useState, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
-import { KeyIcon, TrashIcon, UserIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
-import { Loader2 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { useTranslation } from '@/hooks/useTranslation';
+import React, { useEffect, useState, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
+import { KeyIcon, TrashIcon, UserIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
+import { Loader2 } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,106 +23,106 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { adminApis, AdminPersonalKey } from '@/apis/admin';
+} from '@/components/ui/alert-dialog'
+import { adminApis, AdminPersonalKey } from '@/apis/admin'
 
 const PersonalKeyList: React.FC<{ showHeader?: boolean }> = ({ showHeader = true }) => {
-  const { t } = useTranslation('admin');
-  const { toast } = useToast();
-  const [personalKeys, setPersonalKeys] = useState<AdminPersonalKey[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [deleteConfirmKey, setDeleteConfirmKey] = useState<AdminPersonalKey | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [togglingKeyId, setTogglingKeyId] = useState<number | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const { t } = useTranslation('admin')
+  const { toast } = useToast()
+  const [personalKeys, setPersonalKeys] = useState<AdminPersonalKey[]>([])
+  const [loading, setLoading] = useState(true)
+  const [deleteConfirmKey, setDeleteConfirmKey] = useState<AdminPersonalKey | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [togglingKeyId, setTogglingKeyId] = useState<number | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
 
   // Debounce search input
   useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedSearch(searchQuery);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
+      setDebouncedSearch(searchQuery)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
 
   const fetchPersonalKeys = useCallback(async () => {
-    setLoading(true);
+    setLoading(true)
     try {
-      const response = await adminApis.getPersonalKeys(1, 100, debouncedSearch || undefined);
-      setPersonalKeys(response.items || []);
+      const response = await adminApis.getPersonalKeys(1, 100, debouncedSearch || undefined)
+      setPersonalKeys(response.items || [])
     } catch (error) {
-      console.error('Failed to fetch personal keys:', error);
+      console.error('Failed to fetch personal keys:', error)
       toast({
         variant: 'destructive',
         title: t('personal_keys.errors.load_failed'),
-      });
+      })
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [toast, t, debouncedSearch]);
+  }, [toast, t, debouncedSearch])
 
   useEffect(() => {
-    fetchPersonalKeys();
-  }, [fetchPersonalKeys]);
+    fetchPersonalKeys()
+  }, [fetchPersonalKeys])
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
+    const date = new Date(dateString)
     return date.toLocaleDateString(undefined, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
-    });
-  };
+    })
+  }
 
   const isNeverExpires = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.getFullYear() >= 9999;
-  };
+    const date = new Date(dateString)
+    return date.getFullYear() >= 9999
+  }
 
   const handleToggleStatus = async (personalKey: AdminPersonalKey) => {
-    setTogglingKeyId(personalKey.id);
+    setTogglingKeyId(personalKey.id)
     try {
-      const updated = await adminApis.togglePersonalKeyStatus(personalKey.id);
-      setPersonalKeys(prev => prev.map(k => (k.id === updated.id ? updated : k)));
+      const updated = await adminApis.togglePersonalKeyStatus(personalKey.id)
+      setPersonalKeys(prev => prev.map(k => (k.id === updated.id ? updated : k)))
       toast({
         title: updated.is_active
           ? t('personal_keys.enabled_success')
           : t('personal_keys.disabled_success'),
-      });
+      })
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('personal_keys.errors.toggle_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setTogglingKeyId(null);
+      setTogglingKeyId(null)
     }
-  };
+  }
 
   const handleDelete = async () => {
-    if (!deleteConfirmKey) return;
+    if (!deleteConfirmKey) return
 
-    setIsDeleting(true);
+    setIsDeleting(true)
     try {
-      await adminApis.deletePersonalKey(deleteConfirmKey.id);
+      await adminApis.deletePersonalKey(deleteConfirmKey.id)
       toast({
         title: t('personal_keys.delete_success'),
-      });
-      setDeleteConfirmKey(null);
-      fetchPersonalKeys();
+      })
+      setDeleteConfirmKey(null)
+      fetchPersonalKeys()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('personal_keys.errors.delete_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setIsDeleting(false);
+      setIsDeleting(false)
     }
-  };
+  }
 
   return (
     <div className="space-y-3">
@@ -280,7 +280,7 @@ const PersonalKeyList: React.FC<{ showHeader?: boolean }> = ({ showHeader = true
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-};
+  )
+}
 
-export default PersonalKeyList;
+export default PersonalKeyList

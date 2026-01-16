@@ -2,28 +2,29 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation'
 import {
   ChatBubbleLeftIcon,
   CodeBracketIcon,
   BookOpenIcon,
   Cog6ToothIcon,
-} from '@heroicons/react/24/outline';
-import { paths } from '@/config/paths';
-import { useTranslation } from '@/hooks/useTranslation';
+} from '@heroicons/react/24/outline'
+import { paths } from '@/config/paths'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 interface MobileNavTabsProps {
-  activePage: 'chat' | 'code' | 'wiki' | 'dashboard';
+  activePage: 'chat' | 'code' | 'wiki' | 'dashboard'
 }
 
-// Check if Wiki module is enabled via environment variable
-const isWikiEnabled = process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false';
-
 export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
-  const router = useRouter();
-  const { t } = useTranslation();
+  const router = useRouter()
+  const { t } = useTranslation()
+
+  // Check if Wiki module is enabled via runtime config
+  const isWikiEnabled = getRuntimeConfigSync().enableWiki
 
   const tabs = [
     {
@@ -54,7 +55,7 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
       icon: Cog6ToothIcon,
       path: paths.settings.root.getHref(),
     },
-  ];
+  ]
 
   return (
     <div
@@ -62,8 +63,8 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
       data-tour="mode-toggle"
     >
       {tabs.map(tab => {
-        const Icon = tab.icon;
-        const isActive = activePage === tab.key;
+        const Icon = tab.icon
+        const isActive = activePage === tab.key
 
         return (
           <button
@@ -87,8 +88,8 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
             <Icon className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
             <span className="hidden xs:inline whitespace-nowrap">{tab.label}</span>
           </button>
-        );
+        )
       })}
     </div>
-  );
+  )
 }

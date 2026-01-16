@@ -2,27 +2,27 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { Menu } from '@headlessui/react';
-import { Button } from '@/components/ui/button';
-import Link from 'next/link';
+import { Menu } from '@headlessui/react'
+import { Button } from '@/components/ui/button'
+import Link from 'next/link'
 
-import { useUser } from '@/features/common/UserContext';
-import { useTranslation } from '@/hooks/useTranslation';
-import { DocsButton } from '@/features/layout/DocsButton';
-import { ThemeToggle } from '@/features/theme/ThemeToggle';
-import { Cog8ToothIcon } from '@heroicons/react/24/outline';
+import { useUser } from '@/features/common/UserContext'
+import { useTranslation } from '@/hooks/useTranslation'
+import { DocsButton } from '@/features/layout/DocsButton'
+import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { Cog8ToothIcon } from '@heroicons/react/24/outline'
 
 type UserMenuProps = {
-  className?: string;
-};
+  className?: string
+}
 
 export default function UserMenu({ className = '' }: UserMenuProps) {
-  const { t } = useTranslation();
-  const { user, logout } = useUser();
-  const userDisplayName = user?.user_name || t('common:user.default_name');
-  const isAdmin = user?.role === 'admin';
+  const { t } = useTranslation()
+  const { user, logout } = useUser()
+  const userDisplayName = user?.user_name || t('common:user.default_name')
+  const isAdmin = user?.role === 'admin'
 
   return (
     <div className={className}>
@@ -79,5 +79,5 @@ export default function UserMenu({ className = '' }: UserMenuProps) {
         </Menu.Items>
       </Menu>
     </div>
-  );
+  )
 }

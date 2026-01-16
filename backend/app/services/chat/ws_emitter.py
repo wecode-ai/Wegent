@@ -329,6 +329,7 @@ class WebSocketEmitter:
         title: str,
         team_id: int,
         team_name: str,
+        is_group_chat: bool = False,
     ) -> None:
         """
         Emit task:created event to user room.
@@ -339,6 +340,7 @@ class WebSocketEmitter:
             title: Task title
             team_id: Team ID
             team_name: Team name
+            is_group_chat: Whether this is a group chat task
         """
         await self.sio.emit(
             ServerEvents.TASK_CREATED,
@@ -348,6 +350,7 @@ class WebSocketEmitter:
                 "team_id": team_id,
                 "team_name": team_name,
                 "created_at": datetime.now().isoformat(),
+                "is_group_chat": is_group_chat,
             },
             room=f"user:{user_id}",
             namespace=self.namespace,
@@ -506,6 +509,32 @@ class WebSocketEmitter:
             namespace=self.namespace,
         )
         logger.debug(f"[WS] emit unread:count user={user_id} count={count}")
+
+    async def emit_task_app_update(
+        self,
+        task_id: int,
+        app: Dict[str, Any],
+    ) -> None:
+        """
+        Emit task:app_update event to task room.
+
+        This notifies clients viewing this task about app data changes.
+        Used by expose_service tool when app preview becomes available.
+
+        Args:
+            task_id: Task ID
+            app: App data (name, address, previewUrl)
+        """
+        await self.sio.emit(
+            ServerEvents.TASK_APP_UPDATE,
+            {
+                "task_id": task_id,
+                "app": app,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.info(f"[WS] emit task:app_update task={task_id} app={app}")
 
     # ============================================================
     # Generic Skill Events

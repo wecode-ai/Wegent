@@ -24,6 +24,9 @@ from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team
 from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
 from app.services.adapters.shell_utils import get_shell_type
 from app.services.base import BaseService
+from app.services.readers.kinds import KindType, kindReader
+from app.services.readers.shared_teams import sharedTeamReader
+from app.services.readers.users import userReader
 
 
 class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
@@ -128,17 +131,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             role = (
                 bot_info.role if hasattr(bot_info, "role") else bot_info.get("role", "")
             )
+            require_confirmation = (
+                bot_info.requireConfirmation
+                if hasattr(bot_info, "requireConfirmation")
+                else bot_info.get("requireConfirmation", False)
+            )
 
             # Get bot from kinds table
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == bot_id,
-                    Kind.kind == "Bot",
-                    Kind.is_active == True,
-                )
-                .first()
-            )
+            bot = kindReader.get_by_id(db, KindType.BOT, bot_id)
 
             if not bot:
                 raise HTTPException(
@@ -149,6 +149,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 "botRef": {"name": bot.name, "namespace": bot.namespace},
                 "prompt": bot_prompt or "",
                 "role": role or "",
+                "requireConfirmation": require_confirmation or False,
             }
             members.append(member)
 
@@ -665,15 +666,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         Get Team by ID and user ID (only active teams)
         """
-        team = (
-            db.query(Kind)
-            .filter(
-                Kind.id == team_id,
-                Kind.kind == "Team",
-                Kind.is_active == True,
-            )
-            .first()
-        )
+        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
 
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -687,11 +680,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         Get detailed team information including related user and bots
         """
         # Check if user has access to this team (own or shared)
-        team = (
-            db.query(Kind)
-            .filter(Kind.id == team_id, Kind.kind == "Team", Kind.is_active == True)
-            .first()
-        )
+        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
 
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -702,15 +691,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         if not is_author:
             # Check if user has shared access
-            shared_team = (
-                db.query(SharedTeam)
-                .filter(
-                    SharedTeam.user_id == user_id,
-                    SharedTeam.team_id == team_id,
-                    SharedTeam.is_active == True,
-                )
-                .first()
-            )
+            shared_team = sharedTeamReader.get_by_team_and_user(db, team_id, user_id)
             if not shared_team:
                 raise HTTPException(
                     status_code=403, detail="Access denied to this team"
@@ -721,22 +702,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         team_dict = self._convert_to_team_dict(team, db, original_user_id)
 
         # Get related user (original author)
-        user = db.query(User).filter(User.id == original_user_id).first()
+        user = userReader.get_by_id(db, original_user_id)
 
         # Get detailed bot information
         detailed_bots = []
         for bot_info in team_dict["bots"]:
             bot_id = bot_info["bot_id"]
             # Get bot from kinds table
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == bot_id,
-                    Kind.kind == "Bot",
-                    Kind.is_active == True,
-                )
-                .first()
-            )
+            bot = kindReader.get_by_id(db, KindType.BOT, bot_id)
 
             if bot:
                 bot_dict = self._convert_bot_to_dict(bot, db, bot.user_id)
@@ -776,15 +749,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         from app.schemas.namespace import GroupRole
         from app.services.group_permission import check_group_permission
 
-        team = (
-            db.query(Kind)
-            .filter(
-                Kind.id == team_id,
-                Kind.kind == "Team",
-                Kind.is_active == True,
-            )
-            .first()
-        )
+        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
 
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -852,6 +817,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             from app.schemas.kind import BotTeamRef, TeamMember
 
             members = []
+            members = []
             for bot_info in update_data["bots"]:
                 bot_id = (
                     bot_info.bot_id
@@ -868,17 +834,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     if hasattr(bot_info, "role")
                     else bot_info.get("role", "")
                 )
+                require_confirmation = (
+                    bot_info.requireConfirmation
+                    if hasattr(bot_info, "requireConfirmation")
+                    else bot_info.get("requireConfirmation", False)
+                )
 
                 # Get bot from kinds table
-                bot = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.id == bot_id,
-                        Kind.kind == "Bot",
-                        Kind.is_active == True,
-                    )
-                    .first()
-                )
+                bot = kindReader.get_by_id(db, KindType.BOT, bot_id)
 
                 if not bot:
                     raise HTTPException(
@@ -889,9 +852,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     botRef=BotTeamRef(name=bot.name, namespace=bot.namespace),
                     prompt=bot_prompt or "",
                     role=role or "",
+                    requireConfirmation=require_confirmation or False,
                 )
                 members.append(member)
-
             team_crd.spec.members = members
 
         if "workflow" in update_data:
@@ -1001,11 +964,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         Returns:
             Dictionary with has_running_tasks flag and list of running tasks
         """
-        team = (
-            db.query(Kind)
-            .filter(Kind.id == team_id, Kind.kind == "Team", Kind.is_active == True)
-            .first()
-        )
+        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
 
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -1038,11 +997,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         from app.schemas.namespace import GroupRole
         from app.services.group_permission import check_group_permission
 
-        team = (
-            db.query(Kind)
-            .filter(Kind.id == team_id, Kind.kind == "Team", Kind.is_active == True)
-            .first()
-        )
+        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
 
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -1050,15 +1005,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # delete join shared team entry if any
         if team.user_id != user_id:
             # Check if this is a shared team deletion
-            shared_entry = (
-                db.query(SharedTeam)
-                .filter(
-                    SharedTeam.team_id == team_id,
-                    SharedTeam.user_id == user_id,
-                    SharedTeam.is_active == True,
-                )
-                .first()
-            )
+            shared_entry = sharedTeamReader.get_by_team_and_user(db, team_id, user_id)
 
             if shared_entry:
                 # User is deleting their shared team access
@@ -1208,15 +1155,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
 
         # Check if all bots exist, belong to user, and are active in kinds table
-        bots_in_db = (
-            db.query(Kind)
-            .filter(
-                Kind.id.in_(bot_id_list),
-                Kind.kind == "Bot",
-                Kind.is_active == True,
-            )
-            .all()
-        )
+        bots_in_db = kindReader.get_by_ids(db, KindType.BOT, bot_id_list)
 
         found_bot_ids = {bot.id for bot in bots_in_db}
         missing_bot_ids = set(bot_id_list) - found_bot_ids
@@ -1237,17 +1176,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             )
 
             if shell_type == "external_api":
-                # Get shell for error message
-                shell = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == user_id,
-                        Kind.kind == "Shell",
-                        Kind.name == bot_crd.spec.shellRef.name,
-                        Kind.namespace == bot_crd.spec.shellRef.namespace,
-                        Kind.is_active == True,
-                    )
-                    .first()
+                # Get shell for error message (with public fallback)
+                shell = kindReader.get_by_name_and_namespace(
+                    db,
+                    user_id,
+                    KindType.SHELL,
+                    bot_crd.spec.shellRef.namespace,
+                    bot_crd.spec.shellRef.name,
                 )
 
                 if shell:
@@ -1259,190 +1194,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                             detail=f"Teams using external API shells ({shell_crd.spec.shellType}) must have exactly one bot. Found {len(bots)} bots.",
                         )
 
-    def get_team_by_id(
-        self, db: Session, *, team_id: int, user_id: int
-    ) -> Optional[Kind]:
-        """
-        Get team by id, checking both user's own teams and shared teams
-        """
-        # First check if team exists and belongs to user
-        existing_team = (
-            db.query(Kind)
-            .filter(
-                Kind.id == team_id,
-                Kind.kind == "Team",
-                Kind.is_active == True,
-            )
-            .first()
-        )
-
-        if existing_team:
-            return existing_team
-
-        # If not found, check if team exists in shared teams
-        shared_team = (
-            db.query(SharedTeam)
-            .filter(
-                SharedTeam.user_id == user_id,
-                SharedTeam.team_id == team_id,
-                SharedTeam.is_active == True,
-            )
-            .first()
-        )
-
-        if shared_team:
-            # Return shared team
-            return (
-                db.query(Kind)
-                .filter(Kind.id == team_id, Kind.kind == "Team", Kind.is_active == True)
-                .first()
-            )
-
-        return None
-
-    def get_team_by_id_or_name_and_namespace(
-        self,
-        db: Session,
-        *,
-        team_id: Optional[int] = None,
-        team_name: Optional[str] = None,
-        team_namespace: Optional[str] = None,
-        user_id: int,
-    ) -> Optional[Kind]:
-        """
-        Get team by id or by name and namespace, checking both user's own teams and shared teams.
-        Falls back to public group resources if namespace is public.
-
-        If team_id is provided, search by id
-        If team_id is None, search by team_name and team_namespace
-        If not found and namespace is not 'default', check for public group access
-        """
-        team = None
-
-        # If team_id is provided, search by id
-        if team_id is not None:
-            team = self.get_team_by_id(db, team_id=team_id, user_id=user_id)
-        # If team_id is None, search by name and namespace
-        elif team_name is not None and team_namespace is not None:
-            team = self.get_team_by_name_and_namespace(
-                db, team_name, team_namespace, user_id
-            )
-
-        if team:
-            return team
-
-        # If not found and namespace is not 'default', check for public group
-        if team_namespace and team_namespace != "default" and team_name:
-            from app.models.namespace import Namespace
-
-            # Check if the namespace corresponds to a public group
-            group = (
-                db.query(Namespace)
-                .filter(
-                    Namespace.name == team_namespace,
-                    Namespace.visibility == "public",
-                    Namespace.is_active == True,
-                )
-                .first()
-            )
-
-            if group:
-                # Group is public, query team without user restriction
-                return self.get_team_by_name_and_namespace_without_user_check(
-                    db, team_name, team_namespace
-                )
-
-        return None
-
     def get_team_by_name_and_namespace(
         self, db: Session, team_name: str, team_namespace: str, user_id: int
     ) -> Optional[Kind]:
-        existing_team = (
-            db.query(Kind)
-            .filter(
-                Kind.name == team_name,
-                Kind.namespace == team_namespace,
-                Kind.user_id == user_id,
-                Kind.kind == "Team",
-                Kind.is_active == True,
-            )
-            .first()
+        # Use kindReader which handles personal and shared teams logic
+        return kindReader.get_by_name_and_namespace(
+            db, user_id, KindType.TEAM, team_namespace, team_name
         )
-
-        if existing_team:
-            return existing_team
-
-        join_share_teams = (
-            db.query(SharedTeam)
-            .filter(SharedTeam.user_id == user_id, SharedTeam.is_active == True)
-            .all()
-        )
-
-        for join_team in join_share_teams:
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.name == team_name,
-                    Kind.namespace == team_namespace,
-                    Kind.user_id == join_team.original_user_id,
-                    Kind.kind == "Team",
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-            if team:
-                return team
-
-        return None
-
-    def get_team_by_name_and_namespace_with_public_group(
-        self, db: Session, team_name: str, team_namespace: str, user_id: int
-    ) -> Optional[Kind]:
-        """
-        Get team by name and namespace, with fallback to public group resources.
-
-        First tries to find the team using standard user access checks.
-        If not found and namespace is not 'default', checks if the namespace
-        corresponds to a public group. If so, queries the team without user restriction.
-
-        Args:
-            db: Database session
-            team_name: Team name
-            team_namespace: Team namespace (group name)
-            user_id: Current user ID
-
-        Returns:
-            Team Kind if found, None otherwise
-        """
-        # First, try standard lookup (user's own teams and shared teams)
-        team = self.get_team_by_name_and_namespace(
-            db, team_name, team_namespace, user_id
-        )
-        if team:
-            return team
-
-        # If not found and namespace is not 'default', check for public group
-        if team_namespace and team_namespace != "default":
-            from app.models.namespace import Namespace
-
-            # Check if the namespace corresponds to a public group
-            group = (
-                db.query(Namespace)
-                .filter(
-                    Namespace.name == team_namespace,
-                    Namespace.visibility == "public",
-                    Namespace.is_active == True,
-                )
-                .first()
-            )
-
-            if group:
-                # Group is public, query team without user restriction
-                return self.get_team_by_name_and_namespace_without_user_check(
-                    db, team_name, team_namespace
-                )
-
-        return None
 
     def get_team_by_name_and_namespace_without_user_check(
         self, db: Session, team_name: str, team_namespace: str
@@ -1483,17 +1241,20 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         t_bot_loop = time.time()
         for member in team_crd.spec.members:
             # Find bot in kinds table
-            # For group resources, don't filter by user_id since bots may be created by different users
+            # For group resources, use get_group; otherwise use get_by_name_and_namespace
             t_find_bot = time.time()
-            bot_query = db.query(Kind).filter(
-                Kind.kind == "Bot",
-                Kind.name == member.botRef.name,
-                Kind.namespace == member.botRef.namespace,
-                Kind.is_active == True,
-            )
-            if not is_group_resource:
-                bot_query = bot_query.filter(Kind.user_id == user_id)
-            bot = bot_query.first()
+            if is_group_resource:
+                bot = kindReader.get_group(
+                    db, KindType.BOT, member.botRef.namespace, member.botRef.name
+                )
+            else:
+                bot = kindReader.get_by_name_and_namespace(
+                    db,
+                    team.user_id,
+                    KindType.BOT,
+                    member.botRef.namespace,
+                    member.botRef.name,
+                )
             find_bot_time = time.time() - t_find_bot
 
             if bot:
@@ -1510,6 +1271,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "bot_id": bot.id,
                     "bot_prompt": member.prompt or "",
                     "role": member.role or "",
+                    "requireConfirmation": member.requireConfirmation or False,
                     "bot": bot_summary,
                 }
                 bots.append(bot_info)
@@ -1532,51 +1294,26 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         agent_type = None
         if bots:
             first_bot_id = bots[0]["bot_id"]
-            # For group resources, don't filter by user_id
-            first_bot_query = db.query(Kind).filter(
-                Kind.id == first_bot_id,
-                Kind.kind == "Bot",
-                Kind.is_active.is_(True),
-            )
-            if not is_group_resource:
-                first_bot_query = first_bot_query.filter(Kind.user_id == user_id)
-            first_bot = first_bot_query.first()
+            # Get first bot using kindReader
+            first_bot = kindReader.get_by_id(db, KindType.BOT, first_bot_id)
 
             if first_bot:
                 bot_crd = Bot.model_validate(first_bot.json)
                 shell_type = None
 
-                # First check user's custom shells (for group resources, use bot's user_id)
+                # Get shell using kindReader (handles public fallback automatically)
                 shell_user_id = first_bot.user_id if is_group_resource else user_id
-                shell = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == shell_user_id,
-                        Kind.kind == "Shell",
-                        Kind.name == bot_crd.spec.shellRef.name,
-                        Kind.namespace == bot_crd.spec.shellRef.namespace,
-                        Kind.is_active.is_(True),
-                    )
-                    .first()
+                shell = kindReader.get_by_name_and_namespace(
+                    db,
+                    shell_user_id,
+                    KindType.SHELL,
+                    bot_crd.spec.shellRef.namespace,
+                    bot_crd.spec.shellRef.name,
                 )
 
-                if shell:
+                if shell and shell.json:
                     shell_crd = Shell.model_validate(shell.json)
                     shell_type = shell_crd.spec.shellType
-                else:
-                    # If not found, check public shells
-
-                    public_shell = (
-                        db.query(Kind)
-                        .filter(
-                            Kind.name == bot_crd.spec.shellRef.name,
-                            Kind.is_active == True,
-                        )
-                        .first()
-                    )
-                    if public_shell and public_shell.json:
-                        shell_crd = Shell.model_validate(public_shell.json)
-                        shell_type = shell_crd.spec.shellType
 
                 if shell_type:
                     # Map shellType to agent type
@@ -1696,6 +1433,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "bot_id": bot.id,
                     "bot_prompt": member.prompt or "",
                     "role": member.role or "",
+                    "requireConfirmation": member.requireConfirmation or False,
                     "bot": bot_summary,
                 }
                 bots.append(bot_info)
@@ -1896,40 +1634,19 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             f"[_get_bot_summary] bot.name={bot.name}, modelRef.name={model_ref_name}, modelRef.namespace={model_ref_namespace}"
         )
 
-        # Get shell to extract shell_type
+        # Get shell to extract shell_type (kindReader handles public fallback automatically)
         t_shell = time.time()
-        shell = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Shell",
-                Kind.name == bot_crd.spec.shellRef.name,
-                Kind.namespace == bot_crd.spec.shellRef.namespace,
-                Kind.is_active.is_(True),
-            )
-            .first()
+        shell = kindReader.get_by_name_and_namespace(
+            db,
+            user_id,
+            KindType.SHELL,
+            bot_crd.spec.shellRef.namespace,
+            bot_crd.spec.shellRef.name,
         )
 
         logger.info(
-            f"[_get_bot_summary] Checking shell for bot={bot.name}, shellRef.name={bot_crd.spec.shellRef.name}, user_id={user_id}, found_in_user_shells={shell is not None}"
+            f"[_get_bot_summary] Checking shell for bot={bot.name}, shellRef.name={bot_crd.spec.shellRef.name}, user_id={user_id}, found={shell is not None}"
         )
-
-        # If not found in user's shells, check public shells (user_id = 0)
-        if not shell:
-            shell = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == 0,
-                    Kind.kind == "Shell",
-                    Kind.name == bot_crd.spec.shellRef.name,
-                    Kind.namespace == bot_crd.spec.shellRef.namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
-            )
-            logger.info(
-                f"[_get_bot_summary] Checking public shell for bot={bot.name}, shellRef.name={bot_crd.spec.shellRef.name}, found_in_public_shells={shell is not None}"
-            )
 
         shell_query_time = time.time() - t_shell
 
@@ -1950,28 +1667,21 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Only try to find model if modelRef exists
         t_model = time.time()
         if model_ref_name and model_ref_namespace:
-            # Try to find model in user's private models first
-            model = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Model",
-                    Kind.name == model_ref_name,
-                    Kind.namespace == model_ref_namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
+            # Get model using kindReader (handles public fallback automatically)
+            model = kindReader.get_by_name_and_namespace(
+                db, user_id, KindType.MODEL, model_ref_namespace, model_ref_name
             )
 
-            logger.debug(f"[_get_bot_summary] Private model found: {model is not None}")
+            logger.debug(f"[_get_bot_summary] Model found: {model is not None}")
 
             if model:
-                # Private model - check if it's a custom config or predefined model
                 model_crd = Model.model_validate(model.json)
                 is_custom_config = model_crd.spec.isCustomConfig
+                # Determine if this is a user's private model or public model
+                is_user_model = model.user_id == user_id
 
                 logger.info(
-                    f"[_get_bot_summary] Private model isCustomConfig: {is_custom_config}"
+                    f"[_get_bot_summary] Model isCustomConfig: {is_custom_config}, is_user_model: {is_user_model}"
                 )
 
                 if is_custom_config:
@@ -1988,40 +1698,15 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     # Not custom config = predefined model, return bind_model format with type
                     agent_config = {
                         "bind_model": model_ref_name,
-                        "bind_model_type": "user",
+                        "bind_model_type": "user" if is_user_model else "public",
                     }
                     logger.debug(
                         f"[_get_bot_summary] Predefined model (isCustomConfig=False), returning bind_model: {agent_config}"
                     )
             else:
-                # Try to find in public_models table
-                public_model = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.name == model_ref_name,
-                        Kind.namespace == model_ref_namespace,
-                        Kind.is_active.is_(True),
-                    )
-                    .first()
-                )
-
                 logger.debug(
-                    f"[_get_bot_summary] Public model found: {public_model is not None}"
+                    f"[_get_bot_summary] No model found for modelRef.name={model_ref_name}, modelRef.namespace={model_ref_namespace}"
                 )
-
-                if public_model:
-                    # Public model - return bind_model format with type
-                    agent_config = {
-                        "bind_model": public_model.name,
-                        "bind_model_type": "public",
-                    }
-                    logger.debug(
-                        f"[_get_bot_summary] Using bind_model from public model: {agent_config}"
-                    )
-                else:
-                    logger.debug(
-                        f"[_get_bot_summary] No model found for modelRef.name={model_ref_name}, modelRef.namespace={model_ref_namespace}"
-                    )
         else:
             logger.debug(f"[_get_bot_summary] No modelRef for bot {bot.name}")
 
@@ -2047,44 +1732,32 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         bot_crd = Bot.model_validate(bot.json)
 
         # Get ghost
-        ghost = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Ghost",
-                Kind.name == bot_crd.spec.ghostRef.name,
-                Kind.namespace == bot_crd.spec.ghostRef.namespace,
-                Kind.is_active == True,
-            )
-            .first()
+        ghost = kindReader.get_by_name_and_namespace(
+            db,
+            user_id,
+            KindType.GHOST,
+            bot_crd.spec.ghostRef.namespace,
+            bot_crd.spec.ghostRef.name,
         )
 
-        # Get shell
-        shell = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Shell",
-                Kind.name == bot_crd.spec.shellRef.name,
-                Kind.namespace == bot_crd.spec.shellRef.namespace,
-                Kind.is_active == True,
-            )
-            .first()
+        # Get shell (with public fallback)
+        shell = kindReader.get_by_name_and_namespace(
+            db,
+            user_id,
+            KindType.SHELL,
+            bot_crd.spec.shellRef.namespace,
+            bot_crd.spec.shellRef.name,
         )
 
-        # Get model - modelRef is optional
+        # Get model - modelRef is optional (with public fallback)
         model = None
         if bot_crd.spec.modelRef:
-            model = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Model",
-                    Kind.name == bot_crd.spec.modelRef.name,
-                    Kind.namespace == bot_crd.spec.modelRef.namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
+            model = kindReader.get_by_name_and_namespace(
+                db,
+                user_id,
+                KindType.MODEL,
+                bot_crd.spec.modelRef.namespace,
+                bot_crd.spec.modelRef.name,
             )
 
         # Extract data from components
@@ -2169,11 +1842,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         Returns parameter schema if team has external API bots, otherwise empty
         """
         # Get team details
-        team = (
-            db.query(Kind)
-            .filter(Kind.id == team_id, Kind.kind == "Team", Kind.is_active == True)
-            .first()
-        )
+        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
 
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -2183,15 +1852,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         shared_team = None
 
         if not is_author:
-            shared_team = (
-                db.query(SharedTeam)
-                .filter(
-                    SharedTeam.user_id == user_id,
-                    SharedTeam.team_id == team_id,
-                    SharedTeam.is_active == True,
-                )
-                .first()
-            )
+            shared_team = sharedTeamReader.get_by_team_and_user(db, team_id, user_id)
             if not shared_team:
                 raise HTTPException(
                     status_code=403, detail="Access denied to this team"
@@ -2207,15 +1868,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         for bot_info in team_dict["bots"]:
             bot_id = bot_info["bot_id"]
-            bot = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == bot_id,
-                    Kind.kind == "Bot",
-                    Kind.is_active == True,
-                )
-                .first()
-            )
+            bot = kindReader.get_by_id(db, KindType.BOT, bot_id)
 
             if bot:
                 bot_crd = Bot.model_validate(bot.json)
@@ -2223,16 +1876,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 shell_name = bot_crd.spec.shellRef.name
                 shell_namespace = bot_crd.spec.shellRef.namespace
 
-                shell = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.name == shell_name,
-                        Kind.namespace == shell_namespace,
-                        Kind.user_id == original_user_id,
-                        Kind.kind == "Shell",
-                        Kind.is_active == True,
-                    )
-                    .first()
+                # Get shell using kindReader (handles public fallback)
+                shell = kindReader.get_by_name_and_namespace(
+                    db, original_user_id, KindType.SHELL, shell_namespace, shell_name
                 )
 
                 if shell:
@@ -2255,16 +1901,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if not model_ref:
             return {"has_parameters": False, "parameters": []}
 
-        model = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == original_user_id,
-                Kind.kind == "Model",
-                Kind.name == model_ref.name,
-                Kind.namespace == model_ref.namespace,
-                Kind.is_active == True,
-            )
-            .first()
+        # Get model using kindReader (handles public fallback)
+        model = kindReader.get_by_name_and_namespace(
+            db, original_user_id, KindType.MODEL, model_ref.namespace, model_ref.name
         )
 
         if not model:

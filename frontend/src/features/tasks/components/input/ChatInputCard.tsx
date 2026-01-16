@@ -2,54 +2,57 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import { Upload } from 'lucide-react';
-import ChatInput from './ChatInput';
-import InputBadgeDisplay from './InputBadgeDisplay';
-import ExternalApiParamsInput from '../params/ExternalApiParamsInput';
-import { SelectedTeamBadge } from '../selector/SelectedTeamBadge';
-import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls';
-import type { Team, ChatTipItem } from '@/types/api';
+import React from 'react'
+import { Upload, Sparkles } from 'lucide-react'
+import ChatInput from './ChatInput'
+import InputBadgeDisplay from './InputBadgeDisplay'
+import ExternalApiParamsInput from '../params/ExternalApiParamsInput'
+import { SelectedTeamBadge } from '../selector/SelectedTeamBadge'
+import ChatInputControls, { ChatInputControlsProps } from './ChatInputControls'
+import { QuoteCard } from '../text-selection'
+import { ConnectionStatusBanner } from './ConnectionStatusBanner'
+import type { Team, ChatTipItem } from '@/types/api'
+import { useTranslation } from '@/hooks/useTranslation'
 
 export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskInputMessage'> {
   // Input message
-  taskInputMessage: string;
-  setTaskInputMessage: (message: string) => void;
+  taskInputMessage: string
+  setTaskInputMessage: (message: string) => void
 
   // Team and external API
-  selectedTeam: Team | null;
-  externalApiParams: Record<string, string>;
-  onExternalApiParamsChange: (params: Record<string, string>) => void;
-  onAppModeChange: (mode: string | undefined) => void;
+  selectedTeam: Team | null
+  externalApiParams: Record<string, string>
+  onExternalApiParamsChange: (params: Record<string, string>) => void
+  onAppModeChange: (mode: string | undefined) => void
 
   // Task type
-  taskType: 'chat' | 'code';
-  autoFocus?: boolean;
+  taskType: 'chat' | 'code'
+  autoFocus?: boolean
 
   // Tips
-  tipText: ChatTipItem | null;
+  tipText: ChatTipItem | null
 
   // Group chat
-  isGroupChat: boolean;
+  isGroupChat: boolean
 
   // Drag and drop
-  isDragging: boolean;
-  onDragEnter: (e: React.DragEvent) => void;
-  onDragLeave: (e: React.DragEvent) => void;
-  onDragOver: (e: React.DragEvent) => void;
-  onDrop: (e: React.DragEvent) => void;
+  isDragging: boolean
+  onDragEnter: (e: React.DragEvent) => void
+  onDragLeave: (e: React.DragEvent) => void
+  onDragOver: (e: React.DragEvent) => void
+  onDrop: (e: React.DragEvent) => void
 
   // Attachment handlers
-  onPasteFile?: (files: File | File[]) => void;
+  onPasteFile?: (files: File | File[]) => void
 
   // Submit
-  canSubmit: boolean;
-  handleSendMessage: (message?: string) => Promise<void>;
+  canSubmit: boolean
+  handleSendMessage: (message?: string) => Promise<void>
 
   // Ref for container width measurement
-  inputControlsRef?: React.RefObject<HTMLDivElement | null>;
+  inputControlsRef?: React.RefObject<HTMLDivElement | null>
 }
 
 /**
@@ -70,6 +73,7 @@ export function ChatInputCard({
   taskInputMessage,
   setTaskInputMessage,
   selectedTeam,
+  onTeamChange,
   externalApiParams,
   onExternalApiParamsChange,
   onAppModeChange,
@@ -124,6 +128,8 @@ export function ChatInputCard({
   onStopStream,
   onSendMessage,
 }: ChatInputCardProps) {
+  const { t } = useTranslation('chat')
+
   return (
     <div className="w-full">
       {/* External API Parameters Input - only show for Dify teams */}
@@ -134,6 +140,14 @@ export function ChatInputCard({
           onAppModeChange={onAppModeChange}
           initialParams={externalApiParams}
         />
+      )}
+
+      {/* Group Chat Mention Hint - only show in group chat mode */}
+      {isGroupChat && (
+        <div className="flex items-center gap-1.5 px-4 py-1.5 mb-1 text-text-muted text-xs">
+          <Sparkles className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>{t('groupChat.mentionHint')}</span>
+        </div>
       )}
 
       {/* Chat Input Card */}
@@ -160,11 +174,17 @@ export function ChatInputCard({
           contexts={selectedContexts}
           attachmentState={attachmentState}
           onRemoveContext={contextId => {
-            setSelectedContexts(selectedContexts.filter(ctx => ctx.id !== contextId));
+            setSelectedContexts(selectedContexts.filter(ctx => ctx.id !== contextId))
           }}
           onRemoveAttachment={onAttachmentRemove}
           disabled={isLoading || isStreaming}
         />
+
+        {/* Quote Card - shows quoted text from text selection */}
+        {!shouldHideChatInput && <QuoteCard />}
+
+        {/* Connection Status Banner - shows WebSocket connection status */}
+        {!shouldHideChatInput && <ConnectionStatusBanner />}
 
         {/* Chat Input with inline badge */}
         {!shouldHideChatInput && (
@@ -197,6 +217,7 @@ export function ChatInputCard({
         <div ref={inputControlsRef}>
           <ChatInputControls
             selectedTeam={selectedTeam}
+            onTeamChange={onTeamChange}
             selectedModel={selectedModel}
             setSelectedModel={setSelectedModel}
             forceOverride={forceOverride}
@@ -239,7 +260,7 @@ export function ChatInputCard({
         </div>
       </div>
     </div>
-  );
+  )
 }
 
-export default ChatInputCard;
+export default ChatInputCard

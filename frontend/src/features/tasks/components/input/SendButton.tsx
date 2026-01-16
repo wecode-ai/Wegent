@@ -2,47 +2,50 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Send, ChevronDown, Check } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useUser } from '@/features/common/UserContext';
-import { userApis } from '@/apis/user';
-import { useToast } from '@/hooks/use-toast';
-import type { UserPreferences } from '@/types/api';
-import LoadingDots from '../message/LoadingDots';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { Send, ChevronDown, Check } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
+import { userApis } from '@/apis/user'
+import { useToast } from '@/hooks/use-toast'
+import type { UserPreferences } from '@/types/api'
+import LoadingDots from '../message/LoadingDots'
 
 interface SendButtonProps {
-  onClick: () => void;
-  disabled?: boolean;
-  isLoading?: boolean;
-  className?: string;
+  onClick: () => void
+  disabled?: boolean
+  isLoading?: boolean
+  className?: string
+  /** Hide dropdown toggle for mobile */
+  compact?: boolean
 }
 
-type SendKeyOption = 'enter' | 'cmd_enter';
+type SendKeyOption = 'enter' | 'cmd_enter'
 
 export default function SendButton({
   onClick,
   disabled = false,
   isLoading = false,
   className = '',
+  compact = false,
 }: SendButtonProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const { user, refresh } = useUser();
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const { user, refresh } = useUser()
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
 
   // Get current send key preference from user context
-  const sendKey: SendKeyOption = (user?.preferences?.send_key as SendKeyOption) || 'enter';
+  const sendKey: SendKeyOption = (user?.preferences?.send_key as SendKeyOption) || 'enter'
 
   // Detect if Mac or Windows for display
   const isMac = useMemo(() => {
-    return typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
-  }, []);
+    return typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
+  }, [])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -53,91 +56,91 @@ export default function SendButton({
         buttonRef.current &&
         !buttonRef.current.contains(event.target as Node)
       ) {
-        setIsDropdownOpen(false);
+        setIsDropdownOpen(false)
       }
-    };
+    }
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // Handle send key change
   const handleSendKeyChange = useCallback(
     async (value: SendKeyOption) => {
       if (value === sendKey) {
-        setIsDropdownOpen(false);
-        return;
+        setIsDropdownOpen(false)
+        return
       }
 
-      setIsSaving(true);
+      setIsSaving(true)
       try {
-        const preferences: UserPreferences = { send_key: value };
-        await userApis.updateUser({ preferences });
-        await refresh();
+        const preferences: UserPreferences = { send_key: value }
+        await userApis.updateUser({ preferences })
+        await refresh()
         toast({
           title: t('chat:send_button.preference_saved'),
-        });
+        })
       } catch (error) {
-        console.error('Failed to save send key preference:', error);
+        console.error('Failed to save send key preference:', error)
         toast({
           variant: 'destructive',
           title: t('chat:send_button.preference_save_failed'),
-        });
+        })
       } finally {
-        setIsSaving(false);
-        setIsDropdownOpen(false);
+        setIsSaving(false)
+        setIsDropdownOpen(false)
       }
     },
     [sendKey, refresh, toast, t]
-  );
+  )
 
   // Handle main button click (send message)
   const handleMainClick = useCallback(
     (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
+      e.preventDefault()
+      e.stopPropagation()
       if (!disabled && !isLoading) {
-        onClick();
+        onClick()
       }
     },
     [disabled, isLoading, onClick]
-  );
+  )
 
   // Handle dropdown toggle click
   const handleDropdownToggle = useCallback(
     (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
+      e.preventDefault()
+      e.stopPropagation()
       if (!isSaving) {
-        setIsDropdownOpen(prev => !prev);
+        setIsDropdownOpen(prev => !prev)
       }
     },
     [isSaving]
-  );
+  )
 
   // Get shortcut display text
   const getShortcutText = useCallback(
     (option: SendKeyOption): string => {
       if (option === 'enter') {
-        return 'Enter';
+        return 'Enter'
       }
-      return isMac ? '⌘ Enter' : 'Ctrl Enter';
+      return isMac ? '⌘ Enter' : 'Ctrl Enter'
     },
     [isMac]
-  );
+  )
 
   // Get option label
   const getOptionLabel = useCallback(
     (option: SendKeyOption): string => {
       if (option === 'enter') {
-        return t('chat:send_button.option_enter');
+        return t('chat:send_button.option_enter')
       }
       return isMac
         ? t('chat:send_button.option_cmd_enter_mac')
-        : t('chat:send_button.option_cmd_enter_win');
+        : t('chat:send_button.option_cmd_enter_win')
     },
     [isMac, t]
-  );
+  )
 
   return (
     <div className={`relative inline-flex ${className}`}>
@@ -152,8 +155,9 @@ export default function SendButton({
           data-tour="send-button"
           data-testid="send-button"
           className={`
-            flex items-center justify-center px-2.5 h-full
+            flex items-center justify-center h-full
             transition-colors duration-150
+            ${compact ? 'px-3' : 'px-2.5'}
             ${
               disabled || isLoading
                 ? 'text-text-muted cursor-not-allowed'
@@ -164,35 +168,37 @@ export default function SendButton({
           {isLoading ? <LoadingDots /> : <Send className="h-4 w-4" />}
         </button>
 
-        {/* Divider */}
-        <div className="w-px h-4 bg-border" />
-
-        {/* Dropdown toggle - smaller */}
-        <button
-          type="button"
-          onClick={handleDropdownToggle}
-          disabled={isSaving}
-          className={`
-            flex items-center justify-center px-1.5 h-full
-            transition-colors duration-150
-            ${
-              isSaving
-                ? 'text-text-muted cursor-not-allowed'
-                : 'text-text-muted hover:text-text-primary hover:bg-hover'
-            }
-          `}
-          aria-label={t('chat:send_button.change_shortcut')}
-          aria-expanded={isDropdownOpen}
-          aria-haspopup="true"
-        >
-          <ChevronDown
-            className={`h-3 w-3 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180' : ''}`}
-          />
-        </button>
+        {/* Divider and Dropdown toggle - hidden in compact mode */}
+        {!compact && (
+          <>
+            <div className="w-px h-4 bg-border" />
+            <button
+              type="button"
+              onClick={handleDropdownToggle}
+              disabled={isSaving}
+              className={`
+                flex items-center justify-center px-1.5 h-full
+                transition-colors duration-150
+                ${
+                  isSaving
+                    ? 'text-text-muted cursor-not-allowed'
+                    : 'text-text-muted hover:text-text-primary hover:bg-hover'
+                }
+              `}
+              aria-label={t('chat:send_button.change_shortcut')}
+              aria-expanded={isDropdownOpen}
+              aria-haspopup="true"
+            >
+              <ChevronDown
+                className={`h-3 w-3 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
+          </>
+        )}
       </div>
 
       {/* Dropdown menu */}
-      {isDropdownOpen && (
+      {isDropdownOpen && !compact && (
         <div
           ref={dropdownRef}
           className="absolute bottom-full right-0 mb-2 w-56 rounded-lg border border-border bg-surface shadow-lg z-50 animate-in fade-in slide-in-from-bottom-2 duration-200"
@@ -231,5 +237,5 @@ export default function SendButton({
         </div>
       )}
     </div>
-  );
+  )
 }

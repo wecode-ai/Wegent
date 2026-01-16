@@ -2,31 +2,36 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { WikiContent as WikiContentType } from '@/types/wiki';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { ReactNode, useState, useCallback, useEffect, useRef } from 'react';
-import type { HTMLAttributes } from 'react';
-import { CheckIcon, ClipboardIcon, ArrowsPointingOutIcon } from '@heroicons/react/24/outline';
-import { DiagramModal } from './DiagramModal';
-import { useTranslation } from '@/hooks/useTranslation';
+import { WikiContent as WikiContentType } from '@/types/wiki'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeRaw from 'rehype-raw'
+import rehypeKatex from 'rehype-katex'
+import katex from 'katex'
+
+import 'katex/dist/katex.min.css'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { ReactNode, useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import type { HTMLAttributes } from 'react'
+import { CheckIcon, ClipboardIcon, ArrowsPointingOutIcon } from '@heroicons/react/24/outline'
+import { DiagramModal } from './DiagramModal'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface MarkdownComponentProps extends HTMLAttributes<HTMLElement> {
-  node?: unknown;
-  className?: string;
-  children?: ReactNode;
+  node?: unknown
+  className?: string
+  children?: ReactNode
 }
 
 interface WikiContentProps {
-  content: WikiContentType | null;
-  loading: boolean;
-  error: string | null;
+  content: WikiContentType | null
+  loading: boolean
+  error: string | null
 }
 
 /**
@@ -37,21 +42,21 @@ function CopyButton({
   copiedText,
   copyText,
 }: {
-  code: string;
-  copiedText: string;
-  copyText: string;
+  code: string
+  copiedText: string
+  copyText: string
 }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
     } catch (err) {
-      console.error('Failed to copy:', err);
+      console.error('Failed to copy:', err)
     }
-  }, [code]);
+  }, [code])
 
   return (
     <button
@@ -65,7 +70,7 @@ function CopyButton({
         <ClipboardIcon className="w-4 h-4" />
       )}
     </button>
-  );
+  )
 }
 
 /**
@@ -99,13 +104,13 @@ function LanguageBadge({ language }: { language: string }) {
     markdown: 'Markdown',
     dockerfile: 'Dockerfile',
     graphql: 'GraphQL',
-  };
+  }
 
   return (
     <span className="absolute top-0 left-4 px-2 py-0.5 text-xs font-medium bg-primary/80 text-white rounded-b-md shadow-sm">
       {displayName[language.toLowerCase()] || language.toUpperCase()}
     </span>
-  );
+  )
 }
 
 /**
@@ -116,24 +121,24 @@ function MermaidDiagram({
   diagramText,
   clickToExpandText,
 }: {
-  children: ReactNode;
-  diagramText: string;
-  clickToExpandText: string;
+  children: ReactNode
+  diagramText: string
+  clickToExpandText: string
 }) {
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [diagramHtml, setDiagramHtml] = useState('');
-  const diagramRef = useRef<HTMLDivElement>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [diagramHtml, setDiagramHtml] = useState('')
+  const diagramRef = useRef<HTMLDivElement>(null)
 
   // Capture rendered SVG for modal display
   const handleOpenModal = useCallback(() => {
     if (diagramRef.current) {
-      const svgElement = diagramRef.current.querySelector('svg');
+      const svgElement = diagramRef.current.querySelector('svg')
       if (svgElement) {
-        setDiagramHtml(svgElement.outerHTML);
-        setIsModalOpen(true);
+        setDiagramHtml(svgElement.outerHTML)
+        setIsModalOpen(true)
       }
     }
-  }, []);
+  }, [])
 
   return (
     <>
@@ -187,7 +192,193 @@ function MermaidDiagram({
         title={diagramText}
       />
     </>
-  );
+  )
+}
+/**
+ * Parse LaTeX code and extract individual formulas
+ * Handles multiple $$...$$, \[...\], and standalone formulas
+ * Also removes LaTeX comments (lines starting with %)
+ */
+function parseLatexFormulas(code: string): string[] {
+  const formulas: string[] = []
+  // Remove LaTeX comments (lines starting with %)
+  const codeWithoutComments = code
+    .split('\n')
+    .filter(line => !line.trim().startsWith('%'))
+    .join('\n')
+    .trim()
+
+  // Match all $$...$$ blocks
+  const dollarBlockRegex = /\$\$([\s\S]*?)\$\$/g
+  // Match all \[...\] blocks
+  const bracketBlockRegex = /\\\[([\s\S]*?)\\\]/g
+
+  let match
+  let hasMatches = false
+
+  // Extract $$...$$ blocks
+  while ((match = dollarBlockRegex.exec(codeWithoutComments)) !== null) {
+    hasMatches = true
+    const formula = match[1].trim()
+    if (formula) {
+      formulas.push(formula)
+    }
+  }
+
+  // Extract \[...\] blocks
+  while ((match = bracketBlockRegex.exec(codeWithoutComments)) !== null) {
+    hasMatches = true
+    const formula = match[1].trim()
+    if (formula) {
+      formulas.push(formula)
+    }
+  }
+
+  // If no blocks found, treat the entire content as a single formula
+  if (!hasMatches && codeWithoutComments) {
+    formulas.push(codeWithoutComments)
+  }
+
+  return formulas
+}
+
+/**
+ * Component to render LaTeX code blocks using KaTeX
+ * Supports multiple formulas separated by $$...$$ blocks
+ * Includes toolbar with copy and view source functionality
+ */
+function LaTeXBlock({ code }: { code: string }) {
+  const [showSource, setShowSource] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const formulas = useMemo(() => parseLatexFormulas(code), [code])
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy LaTeX code:', err)
+    }
+  }, [code])
+
+  const toggleSource = useCallback(() => {
+    setShowSource(prev => !prev)
+  }, [])
+
+  const renderedFormulas = useMemo(() => {
+    return formulas.map((formula, index) => {
+      try {
+        return {
+          html: katex.renderToString(formula, {
+            displayMode: true,
+            throwOnError: false,
+            strict: false,
+          }),
+          error: null,
+          key: index,
+        }
+      } catch (error) {
+        console.error('KaTeX rendering error:', error)
+        return {
+          html: `<span class="text-red-500">LaTeX Error: ${error instanceof Error ? error.message : 'Unknown error'}</span>`,
+          error: error,
+          key: index,
+        }
+      }
+    })
+  }, [formulas])
+
+  return (
+    <div className="group my-4 rounded-lg border border-border bg-surface overflow-hidden">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between px-3 py-1.5 bg-surface-hover/50 border-b border-border">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-text-secondary">LaTeX</span>
+        </div>
+        <div className="flex items-center gap-1">
+          {/* View Source Button */}
+          <button
+            onClick={toggleSource}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title={showSource ? 'Hide source' : 'View source'}
+          >
+            <svg
+              className="w-3.5 h-3.5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
+              />
+            </svg>
+            <span className="hidden sm:inline">{showSource ? 'Hide' : 'Source'}</span>
+            {showSource ? (
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M5 15l7-7 7 7"
+                />
+              </svg>
+            ) : (
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 9l-7 7-7-7"
+                />
+              </svg>
+            )}
+          </button>
+          {/* Copy Button */}
+          <button
+            onClick={handleCopy}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title={copied ? 'Copied!' : 'Copy LaTeX code'}
+          >
+            {copied ? (
+              <>
+                <CheckIcon className="w-3.5 h-3.5 text-green-500" />
+                <span className="hidden sm:inline text-green-500">Copied</span>
+              </>
+            ) : (
+              <>
+                <ClipboardIcon className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Copy</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Source Code (collapsible) */}
+      {showSource && (
+        <div className="px-4 py-3 bg-slate-50 dark:bg-slate-900/50 border-b border-border">
+          <pre className="text-sm font-mono text-text-primary whitespace-pre-wrap break-words overflow-x-auto">
+            {code}
+          </pre>
+        </div>
+      )}
+
+      {/* Rendered Formulas */}
+      <div className="px-4 py-3">
+        {renderedFormulas.map(item => (
+          <div
+            key={item.key}
+            className="katex-display overflow-x-auto"
+            dangerouslySetInnerHTML={{ __html: item.html }}
+          />
+        ))}
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -199,31 +390,31 @@ function CodeBlock({
   copiedText,
   copyText,
 }: {
-  language: string;
-  code: string;
-  copiedText: string;
-  copyText: string;
+  language: string
+  code: string
+  copiedText: string
+  copyText: string
 }) {
-  const [isDark, setIsDark] = useState(true);
+  const [isDark, setIsDark] = useState(true)
 
   useEffect(() => {
     // Check if dark mode
     const checkDarkMode = () => {
-      const isDarkMode = document.documentElement.classList.contains('dark');
-      setIsDark(isDarkMode);
-    };
+      const isDarkMode = document.documentElement.classList.contains('dark')
+      setIsDark(isDarkMode)
+    }
 
-    checkDarkMode();
+    checkDarkMode()
 
     // Listen for theme changes
-    const observer = new MutationObserver(checkDarkMode);
+    const observer = new MutationObserver(checkDarkMode)
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['class'],
-    });
+    })
 
-    return () => observer.disconnect();
-  }, []);
+    return () => observer.disconnect()
+  }, [])
 
   return (
     <div className="group relative my-6 rounded-xl overflow-hidden shadow-lg border border-border/50">
@@ -279,7 +470,7 @@ function CodeBlock({
         />
       </div>
     </div>
-  );
+  )
 }
 
 /**
@@ -287,7 +478,7 @@ function CodeBlock({
  * Encapsulates complex ReactMarkdown config and custom components
  */
 export function WikiContent({ content, loading, error }: WikiContentProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   if (loading) {
     return (
@@ -297,7 +488,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
         </div>
         <p className="mt-4 text-sm text-text-secondary">{t('knowledge:loading_content')}</p>
       </div>
-    );
+    )
   }
 
   if (error) {
@@ -318,7 +509,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
         </svg>
         <span>{error}</span>
       </div>
-    );
+    )
   }
 
   if (!content) {
@@ -340,7 +531,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
         <p className="text-lg font-medium">{t('knowledge:select_content')}</p>
         <p className="text-sm mt-1">{t('knowledge:select_content_hint')}</p>
       </div>
-    );
+    )
   }
 
   return (
@@ -356,8 +547,8 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
         <div className="px-8 py-6">
           <div className="prose prose-base max-w-none dark:prose-invert wiki-content">
             <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeRaw]}
+              remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: true }]]}
+              rehypePlugins={[rehypeKatex, rehypeRaw]}
               components={{
                 // Table components
                 table: ({ node: _node, ...props }: MarkdownComponentProps) => (
@@ -514,7 +705,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                 ),
                 // Code component - handles inline code, mermaid, and code blocks
                 code: ({ node: _node, className, children, ...props }: MarkdownComponentProps) => {
-                  const isInline = !className;
+                  const isInline = !className
 
                   // Inline code
                   if (isInline) {
@@ -525,7 +716,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                       >
                         {children}
                       </code>
-                    );
+                    )
                   }
 
                   // Mermaid diagrams
@@ -537,14 +728,20 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                       >
                         {children}
                       </MermaidDiagram>
-                    );
+                    )
+                  }
+
+                  // LaTeX code blocks - render as math formulas
+                  if (className === 'language-latex') {
+                    const latexCode = String(children).replace(/\n$/, '')
+                    return <LaTeXBlock code={latexCode} />
                   }
 
                   // Code blocks
-                  const match = /language-(\w+)/.exec(className || '');
+                  const match = /language-(\w+)/.exec(className || '')
                   if (match) {
-                    let language = match[1];
-                    const codeContent = String(children).replace(/\n$/, '');
+                    let language = match[1]
+                    const codeContent = String(children).replace(/\n$/, '')
 
                     // Language mapping
                     const languageMap: Record<string, string> = {
@@ -555,10 +752,10 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                       sh: 'bash',
                       shell: 'bash',
                       yml: 'yaml',
-                    };
+                    }
 
                     if (languageMap[language.toLowerCase()]) {
-                      language = languageMap[language.toLowerCase()];
+                      language = languageMap[language.toLowerCase()]
                     }
 
                     return (
@@ -568,7 +765,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                         copiedText={t('knowledge:copied')}
                         copyText={t('knowledge:copy_code')}
                       />
-                    );
+                    )
                   }
 
                   return (
@@ -579,7 +776,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
                     >
                       {children}
                     </code>
-                  );
+                  )
                 },
               }}
             >
@@ -589,5 +786,5 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
         </div>
       </article>
     </div>
-  );
+  )
 }

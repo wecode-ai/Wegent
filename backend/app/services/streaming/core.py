@@ -117,22 +117,34 @@ class StreamingState:
     sources: list[dict[str, Any]] = field(
         default_factory=list
     )  # Knowledge base sources for citation
+    reasoning_content: str = ""  # Reasoning/thinking content from DeepSeek R1 etc.
 
     def append_content(self, token: str) -> None:
         """Append token to accumulated response."""
         self.full_response += token
         self.offset += len(token)
 
+    def append_reasoning(self, content: str) -> None:
+        """Append reasoning content (from DeepSeek R1 and similar models)."""
+        self.reasoning_content += content
+
     def add_thinking_step(self, step: dict[str, Any]) -> None:
         """Add a thinking step (tool call)."""
         self.thinking.append(step)
 
     def add_sources(self, sources: list[dict[str, Any]]) -> None:
-        """Add knowledge base sources for citation."""
+        """Add knowledge base sources for citation.
+
+        Only accepts knowledge base sources with kb_id and title.
+        URL sources from web search are currently not supported by frontend.
+        """
         # Merge sources, avoiding duplicates based on (kb_id, title)
-        # Skip sources with missing required fields to prevent incorrect deduplication
         existing_keys = {(s.get("kb_id"), s.get("title")) for s in self.sources}
         for source in sources:
+            # Skip URL type sources (not supported by frontend yet)
+            if source.get("type") == "url":
+                continue
+
             kb_id = source.get("kb_id")
             title = source.get("title")
 
@@ -187,6 +199,9 @@ class StreamingState:
                     result["thinking"] = self.thinking
             if self.sources:
                 result["sources"] = self.sources  # Include sources for citation display
+        # Include reasoning_content if present (DeepSeek R1 and similar reasoning models)
+        if self.reasoning_content:
+            result["reasoning_content"] = self.reasoning_content
         return result
 
     def _slim_thinking_data(
@@ -328,6 +343,11 @@ class StreamingCore:
         Returns:
             True if resources acquired successfully, False otherwise
         """
+        logger.info(
+            f"[StreamingCore] acquire_resources called for task_id={self.state.task_id}, "
+            f"subtask_id={self.state.subtask_id}, user_id={self.state.user_id}"
+        )
+
         # Try to acquire semaphore with timeout
         try:
             self._acquired = await asyncio.wait_for(
@@ -349,22 +369,62 @@ class StreamingCore:
         # Register stream for cancellation
         self._cancel_event = await self._storage.register_stream(self.state.subtask_id)
 
+        # Set task-level streaming status in Redis for fast lookup
+        # This is checked by get_active_streaming() when client reconnects
+        from app.services.chat.storage import session_manager
+
+        logger.info(
+            f"[StreamingCore] Setting task_streaming_status in Redis: "
+            f"task_id={self.state.task_id}, subtask_id={self.state.subtask_id}, "
+            f"user_id={self.state.user_id}, user_name={self.state.user_name}"
+        )
+        set_result = await session_manager.set_task_streaming_status(
+            task_id=self.state.task_id,
+            subtask_id=self.state.subtask_id,
+            user_id=self.state.user_id,
+            username=self.state.user_name,
+        )
+        logger.info(f"[StreamingCore] set_task_streaming_status result: {set_result}")
+
+        # Verify the status was set correctly
+        verify_status = await session_manager.get_task_streaming_status(
+            self.state.task_id
+        )
+        logger.info(
+            f"[StreamingCore] Verified task_streaming_status after set: {verify_status}"
+        )
+
         # Update status to RUNNING
         await self._storage.update_subtask_status(
             self.state.subtask_id,
             "RUNNING",
         )
 
+        logger.info(
+            f"[StreamingCore] acquire_resources completed successfully for task_id={self.state.task_id}"
+        )
         return True
 
     async def release_resources(self) -> None:
         """Release all acquired resources."""
+        logger.info(
+            f"[StreamingCore] release_resources called for task_id={self.state.task_id}, "
+            f"subtask_id={self.state.subtask_id}"
+        )
         try:
             # Unregister stream
             await self._storage.unregister_stream(self.state.subtask_id)
 
             # Delete streaming content cache
             await self._storage.delete_streaming_content(self.state.subtask_id)
+
+            # Clear task-level streaming status from Redis
+            from app.services.chat.storage import session_manager
+
+            logger.info(
+                f"[StreamingCore] Clearing task_streaming_status for task_id={self.state.task_id}"
+            )
+            await session_manager.clear_task_streaming_status(self.state.task_id)
 
             # Disconnect MCP client if present
             if self._mcp_client:
@@ -375,6 +435,9 @@ class StreamingCore:
             if self._acquired:
                 self._semaphore.release()
                 self._acquired = False
+        logger.info(
+            f"[StreamingCore] release_resources completed for task_id={self.state.task_id}"
+        )
 
     def is_cancelled(self) -> bool:
         """Check if streaming has been cancelled."""
@@ -391,6 +454,7 @@ class StreamingCore:
 
         Handles:
         - Content accumulation
+        - Reasoning content extraction (DeepSeek R1 format)
         - Emitting chunk to client
         - Periodic saves to Redis and DB
 
@@ -398,7 +462,7 @@ class StreamingCore:
             token: The token to process
 
         Returns:
-            True if processing should continue, False if cancelled/shutdown
+            True if processing should continue, False if cancelled
         """
         logger.debug(
             "[STREAMING] process_token: subtask_id=%d, token_len=%d",
@@ -406,20 +470,61 @@ class StreamingCore:
             len(token),
         )
 
-        # Check for cancellation or shutdown
-        if self.is_cancelled() or self.is_shutting_down():
+        # Check for cancellation (user-initiated or shutdown)
+        # When cancelled, we treat it as completed with partial response
+        # This is consistent with update_subtask_on_cancel in cancel.py
+        if self.is_cancelled():
             logger.info(
-                "[STREAMING] Cancelled or shutting down: subtask_id=%d",
+                "[STREAMING] Cancelled: subtask_id=%d, response_len=%d",
                 self.state.subtask_id,
+                len(self.state.full_response),
             )
             await self.emitter.emit_cancelled(self.state.subtask_id)
+            # Use COMPLETED status to ensure Task status is properly updated
+            # The partial response is preserved in the result
+            is_chat_mode = self.state.shell_type == "Chat"
+            result = self.state.get_current_result(
+                include_value=True,
+                include_thinking=True,
+                slim_thinking=is_chat_mode,
+            )
             await self._storage.update_subtask_status(
                 self.state.subtask_id,
-                "CANCELLED",
+                "COMPLETED",
+                result=result,
             )
             return False
 
-        # Accumulate content
+        # Check for reasoning content marker (DeepSeek R1 format)
+        # Format: __REASONING__<content>__END_REASONING__
+        reasoning_start = "__REASONING__"
+        reasoning_end = "__END_REASONING__"
+
+        if token.startswith(reasoning_start) and token.endswith(reasoning_end):
+            # Extract reasoning content
+            reasoning_text = token[len(reasoning_start) : -len(reasoning_end)]
+            self.state.append_reasoning(reasoning_text)
+
+            # Emit reasoning chunk to client
+            is_chat_mode = self.state.shell_type == "Chat"
+            result = self.state.get_current_result(
+                include_value=False,
+                include_thinking=not is_chat_mode,
+            )
+            # Add reasoning_chunk flag to indicate this is reasoning content
+            result["reasoning_chunk"] = reasoning_text
+            await self.emitter.emit_chunk(
+                "",  # No content chunk for reasoning
+                self.state.offset,
+                self.state.subtask_id,
+                result=result,
+            )
+
+            # Periodic saves
+            await self._periodic_save()
+            return True
+
+        # Regular content - Accumulate content
         self.state.append_content(token)
 
         # Emit chunk to client with result data

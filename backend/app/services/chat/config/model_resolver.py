@@ -578,8 +578,10 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(
             f"[model_resolver] _extract_model_config: using responses API from protocol={protocol}"
         )
-    elif api_format:
-        logger.info(f"[model_resolver] _extract_model_config: apiFormat={api_format}")
+
+    # Context window and output token limits from modelConfig
+    context_window = model_config.get("context_window")
+    max_output_tokens = model_config.get("max_output_tokens")
 
     return {
         "api_key": api_key,
@@ -588,9 +590,9 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         "model": model_type,
         "default_headers": default_headers,
         "api_format": api_format,
-        # Context window and output token limits from ModelSpec
-        "context_window": model_spec.get("contextWindow"),
-        "max_output_tokens": model_spec.get("maxOutputTokens"),
+        # Context window and output token limits from ModelSpec or modelConfig
+        "context_window": context_window,
+        "max_output_tokens": max_output_tokens,
     }
 
 

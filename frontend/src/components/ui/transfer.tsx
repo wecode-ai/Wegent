@@ -1,36 +1,36 @@
-'use client';
+'use client'
 
-import * as React from 'react';
-import { Search, ChevronRight, ChevronLeft, GripVertical } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import * as React from 'react'
+import { Search, ChevronRight, ChevronLeft, GripVertical } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 export interface TransferItem {
-  key: string;
-  title: string;
-  description?: string;
-  disabled?: boolean;
+  key: string
+  title: string
+  description?: string
+  disabled?: boolean
 }
 
 export interface TransferProps {
-  dataSource: TransferItem[];
-  targetKeys: string[];
-  onChange: (targetKeys: string[], direction: 'left' | 'right', moveKeys: string[]) => void;
-  onOrderChange?: (newOrder: string[]) => void;
-  render?: (item: TransferItem) => React.ReactNode;
-  showSearch?: boolean;
-  filterOption?: (inputValue: string, item: TransferItem) => boolean;
-  titles?: [string, string];
-  className?: string;
-  listStyle?: React.CSSProperties;
-  operations?: [string, string];
-  leftFooter?: React.ReactNode;
-  rightFooter?: React.ReactNode;
-  disabled?: boolean;
-  sortable?: boolean;
+  dataSource: TransferItem[]
+  targetKeys: string[]
+  onChange: (targetKeys: string[], direction: 'left' | 'right', moveKeys: string[]) => void
+  onOrderChange?: (newOrder: string[]) => void
+  render?: (item: TransferItem) => React.ReactNode
+  showSearch?: boolean
+  filterOption?: (inputValue: string, item: TransferItem) => boolean
+  titles?: [string, string]
+  className?: string
+  listStyle?: React.CSSProperties
+  operations?: [string, string]
+  leftFooter?: React.ReactNode
+  rightFooter?: React.ReactNode
+  disabled?: boolean
+  sortable?: boolean
 }
 
 export function Transfer({
@@ -50,63 +50,63 @@ export function Transfer({
   disabled = false,
   sortable = false,
 }: TransferProps) {
-  const [leftSearch, setLeftSearch] = React.useState('');
-  const [rightSearch, setRightSearch] = React.useState('');
-  const [leftChecked, setLeftChecked] = React.useState<string[]>([]);
-  const [rightChecked, setRightChecked] = React.useState<string[]>([]);
-  const [draggedKey, setDraggedKey] = React.useState<string | null>(null);
-  const [dragOverKey, setDragOverKey] = React.useState<string | null>(null);
+  const [leftSearch, setLeftSearch] = React.useState('')
+  const [rightSearch, setRightSearch] = React.useState('')
+  const [leftChecked, setLeftChecked] = React.useState<string[]>([])
+  const [rightChecked, setRightChecked] = React.useState<string[]>([])
+  const [draggedKey, setDraggedKey] = React.useState<string | null>(null)
+  const [dragOverKey, setDragOverKey] = React.useState<string | null>(null)
 
   // 分离左右两侧的数据
   const leftDataSource = React.useMemo(
     () => dataSource.filter(item => !targetKeys.includes(item.key)),
     [dataSource, targetKeys]
-  );
+  )
 
   const rightDataSource = React.useMemo(() => {
-    const targetSet = new Set(targetKeys);
-    const itemMap = new Map(dataSource.map(item => [item.key, item]));
+    const targetSet = new Set(targetKeys)
+    const itemMap = new Map(dataSource.map(item => [item.key, item]))
     return targetKeys
       .filter(key => targetSet.has(key) && itemMap.has(key))
-      .map(key => itemMap.get(key)!);
-  }, [dataSource, targetKeys]);
+      .map(key => itemMap.get(key)!)
+  }, [dataSource, targetKeys])
 
   // 过滤函数
   const defaultFilterOption = (inputValue: string, item: TransferItem) => {
-    return item.title.toLowerCase().includes(inputValue.toLowerCase());
-  };
+    return item.title.toLowerCase().includes(inputValue.toLowerCase())
+  }
 
-  const filter = filterOption || defaultFilterOption;
+  const filter = filterOption || defaultFilterOption
 
   // 过滤后的数据
   const filteredLeftData = React.useMemo(
     () => leftDataSource.filter(item => filter(leftSearch, item)),
     [leftDataSource, leftSearch, filter]
-  );
+  )
 
   const filteredRightData = React.useMemo(
     () => rightDataSource.filter(item => filter(rightSearch, item)),
     [rightDataSource, rightSearch, filter]
-  );
+  )
 
   // 移动到右侧
   const moveToRight = () => {
-    const newTargetKeys = [...targetKeys, ...leftChecked];
-    onChange(newTargetKeys, 'right', leftChecked);
-    setLeftChecked([]);
-  };
+    const newTargetKeys = [...targetKeys, ...leftChecked]
+    onChange(newTargetKeys, 'right', leftChecked)
+    setLeftChecked([])
+  }
 
   // 移动到左侧
   const moveToLeft = () => {
-    const newTargetKeys = targetKeys.filter(key => !rightChecked.includes(key));
-    onChange(newTargetKeys, 'left', rightChecked);
-    setRightChecked([]);
-  };
+    const newTargetKeys = targetKeys.filter(key => !rightChecked.includes(key))
+    onChange(newTargetKeys, 'left', rightChecked)
+    setRightChecked([])
+  }
 
   // 渲染列表项
   const renderItem = (item: TransferItem) => {
     if (render) {
-      return render(item);
+      return render(item)
     }
     return (
       <div className="flex flex-col">
@@ -115,61 +115,61 @@ export function Transfer({
           <span className="text-xs text-muted-foreground">{item.description}</span>
         )}
       </div>
-    );
-  };
+    )
+  }
   // 拖拽处理函数
   const handleDragStart = (e: React.DragEvent, key: string) => {
-    setDraggedKey(key);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', key);
-  };
+    setDraggedKey(key)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', key)
+  }
 
   const handleDragOver = (e: React.DragEvent, key: string) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
     if (draggedKey && key !== draggedKey) {
-      setDragOverKey(key);
+      setDragOverKey(key)
     }
-  };
+  }
 
   const handleDragLeave = () => {
-    setDragOverKey(null);
-  };
+    setDragOverKey(null)
+  }
 
   const handleDrop = (e: React.DragEvent, targetKey: string) => {
-    e.preventDefault();
+    e.preventDefault()
     if (!draggedKey || draggedKey === targetKey) {
-      setDraggedKey(null);
-      setDragOverKey(null);
-      return;
+      setDraggedKey(null)
+      setDragOverKey(null)
+      return
     }
 
-    const currentOrder = [...targetKeys];
-    const draggedIndex = currentOrder.indexOf(draggedKey);
-    const targetIndex = currentOrder.indexOf(targetKey);
+    const currentOrder = [...targetKeys]
+    const draggedIndex = currentOrder.indexOf(draggedKey)
+    const targetIndex = currentOrder.indexOf(targetKey)
 
     if (draggedIndex === -1 || targetIndex === -1) {
-      setDraggedKey(null);
-      setDragOverKey(null);
-      return;
+      setDraggedKey(null)
+      setDragOverKey(null)
+      return
     }
 
     // 移除拖拽项并插入到目标位置
-    currentOrder.splice(draggedIndex, 1);
-    currentOrder.splice(targetIndex, 0, draggedKey);
+    currentOrder.splice(draggedIndex, 1)
+    currentOrder.splice(targetIndex, 0, draggedKey)
 
     if (onOrderChange) {
-      onOrderChange(currentOrder);
+      onOrderChange(currentOrder)
     }
 
-    setDraggedKey(null);
-    setDragOverKey(null);
-  };
+    setDraggedKey(null)
+    setDragOverKey(null)
+  }
 
   const handleDragEnd = () => {
-    setDraggedKey(null);
-    setDragOverKey(null);
-  };
+    setDraggedKey(null)
+    setDragOverKey(null)
+  }
 
   // 渲染列表
   const renderList = (
@@ -182,26 +182,26 @@ export function Transfer({
     footer?: React.ReactNode,
     isRightList?: boolean
   ) => {
-    const allKeys = data.filter(item => !item.disabled).map(item => item.key);
-    const checkedAll = allKeys.length > 0 && allKeys.every(key => checked.includes(key));
-    const indeterminate = checked.length > 0 && !checkedAll;
+    const allKeys = data.filter(item => !item.disabled).map(item => item.key)
+    const checkedAll = allKeys.length > 0 && allKeys.every(key => checked.includes(key))
+    const indeterminate = checked.length > 0 && !checkedAll
     const mergedListStyle: React.CSSProperties = {
       borderColor: 'rgb(var(--color-border))',
       backgroundColor: 'rgb(var(--color-bg-surface))',
       ...listStyle,
-    };
+    }
 
     const handleCheckAll = () => {
       if (checkedAll) {
-        setChecked([]);
+        setChecked([])
       } else {
-        setChecked(allKeys);
+        setChecked(allKeys)
       }
-    };
+    }
 
     const handleCheck = (key: string) => {
-      setChecked(prev => (prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]));
-    };
+      setChecked(prev => (prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]))
+    }
 
     return (
       <div
@@ -243,9 +243,9 @@ export function Transfer({
               <div className="text-center text-sm text-muted-foreground py-8">No data</div>
             ) : (
               data.map(item => {
-                const isDragging = draggedKey === item.key;
-                const isDragOver = dragOverKey === item.key;
-                const canDrag = sortable && isRightList && !item.disabled;
+                const isDragging = draggedKey === item.key
+                const isDragOver = dragOverKey === item.key
+                const canDrag = sortable && isRightList && !item.disabled
 
                 return (
                   <div
@@ -271,13 +271,13 @@ export function Transfer({
                       checked={checked.includes(item.key)}
                       disabled={item.disabled}
                       onCheckedChange={() => {
-                        handleCheck(item.key);
+                        handleCheck(item.key)
                       }}
                       onClick={e => e.stopPropagation()}
                     />
                     <div className="flex-1 min-w-0">{renderItem(item)}</div>
                   </div>
-                );
+                )
               })
             )}
           </div>
@@ -286,8 +286,8 @@ export function Transfer({
         {/* Footer */}
         {footer && <div className="p-2 border-t border-border">{footer}</div>}
       </div>
-    );
-  };
+    )
+  }
 
   return (
     <div className={cn('flex items-stretch gap-4', className)}>
@@ -340,5 +340,5 @@ export function Transfer({
         )}
       </div>
     </div>
-  );
+  )
 }

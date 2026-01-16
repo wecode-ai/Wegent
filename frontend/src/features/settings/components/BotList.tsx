@@ -2,29 +2,29 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
-import '@/features/common/scrollbar.css';
+'use client'
+import '@/features/common/scrollbar.css'
 
-import { useCallback, useEffect, useState } from 'react';
-import { PencilIcon, TrashIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline';
-import { RiRobot2Line } from 'react-icons/ri';
-import LoadingState from '@/features/common/LoadingState';
-import { Bot } from '@/types/api';
+import { useCallback, useEffect, useState } from 'react'
+import { PencilIcon, TrashIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline'
+import { RiRobot2Line } from 'react-icons/ri'
+import LoadingState from '@/features/common/LoadingState'
+import { Bot } from '@/types/api'
 import {
   fetchBotsList,
   deleteBot,
   isPredefinedModel,
   getModelFromConfig,
   checkBotRunningTasks,
-} from '../services/bots';
-import { CheckRunningTasksResponse } from '@/apis/common';
-import BotEdit from './BotEdit';
-import UnifiedAddButton from '@/components/common/UnifiedAddButton';
-import { useTranslation } from '@/hooks/useTranslation';
-import { sortBotsByUpdatedAt } from '@/utils/bot';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { ResourceListItem } from '@/components/common/ResourceListItem';
+} from '../services/bots'
+import { CheckRunningTasksResponse } from '@/apis/common'
+import BotEdit from './BotEdit'
+import UnifiedAddButton from '@/components/common/UnifiedAddButton'
+import { useTranslation } from '@/hooks/useTranslation'
+import { sortBotsByUpdatedAt } from '@/utils/bot'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { ResourceListItem } from '@/components/common/ResourceListItem'
 import {
   Dialog,
   DialogContent,
@@ -32,57 +32,57 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { useToast } from '@/hooks/use-toast';
+} from '@/components/ui/dialog'
+import { useToast } from '@/hooks/use-toast'
 interface BotListProps {
-  scope?: 'personal' | 'group' | 'all';
-  groupName?: string;
-  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>;
+  scope?: 'personal' | 'group' | 'all'
+  groupName?: string
+  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
 }
 
 export default function BotList({ scope = 'personal', groupName, groupRoleMap }: BotListProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const [bots, setBots] = useState<Bot[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [editingBotId, setEditingBotId] = useState<number | null>(null);
-  const [cloningBot, setCloningBot] = useState<Bot | null>(null);
-  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
-  const [forceDeleteConfirmVisible, setForceDeleteConfirmVisible] = useState(false);
-  const [botToDelete, setBotToDelete] = useState<number | null>(null);
-  const [runningTasksInfo, setRunningTasksInfo] = useState<CheckRunningTasksResponse | null>(null);
-  const [isCheckingTasks, setIsCheckingTasks] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const isEditing = editingBotId !== null;
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const [bots, setBots] = useState<Bot[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [editingBotId, setEditingBotId] = useState<number | null>(null)
+  const [cloningBot, setCloningBot] = useState<Bot | null>(null)
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
+  const [forceDeleteConfirmVisible, setForceDeleteConfirmVisible] = useState(false)
+  const [botToDelete, setBotToDelete] = useState<number | null>(null)
+  const [runningTasksInfo, setRunningTasksInfo] = useState<CheckRunningTasksResponse | null>(null)
+  const [isCheckingTasks, setIsCheckingTasks] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const isEditing = editingBotId !== null
 
   const setBotsSorted = useCallback<React.Dispatch<React.SetStateAction<Bot[]>>>(
     updater => {
       setBots(prev => {
         const next =
-          typeof updater === 'function' ? (updater as (value: Bot[]) => Bot[])(prev) : updater;
-        return sortBotsByUpdatedAt(next);
-      });
+          typeof updater === 'function' ? (updater as (value: Bot[]) => Bot[])(prev) : updater
+        return sortBotsByUpdatedAt(next)
+      })
     },
     [setBots]
-  );
+  )
 
   useEffect(() => {
     async function loadBots() {
-      setIsLoading(true);
+      setIsLoading(true)
       try {
-        const botsData = await fetchBotsList(scope, groupName);
-        setBotsSorted(botsData);
+        const botsData = await fetchBotsList(scope, groupName)
+        setBotsSorted(botsData)
       } catch {
         toast({
           variant: 'destructive',
           title: t('common:bots.loading'),
-        });
+        })
       } finally {
-        setIsLoading(false);
+        setIsLoading(false)
       }
     }
-    loadBots();
-  }, [toast, setBotsSorted, t, scope, groupName]);
+    loadBots()
+  }, [toast, setBotsSorted, t, scope, groupName])
 
   const handleCreateBot = () => {
     // Validation for group scope: must have groupName
@@ -91,166 +91,162 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
         variant: 'destructive',
         title: t('common:bots.group_required_title'),
         description: t('common:bots.group_required_message'),
-      });
-      return;
+      })
+      return
     }
 
-    setCloningBot(null);
-    setEditingBotId(0); // Use 0 to mark new creation
-  };
+    setCloningBot(null)
+    setEditingBotId(0) // Use 0 to mark new creation
+  }
 
   const handleEditBot = (bot: Bot) => {
-    setCloningBot(null);
-    setEditingBotId(bot.id);
-  };
+    setCloningBot(null)
+    setEditingBotId(bot.id)
+  }
 
   const handleCloneBot = (bot: Bot) => {
-    setCloningBot(bot);
-    setEditingBotId(0);
-  };
+    setCloningBot(bot)
+    setEditingBotId(0)
+  }
 
   const handleCloseEditor = () => {
-    setEditingBotId(null);
-    setCloningBot(null);
-  };
+    setEditingBotId(null)
+    setCloningBot(null)
+  }
 
   const handleDeleteBot = async (botId: number) => {
-    setBotToDelete(botId);
-    setIsCheckingTasks(true);
+    setBotToDelete(botId)
+    setIsCheckingTasks(true)
 
     try {
       // Check if bot has running tasks
-      const result = await checkBotRunningTasks(botId);
-      setRunningTasksInfo(result);
+      const result = await checkBotRunningTasks(botId)
+      setRunningTasksInfo(result)
 
       if (result.has_running_tasks) {
         // Show force delete confirmation dialog
-        setForceDeleteConfirmVisible(true);
+        setForceDeleteConfirmVisible(true)
       } else {
         // Show normal delete confirmation dialog
-        setDeleteConfirmVisible(true);
+        setDeleteConfirmVisible(true)
       }
     } catch (e) {
       // If check fails, show normal delete dialog
-      console.error('Failed to check running tasks:', e);
-      setDeleteConfirmVisible(true);
+      console.error('Failed to check running tasks:', e)
+      setDeleteConfirmVisible(true)
     } finally {
-      setIsCheckingTasks(false);
+      setIsCheckingTasks(false)
     }
-  };
+  }
 
   const handleConfirmDelete = async () => {
-    if (!botToDelete) return;
+    if (!botToDelete) return
 
-    setIsDeleting(true);
+    setIsDeleting(true)
     try {
-      await deleteBot(botToDelete);
-      setBotsSorted(prev => prev.filter(b => b.id !== botToDelete));
-      setDeleteConfirmVisible(false);
-      setBotToDelete(null);
-      setRunningTasksInfo(null);
+      await deleteBot(botToDelete)
+      setBotsSorted(prev => prev.filter(b => b.id !== botToDelete))
+      setDeleteConfirmVisible(false)
+      setBotToDelete(null)
+      setRunningTasksInfo(null)
     } catch (e) {
-      const errorMessage = e instanceof Error && e.message ? e.message : t('common:bots.delete');
+      const errorMessage = e instanceof Error && e.message ? e.message : t('common:bots.delete')
       toast({
         variant: 'destructive',
         title: errorMessage,
-      });
+      })
     } finally {
-      setIsDeleting(false);
+      setIsDeleting(false)
     }
-  };
+  }
 
   const handleForceDelete = async () => {
-    if (!botToDelete) return;
+    if (!botToDelete) return
 
-    setIsDeleting(true);
+    setIsDeleting(true)
     try {
-      await deleteBot(botToDelete, true);
-      setBotsSorted(prev => prev.filter(b => b.id !== botToDelete));
-      setForceDeleteConfirmVisible(false);
-      setBotToDelete(null);
-      setRunningTasksInfo(null);
+      await deleteBot(botToDelete, true)
+      setBotsSorted(prev => prev.filter(b => b.id !== botToDelete))
+      setForceDeleteConfirmVisible(false)
+      setBotToDelete(null)
+      setRunningTasksInfo(null)
     } catch (e) {
-      const errorMessage = e instanceof Error && e.message ? e.message : t('common:bots.delete');
+      const errorMessage = e instanceof Error && e.message ? e.message : t('common:bots.delete')
       toast({
         variant: 'destructive',
         title: errorMessage,
-      });
+      })
     } finally {
-      setIsDeleting(false);
+      setIsDeleting(false)
     }
-  };
+  }
 
   const handleCancelDelete = () => {
-    setDeleteConfirmVisible(false);
-    setForceDeleteConfirmVisible(false);
-    setBotToDelete(null);
-    setRunningTasksInfo(null);
-  };
+    setDeleteConfirmVisible(false)
+    setForceDeleteConfirmVisible(false)
+    setBotToDelete(null)
+    setRunningTasksInfo(null)
+  }
 
   // Helper function to check if a bot is a group resource
   const isGroupBot = (bot: Bot) => {
-    return bot.namespace && bot.namespace !== 'default';
-  };
+    return bot.namespace && bot.namespace !== 'default'
+  }
 
   // Helper function to check permissions for a specific group resource
   const canEditGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false;
-    const role = groupRoleMap.get(namespace);
-    return role === 'Owner' || role === 'Maintainer' || role === 'Developer';
-  };
+    if (!groupRoleMap) return false
+    const role = groupRoleMap.get(namespace)
+    return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
+  }
 
   const canDeleteGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false;
-    const role = groupRoleMap.get(namespace);
-    return role === 'Owner' || role === 'Maintainer';
-  };
+    if (!groupRoleMap) return false
+    const role = groupRoleMap.get(namespace)
+    return role === 'Owner' || role === 'Maintainer'
+  }
 
   // Check if user can create in the current group context
   // When scope is 'group', check the specific groupName; only Owner/Maintainer can create
   const canCreateInCurrentGroup = (() => {
-    if (scope !== 'group' || !groupName || !groupRoleMap) return false;
-    const role = groupRoleMap.get(groupName);
-    return role === 'Owner' || role === 'Maintainer';
-  })();
+    if (scope !== 'group' || !groupName || !groupRoleMap) return false
+    const role = groupRoleMap.get(groupName)
+    return role === 'Owner' || role === 'Maintainer'
+  })()
 
   // Check if edit button should be shown
   const shouldShowEdit = (bot: Bot) => {
     // For group bots, check group permissions
     if (isGroupBot(bot)) {
-      return canEditGroupResource(bot.namespace!);
+      return canEditGroupResource(bot.namespace!)
     }
     // For personal bots, always show
-    return true;
-  };
+    return true
+  }
 
   // Check if delete button should be shown
   const shouldShowDelete = (bot: Bot) => {
     // For group bots, check group permissions
     if (isGroupBot(bot)) {
-      return canDeleteGroupResource(bot.namespace!);
+      return canDeleteGroupResource(bot.namespace!)
     }
     // For personal bots, always show
-    return true;
-  };
+    return true
+  }
 
   // Check if copy button should be shown (same permission as create)
   const shouldShowCopy = (bot: Bot) => {
     // For group bots, check group permissions (need create permission)
     if (isGroupBot(bot)) {
-      return canDeleteGroupResource(bot.namespace!); // Maintainer/Owner can create
+      return canDeleteGroupResource(bot.namespace!) // Maintainer/Owner can create
     }
     // For personal bots, always show
-    return true;
-  };
+    return true
+  }
 
   return (
     <>
       <div className="space-y-3">
-        <div>
-          <h2 className="text-xl font-semibold text-text-primary mb-1">{t('common:bots.title')}</h2>
-          <p className="text-sm text-text-muted mb-1">{t('common:bots.description')}</p>
-        </div>
         <div
           className={`bg-base border border-border rounded-md p-2 w-full ${
             isEditing
@@ -503,5 +499,5 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
         </DialogContent>
       </Dialog>
     </>
-  );
+  )
 }

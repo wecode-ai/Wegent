@@ -2,22 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState } from 'react';
-import AddContextButton from './AddContextButton';
-import ContextSelector from './ContextSelector';
-import type { ContextItem } from '@/types/context';
-import { isChatContextEnabled } from '@/lib/runtime-config';
+import React, { useState } from 'react'
+import AddContextButton from './AddContextButton'
+import ContextSelector from './ContextSelector'
+import type { ContextItem } from '@/types/context'
+import { isChatContextEnabled } from '@/lib/runtime-config'
 
 interface ChatContextInputProps {
-  selectedContexts: ContextItem[];
-  onContextsChange: (contexts: ContextItem[]) => void;
+  selectedContexts: ContextItem[]
+  onContextsChange: (contexts: ContextItem[]) => void
 }
 
 /**
  * Generic context input component for chat
- * Currently supports: knowledge_base
+ * Currently supports: knowledge_base, table
  * Future: person, bot, team
  *
  * Note: Badge rendering is now handled by InputBadgeDisplay component
@@ -27,19 +27,19 @@ export default function ChatContextInput({
   selectedContexts,
   onContextsChange,
 }: ChatContextInputProps) {
-  const [selectorOpen, setSelectorOpen] = useState(false);
+  const [selectorOpen, setSelectorOpen] = useState(false)
 
   const handleSelect = (context: ContextItem) => {
-    onContextsChange([...selectedContexts, context]);
-  };
+    onContextsChange([...selectedContexts, context])
+  }
 
   const handleDeselect = (id: number | string) => {
-    onContextsChange(selectedContexts.filter(ctx => ctx.id !== id));
-  };
+    onContextsChange(selectedContexts.filter(ctx => ctx.id !== id))
+  }
 
   // If chat context feature is disabled, don't render anything
   if (!isChatContextEnabled()) {
-    return null;
+    return null
   }
 
   return (
@@ -54,5 +54,5 @@ export default function ChatContextInput({
         <AddContextButton onClick={() => setSelectorOpen(true)} />
       </div>
     </ContextSelector>
-  );
+  )
 }

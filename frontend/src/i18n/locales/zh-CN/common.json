@@ -75,7 +75,8 @@
   "user": {
     "default_name": "用户",
     "logout": "退出登录",
-    "login": "登录"
+    "login": "登录",
+    "menu": "用户菜单"
   },
   "chat": {
     "placeholder_chat": "使用智能体进行探索和发现",
@@ -319,7 +320,9 @@
     "recommended_mode_code": "编码",
     "bind_mode": "绑定模式",
     "bind_mode_chat": "聊天",
-    "bind_mode_code": "编码"
+    "bind_mode_code": "编码",
+    "bind_mode_required": "请至少选择一个绑定模式（聊天或编码）",
+    "require_confirmation_tooltip": "启用后，该阶段完成时任务将暂停，等待用户确认后再继续执行下一阶段"
   },
   "team_model": {
     "solo": "独立",
@@ -394,6 +397,7 @@
     "cancel_task": "取消任务",
     "delete_task": "删除任务",
     "searching": "搜索中...",
+    "refreshing": "同步中...",
     "press_enter_to_search": "按 Enter 键搜索",
     "search_hint": "输入关键词搜索对话",
     "clear_search": "清除",
@@ -411,7 +415,6 @@
     "bot": "机器人",
     "team": "智能体",
     "models": "模型",
-    "skills": "技能",
     "skills": "技能",
     "retrievers": "检索引擎",
     "shells": "执行器",
@@ -577,8 +580,18 @@
     "cannotUndo": "此操作无法撤销",
     "coming_soon": "即将推出"
   },
+  "dialog": {
+    "confirm_close_title": "确认关闭",
+    "confirm_close_description": "您有未保存的更改，确定要关闭吗？",
+    "confirm_close_cancel": "取消",
+    "confirm_close_confirm": "确认关闭"
+  },
   "correction": {
     "result_title": "纠正结果"
+  },
+  "appPreview": {
+    "button": "预览",
+    "title": "应用预览"
   },
   "userSearch": {
     "placeholder": "搜索用户名或邮箱...",
@@ -643,7 +656,10 @@
       }
     },
     "saving": "保存中...",
-    "save_token": "保存令牌"
+    "save_token": "保存令牌",
+    "auth_type": "认证方式",
+    "auth_type_digest": "Digest Auth（摘要认证）",
+    "auth_type_basic": "Basic Auth（基本认证）"
   },
   "skills": {
     "title": "技能",
@@ -697,7 +713,7 @@
     "failed_delete": "删除技能失败",
     "failed_download": "下载技能失败",
     "version": "v{{version}}",
-    "author": "{{author}}",
+    "author": "作者",
     "state_available": "可用",
     "state_unavailable": "不可用",
     "file_size": "{{fileSize}}",
@@ -711,11 +727,29 @@
     "public_readonly": "系统技能为只读",
     "public_no_download": "系统技能无法下载",
     "no_skills_hint": "上传技能 ZIP 包或使用系统技能",
+    "preload_skills_section": "预加载技能",
+    "preload_skills_description": "预加载的技能会自动注入到系统提示词中",
+    "preload_only_public_hint": "注意：只有公共技能才能被设置为预加载",
+    "no_skills_selected": "请先选择技能",
     "delete_success": "技能删除成功",
     "delete_failed": "删除技能失败",
     "download_success": "开始下载",
     "bind_shells": "支持的执行器",
-    "no_bind_shells": "未绑定执行器"
+    "no_bind_shells": "未绑定执行器",
+    "overwrite_confirm_title": "技能已存在",
+    "overwrite_confirm_message": "名为 \"{{name}}\" 的技能已存在。是否要用新版本覆盖它？",
+    "overwrite_confirm_button": "覆盖",
+    "cannot_delete_title": "无法删除技能",
+    "cannot_delete_description": "技能 \"{{skillName}}\" 正在被以下 Ghost 使用，无法直接删除。",
+    "referenced_by_ghosts": "被 {{count}} 个 Ghost 引用",
+    "remove_reference": "移除引用",
+    "reference_conflict_help": "您可以点击「移除引用」从单个 Ghost 中移除引用，也可以点击下方按钮一键移除所有引用并删除技能。",
+    "remove_all_and_delete": "一键移除所有引用并删除",
+    "removing_references": "正在移除引用...",
+    "references_removed_success": "已成功移除所有引用并删除技能",
+    "references_remove_failed": "移除引用失败",
+    "reference_removed_success": "已从 Ghost \"{{ghostName}}\" 中移除引用",
+    "reference_remove_failed": "移除引用失败"
   },
   "models": {
     "label": "模型",
@@ -790,6 +824,15 @@
     "context_window_hint": "最大上下文窗口大小（token 数）。用于消息压缩。",
     "max_output_tokens": "最大输出 Token",
     "max_output_tokens_hint": "模型每次响应可生成的最大 token 数。",
+    "fetch_models": "加载模型",
+    "fetching_models": "加载中...",
+    "fetch_success": "成功加载 {{count}} 个模型",
+    "fetch_failed": "加载模型失败",
+    "fetch_models_hint": "请先填写 API Key 后点击'加载模型'按钮",
+    "fetch_error_no_api_key": "请先填写 API Key",
+    "fetch_error_network": "网络连接失败",
+    "fetch_error_auth": "API Key 认证失败",
+    "fetch_error_unsupported": "该提供商暂不支持自动加载模型列表",
     "errors": {
       "load_models_failed": "加载模型列表失败",
       "create_failed": "创建模型失败",
@@ -1004,7 +1047,7 @@
       "invalidLink": "邀请链接无效或已过期"
     },
     "members": {
-      "title": "群聊成员",
+      "title": "群管理",
       "inviteLink": "邀请链接",
       "addMember": "添加成员",
       "addMembers": "添加成员",
@@ -1024,6 +1067,8 @@
     "errors": {
       "unsupported_type": "文件格式不支持",
       "unsupported_type_hint": "请上传以下格式的文件：{{types}}",
+      "unrecognized_type": "文件类型无法识别",
+      "unrecognized_type_hint": "请上传文档、图片或文本类文件",
       "file_too_large": "文件太大了",
       "file_too_large_hint": "文件大小不能超过 {{size}} MB，请压缩后重试",
       "parse_failed": "文件解析失败",
@@ -1039,12 +1084,14 @@
       "network_error": "上传失败",
       "network_error_hint": "网络连接异常，请检查网络后重试",
       "content_truncated": "文件内容已压缩",
-      "content_truncated_hint": "文件内容过长，已自动保留前 {{length}} 万字符"
+      "content_truncated_hint": "文件内容过长，已自动保留前 {{length}} 万字符",
+      "batch_limit_exceeded": "选择的文件过多（最多 {{max}} 个文件）"
     },
     "truncation": {
       "notice": "⚠️ 文件内容过长，已自动压缩（原始 {{original}} 字符 → 压缩至 {{truncated}} 字符）"
     },
-    "supported_types": "PDF、Word、Excel、TXT、Markdown、图片",
-    "characters": "字符"
+    "supported_types": "PDF、Word、Excel、TXT、Markdown、图片、代码文件",
+    "characters": "字符",
+    "upload_tooltip": "支持的文件类型: 文档(PDF, Word, PPT, Excel), 图片, 代码文件及各类文本文件\n最大文件大小: {{size}} MB"
   }
 }

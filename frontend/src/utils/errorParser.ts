@@ -15,10 +15,10 @@ export interface ParsedError {
     | 'llm_unsupported'
     | 'invalid_parameter'
     | 'forbidden'
-    | 'generic_error';
-  message: string;
-  originalError?: string;
-  retryable?: boolean;
+    | 'generic_error'
+  message: string
+  originalError?: string
+  retryable?: boolean
 }
 
 /**
@@ -28,8 +28,8 @@ export interface ParsedError {
  * @returns Parsed error information
  */
 export function parseError(error: Error | string): ParsedError {
-  const errorMessage = typeof error === 'string' ? error : error.message;
-  const lowerMessage = errorMessage.toLowerCase();
+  const errorMessage = typeof error === 'string' ? error : error.message
+  const lowerMessage = errorMessage.toLowerCase()
 
   // Check for forbidden/unauthorized errors
   if (
@@ -43,7 +43,7 @@ export function parseError(error: Error | string): ParsedError {
       message: errorMessage,
       originalError: errorMessage,
       retryable: false, // Permission errors are not retryable
-    };
+    }
   }
 
   // Check for model unsupported errors (multi-modal, model incompatibility)
@@ -58,7 +58,7 @@ export function parseError(error: Error | string): ParsedError {
       message: errorMessage,
       originalError: errorMessage,
       retryable: false, // User should switch model, not retry
-    };
+    }
   }
 
   // Check for general LLM errors (model unavailable, not found, etc.)
@@ -73,7 +73,7 @@ export function parseError(error: Error | string): ParsedError {
       message: errorMessage,
       originalError: errorMessage,
       retryable: true,
-    };
+    }
   }
 
   // Check for invalid parameter errors (generic)
@@ -83,7 +83,7 @@ export function parseError(error: Error | string): ParsedError {
       message: errorMessage,
       originalError: errorMessage,
       retryable: true, // Allow retry for generic parameter errors
-    };
+    }
   }
 
   // Check for 413 Payload Too Large error
@@ -93,7 +93,7 @@ export function parseError(error: Error | string): ParsedError {
       message: errorMessage,
       originalError: errorMessage,
       retryable: true, // Allow retry even for large payloads (user might reduce content)
-    };
+    }
   }
 
   // Check for network errors
@@ -107,7 +107,7 @@ export function parseError(error: Error | string): ParsedError {
       message: errorMessage,
       originalError: errorMessage,
       retryable: true,
-    };
+    }
   }
 
   // Check for timeout errors
@@ -117,7 +117,7 @@ export function parseError(error: Error | string): ParsedError {
       message: errorMessage,
       originalError: errorMessage,
       retryable: true,
-    };
+    }
   }
 
   // Generic error
@@ -126,7 +126,7 @@ export function parseError(error: Error | string): ParsedError {
     message: errorMessage,
     originalError: errorMessage,
     retryable: true,
-  };
+  }
 }
 
 /**
@@ -140,25 +140,25 @@ export function getUserFriendlyErrorMessage(
   error: Error | string,
   t: (key: string) => string
 ): string {
-  const parsed = parseError(error);
+  const parsed = parseError(error)
 
   switch (parsed.type) {
     case 'forbidden':
       // Use dedicated translation key for forbidden errors, fallback to generic if not available
-      return t('errors.forbidden') || t('errors.generic_error');
+      return t('errors.forbidden') || t('errors.generic_error')
     case 'llm_unsupported':
-      return t('errors.llm_unsupported');
+      return t('errors.llm_unsupported')
     case 'llm_error':
-      return t('errors.llm_error');
+      return t('errors.llm_error')
     case 'invalid_parameter':
-      return t('errors.invalid_parameter');
+      return t('errors.invalid_parameter')
     case 'payload_too_large':
-      return t('errors.payload_too_large');
+      return t('errors.payload_too_large')
     case 'network_error':
-      return t('errors.network_error');
+      return t('errors.network_error')
     case 'timeout_error':
-      return t('errors.timeout_error');
+      return t('errors.timeout_error')
     default:
-      return t('errors.generic_error');
+      return t('errors.generic_error')
   }
 }

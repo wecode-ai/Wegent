@@ -1,33 +1,31 @@
-# SPDX-FileCopyrightText: 2025 WeCode, Inc.
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Mermaid diagram tool provider.
+"""Mermaid diagram tool provider (Python validation version).
 
 This module provides the MermaidToolProvider class that creates
 RenderMermaidTool instances for skills that declare mermaid tool dependencies.
 
-This provider is dynamically loaded from the skill directory at runtime.
-The RenderMermaidTool implementation is now local to this skill package,
-using the generic PendingRequestRegistry and emit_skill_request infrastructure.
+This version uses pure Python validation instead of frontend WebSocket validation,
+making it suitable for HTTP mode deployment where backend modules are not available.
 """
 
 from typing import Any, Optional
 
+from chat_shell.skills import SkillToolContext, SkillToolProvider
 from langchain_core.tools import BaseTool
-
-from app.chat_shell.skills import SkillToolContext, SkillToolProvider
 
 
 class MermaidToolProvider(SkillToolProvider):
-    """Tool provider for mermaid diagram rendering.
+    """Tool provider for mermaid diagram rendering (Python validation).
 
     This provider creates RenderMermaidTool instances for skills
     that declare mermaid tool dependencies.
 
-    The tool implementation is now self-contained within this skill package,
-    using the generic skill request/response infrastructure instead of
-    mermaid-specific code in the core system.
+    Unlike the original mermaid-diagram skill, this version uses pure Python
+    syntax validation instead of frontend WebSocket validation, making it
+    independent of backend modules and suitable for HTTP mode deployment.
 
     Example SKILL.md configuration:
         tools:
@@ -51,9 +49,9 @@ class MermaidToolProvider(SkillToolProvider):
         """Return the list of tools this provider can create.
 
         Returns:
-            List containing "render_mermaid"
+            List containing "render_mermaid" and "read_mermaid_reference"
         """
-        return ["render_mermaid"]
+        return ["render_mermaid", "read_mermaid_reference"]
 
     def create_tool(
         self,
@@ -64,31 +62,31 @@ class MermaidToolProvider(SkillToolProvider):
         """Create a mermaid tool instance.
 
         Args:
-            tool_name: Name of the tool to create (must be "render_mermaid")
+            tool_name: Name of the tool to create
             context: Context with dependencies (task_id, subtask_id, ws_emitter)
             tool_config: Optional configuration with keys:
                 - timeout: Render timeout in seconds (default: 30.0)
 
         Returns:
-            Configured RenderMermaidTool instance
+            Configured tool instance
 
         Raises:
-            ValueError: If tool_name is not "render_mermaid"
+            ValueError: If tool_name is unknown
         """
-        if tool_name != "render_mermaid":
+        if tool_name == "render_mermaid":
+            # Import from local module within this skill package
+            from .render_mermaid import RenderMermaidTool
+
+            return RenderMermaidTool()
+
+        elif tool_name == "read_mermaid_reference":
+            # Import from local module within this skill package
+            from .read_reference import ReadMermaidReferenceTool
+
+            return ReadMermaidReferenceTool()
+
+        else:
             raise ValueError(f"Unknown tool: {tool_name}")
-
-        # Import from local module within this skill package
-        from .render_mermaid import RenderMermaidTool
-
-        config = tool_config or {}
-
-        return RenderMermaidTool(
-            task_id=context.task_id,
-            subtask_id=context.subtask_id,
-            ws_emitter=context.ws_emitter,
-            render_timeout=config.get("timeout", 30.0),
-        )
 
     def validate_config(self, tool_config: dict[str, Any]) -> bool:
         """Validate mermaid tool configuration.

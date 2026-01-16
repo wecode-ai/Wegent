@@ -54,7 +54,7 @@
     },
     "document": {
       "title": "文档",
-      "upload": "上传文件",
+      "upload": "添加来源",
       "edit": "编辑文档",
       "enable": "启用",
       "disable": "停用",
@@ -67,6 +67,7 @@
         "available": "可用",
         "unavailable": "不可用"
       },
+      "openLink": "打开链接",
       "columns": {
         "name": "名称",
         "type": "类型",
@@ -75,6 +76,9 @@
         "status": "状态",
         "indexStatus": "索引",
         "actions": "操作"
+      },
+      "type": {
+        "table": "表格"
       },
       "search": "搜索文档",
       "empty": "暂无文档",
@@ -89,8 +93,8 @@
       "nameRequired": "请输入文档名称",
       "namePlaceholder": "输入文档名称",
       "updateFailed": "更新文档失败",
-      "dropzone": "拖放文件到此处或点击浏览",
-      "supportedTypes": "支持 PDF、Word、PPT、Excel、TXT、MD、图片（最大 20MB）",
+      "dropzone": "拖拽文件到此处或点击浏览",
+      "supportedTypes": "支持 PDF、Word、PPT、Excel、TXT、MD、图片（最大 {{maxSize}}MB）",
       "uploading": "上传中...",
       "uploadSuccess": "文件上传成功",
       "batch": {
@@ -98,6 +102,82 @@
         "enable": "批量启用",
         "disable": "批量停用",
         "delete": "批量删除"
+      },
+      "detail": {
+        "title": "文档详情",
+        "backToList": "返回列表",
+        "summary": "文档摘要",
+        "status": "状态",
+        "statusValues": {
+          "pending": "待处理",
+          "generating": "生成中",
+          "completed": "已完成",
+          "failed": "生成失败"
+        },
+        "topics": "主题标签",
+        "metaInfo": "元信息",
+        "content": "文档内容",
+        "truncated": "内容已截断",
+        "copy": "复制",
+        "copied": "已复制",
+        "copySuccess": "复制成功",
+        "copyError": "复制失败",
+        "contentLength": "内容长度",
+        "characters": "字符",
+        "noContent": "暂无内容"
+      }
+    },
+    "upload": {
+      "dropzoneHint": "一次最多选择 {{max}} 个文件",
+      "fileList": "已选择 {{count}} 个文件",
+      "clearAll": "清空全部",
+      "startUpload": "上传 {{count}} 个文件",
+      "confirmUpload": "确认（{{count}} 个文件）",
+      "confirming": "正在创建文档...",
+      "summary": "上传完成：{{success}} 个成功，{{failed}} 个失败",
+      "status": {
+        "pending": "等待中",
+        "uploading": "上传中",
+        "success": "已上传",
+        "error": "失败"
+      },
+      "uploadFile": "上传文件",
+      "pasteText": "粘贴文本",
+      "pasteTextHint": "在下方粘贴文本内容，即可将其作为文档上传到知识库。",
+      "fileName": "文件名",
+      "fileNamePlaceholder": "输入文件名（可选，默认自动生成）",
+      "textContent": "文本内容",
+      "textPlaceholder": "在此处粘贴文本...",
+      "textRequired": "请输入文本内容",
+      "insert": "插入",
+      "clickToRename": "点击修改文件名",
+      "addTable": "添加数据表",
+      "tableHint": "输入数据表的链接和名称，即可将其添加到知识库。",
+      "tableUrlHint": "请输入有效的多维表URL，确保链接可访问且有读取权限。目前支持钉钉多维表。",
+      "tableName": "文档名称",
+      "tableNamePlaceholder": "输入文档名称",
+      "tableUrl": "数据表链接",
+      "tableUrlPlaceholder": "粘贴数据表链接",
+      "tableUrlRequired": "请输入数据表链接",
+      "tableNameRequired": "请输入文档名称",
+      "tableAddFailed": "添加失败，请重试",
+      "adding": "添加中...",
+      "confirmAdd": "确认添加",
+      "validation": {
+        "validating": "正在验证URL...",
+        "success": "URL验证通过",
+        "invalidUrlFormat": "请输入有效的URL格式",
+        "unsupportedProvider": "不支持该链接来源,目前仅支持钉钉多维表",
+        "parseFailed": "无法解析该链接，请检查URL格式是否正确",
+        "missingDingtalkId": "您尚未配置钉钉ID，请使用钉钉登录以访问多维表格",
+        "tableAccessFailed": "无法访问该表格，请检查您是否有权限访问",
+        "tableAccessFailedLinkedTable": "表格可能是链接表格，请使用原始表格链接",
+        "unknownError": "验证失败，请检查URL是否正确",
+        "networkError": "网络错误，请稍后重试",
+        "pleaseFixUrl": "请先修正URL后再提交",
+        "provider": {
+          "dingtalk": "钉钉多维表"
+        }
       }
     },
     "permission": {
@@ -157,6 +237,14 @@
       "breakpointThreshold": "断点阈值",
       "breakpointThresholdHint": "确定断点的百分位阈值 (50-100)"
     },
+    "summary": {
+      "enableLabel": "自动生成摘要",
+      "enableDescription": "上传文档时自动生成摘要，用于提升检索效果",
+      "selectModel": "选择摘要模型",
+      "modelRequired": "请选择用于摘要生成的模型",
+      "modelPlaceholder": "搜索模型...",
+      "noModel": "未选择模型"
+    },
     "retrievalTest": {
       "button": "召回测试",
       "title": "召回测试",
@@ -176,7 +264,8 @@
     "goToSettings": "前往设置"
   },
   "add_repository": "添加仓库",
-  "add_repository_desc": "点击添加新仓库",
+  "add_repository_desc": "功能调整中，暂时不可用",
+  "add_repository_desc_enabled": "点击添加新仓库",
   "no_projects": "暂无项目",
   "source": "来源",
   "indexing": "索引中...",
@@ -210,5 +299,25 @@
   "no_bound_model_warning": "Wiki生成功能暂不可用。默认Wiki智能体未配置模型，请联系管理员。",
   "regenerate": "重新生成",
   "view_detail": "查看详情",
-  "coming_soon": "即将推出"
+  "coming_soon": "即将推出",
+  "dingtalkTable": {
+    "title": "钉钉表格",
+    "empty": "暂无钉钉表格",
+    "emptyHint": "在知识库中添加钉钉多维表后，可在此处查看",
+    "error": {
+      "noAssistant": "未找到AI助理智能体，请确保系统已配置名为'AI助理'的智能体",
+      "loadFailed": "加载钉钉表格失败"
+    },
+    "analyzing": "正在分析钉钉多维表格数据..."
+  },
+  "table": {
+    "title": "数据表",
+    "empty": "暂无数据表",
+    "emptyHint": "在知识库中添加数据表后，可在此处查看",
+    "error": {
+      "noAssistant": "未找到AI助理智能体，请确保系统已配置名为'AI助理'的智能体",
+      "loadFailed": "加载数据表失败"
+    },
+    "analyzing": "正在分析数据表..."
+  }
 }

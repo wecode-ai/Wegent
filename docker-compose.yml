@@ -7,6 +7,8 @@ services:
     image: mysql:9.4
     container_name: wegent-mysql
     restart: always
+    command:
+      - --sort_buffer_size=16M
     environment:
       MYSQL_ROOT_PASSWORD: 123456
       MYSQL_DATABASE: task_manager
@@ -68,13 +70,14 @@ services:
   backend:
     # build:
       # dockerfile: docker/backend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-backend:1.0.28
+    image: ghcr.io/wecode-ai/wegent-backend:latest
     container_name: wegent-backend
     restart: always
     ports:
       - "8000:8000"
-    volumes:
-      - ./backend/init_data:/app/init_data:ro
+    # volumes:
+      # To customize init data, uncomment the following line to override the built-in data:
+      # - ./custom_init_data:/app/init_data:ro
     environment:
       ENVIRONMENT: development
       DB_AUTO_MIGRATE: "True"
@@ -94,6 +97,11 @@ services:
       INIT_DATA_ENABLED: "True"
       MAX_UPLOAD_FILE_SIZE_MB: 50
       MAX_EXTRACTED_TEXT_LENGTH: 1000000
+      # Chat Shell Configuration (uncomment to use HTTP mode)
+      CHAT_SHELL_MODE: http
+      CHAT_SHELL_URL: http://chat_shell:8100
+      # CHAT_SHELL_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
+      # INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
       # OpenTelemetry Configuration (uncomment to enable)
       # OTEL_ENABLED: "true"
       # OTEL_SERVICE_NAME: "wegent-backend"
@@ -110,25 +118,69 @@ services:
   frontend:
     # build:
     #   dockerfile: docker/frontend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-web:1.0.28
+    image: ghcr.io/wecode-ai/wegent-web:latest
     container_name: wegent-frontend
     restart: always
     ports:
       - "${WEGENT_FRONTEND_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
+      # API Configuration
       - RUNTIME_INTERNAL_API_URL=http://backend:8000
       - RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000
+      # Feature Flags
+      # - RUNTIME_ENABLE_CHAT_CONTEXT=false
+      # - RUNTIME_LOGIN_MODE=all
+      # - RUNTIME_OIDC_LOGIN_TEXT=
+      # - RUNTIME_ENABLE_DISPLAY_QUOTAS=enable
+      # - RUNTIME_ENABLE_WIKI=true
+      # URLs
+      # - RUNTIME_VSCODE_LINK_TEMPLATE=
+      # - RUNTIME_FEEDBACK_URL=https://github.com/wecode-ai/wegent/issues/new
+      # - RUNTIME_DOCS_URL=https://github.com/wecode-ai/Wegent
+      # OpenTelemetry Configuration (uncomment to enable)
+      # - RUNTIME_OTEL_ENABLED=false
+      # - RUNTIME_OTEL_SERVICE_NAME=wegent-frontend
+      # - RUNTIME_OTEL_COLLECTOR_ENDPOINT=http://localhost:4318
     working_dir: /app
     depends_on:
       - backend
     networks:
       - wegent-network
 
+  chat_shell:
+    image: ghcr.io/wecode-ai/wegent-chat-shell:latest
+    container_name: wegent-chat-shell
+    restart: always
+    ports:
+      - "8100:8100"
+    environment:
+      - PORT=8100
+      - HOST=0.0.0.0
+      - CHAT_SHELL_MODE=http
+      - CHAT_SHELL_STORAGE_TYPE=remote
+      - CHAT_SHELL_REMOTE_STORAGE_URL=http://backend:8000/api/internal
+      - EXECUTOR_MANAGER_URL=http://executor_manager:8001
+      # - CHAT_SHELL_REMOTE_STORAGE_TOKEN=${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
+      # OpenTelemetry Configuration (uncomment to enable)
+      # - OTEL_ENABLED=true
+      # - OTEL_SERVICE_NAME=wegent-chat-shell
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+    depends_on:
+      - backend
+    networks:
+      - wegent-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   executor_manager:
-    #build:
-      #dockerfile: docker/frontend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-executor-manager:1.0.25
+    # build:
+    #   dockerfile: docker/executor_manager/Dockerfile
+    image: ghcr.io/wecode-ai/wegent-executor-manager:latest
     extra_hosts:
       - "host.docker.internal:host-gateway"
     container_name: wegent-executor-manager
@@ -138,11 +190,13 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - TASK_API_DOMAIN=http://backend:8000
+      - EXECUTOR_MANAGER_EXTERNAL_URL=http://executor_manager:8001
+      - REDIS_URL=redis://redis:6379/0
       - MAX_CONCURRENT_TASKS=30
       - PORT=8001
       - CALLBACK_HOST=http://executor_manager:8001
       - NETWORK=wegent-network
-      - EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:1.0.28
+      - EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
       - EXECUTOR_PORT_RANGE_MIN=10001
       - EXECUTOR_PORT_RANGE_MAX=10100
       - EXECUTOR_WORKSPCE=${HOME}/wecode-bot
@@ -162,6 +216,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - backend
+      - redis
     networks:
       - wegent-network
 

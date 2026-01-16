@@ -17,6 +17,11 @@ dependencies = [
     "httpx>=0.26.0",
     "requests>=2.31.0",
 
+    # Database ORM
+    "sqlalchemy>=2.0.25",
+    "pymysql>=1.1.0",
+    "asyncmy>=0.2.9",
+
     # OpenTelemetry core packages
     "opentelemetry-api>=1.27.0",
     "opentelemetry-sdk>=1.27.0",
@@ -27,6 +32,7 @@ dependencies = [
     "opentelemetry-instrumentation-httpx>=0.48b0",
     "opentelemetry-instrumentation-requests>=0.48b0",
     "opentelemetry-instrumentation-system-metrics>=0.48b0",
+    "opentelemetry-instrumentation-redis>=0.48b0",
 ]
 
 [dependency-groups]
@@ -38,7 +44,7 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["shared", "shared.models", "shared.telemetry", "shared.telemetry.context", "shared.telemetry.metrics", "shared.utils"]
+packages = ["shared", "shared.models", "shared.models.db", "shared.db", "shared.telemetry", "shared.telemetry.context", "shared.telemetry.metrics", "shared.utils"]
 
 [tool.setuptools.package-dir]
 shared = "."

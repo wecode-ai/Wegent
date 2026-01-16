@@ -9,14 +9,13 @@ Contains streaming and synchronous response implementations.
 
 import logging
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, Optional
 
 from fastapi import HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.subtask import Subtask
 from app.models.user import User
 from app.schemas.kind import Task
 from app.schemas.openapi_response import (
@@ -26,11 +25,9 @@ from app.schemas.openapi_response import (
     ResponseObject,
 )
 from app.services.openapi.chat_session import (
-    ChatSessionSetup,
     build_chat_history,
     setup_chat_session,
 )
-from app.services.openapi.mcp import load_mcp_tools
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +47,7 @@ async def create_streaming_response(
     Create a streaming response for Chat Shell type teams.
 
     Supports MCP tools and web search when enabled.
+    Uses HTTP adapter to call remote chat_shell service.
 
     Args:
         db: Database session
@@ -65,6 +63,35 @@ async def create_streaming_response(
     Returns:
         StreamingResponse with SSE events
     """
+    return await _create_streaming_response_http(
+        db=db,
+        user=user,
+        team=team,
+        model_info=model_info,
+        request_body=request_body,
+        input_text=input_text,
+        tool_settings=tool_settings,
+        task_id=task_id,
+        api_key_name=api_key_name,
+    )
+
+
+async def _create_streaming_response_http(
+    db: Session,
+    user: User,
+    team: Kind,
+    model_info: Dict[str, Any],
+    request_body: ResponseCreateInput,
+    input_text: str,
+    tool_settings: Dict[str, Any],
+    task_id: Optional[int] = None,
+    api_key_name: Optional[str] = None,
+) -> StreamingResponse:
+    """Create streaming response using HTTP adapter to call remote chat_shell service."""
+    from app.core.config import settings
+    from app.services.chat.adapters.http import HTTPAdapter
+    from app.services.chat.adapters.interface import ChatEventType, ChatRequest
+    from app.services.chat.storage import db_handler, session_manager
     from app.services.openapi.streaming import streaming_service
 
     # Set up chat session (config, task, subtasks)
@@ -82,208 +109,142 @@ async def create_streaming_response(
     response_id = f"resp_{setup.task_id}"
     created_at = int(datetime.now().timestamp())
     assistant_subtask_id = setup.assistant_subtask.id
+    user_subtask_id = (
+        setup.user_subtask.id
+    )  # User subtask ID for RAG result persistence
+    user_message_id = (
+        setup.user_subtask.message_id
+    )  # User message_id for history exclusion
     task_kind_id = setup.task_id
+    enable_chat_bot = tool_settings.get("enable_chat_bot", False)
 
-    # Capture tool settings for use in generator
-    enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
-    bot_name = setup.bot_name
-    bot_namespace = setup.bot_namespace
+    # Prepare MCP servers for HTTP mode
+    # Only load MCP servers when tools are explicitly enabled via enable_chat_bot
+    # This ensures /api/v1/responses without tools parameter doesn't auto-load tools
+    mcp_servers_to_pass = []
+
+    # 1. Load bot MCP servers from Ghost CRD
+    if setup.bot_name:
+        try:
+            from app.services.openapi.mcp import _get_bot_mcp_servers_sync
+
+            bot_mcp_servers = _get_bot_mcp_servers_sync(
+                team.user_id, setup.bot_name, setup.bot_namespace
+            )
+            if bot_mcp_servers:
+                # Convert to chat_shell expected format
+                for name, config in bot_mcp_servers.items():
+                    if isinstance(config, dict):
+                        server_entry = {
+                            "name": name,
+                            "url": config.get("url", ""),
+                            "type": config.get("type", "streamable-http"),
+                        }
+                        if config.get("headers"):
+                            server_entry["auth"] = config["headers"]
+                        mcp_servers_to_pass.append(server_entry)
+                logger.info(
+                    f"[OPENAPI_HTTP] Loaded {len(bot_mcp_servers)} bot MCP servers for HTTP mode: "
+                    f"bot={setup.bot_namespace}/{setup.bot_name}"
+                )
+        except Exception as e:
+            logger.warning(f"[OPENAPI_HTTP] Failed to load bot MCP servers: {e}")
+
+    # 2. Add custom MCP servers from API request
+    custom_mcp_servers = tool_settings.get("mcp_servers", {})
+    if custom_mcp_servers:
+        for name, config in custom_mcp_servers.items():
+            if isinstance(config, dict) and config.get("url"):
+                server_entry = {
+                    "name": name,
+                    "url": config.get("url", ""),
+                    "type": config.get("type", "streamable-http"),
+                }
+                if config.get("headers"):
+                    server_entry["auth"] = config["headers"]
+                mcp_servers_to_pass.append(server_entry)
+        logger.info(
+            f"[OPENAPI_HTTP] Added {len(custom_mcp_servers)} custom MCP servers from request"
+        )
 
     async def raw_chat_stream() -> AsyncGenerator[str, None]:
-        """Generate raw text chunks from the LLM/Agent and update subtask."""
-        import asyncio
-
-        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-
+        """Generate raw text chunks from HTTP adapter."""
         from app.api.dependencies import get_db as get_db_session
-        from app.chat_shell.messages import MessageConverter
-        from app.chat_shell.models import LangChainModelFactory
-        from app.core.config import settings
-        from app.services.chat.storage import db_handler, session_manager
 
         accumulated_content = ""
         db_gen = next(get_db_session())
-        mcp_client = None
 
         try:
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
             await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
 
-            # Build messages with history
-            history = build_chat_history(setup.existing_subtasks)
-            messages = MessageConverter.build_messages(
-                history=history,
-                current_message=input_text,
-                system_prompt=setup.system_prompt,
+            # Build system prompt with optional deep thinking enhancement
+            from chat_shell.prompts import append_deep_thinking_prompt
+
+            final_system_prompt = append_deep_thinking_prompt(
+                setup.system_prompt, enable_chat_bot
             )
 
-            # Prepare extra tools (MCP and web search)
-            extra_tools = []
+            # Build chat history
+            history = build_chat_history(setup.existing_subtasks)
 
-            # Load MCP tools if system config enabled
-            if settings.CHAT_MCP_ENABLED:
-                try:
-                    mcp_client = await load_mcp_tools(
-                        task_kind_id, bot_name, bot_namespace
-                    )
-                    if mcp_client:
-                        extra_tools.extend(mcp_client.get_tools())
-                        logger.info(
-                            f"[OPENAPI] Loaded {len(mcp_client.get_tools())} MCP tools for task {task_kind_id}"
-                        )
-                except Exception as e:
-                    logger.warning(f"[OPENAPI] Failed to load MCP tools: {e}")
+            # Create HTTP adapter
+            adapter = HTTPAdapter(
+                base_url=settings.CHAT_SHELL_URL,
+                token=settings.CHAT_SHELL_TOKEN,
+            )
 
-            # Add web search tool if deep thinking enabled and system config allows
-            if enable_deep_thinking and settings.WEB_SEARCH_ENABLED:
-                try:
-                    from app.chat_shell.tools import WebSearchTool
+            # Build ChatRequest
+            chat_request = ChatRequest(
+                task_id=task_kind_id,
+                subtask_id=assistant_subtask_id,
+                user_subtask_id=user_subtask_id,  # For RAG result persistence
+                user_message_id=user_message_id,  # For history exclusion (prevent duplicate messages)
+                message=input_text,
+                user_id=user.id,
+                user_name=user.user_name or "",
+                team_id=team.id,
+                team_name=team.name,
+                model_config=setup.model_config,
+                system_prompt=final_system_prompt,
+                history=history,
+                enable_deep_thinking=enable_chat_bot,
+                enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
+                bot_name=setup.bot_name,
+                bot_namespace=setup.bot_namespace,
+                mcp_servers=mcp_servers_to_pass,
+                skill_names=setup.skill_names,
+                skill_configs=setup.skill_configs,
+                preload_skills=setup.preload_skills,
+            )
 
-                    extra_tools.append(WebSearchTool())
-                    logger.info(
-                        f"[OPENAPI] Added web search tool for task {task_kind_id}"
-                    )
-                except Exception as e:
-                    logger.warning(f"[OPENAPI] Failed to add web search tool: {e}")
-
-            # Decide whether to use agent (with tools) or simple LLM
-            use_agent = len(extra_tools) > 0
-
-            if use_agent:
-                # Use LangGraph agent for tool support
-                from app.chat_shell.agents import LangGraphAgentBuilder
-                from app.chat_shell.tools import ToolRegistry
-
-                llm = LangChainModelFactory.create_from_config(
-                    setup.model_config, streaming=True
-                )
-
-                tool_registry = ToolRegistry()
-                for tool in extra_tools:
-                    tool_registry.register(tool)
-
-                agent = LangGraphAgentBuilder(
-                    llm=llm,
-                    tool_registry=tool_registry,
-                    max_iterations=settings.CHAT_TOOL_MAX_REQUESTS,
-                )
-
-                # Stream tokens from agent with periodic saves
-                last_redis_save = asyncio.get_event_loop().time()
-                last_db_save = asyncio.get_event_loop().time()
-                redis_save_interval = getattr(
-                    settings, "STREAMING_REDIS_SAVE_INTERVAL", 1.0
-                )
-                db_save_interval = getattr(settings, "STREAMING_DB_SAVE_INTERVAL", 3.0)
-
-                async for token in agent.stream_tokens(
-                    messages, cancel_event=cancel_event
+            # Stream from HTTP adapter
+            async for event in adapter.chat(chat_request):
+                if cancel_event.is_set() or await session_manager.is_cancelled(
+                    assistant_subtask_id
                 ):
-                    if cancel_event.is_set() or await session_manager.is_cancelled(
-                        assistant_subtask_id
-                    ):
-                        logger.info(
-                            f"Stream cancelled for subtask {assistant_subtask_id}"
-                        )
-                        if accumulated_content:
-                            await session_manager.save_streaming_content(
-                                assistant_subtask_id, accumulated_content
-                            )
-                            await db_handler.save_partial_response(
-                                assistant_subtask_id, accumulated_content
-                            )
-                        break
+                    logger.info(f"Stream cancelled for subtask {assistant_subtask_id}")
+                    break
 
-                    accumulated_content += token
-                    yield token
-
-                    # Periodic saves (same as simple LLM mode)
-                    current_time = asyncio.get_event_loop().time()
-                    if current_time - last_redis_save >= redis_save_interval:
-                        await session_manager.save_streaming_content(
-                            assistant_subtask_id, accumulated_content
-                        )
-                        last_redis_save = current_time
-
-                    if current_time - last_db_save >= db_save_interval:
-                        await db_handler.save_partial_response(
-                            assistant_subtask_id, accumulated_content
-                        )
-                        last_db_save = current_time
-            else:
-                # Simple LLM streaming without tools
-                try:
-                    llm = LangChainModelFactory.create_from_config(
-                        setup.model_config, streaming=True
+                if event.type == ChatEventType.CHUNK:
+                    content = event.data.get("content", "")
+                    if content:
+                        accumulated_content += content
+                        yield content
+                elif event.type == ChatEventType.ERROR:
+                    error_msg = event.data.get("error", "Unknown error")
+                    logger.error(f"[OPENAPI_HTTP] Error from chat_shell: {error_msg}")
+                    raise Exception(error_msg)
+                elif event.type == ChatEventType.DONE:
+                    logger.info(
+                        f"[OPENAPI_HTTP] Stream completed for subtask {assistant_subtask_id}"
                     )
-                except Exception as e:
-                    logger.error(f"Failed to create LLM from model config: {e}")
-                    await db_handler.update_subtask_status(
-                        assistant_subtask_id,
-                        "FAILED",
-                        error=f"Failed to create LLM: {e}",
-                    )
-                    return
-
-                # Convert to LangChain messages
-                langchain_messages = []
-                for msg in messages:
-                    role = msg.get("role", "")
-                    content = msg.get("content", "")
-                    if role == "system":
-                        langchain_messages.append(SystemMessage(content=content))
-                    elif role == "user":
-                        langchain_messages.append(HumanMessage(content=content))
-                    elif role == "assistant":
-                        langchain_messages.append(AIMessage(content=content))
-
-                # Stream response with periodic saves
-                last_redis_save = asyncio.get_event_loop().time()
-                last_db_save = asyncio.get_event_loop().time()
-                redis_save_interval = getattr(
-                    settings, "STREAMING_REDIS_SAVE_INTERVAL", 1.0
-                )
-                db_save_interval = getattr(settings, "STREAMING_DB_SAVE_INTERVAL", 3.0)
-
-                async for chunk in llm.astream(langchain_messages):
-                    if cancel_event.is_set() or await session_manager.is_cancelled(
-                        assistant_subtask_id
-                    ):
-                        logger.info(
-                            f"Stream cancelled for subtask {assistant_subtask_id}"
-                        )
-                        if accumulated_content:
-                            await session_manager.save_streaming_content(
-                                assistant_subtask_id, accumulated_content
-                            )
-                            await db_handler.save_partial_response(
-                                assistant_subtask_id, accumulated_content
-                            )
-                        break
-
-                    if hasattr(chunk, "content") and chunk.content:
-                        accumulated_content += chunk.content
-                        yield chunk.content
-
-                        current_time = asyncio.get_event_loop().time()
-                        if current_time - last_redis_save >= redis_save_interval:
-                            await session_manager.save_streaming_content(
-                                assistant_subtask_id, accumulated_content
-                            )
-                            last_redis_save = current_time
-
-                        if current_time - last_db_save >= db_save_interval:
-                            await db_handler.save_partial_response(
-                                assistant_subtask_id, accumulated_content
-                            )
-                            last_db_save = current_time
 
             # Stream completed (not cancelled)
             if not cancel_event.is_set() and not await session_manager.is_cancelled(
                 assistant_subtask_id
             ):
                 result = {"value": accumulated_content}
-
                 await session_manager.save_streaming_content(
                     assistant_subtask_id, accumulated_content
                 )
@@ -309,7 +270,7 @@ async def create_streaming_response(
                         db_gen.commit()
 
         except Exception as e:
-            logger.exception(f"Error in raw_chat_stream: {e}")
+            logger.exception(f"Error in HTTP streaming: {e}")
             try:
                 await db_handler.update_subtask_status(
                     assistant_subtask_id, "FAILED", error=str(e)
@@ -318,13 +279,6 @@ async def create_streaming_response(
                 pass
             raise
         finally:
-            # Cleanup MCP client if used
-            if mcp_client:
-                try:
-                    await mcp_client.disconnect()
-                except Exception as e:
-                    logger.warning(f"[OPENAPI] Failed to disconnect MCP client: {e}")
-
             await session_manager.unregister_stream(assistant_subtask_id)
             await session_manager.delete_streaming_content(assistant_subtask_id)
             db_gen.close()
@@ -365,6 +319,7 @@ async def create_sync_response(
     Create a synchronous (blocking) response for Chat Shell type teams.
 
     Supports MCP tools and web search when enabled.
+    Uses HTTP adapter to call remote chat_shell service.
 
     Args:
         db: Database session
@@ -380,12 +335,36 @@ async def create_sync_response(
     Returns:
         ResponseObject with completed status and output
     """
-    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+    return await _create_sync_response_http(
+        db=db,
+        user=user,
+        team=team,
+        model_info=model_info,
+        request_body=request_body,
+        input_text=input_text,
+        tool_settings=tool_settings,
+        task_id=task_id,
+        api_key_name=api_key_name,
+    )
+
+
+async def _create_sync_response_http(
+    db: Session,
+    user: User,
+    team: Kind,
+    model_info: Dict[str, Any],
+    request_body: ResponseCreateInput,
+    input_text: str,
+    tool_settings: Dict[str, Any],
+    task_id: Optional[int] = None,
+    api_key_name: Optional[str] = None,
+) -> ResponseObject:
+    """Create sync response using HTTP adapter to call remote chat_shell service."""
     from sqlalchemy.orm.attributes import flag_modified
 
-    from app.chat_shell.messages import MessageConverter
-    from app.chat_shell.models import LangChainModelFactory
     from app.core.config import settings
+    from app.services.chat.adapters.http import HTTPAdapter
+    from app.services.chat.adapters.interface import ChatEventType, ChatRequest
     from app.services.chat.storage import db_handler, session_manager
 
     # Set up chat session (config, task, subtasks)
@@ -403,101 +382,123 @@ async def create_sync_response(
     response_id = f"resp_{setup.task_id}"
     created_at = int(datetime.now().timestamp())
     assistant_subtask_id = setup.assistant_subtask.id
+    user_subtask_id = (
+        setup.user_subtask.id
+    )  # User subtask ID for RAG result persistence
+    user_message_id = (
+        setup.user_subtask.message_id
+    )  # User message_id for history exclusion
+    enable_chat_bot = tool_settings.get("enable_chat_bot", False)
 
-    # Extract tool settings
-    enable_deep_thinking = tool_settings.get("enable_deep_thinking", False)
+    # Prepare MCP servers for HTTP mode
+    # Only load MCP servers when tools are explicitly enabled via enable_chat_bot
+    # This ensures /api/v1/responses without tools parameter doesn't auto-load tools
+    mcp_servers_to_pass = []
+
+    # 1. Load bot MCP servers from Ghost CRD
+    if setup.bot_name:
+        try:
+            from app.services.openapi.mcp import _get_bot_mcp_servers_sync
+
+            bot_mcp_servers = _get_bot_mcp_servers_sync(
+                team.user_id, setup.bot_name, setup.bot_namespace
+            )
+            if bot_mcp_servers:
+                # Convert to chat_shell expected format
+                for name, config in bot_mcp_servers.items():
+                    if isinstance(config, dict):
+                        server_entry = {
+                            "name": name,
+                            "url": config.get("url", ""),
+                            "type": config.get("type", "streamable-http"),
+                        }
+                        if config.get("headers"):
+                            server_entry["auth"] = config["headers"]
+                        mcp_servers_to_pass.append(server_entry)
+                logger.info(
+                    f"[OPENAPI_HTTP_SYNC] Loaded {len(bot_mcp_servers)} bot MCP servers for HTTP mode: "
+                    f"bot={setup.bot_namespace}/{setup.bot_name}"
+                )
+        except Exception as e:
+            logger.warning(f"[OPENAPI_HTTP_SYNC] Failed to load bot MCP servers: {e}")
+
+    # 2. Add custom MCP servers from API request
+    custom_mcp_servers = tool_settings.get("mcp_servers", {})
+    if custom_mcp_servers:
+        for name, config in custom_mcp_servers.items():
+            if isinstance(config, dict) and config.get("url"):
+                server_entry = {
+                    "name": name,
+                    "url": config.get("url", ""),
+                    "type": config.get("type", "streamable-http"),
+                }
+                if config.get("headers"):
+                    server_entry["auth"] = config["headers"]
+                mcp_servers_to_pass.append(server_entry)
+        logger.info(
+            f"[OPENAPI_HTTP_SYNC] Added {len(custom_mcp_servers)} custom MCP servers from request"
+        )
 
     # Update subtask status to RUNNING
     await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
 
     accumulated_content = ""
-    mcp_client = None
 
     try:
-        # Build messages with history
-        history = build_chat_history(setup.existing_subtasks)
-        messages = MessageConverter.build_messages(
-            history=history,
-            current_message=input_text,
-            system_prompt=setup.system_prompt,
+        # Build system prompt with optional deep thinking enhancement
+        from chat_shell.prompts import append_deep_thinking_prompt
+
+        final_system_prompt = append_deep_thinking_prompt(
+            setup.system_prompt, enable_chat_bot
         )
 
-        # Prepare extra tools (MCP and web search)
-        extra_tools = []
+        # Build chat history
+        history = build_chat_history(setup.existing_subtasks)
 
-        # Load MCP tools if system config enabled
-        if settings.CHAT_MCP_ENABLED:
-            try:
-                mcp_client = await load_mcp_tools(
-                    setup.task_id, setup.bot_name, setup.bot_namespace
-                )
-                if mcp_client:
-                    extra_tools.extend(mcp_client.get_tools())
-                    logger.info(
-                        f"[OPENAPI_SYNC] Loaded {len(mcp_client.get_tools())} MCP tools for task {setup.task_id}"
-                    )
-            except Exception as e:
-                logger.warning(f"[OPENAPI_SYNC] Failed to load MCP tools: {e}")
+        # Create HTTP adapter
+        adapter = HTTPAdapter(
+            base_url=settings.CHAT_SHELL_URL,
+            token=settings.CHAT_SHELL_TOKEN,
+        )
 
-        # Add web search tool if deep thinking enabled and system config allows
-        if enable_deep_thinking and settings.WEB_SEARCH_ENABLED:
-            try:
-                from app.chat_shell.tools import WebSearchTool
+        # Build ChatRequest
+        chat_request = ChatRequest(
+            task_id=setup.task_id,
+            subtask_id=assistant_subtask_id,
+            user_subtask_id=user_subtask_id,  # For RAG result persistence
+            user_message_id=user_message_id,  # For history exclusion (prevent duplicate messages)
+            message=input_text,
+            user_id=user.id,
+            user_name=user.user_name or "",
+            team_id=team.id,
+            team_name=team.name,
+            model_config=setup.model_config,
+            system_prompt=final_system_prompt,
+            history=history,
+            enable_deep_thinking=enable_chat_bot,
+            enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
+            bot_name=setup.bot_name,
+            bot_namespace=setup.bot_namespace,
+            mcp_servers=mcp_servers_to_pass,
+            skill_names=setup.skill_names,
+            skill_configs=setup.skill_configs,
+            preload_skills=setup.preload_skills,
+        )
 
-                extra_tools.append(WebSearchTool())
+        # Stream from HTTP adapter and accumulate
+        async for event in adapter.chat(chat_request):
+            if event.type == ChatEventType.CHUNK:
+                content = event.data.get("content", "")
+                if content:
+                    accumulated_content += content
+            elif event.type == ChatEventType.ERROR:
+                error_msg = event.data.get("error", "Unknown error")
+                logger.error(f"[OPENAPI_HTTP_SYNC] Error from chat_shell: {error_msg}")
+                raise Exception(error_msg)
+            elif event.type == ChatEventType.DONE:
                 logger.info(
-                    f"[OPENAPI_SYNC] Added web search tool for task {setup.task_id}"
+                    f"[OPENAPI_HTTP_SYNC] Stream completed for subtask {assistant_subtask_id}"
                 )
-            except Exception as e:
-                logger.warning(f"[OPENAPI_SYNC] Failed to add web search tool: {e}")
-
-        # Decide whether to use agent (with tools) or simple LLM
-        use_agent = len(extra_tools) > 0
-
-        if use_agent:
-            # Use LangGraph agent for tool support
-            from app.chat_shell.agents import LangGraphAgentBuilder
-            from app.chat_shell.tools import ToolRegistry
-
-            llm = LangChainModelFactory.create_from_config(
-                setup.model_config, streaming=True
-            )
-
-            tool_registry = ToolRegistry()
-            for tool in extra_tools:
-                tool_registry.register(tool)
-
-            agent = LangGraphAgentBuilder(
-                llm=llm,
-                tool_registry=tool_registry,
-                max_iterations=settings.CHAT_TOOL_MAX_REQUESTS,
-            )
-
-            # Stream and accumulate tokens from agent (blocking until complete)
-            async for token in agent.stream_tokens(messages):
-                accumulated_content += token
-        else:
-            # Simple LLM streaming without tools
-            llm = LangChainModelFactory.create_from_config(
-                setup.model_config, streaming=True
-            )
-
-            # Convert to LangChain messages
-            langchain_messages = []
-            for msg in messages:
-                role = msg.get("role", "")
-                content = msg.get("content", "")
-                if role == "system":
-                    langchain_messages.append(SystemMessage(content=content))
-                elif role == "user":
-                    langchain_messages.append(HumanMessage(content=content))
-                elif role == "assistant":
-                    langchain_messages.append(AIMessage(content=content))
-
-            # Stream and accumulate content (blocking until complete)
-            async for chunk in llm.astream(langchain_messages):
-                if hasattr(chunk, "content") and chunk.content:
-                    accumulated_content += chunk.content
 
         # Update subtask to completed
         result = {"value": accumulated_content}
@@ -523,7 +524,7 @@ async def create_sync_response(
             db.commit()
 
     except Exception as e:
-        logger.exception(f"Error in sync chat response: {e}")
+        logger.exception(f"Error in HTTP sync chat response: {e}")
         error_message = str(e)
         await db_handler.update_subtask_status(
             assistant_subtask_id, "FAILED", error=error_message
@@ -537,6 +538,8 @@ async def create_sync_response(
             task_crd.status.updatedAt = datetime.now()
             setup.task.json = task_crd.model_dump(mode="json")
             setup.task.updated_at = datetime.now()
+            from sqlalchemy.orm.attributes import flag_modified
+
             flag_modified(setup.task, "json")
             db.commit()
 
@@ -544,13 +547,6 @@ async def create_sync_response(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"LLM request failed: {error_message}",
         )
-    finally:
-        # Cleanup MCP client if used
-        if mcp_client:
-            try:
-                await mcp_client.disconnect()
-            except Exception as e:
-                logger.warning(f"[OPENAPI_SYNC] Failed to disconnect MCP client: {e}")
 
     # Build response
     message_id = f"msg_{assistant_subtask_id}"

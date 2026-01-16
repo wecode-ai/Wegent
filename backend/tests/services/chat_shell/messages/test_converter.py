@@ -6,12 +6,11 @@ import base64
 import io
 from unittest.mock import patch
 
-from PIL import Image
-
-from app.chat_shell.messages.converter import (
+from chat_shell.messages.converter import (
     MAX_IMAGE_SIZE_BYTES,
     MessageConverter,
 )
+from PIL import Image
 
 
 def create_test_image(width, height, color="red"):
@@ -54,7 +53,7 @@ def test_compress_image_large():
     # A 2000x2000 RGB image is 12MB raw, but JPEG is much smaller.
 
     # We can mock MAX_IMAGE_SIZE_BYTES to be very small for testing.
-    with patch("app.chat_shell.messages.converter.MAX_IMAGE_SIZE_BYTES", 100):
+    with patch("chat_shell.messages.converter.MAX_IMAGE_SIZE_BYTES", 100):
         img_data = create_test_image(50, 50)  # Small image but larger than 100 bytes
 
         compressed = MessageConverter._compress_image(img_data, "image/jpeg")
@@ -63,7 +62,7 @@ def test_compress_image_large():
         # Since 100 bytes is very small, it might fail to compress that small and return original
         # if quality reduction doesn't help enough.
 
-        # Let's just verify the logic runs without error.
+        # Let's just verify that logic runs without error.
         assert isinstance(compressed, bytes)
 
 
@@ -76,7 +75,7 @@ def test_create_image_block_compression():
         MessageConverter, "_compress_image", return_value=b"compressed"
     ) as mock_compress:
         # Mock limit to force compression
-        with patch("app.chat_shell.messages.converter.MAX_IMAGE_SIZE_BYTES", 1):
+        with patch("chat_shell.messages.converter.MAX_IMAGE_SIZE_BYTES", 1):
             block = MessageConverter.create_image_block(img_data, "image/jpeg")
 
             mock_compress.assert_called_once()
@@ -96,7 +95,7 @@ def test_build_vision_message_compression():
         MessageConverter, "_compress_image", return_value=b"compressed"
     ) as mock_compress:
         # Mock limit
-        with patch("app.chat_shell.messages.converter.MAX_IMAGE_SIZE_BYTES", 1):
+        with patch("chat_shell.messages.converter.MAX_IMAGE_SIZE_BYTES", 1):
             msg = MessageConverter.build_vision_message("text", b64_img, "image/jpeg")
 
             mock_compress.assert_called_once()

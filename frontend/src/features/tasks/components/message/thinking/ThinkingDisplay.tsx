@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { memo } from 'react';
-import type { ThinkingDisplayProps } from './types';
-import SimpleThinkingView from './SimpleThinkingView';
-import DetailedThinkingView from './DetailedThinkingView';
+import { memo } from 'react'
+import type { ThinkingDisplayProps } from './types'
+import SimpleThinkingView from './SimpleThinkingView'
+import DetailedThinkingView from './DetailedThinkingView'
 
 /**
  * Main thinking display component that routes to the appropriate view
@@ -23,16 +23,16 @@ const ThinkingDisplay = memo(function ThinkingDisplay({
 }: ThinkingDisplayProps) {
   // Early return if no thinking data
   if (!thinking || thinking.length === 0) {
-    return null;
+    return null
   }
 
   // Route to appropriate view based on shell type
   if (shellType === 'Chat') {
-    return <SimpleThinkingView thinking={thinking} taskStatus={taskStatus} />;
+    return <SimpleThinkingView thinking={thinking} taskStatus={taskStatus} />
   }
 
   // Default to detailed view for ClaudeCode, Agno, and other shell types
-  return <DetailedThinkingView thinking={thinking} taskStatus={taskStatus} />;
-});
+  return <DetailedThinkingView thinking={thinking} taskStatus={taskStatus} />
+})
 
-export default ThinkingDisplay;
+export default ThinkingDisplay

@@ -18,6 +18,7 @@ from app.schemas.openapi_response import (
     InputItem,
     WegentTool,
 )
+from app.services.readers.kinds import KindType, kindReader
 
 
 def wegent_status_to_openai_status(wegent_status: str) -> str:
@@ -75,15 +76,38 @@ def parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
 
     Returns:
         Dict with parsed tool settings:
-        - enable_deep_thinking: bool (also enables web search if WEB_SEARCH_ENABLED)
+        - enable_chat_bot: bool (enables all server-side capabilities)
+        - mcp_servers: dict (custom MCP server configurations, format: {name: config})
+        - preload_skills: list (skills to preload for the bot)
     """
-    result = {
-        "enable_deep_thinking": False,
+    result: Dict[str, Any] = {
+        "enable_chat_bot": False,
+        "mcp_servers": {},
+        "preload_skills": [],
     }
     if tools:
         for tool in tools:
-            if tool.type == "wegent_deep_thinking":
-                result["enable_deep_thinking"] = True
+            if tool.type == "wegent_chat_bot":
+                result["enable_chat_bot"] = True
+            elif tool.type == "mcp" and tool.mcp_servers:
+                # mcp_servers is List[Dict[str, Any]]
+                # Each dict maps server_name -> config
+                for servers_dict in tool.mcp_servers:
+                    for name, config in servers_dict.items():
+                        # Skip disabled servers
+                        if isinstance(config, dict) and config.get("disabled"):
+                            continue
+                        if isinstance(config, dict):
+                            result["mcp_servers"][name] = {
+                                "url": config.get("url"),
+                                "type": config.get("type"),
+                                "headers": config.get("headers"),
+                                "command": config.get("command"),
+                                "args": config.get("args"),
+                            }
+            elif tool.type == "skill" and tool.preload_skills:
+                # Add skills to preload_skills list
+                result["preload_skills"].extend(tool.preload_skills)
     return result
 
 
@@ -163,60 +187,56 @@ def check_team_supports_direct_chat(db: Session, team: Kind, user_id: int) -> bo
     Returns:
         True if team supports direct chat
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
     team_crd = Team.model_validate(team.json)
+    logger.info(
+        f"[OPENAPI_HELPERS] check_team_supports_direct_chat: team={team.namespace}/{team.name}, user_id={user_id}, team.user_id={team.user_id}"
+    )
 
     for member in team_crd.spec.members:
-        # Find bot
-        bot = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Bot",
-                Kind.name == member.botRef.name,
-                Kind.namespace == member.botRef.namespace,
-                Kind.is_active == True,
-            )
-            .first()
+        # Find bot using kindReader
+        bot = kindReader.get_by_name_and_namespace(
+            db,
+            team.user_id,
+            KindType.BOT,
+            member.botRef.namespace,
+            member.botRef.name,
         )
 
         if not bot:
+            logger.warning(
+                f"[OPENAPI_HELPERS] Bot not found: {member.botRef.namespace}/{member.botRef.name} for team.user_id={team.user_id}"
+            )
             return False
 
         # Get shell type
         bot_crd = Bot.model_validate(bot.json)
-
-        # Check user's custom shells first
-        shell = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == team.user_id,
-                Kind.kind == "Shell",
-                Kind.name == bot_crd.spec.shellRef.name,
-                Kind.namespace == bot_crd.spec.shellRef.namespace,
-                Kind.is_active == True,
-            )
-            .first()
+        logger.info(
+            f"[OPENAPI_HELPERS] Found bot: {bot.namespace}/{bot.name}, shellRef={bot_crd.spec.shellRef.namespace}/{bot_crd.spec.shellRef.name}"
         )
 
-        # If not found, check public shells
-        if not shell:
-            shell = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == 0,
-                    Kind.kind == "Shell",
-                    Kind.name == bot_crd.spec.shellRef.name,
-                    Kind.namespace == bot_crd.spec.shellRef.namespace,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
+        # Query shell using kindReader (will fallback to public if not found personally)
+        shell = kindReader.get_by_name_and_namespace(
+            db,
+            team.user_id,
+            KindType.SHELL,
+            bot_crd.spec.shellRef.namespace,
+            bot_crd.spec.shellRef.name,
+        )
 
         if not shell or not shell.json:
+            logger.warning(
+                f"[OPENAPI_HELPERS] Shell not found: {bot_crd.spec.shellRef.namespace}/{bot_crd.spec.shellRef.name}"
+            )
             return False
 
         shell_crd = Shell.model_validate(shell.json)
         shell_type = shell_crd.spec.shellType
+        logger.info(
+            f"[OPENAPI_HELPERS] Found shell: {shell.namespace}/{shell.name}, shellType={shell_type}, is_direct_chat={is_direct_chat_shell(shell_type)}"
+        )
 
         if not is_direct_chat_shell(shell_type):
             return False

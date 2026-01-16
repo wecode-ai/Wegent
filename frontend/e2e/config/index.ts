@@ -4,8 +4,8 @@
  */
 
 // Test Users
-export { ADMIN_USER, REGULAR_USER, getTestUser, getEnvTestUser } from './test-users';
-export type { TestUser } from './test-users';
+export { ADMIN_USER, REGULAR_USER, getTestUser, getEnvTestUser } from './test-users'
+export type { TestUser } from './test-users'
 
 // Environment
 export {
@@ -15,5 +15,5 @@ export {
   FeatureFlags,
   PerformanceLimits,
   Routes,
-} from './environment';
-export type { E2EEnvironment } from './environment';
+} from './environment'
+export type { E2EEnvironment } from './environment'

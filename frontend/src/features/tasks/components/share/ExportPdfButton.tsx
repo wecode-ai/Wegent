@@ -1,48 +1,48 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState, useCallback, useMemo } from 'react';
-import { Download, X, ChevronDown, Paperclip } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import { useToast } from '@/hooks/use-toast';
-import { generateChatPdf, type ExportMessage, type ExportAttachment } from '@/utils/pdf';
-import { useTranslation } from '@/hooks/useTranslation';
-import { getAttachmentPreviewUrl, isImageExtension } from '@/apis/attachments';
-import { getToken } from '@/apis/user';
-import { formatDateTime } from '@/utils/dateTime';
+import React, { useState, useCallback, useMemo } from 'react'
+import { Download, X, ChevronDown, Paperclip } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { useToast } from '@/hooks/use-toast'
+import { generateChatPdf, type ExportMessage, type ExportAttachment } from '@/utils/pdf'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getAttachmentPreviewUrl, isImageExtension } from '@/apis/attachments'
+import { getToken } from '@/apis/user'
+import { formatDateTime } from '@/utils/dateTime'
 
 /** Attachment info for selectable messages */
 export interface SelectableAttachment {
-  id: number;
-  filename: string;
-  file_size: number;
-  file_extension: string;
+  id: number
+  filename: string
+  file_size: number
+  file_extension: string
 }
 
 export interface SelectableMessage {
-  id: string | number;
-  type: 'user' | 'ai';
-  content: string;
-  timestamp: number;
-  botName?: string;
-  userName?: string;
-  teamName?: string;
-  attachments?: SelectableAttachment[];
+  id: string | number
+  type: 'user' | 'ai'
+  content: string
+  timestamp: number
+  botName?: string
+  userName?: string
+  teamName?: string
+  attachments?: SelectableAttachment[]
 }
 
 interface ExportPdfButtonProps {
   /** All messages available for export */
-  messages: SelectableMessage[];
+  messages: SelectableMessage[]
   /** Task name for the PDF title and filename */
-  taskName: string;
+  taskName: string
   /** Whether the button should be disabled */
-  disabled?: boolean;
+  disabled?: boolean
   /** Optional class name for styling */
-  className?: string;
+  className?: string
 }
 
 /**
@@ -58,16 +58,16 @@ export default function ExportPdfButton({
   disabled = false,
   className = '',
 }: ExportPdfButtonProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
+  const { t } = useTranslation()
+  const { toast } = useToast()
 
   // Selection mode state
-  const [isSelectionMode, setIsSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string | number>>(new Set());
-  const [isExporting, setIsExporting] = useState(false);
+  const [isSelectionMode, setIsSelectionMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string | number>>(new Set())
+  const [isExporting, setIsExporting] = useState(false)
 
   // Check if there are messages to export
-  const hasMessages = messages.length > 0;
+  const hasMessages = messages.length > 0
 
   /**
    * Enter selection mode
@@ -77,64 +77,64 @@ export default function ExportPdfButton({
       toast({
         variant: 'destructive',
         title: t('chat:export.no_messages') || 'No messages to export',
-      });
-      return;
+      })
+      return
     }
-    setIsSelectionMode(true);
-    setSelectedIds(new Set());
-  }, [hasMessages, toast, t]);
+    setIsSelectionMode(true)
+    setSelectedIds(new Set())
+  }, [hasMessages, toast, t])
 
   /**
    * Exit selection mode
    */
   const handleCancelSelection = useCallback(() => {
-    setIsSelectionMode(false);
-    setSelectedIds(new Set());
-  }, []);
+    setIsSelectionMode(false)
+    setSelectedIds(new Set())
+  }, [])
 
   /**
    * Toggle single message selection
    */
   const handleToggleMessage = useCallback((id: string | number) => {
     setSelectedIds(prev => {
-      const next = new Set(prev);
+      const next = new Set(prev)
       if (next.has(id)) {
-        next.delete(id);
+        next.delete(id)
       } else {
-        next.add(id);
+        next.add(id)
       }
-      return next;
-    });
-  }, []);
+      return next
+    })
+  }, [])
 
   /**
    * Select all messages from a specific index onwards
    */
   const handleSelectFromHere = useCallback(
     (startIndex: number) => {
-      const idsToSelect = messages.slice(startIndex).map(msg => msg.id);
+      const idsToSelect = messages.slice(startIndex).map(msg => msg.id)
       setSelectedIds(prev => {
-        const next = new Set(prev);
-        idsToSelect.forEach(id => next.add(id));
-        return next;
-      });
+        const next = new Set(prev)
+        idsToSelect.forEach(id => next.add(id))
+        return next
+      })
     },
     [messages]
-  );
+  )
 
   /**
    * Select all messages
    */
   const handleSelectAll = useCallback(() => {
-    setSelectedIds(new Set(messages.map(msg => msg.id)));
-  }, [messages]);
+    setSelectedIds(new Set(messages.map(msg => msg.id)))
+  }, [messages])
 
   /**
    * Deselect all messages
    */
   const handleDeselectAll = useCallback(() => {
-    setSelectedIds(new Set());
-  }, []);
+    setSelectedIds(new Set())
+  }, [])
 
   /**
    * Confirm selection and generate PDF
@@ -144,35 +144,35 @@ export default function ExportPdfButton({
    */
   const loadImageAsBase64 = async (attachmentId: number): Promise<string | undefined> => {
     try {
-      const token = getToken();
+      const token = getToken()
       const response = await fetch(getAttachmentPreviewUrl(attachmentId), {
         headers: {
           ...(token && { Authorization: `Bearer ${token}` }),
         },
-      });
+      })
 
       if (!response.ok) {
-        console.warn(`Failed to load image ${attachmentId}: ${response.status}`);
-        return undefined;
+        console.warn(`Failed to load image ${attachmentId}: ${response.status}`)
+        return undefined
       }
 
-      const blob = await response.blob();
+      const blob = await response.blob()
       return new Promise((resolve, reject) => {
-        const reader = new FileReader();
+        const reader = new FileReader()
         reader.onloadend = () => {
-          const base64 = reader.result as string;
+          const base64 = reader.result as string
           // Remove data URL prefix to get pure base64
-          const base64Data = base64.split('chat:,')[1];
-          resolve(base64Data);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
+          const base64Data = base64.split('chat:,')[1]
+          resolve(base64Data)
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(blob)
+      })
     } catch (error) {
-      console.warn(`Failed to load image ${attachmentId}:`, error);
-      return undefined;
+      console.warn(`Failed to load image ${attachmentId}:`, error)
+      return undefined
     }
-  };
+  }
 
   /**
    * Confirm selection and generate PDF
@@ -182,20 +182,20 @@ export default function ExportPdfButton({
       toast({
         variant: 'destructive',
         title: t('chat:export.select_at_least_one') || 'Please select at least one message',
-      });
-      return;
+      })
+      return
     }
 
-    setIsExporting(true);
+    setIsExporting(true)
 
     try {
       // Filter selected messages and maintain order
-      const selectedMessagesRaw = messages.filter(msg => selectedIds.has(msg.id));
+      const selectedMessagesRaw = messages.filter(msg => selectedIds.has(msg.id))
 
       // Load image data for attachments
       const selectedMessages: ExportMessage[] = await Promise.all(
         selectedMessagesRaw.map(async msg => {
-          let attachments: ExportAttachment[] | undefined;
+          let attachments: ExportAttachment[] | undefined
 
           if (msg.attachments && msg.attachments.length > 0) {
             attachments = await Promise.all(
@@ -205,16 +205,16 @@ export default function ExportPdfButton({
                   filename: att.filename,
                   file_size: att.file_size,
                   file_extension: att.file_extension,
-                };
+                }
 
                 // Load image data for image attachments
                 if (isImageExtension(att.file_extension)) {
-                  exportAtt.imageData = await loadImageAsBase64(att.id);
+                  exportAtt.imageData = await loadImageAsBase64(att.id)
                 }
 
-                return exportAtt;
+                return exportAtt
               })
-            );
+            )
           }
 
           return {
@@ -225,45 +225,45 @@ export default function ExportPdfButton({
             userName: msg.userName,
             teamName: msg.teamName,
             attachments,
-          };
+          }
         })
-      );
+      )
 
       await generateChatPdf({
         taskName: taskName || 'Chat Export',
         messages: selectedMessages,
-      });
+      })
 
       toast({
         title: t('chat:export.success') || 'PDF exported successfully',
-      });
+      })
 
       // Exit selection mode after successful export
-      setIsSelectionMode(false);
-      setSelectedIds(new Set());
+      setIsSelectionMode(false)
+      setSelectedIds(new Set())
     } catch (error) {
-      console.error('Failed to export PDF:', error);
+      console.error('Failed to export PDF:', error)
       toast({
         variant: 'destructive',
         title: t('chat:export.failed') || 'Failed to export PDF',
         description: error instanceof Error ? error.message : 'Unknown error',
-      });
+      })
     } finally {
-      setIsExporting(false);
+      setIsExporting(false)
     }
-  }, [selectedIds, messages, taskName, toast, t]);
+  }, [selectedIds, messages, taskName, toast, t])
 
   /**
    * Check if all messages are selected
    */
   const isAllSelected = useMemo(() => {
-    return messages.length > 0 && selectedIds.size === messages.length;
-  }, [messages.length, selectedIds.size]);
+    return messages.length > 0 && selectedIds.size === messages.length
+  }, [messages.length, selectedIds.size])
 
   /**
    * Selection count display
    */
-  const selectionCount = selectedIds.size;
+  const selectionCount = selectedIds.size
 
   // If in selection mode, render the selection UI
   if (isSelectionMode) {
@@ -310,7 +310,7 @@ export default function ExportPdfButton({
         {/* Message selection list */}
         <div className="space-y-2 max-h-[60vh] overflow-y-auto">
           {messages.map((msg, index) => {
-            const isSelected = selectedIds.has(msg.id);
+            const isSelected = selectedIds.has(msg.id)
             return (
               <div
                 key={msg.id}
@@ -360,8 +360,8 @@ export default function ExportPdfButton({
                     variant="ghost"
                     size="sm"
                     onClick={e => {
-                      e.stopPropagation();
-                      handleSelectFromHere(index);
+                      e.stopPropagation()
+                      handleSelectFromHere(index)
                     }}
                     className="text-xs text-text-muted hover:text-primary"
                     title={t('chat:export.select_from_here') || 'Select from here'}
@@ -371,11 +371,11 @@ export default function ExportPdfButton({
                   </Button>
                 </div>
               </div>
-            );
+            )
           })}
         </div>
       </div>
-    );
+    )
   }
 
   // Default: render the export button
@@ -391,5 +391,5 @@ export default function ExportPdfButton({
       <Download className="w-4 h-4 mr-1.5" />
       <span className="text-xs">{t('chat:export.export_pdf') || 'Export PDF'}</span>
     </Button>
-  );
+  )
 }

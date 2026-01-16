@@ -29,6 +29,7 @@ class SubtaskStatus(str, Enum):
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
     DELETE = "DELETE"
+    PENDING_CONFIRMATION = "PENDING_CONFIRMATION"  # Pipeline stage completed, waiting for user confirmation
 
 
 class SubtaskRole(str, Enum):
@@ -41,6 +42,7 @@ class SenderType(str, Enum):
 
     USER = "USER"  # Message sent by a user
     TEAM = "TEAM"  # Message sent by the AI team/agent
+    SYSTEM = "SYSTEM"  # System notification message (e.g., KB binding)
 
 
 class SubtaskBase(BaseModel):
@@ -105,6 +107,8 @@ class SubtaskContextBrief(BaseModel):
     mime_type: Optional[str] = None
     # Knowledge base fields (from type_data)
     document_count: Optional[int] = None
+    # Table fields (from type_data) - nested structure to match frontend expectation
+    source_config: Optional[dict[str, Any]] = None
 
     class Config:
         from_attributes = True
@@ -144,6 +148,19 @@ class SubtaskContextBrief(BaseModel):
                     "document_count": type_data.get("document_count"),
                 }
             )
+        elif context.context_type == "table":
+            # Build source_config for table contexts
+            url = type_data.get("url")
+            if url:
+                base_data["source_config"] = {"url": url}
+                # DEBUG: Log table context creation
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"[SubtaskContextBrief/subtask.py] Building table context: id={context.id}, "
+                    f"url={url}, source_config={base_data['source_config']}"
+                )
 
         return cls(**base_data)
 
@@ -183,6 +200,24 @@ class SubtaskInDB(SubtaskBase):
     sender_user_id: Optional[int] = None  # User ID when sender_type=USER
     sender_user_name: Optional[str] = None  # User name for display
     reply_to_subtask_id: Optional[int] = None  # Quoted message ID
+
+    @field_serializer("contexts")
+    def serialize_contexts(self, value: List) -> List[dict[str, Any]]:
+        """Convert ORM context models to properly constructed Pydantic models"""
+        if not value:
+            return []
+
+        result = []
+        for ctx in value:
+            # Check if it's already a Pydantic model (has model_dump method)
+            if hasattr(ctx, "model_dump"):
+                result.append(ctx.model_dump(mode="json"))
+            else:
+                # It's an ORM model, convert using from_model
+                brief = SubtaskContextBrief.from_model(ctx)
+                result.append(brief.model_dump(mode="json"))
+
+        return result
 
     @field_serializer("result")
     def mask_result(self, value: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
@@ -260,3 +295,19 @@ class SubtaskExecutorUpdate(BaseModel):
     executor_name: Optional[str] = None
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
+
+
+class MessageEditRequest(BaseModel):
+    """Request model for editing a user message"""
+
+    new_content: str = Field(..., min_length=1, description="New message content")
+
+
+class MessageEditResponse(BaseModel):
+    """Response model for message edit operation"""
+
+    success: bool = True
+    subtask_id: int
+    message_id: int
+    deleted_count: int = Field(description="Number of subsequent messages deleted")
+    new_content: str = Field(description="The updated message content")

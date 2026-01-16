@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -7,40 +7,40 @@
  * Handles rendering of Mermaid diagrams as images in PDF
  */
 
-import type { RenderContext } from './base';
-import { checkNewPage } from './base';
-import { PDF_CONFIG } from '../constants';
+import type { RenderContext } from './base'
+import { checkNewPage } from './base'
+import { PDF_CONFIG } from '../constants'
 
 /**
  * A4 page dimensions in mm
  */
-const A4_WIDTH_MM = 210;
+const A4_WIDTH_MM = 210
 
 /**
  * Calculate the full content width for Mermaid diagrams in mm
  * Uses page width minus margins to ensure diagrams use maximum available space
  */
-const MERMAID_CONTENT_WIDTH_MM = A4_WIDTH_MM - PDF_CONFIG.margin * 2; // 170mm
+const MERMAID_CONTENT_WIDTH_MM = A4_WIDTH_MM - PDF_CONFIG.margin * 2 // 170mm
 
 /**
  * Convert mm to pixels (assuming 96 DPI)
  * 1 inch = 25.4mm, 1 inch = 96 pixels
  */
-const MM_TO_PX = 96 / 25.4;
+const MM_TO_PX = 96 / 25.4
 
 /**
  * Mermaid diagram rendering width in pixels
  * Using full content width for better readability
  */
-const MERMAID_RENDER_WIDTH_PX = MERMAID_CONTENT_WIDTH_MM * MM_TO_PX; // ~640px
+const MERMAID_RENDER_WIDTH_PX = MERMAID_CONTENT_WIDTH_MM * MM_TO_PX // ~640px
 
 /**
  * Result of SVG to PNG conversion
  */
 interface SvgToPngResult {
-  dataUrl: string;
-  width: number;
-  height: number;
+  dataUrl: string
+  width: number
+  height: number
 }
 
 /**
@@ -55,112 +55,131 @@ async function svgToPng(svg: string, maxWidth: number): Promise<SvgToPngResult> 
   return new Promise((resolve, reject) => {
     try {
       // Create a temporary container to parse SVG
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = svg;
-      const svgElement = tempDiv.querySelector('svg');
+      const tempDiv = document.createElement('div')
+      tempDiv.innerHTML = svg
+      const svgElement = tempDiv.querySelector('svg')
 
       if (!svgElement) {
-        reject(new Error('SVG element not found'));
-        return;
+        reject(new Error('SVG element not found'))
+        return
       }
 
       // Get SVG dimensions from attributes or viewBox
-      let svgWidth = 0;
-      let svgHeight = 0;
+      let svgWidth = 0
+      let svgHeight = 0
 
-      const widthAttr = svgElement.getAttribute('width');
-      const heightAttr = svgElement.getAttribute('height');
-      const viewBox = svgElement.getAttribute('viewBox');
+      const widthAttr = svgElement.getAttribute('width')
+      const heightAttr = svgElement.getAttribute('height')
+      const viewBox = svgElement.getAttribute('viewBox')
 
       if (widthAttr && heightAttr) {
-        svgWidth = parseFloat(widthAttr.replace('px', ''));
-        svgHeight = parseFloat(heightAttr.replace('px', ''));
+        svgWidth = parseFloat(widthAttr.replace('px', ''))
+        svgHeight = parseFloat(heightAttr.replace('px', ''))
       }
 
       // If dimensions are still 0, try viewBox
       if ((!svgWidth || !svgHeight) && viewBox) {
-        const parts = viewBox.split(/\s+|,/);
+        const parts = viewBox.split(/\s+|,/)
         if (parts.length >= 4) {
-          svgWidth = parseFloat(parts[2]);
-          svgHeight = parseFloat(parts[3]);
+          svgWidth = parseFloat(parts[2])
+          svgHeight = parseFloat(parts[3])
         }
       }
 
       // Default dimensions if still not found
       if (!svgWidth || !svgHeight) {
-        svgWidth = 800;
-        svgHeight = 600;
+        svgWidth = 800
+        svgHeight = 600
       }
 
       // Calculate scaled dimensions to fit within maxWidth
-      let outputWidth = svgWidth;
-      let outputHeight = svgHeight;
+      let outputWidth = svgWidth
+      let outputHeight = svgHeight
 
       if (outputWidth > maxWidth) {
-        const scale = maxWidth / outputWidth;
-        outputWidth = maxWidth;
-        outputHeight = svgHeight * scale;
+        const scale = maxWidth / outputWidth
+        outputWidth = maxWidth
+        outputHeight = svgHeight * scale
       }
 
       // Set explicit dimensions on SVG for proper rendering
-      svgElement.setAttribute('width', String(svgWidth));
-      svgElement.setAttribute('height', String(svgHeight));
+      svgElement.setAttribute('width', String(svgWidth))
+      svgElement.setAttribute('height', String(svgHeight))
 
       // Ensure viewBox is set
       if (!svgElement.getAttribute('viewBox')) {
-        svgElement.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`);
+        svgElement.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight}`)
       }
 
+      // Remove external image references that could taint the canvas
+      // Note: foreignObject elements are kept as they contain text labels
+      // When using base64 data URL for SVG, foreignObject content renders correctly
+      const images = svgElement.querySelectorAll('image')
+      images.forEach(img => {
+        const href = img.getAttribute('href') || img.getAttribute('xlink:href')
+        // Remove images with external URLs (http/https) as they will taint the canvas
+        if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+          img.remove()
+        }
+      })
+
       // Create canvas
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')
 
       if (!ctx) {
-        reject(new Error('Failed to get canvas context'));
-        return;
+        reject(new Error('Failed to get canvas context'))
+        return
       }
 
       // Use higher resolution for better quality (2x device pixel ratio)
-      const dpr = 2;
-      canvas.width = outputWidth * dpr;
-      canvas.height = outputHeight * dpr;
-      ctx.scale(dpr, dpr);
+      const dpr = 2
+      canvas.width = outputWidth * dpr
+      canvas.height = outputHeight * dpr
+      ctx.scale(dpr, dpr)
 
       // Fill white background
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, outputWidth, outputHeight);
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, outputWidth, outputHeight)
 
-      // Convert SVG to data URL
-      const svgData = new XMLSerializer().serializeToString(svgElement);
-      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-      const svgUrl = URL.createObjectURL(svgBlob);
+      // Convert SVG to data URL instead of Blob URL to avoid cross-origin issues
+      // Using base64 encoded data URL ensures the image is treated as same-origin
+      const svgData = new XMLSerializer().serializeToString(svgElement)
+      const base64Svg = btoa(unescape(encodeURIComponent(svgData)))
+      const svgDataUrl = `data:image/svg+xml;base64,${base64Svg}`
 
       // Load image and draw to canvas
-      const img = new Image();
+      const img = new Image()
+
+      // Set crossOrigin to anonymous to handle any remaining cross-origin resources
+      img.crossOrigin = 'anonymous'
 
       img.onload = () => {
-        ctx.drawImage(img, 0, 0, outputWidth, outputHeight);
-        URL.revokeObjectURL(svgUrl);
+        try {
+          ctx.drawImage(img, 0, 0, outputWidth, outputHeight)
 
-        // Get PNG data URL
-        const dataUrl = canvas.toDataURL('image/png');
-        resolve({
-          dataUrl,
-          width: outputWidth,
-          height: outputHeight,
-        });
-      };
+          // Get PNG data URL
+          const dataUrl = canvas.toDataURL('image/png')
+          resolve({
+            dataUrl,
+            width: outputWidth,
+            height: outputHeight,
+          })
+        } catch (canvasError) {
+          // If canvas is still tainted, reject with error
+          reject(new Error(`Canvas tainted: ${canvasError}`))
+        }
+      }
 
       img.onerror = () => {
-        URL.revokeObjectURL(svgUrl);
-        reject(new Error('Failed to load SVG image'));
-      };
+        reject(new Error('Failed to load SVG image'))
+      }
 
-      img.src = svgUrl;
+      img.src = svgDataUrl
     } catch (error) {
-      reject(error);
+      reject(error)
     }
-  });
+  })
 }
 
 /**
@@ -182,11 +201,11 @@ export async function renderMermaidDiagram(
   _startX: number,
   _maxWidth: number
 ): Promise<void> {
-  const { pdf, margin } = ctx;
+  const { pdf, margin } = ctx
 
   try {
     // Dynamically import mermaid library
-    const mermaid = (await import('mermaid')).default;
+    const mermaid = (await import('mermaid')).default
 
     // Initialize mermaid with light theme configuration matching page display
     // PDF always uses light theme since PDF background is white
@@ -248,43 +267,43 @@ export async function renderMermaidDiagram(
       },
       fontSize: 14,
       fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
-    });
+    })
 
     // Generate unique ID for this diagram
-    const uniqueId = `mermaid-pdf-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const uniqueId = `mermaid-pdf-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
 
     // Render SVG from mermaid code
-    const { svg } = await mermaid.render(uniqueId, code.trim());
+    const { svg } = await mermaid.render(uniqueId, code.trim())
 
     // Convert SVG to PNG using full content width for better readability
     // This ensures Mermaid diagrams are rendered at a larger, more readable size
     // regardless of whether they appear in user messages (bubble) or AI messages
-    const { dataUrl, width, height } = await svgToPng(svg, MERMAID_RENDER_WIDTH_PX);
+    const { dataUrl, width, height } = await svgToPng(svg, MERMAID_RENDER_WIDTH_PX)
 
     // Calculate height in PDF units (mm)
     // jsPDF uses mm by default, and we need to convert pixel dimensions
     // Assuming 96 DPI for screen, 1 inch = 25.4mm
-    const pxToMm = 25.4 / 96;
-    const pdfWidth = width * pxToMm;
-    const pdfHeight = height * pxToMm;
+    const pxToMm = 25.4 / 96
+    const pdfWidth = width * pxToMm
+    const pdfHeight = height * pxToMm
 
     // Ensure the diagram doesn't exceed page content width
     // This is a safety check in case the SVG is wider than expected
-    const maxPdfWidth = MERMAID_CONTENT_WIDTH_MM;
-    let finalPdfWidth = pdfWidth;
-    let finalPdfHeight = pdfHeight;
+    const maxPdfWidth = MERMAID_CONTENT_WIDTH_MM
+    let finalPdfWidth = pdfWidth
+    let finalPdfHeight = pdfHeight
 
     if (finalPdfWidth > maxPdfWidth) {
-      const scale = maxPdfWidth / finalPdfWidth;
-      finalPdfWidth = maxPdfWidth;
-      finalPdfHeight = pdfHeight * scale;
+      const scale = maxPdfWidth / finalPdfWidth
+      finalPdfWidth = maxPdfWidth
+      finalPdfHeight = pdfHeight * scale
     }
 
     // Check if we need a new page for the diagram
-    checkNewPage(ctx, finalPdfHeight + 5);
+    checkNewPage(ctx, finalPdfHeight + 5)
 
     // Add some spacing before the diagram
-    ctx.yPosition += 2;
+    ctx.yPosition += 2
 
     // Add the image to PDF at page margin (left-aligned for full width display)
     pdf.addImage(
@@ -296,16 +315,16 @@ export async function renderMermaidDiagram(
       finalPdfHeight,
       undefined,
       'FAST'
-    );
+    )
 
     // Update Y position after the diagram
-    ctx.yPosition += finalPdfHeight + 4;
+    ctx.yPosition += finalPdfHeight + 4
   } catch (error) {
     // Log error for debugging
-    console.warn('Failed to render Mermaid diagram in PDF:', error);
+    console.warn('Failed to render Mermaid diagram in PDF:', error)
 
     // Re-throw to let caller handle fallback
-    throw error;
+    throw error
   }
 }
 
@@ -316,8 +335,8 @@ export async function renderMermaidDiagram(
  * @returns true if the language is mermaid
  */
 export function isMermaidLanguage(language: string): boolean {
-  const normalizedLang = language.toLowerCase().trim();
-  const isMermaid = normalizedLang === 'mermaid';
+  const normalizedLang = language.toLowerCase().trim()
+  const isMermaid = normalizedLang === 'mermaid'
 
-  return isMermaid;
+  return isMermaid
 }

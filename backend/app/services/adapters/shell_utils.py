@@ -21,6 +21,73 @@ from app.schemas.kind import Shell
 logger = logging.getLogger(__name__)
 
 
+def find_shell_json(
+    db: Session, shell_name: str, user_id: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Find shell JSON data by name from public shells or user-defined shells.
+
+    Args:
+        db: Database session
+        shell_name: Shell name
+        user_id: User ID (optional, for looking up user-defined shells)
+
+    Returns:
+        Shell JSON data or None if not found
+    """
+    # Try public shell first (user_id=0)
+    shell_row = (
+        db.query(Kind.json)
+        .filter(
+            Kind.user_id == 0,
+            Kind.kind == "Shell",
+            Kind.name == shell_name,
+            Kind.is_active == True,  # noqa: E712
+        )
+        .first()
+    )
+    if shell_row and isinstance(shell_row[0], dict):
+        return shell_row[0]
+
+    if user_id is None:
+        return None
+
+    # Try personal namespace
+    shell_row = (
+        db.query(Kind.json)
+        .filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Shell",
+            Kind.name == shell_name,
+            Kind.namespace == "default",
+            Kind.is_active == True,  # noqa: E712
+        )
+        .first()
+    )
+    if shell_row and isinstance(shell_row[0], dict):
+        return shell_row[0]
+
+    # Try group namespaces
+    from app.services.group_permission import get_user_groups
+
+    user_groups = get_user_groups(db, user_id)
+    for group_name in user_groups:
+        shell_row = (
+            db.query(Kind.json)
+            .filter(
+                Kind.kind == "Shell",
+                Kind.name == shell_name,
+                Kind.namespace == group_name,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+        if shell_row and isinstance(shell_row[0], dict):
+            return shell_row[0]
+
+    return None
+
+
 def get_shell_by_name(
     db: Session, shell_name: str, user_id: int, namespace: str = "default"
 ) -> Optional[Kind]:

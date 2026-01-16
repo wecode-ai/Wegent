@@ -2,30 +2,32 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { memo, useState, useMemo } from 'react';
-import { Search, ChevronDown, ChevronUp } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { ThinkingStep } from './types';
-import { extractToolCalls, isRunningStatus, isTerminalStatus } from './utils/thinkingUtils';
+import { memo, useState, useMemo } from 'react'
+import { Search, ChevronDown, ChevronUp } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { ThinkingStep } from './types'
+import { extractToolCalls, isRunningStatus, isTerminalStatus } from './utils/thinkingUtils'
 
 interface SimpleThinkingViewProps {
-  thinking: ThinkingStep[] | null;
-  taskStatus?: string;
+  thinking: ThinkingStep[] | null
+  taskStatus?: string
 }
 
 interface ToolEntry {
-  toolName: string;
-  query: string;
-  status: 'running' | 'completed';
-  resultCount?: number;
-  startIndex: number;
-  endIndex?: number;
+  toolName: string
+  query: string
+  status: 'running' | 'completed' | 'failed'
+  resultCount?: number
+  startIndex: number
+  endIndex?: number
   // Display name from backend (e.g., "正在渲染图表", "正在搜索网页")
-  displayTitle?: string;
+  displayTitle?: string
   // Completed display title from backend (e.g., "渲染图表完成", "搜索网页完成")
-  completedTitle?: string;
+  completedTitle?: string
+  // Error message for failed status
+  errorMessage?: string
 }
 
 /**
@@ -36,110 +38,123 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
   thinking,
   taskStatus,
 }: SimpleThinkingViewProps) {
-  const { t } = useTranslation();
-  const items = useMemo(() => thinking ?? [], [thinking]);
+  const { t } = useTranslation()
+  const items = useMemo(() => thinking ?? [], [thinking])
 
   // Process thinking steps into paired tool entries
   const toolEntries = useMemo(() => {
-    const entries: ToolEntry[] = [];
-    const toolStartMap = new Map<string, number>();
+    const entries: ToolEntry[] = []
+    const toolStartMap = new Map<string, number>()
 
     if (items.length > 0) {
       items.forEach((step, index) => {
-        const details = step.details;
-        if (!details) return;
+        const details = step.details
+        if (!details) return
 
         // Track tool_use starts
         if (details.type === 'tool_use' && details.status === 'started') {
           const toolName: string =
             (typeof details.tool_name === 'string' ? details.tool_name : '') ||
             (typeof details.name === 'string' ? details.name : '') ||
-            'unknown';
-          const runId = (step as { run_id?: string }).run_id || `${index}`;
+            'unknown'
+          const runId = (step as { run_id?: string }).run_id || `${index}`
 
-          let query: string = '';
+          let query: string = ''
           if (toolName === 'web_search' && details.input) {
-            query = (details.input as { query?: string }).query || '';
+            query = (details.input as { query?: string }).query || ''
           } else if (toolName === 'wegentFetch' && details.input) {
-            query = (details.input as { url?: string }).url || '';
+            query = (details.input as { url?: string }).url || ''
           } else {
-            const titleStr = typeof step.title === 'string' ? step.title : '';
-            query = titleStr || toolName;
+            const titleStr = typeof step.title === 'string' ? step.title : ''
+            query = titleStr || toolName
           }
 
           // Get display title from backend (e.g., "正在渲染图表")
-          const displayTitle = typeof step.title === 'string' ? step.title : undefined;
+          const displayTitle = typeof step.title === 'string' ? step.title : undefined
 
-          toolStartMap.set(runId, entries.length);
+          toolStartMap.set(runId, entries.length)
           entries.push({
             toolName,
             query,
             status: 'running',
             startIndex: index,
             displayTitle,
-          });
+          })
         }
-        // Match tool_result with tool_use
-        else if (details.type === 'tool_result' && details.status === 'completed') {
+        // Match tool_result with tool_use (completed or failed)
+        else if (
+          details.type === 'tool_result' &&
+          (details.status === 'completed' || details.status === 'failed')
+        ) {
+          console.log('[SimpleThinkingView] Processing tool_result:', {
+            status: details.status,
+            tool_name: details.tool_name,
+            error: details.error,
+            title: step.title,
+          })
           const toolName: string =
             (typeof details.tool_name === 'string' ? details.tool_name : '') ||
             (typeof details.name === 'string' ? details.name : '') ||
-            'unknown';
-          const runId = (step as { run_id?: string }).run_id || '';
-          const startIdx = toolStartMap.get(runId);
+            'unknown'
+          const runId = (step as { run_id?: string }).run_id || ''
+          const startIdx = toolStartMap.get(runId)
 
-          let resultCount: number | undefined;
+          let resultCount: number | undefined
           if (toolName === 'web_search') {
             try {
-              const output = details.output || details.content;
-              let outputData: { count?: number };
+              const output = details.output || details.content
+              let outputData: { count?: number }
 
               if (typeof output === 'string') {
-                outputData = JSON.parse(output);
+                outputData = JSON.parse(output)
               } else {
-                outputData = output as { count?: number };
+                outputData = output as { count?: number }
               }
 
-              resultCount = outputData.count;
+              resultCount = outputData.count
             } catch {
               // Ignore parse errors
             }
           }
 
-          // Get completed title from backend (e.g., "渲染图表完成")
-          const completedTitle = typeof step.title === 'string' ? step.title : undefined;
+          // Get completed title from backend (e.g., "渲染图表完成" or "任务失败: xxx")
+          const completedTitle = typeof step.title === 'string' ? step.title : undefined
+          // Get error message if failed
+          const errorMessage =
+            details.status === 'failed' ? (details.error as string | undefined) : undefined
 
           if (startIdx !== undefined && entries[startIdx]) {
-            entries[startIdx].status = 'completed';
-            entries[startIdx].resultCount = resultCount;
-            entries[startIdx].endIndex = index;
-            entries[startIdx].completedTitle = completedTitle;
+            entries[startIdx].status = details.status as 'completed' | 'failed'
+            entries[startIdx].resultCount = resultCount
+            entries[startIdx].endIndex = index
+            entries[startIdx].completedTitle = completedTitle
+            entries[startIdx].errorMessage = errorMessage
           }
         }
-      });
+      })
     }
 
-    return entries;
-  }, [items]);
+    return entries
+  }, [items])
 
   // Check if any tool is still running
-  const hasRunningTool = toolEntries.some(entry => entry.status === 'running');
-  const isRunning = isRunningStatus(taskStatus);
-  const isCompleted = isTerminalStatus(taskStatus);
+  const hasRunningTool = toolEntries.some(entry => entry.status === 'running')
+  const isRunning = isRunningStatus(taskStatus)
+  const isCompleted = isTerminalStatus(taskStatus)
 
   // Also get tool counts from the standard extraction for fallback
-  const toolCounts = useMemo(() => extractToolCalls(items), [items]);
-  const toolCountFromCounts = Object.values(toolCounts).reduce((sum, count) => sum + count, 0);
+  const toolCounts = useMemo(() => extractToolCalls(items), [items])
+  const toolCountFromCounts = Object.values(toolCounts).reduce((sum, count) => sum + count, 0)
 
   // Default to expanded if there's an active tool
-  const [isExpanded, setIsExpanded] = useState(hasRunningTool || isRunning);
+  const [isExpanded, setIsExpanded] = useState(hasRunningTool || isRunning)
 
   // Early return after hooks
   if (items.length === 0 || (toolEntries.length === 0 && toolCountFromCounts === 0)) {
-    return null;
+    return null
   }
 
-  const toolCount = toolEntries.length > 0 ? toolEntries.length : toolCountFromCounts;
+  const toolCount = toolEntries.length > 0 ? toolEntries.length : toolCountFromCounts
 
   // Summary text
   const summaryText =
@@ -147,7 +162,7 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
       ? `${t('chat:messages.using_tools') || 'Using tools'}...`
       : toolCount > 0
         ? `${t('chat:messages.used_tools') || 'Used tools'} · ${toolCount} ${t('chat:messages.times') || 'times'}`
-        : `${t('chat:messages.used_tools') || 'Used tools'}`;
+        : `${t('chat:messages.used_tools') || 'Used tools'}`
 
   return (
     <div className="-mb-2">
@@ -178,7 +193,9 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
                   className={`absolute -left-[19px] top-0.5 w-3 h-3 rounded-full border-2 bg-surface ${
                     entry.status === 'running'
                       ? 'border-blue-500 animate-pulse'
-                      : 'border-green-500/60'
+                      : entry.status === 'failed'
+                        ? 'border-red-500/60'
+                        : 'border-green-500/60'
                   }`}
                 />
                 <div className="text-xs">
@@ -186,7 +203,9 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
                     className={`font-medium ${
                       entry.status === 'running'
                         ? 'text-blue-600 dark:text-blue-400'
-                        : 'text-green-600 dark:text-green-400'
+                        : entry.status === 'failed'
+                          ? 'text-red-600 dark:text-red-400'
+                          : 'text-green-600 dark:text-green-400'
                     }`}
                   >
                     {entry.status === 'running'
@@ -201,7 +220,7 @@ const SimpleThinkingView = memo(function SimpleThinkingView({
         </div>
       )}
     </div>
-  );
-});
+  )
+})
 
-export default SimpleThinkingView;
+export default SimpleThinkingView

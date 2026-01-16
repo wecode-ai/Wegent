@@ -384,8 +384,11 @@ tags: ["api", "test"]
         )
 
         assert response.status_code == 400
-        assert "referenced by Ghosts" in response.json()["detail"]
-        assert "api-test-ghost" in response.json()["detail"]
+        # detail is now a dict with structured error info
+        detail = response.json()["detail"]
+        assert detail["code"] == "SKILL_REFERENCED"
+        assert "referenced by Ghosts" in detail["message"]
+        assert any(g["name"] == "api-test-ghost" for g in detail["referenced_ghosts"])
 
     def test_delete_skill_not_found(self, test_client: TestClient, test_token: str):
         """Test deleting non-existent skill returns 404"""

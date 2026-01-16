@@ -18,20 +18,24 @@ class TestContextServiceUpload:
     """Test attachment upload functionality"""
 
     def test_upload_unsupported_file_type(self):
-        """Test upload fails for unsupported file types"""
-        from app.services.context import context_service
+        """Test upload fails for binary files with unknown extensions via MIME detection"""
+        from app.services.attachment.parser import DocumentParseError, DocumentParser
 
         # Arrange
-        mock_db = Mock()
-        user_id = 1
-        filename = "test.exe"
-        binary_data = b"fake exe content"
+        parser = DocumentParser()
+        filename = "test.bin"
+        # Use actual binary data (PNG header) that MIME detection will identify as binary
+        # The parser will reject this because .bin is not a known extension and
+        # the content is binary (not text-based)
+        png_header = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        binary_data = png_header + bytes(100)
 
         # Act & Assert
-        with pytest.raises(ValueError, match="Unsupported file type"):
-            context_service.upload_attachment(
-                db=mock_db, user_id=user_id, filename=filename, binary_data=binary_data
-            )
+        # The parser now allows unknown extensions but uses MIME detection to validate
+        # Binary files without matching parsers will raise DocumentParseError
+        with pytest.raises(DocumentParseError) as exc_info:
+            parser.parse(binary_data, ".bin")
+        assert exc_info.value.error_code == DocumentParseError.UNRECOGNIZED_TYPE
 
     def test_upload_file_too_large(self):
         """Test upload fails when file exceeds size limit"""
@@ -55,6 +59,103 @@ class TestContextServiceStorage:
 
     def test_get_binary_data_from_mysql(self):
         """Test retrieving binary data from MySQL storage"""
+        import sys
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context.context_service import context_service as cs_instance
+
+        # Get the actual module (not the singleton instance) for patching
+        cs_module = sys.modules["app.services.context.context_service"]
+
+        # Arrange
+        mock_db = Mock()
+        storage_key = "attachments/test123_20250113_1_100"
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="test.pdf",
+            status=ContextStatus.READY.value,
+            binary_data=b"stored data",
+            type_data={
+                "storage_backend": "mysql",
+                "storage_key": storage_key,
+                "is_encrypted": False,
+            },
+        )
+        context.id = 100
+
+        # Mock the storage backend to return the binary data
+        # Use patch.object with the module to avoid name conflicts
+        with patch.object(cs_module, "get_storage_backend") as mock_get_backend:
+            mock_backend = Mock()
+            mock_backend.get.return_value = b"stored data"
+            mock_get_backend.return_value = mock_backend
+
+            # Act
+            binary_data = cs_instance.get_attachment_binary_data(mock_db, context)
+
+        # Assert
+        assert binary_data == b"stored data"
+        mock_backend.get.assert_called_once_with(storage_key)
+
+    def test_get_binary_data_with_encryption(self):
+        """Test retrieving and decrypting encrypted binary data"""
+        import sys
+
+        from shared.utils.crypto import encrypt_attachment
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context.context_service import context_service as cs_instance
+
+        # Get the actual module (not the singleton instance) for patching
+        cs_module = sys.modules["app.services.context.context_service"]
+
+        # Arrange
+        mock_db = Mock()
+        storage_key = "attachments/test123_20250113_1_100"
+        original_data = b"original attachment data"
+        encrypted_data = encrypt_attachment(original_data)
+
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="test.pdf",
+            status=ContextStatus.READY.value,
+            binary_data=encrypted_data,
+            type_data={
+                "storage_backend": "mysql",
+                "storage_key": storage_key,
+                "is_encrypted": True,
+            },
+        )
+        context.id = 100
+
+        # Mock the storage backend to return encrypted data
+        # Use patch.object with the module to avoid name conflicts
+        with patch.object(cs_module, "get_storage_backend") as mock_get_backend:
+            mock_backend = Mock()
+            mock_backend.get.return_value = encrypted_data
+            mock_get_backend.return_value = mock_backend
+
+            # Act
+            binary_data = cs_instance.get_attachment_binary_data(mock_db, context)
+
+        # Assert - should return decrypted data
+        assert binary_data == original_data
+        assert binary_data != encrypted_data
+
+    def test_get_binary_data_returns_none_without_storage_key(self):
+        """Test that get_binary_data returns None when storage_key is missing"""
         from app.models.subtask_context import (
             ContextStatus,
             ContextType,
@@ -78,7 +179,7 @@ class TestContextServiceStorage:
         binary_data = context_service.get_attachment_binary_data(mock_db, context)
 
         # Assert
-        assert binary_data == b"stored data"
+        assert binary_data is None
 
 
 class TestContextServiceVision:

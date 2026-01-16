@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -25,39 +25,40 @@ import {
   CompositePropagator,
   W3CBaggagePropagator,
   W3CTraceContextPropagator,
-} from '@opentelemetry/core';
-import { WebTracerProvider } from '@opentelemetry/sdk-trace-web';
-import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
-import { registerInstrumentations } from '@opentelemetry/instrumentation';
-import { resourceFromAttributes, detectResources } from '@opentelemetry/resources';
-import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { browserDetector } from '@opentelemetry/opentelemetry-browser-detector';
-import { FetchInstrumentation } from '@opentelemetry/instrumentation-fetch';
-import { DocumentLoadInstrumentation } from '@opentelemetry/instrumentation-document-load';
-import { trace, SpanStatusCode, Attributes, Span } from '@opentelemetry/api';
+} from '@opentelemetry/core'
+import { WebTracerProvider } from '@opentelemetry/sdk-trace-web'
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { registerInstrumentations } from '@opentelemetry/instrumentation'
+import { resourceFromAttributes, detectResources } from '@opentelemetry/resources'
+import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions'
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
+import { browserDetector } from '@opentelemetry/opentelemetry-browser-detector'
+import { FetchInstrumentation } from '@opentelemetry/instrumentation-fetch'
+import { DocumentLoadInstrumentation } from '@opentelemetry/instrumentation-document-load'
+import { trace, SpanStatusCode, Attributes, Span } from '@opentelemetry/api'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 // Track initialization state
-let isInitialized = false;
+let isInitialized = false
 
 /**
  * Configuration options for the frontend tracer
  */
 export interface FrontendTracerConfig {
   /** Service name for traces (default: wegent-frontend) */
-  serviceName?: string;
+  serviceName?: string
   /** OTLP endpoint URL (default: /otlp/traces) */
-  otlpEndpoint?: string;
+  otlpEndpoint?: string
   /** Batch delay in milliseconds (default: 500) */
-  batchDelayMs?: number;
+  batchDelayMs?: number
   /** Whether to trace fetch requests (default: true) */
-  traceFetch?: boolean;
+  traceFetch?: boolean
   /** Whether to trace document load (default: true) */
-  traceDocumentLoad?: boolean;
+  traceDocumentLoad?: boolean
   /** URL patterns to propagate trace headers to (default: all) */
-  propagateTraceHeaderCorsUrls?: RegExp | RegExp[];
+  propagateTraceHeaderCorsUrls?: RegExp | RegExp[]
   /** URL patterns to ignore from tracing (default: Next.js internal URLs) */
-  ignoreUrls?: RegExp[];
+  ignoreUrls?: RegExp[]
 }
 
 /**
@@ -74,20 +75,23 @@ const DEFAULT_IGNORE_URLS: RegExp[] = [
   /\.map$/,
   // Quota API (no need to trace)
   /\/api\/quota/,
-];
+]
 
 /**
  * Default configuration
  */
-const defaultConfig: Required<FrontendTracerConfig> = {
-  serviceName: process.env.NEXT_PUBLIC_OTEL_SERVICE_NAME || 'wegent-frontend',
-  otlpEndpoint: '/otlp/traces',
-  batchDelayMs: 500,
-  traceFetch: true,
-  traceDocumentLoad: true,
-  propagateTraceHeaderCorsUrls: /.*/,
-  ignoreUrls: DEFAULT_IGNORE_URLS,
-};
+const getDefaultConfig = (): Required<FrontendTracerConfig> => {
+  const runtimeConfig = getRuntimeConfigSync()
+  return {
+    serviceName: runtimeConfig.otelServiceName,
+    otlpEndpoint: '/otlp/traces',
+    batchDelayMs: 500,
+    traceFetch: true,
+    traceDocumentLoad: true,
+    propagateTraceHeaderCorsUrls: /.*/,
+    ignoreUrls: DEFAULT_IGNORE_URLS,
+  }
+}
 
 /**
  * Initialize the frontend OpenTelemetry tracer.
@@ -117,39 +121,40 @@ const defaultConfig: Required<FrontendTracerConfig> = {
 export async function initFrontendTracer(config: FrontendTracerConfig = {}): Promise<void> {
   // Prevent double initialization
   if (isInitialized) {
-    console.warn('[FrontendTracer] Already initialized, skipping');
-    return;
+    console.warn('[FrontendTracer] Already initialized, skipping')
+    return
   }
 
-  // Check if telemetry is enabled
-  const otelEnabled = process.env.NEXT_PUBLIC_OTEL_ENABLED === 'true';
-  if (!otelEnabled) {
-    console.info('[FrontendTracer] Telemetry is disabled');
-    return;
+  // Check if telemetry is enabled via runtime config
+  const runtimeConfig = getRuntimeConfigSync()
+  if (!runtimeConfig.otelEnabled) {
+    console.info('[FrontendTracer] Telemetry is disabled')
+    return
   }
 
   // Merge config with defaults
-  const finalConfig = { ...defaultConfig, ...config };
+  const defaultConfig = getDefaultConfig()
+  const finalConfig = { ...defaultConfig, ...config }
 
   try {
     // Dynamically import ZoneContextManager to support async operations
-    const { ZoneContextManager } = await import('@opentelemetry/context-zone');
+    const { ZoneContextManager } = await import('@opentelemetry/context-zone')
 
     // Create base resource with service name
     let resource = resourceFromAttributes({
       [ATTR_SERVICE_NAME]: finalConfig.serviceName,
-    });
+    })
 
     // Detect browser-specific resources (user agent, platform, etc.)
     const detectedResources = await detectResources({
       detectors: [browserDetector],
-    });
-    resource = resource.merge(detectedResources);
+    })
+    resource = resource.merge(detectedResources)
 
     // Create the OTLP exporter pointing to our proxy endpoint
     const exporter = new OTLPTraceExporter({
       url: finalConfig.otlpEndpoint,
-    });
+    })
 
     // Create the tracer provider with batch processing
     const provider = new WebTracerProvider({
@@ -159,7 +164,7 @@ export async function initFrontendTracer(config: FrontendTracerConfig = {}): Pro
           scheduledDelayMillis: finalConfig.batchDelayMs,
         }),
       ],
-    });
+    })
 
     // Register the provider with context manager and propagators
     provider.register({
@@ -167,7 +172,7 @@ export async function initFrontendTracer(config: FrontendTracerConfig = {}): Pro
       propagator: new CompositePropagator({
         propagators: [new W3CBaggagePropagator(), new W3CTraceContextPropagator()],
       }),
-    });
+    })
 
     // Build the list of instrumentations
     // NOTE: UserInteractionInstrumentation is intentionally NOT included.
@@ -175,7 +180,7 @@ export async function initFrontendTracer(config: FrontendTracerConfig = {}): Pro
     // information (e.g., "click on DIV at //html/body/div[5]/div/div").
     // Instead, use the useTraceAction hook or traceLocalAction function
     // to manually trace meaningful user actions with proper context.
-    const instrumentations = [];
+    const instrumentations = []
 
     // Fetch instrumentation
     if (finalConfig.traceFetch) {
@@ -188,31 +193,31 @@ export async function initFrontendTracer(config: FrontendTracerConfig = {}): Pro
           applyCustomAttributesOnSpan: (span, request) => {
             // Add custom attributes to fetch spans
             if (request instanceof Request) {
-              span.setAttribute('http.request.method', request.method);
+              span.setAttribute('http.request.method', request.method)
             }
           },
         })
-      );
+      )
     }
 
     // Document load instrumentation
     if (finalConfig.traceDocumentLoad) {
-      instrumentations.push(new DocumentLoadInstrumentation());
+      instrumentations.push(new DocumentLoadInstrumentation())
     }
 
     // Register all instrumentations
     registerInstrumentations({
       tracerProvider: provider,
       instrumentations,
-    });
+    })
 
-    isInitialized = true;
+    isInitialized = true
     console.info(
       `[FrontendTracer] Initialized successfully for service '${finalConfig.serviceName}'`
-    );
+    )
   } catch (error) {
-    console.error('[FrontendTracer] Failed to initialize:', error);
-    throw error;
+    console.error('[FrontendTracer] Failed to initialize:', error)
+    throw error
   }
 }
 
@@ -222,11 +227,11 @@ export async function initFrontendTracer(config: FrontendTracerConfig = {}): Pro
  * @returns true if initialized, false otherwise
  */
 export function isFrontendTracerInitialized(): boolean {
-  return isInitialized;
+  return isInitialized
 }
 
 // Tracer name for manual spans
-const TRACER_NAME = 'wegent-frontend-manual';
+const TRACER_NAME = 'wegent-frontend-manual'
 
 /**
  * Get the tracer instance for creating manual spans.
@@ -235,7 +240,7 @@ const TRACER_NAME = 'wegent-frontend-manual';
  * @returns The tracer instance
  */
 export function getTracer() {
-  return trace.getTracer(TRACER_NAME);
+  return trace.getTracer(TRACER_NAME)
 }
 
 /**
@@ -264,30 +269,30 @@ export async function traceLocalAction<T>(
 ): Promise<T> {
   // If telemetry is not enabled or not initialized, just run the function
   if (!isInitialized) {
-    return fn();
+    return fn()
   }
 
-  const tracer = getTracer();
+  const tracer = getTracer()
   const span = tracer.startSpan(name, {
     attributes: {
       'action.type': 'local',
       ...attributes,
     },
-  });
+  })
 
   try {
-    const result = await fn();
-    span.setStatus({ code: SpanStatusCode.OK });
-    return result;
+    const result = await fn()
+    span.setStatus({ code: SpanStatusCode.OK })
+    return result
   } catch (error) {
     span.setStatus({
       code: SpanStatusCode.ERROR,
       message: error instanceof Error ? error.message : String(error),
-    });
-    span.recordException(error instanceof Error ? error : new Error(String(error)));
-    throw error;
+    })
+    span.recordException(error instanceof Error ? error : new Error(String(error)))
+    throw error
   } finally {
-    span.end();
+    span.end()
   }
 }
 
@@ -313,30 +318,30 @@ export async function traceLocalAction<T>(
 export function traceLocalActionSync<T>(name: string, attributes: Attributes, fn: () => T): T {
   // If telemetry is not enabled or not initialized, just run the function
   if (!isInitialized) {
-    return fn();
+    return fn()
   }
 
-  const tracer = getTracer();
+  const tracer = getTracer()
   const span = tracer.startSpan(name, {
     attributes: {
       'action.type': 'local',
       ...attributes,
     },
-  });
+  })
 
   try {
-    const result = fn();
-    span.setStatus({ code: SpanStatusCode.OK });
-    return result;
+    const result = fn()
+    span.setStatus({ code: SpanStatusCode.OK })
+    return result
   } catch (error) {
     span.setStatus({
       code: SpanStatusCode.ERROR,
       message: error instanceof Error ? error.message : String(error),
-    });
-    span.recordException(error instanceof Error ? error : new Error(String(error)));
-    throw error;
+    })
+    span.recordException(error instanceof Error ? error : new Error(String(error)))
+    throw error
   } finally {
-    span.end();
+    span.end()
   }
 }
 
@@ -365,14 +370,14 @@ export function traceLocalActionSync<T>(name: string, attributes: Attributes, fn
  */
 export function createSpan(name: string, attributes?: Attributes): Span | undefined {
   if (!isInitialized) {
-    return undefined;
+    return undefined
   }
 
-  const tracer = getTracer();
-  return tracer.startSpan(name, { attributes });
+  const tracer = getTracer()
+  return tracer.startSpan(name, { attributes })
 }
 
 /**
  * Default export for convenience
  */
-export default initFrontendTracer;
+export default initFrontendTracer

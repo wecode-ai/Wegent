@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { memo } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { SystemInfoDisplayProps } from '../types';
-import { MCP_STATUS_COLORS } from '../utils/constants';
+import { memo } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { SystemInfoDisplayProps } from '../types'
+import { MCP_STATUS_COLORS } from '../utils/constants'
 
 /**
  * Component to display system information (model, tools, MCP servers, etc.)
@@ -20,7 +20,7 @@ const SystemInfoDisplay = memo(function SystemInfoDisplay({
   permissionMode,
   cwd,
 }: SystemInfoDisplayProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   return (
     <div className="space-y-1 text-xs text-text-tertiary">
@@ -50,10 +50,10 @@ const SystemInfoDisplay = memo(function SystemInfoDisplay({
           </span>
           <div className="flex gap-2">
             {mcpServers.map((server, idx) => {
-              const isConnected = server.status === 'connected';
+              const isConnected = server.status === 'connected'
               const statusColors = isConnected
                 ? MCP_STATUS_COLORS.connected
-                : MCP_STATUS_COLORS.disconnected;
+                : MCP_STATUS_COLORS.disconnected
 
               return (
                 <span
@@ -62,7 +62,7 @@ const SystemInfoDisplay = memo(function SystemInfoDisplay({
                 >
                   {server.name}
                 </span>
-              );
+              )
             })}
           </div>
         </div>
@@ -88,7 +88,7 @@ const SystemInfoDisplay = memo(function SystemInfoDisplay({
         </div>
       )}
     </div>
-  );
-});
+  )
+})
 
-export default SystemInfoDisplay;
+export default SystemInfoDisplay

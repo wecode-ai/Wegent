@@ -2,55 +2,55 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { Button } from '@/components/ui/button';
+import React, { Component, ErrorInfo, ReactNode } from 'react'
+import { Button } from '@/components/ui/button'
 
 interface Props {
-  children: ReactNode;
-  fallback?: ReactNode;
+  children: ReactNode
+  fallback?: ReactNode
 }
 
 interface State {
-  hasError: boolean;
-  error?: Error;
+  hasError: boolean
+  error?: Error
 }
 
 export default class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
-    super(props);
-    this.state = { hasError: false };
+    super(props)
+    this.state = { hasError: false }
   }
 
   static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error };
+    return { hasError: true, error }
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('ErrorBoundary caught an error:', error, errorInfo);
+    console.error('ErrorBoundary caught an error:', error, errorInfo)
 
     // Check if it's a chunk loading error
     if (error.name === 'ChunkLoadError' || error.message.includes('ChunkLoadError')) {
       console.error(
         'Chunk loading error detected. This might be due to network issues or deployment problems.'
-      );
+      )
     }
   }
 
   handleReload = () => {
-    window.location.reload();
-  };
+    window.location.reload()
+  }
 
   render() {
     if (this.state.hasError) {
       // Check if it's specifically a chunk loading error
       const isChunkError =
         this.state.error?.name === 'ChunkLoadError' ||
-        this.state.error?.message.includes('ChunkLoadError');
+        this.state.error?.message.includes('ChunkLoadError')
 
       if (this.props.fallback) {
-        return this.props.fallback;
+        return this.props.fallback
       }
 
       return (
@@ -81,11 +81,11 @@ export default class ErrorBoundary extends Component<Props, State> {
                     if ('caches' in window) {
                       caches.keys().then(names => {
                         names.forEach(name => {
-                          caches.delete(name);
-                        });
-                      });
+                          caches.delete(name)
+                        })
+                      })
                     }
-                    this.handleReload();
+                    this.handleReload()
                   }}
                   size="lg"
                   className="w-full"
@@ -107,9 +107,9 @@ export default class ErrorBoundary extends Component<Props, State> {
             )}
           </div>
         </div>
-      );
+      )
     }
 
-    return this.props.children;
+    return this.props.children
   }
 }

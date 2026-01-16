@@ -1,69 +1,71 @@
-import React, { useEffect, useState } from 'react';
-import { Coins } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Spinner } from '@/components/ui/spinner';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import React, { useEffect, useState } from 'react'
+import { Coins } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
-import { quotaApis, QuotaData } from '@/apis/quota';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useToast } from '@/hooks/use-toast';
-import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
+import { quotaApis, QuotaData } from '@/apis/quota'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useToast } from '@/hooks/use-toast'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 type QuotaUsageProps = {
-  className?: string;
+  className?: string
   // When true, display only an icon instead of full text (for mobile space constraints)
-  compact?: boolean;
-};
+  compact?: boolean
+}
 
 export default function QuotaUsage({ className, compact = false }: QuotaUsageProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const isMobile = useIsMobile();
-  const [quota, setQuota] = useState<QuotaData | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const isMobile = useIsMobile()
+  const [quota, setQuota] = useState<QuotaData | null>(null)
+  const [loading, setLoading] = useState<boolean>(false)
+  const [error, setError] = useState<string | null>(null)
 
   const handleLoadQuota = React.useCallback(() => {
-    setLoading(true);
-    setError(null);
+    setLoading(true)
+    setError(null)
     quotaApis
       .fetchQuota()
       .then(data => {
-        setQuota(data);
+        setQuota(data)
       })
       .catch(() => {
-        setError(t('common:quota.load_failed'));
+        setError(t('common:quota.load_failed'))
         toast({
           variant: 'destructive',
           title: t('common:quota.load_failed'),
-        });
+        })
       })
       .finally(() => {
-        setLoading(false);
-      });
-  }, [t, toast]);
+        setLoading(false)
+      })
+  }, [t, toast])
 
   useEffect(() => {
-    handleLoadQuota();
-  }, [handleLoadQuota]);
+    handleLoadQuota()
+  }, [handleLoadQuota])
 
   // Separate effect for polling when quota data is available
   useEffect(() => {
-    let timer: NodeJS.Timeout | null = null;
+    let timer: NodeJS.Timeout | null = null
     if (quota && Object.keys(quota).length > 0) {
       timer = setInterval(() => {
-        handleLoadQuota();
-      }, 20000);
+        handleLoadQuota()
+      }, 20000)
     }
     return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [quota, handleLoadQuota]);
+      if (timer) clearInterval(timer)
+    }
+  }, [quota, handleLoadQuota])
 
-  const deployMode = process.env.NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS;
-  if (deployMode !== 'enable') {
-    return null;
+  // Check if quota display is enabled via runtime config
+  const enableDisplayQuotas = getRuntimeConfigSync().enableDisplayQuotas
+  if (!enableDisplayQuotas) {
+    return null
   }
 
   if (loading && !quota) {
@@ -71,30 +73,29 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
       <div className={`flex items-center justify-center mt-1 mb-2 ${className ?? ''}`}>
         <Spinner size="sm" />
       </div>
-    );
+    )
   }
 
   if (error || !quota) {
     // Don't render anything when there's no data or error (empty objects are handled as null in API)
     if (!quota && !error) {
-      return null;
+      return null
     }
     return (
       <div className={`text-xs text-text-muted mt-1 mb-2 ${className ?? ''}`}>
         {error || t('common:quota.load_failed')}
       </div>
-    );
+    )
   }
 
-  const { monthly_quota, monthly_usage, permanent_quota, permanent_usage } =
-    quota.user_quota_detail;
+  const { monthly_quota, monthly_usage, permanent_quota, permanent_usage } = quota.user_quota_detail
 
   const brief = t('common:quota.brief', {
     quota_source: quota.quota_source,
     monthly_usage,
     monthly_quota: monthly_quota.toLocaleString(),
     permanent_quota: (permanent_quota - permanent_usage).toLocaleString(),
-  });
+  })
 
   const detail = (
     <div>
@@ -113,7 +114,7 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
         })}
       </div>
     </div>
-  );
+  )
   // Compact mode: show only icon
   // On mobile: use Popover (click to show)
   // On desktop: use Tooltip (hover to show)
@@ -129,14 +130,14 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
       >
         <Coins className="w-4 h-4 text-text-muted hover:text-text-primary" />
       </Button>
-    );
+    )
 
     const contentElement = (
       <div className="text-xs">
         <div className="mb-1">{brief}</div>
         {detail}
       </div>
-    );
+    )
 
     // On mobile, use Popover for click-to-show behavior
     if (isMobile) {
@@ -147,7 +148,7 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
             {contentElement}
           </PopoverContent>
         </Popover>
-      );
+      )
     }
 
     // On desktop, use Tooltip for hover behavior
@@ -156,7 +157,7 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
         <TooltipTrigger asChild>{iconButton}</TooltipTrigger>
         <TooltipContent side="bottom">{contentElement}</TooltipContent>
       </Tooltip>
-    );
+    )
   }
 
   return (
@@ -173,10 +174,10 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
             color: 'rgb(var(--color-text-muted))',
           }}
           onMouseEnter={e => {
-            e.currentTarget.style.color = 'rgb(var(--color-text-primary))';
+            e.currentTarget.style.color = 'rgb(var(--color-text-primary))'
           }}
           onMouseLeave={e => {
-            e.currentTarget.style.color = 'rgb(var(--color-text-muted))';
+            e.currentTarget.style.color = 'rgb(var(--color-text-muted))'
           }}
         >
           {brief}
@@ -184,5 +185,5 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
       </TooltipTrigger>
       <TooltipContent side="bottom">{detail}</TooltipContent>
     </Tooltip>
-  );
+  )
 }

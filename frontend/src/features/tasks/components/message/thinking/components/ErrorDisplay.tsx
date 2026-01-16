@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { memo } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { ErrorDisplayProps } from '../types';
+import { memo } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { ErrorDisplayProps } from '../types'
 
 /**
  * Component to display error information
@@ -15,7 +15,7 @@ const ErrorDisplay = memo(function ErrorDisplay({
   errorMessage,
   executionType,
 }: ErrorDisplayProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   return (
     <div>
@@ -40,7 +40,7 @@ const ErrorDisplay = memo(function ErrorDisplay({
         )}
       </div>
     </div>
-  );
-});
+  )
+})
 
-export default ErrorDisplay;
+export default ErrorDisplay

@@ -2,148 +2,169 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { apiClient } from './client';
+import { apiClient } from './client'
 
 // Model Category Type (different from resource type public/user/group)
-export type ModelCategoryType = 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank';
+export type ModelCategoryType = 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank'
 
 // Type-specific configurations
 export interface TTSConfig {
-  voice?: string;
-  speed?: number;
-  output_format?: 'mp3' | 'wav';
+  voice?: string
+  speed?: number
+  output_format?: 'mp3' | 'wav'
 }
 
 export interface STTConfig {
-  language?: string;
-  transcription_format?: 'text' | 'srt' | 'vtt';
+  language?: string
+  transcription_format?: 'text' | 'srt' | 'vtt'
 }
 
 export interface EmbeddingConfig {
-  dimensions?: number;
-  encoding_format?: 'float' | 'base64';
+  dimensions?: number
+  encoding_format?: 'float' | 'base64'
 }
 
 export interface RerankConfig {
-  top_n?: number;
-  return_documents?: boolean;
+  top_n?: number
+  return_documents?: boolean
 }
 
 // Model CRD Types
 export interface ModelCRD {
-  apiVersion?: string;
-  kind?: string;
+  apiVersion?: string
+  kind?: string
   metadata: {
-    name: string;
-    namespace: string;
-    displayName?: string; // Human-readable display name
-  };
+    name: string
+    namespace: string
+    displayName?: string // Human-readable display name
+  }
   spec: {
     modelConfig: {
       env: {
-        model: string; // 'openai' | 'claude'
-        model_id: string;
-        api_key: string;
-        base_url?: string;
-        custom_headers?: Record<string, string>; // Custom HTTP headers to override defaults
-      };
-    };
-    protocol?: string;
-    isCustomConfig?: boolean;
+        model: string // 'openai' | 'claude'
+        model_id: string
+        api_key: string
+        base_url?: string
+        custom_headers?: Record<string, string> // Custom HTTP headers to override defaults
+      }
+    }
+    protocol?: string
+    isCustomConfig?: boolean
     // Context window and output token limits for LLM models
-    contextWindow?: number; // Maximum context window size in tokens
-    maxOutputTokens?: number; // Maximum output tokens the model can generate per response
+    contextWindow?: number // Maximum context window size in tokens
+    maxOutputTokens?: number // Maximum output tokens the model can generate per response
     // New fields for multi-type model support
-    modelType?: ModelCategoryType;
-    ttsConfig?: TTSConfig;
-    sttConfig?: STTConfig;
-    embeddingConfig?: EmbeddingConfig;
-    rerankConfig?: RerankConfig;
-  };
+    modelType?: ModelCategoryType
+    ttsConfig?: TTSConfig
+    sttConfig?: STTConfig
+    embeddingConfig?: EmbeddingConfig
+    rerankConfig?: RerankConfig
+  }
   status?: {
-    state: string;
-  };
+    state: string
+  }
 }
 
 export interface ModelListResponse {
-  items: ModelCRD[];
-  total?: number;
+  items: ModelCRD[]
+  total?: number
 }
 
 // Public Model Types
 export interface PublicModelItem {
-  id: number;
-  name: string;
+  id: number
+  name: string
   config: {
     env?: {
-      model?: string;
-      model_id?: string;
-      api_key?: string;
-      base_url?: string;
-      custom_headers?: Record<string, string>; // Custom HTTP headers to override defaults
-    };
-  };
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
+      model?: string
+      model_id?: string
+      api_key?: string
+      base_url?: string
+      custom_headers?: Record<string, string> // Custom HTTP headers to override defaults
+    }
+  }
+  is_active: boolean
+  created_at: string
+  updated_at: string
 }
 
 export interface PublicModelListResponse {
-  total: number;
-  items: PublicModelItem[];
+  total: number
+  items: PublicModelItem[]
 }
 
 // Legacy Model Types (for backward compatibility)
 export interface Model {
-  name: string;
-  displayName?: string | null;
+  name: string
+  displayName?: string | null
 }
 
 export interface ModelNamesResponse {
-  data: Model[];
+  data: Model[]
 }
 
 // Unified Model Types (new API with type differentiation)
-export type ModelTypeEnum = 'public' | 'user' | 'group';
+export type ModelTypeEnum = 'public' | 'user' | 'group'
 
 export interface UnifiedModel {
-  name: string;
-  type: ModelTypeEnum; // 'public' or 'user' or 'group' - identifies model source
-  displayName?: string | null;
-  provider?: string | null; // 'openai' | 'claude'
-  modelId?: string | null;
-  namespace?: string; // Resource namespace (group name or 'default')
-  config?: Record<string, unknown>;
-  isActive?: boolean;
-  modelCategoryType?: ModelCategoryType; // New: model category type (llm, tts, stt, embedding, rerank)
+  name: string
+  type: ModelTypeEnum // 'public' or 'user' or 'group' - identifies model source
+  displayName?: string | null
+  provider?: string | null // 'openai' | 'claude'
+  modelId?: string | null
+  namespace?: string // Resource namespace (group name or 'default')
+  config?: Record<string, unknown>
+  isActive?: boolean
+  modelCategoryType?: ModelCategoryType // New: model category type (llm, tts, stt, embedding, rerank)
 }
 
 export interface UnifiedModelListResponse {
-  data: UnifiedModel[];
+  data: UnifiedModel[]
 }
 
 // Test Connection Types
 export interface TestConnectionRequest {
-  provider_type: 'openai' | 'anthropic' | 'gemini';
-  model_id: string;
-  api_key: string;
-  base_url?: string;
-  custom_headers?: Record<string, string>; // Custom HTTP headers to override defaults
-  model_category_type?: ModelCategoryType; // Model category type for appropriate test method
+  provider_type: 'openai' | 'anthropic' | 'gemini'
+  model_id: string
+  api_key: string
+  base_url?: string
+  custom_headers?: Record<string, string> // Custom HTTP headers to override defaults
+  model_category_type?: ModelCategoryType // Model category type for appropriate test method
 }
 
 export interface TestConnectionResponse {
-  success: boolean;
-  message: string;
+  success: boolean
+  message: string
+}
+
+// Fetch Available Models Types
+export interface FetchAvailableModelsRequest {
+  provider_type: 'openai' | 'anthropic' | 'gemini' | 'custom'
+  api_key: string
+  base_url?: string
+  custom_headers?: Record<string, string>
+}
+
+export interface AvailableModel {
+  id: string
+  name?: string
+  created?: number
+  owned_by?: string
+}
+
+export interface FetchAvailableModelsResponse {
+  success: boolean
+  models: AvailableModel[]
+  message?: string
 }
 
 // Compatible Models Types
 export interface CompatibleModel {
-  name: string;
+  name: string
 }
 
 export interface CompatibleModelsResponse {
-  models: CompatibleModel[];
+  models: CompatibleModel[]
 }
 
 // Model Services
@@ -153,7 +174,7 @@ export const modelApis = {
    * Get model names for a specific shell type (legacy API, use getUnifiedModels for new implementations)
    */
   async getModelNames(shellType: string): Promise<ModelNamesResponse> {
-    return apiClient.get(`/models/names?shell_type=${encodeURIComponent(shellType)}`);
+    return apiClient.get(`/models/names?shell_type=${encodeURIComponent(shellType)}`)
   },
 
   /**
@@ -175,24 +196,24 @@ export const modelApis = {
     groupName?: string,
     modelCategoryType?: ModelCategoryType
   ): Promise<UnifiedModelListResponse> {
-    const params = new URLSearchParams();
+    const params = new URLSearchParams()
     if (shellType) {
-      params.append('shell_type', shellType);
+      params.append('shell_type', shellType)
     }
     if (includeConfig) {
-      params.append('include_config', 'true');
+      params.append('include_config', 'true')
     }
     if (scope) {
-      params.append('scope', scope);
+      params.append('scope', scope)
     }
     if (groupName) {
-      params.append('group_name', groupName);
+      params.append('group_name', groupName)
     }
     if (modelCategoryType) {
-      params.append('model_category_type', modelCategoryType);
+      params.append('model_category_type', modelCategoryType)
     }
-    const queryString = params.toString();
-    return apiClient.get(`/models/unified${queryString ? `?${queryString}` : ''}`);
+    const queryString = params.toString()
+    return apiClient.get(`/models/unified${queryString ? `?${queryString}` : ''}`)
   },
 
   /**
@@ -202,14 +223,14 @@ export const modelApis = {
    * @param modelType - Optional model type ('public' or 'user')
    */
   async getUnifiedModel(modelName: string, modelType?: ModelTypeEnum): Promise<UnifiedModel> {
-    const params = new URLSearchParams();
+    const params = new URLSearchParams()
     if (modelType) {
-      params.append('model_type', modelType);
+      params.append('model_type', modelType)
     }
-    const queryString = params.toString();
+    const queryString = params.toString()
     return apiClient.get(
       `/models/unified/${encodeURIComponent(modelName)}${queryString ? `?${queryString}` : ''}`
-    );
+    )
   },
   /**
    * Get all models as CRD resources (user's own models)
@@ -220,26 +241,26 @@ export const modelApis = {
     scope?: 'personal' | 'group' | 'all',
     groupName?: string
   ): Promise<ModelListResponse> {
-    const params = new URLSearchParams();
+    const params = new URLSearchParams()
     if (scope) {
-      params.append('scope', scope);
+      params.append('scope', scope)
     }
     if (groupName) {
-      params.append('group_name', groupName);
+      params.append('group_name', groupName)
     }
-    const queryString = params.toString();
+    const queryString = params.toString()
     // Use groupName as namespace when provided, otherwise use 'default'
-    const namespace = groupName || 'default';
+    const namespace = groupName || 'default'
     return apiClient.get(
       `/v1/namespaces/${encodeURIComponent(namespace)}/models${queryString ? `?${queryString}` : ''}`
-    );
+    )
   },
 
   /**
    * Get all public models
    */
   async getPublicModels(page: number = 1, limit: number = 100): Promise<PublicModelListResponse> {
-    return apiClient.get(`/models?page=${page}&limit=${limit}`);
+    return apiClient.get(`/models?page=${page}&limit=${limit}`)
   },
 
   /**
@@ -250,7 +271,7 @@ export const modelApis = {
   async getModel(name: string, namespace: string = 'default'): Promise<ModelCRD> {
     return apiClient.get(
       `/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`
-    );
+    )
   },
 
   /**
@@ -258,8 +279,8 @@ export const modelApis = {
    * @param model - Model CRD data (namespace is taken from model.metadata.namespace)
    */
   async createModel(model: ModelCRD): Promise<ModelCRD> {
-    const namespace = model.metadata.namespace || 'default';
-    return apiClient.post(`/v1/namespaces/${encodeURIComponent(namespace)}/models`, model);
+    const namespace = model.metadata.namespace || 'default'
+    return apiClient.post(`/v1/namespaces/${encodeURIComponent(namespace)}/models`, model)
   },
 
   /**
@@ -268,11 +289,11 @@ export const modelApis = {
    * @param model - Model CRD data (namespace is taken from model.metadata.namespace)
    */
   async updateModel(name: string, model: ModelCRD): Promise<ModelCRD> {
-    const namespace = model.metadata.namespace || 'default';
+    const namespace = model.metadata.namespace || 'default'
     return apiClient.put(
       `/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`,
       model
-    );
+    )
   },
 
   /**
@@ -283,20 +304,29 @@ export const modelApis = {
   async deleteModel(name: string, namespace: string = 'default'): Promise<void> {
     return apiClient.delete(
       `/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`
-    );
+    )
   },
 
   /**
    * Test model connection
    */
   async testConnection(config: TestConnectionRequest): Promise<TestConnectionResponse> {
-    return apiClient.post('/models/test-connection', config);
+    return apiClient.post('/models/test-connection', config)
+  },
+
+  /**
+   * Fetch available models from API provider
+   */
+  async fetchAvailableModels(
+    config: FetchAvailableModelsRequest
+  ): Promise<FetchAvailableModelsResponse> {
+    return apiClient.post('/models/fetch-available-models', config)
   },
 
   /**
    * Get models compatible with a specific shell type
    */
   async getCompatibleModels(shellType: string): Promise<CompatibleModelsResponse> {
-    return apiClient.get(`/models/compatible?shell_type=${encodeURIComponent(shellType)}`);
+    return apiClient.get(`/models/compatible?shell_type=${encodeURIComponent(shellType)}`)
   },
-};
+}

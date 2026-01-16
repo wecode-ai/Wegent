@@ -1,14 +1,23 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect, useCallback } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
-import { fetchUnifiedSkillsList, UnifiedSkill, deleteSkill, downloadSkill } from '@/apis/skills';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  fetchUnifiedSkillsList,
+  UnifiedSkill,
+  deleteSkill,
+  downloadSkill,
+  removeSkillReferences,
+  removeSingleSkillReference,
+  parseSkillReferenceError,
+  ReferencedGhost,
+} from '@/apis/skills'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,94 +27,139 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { Download, Trash2, Sparkles, Globe, Plus } from 'lucide-react';
-import { toast } from 'sonner';
-import SkillUploadModal from './skills/SkillUploadModal';
+} from '@/components/ui/alert-dialog'
+import { Download, Trash2, Sparkles, Globe, Plus } from 'lucide-react'
+import { toast } from 'sonner'
+import SkillUploadModal from './skills/SkillUploadModal'
+import { SkillReferenceConflictDialog } from './skills/SkillReferenceConflictDialog'
 
 interface SkillListWithScopeProps {
-  scope: 'personal' | 'group' | 'all';
-  selectedGroup?: string | null;
-  onGroupChange?: (groupName: string | null) => void;
+  scope: 'personal' | 'group' | 'all'
+  selectedGroup?: string | null
+  onGroupChange?: (groupName: string | null) => void
 }
 
-export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
-  const { t } = useTranslation('common');
-  const [skills, setSkills] = useState<UnifiedSkill[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeProps) {
+  const { t } = useTranslation('common')
+  const [skills, setSkills] = useState<UnifiedSkill[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [uploadModalOpen, setUploadModalOpen] = useState(false)
+
+  // Reference conflict dialog state
+  const [referenceConflictOpen, setReferenceConflictOpen] = useState(false)
+  const [referencedGhosts, setReferencedGhosts] = useState<ReferencedGhost[]>([])
 
   const loadSkills = useCallback(async () => {
     try {
-      setLoading(true);
-      setError(null);
-      const data = await fetchUnifiedSkillsList();
-      setSkills(data);
+      setLoading(true)
+      setError(null)
+      const data = await fetchUnifiedSkillsList({
+        scope: scope,
+        groupName: selectedGroup || undefined,
+      })
+      setSkills(data)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load skills');
+      setError(err instanceof Error ? err.message : 'Failed to load skills')
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, []);
+  }, [scope, selectedGroup])
 
   useEffect(() => {
-    loadSkills();
-  }, [loadSkills]);
+    loadSkills()
+  }, [loadSkills])
 
   const handleDelete = async () => {
-    if (!skillToDelete || skillToDelete.is_public) return;
+    if (!skillToDelete || skillToDelete.is_public) return
 
     try {
-      setDeleting(true);
-      await deleteSkill(skillToDelete.id);
-      toast.success(t('skills.delete_success'));
-      loadSkills();
+      setDeleting(true)
+      await deleteSkill(skillToDelete.id)
+      toast.success(t('skills.delete_success'))
+      loadSkills()
+      setDeleteDialogOpen(false)
+      setSkillToDelete(null)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('skills.delete_failed'));
+      const errorMessage = err instanceof Error ? err.message : String(err)
+
+      // Check if this is a reference conflict error
+      const referenceError = parseSkillReferenceError(errorMessage)
+      if (referenceError) {
+        // Close the simple delete dialog and open the reference conflict dialog
+        setDeleteDialogOpen(false)
+        setReferencedGhosts(referenceError.referenced_ghosts)
+        setReferenceConflictOpen(true)
+      } else {
+        toast.error(errorMessage || t('skills.delete_failed'))
+        setDeleteDialogOpen(false)
+        setSkillToDelete(null)
+      }
     } finally {
-      setDeleting(false);
-      setDeleteDialogOpen(false);
-      setSkillToDelete(null);
+      setDeleting(false)
     }
-  };
+  }
+
+  // Handle removing all references and then deleting the skill
+  const handleRemoveAllReferences = async () => {
+    if (!skillToDelete) return
+
+    await removeSkillReferences(skillToDelete.id)
+    // After removing references, delete the skill
+    await deleteSkill(skillToDelete.id)
+    loadSkills()
+  }
+
+  // Handle removing a single reference
+  const handleRemoveSingleReference = async (ghostId: number) => {
+    if (!skillToDelete) return
+
+    await removeSingleSkillReference(skillToDelete.id, ghostId)
+  }
+
+  // Handle successful deletion after removing references
+  const handleDeleteSuccess = () => {
+    setSkillToDelete(null)
+    setReferencedGhosts([])
+    loadSkills()
+  }
 
   const handleDownload = async (skill: UnifiedSkill) => {
     if (skill.is_public) {
-      toast.error(t('skills.public_no_download'));
-      return;
+      toast.error(t('skills.public_no_download'))
+      return
     }
     try {
-      await downloadSkill(skill.id, skill.name);
-      toast.success(t('skills.download_success'));
+      await downloadSkill(skill.id, skill.name)
+      toast.success(t('skills.download_success'))
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('skills.download_failed'));
+      toast.error(err instanceof Error ? err.message : t('skills.download_failed'))
     }
-  };
+  }
 
   const openDeleteDialog = (skill: UnifiedSkill) => {
-    setSkillToDelete(skill);
-    setDeleteDialogOpen(true);
-  };
+    setSkillToDelete(skill)
+    setDeleteDialogOpen(true)
+  }
 
   // Filter skills based on scope
   const filteredSkills = skills.filter(skill => {
     if (scope === 'personal') {
-      return !skill.is_public;
+      return !skill.is_public
     }
     // For 'all' scope, show all skills
-    return true;
-  });
+    return true
+  })
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="text-text-secondary">{t('skills.loading')}</div>
       </div>
-    );
+    )
   }
 
   if (error) {
@@ -113,15 +167,15 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
       <div className="flex items-center justify-center py-12">
         <div className="text-red-500">{error}</div>
       </div>
-    );
+    )
   }
 
   const handleUploadModalClose = (saved: boolean) => {
-    setUploadModalOpen(false);
+    setUploadModalOpen(false)
     if (saved) {
-      loadSkills();
+      loadSkills()
     }
-  };
+  }
 
   return (
     <div className="space-y-4">
@@ -234,7 +288,7 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>{t('skills.delete_confirm_title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('skills.delete_confirm_message', { name: skillToDelete?.name })}
+              {t('skills.delete_confirm_message', { skillName: skillToDelete?.name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -247,7 +301,25 @@ export function SkillListWithScope({ scope }: SkillListWithScopeProps) {
       </AlertDialog>
 
       {/* Upload Modal */}
-      <SkillUploadModal open={uploadModalOpen} onClose={handleUploadModalClose} />
+      <SkillUploadModal
+        open={uploadModalOpen}
+        onClose={handleUploadModalClose}
+        namespace={scope === 'group' && selectedGroup ? selectedGroup : 'default'}
+      />
+
+      {/* Reference Conflict Dialog */}
+      {skillToDelete && (
+        <SkillReferenceConflictDialog
+          open={referenceConflictOpen}
+          onOpenChange={setReferenceConflictOpen}
+          skillName={skillToDelete.name}
+          skillId={skillToDelete.id}
+          referencedGhosts={referencedGhosts}
+          onRemoveAllReferences={handleRemoveAllReferences}
+          onRemoveSingleReference={handleRemoveSingleReference}
+          onDeleteSuccess={handleDeleteSuccess}
+        />
+      )}
     </div>
-  );
+  )
 }

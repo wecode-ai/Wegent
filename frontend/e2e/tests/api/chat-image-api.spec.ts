@@ -6,25 +6,25 @@
  * with the correct image_url format.
  */
 
-import { test, expect } from '@playwright/test';
-import { createApiClient, ApiClient } from '../../utils/api-client';
-import { ADMIN_USER } from '../../config/test-users';
-import * as fs from 'fs';
-import * as path from 'path';
+import { test, expect } from '@playwright/test'
+import { createApiClient, ApiClient } from '../../utils/api-client'
+import { ADMIN_USER } from '../../config/test-users'
+import * as fs from 'fs'
+import * as path from 'path'
 
 test.describe('Chat Image API Tests', () => {
-  let apiClient: ApiClient;
-  const testImagePath = path.join(__dirname, '../../fixtures/test-image.png');
+  let apiClient: ApiClient
+  const testImagePath = path.join(__dirname, '../../fixtures/test-image.png')
 
   test.beforeEach(async ({ request }) => {
-    apiClient = createApiClient(request);
-    await apiClient.login(ADMIN_USER.username, ADMIN_USER.password);
-  });
+    apiClient = createApiClient(request)
+    await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
+  })
 
   test.describe('Image Upload', () => {
     test('should upload PNG image successfully', async ({ request }) => {
       // Read test image
-      const imageBuffer = fs.readFileSync(testImagePath);
+      const imageBuffer = fs.readFileSync(testImagePath)
 
       // Upload via multipart form
       const response = await request.post(
@@ -41,19 +41,19 @@ test.describe('Chat Image API Tests', () => {
             },
           },
         }
-      );
+      )
 
-      expect(response.status()).toBe(200);
-      const data = await response.json();
+      expect(response.status()).toBe(200)
+      const data = await response.json()
 
       // Verify response structure
-      expect(data.id).toBeDefined();
-      expect(data.id).toBeGreaterThan(0);
-      expect(data.filename).toBe('test-image.png');
-      expect(data.mime_type).toBe('image/png');
-      expect(data.status).toBe('ready');
-      expect(data.file_size).toBeGreaterThan(0);
-    });
+      expect(data.id).toBeDefined()
+      expect(data.id).toBeGreaterThan(0)
+      expect(data.filename).toBe('test-image.png')
+      expect(data.mime_type).toBe('image/png')
+      expect(data.status).toBe('ready')
+      expect(data.file_size).toBeGreaterThan(0)
+    })
 
     test('should upload JPEG image successfully', async ({ request }) => {
       // Create a minimal JPEG for testing (1x1 pixel)
@@ -82,7 +82,7 @@ test.describe('Chat Image API Tests', () => {
         0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
         0xf8, 0xf9, 0xfa, 0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0xfb, 0xd5,
         0xdb, 0x20, 0xa8, 0xf1, 0x7e, 0xff, 0xd9,
-      ]);
+      ])
 
       const response = await request.post(
         `${process.env.E2E_API_URL || 'http://localhost:8000'}/api/attachments/upload`,
@@ -98,19 +98,53 @@ test.describe('Chat Image API Tests', () => {
             },
           },
         }
-      );
+      )
 
-      expect(response.status()).toBe(200);
-      const data = await response.json();
+      expect(response.status()).toBe(200)
+      const data = await response.json()
 
-      expect(data.id).toBeDefined();
-      expect(data.mime_type).toBe('image/jpeg');
-      expect(data.status).toBe('ready');
-    });
+      expect(data.id).toBeDefined()
+      expect(data.mime_type).toBe('image/jpeg')
+      expect(data.status).toBe('ready')
+    })
 
     test('should reject unsupported file types', async ({ request }) => {
-      // Create a fake executable file
-      const exeBuffer = Buffer.from('MZ fake executable content');
+      // Create actual binary data (truncated PNG header) with unknown extension
+      // This tests that binary files without supported extensions are rejected
+      const binaryBuffer = Buffer.from([
+        0x89,
+        0x50,
+        0x4e,
+        0x47,
+        0x0d,
+        0x0a,
+        0x1a,
+        0x0a, // PNG header
+        0x00,
+        0x00,
+        0x00,
+        0x0d,
+        0x49,
+        0x48,
+        0x44,
+        0x52, // IHDR chunk start
+        0x00,
+        0x00,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x01, // 1x1 dimension
+        0xff,
+        0xfe,
+        0xfd,
+        0xfc,
+        0xfb,
+        0xfa,
+        0xf9,
+        0xf8, // More binary data
+      ])
 
       const response = await request.post(
         `${process.env.E2E_API_URL || 'http://localhost:8000'}/api/attachments/upload`,
@@ -120,21 +154,21 @@ test.describe('Chat Image API Tests', () => {
           },
           multipart: {
             file: {
-              name: 'malicious.exe',
-              mimeType: 'application/x-msdownload',
-              buffer: exeBuffer,
+              name: 'unknown.bin',
+              mimeType: 'application/octet-stream',
+              buffer: binaryBuffer,
             },
           },
         }
-      );
+      )
 
-      // Should be rejected
-      expect(response.status()).toBe(400);
-    });
+      // Should be rejected - binary files with unknown extensions are not supported
+      expect(response.status()).toBe(400)
+    })
 
     test('should get attachment details after upload', async ({ request }) => {
       // First upload an image
-      const imageBuffer = fs.readFileSync(testImagePath);
+      const imageBuffer = fs.readFileSync(testImagePath)
 
       const uploadResponse = await request.post(
         `${process.env.E2E_API_URL || 'http://localhost:8000'}/api/attachments/upload`,
@@ -150,11 +184,11 @@ test.describe('Chat Image API Tests', () => {
             },
           },
         }
-      );
+      )
 
-      expect(uploadResponse.status()).toBe(200);
-      const uploadData = await uploadResponse.json();
-      const attachmentId = uploadData.id;
+      expect(uploadResponse.status()).toBe(200)
+      const uploadData = await uploadResponse.json()
+      const attachmentId = uploadData.id
 
       // Get attachment details
       const detailResponse = await request.get(
@@ -164,25 +198,25 @@ test.describe('Chat Image API Tests', () => {
             Authorization: `Bearer ${(apiClient as unknown as { token: string }).token}`,
           },
         }
-      );
+      )
 
-      expect(detailResponse.status()).toBe(200);
-      const detailData = await detailResponse.json();
+      expect(detailResponse.status()).toBe(200)
+      const detailData = await detailResponse.json()
 
       // Verify detailed response
-      expect(detailData.id).toBe(attachmentId);
-      expect(detailData.filename).toBe('test-image.png');
-      expect(detailData.mime_type).toBe('image/png');
-      expect(detailData.file_extension).toBe('.png');
-      expect(detailData.status).toBe('ready');
-      expect(detailData.created_at).toBeDefined();
-    });
-  });
+      expect(detailData.id).toBe(attachmentId)
+      expect(detailData.filename).toBe('test-image.png')
+      expect(detailData.mime_type).toBe('image/png')
+      expect(detailData.file_extension).toBe('.png')
+      expect(detailData.status).toBe('ready')
+      expect(detailData.created_at).toBeDefined()
+    })
+  })
 
   test.describe('Image URL Format Verification', () => {
     test('should have correct image_base64 for PNG images', async ({ request }) => {
       // Upload PNG image
-      const imageBuffer = fs.readFileSync(testImagePath);
+      const imageBuffer = fs.readFileSync(testImagePath)
 
       const uploadResponse = await request.post(
         `${process.env.E2E_API_URL || 'http://localhost:8000'}/api/attachments/upload`,
@@ -198,19 +232,19 @@ test.describe('Chat Image API Tests', () => {
             },
           },
         }
-      );
+      )
 
-      expect(uploadResponse.status()).toBe(200);
-      const data = await uploadResponse.json();
+      expect(uploadResponse.status()).toBe(200)
+      const data = await uploadResponse.json()
 
       // The attachment should be ready with image data
-      expect(data.status).toBe('ready');
-      expect(data.mime_type).toBe('image/png');
+      expect(data.status).toBe('ready')
+      expect(data.mime_type).toBe('image/png')
 
       // Note: The actual image_base64 is stored in the database
       // and used when building the vision message
       // We verify the format is correct by checking the attachment is ready
-    });
+    })
 
     test('should verify expected vision message format structure', async () => {
       // This test verifies the expected format that will be sent to the model
@@ -234,31 +268,31 @@ test.describe('Chat Image API Tests', () => {
             },
           },
         ],
-      };
+      }
 
       // Verify structure
-      expect(expectedFormat.role).toBe('user');
-      expect(Array.isArray(expectedFormat.content)).toBe(true);
-      expect(expectedFormat.content.length).toBe(2);
+      expect(expectedFormat.role).toBe('user')
+      expect(Array.isArray(expectedFormat.content)).toBe(true)
+      expect(expectedFormat.content.length).toBe(2)
 
       // Verify text content
-      const textContent = expectedFormat.content[0];
-      expect(textContent.type).toBe('text');
-      expect(textContent.text).toBeDefined();
+      const textContent = expectedFormat.content[0]
+      expect(textContent.type).toBe('text')
+      expect(textContent.text).toBeDefined()
 
       // Verify image_url content
       const imageContent = expectedFormat.content[1] as {
-        type: string;
-        image_url: { url: string };
-      };
-      expect(imageContent.type).toBe('image_url');
-      expect(imageContent.image_url).toBeDefined();
-      expect(imageContent.image_url.url).toMatch(/^data:image\/png;base64,/);
-    });
+        type: string
+        image_url: { url: string }
+      }
+      expect(imageContent.type).toBe('image_url')
+      expect(imageContent.image_url).toBeDefined()
+      expect(imageContent.image_url.url).toMatch(/^data:image\/png;base64,/)
+    })
 
     test('should verify base64 encoding is valid', async ({ request }) => {
       // Upload image and verify the base64 can be decoded
-      const imageBuffer = fs.readFileSync(testImagePath);
+      const imageBuffer = fs.readFileSync(testImagePath)
 
       const uploadResponse = await request.post(
         `${process.env.E2E_API_URL || 'http://localhost:8000'}/api/attachments/upload`,
@@ -274,28 +308,28 @@ test.describe('Chat Image API Tests', () => {
             },
           },
         }
-      );
+      )
 
-      expect(uploadResponse.status()).toBe(200);
+      expect(uploadResponse.status()).toBe(200)
 
       // Verify the original image can be base64 encoded
-      const base64 = imageBuffer.toString('base64');
-      expect(base64.length).toBeGreaterThan(0);
+      const base64 = imageBuffer.toString('base64')
+      expect(base64.length).toBeGreaterThan(0)
 
       // Verify it can be decoded back
-      const decoded = Buffer.from(base64, 'base64');
-      expect(decoded.equals(imageBuffer)).toBe(true);
+      const decoded = Buffer.from(base64, 'base64')
+      expect(decoded.equals(imageBuffer)).toBe(true)
 
       // Verify the data URL format
-      const dataUrl = `data:image/png;base64,${base64}`;
-      expect(dataUrl).toMatch(/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/);
-    });
-  });
+      const dataUrl = `data:image/png;base64,${base64}`
+      expect(dataUrl).toMatch(/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/)
+    })
+  })
 
   test.describe('Attachment Lifecycle', () => {
     test('should delete unlinked attachment', async ({ request }) => {
       // Upload an image
-      const imageBuffer = fs.readFileSync(testImagePath);
+      const imageBuffer = fs.readFileSync(testImagePath)
 
       const uploadResponse = await request.post(
         `${process.env.E2E_API_URL || 'http://localhost:8000'}/api/attachments/upload`,
@@ -311,11 +345,11 @@ test.describe('Chat Image API Tests', () => {
             },
           },
         }
-      );
+      )
 
-      expect(uploadResponse.status()).toBe(200);
-      const uploadData = await uploadResponse.json();
-      const attachmentId = uploadData.id;
+      expect(uploadResponse.status()).toBe(200)
+      const uploadData = await uploadResponse.json()
+      const attachmentId = uploadData.id
 
       // Delete the attachment (should succeed since it's not linked)
       const deleteResponse = await request.delete(
@@ -325,9 +359,9 @@ test.describe('Chat Image API Tests', () => {
             Authorization: `Bearer ${(apiClient as unknown as { token: string }).token}`,
           },
         }
-      );
+      )
 
-      expect(deleteResponse.status()).toBe(200);
+      expect(deleteResponse.status()).toBe(200)
 
       // Verify it's deleted
       const getResponse = await request.get(
@@ -337,14 +371,14 @@ test.describe('Chat Image API Tests', () => {
             Authorization: `Bearer ${(apiClient as unknown as { token: string }).token}`,
           },
         }
-      );
+      )
 
-      expect(getResponse.status()).toBe(404);
-    });
+      expect(getResponse.status()).toBe(404)
+    })
 
     test('should download uploaded image', async ({ request }) => {
       // Upload an image
-      const imageBuffer = fs.readFileSync(testImagePath);
+      const imageBuffer = fs.readFileSync(testImagePath)
 
       const uploadResponse = await request.post(
         `${process.env.E2E_API_URL || 'http://localhost:8000'}/api/attachments/upload`,
@@ -360,11 +394,11 @@ test.describe('Chat Image API Tests', () => {
             },
           },
         }
-      );
+      )
 
-      expect(uploadResponse.status()).toBe(200);
-      const uploadData = await uploadResponse.json();
-      const attachmentId = uploadData.id;
+      expect(uploadResponse.status()).toBe(200)
+      const uploadData = await uploadResponse.json()
+      const attachmentId = uploadData.id
 
       // Download the attachment
       const downloadResponse = await request.get(
@@ -374,17 +408,17 @@ test.describe('Chat Image API Tests', () => {
             Authorization: `Bearer ${(apiClient as unknown as { token: string }).token}`,
           },
         }
-      );
+      )
 
-      expect(downloadResponse.status()).toBe(200);
+      expect(downloadResponse.status()).toBe(200)
 
       // Verify content type
-      const contentType = downloadResponse.headers()['content-type'];
-      expect(contentType).toBe('image/png');
+      const contentType = downloadResponse.headers()['content-type']
+      expect(contentType).toBe('image/png')
 
       // Verify the downloaded content matches the original
-      const downloadedBuffer = await downloadResponse.body();
-      expect(downloadedBuffer.equals(imageBuffer)).toBe(true);
-    });
-  });
-});
+      const downloadedBuffer = await downloadResponse.body()
+      expect(downloadedBuffer.equals(imageBuffer)).toBe(true)
+    })
+  })
+})

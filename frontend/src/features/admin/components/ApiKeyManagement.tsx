@@ -2,20 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
-import { Button } from '@/components/ui/button';
-import { KeyRound, Key } from 'lucide-react';
-import ServiceKeyList from './ServiceKeyList';
-import PersonalKeyList from './PersonalKeyList';
+import React, { useState } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Button } from '@/components/ui/button'
+import { KeyRound, Key } from 'lucide-react'
+import ServiceKeyList from './ServiceKeyList'
+import PersonalKeyList from './PersonalKeyList'
 
-type KeyType = 'service' | 'personal';
+type KeyType = 'service' | 'personal'
 
 const ApiKeyManagement: React.FC = () => {
-  const { t } = useTranslation('admin');
-  const [activeKeyType, setActiveKeyType] = useState<KeyType>('service');
+  const { t } = useTranslation('admin')
+  const [activeKeyType, setActiveKeyType] = useState<KeyType>('service')
 
   return (
     <div className="space-y-4">
@@ -58,7 +58,7 @@ const ApiKeyManagement: React.FC = () => {
         )}
       </div>
     </div>
-  );
-};
+  )
+}
 
-export default ApiKeyManagement;
+export default ApiKeyManagement

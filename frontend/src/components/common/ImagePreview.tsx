@@ -2,97 +2,97 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState, useCallback, useEffect } from 'react';
-import { createPortal } from 'react-dom';
-import { Download, X, ZoomIn, ZoomOut, RotateCw, ExternalLink, AlertCircle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import React, { useState, useCallback, useEffect } from 'react'
+import { createPortal } from 'react-dom'
+import { Download, X, ZoomIn, ZoomOut, RotateCw, ExternalLink, AlertCircle } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 interface ImagePreviewProps {
   /** The image URL to display */
-  src: string;
+  src: string
   /** Alt text for the image */
-  alt?: string;
+  alt?: string
   /** Maximum width of the thumbnail */
-  maxWidth?: number;
+  maxWidth?: number
   /** Maximum height of the thumbnail */
-  maxHeight?: number;
+  maxHeight?: number
   /** Whether to show the image inline (true) or as a link (false) on error */
-  showLinkOnError?: boolean;
+  showLinkOnError?: boolean
 }
 
 /**
  * Full screen image preview modal component (Lightbox)
  */
 function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
-  const [scale, setScale] = useState(1);
-  const [rotation, setRotation] = useState(0);
+  const [scale, setScale] = useState(1)
+  const [rotation, setRotation] = useState(0)
 
   const handleZoomIn = useCallback(() => {
-    setScale(prev => Math.min(prev + 0.25, 3));
-  }, []);
+    setScale(prev => Math.min(prev + 0.25, 3))
+  }, [])
 
   const handleZoomOut = useCallback(() => {
-    setScale(prev => Math.max(prev - 0.25, 0.5));
-  }, []);
+    setScale(prev => Math.max(prev - 0.25, 0.5))
+  }, [])
 
   const handleRotate = useCallback(() => {
-    setRotation(prev => (prev + 90) % 360);
-  }, []);
+    setRotation(prev => (prev + 90) % 360)
+  }, [])
 
   const handleBackdropClick = useCallback(
     (e: React.MouseEvent) => {
       if (e.target === e.currentTarget) {
-        onClose();
+        onClose()
       }
     },
     [onClose]
-  );
+  )
 
   const handleDownload = useCallback(() => {
-    const link = document.createElement('a');
-    link.href = src;
-    link.download = alt || 'image';
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.click();
-  }, [src, alt]);
+    const link = document.createElement('a')
+    link.href = src
+    link.download = alt || 'image'
+    link.target = '_blank'
+    link.rel = 'noopener noreferrer'
+    link.click()
+  }, [src, alt])
 
   const handleOpenInNewTab = useCallback(() => {
-    window.open(src, '_blank', 'noopener,noreferrer');
-  }, [src]);
+    window.open(src, '_blank', 'noopener,noreferrer')
+  }, [src])
 
   // Handle keyboard events
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       switch (e.key) {
         case 'Escape':
-          onClose();
-          break;
+          onClose()
+          break
         case '+':
         case '=':
-          handleZoomIn();
-          break;
+          handleZoomIn()
+          break
         case '-':
-          handleZoomOut();
-          break;
+          handleZoomOut()
+          break
         case 'r':
         case 'R':
-          handleRotate();
-          break;
+          handleRotate()
+          break
       }
-    };
+    }
 
-    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown)
     // Prevent body scroll when lightbox is open
-    document.body.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden'
 
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      document.body.style.overflow = '';
-    };
-  }, [onClose, handleZoomIn, handleZoomOut, handleRotate]);
+      window.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = ''
+    }
+  }, [onClose, handleZoomIn, handleZoomOut, handleRotate])
 
   return (
     <div
@@ -181,7 +181,7 @@ function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClos
         {alt || src}
       </div>
     </div>
-  );
+  )
 }
 
 /**
@@ -192,33 +192,33 @@ function ImageLightbox({ src, alt, onClose }: { src: string; alt: string; onClos
 export default function ImagePreview({
   src,
   alt,
-  maxWidth = 300,
-  maxHeight = 200,
+  maxWidth = 600,
+  maxHeight = 400,
   showLinkOnError = true,
 }: ImagePreviewProps) {
-  const [showLightbox, setShowLightbox] = useState(false);
-  const [hasError, setHasError] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [showLightbox, setShowLightbox] = useState(false)
+  const [hasError, setHasError] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
 
   const handleImageClick = useCallback(() => {
     if (!hasError) {
-      setShowLightbox(true);
+      setShowLightbox(true)
     }
-  }, [hasError]);
+  }, [hasError])
 
   const handleCloseLightbox = useCallback(() => {
-    setShowLightbox(false);
-  }, []);
+    setShowLightbox(false)
+  }, [])
 
   const handleImageLoad = useCallback(() => {
-    setIsLoading(false);
-    setHasError(false);
-  }, []);
+    setIsLoading(false)
+    setHasError(false)
+  }, [])
 
   const handleImageError = useCallback(() => {
-    setIsLoading(false);
-    setHasError(true);
-  }, []);
+    setIsLoading(false)
+    setHasError(true)
+  }, [])
 
   // If there's an error loading the image, show a fallback link
   if (hasError && showLinkOnError) {
@@ -233,7 +233,7 @@ export default function ImagePreview({
         <span className="truncate max-w-[200px]">{alt || src}</span>
         <ExternalLink className="h-3 w-3 flex-shrink-0" />
       </a>
-    );
+    )
   }
 
   return (
@@ -275,5 +275,5 @@ export default function ImagePreview({
           document.body
         )}
     </>
-  );
+  )
 }

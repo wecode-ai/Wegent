@@ -2,39 +2,39 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { Menu } from '@headlessui/react';
-import { ChevronDownIcon } from '@heroicons/react/24/outline';
-import { useTranslation } from '@/hooks/useTranslation';
-import { OpenLinks } from '@/types/api';
+import { Menu } from '@headlessui/react'
+import { ChevronDownIcon } from '@heroicons/react/24/outline'
+import { useTranslation } from '@/hooks/useTranslation'
+import { OpenLinks } from '@/types/api'
 
 interface OpenMenuProps {
-  openLinks?: OpenLinks | null;
+  openLinks?: OpenLinks | null
 }
 
 export default function OpenMenu({ openLinks }: OpenMenuProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   const handleVSCodeOpen = () => {
     if (openLinks?.vscode_link) {
-      window.location.href = openLinks.vscode_link;
+      window.location.href = openLinks.vscode_link
     }
-  };
+  }
 
   const handleGitOpen = () => {
     if (openLinks?.git_link) {
-      window.open(openLinks.git_link, '_blank', 'noopener,noreferrer');
+      window.open(openLinks.git_link, '_blank', 'noopener,noreferrer')
     }
-  };
+  }
 
   // Don't render if no open links
   if (!openLinks) {
-    return null;
+    return null
   }
 
-  const isVSCodeDisabled = !openLinks.vscode_link;
-  const isGitDisabled = !openLinks.git_link;
+  const isVSCodeDisabled = !openLinks.vscode_link
+  const isGitDisabled = !openLinks.git_link
 
   return (
     <Menu as="div" className="relative hidden sm:block">
@@ -98,5 +98,5 @@ export default function OpenMenu({ openLinks }: OpenMenuProps) {
         </Menu.Item>
       </Menu.Items>
     </Menu>
-  );
+  )
 }

@@ -113,6 +113,12 @@ class GhostSpec(BaseModel):
     systemPrompt: str
     mcpServers: Optional[Dict[str, Any]] = None
     skills: Optional[List[str]] = None  # Skill names list
+    preload_skills: Optional[List[str]] = Field(
+        None,
+        description="List of skill names to preload into system prompt. "
+        "Must be a subset of skills. When specified, these skills' prompts "
+        "will be automatically injected into the system message.",
+    )
 
 
 class GhostStatus(Status):
@@ -320,6 +326,9 @@ class TeamMember(BaseModel):
     botRef: BotTeamRef
     prompt: Optional[str] = None
     role: Optional[str] = None
+    requireConfirmation: Optional[bool] = (
+        False  # Whether this stage requires user confirmation before proceeding to next stage (Pipeline mode only)
+    )
 
 
 class TeamSpec(BaseModel):
@@ -412,6 +421,23 @@ class WorkspaceTaskRef(BaseModel):
     namespace: str = "default"
 
 
+class KnowledgeBaseTaskRef(BaseModel):
+    """Reference to a KnowledgeBase bound to a Task (group chat)
+
+    Note: The 'id' field stores Kind.id for stable references.
+    The 'name' field stores the display name (spec.name) for backward compatibility.
+    When looking up a knowledge base:
+    1. If 'id' exists, query by Kind.id directly (preferred)
+    2. If 'id' is None, fall back to name + namespace lookup (legacy data)
+    """
+
+    id: Optional[int] = None  # Knowledge base Kind.id (primary reference)
+    name: str  # Display name (spec.name), kept for backward compatibility
+    namespace: str = "default"
+    boundBy: Optional[str] = None  # Username of the person who bound this KB
+    boundAt: Optional[str] = None  # Binding timestamp in ISO format
+
+
 class TaskSpec(BaseModel):
     """Task specification"""
 
@@ -420,6 +446,17 @@ class TaskSpec(BaseModel):
     teamRef: TeamTaskRef
     workspaceRef: WorkspaceTaskRef
     is_group_chat: bool = False  # Whether this task is a group chat
+    knowledgeBaseRefs: Optional[List[KnowledgeBaseTaskRef]] = (
+        None  # Bound knowledge bases for group chat
+    )
+
+
+class TaskApp(BaseModel):
+    """App preview information (set by expose_service tool when service starts)"""
+
+    name: str
+    address: str
+    previewUrl: str
 
 
 class TaskStatus(Status):
@@ -434,6 +471,7 @@ class TaskStatus(Status):
     updatedAt: Optional[datetime] = None
     completedAt: Optional[datetime] = None
     subTasks: Optional[List[Dict[str, Any]]] = None
+    app: Optional[TaskApp] = None  # App preview information
 
 
 class Task(BaseModel):
@@ -602,6 +640,17 @@ class RetrievalConfig(BaseModel):
     )
 
 
+class SummaryModelRef(BaseModel):
+    """Reference to a Model for summary generation"""
+
+    name: str = Field(..., description="Model name")
+    namespace: str = Field("default", description="Model namespace")
+    type: str = Field(
+        "public",
+        description="Model type: 'public' (system public model), 'user' (personal model), or 'group' (group model)",
+    )
+
+
 class KnowledgeBaseSpec(BaseModel):
     """KnowledgeBase specification"""
 
@@ -612,6 +661,14 @@ class KnowledgeBaseSpec(BaseModel):
     )
     retrievalConfig: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
+    )
+    summaryEnabled: bool = Field(
+        default=False,
+        description="Enable automatic summary generation for documents",
+    )
+    summaryModelRef: Optional[SummaryModelRef] = Field(
+        None,
+        description="Model reference for summary generation. Required when summaryEnabled=True",
     )
 
 

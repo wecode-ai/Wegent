@@ -202,7 +202,8 @@ class ElasticsearchBackend(BaseStorageBackend):
             Retrieval result dict
         """
         index_name = self.get_index_name(knowledge_id, **kwargs)
-        top_k = retrieval_setting.get("top_k", 5)
+        # Increased default top_k from 5 to 20 for better RAG coverage
+        top_k = retrieval_setting.get("top_k", 20)
         score_threshold = retrieval_setting.get("score_threshold", 0.7)
         retrieval_mode = retrieval_setting.get("retrieval_mode", "vector")
 
@@ -513,3 +514,75 @@ class ElasticsearchBackend(BaseStorageBackend):
             return es_client.ping()
         except Exception:
             return False
+
+    def get_all_chunks(
+        self, knowledge_id: str, max_chunks: int = 10000, **kwargs
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all chunks from a knowledge base in Elasticsearch.
+
+        Retrieves all chunks for a knowledge base with a single search request.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            max_chunks: Maximum number of chunks to retrieve (safety limit)
+            **kwargs: Additional parameters (e.g., user_id for per_user strategy)
+
+        Returns:
+            List of chunk dicts with content, title, chunk_id, doc_ref, metadata
+        """
+        index_name = self.get_index_name(knowledge_id, **kwargs)
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+
+        # Query all chunks for this knowledge base
+        search_body = {
+            "size": min(max_chunks, 10000),  # ES limit per request
+            "query": {"term": {"metadata.knowledge_id.keyword": knowledge_id}},
+            "sort": [
+                {"metadata.doc_ref.keyword": "asc"},
+                {"metadata.chunk_index": "asc"},
+            ],
+        }
+
+        try:
+            # Check if index exists
+            if not es_client.indices.exists(index=index_name):
+                return []
+
+            response = es_client.search(index=index_name, body=search_body)
+
+            chunks = []
+            for hit in response["hits"]["hits"]:
+                source = hit.get("_source", {})
+                metadata = source.get("metadata", {})
+
+                # Normalize content to plain text. In most cases Elasticsearch
+                # stores human-readable text in the "content" field. However,
+                # for robustness we still pass it through extract_chunk_text
+                # to handle potential serialized node payloads.
+                raw_content = source.get("content", "")
+
+                chunks.append(
+                    {
+                        "content": self.extract_chunk_text(raw_content),
+                        "title": metadata.get("source_file", ""),
+                        "chunk_id": metadata.get("chunk_index", 0),
+                        "doc_ref": metadata.get("doc_ref", ""),
+                        "metadata": metadata,
+                    }
+                )
+
+                if len(chunks) >= max_chunks:
+                    break
+
+            return chunks
+
+        except Exception as e:
+            # Log error but return empty list to allow fallback to RAG
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"[Elasticsearch] Failed to get all chunks for KB {knowledge_id}: {e}"
+            )
+            return []

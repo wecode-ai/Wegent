@@ -8,6 +8,7 @@ OpenTelemetry instrumentation setup for all services.
 This module provides auto-instrumentation for:
 - FastAPI (HTTP requests/responses)
 - SQLAlchemy (database queries) - optional
+- Redis (cache operations) - optional
 - HTTPX (async HTTP client)
 - Requests (sync HTTP client)
 - System metrics (CPU, memory, etc.)
@@ -20,8 +21,9 @@ from typing import Any, Optional
 def setup_opentelemetry_instrumentation(
     app: Any,
     logger: Optional[logging.Logger] = None,
-    enable_sqlalchemy: bool = False,
+    enable_sqlalchemy: bool = True,
     sqlalchemy_engine: Any = None,
+    enable_redis: bool = True,
 ) -> None:
     """
     Setup OpenTelemetry instrumentation for a FastAPI service.
@@ -31,6 +33,7 @@ def setup_opentelemetry_instrumentation(
         logger: Logger instance (optional, will create one if not provided)
         enable_sqlalchemy: Whether to enable SQLAlchemy instrumentation
         sqlalchemy_engine: SQLAlchemy engine instance (required if enable_sqlalchemy is True)
+        enable_redis: Whether to enable Redis instrumentation
     """
     if logger is None:
         logger = logging.getLogger(__name__)
@@ -40,6 +43,9 @@ def setup_opentelemetry_instrumentation(
     if enable_sqlalchemy:
         _setup_sqlalchemy_instrumentation(logger, sqlalchemy_engine)
 
+    if enable_redis:
+        _setup_redis_instrumentation(logger)
+
     _setup_httpx_instrumentation(logger)
     _setup_requests_instrumentation(logger)
     _setup_system_metrics_instrumentation(logger)
@@ -47,20 +53,20 @@ def setup_opentelemetry_instrumentation(
 
 def _setup_fastapi_instrumentation(app: Any, logger: logging.Logger) -> None:
     """Setup FastAPI instrumentation for tracing HTTP requests.
-    
+
     Industry Standard for SSE/Streaming:
     ------------------------------------
     By default, OpenTelemetry ASGI instrumentation creates internal spans for each
     http.send and http.receive event. For SSE/streaming endpoints like /api/chat/stream,
     this creates excessive noise as each chunk generates a separate span.
-    
+
     Industry Standard Solutions:
     1. Use `excluded_urls` to skip tracing for streaming endpoints entirely
     2. Use custom ASGI middleware with `exclude_send_receive_spans=True` (ASGI >= 0.45b0)
     3. Configure sampling to reduce the volume of these spans
-    
+
     We implement option 2 when available, with automatic fallback behavior.
-    
+
     References:
     - OpenTelemetry ASGI Instrumentation: https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/asgi/asgi.html
     - GitHub Issue: https://github.com/open-telemetry/opentelemetry-python-contrib/issues/1075
@@ -69,15 +75,13 @@ def _setup_fastapi_instrumentation(app: Any, logger: logging.Logger) -> None:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-        from shared.telemetry.config import (
-            get_excluded_urls_regex,
-            get_http_capture_settings,
-            get_otel_config,
-        )
+        from shared.telemetry.config import (get_excluded_urls_regex,
+                                             get_http_capture_settings,
+                                             get_otel_config)
 
         # Get HTTP capture settings
         capture_settings = get_http_capture_settings()
-        
+
         # Get URL filtering configuration
         otel_config = get_otel_config()
         excluded_urls_regex = get_excluded_urls_regex()
@@ -87,17 +91,17 @@ def _setup_fastapi_instrumentation(app: Any, logger: logging.Logger) -> None:
         client_request_hook = None
         client_response_hook = None
 
-        if (
-            capture_settings.get("capture_request_headers")
-            or capture_settings.get("capture_request_body")
+        if capture_settings.get("capture_request_headers") or capture_settings.get(
+            "capture_request_body"
         ):
             server_request_hook = _create_server_request_hook(capture_settings, logger)
 
-        if (
-            capture_settings.get("capture_response_headers")
-            or capture_settings.get("capture_response_body")
+        if capture_settings.get("capture_response_headers") or capture_settings.get(
+            "capture_response_body"
         ):
-            client_response_hook = _create_client_response_hook(capture_settings, logger)
+            client_response_hook = _create_client_response_hook(
+                capture_settings, logger
+            )
 
         # Configure FastAPI instrumentation with URL filtering
         instrument_kwargs = {
@@ -105,12 +109,14 @@ def _setup_fastapi_instrumentation(app: Any, logger: logging.Logger) -> None:
             "client_request_hook": client_request_hook,
             "client_response_hook": client_response_hook,
         }
-        
+
         # Add excluded_urls if configured (blacklist mode)
         if excluded_urls_regex and not otel_config.included_urls:
             instrument_kwargs["excluded_urls"] = excluded_urls_regex
-            logger.info(f"  URL blacklist enabled: {len(otel_config.excluded_urls)} patterns")
-        
+            logger.info(
+                f"  URL blacklist enabled: {len(otel_config.excluded_urls)} patterns"
+            )
+
         # Disable internal http.send/http.receive spans if configured
         # This is the industry standard approach to reduce noise from SSE/streaming endpoints
         # where each chunk would otherwise create a separate span
@@ -124,8 +130,10 @@ def _setup_fastapi_instrumentation(app: Any, logger: logging.Logger) -> None:
         if otel_config.disable_send_receive_spans:
             # Exclude both send and receive spans to reduce noise from streaming endpoints
             instrument_kwargs["exclude_spans"] = "send,receive"
-            logger.info("  Internal http.send/http.receive spans disabled (streaming-friendly mode)")
-        
+            logger.info(
+                "  Internal http.send/http.receive spans disabled (streaming-friendly mode)"
+            )
+
         # Apply instrumentation
         try:
             FastAPIInstrumentor.instrument_app(app, **instrument_kwargs)
@@ -140,7 +148,9 @@ def _setup_fastapi_instrumentation(app: Any, logger: logging.Logger) -> None:
                 )
                 del instrument_kwargs["exclude_spans"]
                 FastAPIInstrumentor.instrument_app(app, **instrument_kwargs)
-                logger.info("✓ FastAPI instrumentation enabled (without streaming optimization)")
+                logger.info(
+                    "✓ FastAPI instrumentation enabled (without streaming optimization)"
+                )
             else:
                 raise
 
@@ -148,7 +158,7 @@ def _setup_fastapi_instrumentation(app: Any, logger: logging.Logger) -> None:
         if any(capture_settings.values()):
             enabled_captures = [k for k, v in capture_settings.items() if v]
             logger.info(f"  HTTP capture enabled for: {', '.join(enabled_captures)}")
-        
+
         # Log URL filtering configuration
         if otel_config.included_urls:
             logger.info(f"  URL whitelist mode: {otel_config.included_urls}")
@@ -268,7 +278,9 @@ def _create_client_response_hook(capture_settings: dict, logger: logging.Logger)
                     # Limit body size to avoid huge spans
                     max_body_size = 4096  # 4KB limit
                     if isinstance(body, bytes):
-                        body_str = body[:max_body_size].decode("utf-8", errors="replace")
+                        body_str = body[:max_body_size].decode(
+                            "utf-8", errors="replace"
+                        )
                     else:
                         body_str = str(body)[:max_body_size]
 
@@ -288,7 +300,8 @@ def _setup_sqlalchemy_instrumentation(
 ) -> None:
     """Setup SQLAlchemy instrumentation for tracing database queries."""
     try:
-        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+        from opentelemetry.instrumentation.sqlalchemy import \
+            SQLAlchemyInstrumentor
 
         if engine is None:
             logger.warning(
@@ -306,10 +319,32 @@ def _setup_sqlalchemy_instrumentation(
         logger.warning(f"Failed to setup SQLAlchemy instrumentation: {e}")
 
 
+def _setup_redis_instrumentation(logger: logging.Logger) -> None:
+    """Setup Redis instrumentation for tracing cache operations.
+
+    Note: This may be a no-op if instrumentation was already set up early
+    (before redis module import). We check is_instrumented() to avoid errors.
+    """
+    try:
+        from opentelemetry.instrumentation.redis import RedisInstrumentor
+
+        instrumentor = RedisInstrumentor()
+        if instrumentor.is_instrumented_by_opentelemetry:
+            logger.info("✓ Redis instrumentation already enabled (early setup)")
+        else:
+            instrumentor.instrument()
+            logger.info("✓ Redis instrumentation enabled")
+    except ImportError:
+        logger.debug("Redis instrumentation not available (package not installed)")
+    except Exception as e:
+        logger.warning(f"Failed to setup Redis instrumentation: {e}")
+
+
 def _setup_httpx_instrumentation(logger: logging.Logger) -> None:
     """Setup HTTPX instrumentation for tracing async HTTP client requests."""
     try:
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
         from shared.telemetry.config import get_http_capture_settings
 
         # Get HTTP capture settings
@@ -322,19 +357,21 @@ def _setup_httpx_instrumentation(logger: logging.Logger) -> None:
         async_request_hook = None
         async_response_hook = None
 
-        if (
-            capture_settings.get("capture_request_headers")
-            or capture_settings.get("capture_request_body")
+        if capture_settings.get("capture_request_headers") or capture_settings.get(
+            "capture_request_body"
         ):
             request_hook = _create_httpx_request_hook(capture_settings, logger)
-            async_request_hook = _create_httpx_async_request_hook(capture_settings, logger)
+            async_request_hook = _create_httpx_async_request_hook(
+                capture_settings, logger
+            )
 
-        if (
-            capture_settings.get("capture_response_headers")
-            or capture_settings.get("capture_response_body")
+        if capture_settings.get("capture_response_headers") or capture_settings.get(
+            "capture_response_body"
         ):
             response_hook = _create_httpx_response_hook(capture_settings, logger)
-            async_response_hook = _create_httpx_async_response_hook(capture_settings, logger)
+            async_response_hook = _create_httpx_async_response_hook(
+                capture_settings, logger
+            )
 
         HTTPXClientInstrumentor().instrument(
             request_hook=request_hook,
@@ -370,7 +407,9 @@ def _create_httpx_request_hook(capture_settings: dict, logger: logging.Logger):
                     # Skip sensitive headers
                     if header_name.lower() in ("authorization", "cookie", "set-cookie"):
                         header_value = "[REDACTED]"
-                    span.set_attribute(f"http.request.header.{header_name}", header_value)
+                    span.set_attribute(
+                        f"http.request.header.{header_name}", header_value
+                    )
 
             # Capture request body
             if capture_settings.get("capture_request_body"):
@@ -384,7 +423,9 @@ def _create_httpx_request_hook(capture_settings: dict, logger: logging.Logger):
                                 body_str = body.decode("utf-8", errors="replace")
                             else:
                                 body_str = (
-                                    body[:max_body_size].decode("utf-8", errors="replace")
+                                    body[:max_body_size].decode(
+                                        "utf-8", errors="replace"
+                                    )
                                     + f"... [truncated, total size: {len(body)} bytes]"
                                 )
                             span.set_attribute("http.request.body", body_str)
@@ -412,7 +453,9 @@ def _create_httpx_response_hook(capture_settings: dict, logger: logging.Logger):
                     # Skip sensitive headers
                     if header_name.lower() in ("authorization", "cookie", "set-cookie"):
                         header_value = "[REDACTED]"
-                    span.set_attribute(f"http.response.header.{header_name}", header_value)
+                    span.set_attribute(
+                        f"http.response.header.{header_name}", header_value
+                    )
 
             # Capture response body
             if capture_settings.get("capture_response_body"):
@@ -426,7 +469,9 @@ def _create_httpx_response_hook(capture_settings: dict, logger: logging.Logger):
                                 body_str = body.decode("utf-8", errors="replace")
                             else:
                                 body_str = (
-                                    body[:max_body_size].decode("utf-8", errors="replace")
+                                    body[:max_body_size].decode(
+                                        "utf-8", errors="replace"
+                                    )
                                     + f"... [truncated, total size: {len(body)} bytes]"
                                 )
                             span.set_attribute("http.response.body", body_str)
@@ -437,6 +482,7 @@ def _create_httpx_response_hook(capture_settings: dict, logger: logging.Logger):
             logger.debug(f"Error in HTTPX response_hook: {e}")
 
     return response_hook
+
 
 def _create_httpx_async_request_hook(capture_settings: dict, logger: logging.Logger):
     """Create an async request hook for HTTPX client to capture request headers and body."""
@@ -453,7 +499,9 @@ def _create_httpx_async_request_hook(capture_settings: dict, logger: logging.Log
                     # Skip sensitive headers
                     if header_name.lower() in ("authorization", "cookie", "set-cookie"):
                         header_value = "[REDACTED]"
-                    span.set_attribute(f"http.request.header.{header_name}", header_value)
+                    span.set_attribute(
+                        f"http.request.header.{header_name}", header_value
+                    )
 
             # Capture request body
             if capture_settings.get("capture_request_body"):
@@ -462,68 +510,100 @@ def _create_httpx_async_request_hook(capture_settings: dict, logger: logging.Log
                     max_body_size = capture_settings.get("max_body_size", 4096)
 
                     # Debug: Log request object attributes (use INFO level for visibility)
-                    request_attrs = [attr for attr in dir(request) if not attr.startswith('_')]
-                    logger.info(f"[OTEL DEBUG] HTTPX request type: {type(request).__name__}, attrs: {request_attrs[:10]}...")
+                    request_attrs = [
+                        attr for attr in dir(request) if not attr.startswith("_")
+                    ]
+                    logger.debug(
+                        f"[OTEL DEBUG] HTTPX request type: {type(request).__name__}, attrs: {request_attrs[:10]}..."
+                    )
 
                     # Try different ways to get the request body
                     # Method 1: request.content (bytes) - most common
                     if hasattr(request, "content"):
                         content = request.content
-                        content_preview = content[:100] if content else b'empty'
-                        logger.info(f"[OTEL DEBUG] request.content type: {type(content)}, len: {len(content) if content else 0}, preview: {content_preview}")
+                        content_preview = content[:100] if content else b"empty"
+                        logger.debug(
+                            f"[OTEL DEBUG] request.content type: {type(content)}, len: {len(content) if content else 0}, preview: {content_preview}"
+                        )
                         if content:
                             body = content
 
                     # Method 2: request.stream (for streaming requests)
                     if body is None and hasattr(request, "stream"):
                         stream = request.stream
-                        stream_attrs = [attr for attr in dir(stream) if not attr.startswith('__')]
-                        logger.info(f"[OTEL DEBUG] request.stream type: {type(stream).__name__}, attrs: {stream_attrs[:10]}")
-                        
+                        stream_attrs = [
+                            attr for attr in dir(stream) if not attr.startswith("__")
+                        ]
+                        logger.debug(
+                            f"[OTEL DEBUG] request.stream type: {type(stream).__name__}, attrs: {stream_attrs[:10]}"
+                        )
+
                         # Try _stream first (ByteStream uses this)
                         if hasattr(stream, "_stream"):
                             inner_stream = stream._stream
-                            logger.info(f"[OTEL DEBUG] Found stream._stream: {type(inner_stream)}")
+                            logger.debug(
+                                f"[OTEL DEBUG] Found stream._stream: {type(inner_stream)}"
+                            )
                             if isinstance(inner_stream, bytes):
                                 body = inner_stream
-                                logger.info(f"[OTEL DEBUG] _stream is bytes, len: {len(body)}")
+                                logger.debug(
+                                    f"[OTEL DEBUG] _stream is bytes, len: {len(body)}"
+                                )
                             elif hasattr(inner_stream, "read"):
                                 # It's a file-like object (BytesIO), try to read and reset
                                 try:
-                                    current_pos = inner_stream.tell() if hasattr(inner_stream, "tell") else 0
+                                    current_pos = (
+                                        inner_stream.tell()
+                                        if hasattr(inner_stream, "tell")
+                                        else 0
+                                    )
                                     body = inner_stream.read()
                                     if hasattr(inner_stream, "seek"):
                                         inner_stream.seek(current_pos)
-                                    logger.info(f"[OTEL DEBUG] Read from _stream: {type(body)}, len: {len(body) if body else 0}")
+                                    logger.debug(
+                                        f"[OTEL DEBUG] Read from _stream: {type(body)}, len: {len(body) if body else 0}"
+                                    )
                                 except Exception as read_err:
-                                    logger.info(f"[OTEL DEBUG] _stream read failed: {read_err}")
+                                    logger.debug(
+                                        f"[OTEL DEBUG] _stream read failed: {read_err}"
+                                    )
                         # Fallback to _content
                         elif hasattr(stream, "_content") and stream._content:
                             body = stream._content
-                            logger.info(f"[OTEL DEBUG] Found stream._content: {type(body)}, len: {len(body) if body else 0}")
+                            logger.debug(
+                                f"[OTEL DEBUG] Found stream._content: {type(body)}, len: {len(body) if body else 0}"
+                            )
                         elif hasattr(stream, "body") and stream.body:
                             body = stream.body
-                            logger.info(f"[OTEL DEBUG] Found stream.body: {type(body)}")
+                            logger.debug(
+                                f"[OTEL DEBUG] Found stream.body: {type(body)}"
+                            )
                         elif hasattr(stream, "_body") and stream._body:
                             body = stream._body
-                            logger.info(f"[OTEL DEBUG] Found stream._body: {type(body)}")
+                            logger.debug(
+                                f"[OTEL DEBUG] Found stream._body: {type(body)}"
+                            )
 
                     # Method 3: Check if request has _content attribute
                     if body is None and hasattr(request, "_content"):
                         body = request._content
-                        logger.info(f"[OTEL DEBUG] Found request._content: {type(body)}")
+                        logger.debug(
+                            f"[OTEL DEBUG] Found request._content: {type(body)}"
+                        )
 
                     # Method 4: Try to read from stream if it's a ByteStream
                     if body is None and hasattr(request, "stream"):
                         stream = request.stream
                         # Check if it's an IteratorByteStream or similar
                         stream_type = type(stream).__name__
-                        logger.info(f"[OTEL DEBUG] Stream type name: {stream_type}")
-                        
+                        logger.debug(f"[OTEL DEBUG] Stream type name: {stream_type}")
+
                         # For ByteStream, try to get the underlying bytes
                         if hasattr(stream, "__iter__"):
                             # Don't consume the iterator, just log that it exists
-                            logger.info("[OTEL DEBUG] Stream is iterable, cannot capture without consuming")
+                            logger.info(
+                                "[OTEL DEBUG] Stream is iterable, cannot capture without consuming"
+                            )
 
                     if body:
                         if isinstance(body, bytes):
@@ -531,24 +611,33 @@ def _create_httpx_async_request_hook(capture_settings: dict, logger: logging.Log
                                 body_str = body.decode("utf-8", errors="replace")
                             else:
                                 body_str = (
-                                    body[:max_body_size].decode("utf-8", errors="replace")
+                                    body[:max_body_size].decode(
+                                        "utf-8", errors="replace"
+                                    )
                                     + f"... [truncated, total size: {len(body)} bytes]"
                                 )
                             span.set_attribute("http.request.body", body_str)
-                            logger.info(f"[OTEL DEBUG] Captured request body: {len(body)} bytes")
+                            logger.debug(
+                                f"[OTEL DEBUG] Captured request body: {len(body)} bytes"
+                            )
                         elif isinstance(body, str):
                             if len(body) <= max_body_size:
                                 span.set_attribute("http.request.body", body)
                             else:
                                 span.set_attribute(
                                     "http.request.body",
-                                    body[:max_body_size] + f"... [truncated, total size: {len(body)} chars]"
+                                    body[:max_body_size]
+                                    + f"... [truncated, total size: {len(body)} chars]",
                                 )
-                            logger.info(f"[OTEL DEBUG] Captured request body: {len(body)} chars")
+                            logger.debug(
+                                f"[OTEL DEBUG] Captured request body: {len(body)} chars"
+                            )
                     else:
                         logger.info("[OTEL DEBUG] No request body found to capture")
                 except Exception as e:
-                    logger.warning(f"[OTEL DEBUG] Failed to capture HTTPX async request body: {e}")
+                    logger.warning(
+                        f"[OTEL DEBUG] Failed to capture HTTPX async request body: {e}"
+                    )
 
         except Exception as e:
             logger.debug(f"Error in HTTPX async_request_hook: {e}")
@@ -571,7 +660,9 @@ def _create_httpx_async_response_hook(capture_settings: dict, logger: logging.Lo
                     # Skip sensitive headers
                     if header_name.lower() in ("authorization", "cookie", "set-cookie"):
                         header_value = "[REDACTED]"
-                    span.set_attribute(f"http.response.header.{header_name}", header_value)
+                    span.set_attribute(
+                        f"http.response.header.{header_name}", header_value
+                    )
 
             # Capture response body
             if capture_settings.get("capture_response_body"):
@@ -586,7 +677,9 @@ def _create_httpx_async_response_hook(capture_settings: dict, logger: logging.Lo
                                 body_str = body.decode("utf-8", errors="replace")
                             else:
                                 body_str = (
-                                    body[:max_body_size].decode("utf-8", errors="replace")
+                                    body[:max_body_size].decode(
+                                        "utf-8", errors="replace"
+                                    )
                                     + f"... [truncated, total size: {len(body)} bytes]"
                                 )
                             span.set_attribute("http.response.body", body_str)
@@ -597,7 +690,6 @@ def _create_httpx_async_response_hook(capture_settings: dict, logger: logging.Lo
             logger.debug(f"Error in HTTPX async_response_hook: {e}")
 
     return async_response_hook
-
 
 
 def _create_requests_request_hook(capture_settings: dict, logger: logging.Logger):
@@ -615,7 +707,9 @@ def _create_requests_request_hook(capture_settings: dict, logger: logging.Logger
                     # Skip sensitive headers
                     if header_name.lower() in ("authorization", "cookie", "set-cookie"):
                         header_value = "[REDACTED]"
-                    span.set_attribute(f"http.request.header.{header_name}", header_value)
+                    span.set_attribute(
+                        f"http.request.header.{header_name}", header_value
+                    )
 
             # Capture request body
             if capture_settings.get("capture_request_body"):
@@ -629,7 +723,9 @@ def _create_requests_request_hook(capture_settings: dict, logger: logging.Logger
                                 body_str = body.decode("utf-8", errors="replace")
                             else:
                                 body_str = (
-                                    body[:max_body_size].decode("utf-8", errors="replace")
+                                    body[:max_body_size].decode(
+                                        "utf-8", errors="replace"
+                                    )
                                     + f"... [truncated, total size: {len(body)} bytes]"
                                 )
                             span.set_attribute("http.request.body", body_str)
@@ -639,7 +735,8 @@ def _create_requests_request_hook(capture_settings: dict, logger: logging.Logger
                             else:
                                 span.set_attribute(
                                     "http.request.body",
-                                    body[:max_body_size] + f"... [truncated, total size: {len(body)} chars]"
+                                    body[:max_body_size]
+                                    + f"... [truncated, total size: {len(body)} chars]",
                                 )
                 except Exception as e:
                     logger.debug(f"Failed to capture Requests request body: {e}")
@@ -665,7 +762,9 @@ def _create_requests_response_hook(capture_settings: dict, logger: logging.Logge
                     # Skip sensitive headers
                     if header_name.lower() in ("authorization", "cookie", "set-cookie"):
                         header_value = "[REDACTED]"
-                    span.set_attribute(f"http.response.header.{header_name}", header_value)
+                    span.set_attribute(
+                        f"http.response.header.{header_name}", header_value
+                    )
 
             # Capture response body
             if capture_settings.get("capture_response_body"):
@@ -679,7 +778,9 @@ def _create_requests_response_hook(capture_settings: dict, logger: logging.Logge
                                 body_str = body.decode("utf-8", errors="replace")
                             else:
                                 body_str = (
-                                    body[:max_body_size].decode("utf-8", errors="replace")
+                                    body[:max_body_size].decode(
+                                        "utf-8", errors="replace"
+                                    )
                                     + f"... [truncated, total size: {len(body)} bytes]"
                                 )
                             span.set_attribute("http.response.body", body_str)
@@ -696,6 +797,7 @@ def _setup_requests_instrumentation(logger: logging.Logger) -> None:
     """Setup Requests instrumentation for tracing sync HTTP client requests."""
     try:
         from opentelemetry.instrumentation.requests import RequestsInstrumentor
+
         from shared.telemetry.config import get_http_capture_settings
 
         # Get HTTP capture settings
@@ -705,15 +807,13 @@ def _setup_requests_instrumentation(logger: logging.Logger) -> None:
         request_hook = None
         response_hook = None
 
-        if (
-            capture_settings.get("capture_request_headers")
-            or capture_settings.get("capture_request_body")
+        if capture_settings.get("capture_request_headers") or capture_settings.get(
+            "capture_request_body"
         ):
             request_hook = _create_requests_request_hook(capture_settings, logger)
 
-        if (
-            capture_settings.get("capture_response_headers")
-            or capture_settings.get("capture_response_body")
+        if capture_settings.get("capture_response_headers") or capture_settings.get(
+            "capture_response_body"
         ):
             response_hook = _create_requests_response_hook(capture_settings, logger)
 
@@ -726,7 +826,9 @@ def _setup_requests_instrumentation(logger: logging.Logger) -> None:
         # Log capture settings
         if any(capture_settings.values()):
             enabled_captures = [k for k, v in capture_settings.items() if v]
-            logger.info(f"  Requests capture enabled for: {', '.join(enabled_captures)}")
+            logger.info(
+                f"  Requests capture enabled for: {', '.join(enabled_captures)}"
+            )
 
     except ImportError:
         logger.debug("Requests instrumentation not available (package not installed)")
@@ -737,9 +839,8 @@ def _setup_requests_instrumentation(logger: logging.Logger) -> None:
 def _setup_system_metrics_instrumentation(logger: logging.Logger) -> None:
     """Setup system metrics instrumentation for CPU, memory, etc."""
     try:
-        from opentelemetry.instrumentation.system_metrics import (
-            SystemMetricsInstrumentor,
-        )
+        from opentelemetry.instrumentation.system_metrics import \
+            SystemMetricsInstrumentor
 
         SystemMetricsInstrumentor().instrument()
         logger.info("✓ System metrics instrumentation enabled")

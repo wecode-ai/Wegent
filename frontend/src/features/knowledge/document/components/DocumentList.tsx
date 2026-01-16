@@ -1,10 +1,10 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react'
 import {
   ArrowLeft,
   Upload,
@@ -17,164 +17,186 @@ import {
   Target,
   FileUp,
   RefreshCw,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Spinner } from '@/components/ui/spinner';
-import { Checkbox } from '@/components/ui/checkbox';
-import { DocumentItem } from './DocumentItem';
-import { DocumentUpload } from './DocumentUpload';
-import { DeleteDocumentDialog } from './DeleteDocumentDialog';
-import { EditDocumentDialog } from './EditDocumentDialog';
-import { RetrievalTestDialog } from './RetrievalTestDialog';
-import { useDocuments } from '../hooks/useDocuments';
-import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge';
-import { useTranslation } from '@/hooks/useTranslation';
+  Info,
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { DocumentDetailDialog } from './DocumentDetailDialog'
+import { DocumentItem } from './DocumentItem'
+import { DocumentUpload, type TableDocument } from './DocumentUpload'
+import { DeleteDocumentDialog } from './DeleteDocumentDialog'
+import { EditDocumentDialog } from './EditDocumentDialog'
+import { RetrievalTestDialog } from './RetrievalTestDialog'
+import { useDocuments } from '../hooks/useDocuments'
+import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface DocumentListProps {
-  knowledgeBase: KnowledgeBase;
-  onBack?: () => void;
-  canManage?: boolean;
+  knowledgeBase: KnowledgeBase
+  onBack?: () => void
+  canManage?: boolean
 }
 
-type SortField = 'name' | 'size' | 'date';
-type SortOrder = 'asc' | 'desc';
+type SortField = 'name' | 'size' | 'date'
+type SortOrder = 'asc' | 'desc'
 
 export function DocumentList({ knowledgeBase, onBack, canManage = true }: DocumentListProps) {
-  const { t } = useTranslation('knowledge');
+  const { t } = useTranslation('knowledge')
   const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
     knowledgeBaseId: knowledgeBase.id,
-  });
+  })
 
   // Only show error on page for initial load failures (when documents list is empty)
   // Operation errors are shown via toast notifications
-  const showLoadError = error && documents.length === 0;
+  const showLoadError = error && documents.length === 0
 
-  const [showUpload, setShowUpload] = useState(false);
-  const [showRetrievalTest, setShowRetrievalTest] = useState(false);
-  const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null);
-  const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [sortField, setSortField] = useState<SortField>('date');
-  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [batchLoading, setBatchLoading] = useState(false);
+  const [showUpload, setShowUpload] = useState(false)
+  const [showRetrievalTest, setShowRetrievalTest] = useState(false)
+  const [viewingDoc, setViewingDoc] = useState<KnowledgeDocument | null>(null)
+  const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
+  const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortField, setSortField] = useState<SortField>('date')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [batchLoading, setBatchLoading] = useState(false)
 
   const filteredAndSortedDocuments = useMemo(() => {
-    let result = [...documents];
+    let result = [...documents]
 
     // Filter by search query (name-based frontend search)
     if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(doc => doc.name.toLowerCase().includes(query));
+      const query = searchQuery.toLowerCase()
+      result = result.filter(doc => doc.name.toLowerCase().includes(query))
     }
 
     // Sort
     result.sort((a, b) => {
-      let comparison = 0;
+      let comparison = 0
       switch (sortField) {
         case 'name':
-          comparison = a.name.localeCompare(b.name);
-          break;
+          comparison = a.name.localeCompare(b.name)
+          break
         case 'size':
-          comparison = a.file_size - b.file_size;
-          break;
+          comparison = a.file_size - b.file_size
+          break
         case 'date':
-          comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-          break;
+          comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+          break
       }
-      return sortOrder === 'asc' ? comparison : -comparison;
-    });
+      return sortOrder === 'asc' ? comparison : -comparison
+    })
 
-    return result;
-  }, [documents, searchQuery, sortField, sortOrder]);
+    return result
+  }, [documents, searchQuery, sortField, sortOrder])
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
     } else {
-      setSortField(field);
-      setSortOrder('desc');
+      setSortField(field)
+      setSortOrder('desc')
     }
-  };
+  }
 
   const SortIcon = ({ field }: { field: SortField }) => {
-    if (sortField !== field) return null;
+    if (sortField !== field) return null
     return sortOrder === 'asc' ? (
       <ChevronUp className="w-3 h-3 inline ml-1" />
     ) : (
       <ChevronDown className="w-3 h-3 inline ml-1" />
-    );
-  };
+    )
+  }
 
   const handleUploadComplete = async (
-    attachmentId: number,
-    file: File,
+    attachments: { attachment: { id: number; filename: string }; file: File }[],
     splitterConfig?: Partial<SplitterConfig>
   ) => {
-    const extension = file.name.split('.').pop() || '';
-    try {
-      await create({
-        attachment_id: attachmentId,
-        name: file.name,
-        file_extension: extension,
-        file_size: file.size,
-        splitter_config: splitterConfig,
-      });
-      setShowUpload(false);
-    } catch {
-      // Error handled by hook
+    // Create documents sequentially to ensure all are created
+    for (const { attachment, file } of attachments) {
+      // Use attachment.filename (which may have been renamed) instead of file.name
+      const documentName = attachment.filename || file.name
+      const extension = documentName.split('.').pop() || ''
+      try {
+        await create({
+          attachment_id: attachment.id,
+          name: documentName,
+          file_extension: extension,
+          file_size: file.size,
+          splitter_config: splitterConfig,
+          source_type: 'file',
+        })
+      } catch {
+        // Continue with next file even if one fails
+      }
     }
-  };
+    setShowUpload(false)
+  }
+
+  const handleTableAdd = async (data: TableDocument) => {
+    await create({
+      name: data.name,
+      file_extension: 'table',
+      file_size: 0,
+      source_type: 'table',
+      source_config: data.source_config,
+    })
+    setShowUpload(false)
+  }
 
   const handleDelete = async () => {
-    if (!deletingDoc) return;
+    if (!deletingDoc) return
     try {
-      await remove(deletingDoc.id);
-      setDeletingDoc(null);
+      await remove(deletingDoc.id)
+      setDeletingDoc(null)
     } catch {
       // Error handled by hook
     }
-  };
+  }
   // Batch selection handlers
   const handleSelectDoc = (doc: KnowledgeDocument, selected: boolean) => {
     setSelectedIds(prev => {
-      const newSet = new Set(prev);
+      const newSet = new Set(prev)
       if (selected) {
-        newSet.add(doc.id);
+        newSet.add(doc.id)
       } else {
-        newSet.delete(doc.id);
+        newSet.delete(doc.id)
       }
-      return newSet;
-    });
-  };
+      return newSet
+    })
+  }
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedIds(new Set(filteredAndSortedDocuments.map(doc => doc.id)));
+      setSelectedIds(new Set(filteredAndSortedDocuments.map(doc => doc.id)))
     } else {
-      setSelectedIds(new Set());
+      setSelectedIds(new Set())
     }
-  };
+  }
 
   const isAllSelected =
     filteredAndSortedDocuments.length > 0 &&
-    filteredAndSortedDocuments.every(doc => selectedIds.has(doc.id));
+    filteredAndSortedDocuments.every(doc => selectedIds.has(doc.id))
 
-  const isPartialSelected = selectedIds.size > 0 && !isAllSelected;
+  const isPartialSelected = selectedIds.size > 0 && !isAllSelected
 
   // Batch operations using batch API
   const handleBatchDelete = async () => {
-    if (selectedIds.size === 0) return;
-    setBatchLoading(true);
+    if (selectedIds.size === 0) return
+    setBatchLoading(true)
     try {
-      await batchDelete(Array.from(selectedIds));
-      setSelectedIds(new Set());
+      await batchDelete(Array.from(selectedIds))
+      setSelectedIds(new Set())
     } catch {
       // Error handled by hook
     } finally {
-      setBatchLoading(false);
+      setBatchLoading(false)
     }
-  };
+  }
+
+  const longSummary = knowledgeBase.summary?.long_summary
 
   return (
     <div className="space-y-4">
@@ -190,16 +212,34 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
         )}
         <FolderOpen className="w-5 h-5 text-primary flex-shrink-0" />
         <div className="flex-1 min-w-0">
-          <h2 className="text-base font-medium text-text-primary truncate">{knowledgeBase.name}</h2>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-base font-medium text-text-primary truncate">
+              {knowledgeBase.name}
+            </h2>
+            {/* Summary tooltip - next to title */}
+            {longSummary && (
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <button className="flex-shrink-0 p-0.5 rounded text-text-muted hover:text-primary hover:bg-surface transition-colors">
+                      <Info className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" align="start" className="max-w-md">
+                    <p className="text-sm leading-relaxed">{longSummary}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
           {knowledgeBase.description && (
             <p className="text-xs text-text-muted truncate">{knowledgeBase.description}</p>
           )}
         </div>
       </div>
 
-      {/* Search bar */}
+      {/* Search bar and action buttons */}
       <div className="flex items-center gap-3 flex-wrap">
-        {/* Search by name */}
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
           <input
@@ -224,7 +264,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
           {t('document.retrievalTest.button')}
         </Button>
 
-        {/* Upload button - right aligned */}
+        {/* Upload button */}
         {canManage && (
           <Button variant="primary" size="sm" onClick={() => setShowUpload(true)}>
             <Upload className="w-4 h-4 mr-1" />
@@ -307,7 +347,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
                 {t('document.document.columns.date')}
                 <SortIcon field="date" />
               </div>
-              <div className="w-16 flex-shrink-0 text-center">
+              <div className="w-24 flex-shrink-0 text-center">
                 {t('document.document.columns.indexStatus')}
               </div>
               {canManage && (
@@ -321,6 +361,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
               <DocumentItem
                 key={doc.id}
                 document={doc}
+                onViewDetail={setViewingDoc}
                 onEdit={setEditingDoc}
                 onDelete={setDeletingDoc}
                 canManage={canManage}
@@ -349,10 +390,18 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
       )}
 
       {/* Dialogs */}
+      <DocumentDetailDialog
+        open={!!viewingDoc}
+        onOpenChange={open => !open && setViewingDoc(null)}
+        document={viewingDoc}
+        knowledgeBaseId={knowledgeBase.id}
+      />
+
       <DocumentUpload
         open={showUpload}
         onOpenChange={setShowUpload}
         onUploadComplete={handleUploadComplete}
+        onTableAdd={handleTableAdd}
       />
 
       <EditDocumentDialog
@@ -360,8 +409,8 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
         onOpenChange={open => !open && setEditingDoc(null)}
         document={editingDoc}
         onSuccess={() => {
-          setEditingDoc(null);
-          refresh();
+          setEditingDoc(null)
+          refresh()
         }}
       />
 
@@ -379,5 +428,5 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
         knowledgeBase={knowledgeBase}
       />
     </div>
-  );
+  )
 }

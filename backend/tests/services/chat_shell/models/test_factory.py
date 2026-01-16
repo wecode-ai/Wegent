@@ -3,11 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from chat_shell.models.factory import LangChainModelFactory
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
-
-from app.chat_shell.models.factory import LangChainModelFactory
 
 
 @pytest.mark.asyncio
@@ -92,3 +91,42 @@ def test_create_from_name():
 
     assert isinstance(model, ChatOpenAI)
     assert model.model_name == "gpt-4o"
+
+
+def test_create_openai_model_with_responses_api():
+    """Test creating OpenAI model with Responses API format includes reasoning.encrypted_content."""
+    config = {
+        "model_id": "gpt-5.2",
+        "model": "openai",
+        "api_key": "sk-test",
+        "api_format": "responses",  # Enable Responses API
+    }
+
+    model = LangChainModelFactory.create_from_config(config)
+
+    assert isinstance(model, ChatOpenAI)
+    assert model.model_name == "gpt-5.2"
+    # Verify use_responses_api is enabled
+    assert model.use_responses_api is True
+    # Verify include parameter contains reasoning.encrypted_content
+    # This is required for multi-turn conversations with reasoning models
+    assert model.include == ["reasoning.encrypted_content"]
+
+
+def test_create_openai_model_without_responses_api():
+    """Test creating OpenAI model without Responses API does not set include."""
+    config = {
+        "model_id": "gpt-4o",
+        "model": "openai",
+        "api_key": "sk-test",
+        # No api_format, uses default chat/completions
+    }
+
+    model = LangChainModelFactory.create_from_config(config)
+
+    assert isinstance(model, ChatOpenAI)
+    assert model.model_name == "gpt-4o"
+    # Verify use_responses_api is not set (None or False)
+    assert model.use_responses_api is None or model.use_responses_api is False
+    # Verify include is not set
+    assert model.include is None

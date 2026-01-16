@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -7,7 +7,7 @@
  * Contains helper functions for PDF generation
  */
 
-import { IMAGE_EXTENSIONS, FILE_TYPE_LABELS } from './constants';
+import { IMAGE_EXTENSIONS, FILE_TYPE_LABELS } from './constants'
 
 /**
  * Sanitize filename by removing or replacing invalid characters
@@ -17,22 +17,22 @@ export function sanitizeFilename(name: string): string {
     .replace(/[<>:"/\\|?*]/g, '_')
     .replace(/\s+/g, '_')
     .replace(/_+/g, '_')
-    .trim();
+    .trim()
 }
 
 /**
  * Format date for filename
  */
 export function formatDateForFilename(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
 /**
  * Format timestamp for display
  */
 export function formatTimestamp(timestamp: number): string {
-  if (typeof timestamp !== 'number' || Number.isNaN(timestamp)) return '';
+  if (typeof timestamp !== 'number' || Number.isNaN(timestamp)) return ''
   return new Date(timestamp).toLocaleString(navigator.language, {
     year: 'numeric',
     month: '2-digit',
@@ -41,18 +41,18 @@ export function formatTimestamp(timestamp: number): string {
     minute: '2-digit',
     second: '2-digit',
     hour12: false,
-  });
+  })
 }
 
 /**
  * Format file size for display
  */
 export function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
 /**
@@ -60,35 +60,35 @@ export function formatFileSize(bytes: number): string {
  * Uses simple text labels instead of emoji for PDF compatibility
  */
 export function getFileTypeLabel(extension: string): string {
-  const ext = extension.toLowerCase().replace('.', '');
-  return FILE_TYPE_LABELS[ext] || '[FILE]';
+  const ext = extension.toLowerCase().replace('.', '')
+  return FILE_TYPE_LABELS[ext] || '[FILE]'
 }
 
 /**
  * Check if a file extension is an image type
  */
 export function isImageExtension(extension: string): boolean {
-  const ext = extension.toLowerCase();
-  return IMAGE_EXTENSIONS.includes(ext);
+  const ext = extension.toLowerCase()
+  return IMAGE_EXTENSIONS.includes(ext)
 }
 
 /**
  * Get image format for jsPDF from file extension
  */
 export function getImageFormat(extension: string): string {
-  const ext = extension.toLowerCase().replace('.', '');
+  const ext = extension.toLowerCase().replace('.', '')
   switch (ext) {
     case 'jpg':
     case 'jpeg':
-      return 'JPEG';
+      return 'JPEG'
     case 'png':
-      return 'PNG';
+      return 'PNG'
     case 'gif':
-      return 'GIF';
+      return 'GIF'
     case 'webp':
-      return 'WEBP';
+      return 'WEBP'
     default:
-      return 'JPEG';
+      return 'JPEG'
   }
 }
 
@@ -96,7 +96,7 @@ export function getImageFormat(extension: string): string {
  * Check if a line is a code block delimiter
  */
 export function isCodeBlockDelimiter(line: string): boolean {
-  return line.trim().startsWith('```');
+  return line.trim().startsWith('```')
 }
 
 /**
@@ -115,12 +115,12 @@ export function isCodeBlockDelimiter(line: string): boolean {
  * Removes special markers and normalizes line breaks
  */
 export function sanitizeContent(content: string): string {
-  let result = content;
+  let result = content
   // Replace special line break markers
-  result = result.replace(/\$\{\$\$\}\$/g, '\n');
+  result = result.replace(/\$\{\$\$\}\$/g, '\n')
   // Remove progress bar markers
-  result = result.replace(/__PROGRESS_BAR__:.*?:\d+/g, '');
+  result = result.replace(/__PROGRESS_BAR__:.*?:\d+/g, '')
   // Clean up prompt truncated markers
-  result = result.replace(/__PROMPT_TRUNCATED__:.*?::(.*?)(?=\n|$)/g, '$1');
-  return result;
+  result = result.replace(/__PROMPT_TRUNCATED__:.*?::(.*?)(?=\n|$)/g, '$1')
+  return result
 }

@@ -7,7 +7,7 @@ OpenAPI Response schemas for v1/responses endpoint.
 Compatible with OpenAI Responses API format.
 """
 
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -16,16 +16,48 @@ class WegentTool(BaseModel):
     """Custom Wegent tool configuration.
 
     Supported tool types:
-    - wegent_deep_thinking: Enable deep thinking mode with web search
-      (web search requires WEB_SEARCH_ENABLED=true in system config)
+    - wegent_chat_bot: Enable all server-side capabilities (recommended)
+      Includes: deep thinking with web search, server MCP tools, and message enhancement
+    - mcp: Custom MCP server configuration
+      Allows connecting to user-provided MCP servers for additional tools
+    - skill: Preload specific skills for the bot
 
     Note:
-    - MCP tools are controlled by CHAT_MCP_ENABLED system config (no user tool needed)
+    - Bot/Ghost MCP tools are always available by default (no user tool needed)
+    - Use wegent_chat_bot to enable full server-side capabilities
+    - Use mcp type with mcp_servers to add custom MCP servers
+    - Use skill type with skills to preload specific skills
+
+    Examples:
+        # Enable all server-side capabilities
+        {"type": "wegent_chat_bot"}
+
+        # Add custom MCP servers (standard format)
+        {
+            "type": "mcp",
+            "mcp_servers": [
+                {
+                    "my-server": {"url": "http://...", "type": "http"},
+                    "another": {"url": "http://...", "type": "sse"}
+                }
+            ]
+        }
+
+        # Preload specific skills
+        {"type": "skill", "preload_skills": ["skill_a", "skill_b"]}
     """
 
     type: str = Field(
         ...,
-        description="Tool type: 'wegent_deep_thinking'",
+        description="Tool type: 'wegent_chat_bot' (server capabilities), 'mcp' (custom MCP servers), or 'skill' (preload skills)",
+    )
+    mcp_servers: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="List containing a dict of MCP server configs: [{name: {url, type, headers}, ...}]. Required when type='mcp'",
+    )
+    preload_skills: Optional[List[str]] = Field(
+        default=None,
+        description="List of skill names to preload. Required when type='skill'",
     )
 
 
@@ -61,7 +93,7 @@ class ResponseCreateInput(BaseModel):
     )
     tools: Optional[List[WegentTool]] = Field(
         default=None,
-        description="Wegent custom tools, e.g., [{'type': 'wegent_deep_thinking'}]",
+        description="Wegent custom tools: [{'type': 'wegent_chat_bot'}] to enable all server-side capabilities",
     )
 
 

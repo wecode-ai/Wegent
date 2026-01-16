@@ -18,8 +18,8 @@ const initThemeScript = `(() => {
   } catch (error) {
     // ignore errors in early boot
   }
-})();`;
+})();`
 
 export function ThemeScript() {
-  return <script dangerouslySetInnerHTML={{ __html: initThemeScript }} suppressHydrationWarning />;
+  return <script dangerouslySetInnerHTML={{ __html: initThemeScript }} suppressHydrationWarning />
 }

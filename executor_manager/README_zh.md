@@ -27,7 +27,7 @@ cd executor_manager
 ./start.sh --port 8002
 
 # 使用自定义 executor 镜像
-./start.sh --executor-image ghcr.io/wecode-ai/wegent-executor:1.0.18
+./start.sh --executor-image ghcr.io/wecode-ai/wegent-executor:latest
 
 # 使用自定义后端 API
 ./start.sh --task-api-domain http://backend:8000
@@ -71,7 +71,7 @@ cd executor_manager
 cd executor_manager
 
 # 使用 uv 运行
-EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:{version} DOCKER_HOST_ADDR={LocalHost IP} uv run main.py
+EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest DOCKER_HOST_ADDR={LocalHost IP} uv run main.py
 ```
 
 > EXECUTOR_IMAGE: 查看 docker-compose.yml 获取最新的 wegent-executor 镜像版本

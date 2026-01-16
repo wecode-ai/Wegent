@@ -1,11 +1,11 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import DOMPurify from 'dompurify';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import DOMPurify from 'dompurify'
 import {
   ZoomIn,
   ZoomOut,
@@ -18,15 +18,15 @@ import {
   X,
   FileImage,
   Code,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useTheme } from '@/features/theme/ThemeProvider';
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useTheme } from '@/features/theme/ThemeProvider'
 
 export interface MermaidDiagramProps {
-  code: string;
-  className?: string;
+  code: string
+  className?: string
 }
 
 /**
@@ -41,33 +41,33 @@ export interface MermaidDiagramProps {
  * - Error handling with fallback to raw code
  */
 export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
-  const { t } = useTranslation();
-  const { theme } = useTheme();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const diagramRef = useRef<HTMLDivElement>(null);
+  const { t } = useTranslation()
+  const { theme } = useTheme()
+  const containerRef = useRef<HTMLDivElement>(null)
+  const diagramRef = useRef<HTMLDivElement>(null)
 
-  const [svgContent, setSvgContent] = useState<string>('');
-  const [originalSvgContent, setOriginalSvgContent] = useState<string>('');
-  const [error, setError] = useState<string>('');
-  const [isLoading, setIsLoading] = useState(true);
-  const [scale, setScale] = useState(1);
-  const [initialScale, setInitialScale] = useState(1);
+  const [svgContent, setSvgContent] = useState<string>('')
+  const [originalSvgContent, setOriginalSvgContent] = useState<string>('')
+  const [error, setError] = useState<string>('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [scale, setScale] = useState(1)
+  const [initialScale, setInitialScale] = useState(1)
   const [baseDimensions, setBaseDimensions] = useState<{ width: number; height: number } | null>(
     null
-  );
-  const [copied, setCopied] = useState(false);
-  const [exportedPng, setExportedPng] = useState(false);
-  const [exportedSvg, setExportedSvg] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [showCode, setShowCode] = useState(false);
-  const [codeCopied, setCodeCopied] = useState(false);
+  )
+  const [copied, setCopied] = useState(false)
+  const [exportedPng, setExportedPng] = useState(false)
+  const [exportedSvg, setExportedSvg] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [showCode, setShowCode] = useState(false)
+  const [codeCopied, setCodeCopied] = useState(false)
 
   // Generate unique ID for this diagram instance
-  const diagramId = useMemo(() => `mermaid-${Math.random().toString(36).substr(2, 9)}`, []);
+  const diagramId = useMemo(() => `mermaid-${Math.random().toString(36).substr(2, 9)}`, [])
 
   // Mermaid theme configuration based on current theme
   const getMermaidConfig = useCallback(() => {
-    const isDark = theme === 'dark';
+    const isDark = theme === 'dark'
 
     return {
       startOnLoad: false,
@@ -154,8 +154,8 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
       },
       fontSize: 14,
       fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
-    };
-  }, [theme]);
+    }
+  }, [theme])
 
   // Sanitize SVG content to prevent XSS attacks
   const sanitizeSvg = useCallback((svg: string): string => {
@@ -200,57 +200,57 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
       WHOLE_DOCUMENT: false,
       RETURN_DOM: false,
       RETURN_DOM_FRAGMENT: false,
-    });
-  }, []);
+    })
+  }, [])
 
   // Get SVG dimensions from SVG string
   const getSvgDimensions = useCallback((svg: string): { width: number; height: number } | null => {
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = svg;
-    const svgElement = tempDiv.querySelector('svg');
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = svg
+    const svgElement = tempDiv.querySelector('svg')
 
-    if (!svgElement) return null;
+    if (!svgElement) return null
 
     // Get SVG dimensions from attributes or viewBox
-    const widthAttr = svgElement.getAttribute('width');
-    const heightAttr = svgElement.getAttribute('height');
-    const viewBox = svgElement.getAttribute('viewBox');
+    const widthAttr = svgElement.getAttribute('width')
+    const heightAttr = svgElement.getAttribute('height')
+    const viewBox = svgElement.getAttribute('viewBox')
 
-    let svgWidth = 0;
-    let svgHeight = 0;
+    let svgWidth = 0
+    let svgHeight = 0
 
     if (widthAttr && heightAttr) {
       // Remove 'px' suffix if present
-      svgWidth = parseFloat(widthAttr.replace('px', ''));
-      svgHeight = parseFloat(heightAttr.replace('px', ''));
+      svgWidth = parseFloat(widthAttr.replace('px', ''))
+      svgHeight = parseFloat(heightAttr.replace('px', ''))
     }
 
     // If dimensions are still 0, try viewBox
     if ((!svgWidth || !svgHeight) && viewBox) {
-      const parts = viewBox.split(/\s+|,/);
+      const parts = viewBox.split(/\s+|,/)
       if (parts.length >= 4) {
-        svgWidth = parseFloat(parts[2]);
-        svgHeight = parseFloat(parts[3]);
+        svgWidth = parseFloat(parts[2])
+        svgHeight = parseFloat(parts[3])
       }
     }
 
     // If still no dimensions, use default
     if (!svgWidth || !svgHeight) {
-      return { width: 800, height: 600 };
+      return { width: 800, height: 600 }
     }
 
-    return { width: svgWidth, height: svgHeight };
-  }, []);
+    return { width: svgWidth, height: svgHeight }
+  }, [])
 
   // Calculate optimal initial scale based on SVG dimensions
   // Default to 100% to ensure diagram fits within container
   const calculateInitialScale = useCallback(
     (_dimensions: { width: number; height: number } | null): number => {
       // Always use 100% as default to avoid overflow
-      return 1;
+      return 1
     },
     []
-  );
+  )
 
   // Scale SVG by modifying its width/height attributes (lossless scaling)
   const scaleSvg = useCallback(
@@ -259,96 +259,96 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
       dimensions: { width: number; height: number } | null,
       scaleValue: number
     ): string => {
-      if (!dimensions) return svg;
+      if (!dimensions) return svg
 
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = svg;
-      const svgElement = tempDiv.querySelector('svg');
+      const tempDiv = document.createElement('div')
+      tempDiv.innerHTML = svg
+      const svgElement = tempDiv.querySelector('svg')
 
-      if (!svgElement) return svg;
+      if (!svgElement) return svg
 
-      const newWidth = Math.round(dimensions.width * scaleValue);
-      const newHeight = Math.round(dimensions.height * scaleValue);
+      const newWidth = Math.round(dimensions.width * scaleValue)
+      const newHeight = Math.round(dimensions.height * scaleValue)
 
       // Set new dimensions with px suffix for consistency
-      svgElement.setAttribute('width', `${newWidth}px`);
-      svgElement.setAttribute('height', `${newHeight}px`);
+      svgElement.setAttribute('width', `${newWidth}px`)
+      svgElement.setAttribute('height', `${newHeight}px`)
 
       // Also set style to ensure dimensions are applied
-      svgElement.style.width = `${newWidth}px`;
-      svgElement.style.height = `${newHeight}px`;
-      svgElement.style.minWidth = `${newWidth}px`;
-      svgElement.style.minHeight = `${newHeight}px`;
+      svgElement.style.width = `${newWidth}px`
+      svgElement.style.height = `${newHeight}px`
+      svgElement.style.minWidth = `${newWidth}px`
+      svgElement.style.minHeight = `${newHeight}px`
 
       // Ensure viewBox is set for proper scaling
       if (!svgElement.getAttribute('viewBox')) {
-        svgElement.setAttribute('viewBox', `0 0 ${dimensions.width} ${dimensions.height}`);
+        svgElement.setAttribute('viewBox', `0 0 ${dimensions.width} ${dimensions.height}`)
       }
 
-      return tempDiv.innerHTML;
+      return tempDiv.innerHTML
     },
     []
-  );
+  )
 
   // Render Mermaid diagram
   useEffect(() => {
-    let isMounted = true;
+    let isMounted = true
 
     const renderDiagram = async () => {
       if (!code.trim()) {
-        setError('Empty diagram code');
-        setIsLoading(false);
-        return;
+        setError('Empty diagram code')
+        setIsLoading(false)
+        return
       }
 
       try {
-        setIsLoading(true);
-        setError('');
+        setIsLoading(true)
+        setError('')
 
         // Dynamically import mermaid to avoid SSR issues
-        const mermaid = (await import('mermaid')).default;
+        const mermaid = (await import('mermaid')).default
 
         // Initialize with current theme config
-        mermaid.initialize(getMermaidConfig());
+        mermaid.initialize(getMermaidConfig())
 
         // Render the diagram
-        const { svg } = await mermaid.render(diagramId, code.trim());
+        const { svg } = await mermaid.render(diagramId, code.trim())
 
         if (isMounted) {
           // Get original dimensions
-          const dimensions = getSvgDimensions(svg);
-          setBaseDimensions(dimensions);
+          const dimensions = getSvgDimensions(svg)
+          setBaseDimensions(dimensions)
 
           // Calculate optimal initial scale for this diagram
-          const optimalScale = calculateInitialScale(dimensions);
-          setInitialScale(optimalScale);
-          setScale(optimalScale);
+          const optimalScale = calculateInitialScale(dimensions)
+          setInitialScale(optimalScale)
+          setScale(optimalScale)
 
           // Store original SVG and sanitize
-          const sanitizedSvg = sanitizeSvg(svg);
-          setOriginalSvgContent(sanitizedSvg);
+          const sanitizedSvg = sanitizeSvg(svg)
+          setOriginalSvgContent(sanitizedSvg)
 
           // Apply initial scale to SVG
-          const scaledSvg = scaleSvg(sanitizedSvg, dimensions, optimalScale);
-          setSvgContent(scaledSvg);
-          setIsLoading(false);
+          const scaledSvg = scaleSvg(sanitizedSvg, dimensions, optimalScale)
+          setSvgContent(scaledSvg)
+          setIsLoading(false)
         }
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error'
 
         if (isMounted) {
-          console.error('Mermaid render error:', errorMessage);
-          setError(errorMessage);
-          setIsLoading(false);
+          console.error('Mermaid render error:', errorMessage)
+          setError(errorMessage)
+          setIsLoading(false)
         }
       }
-    };
+    }
 
-    renderDiagram();
+    renderDiagram()
 
     return () => {
-      isMounted = false;
-    };
+      isMounted = false
+    }
   }, [
     code,
     theme,
@@ -358,81 +358,81 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
     getSvgDimensions,
     calculateInitialScale,
     scaleSvg,
-  ]);
+  ])
 
   // Update SVG when scale changes
   useEffect(() => {
     if (originalSvgContent && baseDimensions) {
-      const scaledSvg = scaleSvg(originalSvgContent, baseDimensions, scale);
-      setSvgContent(scaledSvg);
+      const scaledSvg = scaleSvg(originalSvgContent, baseDimensions, scale)
+      setSvgContent(scaledSvg)
     }
-  }, [scale, originalSvgContent, baseDimensions, scaleSvg]);
+  }, [scale, originalSvgContent, baseDimensions, scaleSvg])
 
   // Zoom controls
   const zoomIn = useCallback(() => {
-    setScale(prev => Math.min(prev + 0.25, 3));
-  }, []);
+    setScale(prev => Math.min(prev + 0.25, 3))
+  }, [])
 
   const zoomOut = useCallback(() => {
-    setScale(prev => Math.max(prev - 0.25, 0.5));
-  }, []);
+    setScale(prev => Math.max(prev - 0.25, 0.5))
+  }, [])
 
   const resetZoom = useCallback(() => {
-    setScale(initialScale);
-  }, [initialScale]);
+    setScale(initialScale)
+  }, [initialScale])
 
   // Copy image to clipboard
   const copyImage = useCallback(async () => {
-    if (!svgContent) return;
+    if (!svgContent) return
 
     try {
       // Create a temporary container to get the SVG element
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = svgContent;
-      const svgElement = tempDiv.querySelector('svg');
+      const tempDiv = document.createElement('div')
+      tempDiv.innerHTML = svgContent
+      const svgElement = tempDiv.querySelector('svg')
 
       if (!svgElement) {
-        console.error('SVG element not found');
-        return;
+        console.error('SVG element not found')
+        return
       }
 
       // Get SVG dimensions
-      const bbox = svgElement.getBBox?.() || { width: 800, height: 600 };
-      const width = Math.max(bbox.width + 40, parseInt(svgElement.getAttribute('width') || '800'));
+      const bbox = svgElement.getBBox?.() || { width: 800, height: 600 }
+      const width = Math.max(bbox.width + 40, parseInt(svgElement.getAttribute('width') || '800'))
       const height = Math.max(
         bbox.height + 40,
         parseInt(svgElement.getAttribute('height') || '600')
-      );
+      )
 
       // Set explicit dimensions on SVG
-      svgElement.setAttribute('width', String(width));
-      svgElement.setAttribute('height', String(height));
+      svgElement.setAttribute('width', String(width))
+      svgElement.setAttribute('height', String(height))
 
       // Create canvas
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
 
       // Set canvas size with device pixel ratio for better quality
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = width * dpr;
-      canvas.height = height * dpr;
-      ctx.scale(dpr, dpr);
+      const dpr = window.devicePixelRatio || 1
+      canvas.width = width * dpr
+      canvas.height = height * dpr
+      ctx.scale(dpr, dpr)
 
       // Fill background
-      ctx.fillStyle = theme === 'dark' ? '#0f172a' : '#ffffff';
-      ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = theme === 'dark' ? '#0f172a' : '#ffffff'
+      ctx.fillRect(0, 0, width, height)
 
       // Convert SVG to data URL
-      const svgData = new XMLSerializer().serializeToString(svgElement);
-      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-      const svgUrl = URL.createObjectURL(svgBlob);
+      const svgData = new XMLSerializer().serializeToString(svgElement)
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
+      const svgUrl = URL.createObjectURL(svgBlob)
 
       // Load image and draw to canvas
-      const img = new Image();
+      const img = new Image()
       img.onload = async () => {
-        ctx.drawImage(img, 20, 20, width - 40, height - 40);
-        URL.revokeObjectURL(svgUrl);
+        ctx.drawImage(img, 20, 20, width - 40, height - 40)
+        URL.revokeObjectURL(svgUrl)
 
         // Copy to clipboard as PNG
         canvas.toBlob(async blob => {
@@ -442,182 +442,182 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
                 new ClipboardItem({
                   'image/png': blob,
                 }),
-              ]);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 2000);
+              ])
+              setCopied(true)
+              setTimeout(() => setCopied(false), 2000)
             } catch (clipboardErr) {
-              console.error('Failed to copy to clipboard:', clipboardErr);
+              console.error('Failed to copy to clipboard:', clipboardErr)
             }
           }
-        }, 'image/png');
-      };
-      img.src = svgUrl;
+        }, 'image/png')
+      }
+      img.src = svgUrl
     } catch (err) {
-      console.error('Failed to copy image:', err);
+      console.error('Failed to copy image:', err)
     }
-  }, [svgContent, theme]);
+  }, [svgContent, theme])
 
   // Copy source code to clipboard (for error state and code modal)
   const copyCode = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(code);
-      setCodeCopied(true);
-      setTimeout(() => setCodeCopied(false), 2000);
+      await navigator.clipboard.writeText(code)
+      setCodeCopied(true)
+      setTimeout(() => setCodeCopied(false), 2000)
     } catch (err) {
-      console.error('Failed to copy:', err);
+      console.error('Failed to copy:', err)
     }
-  }, [code]);
+  }, [code])
 
   // Toggle code view modal
   const toggleCodeView = useCallback(() => {
-    setShowCode(prev => !prev);
-  }, []);
+    setShowCode(prev => !prev)
+  }, [])
 
   // Export to PNG
   const exportPng = useCallback(async () => {
-    if (!svgContent) return;
+    if (!svgContent) return
 
     try {
       // Create a temporary container to get the SVG element
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = svgContent;
-      const svgElement = tempDiv.querySelector('svg');
+      const tempDiv = document.createElement('div')
+      tempDiv.innerHTML = svgContent
+      const svgElement = tempDiv.querySelector('svg')
 
       if (!svgElement) {
-        console.error('SVG element not found');
-        return;
+        console.error('SVG element not found')
+        return
       }
 
       // Get SVG dimensions
-      const bbox = svgElement.getBBox?.() || { width: 800, height: 600 };
-      const width = Math.max(bbox.width + 40, parseInt(svgElement.getAttribute('width') || '800'));
+      const bbox = svgElement.getBBox?.() || { width: 800, height: 600 }
+      const width = Math.max(bbox.width + 40, parseInt(svgElement.getAttribute('width') || '800'))
       const height = Math.max(
         bbox.height + 40,
         parseInt(svgElement.getAttribute('height') || '600')
-      );
+      )
 
       // Set explicit dimensions on SVG
-      svgElement.setAttribute('width', String(width));
-      svgElement.setAttribute('height', String(height));
+      svgElement.setAttribute('width', String(width))
+      svgElement.setAttribute('height', String(height))
 
       // Create canvas
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
 
       // Set canvas size with device pixel ratio for better quality
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = width * dpr;
-      canvas.height = height * dpr;
-      ctx.scale(dpr, dpr);
+      const dpr = window.devicePixelRatio || 1
+      canvas.width = width * dpr
+      canvas.height = height * dpr
+      ctx.scale(dpr, dpr)
 
       // Fill background
-      ctx.fillStyle = theme === 'dark' ? '#0f172a' : '#ffffff';
-      ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = theme === 'dark' ? '#0f172a' : '#ffffff'
+      ctx.fillRect(0, 0, width, height)
 
       // Convert SVG to data URL
-      const svgData = new XMLSerializer().serializeToString(svgElement);
-      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-      const svgUrl = URL.createObjectURL(svgBlob);
+      const svgData = new XMLSerializer().serializeToString(svgElement)
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
+      const svgUrl = URL.createObjectURL(svgBlob)
 
       // Load image and draw to canvas
-      const img = new Image();
+      const img = new Image()
       img.onload = () => {
-        ctx.drawImage(img, 20, 20, width - 40, height - 40);
-        URL.revokeObjectURL(svgUrl);
+        ctx.drawImage(img, 20, 20, width - 40, height - 40)
+        URL.revokeObjectURL(svgUrl)
 
         // Download as PNG
         canvas.toBlob(blob => {
           if (blob) {
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `mermaid-diagram-${Date.now()}.png`;
-            a.click();
-            URL.revokeObjectURL(url);
-            setExportedPng(true);
-            setTimeout(() => setExportedPng(false), 2000);
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `mermaid-diagram-${Date.now()}.png`
+            a.click()
+            URL.revokeObjectURL(url)
+            setExportedPng(true)
+            setTimeout(() => setExportedPng(false), 2000)
           }
-        }, 'image/png');
-      };
-      img.src = svgUrl;
+        }, 'image/png')
+      }
+      img.src = svgUrl
     } catch (err) {
-      console.error('Failed to export PNG:', err);
+      console.error('Failed to export PNG:', err)
     }
-  }, [svgContent, theme]);
+  }, [svgContent, theme])
 
   // Export to SVG
   const exportSvg = useCallback(() => {
-    if (!svgContent) return;
+    if (!svgContent) return
 
     try {
       // Create a temporary container to get the SVG element
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = svgContent;
-      const svgElement = tempDiv.querySelector('svg');
+      const tempDiv = document.createElement('div')
+      tempDiv.innerHTML = svgContent
+      const svgElement = tempDiv.querySelector('svg')
 
       if (!svgElement) {
-        console.error('SVG element not found');
-        return;
+        console.error('SVG element not found')
+        return
       }
 
       // Add XML declaration and namespace if not present
       if (!svgElement.getAttribute('xmlns')) {
-        svgElement.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        svgElement.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
       }
 
       // Serialize SVG to string
-      const svgData = new XMLSerializer().serializeToString(svgElement);
-      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-      const url = URL.createObjectURL(svgBlob);
+      const svgData = new XMLSerializer().serializeToString(svgElement)
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
+      const url = URL.createObjectURL(svgBlob)
 
       // Download as SVG
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `mermaid-diagram-${Date.now()}.svg`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `mermaid-diagram-${Date.now()}.svg`
+      a.click()
+      URL.revokeObjectURL(url)
 
-      setExportedSvg(true);
-      setTimeout(() => setExportedSvg(false), 2000);
+      setExportedSvg(true)
+      setTimeout(() => setExportedSvg(false), 2000)
     } catch (err) {
-      console.error('Failed to export SVG:', err);
+      console.error('Failed to export SVG:', err)
     }
-  }, [svgContent]);
+  }, [svgContent])
 
   // Toggle fullscreen modal
   const toggleFullscreen = useCallback(() => {
-    setIsFullscreen(prev => !prev);
-  }, []);
+    setIsFullscreen(prev => !prev)
+  }, [])
 
   // Handle ESC key to close fullscreen or code modal
   useEffect(() => {
-    if (!isFullscreen && !showCode) return;
+    if (!isFullscreen && !showCode) return
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (showCode) {
-          setShowCode(false);
+          setShowCode(false)
         } else if (isFullscreen) {
-          setIsFullscreen(false);
+          setIsFullscreen(false)
         }
       }
-    };
+    }
 
-    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleKeyDown)
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isFullscreen, showCode]);
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isFullscreen, showCode])
 
   // Handle wheel zoom
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      setScale(prev => Math.max(0.5, Math.min(3, prev + delta)));
+      e.preventDefault()
+      const delta = e.deltaY > 0 ? -0.1 : 0.1
+      setScale(prev => Math.max(0.5, Math.min(3, prev + delta)))
     }
-  }, []);
+  }, [])
 
   // Render error state with raw code
   if (error) {
@@ -644,7 +644,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
           </Button>
         </div>
       </div>
-    );
+    )
   }
 
   // Render loading state
@@ -658,7 +658,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
           <span className="text-sm">Loading diagram...</span>
         </div>
       </div>
-    );
+    )
   }
 
   // Diagram toolbar
@@ -812,7 +812,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
         </Tooltip>
       )}
     </div>
-  );
+  )
 
   return (
     <>
@@ -866,7 +866,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
           onClick={e => {
             // Close when clicking on the backdrop (not on child elements)
             if (e.target === e.currentTarget) {
-              toggleFullscreen();
+              toggleFullscreen()
             }
           }}
         >
@@ -917,7 +917,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
             onClick={e => {
               // Close when clicking on the container background (not on the diagram)
               if (e.target === e.currentTarget) {
-                toggleFullscreen();
+                toggleFullscreen()
               }
             }}
           >
@@ -943,7 +943,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
           className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm"
           onClick={e => {
             if (e.target === e.currentTarget) {
-              toggleCodeView();
+              toggleCodeView()
             }
           }}
         >
@@ -1006,7 +1006,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
         </div>
       )}
     </>
-  );
+  )
 }
 
-export default MermaidDiagram;
+export default MermaidDiagram

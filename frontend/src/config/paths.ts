@@ -2,12 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
+
 export const paths = {
   home: {
     getHref: () => '/',
   },
   docs: {
-    getHref: () => process.env.NEXT_PUBLIC_DOCS_URL || 'https://github.com/wecode-ai/Wegent',
+    getHref: () => getRuntimeConfigSync().docsUrl,
   },
   auth: {
     password_login: {
@@ -15,9 +17,9 @@ export const paths = {
     },
     login: {
       getHref: () => {
-        console.log(typeof window === 'undefined');
+        console.log(typeof window === 'undefined')
         // Always return local login page in SSR/Node environment
-        return paths.auth.password_login.getHref();
+        return paths.auth.password_login.getHref()
       },
     },
   },
@@ -47,4 +49,4 @@ export const paths = {
       getHref: () => '/settings?tab=models',
     },
   },
-} as const;
+} as const

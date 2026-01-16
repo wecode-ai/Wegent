@@ -110,6 +110,17 @@ class SkillValidator:
                 # Extract SKILL.md body as prompt content
                 prompt_content = SkillValidator._extract_skill_body(skill_md_content)
 
+                # Default bindShells to ["ClaudeCode"] if not specified
+                bind_shells = metadata.get("bindShells")
+                if bind_shells is None:
+                    bind_shells = ["ClaudeCode"]
+
+                # Default preload to False if not specified
+                preload = metadata.get("preload", False)
+                # Ensure preload is a boolean
+                if not isinstance(preload, bool):
+                    preload = False
+
                 return {
                     "description": metadata.get("description", ""),
                     "displayName": metadata.get("displayName"),
@@ -117,15 +128,14 @@ class SkillValidator:
                     "version": metadata.get("version"),
                     "author": metadata.get("author"),
                     "tags": metadata.get("tags"),
-                    "bindShells": metadata.get(
-                        "bindShells"
-                    ),  # Shell types this skill is compatible with
+                    "bindShells": bind_shells,  # Shell types this skill is compatible with
                     "tools": metadata.get(
                         "tools"
                     ),  # Tool declarations for skill-tool binding
                     "provider": metadata.get(
                         "provider"
                     ),  # Provider config for dynamic loading
+                    "preload": preload,  # Whether to preload into system prompt
                     "file_size": file_size,
                     "file_hash": file_hash,
                 }

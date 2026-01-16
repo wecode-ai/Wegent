@@ -16,6 +16,11 @@ from app.api.dependencies import get_db, with_task_telemetry
 from app.core import security
 from app.core.config import settings
 from app.models.user import User
+from app.schemas.service import (
+    ServiceDeleteRequest,
+    ServiceResponse,
+    ServiceUpdate,
+)
 from app.schemas.shared_task import (
     JoinSharedTaskRequest,
     JoinSharedTaskResponse,
@@ -24,6 +29,9 @@ from app.schemas.shared_task import (
     TaskShareResponse,
 )
 from app.schemas.task import (
+    ConfirmStageRequest,
+    ConfirmStageResponse,
+    PipelineStageInfo,
     TaskCreate,
     TaskDetail,
     TaskInDB,
@@ -235,6 +243,64 @@ async def cancel_task(
     )
 
 
+@router.post("/{task_id}/confirm-stage", response_model=ConfirmStageResponse)
+def confirm_pipeline_stage(
+    request: ConfirmStageRequest,
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Confirm a pipeline stage and proceed to the next stage.
+
+    For pipeline mode teams with requireConfirmation=true on a member,
+    the task will pause after that stage completes and wait for user confirmation.
+
+    Args:
+        request: Contains confirmed_prompt and action (continue/retry)
+        task_id: Task ID
+        current_user: Current authenticated user
+        db: Database session
+
+    Returns:
+        ConfirmStageResponse with stage info
+    """
+    return task_kinds_service.confirm_pipeline_stage(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+        confirmed_prompt=request.confirmed_prompt,
+        action=request.action,
+    )
+
+
+@router.get("/{task_id}/pipeline-stage-info", response_model=PipelineStageInfo)
+def get_pipeline_stage_info(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get pipeline stage information for a task.
+
+    Returns current stage, total stages, and stage details for pipeline mode teams.
+    For non-pipeline teams, returns default values.
+
+    Args:
+        task_id: Task ID
+        current_user: Current authenticated user
+        db: Database session
+
+    Returns:
+        PipelineStageInfo with stage details
+    """
+    return task_kinds_service.get_pipeline_stage_info(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+    )
+
+
 @router.post("/{task_id}/share", response_model=TaskShareResponse)
 def share_task(
     task_id: int,
@@ -435,3 +501,156 @@ async def export_task_docx(
     except Exception as e:
         logger.error(f"Failed to export task {task_id} to DOCX: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to generate DOCX document")
+
+
+@router.get("/{task_id}/services", response_model=ServiceResponse)
+def get_task_services(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get task services/app configuration.
+
+    Returns the app field from the task JSON containing service information
+    like name, host, previewUrl, mysql, etc.
+    """
+    from app.models.task import TaskResource
+    from app.services.task_member_service import task_member_service
+
+    # Check if user has access to the task
+    if not task_member_service.is_member(db, task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # App data is stored under status.app
+    status_data = task.json.get("status", {}) if task.json else {}
+    app_data = status_data.get("app", {}) if status_data else {}
+    return {"app": app_data}
+
+
+@router.post("/{task_id}/services", response_model=ServiceResponse)
+def update_task_services(
+    service_update: ServiceUpdate,
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Update task services/app configuration (partial merge).
+
+    Merges the provided fields with existing app data.
+    Only provided non-None fields will be updated.
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.task import TaskResource
+    from app.services.task_member_service import task_member_service
+
+    # Check if user has access to the task
+    if not task_member_service.is_member(db, task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Get existing app data or initialize empty dict
+    # App data is stored under status.app
+    task_json = task.json or {}
+    status_data = task_json.get("status", {}) or {}
+    app_data = status_data.get("app", {}) or {}
+
+    # Merge only non-None fields from the request
+    update_data = service_update.model_dump(exclude_none=True)
+    app_data.update(update_data)
+
+    # Update task JSON with new app data under status.app
+    status_data["app"] = app_data
+    task_json["status"] = status_data
+    task.json = task_json
+    task.updated_at = datetime.now()
+    flag_modified(task, "json")
+
+    db.commit()
+    db.refresh(task)
+
+    return {"app": app_data}
+
+
+@router.delete("/{task_id}/services", response_model=ServiceResponse)
+def delete_task_services(
+    delete_request: ServiceDeleteRequest,
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Delete specified fields from task services/app configuration.
+
+    Removes the specified field names from the app object.
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.task import TaskResource
+    from app.services.task_member_service import task_member_service
+
+    # Check if user has access to the task
+    if not task_member_service.is_member(db, task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Get existing app data
+    # App data is stored under status.app
+    task_json = task.json or {}
+    status_data = task_json.get("status", {}) or {}
+    app_data = status_data.get("app", {}) or {}
+
+    # Remove specified fields
+    for field_name in delete_request.fields:
+        app_data.pop(field_name, None)
+
+    # Update task JSON under status.app
+    status_data["app"] = app_data
+    task_json["status"] = status_data
+    task.json = task_json
+    task.updated_at = datetime.now()
+    flag_modified(task, "json")
+
+    db.commit()
+    db.refresh(task)
+
+    return {"app": app_data}

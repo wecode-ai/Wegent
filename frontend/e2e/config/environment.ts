@@ -3,18 +3,18 @@
  */
 
 export interface E2EEnvironment {
-  baseUrl: string;
-  apiUrl: string;
-  timeout: number;
-  retries: number;
-  isCI: boolean;
+  baseUrl: string
+  apiUrl: string
+  timeout: number
+  retries: number
+  isCI: boolean
 }
 
 /**
  * Get current environment configuration
  */
 export function getEnvironment(): E2EEnvironment {
-  const isCI = !!process.env.CI;
+  const isCI = !!process.env.CI
 
   return {
     baseUrl: process.env.E2E_BASE_URL || 'http://localhost:3000',
@@ -22,7 +22,7 @@ export function getEnvironment(): E2EEnvironment {
     timeout: parseInt(process.env.E2E_TIMEOUT || '30000', 10),
     retries: isCI ? 2 : 0,
     isCI,
-  };
+  }
 }
 
 /**
@@ -43,7 +43,7 @@ export const Timeouts = {
   navigation: 30000,
   /** Long running operation timeout */
   longOperation: 60000,
-};
+}
 
 /**
  * Test data prefixes
@@ -56,7 +56,7 @@ export const TestPrefixes = {
   user: 'e2e-user',
   task: 'e2e-task',
   shell: 'e2e-shell',
-};
+}
 
 /**
  * Feature flags for tests
@@ -70,7 +70,7 @@ export const FeatureFlags = {
   apiTests: process.env.E2E_API_TESTS !== 'false',
   /** Skip cleanup after tests */
   skipCleanup: process.env.E2E_SKIP_CLEANUP === 'true',
-};
+}
 
 /**
  * Performance thresholds
@@ -88,7 +88,7 @@ export const PerformanceLimits = {
     update: 2000,
     delete: 1000,
   },
-};
+}
 
 /**
  * Routes used in tests
@@ -108,4 +108,4 @@ export const Routes = {
   adminUsers: '/admin/users',
   adminModels: '/admin/models',
   sharedTask: '/shared/task',
-};
+}

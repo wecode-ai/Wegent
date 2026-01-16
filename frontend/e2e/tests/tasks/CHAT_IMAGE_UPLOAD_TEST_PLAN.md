@@ -63,7 +63,7 @@ sequenceDiagram
 1. **前端上传**: `POST /api/attachments/upload` → 返回 `attachment_id`
 2. **前端发送**: `POST /api/chat/stream` with `attachment_id`
 3. **后端处理**:
-   - [`attachment_service.build_message_with_attachment()`](backend/app/services/attachment/attachment_service.py:359) 构建 vision dict
+   - [`context_service.build_message_with_attachment()`](backend/app/services/context/context_service.py:337) 构建 vision dict
    - [`message_builder.build_vision_content()`](backend/app/services/chat/message_builder.py:15) 转换为 OpenAI 格式
 4. **Provider 发送**: [`OpenAIProvider.stream_chat()`](backend/app/services/chat/providers/openai.py:66) 发送到模型
 
@@ -117,12 +117,12 @@ export async function mockChatStreamWithImageCapture(
 ): Promise<void> {
   // Mock the chat stream endpoint
   await page.route('**/api/chat/stream', async (route: Route) => {
-    const request = route.request();
-    const postData = request.postDataJSON();
+    const request = route.request()
+    const postData = request.postDataJSON()
 
     // Capture request for verification
     if (onRequestCapture) {
-      onRequestCapture(postData);
+      onRequestCapture(postData)
     }
 
     // Return mock SSE response
@@ -130,8 +130,8 @@ export async function mockChatStreamWithImageCapture(
       status: 200,
       contentType: 'text/event-stream',
       body: generateMockSSEResponse('I can see the image you uploaded.'),
-    });
-  });
+    })
+  })
 }
 
 /**
@@ -144,7 +144,7 @@ data: {"content": "${content}", "done": false}
 
 data: {"content": "", "done": true, "result": {"value": "${content}"}}
 
-`;
+`
 }
 ```
 
@@ -153,26 +153,26 @@ data: {"content": "", "done": true, "result": {"value": "${content}"}}
 **文件**: `frontend/e2e/tests/tasks/chat-image-upload.spec.ts`
 
 ```typescript
-import { test, expect } from '@playwright/test';
-import { createApiClient, ApiClient } from '../../utils/api-client';
-import { ADMIN_USER } from '../../config/test-users';
-import * as path from 'path';
-import * as fs from 'fs';
+import { test, expect } from '@playwright/test'
+import { createApiClient, ApiClient } from '../../utils/api-client'
+import { ADMIN_USER } from '../../config/test-users'
+import * as path from 'path'
+import * as fs from 'fs'
 
 test.describe('Chat Image Upload and Send', () => {
-  let apiClient: ApiClient;
-  let capturedRequest: any = null;
+  let apiClient: ApiClient
+  let capturedRequest: any = null
 
   test.beforeEach(async ({ page, request }) => {
-    apiClient = createApiClient(request);
-    await apiClient.login(ADMIN_USER.username, ADMIN_USER.password);
-    capturedRequest = null;
-  });
+    apiClient = createApiClient(request)
+    await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
+    capturedRequest = null
+  })
 
   test('should upload image and send to model with correct image_url format', async ({ page }) => {
     // 1. Setup request capture
     await page.route('**/api/chat/stream', async route => {
-      capturedRequest = route.request().postDataJSON();
+      capturedRequest = route.request().postDataJSON()
 
       // Return mock response
       const mockResponse = `data: {"task_id": 1, "subtask_id": 1, "content": "", "done": false}
@@ -181,62 +181,62 @@ data: {"content": "I can see the image.", "done": false}
 
 data: {"content": "", "done": true}
 
-`;
+`
       await route.fulfill({
         status: 200,
         contentType: 'text/event-stream',
         body: mockResponse,
-      });
-    });
+      })
+    })
 
     // 2. Navigate to chat page
-    await page.goto('/chat');
-    await page.waitForLoadState('domcontentloaded');
+    await page.goto('/chat')
+    await page.waitForLoadState('domcontentloaded')
 
     // 3. Upload image
-    const testImagePath = path.join(__dirname, '../../fixtures/test-image.png');
-    const fileInput = page.locator('input[type="file"]').first();
-    await fileInput.setInputFiles(testImagePath);
+    const testImagePath = path.join(__dirname, '../../fixtures/test-image.png')
+    const fileInput = page.locator('input[type="file"]').first()
+    await fileInput.setInputFiles(testImagePath)
 
     // Wait for upload to complete
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(2000)
 
     // 4. Type message and send
-    const messageInput = page.locator('textarea').first();
-    await messageInput.fill('What is in this image?');
+    const messageInput = page.locator('textarea').first()
+    await messageInput.fill('What is in this image?')
 
-    const sendButton = page.locator('button[type="submit"]').first();
-    await sendButton.click();
+    const sendButton = page.locator('button[type="submit"]').first()
+    await sendButton.click()
 
     // 5. Wait for response
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(3000)
 
     // 6. Verify the request was captured
-    expect(capturedRequest).not.toBeNull();
-    expect(capturedRequest.attachment_id).toBeDefined();
-  });
+    expect(capturedRequest).not.toBeNull()
+    expect(capturedRequest.attachment_id).toBeDefined()
+  })
 
   test('should verify model receives correct image_url format via API', async ({ request }) => {
     // This test uses API directly to verify the image format
 
     // 1. Upload image via API
-    const testImagePath = path.join(__dirname, '../../fixtures/test-image.png');
-    const imageBuffer = fs.readFileSync(testImagePath);
+    const testImagePath = path.join(__dirname, '../../fixtures/test-image.png')
+    const imageBuffer = fs.readFileSync(testImagePath)
 
     const uploadResponse = await apiClient.post('/api/attachments/upload', {
       // multipart form data
-    });
+    })
 
     // 2. Verify attachment was created
-    expect(uploadResponse.status).toBe(200);
-    expect(uploadResponse.data.id).toBeDefined();
+    expect(uploadResponse.status).toBe(200)
+    expect(uploadResponse.data.id).toBeDefined()
 
     // 3. The image_base64 should be populated
-    const attachmentId = uploadResponse.data.id;
-    const attachmentDetail = await apiClient.get(`/api/attachments/${attachmentId}`);
-    expect(attachmentDetail.status).toBe(200);
-  });
-});
+    const attachmentId = uploadResponse.data.id
+    const attachmentDetail = await apiClient.get(`/api/attachments/${attachmentId}`)
+    expect(attachmentDetail.status).toBe(200)
+  })
+})
 ```
 
 ### 4.4 API 级别测试（验证 image_url 格式）
@@ -246,21 +246,21 @@ data: {"content": "", "done": true}
 **文件**: `frontend/e2e/tests/api/chat-image-api.spec.ts`
 
 ```typescript
-import { test, expect } from '@playwright/test';
-import { createApiClient } from '../../utils/api-client';
-import { ADMIN_USER } from '../../config/test-users';
-import * as fs from 'fs';
-import * as path from 'path';
+import { test, expect } from '@playwright/test'
+import { createApiClient } from '../../utils/api-client'
+import { ADMIN_USER } from '../../config/test-users'
+import * as fs from 'fs'
+import * as path from 'path'
 
 test.describe('Chat Image API Tests', () => {
   test('should upload image and verify base64 encoding', async ({ request }) => {
-    const apiClient = createApiClient(request);
-    await apiClient.login(ADMIN_USER.username, ADMIN_USER.password);
+    const apiClient = createApiClient(request)
+    await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
 
     // Read test image
-    const testImagePath = path.join(__dirname, '../../fixtures/test-image.png');
-    const imageBuffer = fs.readFileSync(testImagePath);
-    const base64Image = imageBuffer.toString('base64');
+    const testImagePath = path.join(__dirname, '../../fixtures/test-image.png')
+    const imageBuffer = fs.readFileSync(testImagePath)
+    const base64Image = imageBuffer.toString('base64')
 
     // Upload via multipart form
     const response = await request.post('/api/attachments/upload', {
@@ -274,27 +274,27 @@ test.describe('Chat Image API Tests', () => {
           buffer: imageBuffer,
         },
       },
-    });
+    })
 
-    expect(response.status()).toBe(200);
-    const data = await response.json();
+    expect(response.status()).toBe(200)
+    const data = await response.json()
 
     // Verify response
-    expect(data.id).toBeDefined();
-    expect(data.mime_type).toBe('image/png');
-    expect(data.status).toBe('ready');
-  });
+    expect(data.id).toBeDefined()
+    expect(data.mime_type).toBe('image/png')
+    expect(data.status).toBe('ready')
+  })
 
   test('should build correct vision message format', async ({ request }) => {
     // This test verifies the message format that would be sent to the model
     // by checking the attachment service behavior
 
-    const apiClient = createApiClient(request);
-    await apiClient.login(ADMIN_USER.username, ADMIN_USER.password);
+    const apiClient = createApiClient(request)
+    await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
 
     // 1. Upload image
-    const testImagePath = path.join(__dirname, '../../fixtures/test-image.png');
-    const imageBuffer = fs.readFileSync(testImagePath);
+    const testImagePath = path.join(__dirname, '../../fixtures/test-image.png')
+    const imageBuffer = fs.readFileSync(testImagePath)
 
     const uploadResponse = await request.post('/api/attachments/upload', {
       headers: {
@@ -307,27 +307,27 @@ test.describe('Chat Image API Tests', () => {
           buffer: imageBuffer,
         },
       },
-    });
+    })
 
-    const uploadData = await uploadResponse.json();
-    const attachmentId = uploadData.id;
+    const uploadData = await uploadResponse.json()
+    const attachmentId = uploadData.id
 
     // 2. Get attachment details to verify image_base64 is populated
     const detailResponse = await request.get(`/api/attachments/${attachmentId}`, {
       headers: {
         Authorization: `Bearer ${apiClient.token}`,
       },
-    });
+    })
 
-    expect(detailResponse.status()).toBe(200);
-    const detailData = await detailResponse.json();
+    expect(detailResponse.status()).toBe(200)
+    const detailData = await detailResponse.json()
 
     // Verify the attachment is ready and has the correct format
-    expect(detailData.status).toBe('ready');
-    expect(detailData.mime_type).toBe('image/png');
-    expect(detailData.file_extension).toBe('.png');
-  });
-});
+    expect(detailData.status).toBe('ready')
+    expect(detailData.mime_type).toBe('image/png')
+    expect(detailData.file_extension).toBe('.png')
+  })
+})
 ```
 
 ## 5. Mock 模型服务器方案（可选）
@@ -339,29 +339,29 @@ test.describe('Chat Image API Tests', () => {
 **文件**: `frontend/e2e/utils/mock-model-server.ts`
 
 ```typescript
-import http from 'http';
+import http from 'http'
 
 interface CapturedRequest {
-  method: string;
-  url: string;
-  headers: Record<string, string>;
-  body: any;
+  method: string
+  url: string
+  headers: Record<string, string>
+  body: any
 }
 
 export class MockModelServer {
-  private server: http.Server | null = null;
-  private capturedRequests: CapturedRequest[] = [];
-  private port: number;
+  private server: http.Server | null = null
+  private capturedRequests: CapturedRequest[] = []
+  private port: number
 
   constructor(port: number = 9999) {
-    this.port = port;
+    this.port = port
   }
 
   async start(): Promise<void> {
     return new Promise(resolve => {
       this.server = http.createServer((req, res) => {
-        let body = '';
-        req.on('data', chunk => (body += chunk));
+        let body = ''
+        req.on('data', chunk => (body += chunk))
         req.on('end', () => {
           // Capture request
           this.capturedRequests.push({
@@ -369,14 +369,14 @@ export class MockModelServer {
             url: req.url || '/',
             headers: req.headers as Record<string, string>,
             body: body ? JSON.parse(body) : null,
-          });
+          })
 
           // Return mock SSE response
           res.writeHead(200, {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
             Connection: 'keep-alive',
-          });
+          })
 
           // Send mock streaming response
           const chunks = [
@@ -386,71 +386,71 @@ export class MockModelServer {
             'data: {"choices":[{"delta":{"content":" the"}}]}\n\n',
             'data: {"choices":[{"delta":{"content":" image"}}]}\n\n',
             'data: [DONE]\n\n',
-          ];
+          ]
 
-          let i = 0;
+          let i = 0
           const interval = setInterval(() => {
             if (i < chunks.length) {
-              res.write(chunks[i]);
-              i++;
+              res.write(chunks[i])
+              i++
             } else {
-              clearInterval(interval);
-              res.end();
+              clearInterval(interval)
+              res.end()
             }
-          }, 50);
-        });
-      });
+          }, 50)
+        })
+      })
 
       this.server.listen(this.port, () => {
-        console.log(`Mock model server running on port ${this.port}`);
-        resolve();
-      });
-    });
+        console.log(`Mock model server running on port ${this.port}`)
+        resolve()
+      })
+    })
   }
 
   async stop(): Promise<void> {
     return new Promise(resolve => {
       if (this.server) {
-        this.server.close(() => resolve());
+        this.server.close(() => resolve())
       } else {
-        resolve();
+        resolve()
       }
-    });
+    })
   }
 
   getCapturedRequests(): CapturedRequest[] {
-    return this.capturedRequests;
+    return this.capturedRequests
   }
 
   getLastRequest(): CapturedRequest | null {
-    return this.capturedRequests[this.capturedRequests.length - 1] || null;
+    return this.capturedRequests[this.capturedRequests.length - 1] || null
   }
 
   clearRequests(): void {
-    this.capturedRequests = [];
+    this.capturedRequests = []
   }
 
   /**
    * Verify that the last request contains a valid image_url
    */
   verifyImageUrlFormat(): boolean {
-    const lastRequest = this.getLastRequest();
-    if (!lastRequest || !lastRequest.body) return false;
+    const lastRequest = this.getLastRequest()
+    if (!lastRequest || !lastRequest.body) return false
 
-    const messages = lastRequest.body.messages;
-    if (!messages || !Array.isArray(messages)) return false;
+    const messages = lastRequest.body.messages
+    if (!messages || !Array.isArray(messages)) return false
 
     // Find user message with image
-    const userMessage = messages.find((m: any) => m.role === 'user' && Array.isArray(m.content));
-    if (!userMessage) return false;
+    const userMessage = messages.find((m: any) => m.role === 'user' && Array.isArray(m.content))
+    if (!userMessage) return false
 
     // Check for image_url content
-    const imageContent = userMessage.content.find((c: any) => c.type === 'image_url');
-    if (!imageContent) return false;
+    const imageContent = userMessage.content.find((c: any) => c.type === 'image_url')
+    if (!imageContent) return false
 
     // Verify format
-    const imageUrl = imageContent.image_url?.url;
-    return imageUrl && imageUrl.startsWith('data:image/');
+    const imageUrl = imageContent.image_url?.url
+    return imageUrl && imageUrl.startsWith('data:image/')
   }
 }
 ```

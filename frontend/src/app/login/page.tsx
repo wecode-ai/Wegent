@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import LogoHeader, { LogoSubTitle } from '@/features/login/components/LogoHeader';
-import LoginForm from '@/features/login/components/LoginForm';
+import LogoHeader, { LogoSubTitle } from '@/features/login/components/LogoHeader'
+import LoginForm from '@/features/login/components/LoginForm'
 
-import { UserProvider } from '@/features/common/UserContext';
+import { UserProvider } from '@/features/common/UserContext'
 
 export default function LoginPage() {
   return (
@@ -24,5 +24,5 @@ export default function LoginPage() {
         </div>
       </div>
     </UserProvider>
-  );
+  )
 }

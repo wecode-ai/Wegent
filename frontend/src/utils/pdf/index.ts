@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,6 +10,7 @@
 // Types
 export type {
   ExportAttachment,
+  ExportKnowledgeBase,
   ExportMessage,
   PdfExportOptions,
   TextSegment,
@@ -20,13 +21,13 @@ export type {
   RGBColor,
   BubbleStyle,
   BubbleCommonStyle,
-} from './types';
+} from './types'
 
 // Main generator function
-export { generateChatPdf } from './generator';
+export { generateChatPdf } from './generator'
 
 // Utility functions that may be useful externally
-export { sanitizeFilename, formatFileSize, isImageExtension } from './utils';
+export { sanitizeFilename, formatFileSize, isImageExtension } from './utils'
 
 // For backward compatibility, also export as ChatPdfExportOptions
-export type { PdfExportOptions as ChatPdfExportOptions } from './types';
+export type { PdfExportOptions as ChatPdfExportOptions } from './types'

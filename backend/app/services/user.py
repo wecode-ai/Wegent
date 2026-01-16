@@ -2,11 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import json
+import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import BackgroundTasks, HTTPException, status
+from fastapi import HTTPException, status
 from shared.utils.crypto import decrypt_git_token, encrypt_git_token, is_token_encrypted
 from sqlalchemy.orm import Session
 
@@ -16,6 +18,7 @@ from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
 from app.services.base import BaseService
 from app.services.k_batch import apply_default_resources_async
+from app.services.readers.users import userReader
 
 
 class UserService(BaseService[User, UserUpdate, UserUpdate]):
@@ -73,8 +76,12 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 # Gerrit requires username parameter for validation
                 if provider_type == "gerrit":
                     username = git_item.get("user_name")
+                    auth_type = git_item.get("auth_type") or "digest"
                     validation_result = provider.validate_token(
-                        plain_token, git_domain=git_domain, user_name=username
+                        plain_token,
+                        git_domain=git_domain,
+                        user_name=username,
+                        auth_type=auth_type,
                     )
                 else:
                     validation_result = provider.validate_token(
@@ -82,6 +89,10 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                     )
 
                 if not validation_result.get("valid", False):
+                    # Check for auth method mismatch error
+                    error_msg = validation_result.get("message", "")
+                    if error_msg:
+                        raise ValidationException(error_msg)
                     raise ValidationException(f"Invalid {provider_type} token")
 
                 user_data = validation_result.get("user", {})
@@ -115,7 +126,6 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         db: Session,
         *,
         obj_in: UserCreate,
-        background_tasks: Optional[BackgroundTasks] = None,
     ) -> User:
         """
         Create new user with git token validation
@@ -132,9 +142,7 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 obj_in.email = git_info[0]["git_email"]
 
         # Check if user already exists
-        existing_user = (
-            db.query(User).filter(User.user_name == obj_in.user_name).first()
-        )
+        existing_user = userReader.get_by_name(db, obj_in.user_name)
         if existing_user:
             raise HTTPException(
                 status_code=400, detail="User with this username already exists"
@@ -152,9 +160,12 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         db.commit()
         db.refresh(db_obj)
 
-        # Schedule the async task to run in the background using FastAPI BackgroundTasks
-        if background_tasks:
-            background_tasks.add_task(apply_default_resources_async, db_obj.id)
+        # Apply default resources for the new user in a background thread
+        def run_async_task():
+            asyncio.run(apply_default_resources_async(db_obj.id))
+
+        thread = threading.Thread(target=run_async_task, daemon=True)
+        thread.start()
 
         return db_obj
 
@@ -177,12 +188,8 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         """
         # Check if user already exists (excluding current user)
         if obj_in.user_name:
-            existing_user = (
-                db.query(User)
-                .filter(User.user_name == obj_in.user_name, User.id != user.id)
-                .first()
-            )
-            if existing_user:
+            existing_user = userReader.get_by_name(db, obj_in.user_name)
+            if existing_user and existing_user.id != user.id:
                 raise HTTPException(
                     status_code=400, detail="User with this username already exists"
                 )
@@ -322,7 +329,7 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         Raises:
             HTTPException: If user does not exist
         """
-        user = db.query(User).filter(User.id == user_id).first()
+        user = userReader.get_by_id(db, user_id)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -344,7 +351,7 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         Raises:
             HTTPException: If user does not exist
         """
-        user = db.query(User).filter(User.user_name == user_name).first()
+        user = userReader.get_by_name(db, user_name)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -362,7 +369,8 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         Returns:
             List of all active users
         """
-        user_list = db.query(User).filter(User.is_active == True).all()
+        all_users = userReader.get_all(db)
+        user_list = [u for u in all_users if u.is_active]
         for i in range(len(user_list)):
             user_list[i] = self.decrypt_user_git_info(user_list[i])
         return user_list

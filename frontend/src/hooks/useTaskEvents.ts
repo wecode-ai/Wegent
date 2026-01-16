@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
 /**
  * useTaskEvents Hook
@@ -11,8 +11,8 @@
  * Handles task creation, deletion, rename, status changes, and sharing.
  */
 
-import { useCallback, useEffect } from 'react';
-import { useSocket } from '@/contexts/SocketContext';
+import { useCallback, useEffect } from 'react'
+import { useSocket } from '@/contexts/SocketContext'
 import {
   ServerEvents,
   TaskCreatedPayload,
@@ -21,21 +21,21 @@ import {
   TaskStatusPayload,
   TaskSharedPayload,
   UnreadCountPayload,
-} from '@/types/socket';
+} from '@/types/socket'
 
 interface UseTaskEventsOptions {
   /** Callback when a new task is created */
-  onTaskCreated?: (task: TaskCreatedPayload) => void;
+  onTaskCreated?: (task: TaskCreatedPayload) => void
   /** Callback when a task is deleted */
-  onTaskDeleted?: (data: TaskDeletedPayload) => void;
+  onTaskDeleted?: (data: TaskDeletedPayload) => void
   /** Callback when a task is renamed */
-  onTaskRenamed?: (data: TaskRenamedPayload) => void;
+  onTaskRenamed?: (data: TaskRenamedPayload) => void
   /** Callback when task status changes */
-  onTaskStatus?: (data: TaskStatusPayload) => void;
+  onTaskStatus?: (data: TaskStatusPayload) => void
   /** Callback when a task is shared with user */
-  onTaskShared?: (data: TaskSharedPayload) => void;
+  onTaskShared?: (data: TaskSharedPayload) => void
   /** Callback when unread count changes */
-  onUnreadCount?: (data: UnreadCountPayload) => void;
+  onUnreadCount?: (data: UnreadCountPayload) => void
 }
 
 /**
@@ -56,70 +56,70 @@ interface UseTaskEventsOptions {
  * ```
  */
 export function useTaskEvents(options: UseTaskEventsOptions = {}): void {
-  const { socket, isConnected } = useSocket();
+  const { socket, isConnected } = useSocket()
 
   const handleTaskCreated = useCallback(
     (data: TaskCreatedPayload) => {
-      options.onTaskCreated?.(data);
+      options.onTaskCreated?.(data)
     },
     [options.onTaskCreated]
-  );
+  )
 
   const handleTaskDeleted = useCallback(
     (data: TaskDeletedPayload) => {
-      options.onTaskDeleted?.(data);
+      options.onTaskDeleted?.(data)
     },
     [options.onTaskDeleted]
-  );
+  )
 
   const handleTaskRenamed = useCallback(
     (data: TaskRenamedPayload) => {
-      options.onTaskRenamed?.(data);
+      options.onTaskRenamed?.(data)
     },
     [options.onTaskRenamed]
-  );
+  )
 
   const handleTaskStatus = useCallback(
     (data: TaskStatusPayload) => {
-      options.onTaskStatus?.(data);
+      options.onTaskStatus?.(data)
     },
     [options.onTaskStatus]
-  );
+  )
 
   const handleTaskShared = useCallback(
     (data: TaskSharedPayload) => {
-      options.onTaskShared?.(data);
+      options.onTaskShared?.(data)
     },
     [options.onTaskShared]
-  );
+  )
 
   const handleUnreadCount = useCallback(
     (data: UnreadCountPayload) => {
-      options.onUnreadCount?.(data);
+      options.onUnreadCount?.(data)
     },
     [options.onUnreadCount]
-  );
+  )
 
   useEffect(() => {
-    if (!socket || !isConnected) return;
+    if (!socket || !isConnected) return
 
     // Register event listeners
-    socket.on(ServerEvents.TASK_CREATED, handleTaskCreated);
-    socket.on(ServerEvents.TASK_DELETED, handleTaskDeleted);
-    socket.on(ServerEvents.TASK_RENAMED, handleTaskRenamed);
-    socket.on(ServerEvents.TASK_STATUS, handleTaskStatus);
-    socket.on(ServerEvents.TASK_SHARED, handleTaskShared);
-    socket.on(ServerEvents.UNREAD_COUNT, handleUnreadCount);
+    socket.on(ServerEvents.TASK_CREATED, handleTaskCreated)
+    socket.on(ServerEvents.TASK_DELETED, handleTaskDeleted)
+    socket.on(ServerEvents.TASK_RENAMED, handleTaskRenamed)
+    socket.on(ServerEvents.TASK_STATUS, handleTaskStatus)
+    socket.on(ServerEvents.TASK_SHARED, handleTaskShared)
+    socket.on(ServerEvents.UNREAD_COUNT, handleUnreadCount)
 
     return () => {
       // Cleanup event listeners
-      socket.off(ServerEvents.TASK_CREATED, handleTaskCreated);
-      socket.off(ServerEvents.TASK_DELETED, handleTaskDeleted);
-      socket.off(ServerEvents.TASK_RENAMED, handleTaskRenamed);
-      socket.off(ServerEvents.TASK_STATUS, handleTaskStatus);
-      socket.off(ServerEvents.TASK_SHARED, handleTaskShared);
-      socket.off(ServerEvents.UNREAD_COUNT, handleUnreadCount);
-    };
+      socket.off(ServerEvents.TASK_CREATED, handleTaskCreated)
+      socket.off(ServerEvents.TASK_DELETED, handleTaskDeleted)
+      socket.off(ServerEvents.TASK_RENAMED, handleTaskRenamed)
+      socket.off(ServerEvents.TASK_STATUS, handleTaskStatus)
+      socket.off(ServerEvents.TASK_SHARED, handleTaskShared)
+      socket.off(ServerEvents.UNREAD_COUNT, handleUnreadCount)
+    }
   }, [
     socket,
     isConnected,
@@ -129,16 +129,16 @@ export function useTaskEvents(options: UseTaskEventsOptions = {}): void {
     handleTaskStatus,
     handleTaskShared,
     handleUnreadCount,
-  ]);
+  ])
 }
 
 /**
  * Hook to get task connection status
  */
 export function useTaskConnectionStatus(): {
-  isConnected: boolean;
-  reconnectAttempts: number;
+  isConnected: boolean
+  reconnectAttempts: number
 } {
-  const { isConnected, reconnectAttempts } = useSocket();
-  return { isConnected, reconnectAttempts };
+  const { isConnected, reconnectAttempts } = useSocket()
+  return { isConnected, reconnectAttempts }
 }

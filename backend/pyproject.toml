@@ -7,7 +7,7 @@ name = "wegent-backend"
 version = "1.0.0"
 description = "Wegent Backend API Service"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<=3.13"
 dependencies = [
     # FastAPI framework and related dependencies
     "fastapi>=0.109.1",
@@ -77,6 +77,7 @@ dependencies = [
     "openpyxl>=3.1.2",
     "chardet>=5.0.0",
     "pillow>=12.0.0",
+    "python-magic>=0.4.27",
     "markdown>=3.5.0",
     "beautifulsoup4>=4.12.0",
     "emoji>=2.9.0",
@@ -92,7 +93,17 @@ dependencies = [
     "llama-index-embeddings-openai>=0.3.0",
     "llama-index-readers-file>=0.4.0",
     "docx2txt>=0.8",  # Required by llama-index-readers-file for Word document parsing
+
+    # Chat Shell (local workspace dependency for Package mode)
+    "wegent-chat-shell",
+
+    # Shared utilities (monorepo workspace dependency)
+    "wegent-shared",
 ]
+
+[tool.uv.sources]
+wegent-chat-shell = { path = "../chat_shell", editable = true }
+wegent-shared = { path = "../shared", editable = true }
 
 [dependency-groups]
 dev = [

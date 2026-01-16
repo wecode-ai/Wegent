@@ -2,113 +2,115 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useEffect, useState } from 'react';
-import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
-import { Button } from '@/components/ui/button';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { useUser } from '@/features/common/UserContext';
-import { paths } from '@/config/paths';
-import { useTranslation } from '@/hooks/useTranslation';
-import LanguageSwitcher from '@/components/LanguageSwitcher';
-import { ThemeToggle } from '@/features/theme/ThemeToggle';
-import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants';
-import Image from 'next/image';
+import { useEffect, useState } from 'react'
+import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
+import { Button } from '@/components/ui/button'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useUser } from '@/features/common/UserContext'
+import { paths } from '@/config/paths'
+import { useTranslation } from '@/hooks/useTranslation'
+import LanguageSwitcher from '@/components/LanguageSwitcher'
+import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants'
+import Image from 'next/image'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 export default function LoginForm() {
-  const { t } = useTranslation();
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const { t } = useTranslation()
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const [formData, setFormData] = useState({
     user_name: 'admin',
     password: 'Wegent2025!',
-  });
-  const [showPassword, setShowPassword] = useState(false);
+  })
+  const [showPassword, setShowPassword] = useState(false)
   // Used antd message.error for unified error prompt, no need for local error state
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false)
 
-  // Get login mode configuration
-  const loginMode = process.env.NEXT_PUBLIC_LOGIN_MODE || 'all';
-  const showPasswordLogin = loginMode === 'password' || loginMode === 'all';
-  const showOidcLogin = loginMode === 'oidc' || loginMode === 'all';
+  // Get login mode configuration from runtime config
+  const runtimeConfig = getRuntimeConfigSync()
+  const loginMode = runtimeConfig.loginMode
+  const showPasswordLogin = loginMode === 'password' || loginMode === 'all'
+  const showOidcLogin = loginMode === 'oidc' || loginMode === 'all'
 
-  // Get OIDC login button text
-  const oidcLoginText = process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || t('common:login.oidc_login');
-  const loginPath = paths.auth.login.getHref();
-  const defaultRedirect = paths.chat.getHref();
-  const [redirectPath, setRedirectPath] = useState(defaultRedirect);
+  // Get OIDC login button text from runtime config
+  const oidcLoginText = runtimeConfig.oidcLoginText || t('common:login.oidc_login')
+  const loginPath = paths.auth.login.getHref()
+  const defaultRedirect = paths.chat.getHref()
+  const [redirectPath, setRedirectPath] = useState(defaultRedirect)
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
+    const { name, value } = e.target
     setFormData(prev => ({
       ...prev,
       [name]: value,
-    }));
+    }))
     // Used antd message.error for unified error prompt, no need for local error state
-  };
+  }
 
-  const { user, isLoading: userLoading, login } = useUser();
+  const { user, isLoading: userLoading, login } = useUser()
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const queryRedirect = searchParams.get('redirect');
-      const storedRedirect = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY);
-      const disallowedRedirects = [loginPath, '/login/oidc'];
-      const validQueryRedirect = sanitizeRedirectPath(queryRedirect, disallowedRedirects);
-      const validStoredRedirect = sanitizeRedirectPath(storedRedirect, disallowedRedirects);
+      const queryRedirect = searchParams.get('redirect')
+      const storedRedirect = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY)
+      const disallowedRedirects = [loginPath, '/login/oidc']
+      const validQueryRedirect = sanitizeRedirectPath(queryRedirect, disallowedRedirects)
+      const validStoredRedirect = sanitizeRedirectPath(storedRedirect, disallowedRedirects)
 
       if (validQueryRedirect) {
-        sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, validQueryRedirect);
-        setRedirectPath(validQueryRedirect);
+        sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, validQueryRedirect)
+        setRedirectPath(validQueryRedirect)
       } else if (validStoredRedirect) {
-        setRedirectPath(validStoredRedirect);
+        setRedirectPath(validStoredRedirect)
       } else {
-        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY);
-        setRedirectPath(defaultRedirect);
+        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
+        setRedirectPath(defaultRedirect)
       }
     }
-  }, [defaultRedirect, loginPath, searchParams]);
+  }, [defaultRedirect, loginPath, searchParams])
 
   useEffect(() => {
     if (!userLoading && user) {
       if (typeof window !== 'undefined') {
-        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY);
+        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
       }
-      router.replace(redirectPath);
+      router.replace(redirectPath)
     }
-  }, [userLoading, user, router, redirectPath]);
+  }, [userLoading, user, router, redirectPath])
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+    e.preventDefault()
     if (user) {
       if (typeof window !== 'undefined') {
-        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY);
+        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
       }
-      router.replace(redirectPath);
-      return;
+      router.replace(redirectPath)
+      return
     }
-    setIsLoading(true);
+    setIsLoading(true)
     // Used antd message.error for unified error prompt, no need for local error state
 
     try {
       await login({
         user_name: formData.user_name,
         password: formData.password,
-      });
+      })
       // Login succeeded - clean up session storage
       if (typeof window !== 'undefined') {
-        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY);
+        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
       }
       // Force an immediate redirect after successful login
       // This ensures redirect happens even if useEffect timing is delayed
-      router.replace(redirectPath);
+      router.replace(redirectPath)
     } catch {
       // Error handling is already done in UserContext.login, no need to show error message here
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
+  }
 
   return (
     <div className="space-y-6">
@@ -247,5 +249,5 @@ export default function LoginForm() {
         </div>
       )}
     </div>
-  );
+  )
 }

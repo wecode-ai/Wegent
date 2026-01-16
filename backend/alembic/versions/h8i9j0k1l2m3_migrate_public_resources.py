@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 WeCode, Inc.
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -15,8 +15,9 @@ This migration:
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "h8i9j0k1l2m3"
@@ -27,17 +28,18 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Migrate public_models and public_shells to kinds table.
-    
+
     The public_models and public_shells tables use a simplified schema with a 'json' column
     that stores all resource data. This migration:
     1. Migrates data from public_models to kinds (user_id=0, kind='Model')
     2. Migrates data from public_shells to kinds (user_id=0, kind='Shell')
     3. Drops the old tables
     """
-    
+
     # Migrate public_models to kinds
     # The 'json' column in public_models contains the full spec data
-    op.execute("""
+    op.execute(
+        """
         INSERT INTO kinds (user_id, kind, namespace, name, json, is_active, created_at, updated_at)
         SELECT
             0 as user_id,
@@ -56,11 +58,13 @@ def upgrade() -> None:
             AND kinds.namespace = public_models.namespace
             AND kinds.name = public_models.name
         )
-    """)
-    
+    """
+    )
+
     # Migrate public_shells to kinds
     # The 'json' column in public_shells contains the full spec data
-    op.execute("""
+    op.execute(
+        """
         INSERT INTO kinds (user_id, kind, namespace, name, json, is_active, created_at, updated_at)
         SELECT
             0 as user_id,
@@ -79,8 +83,9 @@ def upgrade() -> None:
             AND kinds.namespace = public_shells.namespace
             AND kinds.name = public_shells.name
         )
-    """)
-    
+    """
+    )
+
     # Drop old tables
     op.execute("DROP TABLE IF EXISTS public_shells")
     op.execute("DROP TABLE IF EXISTS public_models")
@@ -90,7 +95,8 @@ def downgrade() -> None:
     """Restore public_models and public_shells tables with simplified schema."""
 
     # Recreate public_models table with simplified schema
-    op.execute("""
+    op.execute(
+        """
         CREATE TABLE IF NOT EXISTS public_models (
             id INT NOT NULL AUTO_INCREMENT,
             name VARCHAR(100) NOT NULL,
@@ -103,10 +109,12 @@ def downgrade() -> None:
             KEY ix_public_models_id (id),
             UNIQUE KEY idx_public_model_name_namespace (name, namespace)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """)
+    """
+    )
 
     # Recreate public_shells table with simplified schema
-    op.execute("""
+    op.execute(
+        """
         CREATE TABLE IF NOT EXISTS public_shells (
             id INT NOT NULL AUTO_INCREMENT,
             name VARCHAR(100) NOT NULL,
@@ -119,10 +127,12 @@ def downgrade() -> None:
             KEY ix_public_shells_id (id),
             UNIQUE KEY idx_public_shell_name_namespace (name, namespace)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """)
+    """
+    )
 
     # Migrate data back from kinds to public_models
-    op.execute("""
+    op.execute(
+        """
         INSERT INTO public_models (name, namespace, json, is_active, created_at, updated_at)
         SELECT
             name,
@@ -133,10 +143,12 @@ def downgrade() -> None:
             updated_at
         FROM kinds
         WHERE user_id = 0 AND kind = 'Model'
-    """)
+    """
+    )
 
     # Migrate data back from kinds to public_shells
-    op.execute("""
+    op.execute(
+        """
         INSERT INTO public_shells (name, namespace, json, is_active, created_at, updated_at)
         SELECT
             name,
@@ -147,7 +159,8 @@ def downgrade() -> None:
             updated_at
         FROM kinds
         WHERE user_id = 0 AND kind = 'Shell'
-    """)
+    """
+    )
 
     # Remove migrated records from kinds
     op.execute("DELETE FROM kinds WHERE user_id = 0 AND kind = 'Model'")

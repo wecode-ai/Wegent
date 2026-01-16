@@ -833,30 +833,40 @@ class SharedTaskService:
         # Convert to public subtask data (exclude sensitive fields)
         public_subtasks = []
         for sub in subtasks:
-            # Get attachment contexts for this subtask
+            # Get ALL contexts for this subtask (attachments and knowledge bases)
             contexts = (
                 db.query(SubtaskContext)
-                .filter(
-                    SubtaskContext.subtask_id == sub.id,
-                    SubtaskContext.context_type == ContextType.ATTACHMENT.value,
-                )
+                .filter(SubtaskContext.subtask_id == sub.id)
                 .all()
             )
 
             # Convert contexts to public format (exclude binary data and image base64)
-            public_attachments = [
-                {
+            public_contexts = []
+            for ctx in contexts:
+                ctx_dict = {
                     "id": ctx.id,
-                    "original_filename": ctx.original_filename,
-                    "file_extension": ctx.file_extension,
-                    "file_size": ctx.file_size,
-                    "mime_type": ctx.mime_type,
-                    "extracted_text": ctx.extracted_text or "",
-                    "text_length": ctx.text_length,
+                    "context_type": ctx.context_type,
+                    "name": ctx.name,
                     "status": ctx.status,
                 }
-                for ctx in contexts
-            ]
+
+                # Add type-specific fields
+                if ctx.context_type == ContextType.ATTACHMENT.value:
+                    ctx_dict.update(
+                        {
+                            "file_extension": ctx.file_extension,
+                            "file_size": ctx.file_size,
+                            "mime_type": ctx.mime_type,
+                        }
+                    )
+                elif ctx.context_type == ContextType.KNOWLEDGE_BASE.value:
+                    ctx_dict.update(
+                        {
+                            "document_count": ctx.document_count,
+                        }
+                    )
+
+                public_contexts.append(ctx_dict)
 
             # Get sender user name if available
             sender_user_name = None
@@ -872,7 +882,7 @@ class SharedTaskService:
                     status=sub.status,
                     created_at=sub.created_at,
                     updated_at=sub.updated_at,
-                    attachments=public_attachments,
+                    contexts=public_contexts,
                     sender_type=sub.sender_type,
                     sender_user_id=sub.sender_user_id,
                     sender_user_name=sender_user_name,

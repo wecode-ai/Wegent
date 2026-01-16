@@ -1,12 +1,12 @@
-import { test as base, expect, Page } from '@playwright/test';
+import { test as base, expect, Page } from '@playwright/test'
 
 /**
  * Custom test fixtures for Wegent E2E tests
  */
 
 export interface TestFixtures {
-  authenticatedPage: Page;
-  testPrefix: string;
+  authenticatedPage: Page
+  testPrefix: string
 }
 
 /**
@@ -19,7 +19,7 @@ export const test = base.extend<TestFixtures>({
    */
   authenticatedPage: async ({ page }, use) => {
     // The storage state is automatically loaded from config
-    await use(page);
+    await use(page)
   },
 
   /**
@@ -27,13 +27,13 @@ export const test = base.extend<TestFixtures>({
    * Helps avoid conflicts between test runs
    */
   testPrefix: async ({}, use) => {
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(7);
-    await use(`e2e-${timestamp}-${random}`);
+    const timestamp = Date.now()
+    const random = Math.random().toString(36).substring(7)
+    await use(`e2e-${timestamp}-${random}`)
   },
-});
+})
 
-export { expect };
+export { expect }
 
 /**
  * Common page object helpers
@@ -45,8 +45,8 @@ export class PageHelpers {
    * Navigate to a tab in settings
    */
   async navigateToSettingsTab(tab: 'team' | 'models' | 'integrations'): Promise<void> {
-    await this.page.goto(`/settings?tab=${tab}`);
-    await this.page.waitForLoadState('networkidle');
+    await this.page.goto(`/settings?tab=${tab}`)
+    await this.page.waitForLoadState('networkidle')
   }
 
   /**
@@ -56,23 +56,23 @@ export class PageHelpers {
     text?: string,
     _type: 'success' | 'error' | 'default' = 'default'
   ): Promise<void> {
-    const toastSelector = text ? `[data-sonner-toast]:has-text("${text}")` : '[data-sonner-toast]';
-    await this.page.waitForSelector(toastSelector, { timeout: 10000 });
+    const toastSelector = text ? `[data-sonner-toast]:has-text("${text}")` : '[data-sonner-toast]'
+    await this.page.waitForSelector(toastSelector, { timeout: 10000 })
   }
 
   /**
    * Click a button with specific text
    */
   async clickButton(text: string): Promise<void> {
-    await this.page.click(`button:has-text("${text}")`);
+    await this.page.click(`button:has-text("${text}")`)
   }
 
   /**
    * Fill form field by label
    */
   async fillField(label: string, value: string): Promise<void> {
-    const field = this.page.locator(`label:has-text("${label}") + input`);
-    await field.fill(value);
+    const field = this.page.locator(`label:has-text("${label}") + input`)
+    await field.fill(value)
   }
 
   /**
@@ -80,9 +80,9 @@ export class PageHelpers {
    */
   async selectOption(selectorOrLabel: string, optionText: string): Promise<void> {
     // Click to open dropdown
-    await this.page.click(selectorOrLabel);
+    await this.page.click(selectorOrLabel)
     // Wait for options and click
-    await this.page.click(`[role="option"]:has-text("${optionText}")`);
+    await this.page.click(`[role="option"]:has-text("${optionText}")`)
   }
 
   /**
@@ -97,7 +97,7 @@ export class PageHelpers {
       })
       .catch(() => {
         // Ignore if no loading indicator found
-      });
+      })
   }
 
   /**
@@ -106,14 +106,14 @@ export class PageHelpers {
   async confirmDelete(): Promise<void> {
     await this.page.click(
       'button:has-text("Delete"), button:has-text("Confirm"), button:has-text("确认")'
-    );
+    )
   }
 
   /**
    * Cancel dialog
    */
   async cancelDialog(): Promise<void> {
-    await this.page.click('button:has-text("Cancel"), button:has-text("取消")');
+    await this.page.click('button:has-text("Cancel"), button:has-text("取消")')
   }
 }
 
@@ -125,7 +125,7 @@ export const TestData = {
    * Generate unique name with prefix
    */
   uniqueName: (prefix: string): string => {
-    return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(7)}`
   },
 
   /**
@@ -162,4 +162,4 @@ export const TestData = {
     api_key: 'test-api-key',
     base_url: 'https://api.openai.com/v1',
   }),
-};
+}

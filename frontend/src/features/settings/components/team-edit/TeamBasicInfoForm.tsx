@@ -1,24 +1,24 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { useTranslation } from '@/hooks/useTranslation';
-import { TeamIconPicker } from '../teams/TeamIconPicker';
+import React from 'react'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { useTranslation } from '@/hooks/useTranslation'
+import { TeamIconPicker } from '../teams/TeamIconPicker'
 
 interface TeamBasicInfoFormProps {
-  name: string;
-  setName: (name: string) => void;
-  description: string;
-  setDescription: (description: string) => void;
-  bindMode: ('chat' | 'code')[];
-  setBindMode: (bindMode: ('chat' | 'code')[]) => void;
-  icon?: string | null;
-  setIcon?: (icon: string) => void;
+  name: string
+  setName: (name: string) => void
+  description: string
+  setDescription: (description: string) => void
+  bindMode: ('chat' | 'code')[]
+  setBindMode: (bindMode: ('chat' | 'code')[]) => void
+  icon?: string | null
+  setIcon?: (icon: string) => void
 }
 
 export default function TeamBasicInfoForm({
@@ -31,7 +31,7 @@ export default function TeamBasicInfoForm({
   icon,
   setIcon,
 }: TeamBasicInfoFormProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   return (
     <div className="space-y-4">
@@ -58,18 +58,17 @@ export default function TeamBasicInfoForm({
           <Label className="text-sm font-medium">{t('common:team.bind_mode')}</Label>
           <div className="flex gap-2">
             {(['chat', 'code'] as const).map(opt => {
-              const isSelected = bindMode.includes(opt);
+              const isSelected = bindMode.includes(opt)
               return (
                 <button
                   key={opt}
                   type="button"
                   onClick={() => {
                     if (isSelected) {
-                      if (bindMode.length > 1) {
-                        setBindMode(bindMode.filter(m => m !== opt));
-                      }
+                      // Allow deselecting even if it's the last one (can be empty)
+                      setBindMode(bindMode.filter(m => m !== opt))
                     } else {
-                      setBindMode([...bindMode, opt]);
+                      setBindMode([...bindMode, opt])
                     }
                   }}
                   className={`
@@ -83,7 +82,7 @@ export default function TeamBasicInfoForm({
                 >
                   {t(`team.bind_mode_${opt}`)}
                 </button>
-              );
+              )
             })}
           </div>
         </div>
@@ -103,5 +102,5 @@ export default function TeamBasicInfoForm({
         />
       </div>
     </div>
-  );
+  )
 }

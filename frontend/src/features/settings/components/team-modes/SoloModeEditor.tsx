@@ -1,49 +1,49 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
-import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown';
-import { RiRobot2Line, RiMagicLine } from 'react-icons/ri';
-import { Plus, ChevronDown, Check } from 'lucide-react';
-import { Bot, Team } from '@/types/api';
-import { useTranslation } from '@/hooks/useTranslation';
-import { getPromptBadgeStyle, type PromptBadgeVariant } from '@/utils/styles';
-import { Tag } from '@/components/ui/tag';
-import BotEdit, { AgentType, BotEditRef } from '../BotEdit';
+} from '@/components/ui/dropdown'
+import { RiRobot2Line, RiMagicLine } from 'react-icons/ri'
+import { Plus, ChevronDown, Check } from 'lucide-react'
+import { Bot, Team } from '@/types/api'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getPromptBadgeStyle, type PromptBadgeVariant } from '@/utils/styles'
+import { Tag } from '@/components/ui/tag'
+import BotEdit, { AgentType, BotEditRef } from '../BotEdit'
 
 export interface SoloModeEditorProps {
-  bots: Bot[];
-  setBots: React.Dispatch<React.SetStateAction<Bot[]>>;
-  selectedBotId: number | null;
-  setSelectedBotId: React.Dispatch<React.SetStateAction<number | null>>;
-  editingTeam: Team | null;
-  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
-  unsavedPrompts?: Record<string, string>;
-  teamPromptMap?: Map<number, boolean>;
-  onOpenPromptDrawer?: () => void;
+  bots: Bot[]
+  setBots: React.Dispatch<React.SetStateAction<Bot[]>>
+  selectedBotId: number | null
+  setSelectedBotId: React.Dispatch<React.SetStateAction<number | null>>
+  editingTeam: Team | null
+  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
+  unsavedPrompts?: Record<string, string>
+  teamPromptMap?: Map<number, boolean>
+  onOpenPromptDrawer?: () => void
   /** Callback to create a new bot (reuse TeamEdit's handler) - deprecated, now handled inline */
-  onCreateBot?: () => void;
+  onCreateBot?: () => void
   /** List of allowed agent types for filtering when creating bots */
-  allowedAgents?: AgentType[];
+  allowedAgents?: AgentType[]
   /** Current team editing ID (0 = new team) */
-  editingTeamId?: number;
+  editingTeamId?: number
   /** Ref to access BotEdit methods for external saving */
-  botEditRef?: React.RefObject<BotEditRef | null>;
+  botEditRef?: React.RefObject<BotEditRef | null>
   /** Scope for filtering shells */
-  scope?: 'personal' | 'group' | 'all';
+  scope?: 'personal' | 'group' | 'all'
   /** Group name when scope is 'group' */
-  groupName?: string;
+  groupName?: string
 }
 
 export default function SoloModeEditor({
@@ -61,7 +61,7 @@ export default function SoloModeEditor({
   scope,
   groupName,
 }: SoloModeEditorProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   // Calculate prompt summary (similar to BotTransfer)
   const promptSummary = React.useMemo<{ label: string; variant: PromptBadgeVariant }>(() => {
@@ -69,84 +69,84 @@ export default function SoloModeEditor({
       return {
         label: t('common:team.prompts_tag_none'),
         variant: 'none',
-      };
+      }
     }
 
     // Check unsaved prompts first
-    const unsavedPrompt = unsavedPrompts[`prompt-${selectedBotId}`];
-    const hasUnsavedContent = unsavedPrompt && unsavedPrompt.trim().length > 0;
+    const unsavedPrompt = unsavedPrompts[`prompt-${selectedBotId}`]
+    const hasUnsavedContent = unsavedPrompt && unsavedPrompt.trim().length > 0
 
     // Check teamPromptMap
-    const hasConfigured = teamPromptMap ? teamPromptMap.get(selectedBotId) || false : false;
+    const hasConfigured = teamPromptMap ? teamPromptMap.get(selectedBotId) || false : false
 
     if (hasUnsavedContent) {
       const countText = hasConfigured
         ? ` - ${t('common:team.prompts_tag_configured', { count: 1 })}`
-        : '';
+        : ''
       return {
         label: `${t('common:team.prompts_tag_pending')}${countText}`,
         variant: 'pending',
-      };
+      }
     }
 
     if (hasConfigured) {
       return {
         label: t('common:team.prompts_tag_configured', { count: 1 }),
         variant: 'configured',
-      };
+      }
     }
 
     return {
       label: t('common:team.prompts_tag_none'),
       variant: 'none',
-    };
-  }, [selectedBotId, unsavedPrompts, teamPromptMap, t]);
+    }
+  }, [selectedBotId, unsavedPrompts, teamPromptMap, t])
 
   const promptSummaryStyle = React.useMemo(
     () => getPromptBadgeStyle(promptSummary.variant),
     [promptSummary.variant]
-  );
+  )
 
   // Determine if this is a new team without a selected bot
-  const isNewTeamWithoutBot = editingTeamId === 0 && selectedBotId === null;
+  const isNewTeamWithoutBot = editingTeamId === 0 && selectedBotId === null
 
   // State for inline bot creation mode - auto-enter for new teams
-  const [isCreatingBot, setIsCreatingBot] = useState(isNewTeamWithoutBot);
+  const [isCreatingBot, setIsCreatingBot] = useState(isNewTeamWithoutBot)
   // Track bots IDs to detect new bot creation
-  const prevBotIdsRef = useRef<Set<number>>(new Set(bots.map(b => b.id)));
+  const prevBotIdsRef = useRef<Set<number>>(new Set(bots.map(b => b.id)))
 
   // Update isCreatingBot when editingTeamId or selectedBotId changes
   useEffect(() => {
     if (editingTeamId === 0 && selectedBotId === null) {
-      setIsCreatingBot(true);
+      setIsCreatingBot(true)
     }
-  }, [editingTeamId, selectedBotId]);
+  }, [editingTeamId, selectedBotId])
 
   // Get the selected bot
   const selectedBot = useMemo(() => {
-    if (selectedBotId === null) return null;
-    return bots.find(b => b.id === selectedBotId) || null;
-  }, [bots, selectedBotId]);
+    if (selectedBotId === null) return null
+    return bots.find(b => b.id === selectedBotId) || null
+  }, [bots, selectedBotId])
 
   // Handle bot selection change
   const handleBotChange = useCallback(
     (botId: number) => {
-      setSelectedBotId(botId);
-      setIsCreatingBot(false);
+      setSelectedBotId(botId)
+      setIsCreatingBot(false)
     },
     [setSelectedBotId]
-  );
+  )
 
   // Handle create new bot - show inline creation form
   const handleCreateBot = useCallback(() => {
-    setSelectedBotId(null);
-    setIsCreatingBot(true);
-  }, [setSelectedBotId]);
+    setSelectedBotId(null)
+    setIsCreatingBot(true)
+  }, [setSelectedBotId])
 
   // Handle bot edit close
   const handleBotEditClose = useCallback(() => {
     // No-op for solo mode - bot changes are saved with team
-  }, []);
+  }, [])
 
   // Handle bot creation close - just close the creation mode (used for cancel)
   const handleBotCreateClose = useCallback(() => {
@@ -154,48 +154,48 @@ export default function SoloModeEditor({
     // We don't set isCreatingBot to false here because the useEffect will handle it
     // when a new bot is detected. If no new bot is created (e.g., validation failed),
     // we keep the creation mode open.
-  }, []);
+  }, [])
 
   // Handle cancel creation explicitly
   const handleCancelCreate = useCallback(() => {
     // If there are existing bots, select the first one
     if (bots.length > 0) {
-      setSelectedBotId(bots[0].id);
+      setSelectedBotId(bots[0].id)
     }
-    setIsCreatingBot(false);
-  }, [bots, setSelectedBotId]);
+    setIsCreatingBot(false)
+  }, [bots, setSelectedBotId])
 
   // Effect to detect new bot creation and auto-select it
   useEffect(() => {
     // Find any new bot that wasn't in the previous set
-    const currentBotIds = new Set(bots.map(b => b.id));
-    const newBotIds = bots.filter(b => !prevBotIdsRef.current.has(b.id));
+    const currentBotIds = new Set(bots.map(b => b.id))
+    const newBotIds = bots.filter(b => !prevBotIdsRef.current.has(b.id))
 
     // If there's a new bot, select it and close creation mode
     if (newBotIds.length > 0) {
       // Select the first new bot (should be the one we just created)
-      const newBot = newBotIds[0];
-      setSelectedBotId(newBot.id);
+      const newBot = newBotIds[0]
+      setSelectedBotId(newBot.id)
       // Close creation mode if we were creating
       if (isCreatingBot) {
-        setIsCreatingBot(false);
+        setIsCreatingBot(false)
       }
     }
 
     // Update the ref for next comparison
-    prevBotIdsRef.current = currentBotIds;
-  }, [bots, isCreatingBot, setSelectedBotId]);
+    prevBotIdsRef.current = currentBotIds
+  }, [bots, isCreatingBot, setSelectedBotId])
 
   // Determine the current mode label
   const currentModeLabel = useMemo(() => {
     if (isCreatingBot) {
-      return t('common:bots.new_bot');
+      return t('common:bots.new_bot')
     }
     if (selectedBot) {
-      return selectedBot.name;
+      return selectedBot.name
     }
-    return t('common:team.select_bot_placeholder');
-  }, [isCreatingBot, selectedBot, t]);
+    return t('common:team.select_bot_placeholder')
+  }, [isCreatingBot, selectedBot, t])
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -343,5 +343,5 @@ export default function SoloModeEditor({
         )}
       </div>
     </div>
-  );
+  )
 }

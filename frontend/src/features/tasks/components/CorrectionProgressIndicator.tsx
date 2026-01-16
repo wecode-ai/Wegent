@@ -2,28 +2,28 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import { Search, Brain, Sparkles, Loader2 } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
-import { cn } from '@/lib/utils';
-import type { CorrectionStage } from '@/types/socket';
-import MarkdownWithMermaid from '@/components/common/MarkdownWithMermaid';
-import { useTheme } from '@/features/theme/ThemeProvider';
+import React from 'react'
+import { Search, Brain, Sparkles, Loader2 } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import type { CorrectionStage } from '@/types/socket'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
+import { useTheme } from '@/features/theme/ThemeProvider'
 
 /** Streaming content for correction fields */
 export interface CorrectionStreamingContent {
-  summary: string;
-  improved_answer: string;
+  summary: string
+  improved_answer: string
 }
 
 interface CorrectionProgressIndicatorProps {
-  stage: CorrectionStage | 'starting';
-  toolName?: string;
-  className?: string;
+  stage: CorrectionStage | 'starting'
+  toolName?: string
+  className?: string
   /** Streaming content to display during generation */
-  streamingContent?: CorrectionStreamingContent;
+  streamingContent?: CorrectionStreamingContent
 }
 
 /**
@@ -32,9 +32,9 @@ interface CorrectionProgressIndicatorProps {
 const stageConfig: Record<
   CorrectionStage | 'starting',
   {
-    icon: typeof Loader2;
-    i18nKey: string;
-    animate: boolean;
+    icon: typeof Loader2
+    i18nKey: string
+    animate: boolean
   }
 > = {
   starting: {
@@ -57,7 +57,7 @@ const stageConfig: Record<
     i18nKey: 'correction.progress.generating_improvement',
     animate: false,
   },
-};
+}
 
 /**
  * CorrectionProgressIndicator Component
@@ -78,14 +78,14 @@ export default function CorrectionProgressIndicator({
   className,
   streamingContent,
 }: CorrectionProgressIndicatorProps) {
-  const { t } = useTranslation('chat');
-  const { theme } = useTheme();
+  const { t } = useTranslation('chat')
+  const { theme } = useTheme()
 
-  const config = stageConfig[stage] || stageConfig.evaluating;
-  const Icon = config.icon;
+  const config = stageConfig[stage] || stageConfig.evaluating
+  const Icon = config.icon
 
   // Check if we have streaming content to display
-  const hasStreamingContent = streamingContent && streamingContent.improved_answer;
+  const hasStreamingContent = streamingContent && streamingContent.improved_answer
 
   return (
     <div
@@ -127,13 +127,13 @@ export default function CorrectionProgressIndicator({
       {/* Streaming content display - only show improved_answer, summary is in collapsible */}
       {hasStreamingContent && stage === 'generating_improvement' && (
         <div className="mt-2 text-text-primary">
-          {/* Improved answer streaming - use MarkdownWithMermaid for consistent rendering */}
+          {/* Improved answer streaming - use EnhancedMarkdown for consistent rendering */}
           <div className="border-l-2 border-primary/50 pl-3">
             <div className="text-xs text-text-muted mb-1">
               {t('correction.streaming.improved_answer')}
             </div>
             <div className="text-sm max-h-60 overflow-y-auto relative">
-              <MarkdownWithMermaid
+              <EnhancedMarkdown
                 source={streamingContent.improved_answer}
                 theme={theme as 'light' | 'dark'}
               />
@@ -144,5 +144,5 @@ export default function CorrectionProgressIndicator({
         </div>
       )}
     </div>
-  );
+  )
 }

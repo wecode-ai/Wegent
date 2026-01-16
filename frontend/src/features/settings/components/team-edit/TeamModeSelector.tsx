@@ -1,24 +1,24 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useMemo, useState } from 'react';
-import Image from 'next/image';
-import { Label } from '@/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { RiRobot2Line } from 'react-icons/ri';
-import { ChevronDown } from 'lucide-react';
-import { useTranslation } from '@/hooks/useTranslation';
-import { TeamMode } from '../team-modes';
-import { cn } from '@/lib/utils';
+import React, { useMemo, useState } from 'react'
+import Image from 'next/image'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { RiRobot2Line } from 'react-icons/ri'
+import { ChevronDown } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { TeamMode } from '../team-modes'
+import { cn } from '@/lib/utils'
 
 interface TeamModeSelectorProps {
-  mode: TeamMode;
-  onModeChange: (mode: TeamMode) => void;
-  shouldCollapse?: boolean;
-  onCollapseHandled?: () => void;
+  mode: TeamMode
+  onModeChange: (mode: TeamMode) => void
+  shouldCollapse?: boolean
+  onCollapseHandled?: () => void
 }
 
 export default function TeamModeSelector({
@@ -27,16 +27,16 @@ export default function TeamModeSelector({
   shouldCollapse,
   onCollapseHandled,
 }: TeamModeSelectorProps) {
-  const { t } = useTranslation();
-  const [isExpanded, setIsExpanded] = useState(false);
+  const { t } = useTranslation()
+  const [isExpanded, setIsExpanded] = useState(false)
 
   // Handle collapse from parent (after dialog confirmation)
   React.useEffect(() => {
     if (shouldCollapse) {
-      setIsExpanded(false);
-      onCollapseHandled?.();
+      setIsExpanded(false)
+      onCollapseHandled?.()
     }
-  }, [shouldCollapse, onCollapseHandled]);
+  }, [shouldCollapse, onCollapseHandled])
 
   // Mode info with description and image
   const modeInfo = useMemo(() => {
@@ -46,14 +46,14 @@ export default function TeamModeSelector({
       route: '/settings/router.png',
       coordinate: '/settings/network.png',
       collaborate: '/settings/parallel.png',
-    };
+    }
 
     return {
       title: t(`team_model.${mode}`),
       desc: t(`team_model_desc.${mode}`),
       image: imageMap[mode],
-    };
-  }, [mode, t]);
+    }
+  }, [mode, t])
 
   return (
     <div className="space-y-2">
@@ -92,7 +92,7 @@ export default function TeamModeSelector({
             <RadioGroup
               value={mode}
               onValueChange={value => {
-                onModeChange(value as TeamMode);
+                onModeChange(value as TeamMode)
               }}
               className="w-full grid grid-cols-5 gap-2"
             >
@@ -145,5 +145,5 @@ export default function TeamModeSelector({
         </div>
       </div>
     </div>
-  );
+  )
 }

@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import * as React from 'react';
-import { Check, ChevronsUpDown } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import * as React from 'react'
+import { Check, ChevronsUpDown } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import {
   Command,
   CommandEmpty,
@@ -14,37 +14,37 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from '@/components/ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+} from '@/components/ui/command'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 export interface SearchableSelectItem {
-  value: string;
-  label: string;
-  searchText?: string; // Optional custom search text
-  disabled?: boolean;
-  content?: React.ReactNode; // Custom content for the item
+  value: string
+  label: string
+  searchText?: string // Optional custom search text
+  disabled?: boolean
+  content?: React.ReactNode // Custom content for the item
 }
 
 interface SearchableSelectProps {
-  value?: string;
-  onValueChange?: (value: string) => void;
-  onSearchChange?: (value: string) => void; // Callback for search text changes (for server-side search)
-  disabled?: boolean;
-  placeholder?: string;
-  searchPlaceholder?: string;
-  items: SearchableSelectItem[];
-  loading?: boolean;
-  error?: string | null;
-  emptyText?: string;
-  noMatchText?: string;
-  className?: string;
-  contentClassName?: string;
-  triggerClassName?: string;
-  renderTriggerValue?: (item: SearchableSelectItem | undefined) => React.ReactNode;
-  footer?: React.ReactNode;
-  listFooter?: React.ReactNode; // Content rendered at the end of the list (after items, before footer)
-  showChevron?: boolean; // Whether to show chevron icon
-  defaultOpen?: boolean; // Whether to open the dropdown by default
+  value?: string
+  onValueChange?: (value: string) => void
+  onSearchChange?: (value: string) => void // Callback for search text changes (for server-side search)
+  disabled?: boolean
+  placeholder?: string
+  searchPlaceholder?: string
+  items: SearchableSelectItem[]
+  loading?: boolean
+  error?: string | null
+  emptyText?: string
+  noMatchText?: string
+  className?: string
+  contentClassName?: string
+  triggerClassName?: string
+  renderTriggerValue?: (item: SearchableSelectItem | undefined) => React.ReactNode
+  footer?: React.ReactNode
+  listFooter?: React.ReactNode // Content rendered at the end of the list (after items, before footer)
+  showChevron?: boolean // Whether to show chevron icon
+  defaultOpen?: boolean // Whether to open the dropdown by default
 }
 
 export function SearchableSelect({
@@ -68,31 +68,31 @@ export function SearchableSelect({
   showChevron = false,
   defaultOpen = false,
 }: SearchableSelectProps) {
-  const [isOpen, setIsOpen] = React.useState(defaultOpen);
-  const [searchValue, setSearchValue] = React.useState('');
+  const [isOpen, setIsOpen] = React.useState(defaultOpen)
+  const [searchValue, setSearchValue] = React.useState('')
 
   // Find selected item
   const selectedItem = React.useMemo(() => {
-    return items.find(item => item.value === value);
-  }, [items, value]);
+    return items.find(item => item.value === value)
+  }, [items, value])
 
   const handleSelect = (currentValue: string) => {
-    onValueChange?.(currentValue);
-    setIsOpen(false);
-  };
+    onValueChange?.(currentValue)
+    setIsOpen(false)
+  }
 
   const handleSearchValueChange = (search: string) => {
-    setSearchValue(search);
-    onSearchChange?.(search);
-  };
+    setSearchValue(search)
+    onSearchChange?.(search)
+  }
 
   // Reset search when popover closes
   React.useEffect(() => {
     if (!isOpen) {
-      setSearchValue('');
-      onSearchChange?.('');
+      setSearchValue('')
+      onSearchChange?.('')
     }
-  }, [isOpen, onSearchChange]);
+  }, [isOpen, onSearchChange])
 
   return (
     <div className={className}>
@@ -153,7 +153,12 @@ export function SearchableSelect({
                 'placeholder:text-text-muted text-sm'
               )}
             />
-            <CommandList className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1">
+            <CommandList
+              className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1"
+              onWheel={e => {
+                e.stopPropagation()
+              }}
+            >
               {error ? (
                 <div className="py-4 px-3 text-center text-sm text-error">{error}</div>
               ) : items.length === 0 ? (
@@ -209,5 +214,5 @@ export function SearchableSelect({
         </PopoverContent>
       </Popover>
     </div>
-  );
+  )
 }

@@ -1,42 +1,32 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import {
-  Users,
-  User,
-  Plus,
-  FileText,
-  Pencil,
-  Trash2,
-  ArrowRight,
-  Globe,
-  ArrowLeft,
-  Search,
-  Clock,
-} from 'lucide-react';
-import { Spinner } from '@/components/ui/spinner';
-import { Card } from '@/components/ui/card';
-import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog';
-import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog';
-import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog';
-import { DocumentList } from './DocumentList';
-import { useTranslation } from '@/hooks/useTranslation';
-import { listGroups } from '@/apis/groups';
-import { useKnowledgeBases } from '../hooks/useKnowledgeBases';
-import type { Group, GroupRole } from '@/types/group';
-import type { KnowledgeBase } from '@/types/knowledge';
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { Users, User, Plus, FileText, Globe, ArrowLeft, Search } from 'lucide-react'
+import { Spinner } from '@/components/ui/spinner'
+import { Card } from '@/components/ui/card'
+import { KnowledgeBaseCard } from './KnowledgeBaseCard'
+import { GroupCard } from './GroupCard'
+import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
+import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
+import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
+import { DocumentList } from './DocumentList'
+import { useTranslation } from '@/hooks/useTranslation'
+import { listGroups } from '@/apis/groups'
+import { useKnowledgeBases } from '../hooks/useKnowledgeBases'
+import type { Group, GroupRole } from '@/types/group'
+import type { KnowledgeBase } from '@/types/knowledge'
 
-type DocumentTabType = 'personal' | 'group' | 'external';
+type DocumentTabType = 'personal' | 'group' | 'external'
 
 interface DocumentTab {
-  id: DocumentTabType;
-  labelKey: string;
-  icon: React.ReactNode;
-  disabled?: boolean;
+  id: DocumentTabType
+  labelKey: string
+  icon: React.ReactNode
+  disabled?: boolean
 }
 
 const tabs: DocumentTab[] = [
@@ -56,37 +46,37 @@ const tabs: DocumentTab[] = [
     icon: <Globe className="w-4 h-4" />,
     disabled: true,
   },
-];
+]
 
 export function KnowledgeDocumentPage() {
-  const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<DocumentTabType>('personal');
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [loadingGroups, setLoadingGroups] = useState(true);
-  const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null);
+  const { t } = useTranslation()
+  const [activeTab, setActiveTab] = useState<DocumentTabType>('personal')
+  const [groups, setGroups] = useState<Group[]>([])
+  const [loadingGroups, setLoadingGroups] = useState(true)
+  const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null)
 
   // Dialog states
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [createForGroup, setCreateForGroup] = useState<string | null>(null);
-  const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null);
-  const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null);
+  const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [createForGroup, setCreateForGroup] = useState<string | null>(null)
+  const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null)
+  const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null)
 
   // Refresh key for group knowledge bases
-  const [groupRefreshKey, setGroupRefreshKey] = useState(0);
+  const [groupRefreshKey, setGroupRefreshKey] = useState(0)
 
   // Personal knowledge bases
-  const personalKb = useKnowledgeBases({ scope: 'personal' });
+  const personalKb = useKnowledgeBases({ scope: 'personal' })
 
   // Build group role map from loaded groups
   const groupRoleMap = useMemo(() => {
-    const roleMap = new Map<string, GroupRole>();
+    const roleMap = new Map<string, GroupRole>()
     groups.forEach(group => {
       if (group.my_role) {
-        roleMap.set(group.name, group.my_role);
+        roleMap.set(group.name, group.my_role)
       }
-    });
-    return roleMap;
-  }, [groups]);
+    })
+    return roleMap
+  }, [groups])
 
   // Helper function to check if user can manage a knowledge base
   // For personal knowledge bases (namespace === 'default'), always allow
@@ -95,77 +85,77 @@ export function KnowledgeDocumentPage() {
     (kb: KnowledgeBase) => {
       // Personal knowledge base - always can manage
       if (kb.namespace === 'default') {
-        return true;
+        return true
       }
       // Group knowledge base - check role
-      const role = groupRoleMap.get(kb.namespace);
-      return role === 'Owner' || role === 'Maintainer' || role === 'Developer';
+      const role = groupRoleMap.get(kb.namespace)
+      return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
     },
     [groupRoleMap]
-  );
+  )
 
   // Load user's groups
   useEffect(() => {
     const loadGroups = async () => {
       try {
-        const response = await listGroups();
-        setGroups(response.items || []);
+        const response = await listGroups()
+        setGroups(response.items || [])
       } catch (error) {
-        console.error('Failed to load groups:', error);
+        console.error('Failed to load groups:', error)
       } finally {
-        setLoadingGroups(false);
+        setLoadingGroups(false)
       }
-    };
-    loadGroups();
-  }, []);
+    }
+    loadGroups()
+  }, [])
 
   const handleCreateKb = (groupName: string | null) => {
-    setCreateForGroup(groupName);
-    setShowCreateDialog(true);
-  };
+    setCreateForGroup(groupName)
+    setShowCreateDialog(true)
+  }
 
   const handleCreate = async (data: {
-    name: string;
-    description?: string;
-    retrieval_config?: Parameters<typeof personalKb.create>[0]['retrieval_config'];
+    name: string
+    description?: string
+    retrieval_config?: Parameters<typeof personalKb.create>[0]['retrieval_config']
   }) => {
     await personalKb.create({
       name: data.name,
       description: data.description,
       namespace: createForGroup || 'default',
       retrieval_config: data.retrieval_config,
-    });
-    setShowCreateDialog(false);
+    })
+    setShowCreateDialog(false)
     // Refresh the appropriate list based on whether it's a group or personal knowledge base
     if (createForGroup) {
-      setGroupRefreshKey(prev => prev + 1);
+      setGroupRefreshKey(prev => prev + 1)
     } else {
-      personalKb.refresh();
+      personalKb.refresh()
     }
-    setCreateForGroup(null);
-  };
+    setCreateForGroup(null)
+  }
 
   const handleUpdate = async (data: Parameters<typeof personalKb.update>[1]) => {
-    if (!editingKb) return;
-    await personalKb.update(editingKb.id, data);
+    if (!editingKb) return
+    await personalKb.update(editingKb.id, data)
     // Refresh the appropriate list based on whether it's a group or personal knowledge base
     if (editingKb.namespace !== 'default') {
       // Group knowledge base - trigger refresh via refreshKey
-      setGroupRefreshKey(prev => prev + 1);
+      setGroupRefreshKey(prev => prev + 1)
     }
-    setEditingKb(null);
-  };
+    setEditingKb(null)
+  }
 
   const handleDelete = async () => {
-    if (!deletingKb) return;
-    await personalKb.remove(deletingKb.id);
+    if (!deletingKb) return
+    await personalKb.remove(deletingKb.id)
     // Refresh the appropriate list based on whether it's a group or personal knowledge base
     if (deletingKb.namespace !== 'default') {
       // Group knowledge base - trigger refresh via refreshKey
-      setGroupRefreshKey(prev => prev + 1);
+      setGroupRefreshKey(prev => prev + 1)
     }
-    setDeletingKb(null);
-  };
+    setDeletingKb(null)
+  }
 
   // Show document list if a knowledge base is selected
   if (selectedKb) {
@@ -173,12 +163,12 @@ export function KnowledgeDocumentPage() {
       <DocumentList
         knowledgeBase={selectedKb}
         onBack={() => {
-          setSelectedKb(null);
-          personalKb.refresh();
+          setSelectedKb(null)
+          personalKb.refresh()
         }}
         canManage={canManageKnowledgeBase(selectedKb)}
       />
-    );
+    )
   }
 
   return (
@@ -186,7 +176,7 @@ export function KnowledgeDocumentPage() {
       {/* Tab navigation - left aligned */}
       <div className="flex items-center gap-1">
         {tabs.map(tab => {
-          const isActive = activeTab === tab.id;
+          const isActive = activeTab === tab.id
           return (
             <button
               key={tab.id}
@@ -211,7 +201,7 @@ export function KnowledgeDocumentPage() {
                 </span>
               )}
             </button>
-          );
+          )
         })}
       </div>
 
@@ -252,8 +242,8 @@ export function KnowledgeDocumentPage() {
       <CreateKnowledgeBaseDialog
         open={showCreateDialog}
         onOpenChange={open => {
-          setShowCreateDialog(open);
-          if (!open) setCreateForGroup(null);
+          setShowCreateDialog(open)
+          if (!open) setCreateForGroup(null)
         }}
         onSubmit={handleCreate}
         loading={personalKb.loading}
@@ -277,17 +267,17 @@ export function KnowledgeDocumentPage() {
         loading={personalKb.loading}
       />
     </div>
-  );
+  )
 }
 
 // Personal knowledge content component
 interface PersonalKnowledgeContentProps {
-  knowledgeBases: KnowledgeBase[];
-  loading: boolean;
-  onSelectKb: (kb: KnowledgeBase) => void;
-  onEditKb: (kb: KnowledgeBase) => void;
-  onDeleteKb: (kb: KnowledgeBase) => void;
-  onCreateKb: () => void;
+  knowledgeBases: KnowledgeBase[]
+  loading: boolean
+  onSelectKb: (kb: KnowledgeBase) => void
+  onEditKb: (kb: KnowledgeBase) => void
+  onDeleteKb: (kb: KnowledgeBase) => void
+  onCreateKb: () => void
 }
 
 function PersonalKnowledgeContent({
@@ -298,23 +288,23 @@ function PersonalKnowledgeContent({
   onDeleteKb,
   onCreateKb,
 }: PersonalKnowledgeContentProps) {
-  const { t } = useTranslation();
-  const [searchQuery, setSearchQuery] = useState('');
+  const { t } = useTranslation()
+  const [searchQuery, setSearchQuery] = useState('')
 
   const filteredKnowledgeBases = useMemo(() => {
-    if (!searchQuery.trim()) return knowledgeBases;
-    const query = searchQuery.toLowerCase();
+    if (!searchQuery.trim()) return knowledgeBases
+    const query = searchQuery.toLowerCase()
     return knowledgeBases.filter(
       kb => kb.name.toLowerCase().includes(query) || kb.description?.toLowerCase().includes(query)
-    );
-  }, [knowledgeBases, searchQuery]);
+    )
+  }, [knowledgeBases, searchQuery])
 
   if (loading) {
     return (
       <div className="flex justify-center py-12">
         <Spinner />
       </div>
-    );
+    )
   }
 
   if (knowledgeBases.length === 0) {
@@ -336,7 +326,7 @@ function PersonalKnowledgeContent({
           </p>
         </Card>
       </div>
-    );
+    )
   }
 
   return (
@@ -390,18 +380,18 @@ function PersonalKnowledgeContent({
         </div>
       )}
     </div>
-  );
+  )
 }
 
 // Group knowledge content component
 interface GroupKnowledgeContentProps {
-  groups: Group[];
-  loadingGroups: boolean;
-  refreshKey: number;
-  onSelectKb: (kb: KnowledgeBase) => void;
-  onEditKb: (kb: KnowledgeBase) => void;
-  onDeleteKb: (kb: KnowledgeBase) => void;
-  onCreateKb: (groupName: string) => void;
+  groups: Group[]
+  loadingGroups: boolean
+  refreshKey: number
+  onSelectKb: (kb: KnowledgeBase) => void
+  onEditKb: (kb: KnowledgeBase) => void
+  onDeleteKb: (kb: KnowledgeBase) => void
+  onCreateKb: (groupName: string) => void
 }
 
 function GroupKnowledgeContent({
@@ -413,15 +403,15 @@ function GroupKnowledgeContent({
   onDeleteKb,
   onCreateKb,
 }: GroupKnowledgeContentProps) {
-  const { t } = useTranslation();
-  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
+  const { t } = useTranslation()
+  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
 
   if (loadingGroups) {
     return (
       <div className="flex justify-center py-12">
         <Spinner />
       </div>
-    );
+    )
   }
 
   if (groups.length === 0) {
@@ -430,7 +420,7 @@ function GroupKnowledgeContent({
         <Users className="w-12 h-12 mb-4 opacity-50" />
         <p className="text-sm">{t('knowledge:document.noGroupHint')}</p>
       </div>
-    );
+    )
   }
 
   // Show knowledge bases for selected group
@@ -445,7 +435,7 @@ function GroupKnowledgeContent({
         onDeleteKb={onDeleteKb}
         onCreateKb={() => onCreateKb(selectedGroup.name)}
       />
-    );
+    )
   }
 
   // Show group cards grid - centered
@@ -457,58 +447,18 @@ function GroupKnowledgeContent({
         ))}
       </div>
     </div>
-  );
-}
-
-// Group card component
-interface GroupCardProps {
-  group: Group;
-  onClick: () => void;
-}
-
-function GroupCard({ group, onClick }: GroupCardProps) {
-  return (
-    <Card
-      padding="sm"
-      className="hover:bg-hover transition-colors cursor-pointer h-[140px] flex flex-col group"
-      onClick={onClick}
-    >
-      {/* Header with icon and name */}
-      <div className="flex items-center gap-3 mb-2">
-        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-          <Users className="w-5 h-5 text-primary" />
-        </div>
-        <h3 className="font-medium text-sm line-clamp-2 flex-1">
-          {group.display_name || group.name}
-        </h3>
-      </div>
-
-      {/* Description */}
-      <div className="text-xs text-text-muted flex-1 min-h-0">
-        {group.description && <p className="line-clamp-2">{group.description}</p>}
-      </div>
-
-      {/* Bottom section - member count */}
-      <div className="flex items-center justify-between mt-auto pt-2 flex-shrink-0">
-        <span className="text-xs text-text-muted flex items-center gap-1">
-          <Users className="w-3 h-3" />
-          {group.member_count || 0}
-        </span>
-        <ArrowRight className="w-4 h-4 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
-      </div>
-    </Card>
-  );
+  )
 }
 
 // Group knowledge base list component
 interface GroupKnowledgeBaseListProps {
-  group: Group;
-  refreshKey: number;
-  onBack: () => void;
-  onSelectKb: (kb: KnowledgeBase) => void;
-  onEditKb: (kb: KnowledgeBase) => void;
-  onDeleteKb: (kb: KnowledgeBase) => void;
-  onCreateKb: () => void;
+  group: Group
+  refreshKey: number
+  onBack: () => void
+  onSelectKb: (kb: KnowledgeBase) => void
+  onEditKb: (kb: KnowledgeBase) => void
+  onDeleteKb: (kb: KnowledgeBase) => void
+  onCreateKb: () => void
 }
 
 function GroupKnowledgeBaseList({
@@ -520,37 +470,36 @@ function GroupKnowledgeBaseList({
   onDeleteKb,
   onCreateKb,
 }: GroupKnowledgeBaseListProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
   const { knowledgeBases, loading, refresh } = useKnowledgeBases({
     scope: 'group',
     groupName: group.name,
-  });
-  const [searchQuery, setSearchQuery] = useState('');
+  })
+  const [searchQuery, setSearchQuery] = useState('')
 
   // Check permissions based on group role
   // Developer or higher can create/edit, Maintainer or higher can delete
-  const groupRole = group.my_role;
-  const canCreate =
-    groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer';
-  const canEdit = groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer';
-  const canDelete = groupRole === 'Owner' || groupRole === 'Maintainer';
+  const groupRole = group.my_role
+  const canCreate = groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
+  const canEdit = groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
+  const canDelete = groupRole === 'Owner' || groupRole === 'Maintainer'
 
   // Refresh when refreshKey changes
   useEffect(() => {
     if (refreshKey > 0) {
-      refresh();
+      refresh()
     }
-  }, [refreshKey, refresh]);
+  }, [refreshKey, refresh])
 
   const filteredKnowledgeBases = useMemo(() => {
-    if (!searchQuery.trim()) return knowledgeBases;
-    const query = searchQuery.toLowerCase();
+    if (!searchQuery.trim()) return knowledgeBases
+    const query = searchQuery.toLowerCase()
     return knowledgeBases.filter(
       kb => kb.name.toLowerCase().includes(query) || kb.description?.toLowerCase().includes(query)
-    );
-  }, [knowledgeBases, searchQuery]);
+    )
+  }, [knowledgeBases, searchQuery])
 
-  const groupDisplayName = group.display_name || group.name || 'Unknown Group';
+  const groupDisplayName = group.display_name || group.name || 'Unknown Group'
 
   return (
     <div>
@@ -653,114 +602,5 @@ function GroupKnowledgeBaseList({
         </div>
       )}
     </div>
-  );
-}
-
-// Knowledge base card component (grid layout)
-interface KnowledgeBaseCardProps {
-  knowledgeBase: KnowledgeBase;
-  onClick: () => void;
-  onEdit?: () => void;
-  onDelete?: () => void;
-  canEdit?: boolean;
-  canDelete?: boolean;
-}
-
-function KnowledgeBaseCard({
-  knowledgeBase,
-  onClick,
-  onEdit,
-  onDelete,
-  canEdit = true,
-  canDelete = true,
-}: KnowledgeBaseCardProps) {
-  const { t } = useTranslation();
-
-  // Format date for compact display (MM-DD HH:mm)
-  const formatDate = (dateString: string) => {
-    if (!dateString) return '';
-    const date = new Date(dateString);
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${month}-${day} ${hours}:${minutes}`;
-  };
-
-  return (
-    <Card
-      padding="sm"
-      className="hover:bg-hover transition-colors cursor-pointer h-[140px] flex flex-col group"
-      onClick={onClick}
-    >
-      {/* Header with name */}
-      <div className="flex items-start pt-1 mb-2 flex-shrink-0">
-        <h3 className="font-medium text-sm leading-relaxed line-clamp-2 flex-1">
-          <span className="font-semibold">{knowledgeBase.name}</span>
-        </h3>
-      </div>
-
-      {/* Description */}
-      <div className="text-xs text-text-muted flex-1 min-h-0">
-        {knowledgeBase.description && <p className="line-clamp-2">{knowledgeBase.description}</p>}
-      </div>
-
-      {/* Bottom section - stats on left, actions on right */}
-      <div className="flex items-center justify-between mt-auto pt-2 flex-shrink-0">
-        {/* Document count and updated time */}
-        <div className="flex items-center gap-3 text-xs text-text-muted">
-          <span className="flex items-center gap-1">
-            <FileText className="w-3 h-3" />
-            {knowledgeBase.document_count}
-          </span>
-          <span
-            className="flex items-center gap-1"
-            title={
-              knowledgeBase.updated_at ? new Date(knowledgeBase.updated_at).toLocaleString() : ''
-            }
-          >
-            <Clock className="w-3 h-3" />
-            {formatDate(knowledgeBase.updated_at)}
-          </span>
-        </div>
-        {/* Action icons */}
-        <div className="flex items-center gap-1">
-          {canEdit && onEdit && (
-            <button
-              className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
-              onClick={e => {
-                e.stopPropagation();
-                onEdit();
-              }}
-              title={t('common:actions.edit')}
-            >
-              <Pencil className="w-4 h-4" />
-            </button>
-          )}
-          {canDelete && onDelete && (
-            <button
-              className="p-1.5 rounded-md text-text-muted hover:text-error hover:bg-error/10 transition-colors opacity-0 group-hover:opacity-100"
-              onClick={e => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              title={t('common:actions.delete')}
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          )}
-          <button
-            className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
-            onClick={e => {
-              e.stopPropagation();
-              onClick();
-            }}
-            title={t('common:actions.view')}
-          >
-            <ArrowRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    </Card>
-  );
+  )
 }

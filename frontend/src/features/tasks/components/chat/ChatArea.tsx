@@ -1,46 +1,55 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useEffect, useCallback, useMemo } from 'react';
-import { ShieldX } from 'lucide-react';
-import MessagesArea from '../message/MessagesArea';
-import { QuickAccessCards } from './QuickAccessCards';
-import { SloganDisplay } from './SloganDisplay';
-import { ChatInputCard } from '../input/ChatInputCard';
-import { useChatAreaState } from './useChatAreaState';
-import { useChatStreamHandlers } from './useChatStreamHandlers';
-import { allBotsHavePredefinedModel } from '../selector/ModelSelector';
-import type { Team } from '@/types/api';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useRouter } from 'next/navigation';
-import { useTaskContext } from '../../contexts/taskContext';
-import { useChatStreamContext } from '../../contexts/chatStreamContext';
-import { Button } from '@/components/ui/button';
-import { useScrollManagement } from '../hooks/useScrollManagement';
-import { useFloatingInput } from '../hooks/useFloatingInput';
-import { useTeamPreferences } from '../hooks/useTeamPreferences';
-import { useAttachmentUpload } from '../hooks/useAttachmentUpload';
+import React, { useEffect, useCallback, useMemo, useState, useRef } from 'react'
+import { ShieldX } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
+import MessagesArea from '../message/MessagesArea'
+import { QuickAccessCards } from './QuickAccessCards'
+import { SloganDisplay } from './SloganDisplay'
+import { ChatInputCard } from '../input/ChatInputCard'
+import PipelineStageIndicator from './PipelineStageIndicator'
+import type { PipelineStageInfo } from '@/apis/tasks'
+import { useChatAreaState } from './useChatAreaState'
+import { useChatStreamHandlers } from './useChatStreamHandlers'
+import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
+import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
+import type { Team, SubtaskContextBrief } from '@/types/api'
+import type { ContextItem } from '@/types/context'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useRouter } from 'next/navigation'
+import { useTaskContext } from '../../contexts/taskContext'
+import { useChatStreamContext } from '../../contexts/chatStreamContext'
+import { Button } from '@/components/ui/button'
+import { useScrollManagement } from '../hooks/useScrollManagement'
+import { useFloatingInput } from '../hooks/useFloatingInput'
+import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
+import { getLastTeamIdByMode, saveLastTeamByMode } from '@/utils/userPreferences'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
  * When the controls container width is less than this value, selectors will collapse.
  */
-const COLLAPSE_SELECTORS_THRESHOLD = 420;
+const COLLAPSE_SELECTORS_THRESHOLD = 420
 
 interface ChatAreaProps {
-  teams: Team[];
-  isTeamsLoading: boolean;
-  selectedTeamForNewTask?: Team | null;
-  showRepositorySelector?: boolean;
-  taskType?: 'chat' | 'code';
-  onShareButtonRender?: (button: React.ReactNode) => void;
-  onRefreshTeams?: () => Promise<Team[]>;
+  teams: Team[]
+  isTeamsLoading: boolean
+  selectedTeamForNewTask?: Team | null
+  showRepositorySelector?: boolean
+  taskType?: 'chat' | 'code'
+  onShareButtonRender?: (button: React.ReactNode) => void
+  onRefreshTeams?: () => Promise<Team[]>
 }
 
-export default function ChatArea({
+/**
+ * Inner component that uses the QuoteContext.
+ * Must be rendered inside QuoteProvider.
+ */
+function ChatAreaContent({
   teams,
   isTeamsLoading,
   selectedTeamForNewTask,
@@ -49,41 +58,173 @@ export default function ChatArea({
   onShareButtonRender,
   onRefreshTeams,
 }: ChatAreaProps) {
-  const { t } = useTranslation();
-  const router = useRouter();
+  const { t } = useTranslation()
+  const router = useRouter()
+
+  // Pipeline stage info state - shared between PipelineStageIndicator and MessagesArea
+  const [pipelineStageInfo, setPipelineStageInfo] = useState<PipelineStageInfo | null>(null)
+  const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
-  const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext();
+  const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext()
 
-  // Stream context for clearVersion and getStreamState
+  // Stream context for getStreamState
   // getStreamState is used to access messages (SINGLE SOURCE OF TRUTH per AGENTS.md)
-  const { clearVersion, getStreamState } = useChatStreamContext();
+  const { getStreamState } = useChatStreamContext()
 
   // Get stream state for current task to check messages
   const currentStreamState = selectedTaskDetail?.id
     ? getStreamState(selectedTaskDetail.id)
-    : undefined;
+    : undefined
 
   // Chat area state (team, repo, branch, model, input, toggles, etc.)
   const chatState = useChatAreaState({
     teams,
     taskType,
     selectedTeamForNewTask,
-  });
+  })
 
   // Compute subtask info for scroll management
-  const subtaskList = selectedTaskDetail?.subtasks ?? [];
-  const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
-  const lastSubtaskId = lastSubtask?.id ?? null;
-  const lastSubtaskUpdatedAt = lastSubtask?.updated_at || lastSubtask?.completed_at || null;
+  const subtaskList = selectedTaskDetail?.subtasks ?? []
+  const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null
+  const lastSubtaskId = lastSubtask?.id ?? null
+  const lastSubtaskUpdatedAt = lastSubtask?.updated_at || lastSubtask?.completed_at || null
   // Determine if there are messages to display (computed early for hooks)
   // Uses context messages as the single source of truth, not selectedTaskDetail.subtasks
   const hasMessagesForHooks = useMemo(() => {
-    const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
+    const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id
     // Check messages from context (single source of truth)
-    const hasContextMessages = currentStreamState?.messages && currentStreamState.messages.size > 0;
-    return Boolean(hasSelectedTask || hasContextMessages);
-  }, [selectedTaskDetail, currentStreamState?.messages]);
+    const hasContextMessages = currentStreamState?.messages && currentStreamState.messages.size > 0
+    return Boolean(hasSelectedTask || hasContextMessages)
+  }, [selectedTaskDetail, currentStreamState?.messages])
+
+  // Get taskId from URL for team sync logic
+  const searchParams = useSearchParams()
+  const taskIdFromUrl =
+    searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+
+  // Track initialization and last synced task for team selection
+  const hasInitializedTeamRef = useRef(false)
+  const lastSyncedTaskIdRef = useRef<number | null>(null)
+
+  // Filter teams by bind_mode based on current mode
+  const filteredTeams = useMemo(() => {
+    const teamsWithValidBindMode = teams.filter(team => {
+      if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
+      return true
+    })
+    return teamsWithValidBindMode.filter(team => {
+      if (!team.bind_mode) return true
+      return team.bind_mode.includes(taskType)
+    })
+  }, [teams, taskType])
+
+  // Extract values for dependency array
+  const selectedTeam = chatState.selectedTeam
+  const handleTeamChange = chatState.handleTeamChange
+
+  // Team selection logic - simplified and direct
+  useEffect(() => {
+    if (filteredTeams.length === 0) return
+
+    // Extract team ID from task detail
+    const detailTeamId = selectedTaskDetail?.team
+      ? typeof selectedTaskDetail.team === 'number'
+        ? selectedTaskDetail.team
+        : (selectedTaskDetail.team as Team).id
+      : null
+
+    // Case 1: Sync from task detail (HIGHEST PRIORITY)
+    // Only sync when URL taskId matches taskDetail.id to prevent race conditions
+    if (taskIdFromUrl && selectedTaskDetail?.id && detailTeamId) {
+      if (selectedTaskDetail.id.toString() === taskIdFromUrl) {
+        // Only update if we haven't synced this task yet or team is different
+        if (
+          lastSyncedTaskIdRef.current !== selectedTaskDetail.id ||
+          selectedTeam?.id !== detailTeamId
+        ) {
+          const teamFromDetail = filteredTeams.find(t => t.id === detailTeamId)
+          if (teamFromDetail) {
+            console.log('[ChatArea] Syncing team from task detail:', teamFromDetail.name)
+            handleTeamChange(teamFromDetail)
+            lastSyncedTaskIdRef.current = selectedTaskDetail.id
+            hasInitializedTeamRef.current = true
+            return
+          } else {
+            // Team not in filtered list, try to use the team object from detail
+            const teamObject =
+              typeof selectedTaskDetail.team === 'object' ? (selectedTaskDetail.team as Team) : null
+            if (teamObject) {
+              console.log('[ChatArea] Using team object from detail:', teamObject.name)
+              handleTeamChange(teamObject)
+              lastSyncedTaskIdRef.current = selectedTaskDetail.id
+              hasInitializedTeamRef.current = true
+              return
+            }
+          }
+        } else {
+          // Already synced this task, skip
+          return
+        }
+      } else {
+        // URL and taskDetail don't match - wait for correct taskDetail to load
+        console.log('[ChatArea] Waiting for taskDetail to match URL')
+        return
+      }
+    }
+
+    // Case 2: New chat (no taskId in URL) - restore from localStorage
+    if (!taskIdFromUrl && !hasInitializedTeamRef.current) {
+      const lastTeamId = getLastTeamIdByMode(taskType)
+      if (lastTeamId) {
+        const lastTeam = filteredTeams.find(t => t.id === lastTeamId)
+        if (lastTeam) {
+          console.log('[ChatArea] Restoring team from localStorage:', lastTeam.name)
+          handleTeamChange(lastTeam)
+          hasInitializedTeamRef.current = true
+          lastSyncedTaskIdRef.current = null
+          return
+        }
+      }
+      // No saved preference or team not found, select first team
+      if (!selectedTeam) {
+        console.log('[ChatArea] Selecting first team:', filteredTeams[0].name)
+        handleTeamChange(filteredTeams[0])
+      }
+      hasInitializedTeamRef.current = true
+      lastSyncedTaskIdRef.current = null
+      return
+    }
+
+    // Case 3: Validate current selection exists in filtered list
+    if (selectedTeam) {
+      const exists = filteredTeams.some(t => t.id === selectedTeam.id)
+      if (!exists) {
+        console.log('[ChatArea] Current team not in filtered list, selecting first')
+        handleTeamChange(filteredTeams[0])
+      }
+    } else if (!taskIdFromUrl) {
+      // No selection and no task - select first team
+      console.log('[ChatArea] No selection, selecting first team')
+      handleTeamChange(filteredTeams[0])
+    }
+  }, [filteredTeams, selectedTaskDetail, taskIdFromUrl, selectedTeam, handleTeamChange, taskType])
+
+  // Reset initialization when switching from task to new chat
+  useEffect(() => {
+    if (!taskIdFromUrl) {
+      lastSyncedTaskIdRef.current = null
+    }
+  }, [taskIdFromUrl])
+
+  // Save team preference when user manually selects (via QuickAccessCards)
+  const handleTeamSelect = useCallback(
+    (team: Team) => {
+      handleTeamChange(team)
+      saveLastTeamByMode(team.id, taskType)
+    },
+    [handleTeamChange, taskType]
+  )
 
   // Use scroll management hook - consolidates 4 useEffect calls
   const {
@@ -97,7 +238,7 @@ export default function ChatArea({
     selectedTaskId: selectedTaskDetail?.id,
     lastSubtaskId,
     lastSubtaskUpdatedAt,
-  });
+  })
 
   // Use floating input hook - consolidates 3 useEffect calls
   const {
@@ -109,7 +250,7 @@ export default function ChatArea({
     controlsContainerWidth,
   } = useFloatingInput({
     hasMessages: hasMessagesForHooks,
-  });
+  })
 
   // Stream handlers (send message, retry, cancel, stop)
   const streamHandlers = useChatStreamHandlers({
@@ -133,21 +274,21 @@ export default function ChatArea({
     scrollToBottom,
     selectedContexts: chatState.selectedContexts,
     resetContexts: chatState.resetContexts,
-  });
+  })
 
   // Determine if there are messages to display (full computation)
   const hasMessages = useMemo(() => {
-    const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
+    const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id
     const hasNewTaskStream =
-      !selectedTaskDetail?.id && streamHandlers.pendingTaskId && streamHandlers.isStreaming;
-    const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0;
-    const hasLocalPending = streamHandlers.localPendingMessage !== null;
+      !selectedTaskDetail?.id && streamHandlers.pendingTaskId && streamHandlers.isStreaming
+    const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0
+    const hasLocalPending = streamHandlers.localPendingMessage !== null
     const hasUnifiedMessages =
       streamHandlers.currentStreamState?.messages &&
-      streamHandlers.currentStreamState.messages.size > 0;
+      streamHandlers.currentStreamState.messages.size > 0
 
     if (hasSelectedTask && hasSubtasks) {
-      return true;
+      return true
     }
 
     return Boolean(
@@ -157,7 +298,7 @@ export default function ChatArea({
       hasNewTaskStream ||
       hasLocalPending ||
       hasUnifiedMessages
-    );
+    )
   }, [
     selectedTaskDetail,
     streamHandlers.hasPendingUserMessage,
@@ -165,30 +306,18 @@ export default function ChatArea({
     streamHandlers.pendingTaskId,
     streamHandlers.localPendingMessage,
     streamHandlers.currentStreamState?.messages,
-  ]);
+  ])
 
-  // Use team preferences hook - consolidates team preference logic
-  // Note: Model selection is now handled by useModelSelection hook in ModelSelector
-  useTeamPreferences({
-    teams,
-    hasMessages,
-    selectedTaskDetail,
-    selectedTeam: chatState.selectedTeam,
-    setSelectedTeam: chatState.setSelectedTeam,
-    hasRestoredPreferences: chatState.hasRestoredPreferences,
-    setHasRestoredPreferences: chatState.setHasRestoredPreferences,
-    isTeamCompatibleWithMode: chatState.isTeamCompatibleWithMode,
-    initialTeamIdRef: chatState.initialTeamIdRef,
-    clearVersion,
-  });
+  // Note: Team selection is now handled by useTeamSelection hook in TeamSelector component
+  // Model selection is handled by useModelSelection hook in ModelSelector component
 
   // Check if model selection is required
   const isModelSelectionRequired = useMemo(() => {
-    if (!chatState.selectedTeam || chatState.selectedTeam.agent_type === 'dify') return false;
-    const hasDefaultOption = allBotsHavePredefinedModel(chatState.selectedTeam);
-    if (hasDefaultOption) return false;
-    return !chatState.selectedModel;
-  }, [chatState.selectedTeam, chatState.selectedModel]);
+    if (!chatState.selectedTeam || chatState.selectedTeam.agent_type === 'dify') return false
+    const hasDefaultOption = allBotsHavePredefinedModel(chatState.selectedTeam)
+    if (hasDefaultOption) return false
+    return !chatState.selectedModel
+  }, [chatState.selectedTeam, chatState.selectedModel])
 
   // Unified canSubmit flag
   const canSubmit = useMemo(() => {
@@ -197,38 +326,38 @@ export default function ChatArea({
       !streamHandlers.isStreaming &&
       !isModelSelectionRequired &&
       chatState.isAttachmentReadyToSend
-    );
+    )
   }, [
     chatState.isLoading,
     streamHandlers.isStreaming,
     isModelSelectionRequired,
     chatState.isAttachmentReadyToSend,
-  ]);
+  ])
 
   // Collapse selectors when space is limited
   const shouldCollapseSelectors =
-    controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD;
+    controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD
 
   // Load prompt from sessionStorage - single remaining useEffect
   useEffect(() => {
-    if (hasMessages) return;
+    if (hasMessages) return
 
-    const pendingPromptData = sessionStorage.getItem('pendingTaskPrompt');
+    const pendingPromptData = sessionStorage.getItem('pendingTaskPrompt')
     if (pendingPromptData) {
       try {
-        const data = JSON.parse(pendingPromptData);
-        const isRecent = Date.now() - data.timestamp < 5 * 60 * 1000;
+        const data = JSON.parse(pendingPromptData)
+        const isRecent = Date.now() - data.timestamp < 5 * 60 * 1000
 
         if (isRecent && data.prompt) {
-          chatState.setTaskInputMessage(data.prompt);
-          sessionStorage.removeItem('pendingTaskPrompt');
+          chatState.setTaskInputMessage(data.prompt)
+          sessionStorage.removeItem('pendingTaskPrompt')
         }
       } catch (error) {
-        console.error('Failed to parse pending prompt data:', error);
-        sessionStorage.removeItem('pendingTaskPrompt');
+        console.error('Failed to parse pending prompt data:', error)
+        sessionStorage.removeItem('pendingTaskPrompt')
       }
     }
-  }, [hasMessages, chatState]);
+  }, [hasMessages, chatState])
 
   // Use attachment upload hook - centralizes all attachment upload logic
   const { handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handlePasteFile } =
@@ -239,33 +368,71 @@ export default function ChatArea({
       attachmentState: chatState.attachmentState,
       onFileSelect: chatState.handleFileSelect,
       setIsDragging: chatState.setIsDragging,
-    });
+    })
 
   // Callback for MessagesArea content changes - enhanced with streaming check
   const handleMessagesContentChange = useCallback(() => {
     if (streamHandlers.isStreaming || isUserNearBottomRef.current) {
-      scrollToBottom();
+      scrollToBottom()
     }
-  }, [streamHandlers.isStreaming, scrollToBottom, isUserNearBottomRef]);
+  }, [streamHandlers.isStreaming, scrollToBottom, isUserNearBottomRef])
 
   // Callback for child components to send messages
   const handleSendMessageFromChild = useCallback(
     async (content: string) => {
-      const existingInput = chatState.taskInputMessage.trim();
-      const combinedMessage = existingInput ? `${content}\n\n---\n\n${existingInput}` : content;
-      chatState.setTaskInputMessage('');
-      await streamHandlers.handleSendMessage(combinedMessage);
+      const existingInput = chatState.taskInputMessage.trim()
+      const combinedMessage = existingInput ? `${content}\n\n---\n\n${existingInput}` : content
+      chatState.setTaskInputMessage('')
+      await streamHandlers.handleSendMessage(combinedMessage)
     },
     [chatState, streamHandlers]
-  );
+  )
+
+  // Callback for re-selecting a context from a message badge
+  const handleContextReselect = useCallback(
+    (context: SubtaskContextBrief) => {
+      // Convert SubtaskContextBrief to ContextItem format
+      let contextItem: ContextItem | null = null
+
+      if (context.context_type === 'knowledge_base') {
+        contextItem = {
+          id: context.id,
+          name: context.name,
+          type: 'knowledge_base',
+          document_count: context.document_count ?? undefined,
+        }
+      } else if (context.context_type === 'table') {
+        contextItem = {
+          id: context.id,
+          name: context.name,
+          type: 'table',
+          document_id: 0, // Not available in SubtaskContextBrief, backend will resolve it
+          source_config: context.source_config ?? undefined,
+        }
+      }
+
+      if (!contextItem) return
+
+      // Check if context is already selected
+      const isAlreadySelected = chatState.selectedContexts.some(
+        c => c.type === contextItem!.type && c.id === contextItem!.id
+      )
+
+      // If not already selected, add it to selectedContexts
+      if (!isAlreadySelected) {
+        chatState.setSelectedContexts([...chatState.selectedContexts, contextItem!])
+      }
+    },
+    [chatState]
+  )
 
   // Handle access denied state
   if (accessDenied) {
     const handleGoHome = () => {
-      clearAccessDenied();
-      setSelectedTask(null);
-      router.push('/chat');
-    };
+      clearAccessDenied()
+      setSelectedTask(null)
+      router.push('/chat')
+    }
 
     return (
       <div
@@ -299,7 +466,7 @@ export default function ChatArea({
           </div>
         </div>
       </div>
-    );
+    )
   }
 
   // Common input card props
@@ -308,6 +475,7 @@ export default function ChatArea({
     setTaskInputMessage: chatState.setTaskInputMessage,
     selectedTeam: chatState.selectedTeam,
     externalApiParams: chatState.externalApiParams,
+    onTeamChange: chatState.handleTeamChange,
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,
     onAppModeChange: chatState.handleAppModeChange,
     taskType,
@@ -319,7 +487,15 @@ export default function ChatArea({
     onDragOver: handleDragOver,
     onDrop: handleDrop,
     canSubmit,
-    handleSendMessage: streamHandlers.handleSendMessage,
+    handleSendMessage: async (overrideMessage?: string) => {
+      // Format message with quote if present, then clear quote
+      const baseMessage = overrideMessage?.trim() || chatState.taskInputMessage.trim()
+      const message = formatQuoteForMessage(baseMessage)
+      if (quote) {
+        clearQuote()
+      }
+      await streamHandlers.handleSendMessage(message)
+    },
     onPasteFile: handlePasteFile,
     // ChatInputControls props
     selectedModel: chatState.selectedModel,
@@ -357,8 +533,15 @@ export default function ChatArea({
     isAttachmentReadyToSend: chatState.isAttachmentReadyToSend,
     isSubtaskStreaming: streamHandlers.isSubtaskStreaming,
     onStopStream: streamHandlers.stopStream,
-    onSendMessage: () => streamHandlers.handleSendMessage(),
-  };
+    onSendMessage: () => {
+      // Format message with quote if present, then clear quote
+      const message = formatQuoteForMessage(chatState.taskInputMessage.trim())
+      if (quote) {
+        clearQuote()
+      }
+      streamHandlers.handleSendMessage(message)
+    },
+  }
 
   return (
     <div
@@ -366,6 +549,18 @@ export default function ChatArea({
       className="flex-1 flex flex-col min-h-0 w-full relative"
       style={{ height: '100%', boxSizing: 'border-box' }}
     >
+      {/* Pipeline Stage Indicator - shows current stage progress for pipeline mode */}
+      {hasMessages && selectedTaskDetail?.id && (
+        <PipelineStageIndicator
+          taskId={selectedTaskDetail.id}
+          taskStatus={selectedTaskDetail.status || null}
+          collaborationModel={
+            selectedTaskDetail.team?.workflow?.mode || chatState.selectedTeam?.workflow?.mode
+          }
+          onStageInfoChange={setPipelineStageInfo}
+        />
+      )}
+
       {/* Messages Area: always mounted to keep scroll container stable */}
       <div className={hasMessages ? 'relative flex-1 min-h-0' : 'relative'}>
         {/* Top gradient fade effect */}
@@ -403,6 +598,8 @@ export default function ChatArea({
               enableCorrectionWebSearch={chatState.enableCorrectionWebSearch}
               hasMessages={hasMessages}
               pendingTaskId={streamHandlers.pendingTaskId}
+              isPendingConfirmation={pipelineStageInfo?.is_pending_confirmation}
+              onContextReselect={handleContextReselect}
             />
           </div>
         </div>
@@ -426,7 +623,7 @@ export default function ChatArea({
               <QuickAccessCards
                 teams={teams}
                 selectedTeam={chatState.selectedTeam}
-                onTeamSelect={chatState.handleTeamChange}
+                onTeamSelect={handleTeamSelect}
                 currentMode={taskType}
                 isLoading={isTeamsLoading}
                 isTeamsLoading={isTeamsLoading}
@@ -448,14 +645,27 @@ export default function ChatArea({
               width: floatingMetrics.width,
             }}
           >
-            {/* Gradient background - contained within the floating input bounds */}
-            <div className="absolute inset-0 bg-gradient-to-t from-base via-base/95 to-base/0 pointer-events-none" />
-            <div className="relative z-10 w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
+            <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
               <ChatInputCard {...inputCardProps} />
             </div>
           </div>
         )}
       </div>
     </div>
-  );
+  )
+}
+
+/**
+ * ChatArea Component
+ *
+ * Main chat interface component that wraps ChatAreaContent with QuoteProvider
+ * to enable text selection quoting functionality.
+ */
+export default function ChatArea(props: ChatAreaProps) {
+  return (
+    <QuoteProvider>
+      <SelectionTooltip />
+      <ChatAreaContent {...props} />
+    </QuoteProvider>
+  )
 }

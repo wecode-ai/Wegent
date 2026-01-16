@@ -1,20 +1,20 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
-import '@/features/common/scrollbar.css';
+'use client'
+import '@/features/common/scrollbar.css'
 
-import React, { useEffect, useState, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { ResourceListItem } from '@/components/common/ResourceListItem';
-import { Tag } from '@/components/ui/tag';
-import { CommandLineIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
-import { Loader2 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
-import { useTranslation } from '@/hooks/useTranslation';
-import ShellEditDialog from './ShellEditDialog';
+import React, { useEffect, useState, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { ResourceListItem } from '@/components/common/ResourceListItem'
+import { Tag } from '@/components/ui/tag'
+import { CommandLineIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline'
+import { Loader2 } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
+import ShellEditDialog from './ShellEditDialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,15 +24,15 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { shellApis, UnifiedShell } from '@/apis/shells';
-import UnifiedAddButton from '@/components/common/UnifiedAddButton';
+} from '@/components/ui/alert-dialog'
+import { shellApis, UnifiedShell } from '@/apis/shells'
+import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 
 interface ShellListProps {
-  scope?: 'personal' | 'group' | 'all';
-  groupName?: string;
-  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>;
-  onEditResource?: (namespace: string) => void;
+  scope?: 'personal' | 'group' | 'all'
+  groupName?: string
+  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
+  onEditResource?: (namespace: string) => void
 }
 
 const ShellList: React.FC<ShellListProps> = ({
@@ -41,48 +41,48 @@ const ShellList: React.FC<ShellListProps> = ({
   groupRoleMap,
   onEditResource,
 }) => {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const [shells, setShells] = useState<UnifiedShell[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editingShell, setEditingShell] = useState<UnifiedShell | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [deleteConfirmShell, setDeleteConfirmShell] = useState<UnifiedShell | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const [shells, setShells] = useState<UnifiedShell[]>([])
+  const [loading, setLoading] = useState(true)
+  const [editingShell, setEditingShell] = useState<UnifiedShell | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [deleteConfirmShell, setDeleteConfirmShell] = useState<UnifiedShell | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const fetchShells = useCallback(async () => {
-    setLoading(true);
+    setLoading(true)
     try {
-      const response = await shellApis.getUnifiedShells(scope, groupName);
-      setShells(response.data || []);
+      const response = await shellApis.getUnifiedShells(scope, groupName)
+      setShells(response.data || [])
     } catch (error) {
-      console.error('Failed to fetch shells:', error);
+      console.error('Failed to fetch shells:', error)
       toast({
         variant: 'destructive',
         title: t('common:shells.errors.load_shells_failed'),
-      });
+      })
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [toast, t, scope, groupName]);
+  }, [toast, t, scope, groupName])
 
   useEffect(() => {
-    fetchShells();
-  }, [fetchShells, scope, groupName]);
+    fetchShells()
+  }, [fetchShells, scope, groupName])
 
   // Categorize shells by type
   const { groupShells, publicShells, userShells } = React.useMemo(() => {
-    const group: UnifiedShell[] = [];
-    const publicList: UnifiedShell[] = [];
-    const user: UnifiedShell[] = [];
+    const group: UnifiedShell[] = []
+    const publicList: UnifiedShell[] = []
+    const user: UnifiedShell[] = []
 
     for (const shell of shells) {
       if (shell.type === 'group') {
-        group.push(shell);
+        group.push(shell)
       } else if (shell.type === 'public') {
-        publicList.push(shell);
+        publicList.push(shell)
       } else {
-        user.push(shell);
+        user.push(shell)
       }
     }
 
@@ -90,82 +90,82 @@ const ShellList: React.FC<ShellListProps> = ({
       groupShells: group,
       publicShells: publicList,
       userShells: user,
-    };
-  }, [shells]);
+    }
+  }, [shells])
 
-  const totalShells = groupShells.length + publicShells.length + userShells.length;
+  const totalShells = groupShells.length + publicShells.length + userShells.length
 
   // Helper function to check permissions for a specific group resource
   const canEditGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false;
-    const role = groupRoleMap.get(namespace);
-    return role === 'Owner' || role === 'Maintainer' || role === 'Developer';
-  };
+    if (!groupRoleMap) return false
+    const role = groupRoleMap.get(namespace)
+    return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
+  }
 
   const canDeleteGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false;
-    const role = groupRoleMap.get(namespace);
-    return role === 'Owner' || role === 'Maintainer';
-  };
+    if (!groupRoleMap) return false
+    const role = groupRoleMap.get(namespace)
+    return role === 'Owner' || role === 'Maintainer'
+  }
 
   // Check if user can create in the current group context
   // When scope is 'group', check the specific groupName; only Owner/Maintainer can create
   const canCreateInCurrentGroup = (() => {
-    if (scope !== 'group' || !groupName || !groupRoleMap) return false;
-    const role = groupRoleMap.get(groupName);
-    return role === 'Owner' || role === 'Maintainer';
-  })();
+    if (scope !== 'group' || !groupName || !groupRoleMap) return false
+    const role = groupRoleMap.get(groupName)
+    return role === 'Owner' || role === 'Maintainer'
+  })()
 
   const handleDelete = async () => {
-    if (!deleteConfirmShell) return;
+    if (!deleteConfirmShell) return
 
-    setIsDeleting(true);
+    setIsDeleting(true)
     try {
-      await shellApis.deleteShell(deleteConfirmShell.name);
+      await shellApis.deleteShell(deleteConfirmShell.name)
       toast({
         title: t('common:shells.delete_success'),
-      });
-      setDeleteConfirmShell(null);
-      fetchShells();
+      })
+      setDeleteConfirmShell(null)
+      fetchShells()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: t('common:shells.errors.delete_failed'),
         description: (error as Error).message,
-      });
+      })
     } finally {
-      setIsDeleting(false);
+      setIsDeleting(false)
     }
-  };
+  }
 
   const handleEdit = (shell: UnifiedShell) => {
-    if (shell.type === 'public') return;
+    if (shell.type === 'public') return
 
     // Notify parent to update group selector if editing a group resource
     if (onEditResource && shell.namespace && shell.namespace !== 'default') {
-      onEditResource(shell.namespace);
+      onEditResource(shell.namespace)
     }
 
-    setEditingShell(shell);
-    setDialogOpen(true);
-  };
+    setEditingShell(shell)
+    setDialogOpen(true)
+  }
 
   const handleEditClose = () => {
-    setEditingShell(null);
-    setDialogOpen(false);
-    fetchShells();
-  };
+    setEditingShell(null)
+    setDialogOpen(false)
+    fetchShells()
+  }
 
   const handleCreate = () => {
-    setEditingShell(null);
-    setDialogOpen(true);
-  };
+    setEditingShell(null)
+    setDialogOpen(true)
+  }
 
   const getExecutionTypeLabel = (executionType?: string | null) => {
-    if (executionType === 'local_engine') return 'Local Engine';
-    if (executionType === 'external_api') return 'External API';
-    return executionType || 'Unknown';
-  };
+    if (executionType === 'local_engine') return 'Local Engine'
+    if (executionType === 'external_api') return 'External API'
+    return executionType || 'Unknown'
+  }
 
   return (
     <div className="space-y-3">
@@ -479,7 +479,7 @@ const ShellList: React.FC<ShellListProps> = ({
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-};
+  )
+}
 
-export default ShellList;
+export default ShellList

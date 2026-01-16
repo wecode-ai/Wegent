@@ -1,11 +1,11 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { useTranslation } from '@/hooks/useTranslation';
+import { useState } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,16 +15,16 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { deleteGroup } from '@/apis/groups';
-import { toast } from 'sonner';
-import type { Group } from '@/types/group';
+} from '@/components/ui/alert-dialog'
+import { deleteGroup } from '@/apis/groups'
+import { toast } from 'sonner'
+import type { Group } from '@/types/group'
 
 interface DeleteGroupConfirmDialogProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSuccess: () => void;
-  group: Group | null;
+  isOpen: boolean
+  onClose: () => void
+  onSuccess: () => void
+  group: Group | null
 }
 
 export function DeleteGroupConfirmDialog({
@@ -33,40 +33,40 @@ export function DeleteGroupConfirmDialog({
   onSuccess,
   group,
 }: DeleteGroupConfirmDialogProps) {
-  const { t } = useTranslation();
-  const [isDeleting, setIsDeleting] = useState(false);
+  const { t } = useTranslation()
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const handleConfirm = async () => {
-    if (!group) return;
+    if (!group) return
 
     // Check for blocking conditions
     if ((group.resource_count || 0) > 0) {
-      toast.error(t('groups:groups.messages.cannotDeleteWithResources'));
-      return;
+      toast.error(t('groups:groups.messages.cannotDeleteWithResources'))
+      return
     }
 
-    setIsDeleting(true);
+    setIsDeleting(true)
     try {
-      await deleteGroup(group.name);
-      toast.success(t('groups:groups.messages.deleteSuccess'));
-      onSuccess();
-      onClose();
+      await deleteGroup(group.name)
+      toast.success(t('groups:groups.messages.deleteSuccess'))
+      onSuccess()
+      onClose()
     } catch (error: unknown) {
-      console.error('Failed to delete group:', error);
-      const err = error as { response?: { data?: { detail?: string } }; message?: string };
+      console.error('Failed to delete group:', error)
+      const err = error as { response?: { data?: { detail?: string } }; message?: string }
       const errorMessage =
-        err?.response?.data?.detail || err?.message || t('groups:groups.messages.deleteFailed');
-      toast.error(errorMessage);
+        err?.response?.data?.detail || err?.message || t('groups:groups.messages.deleteFailed')
+      toast.error(errorMessage)
     } finally {
-      setIsDeleting(false);
+      setIsDeleting(false)
     }
-  };
-
-  if (!group) {
-    return null;
   }
 
-  const hasBlockers = (group.resource_count || 0) > 0;
+  if (!group) {
+    return null
+  }
+
+  const hasBlockers = (group.resource_count || 0) > 0
 
   return (
     <AlertDialog open={isOpen} onOpenChange={open => !open && !isDeleting && onClose()}>
@@ -138,5 +138,5 @@ export function DeleteGroupConfirmDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  );
+  )
 }

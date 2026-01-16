@@ -15,21 +15,20 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-from executor_manager.clients.task_api_client import TaskApiClient
-from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
-from executor_manager.executors.dispatcher import ExecutorDispatcher
-from executor_manager.tasks.task_processor import TaskProcessor
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from shared.logger import setup_logger
 from shared.models.task import TasksRequest
 from shared.telemetry.config import get_otel_config
-from shared.telemetry.context import (
-    set_request_context,
-    set_task_context,
-    set_user_context,
-)
+from shared.telemetry.context import (set_request_context, set_task_context,
+                                      set_user_context)
+
+from executor_manager.clients.task_api_client import TaskApiClient
+from executor_manager.common.config import ROUTE_PREFIX
+from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
+from executor_manager.executors.dispatcher import ExecutorDispatcher
+from executor_manager.tasks.task_processor import TaskProcessor
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -39,6 +38,30 @@ app = FastAPI(
     title="Executor Manager API",
     description="API for managing executor tasks and callbacks",
 )
+
+# E2B Standard API routes
+from executor_manager.routers.e2b import router as e2b_router
+from executor_manager.routers.sandbox import router as sandbox_router
+# Wegent E2B private protocol proxy routes
+from executor_manager.routers.wegent_e2b_proxy import \
+    router as wegent_e2b_proxy_router
+
+# Create main API router with unified prefix
+api_router = APIRouter(prefix=ROUTE_PREFIX)
+
+# Mount sub-routers to api_router
+api_router.include_router(sandbox_router)
+# E2B standard endpoints:
+# - /executor-manager/e2b/sandboxes - Create sandbox (POST), Get sandbox (GET), Delete (DELETE)
+# - /executor-manager/e2b/v2/sandboxes - List sandboxes
+# - /executor-manager/e2b/sandboxes/{id}/timeout - Set timeout
+# - /executor-manager/e2b/sandboxes/{id}/pause - Pause sandbox
+# - /executor-manager/e2b/sandboxes/{id}/resume - Resume sandbox
+# - /executor-manager/e2b/sandboxes/{id}/connect - Connect to sandbox
+api_router.include_router(e2b_router, prefix="/e2b")
+# Private protocol proxy for sandbox access
+# Routes: /executor-manager/e2b/proxy/<sandboxID>/<port>/<path> -> container
+api_router.include_router(wegent_e2b_proxy_router, prefix="/e2b/proxy")
 
 # Create task processor for handling callbacks
 task_processor = TaskProcessor()
@@ -205,9 +228,10 @@ class CallbackRequest(BaseModel):
     task_type: Optional[str] = (
         None  # Task type: "validation" for validation tasks, None for regular tasks
     )
+    subagent_metadata: Optional[Dict[str, Any]] = None  # SubAgent metadata from task
 
 
-@app.post("/executor-manager/callback")
+@api_router.post("/callback")
 async def callback_handler(request: CallbackRequest, http_request: Request):
     """
     Receive callback interface for executor task progress and completion.
@@ -221,6 +245,23 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
         logger.info(f"Received callback: body={request} from {client_ip}")
+
+        # [DEBUG] Log result content for streaming debugging
+        if request.result:
+            result_value = request.result.get("value", "")
+            result_thinking = request.result.get("thinking", [])
+            logger.info(
+                f"[DEBUG] Callback result: task_id={request.task_id}, "
+                f"status={request.status}, progress={request.progress}, "
+                f"value_length={len(result_value) if result_value else 0}, "
+                f"thinking_count={len(result_thinking)}"
+            )
+            if result_value:
+                # Log first 200 chars of content
+                preview = (
+                    result_value[:200] if len(result_value) > 200 else result_value
+                )
+                logger.info(f"[DEBUG] Content preview: {preview}...")
 
         # Set task context for tracing (function handles OTEL enabled check internally)
         set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
@@ -241,6 +282,18 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
             return {
                 "status": "success",
                 "message": f"Successfully processed validation callback for task {request.task_id}",
+            }
+
+        # Check if this is a Sandbox execution callback
+        is_sandbox_task = request.task_type == "sandbox"
+        if is_sandbox_task:
+            await _handle_sandbox_callback(request)
+            logger.info(
+                f"Successfully processed Sandbox callback for task {request.task_id}"
+            )
+            return {
+                "status": "success",
+                "message": f"Successfully processed Sandbox callback for task {request.task_id}",
             }
 
         # For regular tasks, update task status in database
@@ -333,7 +386,87 @@ async def _forward_validation_callback(request: CallbackRequest):
         logger.error(f"Error forwarding validation callback: {e}")
 
 
-@app.post("/executor-manager/tasks/receive")
+async def _handle_sandbox_callback(request: CallbackRequest):
+    """Handle Sandbox execution callback.
+
+    This function updates the execution status in sandbox_manager based on
+    the callback from executor container.
+
+    Args:
+        request: Callback request containing execution status and result
+    """
+    from executor_manager.services.sandbox import get_sandbox_manager
+
+    # Use task_id and subtask_id from callback request to identify execution
+    task_id = request.task_id
+    subtask_id = request.subtask_id
+
+    logger.info(
+        f"[SandboxCallback] Processing callback: "
+        f"task_id={task_id}, subtask_id={subtask_id}, "
+        f"status={request.status}, progress={request.progress}"
+    )
+
+    # Get sandbox manager
+    manager = get_sandbox_manager()
+
+    # Load execution from Redis Hash by task_id and subtask_id
+    execution = manager._repository.load_execution(task_id, subtask_id)
+    if not execution:
+        logger.error(
+            f"[SandboxCallback] Execution not found in Redis: "
+            f"task_id={task_id}, subtask_id={subtask_id}"
+        )
+        return
+
+    # Update execution status based on callback
+    status_lower = request.status.lower() if request.status else ""
+
+    if status_lower == "completed":
+        # Extract result from callback
+        result_value = None
+        if request.result:
+            result_value = request.result.get("value", "")
+
+        execution.set_completed(result_value or "")
+        logger.info(
+            f"[SandboxCallback] Execution completed: "
+            f"task_id={task_id}, subtask_id={subtask_id}, "
+            f"result_length={len(result_value) if result_value else 0}"
+        )
+
+    elif status_lower == "failed":
+        error_msg = request.error_message or "Execution failed"
+        execution.set_failed(error_msg)
+        logger.info(
+            f"[SandboxCallback] Execution failed: "
+            f"task_id={task_id}, subtask_id={subtask_id}, error={error_msg}"
+        )
+
+    elif status_lower == "running":
+        # Update progress for running status
+        execution.progress = request.progress
+        logger.debug(
+            f"[SandboxCallback] Execution progress: "
+            f"task_id={task_id}, subtask_id={subtask_id}, progress={request.progress}"
+        )
+
+    else:
+        logger.warning(
+            f"[SandboxCallback] Unknown status: "
+            f"task_id={task_id}, subtask_id={subtask_id}, status={request.status}"
+        )
+
+    # Save updated execution state to Redis
+    manager._repository.save_execution(execution)
+
+    logger.info(
+        f"[SandboxCallback] Execution updated: "
+        f"task_id={task_id}, subtask_id={subtask_id}, status={execution.status.value}"
+    )
+
+
+@api_router.post("/tasks/receive")
 async def receive_tasks(request: TasksRequest, http_request: Request):
     """
     Receive tasks in batch via POST.
@@ -379,11 +512,17 @@ async def health_check():
     return {"status": "healthy"}
 
 
+@app.get("/ready")
+async def readiness_check():
+    """Readiness probe endpoint."""
+    return {"status": "ready"}
+
+
 class DeleteExecutorRequest(BaseModel):
     executor_name: str
 
 
-@app.post("/executor-manager/executor/delete")
+@api_router.post("/executor/delete")
 async def delete_executor(request: DeleteExecutorRequest, http_request: Request):
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
@@ -398,7 +537,7 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/executor-manager/executor/load")
+@api_router.get("/executor/load")
 async def get_executor_load(http_request: Request):
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
@@ -443,7 +582,7 @@ class ValidateImageResponse(BaseModel):
     validation_task_id: Optional[int] = None
 
 
-@app.post("/executor-manager/images/validate")
+@api_router.post("/images/validate")
 async def validate_image(request: ValidateImageRequest, http_request: Request):
     """
     Validate if a base image is compatible with a specific shell type.
@@ -546,7 +685,7 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
         }
 
 
-@app.post("/executor-manager/tasks/cancel")
+@api_router.post("/tasks/cancel")
 async def cancel_task(request: CancelTaskRequest, http_request: Request):
     """
     Cancel a running task by calling the executor's cancel API.
@@ -585,3 +724,7 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
     except Exception as e:
         logger.error(f"Error cancelling task {request.task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Mount api_router to app
+app.include_router(api_router)

@@ -13,6 +13,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from shared.utils.crypto import decrypt_attachment, encrypt_attachment
 from sqlalchemy.orm import Session
 
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
@@ -30,6 +31,11 @@ from app.services.attachment.storage_backend import StorageError, generate_stora
 from app.services.attachment.storage_factory import get_storage_backend
 
 logger = logging.getLogger(__name__)
+
+
+def _should_encrypt() -> bool:
+    """Check if attachment encryption is enabled."""
+    return os.environ.get("ATTACHMENT_ENCRYPTION_ENABLED", "false").lower() == "true"
 
 
 class NotFoundException(Exception):
@@ -112,13 +118,15 @@ class ContextService:
         storage_backend = get_storage_backend(db)
 
         # Create context record with UPLOADING status
+        # binary_data is NOT stored here - it will be saved via storage_backend.save()
+        # which handles storage based on the configured backend type (MySQL, S3, MinIO, etc.)
         context = SubtaskContext(
             subtask_id=effective_subtask_id,
             user_id=user_id,
             context_type=ContextType.ATTACHMENT.value,
             name=filename,
             status=ContextStatus.UPLOADING.value,
-            binary_data=binary_data,  # Temporarily store here
+            binary_data=b"",  # Empty bytes - actual data stored via storage_backend.save()
             image_base64="",  # Empty string for NOT NULL constraint
             extracted_text="",  # Empty string for NOT NULL constraint
             text_length=0,
@@ -143,14 +151,29 @@ class ContextService:
         }
 
         try:
+            # Encrypt binary data if encryption is enabled (handled at service layer)
+            is_encrypted = _should_encrypt()
+            data_to_store = binary_data
+            if is_encrypted:
+                data_to_store = encrypt_attachment(binary_data)
+                logger.info(f"Encrypted attachment data for context {context.id}")
+
             # Save binary data to storage backend
             metadata = {
                 "filename": filename,
                 "mime_type": mime_type,
                 "file_size": file_size,
                 "user_id": user_id,
+                "is_encrypted": is_encrypted,
             }
-            storage_backend.save(storage_key, binary_data, metadata)
+            storage_backend.save(storage_key, data_to_store, metadata)
+
+            # Update encryption metadata in type_data
+            context.type_data = {
+                **context.type_data,
+                "is_encrypted": is_encrypted,
+                "encryption_version": 1 if is_encrypted else 0,
+            }
         except StorageError as e:
             logger.exception(f"Failed to save context {context.id} to storage: {e}")
             db.rollback()
@@ -209,30 +232,43 @@ class ContextService:
         """
         Get binary data for an attachment from the appropriate storage backend.
 
+        Decryption is handled at this service layer, so storage backends
+        don't need to implement encryption/decryption logic.
+
         Args:
             db: Database session
             context: SubtaskContext record
 
         Returns:
-            Binary data or None if not found
+            Binary data (decrypted if necessary) or None if not found
         """
         if context.context_type != ContextType.ATTACHMENT.value:
             return None
 
-        # Check if data is stored in MySQL (storage_backend == 'mysql')
-        if context.storage_backend == "mysql":
-            return context.binary_data if context.binary_data else None
-
-        # For external storage, retrieve from storage backend using storage_key
         storage_key = context.storage_key
         if not storage_key:
             logger.warning(
-                f"Context {context.id} has no storage_key for external storage"
+                f"Context {context.id} has no storage_key for storage backend"
             )
             return None
 
+        # Retrieve raw data from storage backend
         storage_backend = get_storage_backend(db)
-        return storage_backend.get(storage_key)
+        binary_data = storage_backend.get(storage_key)
+
+        if binary_data is None:
+            return None
+
+        # Decrypt at service layer if data is encrypted
+        is_encrypted = False
+        if context.type_data and isinstance(context.type_data, dict):
+            is_encrypted = context.type_data.get("is_encrypted", False)
+
+        if is_encrypted:
+            logger.debug(f"Decrypting attachment data for context {context.id}")
+            binary_data = decrypt_attachment(binary_data)
+
+        return binary_data
 
     def get_attachment_url(
         self,

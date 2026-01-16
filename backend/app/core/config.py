@@ -129,6 +129,9 @@ class Settings(BaseSettings):
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
 
+    # Service extension module (empty = disabled)
+    SERVICE_EXTENSION: str = ""
+
     # Team sharing configuration
     TEAM_SHARE_BASE_URL: str = "http://localhost:3000/chat"
     TASK_SHARE_BASE_URL: str = "http://localhost:3000"
@@ -156,6 +159,10 @@ class Settings(BaseSettings):
         False  # Force re-initialize YAML resources (delete and recreate)
     )
 
+    # Default resource file path for new user initialization
+    # Path to JSON file containing default resources to apply when creating new users
+    DEFAULT_RESOURCE_FILE_PATH: str = ""
+
     # default header
     EXECUTOR_ENV: str = '{"DEFAULT_HEADERS":{"user":"${task_data.user.name}"}}'
 
@@ -176,6 +183,20 @@ class Settings(BaseSettings):
     ATTACHMENT_S3_BUCKET: str = "attachments"
     ATTACHMENT_S3_REGION: str = "us-east-1"
     ATTACHMENT_S3_USE_SSL: bool = True
+
+    # Attachment encryption configuration
+    # Enable/disable AES-256-CBC encryption for attachment binary data
+    # When enabled, all newly uploaded attachments will be encrypted
+    # Existing unencrypted attachments remain accessible (backward compatible)
+    ATTACHMENT_ENCRYPTION_ENABLED: bool = False
+    # AES encryption key for attachments (32 bytes for AES-256)
+    # SECURITY WARNING: Change this default value in production!
+    # Generate using: openssl rand -hex 32
+    ATTACHMENT_AES_KEY: str = "12345678901234567890123456789012"
+    # AES initialization vector for attachments (16 bytes)
+    # SECURITY WARNING: Change this default value in production!
+    # Generate using: openssl rand -hex 16
+    ATTACHMENT_AES_IV: str = "1234567890123456"
 
     OTEL_ENABLED: bool = False
     # Web search configuration
@@ -203,6 +224,26 @@ class Settings(BaseSettings):
     # MCP (Model Context Protocol) configuration for Chat Shell
     # Enable/disable MCP tools in Chat Shell mode
     CHAT_MCP_ENABLED: bool = False
+
+    # Chat Shell mode configuration
+    # "package" - use local app/chat_shell module directly (default, single process)
+    # "http" - call external Chat Shell service via HTTP/SSE
+    CHAT_SHELL_MODE: str = "http"
+    # Chat Shell service URL (only used when CHAT_SHELL_MODE="http")
+    CHAT_SHELL_URL: str = "http://localhost:8100"
+    # Chat Shell service authentication token (only used when CHAT_SHELL_MODE="http")
+    CHAT_SHELL_TOKEN: str = ""
+    # Internal service authentication token (for HTTP mode communication)
+    INTERNAL_SERVICE_TOKEN: str = ""
+    # Backend internal URL (for service-to-service communication)
+    # Used by chat_shell to download skill binaries
+    BACKEND_INTERNAL_URL: str = "http://localhost:8000"
+
+    # Streaming architecture mode configuration
+    # "legacy" - WebSocketStreamingHandler directly emits to WebSocket (current behavior)
+    # "bridge" - StreamingCore publishes to Redis channel, WebSocketBridge forwards to WebSocket
+    STREAMING_MODE: str = "legacy"
+
     # JSON configuration for MCP servers (similar to Claude Desktop format)
     # Example:
     # {
@@ -229,6 +270,16 @@ class Settings(BaseSettings):
     GRACEFUL_SHUTDOWN_TIMEOUT: int = 600
     # Whether to reject new requests during shutdown (503 Service Unavailable)
     SHUTDOWN_REJECT_NEW_REQUESTS: bool = True
+
+    # Data Table Configuration
+    # JSON string containing table provider credentials (DingTalk, etc.)
+    # Format: {"dingtalk":{"appKey":"...","appSecret":"...","operatorId":"...","userMapping":{...}}}
+    # See backend/app/services/tables/DATA_TABLE_CONFIG_EXAMPLE.md for details
+    DATA_TABLE_CONFIG: str = ""
+
+    # Knowledge base and document summary configuration
+    # Enable/disable automatic summary generation after document indexing
+    SUMMARY_ENABLED: bool = True
 
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config

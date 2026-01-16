@@ -10,14 +10,33 @@
     "copy": "Copy",
     "regenerate": "Regenerate",
     "stop": "Stop",
-    "retry": "Retry"
+    "retry": "Retry",
+    "edit": "Edit",
+    "save": "Save",
+    "cancel": "Cancel"
+  },
+  "edit": {
+    "tooltip": "Edit message",
+    "success": "Message edited successfully",
+    "failed": "Failed to edit message",
+    "confirm_title": "Confirm Edit",
+    "confirm_description": "This edit will clear this message and all subsequent messages. The conversation will restart from this point. Are you sure you want to continue?",
+    "confirm_button": "Confirm",
+    "confirming": "Processing..."
+  },
+  "quote": {
+    "ask_wegent": "Ask Wegent",
+    "quoted_text": "Quoted text",
+    "remove_quote": "Remove quote"
   },
   "status": {
     "typing": "AI is typing...",
     "thinking": "AI is thinking...",
     "error": "Failed to send message",
     "connecting": "Connecting...",
-    "disconnected": "Disconnected"
+    "disconnected": "Disconnected",
+    "reconnecting": "Reconnecting... (attempt {{count}})",
+    "reconnected": "Reconnected"
   },
   "messages": {
     "assistant": "AI Assistant",
@@ -124,6 +143,8 @@
     "tool_call": "🔧 Tool Call",
     "tool_use": "🔧 Tool Use",
     "tool_result": "🔧 Tool Result",
+    "tool_error": "❌ Tool Error",
+    "model_reasoning": "💭 Model Thinking",
     "text_response": "Text Response",
     "expand": "Expand",
     "collapse": "Collapse",
@@ -146,7 +167,8 @@
     "error_message": "Error Message",
     "execution_type": "Execution Type",
     "mcp_init_fail": "❌ MCP initialization failed. ",
-    "attachments_downloaded": "📎 Attachments Downloaded"
+    "attachments_downloaded": "📎 Attachments Downloaded",
+    "generating_content": "✨ Generating Content"
   },
   "send_button": {
     "shortcut_title": "Send Shortcut",
@@ -170,7 +192,8 @@
     "invalid_parameter": "Invalid parameter: Request parameters are incorrect, please check your input",
     "network_error": "Network error: Please check your connection and try again",
     "timeout_error": "Request timeout: Service response time exceeded, please try again later",
-    "generic_error": "Request failed: Unknown error, please try again or contact administrator"
+    "generic_error": "Request failed: Unknown error, please try again or contact administrator",
+    "copy_error": "Copy error details"
   },
   "clarification": {
     "title": "Smart Follow-up",
@@ -225,6 +248,7 @@
     "select_from_here": "Select from here",
     "select_below": "Select below",
     "attachments": "attachment(s)",
+    "knowledge_bases": "knowledge base(s)",
     "preparing": "Preparing export...",
     "font_load_failed": "Failed to load font, please retry",
     "retry": "Retry"
@@ -237,6 +261,11 @@
   "deep_thinking": {
     "enable": "Enable deep thinking",
     "disable": "Disable deep thinking"
+  },
+  "reasoning": {
+    "thinking": "Thinking...",
+    "thought_process": "Thought process",
+    "chars": "chars"
   },
   "upload": {
     "tooltip": "Supported file types: PDF, Word, PPT, Excel, TXT, Markdown, Images(JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nSupports multiple file uploads"
@@ -252,8 +281,35 @@
     "longer_than_usual": "Response is taking longer than usual"
   },
   "groupChat": {
+    "mentionHint": "In group chat, use @ to mention an agent to get AI responses",
     "mentionToTrigger": "Type @{{teamName}} to get AI response",
     "messageSaved": "Message saved",
+    "tabs": {
+      "members": "Members",
+      "knowledge": "Knowledge"
+    },
+    "knowledge": {
+      "title": "Group Knowledge Bases",
+      "groupKnowledgeBases": "Group Knowledge",
+      "otherKnowledgeBases": "Other Knowledge Bases",
+      "add": "Add",
+      "addTitle": "Add Knowledge Base",
+      "addDescription": "Select knowledge bases to bind to this group chat. All members can access bound knowledge bases.",
+      "remove": "Remove",
+      "empty": "No knowledge bases bound",
+      "noAvailable": "No available knowledge bases",
+      "limit": "{{count}}/{{max}} bound",
+      "boundBy": "Bound by {{name}} at {{time}}",
+      "bindSuccess": "Knowledge base \"{{name}}\" bound successfully",
+      "bindFailed": "Failed to bind knowledge base",
+      "removeSuccess": "Knowledge base \"{{name}}\" removed",
+      "removeFailed": "Failed to remove knowledge base",
+      "loadFailed": "Failed to load knowledge bases",
+      "systemMessage": {
+        "bind": "{{userName}} bound knowledge base \"{{kbName}}\"",
+        "unbind": "{{userName}} removed knowledge base \"{{kbName}}\""
+      }
+    },
     "mentionAutocomplete": {
       "title": "Mention",
       "noTeam": "No team available",
@@ -328,6 +384,10 @@
       "generateInviteLink": "Generate Invite Link"
     }
   },
+  "knowledgeSummary": {
+    "totalDocuments": "{{count}} documents total",
+    "manage": "Manage Knowledge Bases"
+  },
   "common": {
     "cancel": "Cancel",
     "close": "Close"
@@ -386,5 +446,33 @@
       "summary": "Summary",
       "improved_answer": "Improved Answer"
     }
+  },
+  "pipeline": {
+    "progress_label": "Pipeline Progress",
+    "current_stage": "Current Stage",
+    "awaiting_confirmation": "Awaiting Confirmation",
+    "start_node": "Start",
+    "stage_started": "Started",
+    "stage_completed": "Completed",
+    "stage_running": "Running",
+    "stage_pending": "Pending",
+    "stage_failed": "Failed",
+    "stage_awaiting_confirmation": "Awaiting Confirmation",
+    "requires_confirmation": "Requires confirmation",
+    "continue_to_next_stage": "Continue to Next Stage",
+    "confirm_stage": "Confirm",
+    "stage_confirming": "Processing...",
+    "continue_clarifying": "Continue Clarifying",
+    "edit_prompt": "Edit Prompt",
+    "edit_prompt_placeholder": "Edit the prompt before proceeding to the next stage...",
+    "save_changes": "Save",
+    "confirmation_hint": "Review and edit the prompt if needed, then click 'Continue to Next Stage' to proceed.",
+    "stage_confirmed": "Stage Confirmed",
+    "stage_retry": "Returning to clarification",
+    "confirm_failed": "Failed to confirm stage",
+    "retry_failed": "Failed to retry stage",
+    "proceeding_to_stage": "Proceeding to stage: {{stage}}",
+    "pipeline_completed": "Pipeline completed",
+    "no_task_id": "No task ID available"
   }
 }

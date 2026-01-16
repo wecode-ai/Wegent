@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -7,38 +7,38 @@
  * Contains core rendering utilities and context management
  */
 
-import type jsPDF from 'jspdf';
-import type { TextSegment, FontStyle } from '../types';
-import { COLORS, LINE_HEIGHTS, PRIMARY_COLOR, PDF_CONFIG } from '../constants';
+import type jsPDF from 'jspdf'
+import type { TextSegment, FontStyle } from '../types'
+import { COLORS, LINE_HEIGHTS, PRIMARY_COLOR, PDF_CONFIG } from '../constants'
 import {
   setFontForText,
   hasUnicodeFontLoaded,
   requiresUnicodeFont,
   splitTextIntoWrappableUnits,
-} from '../font';
-import { UNICODE_FONT_NAME } from '../constants';
+} from '../font'
+import { UNICODE_FONT_NAME } from '../constants'
 
 /**
  * PDF Render Context - manages state during PDF generation
  */
 export interface RenderContext {
-  pdf: jsPDF;
-  pageWidth: number;
-  pageHeight: number;
-  margin: number;
-  contentWidth: number;
-  yPosition: number;
-  pageNum: { value: number };
+  pdf: jsPDF
+  pageWidth: number
+  pageHeight: number
+  margin: number
+  contentWidth: number
+  yPosition: number
+  pageNum: { value: number }
 }
 
 /**
  * Create a new render context from a jsPDF instance
  */
 export function createRenderContext(pdf: jsPDF): RenderContext {
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const margin = PDF_CONFIG.margin;
-  const contentWidth = pageWidth - margin * 2;
+  const pageWidth = pdf.internal.pageSize.getWidth()
+  const pageHeight = pdf.internal.pageSize.getHeight()
+  const margin = PDF_CONFIG.margin
+  const contentWidth = pageWidth - margin * 2
 
   return {
     pdf,
@@ -48,19 +48,19 @@ export function createRenderContext(pdf: jsPDF): RenderContext {
     contentWidth,
     yPosition: margin,
     pageNum: { value: 1 },
-  };
+  }
 }
 
 /**
  * Add footer with watermark
  */
 export function addFooter(ctx: RenderContext): void {
-  const { pdf, pageWidth, pageHeight, margin, pageNum } = ctx;
-  pdf.setFontSize(8);
-  pdf.setTextColor(160, 160, 160);
-  pdf.setFont('helvetica', 'normal');
-  pdf.text('Exported from Wegent', pageWidth / 2, pageHeight - 10, { align: 'center' });
-  pdf.text(`Page ${pageNum.value}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
+  const { pdf, pageWidth, pageHeight, margin, pageNum } = ctx
+  pdf.setFontSize(8)
+  pdf.setTextColor(160, 160, 160)
+  pdf.setFont('helvetica', 'normal')
+  pdf.text('Exported from Wegent', pageWidth / 2, pageHeight - 10, { align: 'center' })
+  pdf.text(`Page ${pageNum.value}`, pageWidth - margin, pageHeight - 10, { align: 'right' })
 }
 
 /**
@@ -68,15 +68,15 @@ export function addFooter(ctx: RenderContext): void {
  * Returns true if a new page was added
  */
 export function checkNewPage(ctx: RenderContext, requiredHeight: number): boolean {
-  const { pdf, pageHeight, margin, pageNum } = ctx;
+  const { pdf, pageHeight, margin, pageNum } = ctx
   if (ctx.yPosition + requiredHeight > pageHeight - PDF_CONFIG.footerPageOffset) {
-    addFooter(ctx);
-    pdf.addPage();
-    pageNum.value++;
-    ctx.yPosition = margin;
-    return true;
+    addFooter(ctx)
+    pdf.addPage()
+    pageNum.value++
+    ctx.yPosition = margin
+    return true
   }
-  return false;
+  return false
 }
 
 /**
@@ -90,93 +90,97 @@ export function renderStyledText(
   baseFontSize: number = 10,
   enablePageBreak: boolean = true
 ): void {
-  const { pdf } = ctx;
-  let currentX = startX;
-  const lineHeight = enablePageBreak ? LINE_HEIGHTS.paragraph : LINE_HEIGHTS.paragraph - 0.5;
+  const { pdf } = ctx
+  let currentX = startX
+  const lineHeight = enablePageBreak ? LINE_HEIGHTS.paragraph : LINE_HEIGHTS.paragraph - 0.5
 
   /**
    * Helper function to set font style for a segment
    */
   const setSegmentStyle = (segment: TextSegment) => {
-    let fontStyle: FontStyle = 'normal';
+    let fontStyle: FontStyle = 'normal'
     if (segment.bold && segment.italic) {
-      fontStyle = 'bolditalic';
+      fontStyle = 'bolditalic'
     } else if (segment.bold) {
-      fontStyle = 'bold';
+      fontStyle = 'bold'
     } else if (segment.italic) {
-      fontStyle = 'italic';
+      fontStyle = 'italic'
     }
 
-    pdf.setFontSize(baseFontSize);
+    pdf.setFontSize(baseFontSize)
 
-    if (segment.code) {
-      pdf.setTextColor(COLORS.code.r, COLORS.code.g, COLORS.code.b);
-      pdf.setFont('courier', 'normal');
+    if (segment.math) {
+      // Math formulas: render in a distinct style
+      pdf.setTextColor(100, 50, 150) // Purple-ish color for math
+      pdf.setFont('courier', 'normal')
+    } else if (segment.code) {
+      pdf.setTextColor(COLORS.code.r, COLORS.code.g, COLORS.code.b)
+      pdf.setFont('courier', 'normal')
     } else if (segment.link) {
-      pdf.setTextColor(COLORS.link.r, COLORS.link.g, COLORS.link.b);
-      setFontForText(pdf, segment.text, fontStyle);
+      pdf.setTextColor(COLORS.link.r, COLORS.link.g, COLORS.link.b)
+      setFontForText(pdf, segment.text, fontStyle)
     } else {
-      pdf.setTextColor(COLORS.text.r, COLORS.text.g, COLORS.text.b);
-      setFontForText(pdf, segment.text, fontStyle);
+      pdf.setTextColor(COLORS.text.r, COLORS.text.g, COLORS.text.b)
+      setFontForText(pdf, segment.text, fontStyle)
     }
-  };
+  }
 
   /**
    * Helper function to draw text with optional decorations
    */
   const drawTextWithDecorations = (text: string, x: number, y: number, segment: TextSegment) => {
-    pdf.text(text, x, y);
-    const textWidth = pdf.getTextWidth(text);
+    pdf.text(text, x, y)
+    const textWidth = pdf.getTextWidth(text)
 
     if (segment.link) {
-      pdf.setDrawColor(COLORS.link.r, COLORS.link.g, COLORS.link.b);
-      pdf.setLineWidth(0.2);
-      pdf.line(x, y + 0.5, x + textWidth, y + 0.5);
-      pdf.link(x, y - 3, textWidth, 4, { url: segment.link });
+      pdf.setDrawColor(COLORS.link.r, COLORS.link.g, COLORS.link.b)
+      pdf.setLineWidth(0.2)
+      pdf.line(x, y + 0.5, x + textWidth, y + 0.5)
+      pdf.link(x, y - 3, textWidth, 4, { url: segment.link })
     }
 
     if (segment.strikethrough) {
-      pdf.setDrawColor(COLORS.text.r, COLORS.text.g, COLORS.text.b);
-      pdf.setLineWidth(0.3);
-      pdf.line(x, y - 1.5, x + textWidth, y - 1.5);
+      pdf.setDrawColor(COLORS.text.r, COLORS.text.g, COLORS.text.b)
+      pdf.setLineWidth(0.3)
+      pdf.line(x, y - 1.5, x + textWidth, y - 1.5)
     }
 
-    return textWidth;
-  };
+    return textWidth
+  }
 
   /**
    * Helper function to handle line break with optional page break check
    */
   const handleLineBreak = (segment: TextSegment) => {
-    ctx.yPosition += lineHeight;
+    ctx.yPosition += lineHeight
     if (enablePageBreak && checkNewPage(ctx, lineHeight)) {
-      setSegmentStyle(segment);
+      setSegmentStyle(segment)
     }
-    currentX = startX;
-  };
+    currentX = startX
+  }
 
   for (const segment of segments) {
-    setSegmentStyle(segment);
+    setSegmentStyle(segment)
 
-    const text = segment.text;
-    const availableWidth = startX + maxWidth - currentX;
-    const fullTextWidth = pdf.getTextWidth(text);
+    const text = segment.text
+    const availableWidth = startX + maxWidth - currentX
+    const fullTextWidth = pdf.getTextWidth(text)
 
     if (fullTextWidth <= availableWidth) {
-      const drawnWidth = drawTextWithDecorations(text, currentX, ctx.yPosition, segment);
-      currentX += drawnWidth;
+      const drawnWidth = drawTextWithDecorations(text, currentX, ctx.yPosition, segment)
+      currentX += drawnWidth
     } else {
-      const words = splitTextIntoWrappableUnits(text);
-      let currentLineText = '';
+      const words = splitTextIntoWrappableUnits(text)
+      let currentLineText = ''
 
       for (let i = 0; i < words.length; i++) {
-        const word = words[i];
-        const testText = currentLineText + word;
-        const testWidth = pdf.getTextWidth(testText);
-        const currentAvailableWidth = startX + maxWidth - currentX;
+        const word = words[i]
+        const testText = currentLineText + word
+        const testWidth = pdf.getTextWidth(testText)
+        const currentAvailableWidth = startX + maxWidth - currentX
 
         if (testWidth <= currentAvailableWidth) {
-          currentLineText = testText;
+          currentLineText = testText
         } else {
           if (currentLineText.length > 0) {
             const drawnWidth = drawTextWithDecorations(
@@ -184,41 +188,41 @@ export function renderStyledText(
               currentX,
               ctx.yPosition,
               segment
-            );
-            currentX += drawnWidth;
+            )
+            currentX += drawnWidth
           }
 
-          const wordWidth = pdf.getTextWidth(word);
+          const wordWidth = pdf.getTextWidth(word)
           if (currentX > startX && wordWidth > startX + maxWidth - currentX) {
-            handleLineBreak(segment);
+            handleLineBreak(segment)
           }
 
           if (wordWidth > maxWidth) {
-            let charIndex = 0;
+            let charIndex = 0
             while (charIndex < word.length) {
-              let charText = '';
+              let charText = ''
               while (charIndex < word.length) {
-                const nextChar = word[charIndex];
-                const nextWidth = pdf.getTextWidth(charText + nextChar);
+                const nextChar = word[charIndex]
+                const nextWidth = pdf.getTextWidth(charText + nextChar)
                 if (nextWidth > maxWidth && charText.length > 0) {
-                  break;
+                  break
                 }
-                charText += nextChar;
-                charIndex++;
+                charText += nextChar
+                charIndex++
               }
 
               if (charText.length > 0) {
-                drawTextWithDecorations(charText, currentX, ctx.yPosition, segment);
+                drawTextWithDecorations(charText, currentX, ctx.yPosition, segment)
                 if (charIndex < word.length) {
-                  handleLineBreak(segment);
+                  handleLineBreak(segment)
                 } else {
-                  currentX = startX + pdf.getTextWidth(charText);
+                  currentX = startX + pdf.getTextWidth(charText)
                 }
               }
             }
-            currentLineText = '';
+            currentLineText = ''
           } else {
-            currentLineText = word;
+            currentLineText = word
           }
         }
       }
@@ -229,8 +233,8 @@ export function renderStyledText(
           currentX,
           ctx.yPosition,
           segment
-        );
-        currentX += drawnWidth;
+        )
+        currentX += drawnWidth
       }
     }
   }
@@ -247,131 +251,131 @@ export function renderCodeBlock(
   startX: number,
   maxWidth: number
 ): void {
-  const { pdf, pageHeight, margin, pageNum } = ctx;
-  const codeLines = code.split('\n');
-  const lineHeight = LINE_HEIGHTS.code;
-  const codePadding = 3;
-  const codeBlockSpacing = 2;
+  const { pdf, pageHeight, margin, pageNum } = ctx
+  const codeLines = code.split('\n')
+  const lineHeight = LINE_HEIGHTS.code
+  const codePadding = 3
+  const codeBlockSpacing = 2
 
-  checkNewPage(ctx, lineHeight * 3 + codePadding * 2);
+  checkNewPage(ctx, lineHeight * 3 + codePadding * 2)
 
   // Structure to store line info for each page segment
   interface PageSegment {
-    pageIndex: number;
-    startY: number;
-    lines: Array<{ text: string; y: number; needsUnicode: boolean }>;
+    pageIndex: number
+    startY: number
+    lines: Array<{ text: string; y: number; needsUnicode: boolean }>
   }
 
-  const segments: PageSegment[] = [];
-  const blockStartY = ctx.yPosition;
+  const segments: PageSegment[] = []
+  const blockStartY = ctx.yPosition
   let currentSegment: PageSegment = {
     pageIndex: pageNum.value,
     startY: blockStartY,
     lines: [],
-  };
+  }
 
   // Show language label
   if (language) {
-    pdf.setFontSize(7);
-    pdf.setTextColor(140, 140, 140);
-    pdf.setFont('helvetica', 'normal');
-    pdf.text(language, startX + maxWidth - 3, ctx.yPosition + codePadding, { align: 'right' });
+    pdf.setFontSize(7)
+    pdf.setTextColor(140, 140, 140)
+    pdf.setFont('helvetica', 'normal')
+    pdf.text(language, startX + maxWidth - 3, ctx.yPosition + codePadding, { align: 'right' })
   }
 
-  ctx.yPosition += codePadding;
-  pdf.setFontSize(8);
+  ctx.yPosition += codePadding
+  pdf.setFontSize(8)
 
   // First pass: calculate positions and handle page breaks
   for (const codeLine of codeLines) {
-    const needsUnicode = hasUnicodeFontLoaded(pdf) && requiresUnicodeFont(codeLine);
+    const needsUnicode = hasUnicodeFontLoaded(pdf) && requiresUnicodeFont(codeLine)
     if (needsUnicode) {
-      pdf.setFont(UNICODE_FONT_NAME, 'normal');
+      pdf.setFont(UNICODE_FONT_NAME, 'normal')
     } else {
-      pdf.setFont('courier', 'normal');
+      pdf.setFont('courier', 'normal')
     }
-    const wrappedLines = pdf.splitTextToSize(codeLine || ' ', maxWidth - codePadding * 2);
+    const wrappedLines = pdf.splitTextToSize(codeLine || ' ', maxWidth - codePadding * 2)
 
     for (const wrappedLine of wrappedLines) {
       if (ctx.yPosition + lineHeight > pageHeight - 20) {
         // Save current segment before page break
-        segments.push(currentSegment);
+        segments.push(currentSegment)
 
         // Add footer and new page
-        addFooter(ctx);
-        pdf.addPage();
-        pageNum.value++;
-        ctx.yPosition = margin;
+        addFooter(ctx)
+        pdf.addPage()
+        pageNum.value++
+        ctx.yPosition = margin
 
         // Start new segment
         currentSegment = {
           pageIndex: pageNum.value,
           startY: ctx.yPosition,
           lines: [],
-        };
-        ctx.yPosition += codePadding;
+        }
+        ctx.yPosition += codePadding
       }
 
       currentSegment.lines.push({
         text: wrappedLine,
         y: ctx.yPosition,
         needsUnicode,
-      });
-      ctx.yPosition += lineHeight;
+      })
+      ctx.yPosition += lineHeight
     }
   }
 
   // Save the last segment
-  segments.push(currentSegment);
+  segments.push(currentSegment)
 
   // Add bottom padding to yPosition (this is where the code block ends)
-  ctx.yPosition += codePadding;
-  const codeBlockEndY = ctx.yPosition;
+  ctx.yPosition += codePadding
+  const codeBlockEndY = ctx.yPosition
 
   // Second pass: draw backgrounds and text for each segment
-  const totalPages = pageNum.value;
+  const totalPages = pageNum.value
 
   for (let segIdx = 0; segIdx < segments.length; segIdx++) {
-    const segment = segments[segIdx];
+    const segment = segments[segIdx]
 
     // Go to the correct page
-    pdf.setPage(segment.pageIndex);
+    pdf.setPage(segment.pageIndex)
 
     // Calculate segment height
-    let segmentEndY: number;
+    let segmentEndY: number
     if (segIdx === segments.length - 1) {
       // Last segment: use the final codeBlockEndY
-      segmentEndY = codeBlockEndY;
+      segmentEndY = codeBlockEndY
     } else {
       // Not last segment: calculate based on last line position + lineHeight
-      const lastLine = segment.lines[segment.lines.length - 1];
-      segmentEndY = lastLine ? lastLine.y + lineHeight : segment.startY + codePadding;
+      const lastLine = segment.lines[segment.lines.length - 1]
+      segmentEndY = lastLine ? lastLine.y + lineHeight : segment.startY + codePadding
     }
-    const segmentHeight = segmentEndY - segment.startY;
+    const segmentHeight = segmentEndY - segment.startY
 
     // Draw background
-    pdf.setFillColor(COLORS.codeBlockBg.r, COLORS.codeBlockBg.g, COLORS.codeBlockBg.b);
-    pdf.setDrawColor(200, 200, 200);
-    pdf.roundedRect(startX, segment.startY, maxWidth, segmentHeight, 1.5, 1.5, 'FD');
+    pdf.setFillColor(COLORS.codeBlockBg.r, COLORS.codeBlockBg.g, COLORS.codeBlockBg.b)
+    pdf.setDrawColor(200, 200, 200)
+    pdf.roundedRect(startX, segment.startY, maxWidth, segmentHeight, 1.5, 1.5, 'FD')
 
     // Draw text
-    pdf.setFontSize(8);
-    pdf.setTextColor(COLORS.codeBlockText.r, COLORS.codeBlockText.g, COLORS.codeBlockText.b);
+    pdf.setFontSize(8)
+    pdf.setTextColor(COLORS.codeBlockText.r, COLORS.codeBlockText.g, COLORS.codeBlockText.b)
 
     for (const line of segment.lines) {
       if (line.needsUnicode) {
-        pdf.setFont(UNICODE_FONT_NAME, 'normal');
+        pdf.setFont(UNICODE_FONT_NAME, 'normal')
       } else {
-        pdf.setFont('courier', 'normal');
+        pdf.setFont('courier', 'normal')
       }
-      pdf.text(line.text, startX + codePadding, line.y);
+      pdf.text(line.text, startX + codePadding, line.y)
     }
   }
 
   // Return to the last page
-  pdf.setPage(totalPages);
+  pdf.setPage(totalPages)
 
   // Add spacing after code block for next content
-  ctx.yPosition += codeBlockSpacing;
+  ctx.yPosition += codeBlockSpacing
 }
 /**
  * Normalize cell content by converting HTML tags to plain text
@@ -383,24 +387,24 @@ export function renderCodeBlock(
  * - HTML entities -> decoded
  */
 function normalizeCellContent(content: string): string {
-  if (!content) return '';
+  if (!content) return ''
 
-  let result = content;
+  let result = content
 
   // Replace <br>, <br/>, <br /> tags with newlines
-  result = result.replace(/<br\s*\/?>/gi, '\n');
+  result = result.replace(/<br\s*\/?>/gi, '\n')
 
   // Replace block-level closing tags with newlines
-  result = result.replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, '\n');
+  result = result.replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, '\n')
 
   // Replace block-level opening tags (except first one) - they often indicate new lines
-  result = result.replace(/<(?:p|div|tr|h[1-6])(?:\s[^>]*)?>/gi, '');
+  result = result.replace(/<(?:p|div|tr|h[1-6])(?:\s[^>]*)?>/gi, '')
 
   // Handle list items - add bullet point
-  result = result.replace(/<li(?:\s[^>]*)?>/gi, '\n• ');
+  result = result.replace(/<li(?:\s[^>]*)?>/gi, '\n• ')
 
   // Remove all remaining HTML tags
-  result = result.replace(/<[^>]+>/g, '');
+  result = result.replace(/<[^>]+>/g, '')
 
   // Decode common HTML entities
   result = result
@@ -410,21 +414,21 @@ function normalizeCellContent(content: string): string {
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'")
-    .replace(/&apos;/gi, "'");
+    .replace(/&apos;/gi, "'")
 
   // Clean up multiple consecutive newlines
-  result = result.replace(/\n{3,}/g, '\n\n');
+  result = result.replace(/\n{3,}/g, '\n\n')
 
   // Trim leading/trailing whitespace from each line but preserve newlines
   result = result
     .split('\n')
     .map(line => line.trim())
-    .join('\n');
+    .join('\n')
 
   // Trim leading/trailing newlines from the whole content
-  result = result.trim();
+  result = result.trim()
 
-  return result;
+  return result
 }
 
 function calculateRowHeight(
@@ -434,19 +438,19 @@ function calculateRowHeight(
   cellPadding: number,
   cellLineHeight: number
 ): number {
-  let maxLines = 1;
+  let maxLines = 1
   for (const cell of cells) {
-    const normalizedCell = normalizeCellContent(cell);
+    const normalizedCell = normalizeCellContent(cell)
     // Split by explicit newlines first, then wrap each line
-    const explicitLines = normalizedCell.split('\n');
-    let totalLines = 0;
+    const explicitLines = normalizedCell.split('\n')
+    let totalLines = 0
     for (const line of explicitLines) {
-      const wrappedLines = pdf.splitTextToSize(line || ' ', colWidth - cellPadding * 2);
-      totalLines += wrappedLines.length;
+      const wrappedLines = pdf.splitTextToSize(line || ' ', colWidth - cellPadding * 2)
+      totalLines += wrappedLines.length
     }
-    maxLines = Math.max(maxLines, totalLines);
+    maxLines = Math.max(maxLines, totalLines)
   }
-  return maxLines * cellLineHeight + cellPadding * 2;
+  return maxLines * cellLineHeight + cellPadding * 2
 }
 
 /**
@@ -460,116 +464,116 @@ export function renderTable(
   startX: number,
   maxWidth: number
 ): void {
-  if (headers.length === 0) return;
+  if (headers.length === 0) return
 
-  const { pdf } = ctx;
-  const cellPadding = 1.5;
-  const cellLineHeight = 4;
-  const numCols = headers.length;
-  const colWidth = maxWidth / numCols;
+  const { pdf } = ctx
+  const cellPadding = 1.5
+  const cellLineHeight = 4
+  const numCols = headers.length
+  const colWidth = maxWidth / numCols
 
   // Calculate header row height based on content
-  pdf.setFontSize(8);
-  const headerRowHeight = calculateRowHeight(pdf, headers, colWidth, cellPadding, cellLineHeight);
+  pdf.setFontSize(8)
+  const headerRowHeight = calculateRowHeight(pdf, headers, colWidth, cellPadding, cellLineHeight)
 
-  checkNewPage(ctx, headerRowHeight + 5);
+  checkNewPage(ctx, headerRowHeight + 5)
 
-  const headerY = ctx.yPosition;
-  pdf.setFillColor(240, 240, 240);
-  pdf.setDrawColor(200, 200, 200);
-  pdf.rect(startX, headerY, maxWidth, headerRowHeight, 'FD');
+  const headerY = ctx.yPosition
+  pdf.setFillColor(240, 240, 240)
+  pdf.setDrawColor(200, 200, 200)
+  pdf.rect(startX, headerY, maxWidth, headerRowHeight, 'FD')
 
-  pdf.setFontSize(8);
-  pdf.setTextColor(COLORS.heading.r, COLORS.heading.g, COLORS.heading.b);
+  pdf.setFontSize(8)
+  pdf.setTextColor(COLORS.heading.r, COLORS.heading.g, COLORS.heading.b)
 
-  let xPos = startX;
+  let xPos = startX
   for (let col = 0; col < numCols; col++) {
-    const normalizedHeader = normalizeCellContent(headers[col]);
-    setFontForText(pdf, normalizedHeader || '', 'bold');
+    const normalizedHeader = normalizeCellContent(headers[col])
+    setFontForText(pdf, normalizedHeader || '', 'bold')
     // Split by explicit newlines first, then wrap each line
-    const explicitLines = normalizedHeader.split('\n');
-    let lineY = headerY + cellPadding + cellLineHeight * 0.7;
+    const explicitLines = normalizedHeader.split('\n')
+    let lineY = headerY + cellPadding + cellLineHeight * 0.7
     for (const explicitLine of explicitLines) {
-      const wrappedLines = pdf.splitTextToSize(explicitLine || ' ', colWidth - cellPadding * 2);
+      const wrappedLines = pdf.splitTextToSize(explicitLine || ' ', colWidth - cellPadding * 2)
       for (const line of wrappedLines) {
-        pdf.text(line, xPos + cellPadding, lineY);
-        lineY += cellLineHeight;
+        pdf.text(line, xPos + cellPadding, lineY)
+        lineY += cellLineHeight
       }
     }
-    xPos += colWidth;
+    xPos += colWidth
   }
 
-  pdf.setDrawColor(200, 200, 200);
-  pdf.line(startX, headerY, startX + maxWidth, headerY);
+  pdf.setDrawColor(200, 200, 200)
+  pdf.line(startX, headerY, startX + maxWidth, headerY)
 
-  ctx.yPosition = headerY + headerRowHeight;
+  ctx.yPosition = headerY + headerRowHeight
 
   for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
-    const row = rows[rowIdx];
+    const row = rows[rowIdx]
 
     // Calculate row height based on content
-    pdf.setFontSize(8);
-    const rowHeight = calculateRowHeight(pdf, row, colWidth, cellPadding, cellLineHeight);
+    pdf.setFontSize(8)
+    const rowHeight = calculateRowHeight(pdf, row, colWidth, cellPadding, cellLineHeight)
 
-    checkNewPage(ctx, rowHeight);
+    checkNewPage(ctx, rowHeight)
 
-    const rowStartY = ctx.yPosition;
+    const rowStartY = ctx.yPosition
 
     if (rowIdx % 2 === 1) {
-      pdf.setFillColor(248, 248, 248);
-      pdf.rect(startX, rowStartY, maxWidth, rowHeight, 'F');
+      pdf.setFillColor(248, 248, 248)
+      pdf.rect(startX, rowStartY, maxWidth, rowHeight, 'F')
     }
 
-    pdf.setDrawColor(200, 200, 200);
-    pdf.line(startX, rowStartY + rowHeight, startX + maxWidth, rowStartY + rowHeight);
+    pdf.setDrawColor(200, 200, 200)
+    pdf.line(startX, rowStartY + rowHeight, startX + maxWidth, rowStartY + rowHeight)
 
-    pdf.setFontSize(8);
-    pdf.setTextColor(COLORS.text.r, COLORS.text.g, COLORS.text.b);
+    pdf.setFontSize(8)
+    pdf.setTextColor(COLORS.text.r, COLORS.text.g, COLORS.text.b)
 
-    xPos = startX;
+    xPos = startX
     for (let col = 0; col < numCols; col++) {
-      const normalizedCell = normalizeCellContent(row[col]);
-      setFontForText(pdf, normalizedCell || '', 'normal');
+      const normalizedCell = normalizeCellContent(row[col])
+      setFontForText(pdf, normalizedCell || '', 'normal')
       // Split by explicit newlines first, then wrap each line
-      const explicitLines = normalizedCell.split('\n');
-      let lineY = rowStartY + cellPadding + cellLineHeight * 0.7;
+      const explicitLines = normalizedCell.split('\n')
+      let lineY = rowStartY + cellPadding + cellLineHeight * 0.7
       for (const explicitLine of explicitLines) {
-        const wrappedLines = pdf.splitTextToSize(explicitLine || ' ', colWidth - cellPadding * 2);
+        const wrappedLines = pdf.splitTextToSize(explicitLine || ' ', colWidth - cellPadding * 2)
         for (const line of wrappedLines) {
-          pdf.text(line, xPos + cellPadding, lineY);
-          lineY += cellLineHeight;
+          pdf.text(line, xPos + cellPadding, lineY)
+          lineY += cellLineHeight
         }
       }
-      xPos += colWidth;
+      xPos += colWidth
     }
 
-    ctx.yPosition += rowHeight;
+    ctx.yPosition += rowHeight
   }
 
-  ctx.yPosition += 2;
+  ctx.yPosition += 2
 }
 
 /**
  * Add header with logo and title
  */
 export function addHeader(ctx: RenderContext, taskName: string): void {
-  const { pdf, pageWidth, margin, contentWidth } = ctx;
+  const { pdf, pageWidth, margin, contentWidth } = ctx
 
-  pdf.setFontSize(24);
-  pdf.setTextColor(PRIMARY_COLOR.r, PRIMARY_COLOR.g, PRIMARY_COLOR.b);
-  pdf.setFont('helvetica', 'bold');
-  pdf.text('Wegent AI', pageWidth / 2, ctx.yPosition, { align: 'center' });
-  ctx.yPosition += 10;
+  pdf.setFontSize(24)
+  pdf.setTextColor(PRIMARY_COLOR.r, PRIMARY_COLOR.g, PRIMARY_COLOR.b)
+  pdf.setFont('helvetica', 'bold')
+  pdf.text('Wegent AI', pageWidth / 2, ctx.yPosition, { align: 'center' })
+  ctx.yPosition += 10
 
-  pdf.setFontSize(16);
-  pdf.setTextColor(PRIMARY_COLOR.r, PRIMARY_COLOR.g, PRIMARY_COLOR.b);
-  setFontForText(pdf, taskName, 'bold');
-  const titleLines = pdf.splitTextToSize(taskName, contentWidth);
-  pdf.text(titleLines, pageWidth / 2, ctx.yPosition, { align: 'center' });
-  ctx.yPosition += titleLines.length * 7 + 5;
+  pdf.setFontSize(16)
+  pdf.setTextColor(PRIMARY_COLOR.r, PRIMARY_COLOR.g, PRIMARY_COLOR.b)
+  setFontForText(pdf, taskName, 'bold')
+  const titleLines = pdf.splitTextToSize(taskName, contentWidth)
+  pdf.text(titleLines, pageWidth / 2, ctx.yPosition, { align: 'center' })
+  ctx.yPosition += titleLines.length * 7 + 5
 
-  pdf.setDrawColor(PRIMARY_COLOR.r, PRIMARY_COLOR.g, PRIMARY_COLOR.b);
-  pdf.setLineWidth(0.5);
-  pdf.line(margin, ctx.yPosition, pageWidth - margin, ctx.yPosition);
-  ctx.yPosition += 10;
+  pdf.setDrawColor(PRIMARY_COLOR.r, PRIMARY_COLOR.g, PRIMARY_COLOR.b)
+  pdf.setLineWidth(0.5)
+  pdf.line(margin, ctx.yPosition, pageWidth - margin, ctx.yPosition)
+  ctx.yPosition += 10
 }

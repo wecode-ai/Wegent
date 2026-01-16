@@ -136,8 +136,15 @@ async def upload_skill(
 def list_skills(
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=100, description="Number of items to return"),
-    namespace: str = Query("default", description="Namespace filter"),
+    namespace: str = Query(
+        "default", description="Namespace filter (team namespace for group skills)"
+    ),
     name: str = Query(None, description="Filter by skill name"),
+    exact_match: bool = Query(
+        False,
+        description="If true, only search in the specified namespace (for upload check). "
+        "If false, search with fallback: personal -> group -> public (for usage).",
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -145,12 +152,41 @@ def list_skills(
     Get current user's Skill list.
 
     If 'name' parameter is provided, returns only the skill with that name.
+
+    Search behavior depends on 'exact_match':
+    - exact_match=true: Only search in the specified namespace (used for upload duplicate check)
+    - exact_match=false (default): Search with fallback order (used for skill usage):
+      1. User's skill in default namespace (personal)
+      2. Group-level skill in specified namespace (any user in that group, if namespace != 'default')
+      3. Public skill (user_id=0)
     """
     if name:
-        # Query by name
+        if exact_match:
+            # Exact match mode: only search in the specified namespace
+            skill = skill_kinds_service.get_skill_by_name(
+                db=db, name=name, namespace=namespace, user_id=current_user.id
+            )
+            return SkillList(items=[skill] if skill else [])
+
+        # Fallback mode: search with priority order
+        # 1. User's personal skill (default namespace)
         skill = skill_kinds_service.get_skill_by_name(
-            db=db, name=name, namespace=namespace, user_id=current_user.id
+            db=db, name=name, namespace="default", user_id=current_user.id
         )
+
+        # 2. Group-level skill (if namespace is not default)
+        # Search ALL skills in the group namespace, not just current user's
+        if not skill and namespace != "default":
+            skill = skill_kinds_service.get_skill_by_name_in_namespace(
+                db=db, name=name, namespace=namespace
+            )
+
+        # 3. Public skill (user_id=0)
+        if not skill:
+            skill = skill_kinds_service.get_skill_by_name(
+                db=db, name=name, namespace="default", user_id=0
+            )
+
         return SkillList(items=[skill] if skill else [])
 
     # List all skills
@@ -483,44 +519,89 @@ def get_public_skill_content(
 def list_unified_skills(
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(100, ge=1, le=100, description="Number of items to return"),
-    namespace: str = Query("default", description="Namespace filter"),
+    scope: str = Query(
+        "personal",
+        description="Query scope: 'personal' (default), 'group', or 'all'",
+    ),
+    group_name: Optional[str] = Query(
+        None, description="Group name (required when scope='group')"
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """
-    List all skills (user's + public).
+    List all skills (user's/group's + public).
 
-    Returns combined list with user's skills first, then public skills.
-    User's skills with same name take precedence over public skills.
+    Scope behavior:
+    - scope='personal' (default): personal skills (current user only) + public skills
+    - scope='group': ALL group skills in namespace (from any user) + public skills (requires group_name)
+    - scope='all': personal + public + all user's groups
+
+    Returns combined list with user/group skills first, then public skills.
+    User/group skills with same name take precedence over public skills.
     """
-    # Get user's skills
-    user_skills_list = skill_kinds_service.list_skills(
-        db=db, user_id=current_user.id, skip=0, limit=1000, namespace=namespace
-    )
+    from app.services.group_permission import get_user_groups
 
-    # Convert to unified format
     user_skills = []
     user_skill_names = set()
-    for skill in user_skills_list.items:
-        user_skill_names.add(skill.metadata.name)
-        user_skills.append(
-            {
-                "id": int(skill.metadata.labels.get("id", 0)),
-                "name": skill.metadata.name,
-                "namespace": skill.metadata.namespace,
-                "description": skill.spec.description,
-                "displayName": getattr(skill.spec, "displayName", None),
-                "prompt": skill.spec.prompt,
-                "version": skill.spec.version,
-                "author": skill.spec.author,
-                "tags": skill.spec.tags,
-                "bindShells": skill.spec.bindShells,
-                "is_active": True,
-                "is_public": False,
-                "created_at": None,
-                "updated_at": None,
-            }
-        )
+
+    # Determine which namespaces to query based on scope
+    if scope == "personal":
+        # Personal scope: only query current user's skills in default namespace
+        namespaces_to_query = [("default", True)]  # (namespace, filter_by_user)
+    elif scope == "group":
+        if group_name:
+            # Group scope with specific group: query ALL skills in that namespace
+            namespaces_to_query = [(group_name, False)]  # Don't filter by user
+        else:
+            # Query all user's groups (excluding default)
+            user_groups = get_user_groups(db, current_user.id)
+            namespaces_to_query = [
+                (g.name, False) for g in user_groups if g.name != "default"
+            ]
+    else:  # scope == "all"
+        # Query personal + all user's groups
+        user_groups = get_user_groups(db, current_user.id)
+        namespaces_to_query = [("default", True)] + [
+            (g.name, False) for g in user_groups if g.name != "default"
+        ]
+
+    # Query skills from all relevant namespaces
+    for namespace_info in namespaces_to_query:
+        namespace, filter_by_user = namespace_info
+
+        if filter_by_user:
+            # Personal namespace: filter by current user
+            user_skills_list = skill_kinds_service.list_skills(
+                db=db, user_id=current_user.id, skip=0, limit=1000, namespace=namespace
+            )
+        else:
+            # Group namespace: get ALL skills in namespace (from any user)
+            user_skills_list = skill_kinds_service.list_skills_in_namespace(
+                db=db, namespace=namespace, skip=0, limit=1000
+            )
+
+        for skill in user_skills_list.items:
+            if skill.metadata.name not in user_skill_names:
+                user_skill_names.add(skill.metadata.name)
+                user_skills.append(
+                    {
+                        "id": int(skill.metadata.labels.get("id", 0)),
+                        "name": skill.metadata.name,
+                        "namespace": skill.metadata.namespace,
+                        "description": skill.spec.description,
+                        "displayName": getattr(skill.spec, "displayName", None),
+                        "prompt": skill.spec.prompt,
+                        "version": skill.spec.version,
+                        "author": skill.spec.author,
+                        "tags": skill.spec.tags,
+                        "bindShells": skill.spec.bindShells,
+                        "is_active": True,
+                        "is_public": False,
+                        "created_at": None,
+                        "updated_at": None,
+                    }
+                )
 
     # Get public skills
     public_skills = public_skill_service.get_skills(db, skip=0, limit=1000)
@@ -611,6 +692,7 @@ def get_skill(
 @router.get("/{skill_id}/download")
 def download_skill(
     skill_id: int,
+    namespace: str = Query("default", description="Namespace for group skill lookup"),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -618,18 +700,43 @@ def download_skill(
     Download Skill ZIP package.
 
     Used by Executor to download Skills for deployment.
+    Search order:
+    1. User's personal skill (user_id=current_user)
+    2. Group skill in namespace (if namespace != 'default')
+    3. Public skill (user_id=0)
     """
-    # Get skill metadata
+    # 1. Search user's personal skill first
     skill = skill_kinds_service.get_skill_by_id(
         db=db, skill_id=skill_id, user_id=current_user.id
     )
+    binary_data = None
+
+    if skill:
+        binary_data = skill_kinds_service.get_skill_binary(
+            db=db, skill_id=skill_id, user_id=current_user.id
+        )
+
+    # 2. If not found and namespace is not default, search group skill
+    if not skill and namespace != "default":
+        skill = skill_kinds_service.get_skill_by_id_in_namespace(
+            db=db, skill_id=skill_id, namespace=namespace
+        )
+        if skill:
+            binary_data = skill_kinds_service.get_skill_binary_in_namespace(
+                db=db, skill_id=skill_id, namespace=namespace
+            )
+
+    # 3. If still not found, search public skill (user_id=0)
+    if not skill:
+        skill = skill_kinds_service.get_skill_by_id(db=db, skill_id=skill_id, user_id=0)
+        if skill:
+            binary_data = skill_kinds_service.get_skill_binary(
+                db=db, skill_id=skill_id, user_id=0
+            )
+
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
 
-    # Get binary data
-    binary_data = skill_kinds_service.get_skill_binary(
-        db=db, skill_id=skill_id, user_id=current_user.id
-    )
     if not binary_data:
         raise HTTPException(status_code=404, detail="Skill binary not found")
 
@@ -641,6 +748,42 @@ def download_skill(
             "Content-Disposition": f"attachment; filename={skill.metadata.name}.zip"
         },
     )
+
+
+@router.post("/{skill_id}/remove-references", response_model=Dict[str, Any])
+def remove_skill_references(
+    skill_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Remove all Ghost references to this Skill.
+
+    This allows the Skill to be deleted afterwards.
+    Returns the count of removed references and affected Ghost names.
+    """
+    result = skill_kinds_service.remove_skill_references(
+        db=db, skill_id=skill_id, user_id=current_user.id
+    )
+    return result
+
+
+@router.post("/{skill_id}/remove-reference/{ghost_id}", response_model=Dict[str, Any])
+def remove_single_skill_reference(
+    skill_id: int,
+    ghost_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Remove a Skill reference from a single Ghost.
+
+    Returns success status and the affected Ghost name.
+    """
+    result = skill_kinds_service.remove_single_skill_reference(
+        db=db, skill_id=skill_id, ghost_id=ghost_id, user_id=current_user.id
+    )
+    return result
 
 
 @router.put("/{skill_id}", response_model=Skill)

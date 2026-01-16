@@ -44,7 +44,7 @@ async def refresh_repositories(
 async def get_repositories(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(
-        100, ge=1, le=100, description="Number of repositories per page"
+        1000, ge=1, le=5000, description="Number of repositories per page (max 5000)"
     ),
     current_user: User = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db),

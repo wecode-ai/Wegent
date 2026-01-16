@@ -2,167 +2,180 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useState, useEffect, useMemo } from 'react';
-import Modal from '@/features/common/Modal';
-import { Button } from '@/components/ui/button';
-import { useToast } from '@/hooks/use-toast';
-import { useUser } from '@/features/common/UserContext';
-import { fetchGitInfo, saveGitToken } from '../services/github';
-import { GitInfo } from '@/types/api';
-import { useTranslation } from '@/hooks/useTranslation';
+import React, { useState, useEffect, useMemo } from 'react'
+import Modal from '@/features/common/Modal'
+import { Button } from '@/components/ui/button'
+import { useToast } from '@/hooks/use-toast'
+import { useUser } from '@/features/common/UserContext'
+import { fetchGitInfo, saveGitToken } from '../services/github'
+import { GitInfo } from '@/types/api'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface GitHubEditProps {
-  isOpen: boolean;
-  onClose: () => void;
-  mode: 'add' | 'edit';
-  editInfo: GitInfo | null;
+  isOpen: boolean
+  onClose: () => void
+  mode: 'add' | 'edit'
+  editInfo: GitInfo | null
 }
 
 const sanitizeDomainInput = (value: string) => {
-  if (!value) return '';
-  const trimmed = value.trim();
-  if (!trimmed) return '';
+  if (!value) return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
 
   // Check if it starts with http:// or https://
-  const httpMatch = trimmed.match(/^(https?:\/\/)/i);
-  const protocol = httpMatch ? httpMatch[1].toLowerCase() : '';
+  const httpMatch = trimmed.match(/^(https?:\/\/)/i)
+  const protocol = httpMatch ? httpMatch[1].toLowerCase() : ''
 
   // Remove protocol for processing
-  const withoutProtocol = trimmed.replace(/^https?:\/\//i, '');
+  const withoutProtocol = trimmed.replace(/^https?:\/\//i, '')
 
   // Get domain only (remove path)
-  const domainOnly = withoutProtocol.split('common:/')[0];
+  const domainOnly = withoutProtocol.split('common:/')[0]
 
   // Return with protocol if it was http://, otherwise return domain only
   return protocol === 'http://'
     ? `http://${domainOnly.trim().toLowerCase()}`
-    : domainOnly.trim().toLowerCase();
-};
+    : domainOnly.trim().toLowerCase()
+}
 
 const isValidDomain = (value: string) => {
-  if (!value) return false;
+  if (!value) return false
 
   // Extract domain without protocol
-  const domainWithoutProtocol = value.replace(/^https?:\/\//i, '');
-  const [host, port] = domainWithoutProtocol.split(':');
+  const domainWithoutProtocol = value.replace(/^https?:\/\//i, '')
+  const [host, port] = domainWithoutProtocol.split(':')
 
-  if (!host) return false;
+  if (!host) return false
   if (port !== undefined) {
-    if (!/^\d{1,5}$/.test(port)) return false;
-    const portNumber = Number(port);
-    if (portNumber < 1 || portNumber > 65535) return false;
+    if (!/^\d{1,5}$/.test(port)) return false
+    const portNumber = Number(port)
+    if (portNumber < 1 || portNumber > 65535) return false
   }
-  if (host === 'localhost') return true;
-  const domainRegex = /^(?!-)[A-Za-z0-9-]{1,63}(?<!-)(?:\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$/;
-  return domainRegex.test(host);
-};
+  if (host === 'localhost') return true
+  const domainRegex = /^(?!-)[A-Za-z0-9-]{1,63}(?<!-)(?:\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$/
+  return domainRegex.test(host)
+}
 
 const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo }) => {
-  const { user, refresh } = useUser();
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const [platforms, setPlatforms] = useState<GitInfo[]>([]);
-  const [domain, setDomain] = useState('');
-  const [token, setToken] = useState('');
-  const [username, setUsername] = useState('');
-  const [type, setType] = useState<GitInfo['type']>('github');
-  const [tokenSaving, setTokenSaving] = useState(false);
-  const isGitlabLike = type === 'gitlab' || type === 'gitee';
-  const isGitea = type === 'gitea';
-  const isGerrit = type === 'gerrit';
+  const { user, refresh } = useUser()
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const [platforms, setPlatforms] = useState<GitInfo[]>([])
+  const [domain, setDomain] = useState('')
+  const [token, setToken] = useState('')
+  const [username, setUsername] = useState('')
+  const [type, setType] = useState<GitInfo['type']>('github')
+  const [authType, setAuthType] = useState<'digest' | 'basic'>('digest')
+  const [tokenSaving, setTokenSaving] = useState(false)
+  const isGitlabLike = type === 'gitlab' || type === 'gitee'
+  const isGitea = type === 'gitea'
+  const isGerrit = type === 'gerrit'
 
   const isDomainInvalid = useMemo(() => {
-    if (!domain) return false;
-    return !isValidDomain(domain);
-  }, [domain]);
+    if (!domain) return false
+    return !isValidDomain(domain)
+  }, [domain])
 
   const domainLink = useMemo(() => {
-    if (!domain) return '';
-    return /^https?:\/\//i.test(domain) ? domain : `https://${domain}`;
-  }, [domain]);
+    if (!domain) return ''
+    return /^https?:\/\//i.test(domain) ? domain : `https://${domain}`
+  }, [domain])
 
   const giteaSettingsLink = useMemo(() => {
-    const base = domainLink || 'https://gitea.com';
-    return `${base.replace(/\/$/, '')}/user/settings/applications`;
-  }, [domainLink]);
+    const base = domainLink || 'https://gitea.com'
+    return `${base.replace(/\/$/, '')}/user/settings/applications`
+  }, [domainLink])
 
   const hasGithubPlatform = useMemo(
     () => platforms.some((info: GitInfo) => sanitizeDomainInput(info.git_domain) === 'github.com'),
     [platforms]
-  );
+  )
 
   // Load platform info and reset form when modal opens
   useEffect(() => {
     if (isOpen && user) {
-      fetchGitInfo(user).then(info => setPlatforms(info));
+      fetchGitInfo(user).then(info => setPlatforms(info))
       if (mode === 'edit' && editInfo) {
-        const sanitizedDomain = sanitizeDomainInput(editInfo.git_domain);
-        setDomain(sanitizedDomain);
-        setToken(editInfo.git_token);
-        setUsername(editInfo.user_name || '');
-        setType(editInfo.type);
+        const sanitizedDomain = sanitizeDomainInput(editInfo.git_domain)
+        setDomain(sanitizedDomain)
+        setToken(editInfo.git_token)
+        setUsername(editInfo.user_name || '')
+        setType(editInfo.type)
+        setAuthType(editInfo.auth_type || 'digest')
       } else {
         // For add mode, default to github.com when type is github
-        setDomain('github.com');
-        setToken('');
-        setUsername('');
-        setType('github');
+        setDomain('github.com')
+        setToken('')
+        setUsername('')
+        setType('github')
+        setAuthType('digest')
       }
     }
-  }, [isOpen, user, mode, editInfo]);
+  }, [isOpen, user, mode, editInfo])
 
   // Save logic
   const handleSave = async () => {
-    if (!user) return;
-    const sanitizedDomain = sanitizeDomainInput(domain);
-    const domainToSave = sanitizedDomain || (type === 'github' ? 'github.com' : '');
-    const tokenToSave = token.trim();
-    const usernameToSave = username.trim();
+    if (!user) return
+    const sanitizedDomain = sanitizeDomainInput(domain)
+    const domainToSave = sanitizedDomain || (type === 'github' ? 'github.com' : '')
+    const tokenToSave = token.trim()
+    const usernameToSave = username.trim()
 
     if (!domainToSave || !tokenToSave) {
       toast({
         variant: 'destructive',
         title: t('common:github.error.required'),
-      });
-      return;
+      })
+      return
     }
 
     // Gerrit and Gitea require username
     if ((isGerrit || isGitea) && !usernameToSave) {
-      const platformName = isGerrit ? 'Gerrit' : 'Gitea';
+      const platformName = isGerrit ? 'Gerrit' : 'Gitea'
       toast({
         variant: 'destructive',
         title: `${platformName} username is required`,
-      });
-      return;
+      })
+      return
     }
 
     if (!isValidDomain(domainToSave)) {
       toast({
         variant: 'destructive',
         title: t('common:github.error.invalid_domain'),
-      });
-      setDomain(sanitizedDomain);
-      return;
+      })
+      setDomain(sanitizedDomain)
+      return
     }
-    setTokenSaving(true);
+    setTokenSaving(true)
     try {
       // Pass existing id when editing to update instead of create new record
-      const existingId = mode === 'edit' && editInfo?.id ? editInfo.id : undefined;
-      await saveGitToken(user, domainToSave, tokenToSave, usernameToSave, type, existingId);
-      onClose();
-      await refresh();
+      const existingId = mode === 'edit' && editInfo?.id ? editInfo.id : undefined
+      // Pass authType for Gerrit
+      const authTypeToSave = isGerrit ? authType : undefined
+      await saveGitToken(
+        user,
+        domainToSave,
+        tokenToSave,
+        usernameToSave,
+        type,
+        existingId,
+        authTypeToSave
+      )
+      onClose()
+      await refresh()
     } catch (error) {
       toast({
         variant: 'destructive',
         title: (error as Error)?.message || t('common:github.error.save_failed'),
-      });
+      })
     } finally {
-      setTokenSaving(false);
+      setTokenSaving(false)
     }
-  };
+  }
   return (
     <Modal
       isOpen={isOpen}
@@ -187,8 +200,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 value="github"
                 checked={type === 'github'}
                 onChange={() => {
-                  setType('github');
-                  setDomain('github.com');
+                  setType('github')
+                  setDomain('github.com')
                 }}
                 disabled={mode === 'edit' && editInfo?.type !== 'github' && hasGithubPlatform}
               />
@@ -203,8 +216,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 value="gitlab"
                 checked={type === 'gitlab'}
                 onChange={() => {
-                  setType('gitlab');
-                  setDomain('');
+                  setType('gitlab')
+                  setDomain('')
                 }}
               />
               {t('common:github.platform_gitlab')}
@@ -218,8 +231,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 value="gitea"
                 checked={isGitea}
                 onChange={() => {
-                  setType('gitea');
-                  setDomain('gitea.com');
+                  setType('gitea')
+                  setDomain('gitea.com')
                 }}
               />
               {t('common:github.platform_gitea') || 'Gitea'}
@@ -233,8 +246,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 value="gerrit"
                 checked={isGerrit}
                 onChange={() => {
-                  setType('gerrit');
-                  setDomain('');
+                  setType('gerrit')
+                  setDomain('')
                 }}
               />
               {t('common:github.platform_gerrit') || 'Gerrit'}
@@ -279,6 +292,36 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               placeholder={t('common:github.username') || 'Username'}
               className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
             />
+          </div>
+        )}
+        {/* Authentication type selection (Gerrit only) */}
+        {isGerrit && (
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-2">
+              {t('common:github.auth_type') || 'Authentication Method'}
+            </label>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-1 text-sm text-text-primary">
+                <input
+                  type="radio"
+                  name="authType"
+                  value="digest"
+                  checked={authType === 'digest'}
+                  onChange={() => setAuthType('digest')}
+                />
+                {t('common:github.auth_type_digest') || 'Digest Auth'}
+              </label>
+              <label className="flex items-center gap-1 text-sm text-text-primary">
+                <input
+                  type="radio"
+                  name="authType"
+                  value="basic"
+                  checked={authType === 'basic'}
+                  onChange={() => setAuthType('basic')}
+                />
+                {t('common:github.auth_type_basic') || 'Basic Auth'}
+              </label>
+            </div>
           </div>
         )}
         {/* Token input */}
@@ -440,7 +483,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
         </Button>
       </div>
     </Modal>
-  );
-};
+  )
+}
 
-export default GitHubEdit;
+export default GitHubEdit

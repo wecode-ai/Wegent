@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useRef, useCallback } from 'react';
-import { Paperclip, X, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import React, { useRef, useCallback } from 'react'
+import { Paperclip, X, Loader2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   SUPPORTED_EXTENSIONS,
   MAX_FILE_SIZE,
@@ -16,88 +16,88 @@ import {
   getFileIcon,
   isImageExtension,
   getAttachmentPreviewUrl,
-} from '@/apis/attachments';
-import { getToken } from '@/apis/user';
-import type { Attachment, MultiAttachmentUploadState } from '@/types/api';
-import { useState, useEffect } from 'react';
+} from '@/apis/attachments'
+import { getToken } from '@/apis/user'
+import type { Attachment, MultiAttachmentUploadState } from '@/types/api'
+import { useState, useEffect } from 'react'
 
 interface MultiFileUploadProps {
   /** Current attachments state */
-  state: MultiAttachmentUploadState;
+  state: MultiAttachmentUploadState
   /** Whether the component is disabled */
-  disabled?: boolean;
+  disabled?: boolean
   /** Callback when files are selected */
-  onFileSelect: (files: File | File[]) => void;
+  onFileSelect: (files: File | File[]) => void
   /** Callback to remove an attachment */
-  onRemove: (attachmentId: number) => void;
+  onRemove: (attachmentId: number) => void
   /** Show only button without previews */
-  showButtonOnly?: boolean;
+  showButtonOnly?: boolean
   /** Show only previews without button */
-  showPreviewOnly?: boolean;
+  showPreviewOnly?: boolean
 }
 
 /**
  * Custom hook to fetch image with authentication and return blob URL
  */
 function useAuthenticatedImageInline(attachmentId: number, isImage: boolean) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(false);
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState(false)
 
   useEffect(() => {
-    if (!isImage) return;
+    if (!isImage) return
 
-    let isMounted = true;
+    let isMounted = true
     const fetchImage = async () => {
-      setIsLoading(true);
-      setError(false);
+      setIsLoading(true)
+      setError(false)
 
       try {
-        const token = getToken();
+        const token = getToken()
         const response = await fetch(getAttachmentPreviewUrl(attachmentId), {
           headers: {
             ...(token && { Authorization: `Bearer ${token}` }),
           },
-        });
+        })
 
         if (!response.ok) {
-          throw new Error(`Failed to fetch image: ${response.status}`);
+          throw new Error(`Failed to fetch image: ${response.status}`)
         }
 
-        const blob = await response.blob();
+        const blob = await response.blob()
         if (isMounted) {
-          const url = URL.createObjectURL(blob);
-          setBlobUrl(url);
+          const url = URL.createObjectURL(blob)
+          setBlobUrl(url)
         }
       } catch (err) {
-        console.error('Failed to load image:', err);
+        console.error('Failed to load image:', err)
         if (isMounted) {
-          setError(true);
+          setError(true)
         }
       } finally {
         if (isMounted) {
-          setIsLoading(false);
+          setIsLoading(false)
         }
       }
-    };
+    }
 
-    fetchImage();
+    fetchImage()
 
     return () => {
-      isMounted = false;
-    };
-  }, [attachmentId, isImage]);
+      isMounted = false
+    }
+  }, [attachmentId, isImage])
 
   // Clean up blob URL when it changes or component unmounts
   useEffect(() => {
     return () => {
       if (blobUrl) {
-        URL.revokeObjectURL(blobUrl);
+        URL.revokeObjectURL(blobUrl)
       }
-    };
-  }, [blobUrl]);
+    }
+  }, [blobUrl])
 
-  return { blobUrl, isLoading, error };
+  return { blobUrl, isLoading, error }
 }
 
 /**
@@ -108,16 +108,16 @@ function AttachmentPreviewInline({
   disabled,
   onRemove,
 }: {
-  attachment: Attachment;
-  disabled?: boolean;
-  onRemove: () => void;
+  attachment: Attachment
+  disabled?: boolean
+  onRemove: () => void
 }) {
-  const isImage = isImageExtension(attachment.file_extension);
+  const isImage = isImageExtension(attachment.file_extension)
   const {
     blobUrl: imageUrl,
     isLoading: imageLoading,
     error: imageError,
-  } = useAuthenticatedImageInline(attachment.id, isImage);
+  } = useAuthenticatedImageInline(attachment.id, isImage)
 
   // For images, show thumbnail preview
   if (isImage && !imageError) {
@@ -148,7 +148,7 @@ function AttachmentPreviewInline({
             </Button>
           )}
         </div>
-      );
+      )
     }
 
     // Show image once loaded
@@ -187,7 +187,7 @@ function AttachmentPreviewInline({
             </Button>
           )}
         </div>
-      );
+      )
     }
   }
 
@@ -227,7 +227,7 @@ function AttachmentPreviewInline({
         </Button>
       )}
     </div>
-  );
+  )
 }
 
 export default function MultiFileUpload({
@@ -238,62 +238,62 @@ export default function MultiFileUpload({
   showButtonOnly = false,
   showPreviewOnly = false,
 }: MultiFileUploadProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleClick = useCallback(() => {
     if (!disabled) {
-      fileInputRef.current?.click();
+      fileInputRef.current?.click()
     }
-  }, [disabled]);
+  }, [disabled])
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
+      const files = e.target.files
       if (files && files.length > 0) {
-        onFileSelect(Array.from(files));
+        onFileSelect(Array.from(files))
       }
       // Reset input so same file can be selected again
       if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+        fileInputRef.current.value = ''
       }
     },
     [onFileSelect]
-  );
+  )
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
+      e.preventDefault()
+      e.stopPropagation()
 
-      if (disabled) return;
+      if (disabled) return
 
-      const files = e.dataTransfer.files;
+      const files = e.dataTransfer.files
       if (files && files.length > 0) {
-        onFileSelect(Array.from(files));
+        onFileSelect(Array.from(files))
       }
     },
     [disabled, onFileSelect]
-  );
+  )
 
   // Build accept string for file input
-  const acceptString = SUPPORTED_EXTENSIONS.join(',');
+  const acceptString = SUPPORTED_EXTENSIONS.join(',')
 
   // Tooltip content
-  const tooltipContent = `支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: ${MAX_FILE_SIZE / (1024 * 1024)} MB\n支持多文件同时上传`;
+  const tooltipContent = `支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: ${MAX_FILE_SIZE / (1024 * 1024)} MB\n支持多文件同时上传`
 
-  const hasAttachments = state.attachments.length > 0;
-  const isUploading = state.uploadingFiles.size > 0;
+  const hasAttachments = state.attachments.length > 0
+  const isUploading = state.uploadingFiles.size > 0
 
   // Control what to show based on props
-  const shouldShowButton = !showPreviewOnly && !isUploading;
-  const shouldShowPreview = !showButtonOnly && hasAttachments;
-  const shouldShowUploading = !showButtonOnly && isUploading;
-  const shouldShowErrors = !showButtonOnly && state.errors.size > 0;
+  const shouldShowButton = !showPreviewOnly && !isUploading
+  const shouldShowPreview = !showButtonOnly && hasAttachments
+  const shouldShowUploading = !showButtonOnly && isUploading
+  const shouldShowErrors = !showButtonOnly && state.errors.size > 0
 
   return (
     <div className="flex flex-col gap-2" onDragOver={handleDragOver} onDrop={handleDrop}>
@@ -369,5 +369,5 @@ export default function MultiFileUpload({
         </div>
       )}
     </div>
-  );
+  )
 }

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 WeCode, Inc.
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -39,6 +39,14 @@ class DocumentStatus(str, PyEnum):
     DISABLED = "disabled"
 
 
+class DocumentSourceType(str, PyEnum):
+    """Document source type for knowledge documents."""
+
+    FILE = "file"  # Uploaded file
+    TEXT = "text"  # Pasted text
+    TABLE = "table"  # External table (DingTalk, Feishu, etc.)
+
+
 class KnowledgeDocument(Base):
     """
     Knowledge document model for storing document metadata.
@@ -57,7 +65,7 @@ class KnowledgeDocument(Base):
     kind_id = Column(Integer, nullable=False, index=True)
     # References subtask_contexts.id (context_type='attachment') but without FK constraint
     # Referential integrity is managed at the application layer
-    attachment_id = Column(Integer, nullable=True)
+    attachment_id = Column(Integer, nullable=False, default=0)
     name = Column(String(255), nullable=False)
     file_extension = Column(String(50), nullable=False)
     file_size = Column(BigInteger, nullable=False, default=0)
@@ -71,8 +79,15 @@ class KnowledgeDocument(Base):
         Boolean, nullable=False, default=False
     )  # Default to False, set to True after indexing completes
     splitter_config = Column(
-        JSON, nullable=True
+        JSON, nullable=False, default={}
     )  # Splitter configuration for document chunking
+    source_type = Column(
+        String(50), nullable=False, default=DocumentSourceType.FILE.value
+    )  # Document source type: file, text, table
+    source_config = Column(
+        JSON, nullable=False, default={}
+    )  # Source configuration (e.g., {"url": "..."} for table)
+    summary = Column(JSON, nullable=True)  # Document summary information (JSON)
     created_at = Column(DateTime, nullable=False, default=func.now())
     updated_at = Column(
         DateTime, nullable=False, default=func.now(), onupdate=func.now()

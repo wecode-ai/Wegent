@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 WeCode, Inc.
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -8,9 +8,9 @@ Pydantic schemas for knowledge base and document management.
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Import shared types from kind.py to avoid duplication
 from app.schemas.kind import (
@@ -18,6 +18,7 @@ from app.schemas.kind import (
     HybridWeights,
     RetrievalConfig,
     RetrieverRef,
+    SummaryModelRef,
 )
 
 # Import SplitterConfig from rag.py to use unified splitter configuration
@@ -29,6 +30,14 @@ class DocumentStatus(str, Enum):
 
     ENABLED = "enabled"
     DISABLED = "disabled"
+
+
+class DocumentSourceType(str, Enum):
+    """Document source type enumeration."""
+
+    FILE = "file"
+    TEXT = "text"
+    TABLE = "table"
 
 
 class ResourceScope(str, Enum):
@@ -52,6 +61,14 @@ class KnowledgeBaseCreate(BaseModel):
     namespace: str = Field(default="default", max_length=255)
     retrieval_config: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
+    )
+    summary_enabled: bool = Field(
+        default=False,
+        description="Enable automatic summary generation for documents",
+    )
+    summary_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
     )
 
 
@@ -81,6 +98,14 @@ class KnowledgeBaseUpdate(BaseModel):
         None,
         description="Retrieval configuration update (excludes retriever and embedding model)",
     )
+    summary_enabled: Optional[bool] = Field(
+        None,
+        description="Enable automatic summary generation for documents",
+    )
+    summary_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
+    )
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -96,6 +121,18 @@ class KnowledgeBaseResponse(BaseModel):
     retrieval_config: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
     )
+    summary_enabled: bool = Field(
+        default=False,
+        description="Enable automatic summary generation for documents",
+    )
+    summary_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model reference for summary generation",
+    )
+    summary: Optional[dict] = Field(
+        None,
+        description="Knowledge base summary (short_summary, long_summary, topics, etc.)",
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -108,14 +145,21 @@ class KnowledgeBaseResponse(BaseModel):
             document_count: Document count (should be queried from database)
         """
         spec = kind.json.get("spec", {})
+        # Extract summary from spec.summary if available
+        summary = spec.get("summary")
+        # Extract summary_model_ref from spec
+        summary_model_ref = spec.get("summaryModelRef")
         return cls(
             id=kind.id,
             name=spec.get("name", ""),
-            description=spec.get("description"),
+            description=spec.get("description") or None,  # Convert empty string to None
             user_id=kind.user_id,
             namespace=kind.namespace,
             document_count=document_count,
             retrieval_config=spec.get("retrievalConfig"),
+            summary_enabled=spec.get("summaryEnabled", False),
+            summary_model_ref=summary_model_ref,
+            summary=summary,
             is_active=kind.is_active,
             created_at=kind.created_at,
             updated_at=kind.updated_at,
@@ -139,11 +183,19 @@ class KnowledgeBaseListResponse(BaseModel):
 class KnowledgeDocumentCreate(BaseModel):
     """Schema for creating a knowledge document."""
 
-    attachment_id: int = Field(..., description="ID of the uploaded attachment")
+    attachment_id: Optional[int] = Field(
+        None,
+        description="ID of the uploaded attachment (required for file/text source)",
+    )
     name: str = Field(..., min_length=1, max_length=255)
     file_extension: str = Field(..., max_length=50)
-    file_size: int = Field(..., ge=0)
+    file_size: int = Field(default=0, ge=0)
     splitter_config: Optional[SplitterConfig] = None
+    source_type: DocumentSourceType = Field(default=DocumentSourceType.FILE)
+    source_config: dict = Field(
+        default_factory=dict,
+        description="Source configuration (e.g., {'url': '...'} for table)",
+    )
 
 
 class KnowledgeDocumentUpdate(BaseModel):
@@ -169,11 +221,21 @@ class KnowledgeDocumentResponse(BaseModel):
     user_id: int
     is_active: bool
     splitter_config: Optional[SplitterConfig] = None
+    source_type: DocumentSourceType = DocumentSourceType.FILE
+    source_config: Optional[dict] = None
     doc_ref: Optional[str] = Field(
         None, description="RAG storage document reference ID"
     )
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("source_config", mode="before")
+    @classmethod
+    def ensure_source_config_dict(cls, v):
+        """Convert None to empty dict for backward compatibility."""
+        if v is None:
+            return {}
+        return v
 
     class Config:
         from_attributes = True
@@ -236,3 +298,46 @@ class AccessibleKnowledgeResponse(BaseModel):
 
     personal: list[AccessibleKnowledgeBase]
     team: list[TeamKnowledgeGroup]
+
+
+# ============== Table URL Validation Schemas ==============
+
+
+class TableUrlValidationRequest(BaseModel):
+    """Schema for table URL validation request."""
+
+    url: str = Field(..., min_length=1, description="The table URL to validate")
+
+
+class TableUrlValidationResponse(BaseModel):
+    """Schema for table URL validation response."""
+
+    valid: bool = Field(..., description="Whether the URL is valid")
+    provider: Optional[str] = Field(
+        None, description="Detected table provider (e.g., 'dingtalk')"
+    )
+    base_id: Optional[str] = Field(None, description="Extracted base ID from URL")
+    sheet_id: Optional[str] = Field(None, description="Extracted sheet ID from URL")
+    error_code: Optional[str] = Field(
+        None, description="Error code if validation failed"
+    )
+    error_message: Optional[str] = Field(
+        None, description="Error message if validation failed"
+    )
+
+
+# ============== Document Detail Schemas ==============
+
+
+class DocumentDetailResponse(BaseModel):
+    """Schema for document detail response (content + summary)."""
+
+    document_id: int = Field(..., description="Document ID")
+    content: Optional[str] = Field(
+        None, description="Extracted text content from document"
+    )
+    content_length: Optional[int] = Field(
+        None, description="Length of content in characters"
+    )
+    truncated: Optional[bool] = Field(None, description="Whether content was truncated")
+    summary: Optional[dict] = Field(None, description="Document summary object")

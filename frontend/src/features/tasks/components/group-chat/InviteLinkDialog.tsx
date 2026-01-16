@@ -2,36 +2,36 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState, useEffect } from 'react';
-import { Copy, Check } from 'lucide-react';
+import { useState, useEffect } from 'react'
+import { Copy, Check } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { useToast } from '@/hooks/use-toast';
-import { taskMemberApi } from '@/apis/task-member';
-import { useTranslation } from '@/hooks/useTranslation';
+} from '@/components/ui/select'
+import { useToast } from '@/hooks/use-toast'
+import { taskMemberApi } from '@/apis/task-member'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface InviteLinkDialogProps {
-  open: boolean;
-  onClose: () => void;
-  taskId: number;
-  taskTitle: string;
-  onMembersChanged?: () => void; // Callback to refresh task detail after converting to group chat
+  open: boolean
+  onClose: () => void
+  taskId: number
+  taskTitle: string
+  onMembersChanged?: () => void // Callback to refresh task detail after converting to group chat
 }
 
 export function InviteLinkDialog({
@@ -41,105 +41,105 @@ export function InviteLinkDialog({
   taskTitle,
   onMembersChanged,
 }: InviteLinkDialogProps) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
-  const [expiresHours, setExpiresHours] = useState('0'); // 0 = permanent (no expiration)
-  const [loading, setLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null)
+  const [expiresHours, setExpiresHours] = useState('0') // 0 = permanent (no expiration)
+  const [loading, setLoading] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   // Auto-generate link when dialog opens
   useEffect(() => {
     if (open && !inviteUrl) {
-      generateLink();
+      generateLink()
     }
-  }, [open]);
+  }, [open])
 
   const generateLink = async () => {
-    setLoading(true);
+    setLoading(true)
     try {
       // First, ensure the task is converted to a group chat
-      let wasConverted = false;
+      let wasConverted = false
       try {
-        await taskMemberApi.convertToGroupChat(taskId);
-        wasConverted = true;
+        await taskMemberApi.convertToGroupChat(taskId)
+        wasConverted = true
       } catch (conversionError: unknown) {
         // Ignore conversion errors - task might already be a group chat or user might not be owner
         // The important part is the generateInviteLink call below
-        console.log('Task conversion:', conversionError);
+        console.log('Task conversion:', conversionError)
       }
 
       // Generate the invite link
-      const response = await taskMemberApi.generateInviteLink(taskId, parseInt(expiresHours));
-      setInviteUrl(response.invite_url);
+      const response = await taskMemberApi.generateInviteLink(taskId, parseInt(expiresHours))
+      setInviteUrl(response.invite_url)
 
       // Trigger UI refresh if task was converted to group chat
       if (wasConverted) {
-        onMembersChanged?.();
+        onMembersChanged?.()
       }
     } catch (error: unknown) {
       toast({
         title: t('chat:groupChat.inviteLink.generateFailed'),
         description: error instanceof Error ? error.message : undefined,
         variant: 'destructive',
-      });
+      })
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   const copyLink = async () => {
-    if (!inviteUrl) return;
+    if (!inviteUrl) return
 
     // Try modern clipboard API first
     if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
       try {
-        await navigator.clipboard.writeText(inviteUrl);
-        setCopied(true);
+        await navigator.clipboard.writeText(inviteUrl)
+        setCopied(true)
         toast({
           title: t('chat:groupChat.inviteLink.copied'),
-        });
+        })
         // Close the dialog after copying
         setTimeout(() => {
-          handleClose();
-        }, 500);
-        return;
+          handleClose()
+        }, 500)
+        return
       } catch (err) {
-        console.error('Clipboard API failed: ', err);
+        console.error('Clipboard API failed: ', err)
       }
     }
 
     // Fallback for non-HTTPS environments (e.g., HTTP IP:port)
     try {
-      const textarea = document.createElement('textarea');
-      textarea.value = inviteUrl;
-      textarea.style.cssText = 'position:fixed;opacity:0';
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      setCopied(true);
+      const textarea = document.createElement('textarea')
+      textarea.value = inviteUrl
+      textarea.style.cssText = 'position:fixed;opacity:0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+      setCopied(true)
       toast({
         title: t('chat:groupChat.inviteLink.copied'),
-      });
+      })
       // Close the dialog after copying
       setTimeout(() => {
-        handleClose();
-      }, 500);
+        handleClose()
+      }, 500)
     } catch (err) {
-      console.error('Fallback copy failed: ', err);
+      console.error('Fallback copy failed: ', err)
       toast({
         title: t('chat:groupChat.inviteLink.copyFailed'),
         variant: 'destructive',
-      });
+      })
     }
-  };
+  }
 
   const handleClose = () => {
-    setInviteUrl(null);
-    setCopied(false);
-    onClose();
-  };
+    setInviteUrl(null)
+    setCopied(false)
+    onClose()
+  }
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -196,8 +196,8 @@ export function InviteLinkDialog({
               <Button
                 variant="outline"
                 onClick={() => {
-                  setInviteUrl(null);
-                  generateLink();
+                  setInviteUrl(null)
+                  generateLink()
                 }}
                 className="w-full"
               >
@@ -208,5 +208,5 @@ export function InviteLinkDialog({
         </div>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

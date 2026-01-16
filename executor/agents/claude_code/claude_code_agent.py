@@ -20,23 +20,23 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-from executor.agents.agno.thinking_step_manager import ThinkingStepManager
-from executor.agents.base import Agent
-from executor.agents.claude_code.progress_state_manager import ProgressStateManager
-from executor.agents.claude_code.response_processor import process_response
-from executor.config import config
-from executor.tasks.resource_manager import ResourceManager
-from executor.tasks.task_state_manager import TaskState, TaskStateManager
-from executor.utils.mcp_utils import (
-    extract_mcp_servers_config,
-    replace_mcp_server_variables,
-)
 from shared.logger import setup_logger
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
 from shared.utils.crypto import decrypt_git_token, is_token_encrypted
 from shared.utils.sensitive_data_masker import mask_sensitive_data
+
+from executor.agents.agno.thinking_step_manager import ThinkingStepManager
+from executor.agents.base import Agent
+from executor.agents.claude_code.progress_state_manager import \
+    ProgressStateManager
+from executor.agents.claude_code.response_processor import process_response
+from executor.config import config
+from executor.tasks.resource_manager import ResourceManager
+from executor.tasks.task_state_manager import TaskState, TaskStateManager
+from executor.utils.mcp_utils import (extract_mcp_servers_config,
+                                      replace_mcp_server_variables)
 
 logger = setup_logger("claude_code_agent")
 
@@ -61,10 +61,15 @@ class ClaudeCodeAgent(Agent):
     """
 
     # Static dictionary for storing client connections to enable connection reuse
+    # Key: session_id (task_id:bot_id format), Value: ClaudeSDKClient
     _clients: Dict[str, ClaudeSDKClient] = {}
 
     # Static dictionary for storing hook functions
     _hooks: Dict[str, Any] = {}
+
+    # Static dictionary for mapping internal_session_key to actual Claude session_id
+    # Key: internal_session_key (task_id:bot_id), Value: actual Claude session_id
+    _session_id_map: Dict[str, str] = {}
 
     def get_name(self) -> str:
         return "ClaudeCode"
@@ -123,7 +128,43 @@ class ClaudeCodeAgent(Agent):
         """
         super().__init__(task_data)
         self.client = None
-        self.session_id = self.task_id
+        self.new_session = task_data.get("new_session", False)
+
+        # Extract bot_id from task_data for session key
+        # In pipeline mode, each bot has its own session
+        bot_id = None
+        bots = task_data.get("bot", [])
+        if bots and len(bots) > 0:
+            bot_id = bots[0].get("id")
+
+        # Internal key for caching - use task_id:bot_id so each bot has independent session
+        # This allows pipeline tasks to jump back to previous bots and restore their sessions
+        if bot_id:
+            self._internal_session_key = f"{self.task_id}:{bot_id}"
+        else:
+            self._internal_session_key = str(self.task_id)
+
+        cached_session_id = self._session_id_map.get(self._internal_session_key)
+
+        # Case 1: No cache -> use internal_session_key as session_id
+        if not cached_session_id:
+            self.session_id = self._internal_session_key
+            logger.info(
+                f"No cache, using {self.session_id} as session_id (bot_id={bot_id})"
+            )
+        # Case 2: Has cache + new_session=True -> create new session in _async_execute
+        elif self.new_session:
+            # For new_session, we'll create a new client but keep the old one for potential jump-back
+            self.session_id = cached_session_id
+            logger.info(
+                f"Has cache + new_session=True, will create new session for {self.session_id}"
+            )
+        # Case 3: Has cache + new_session=False -> use cached session_id (follow-up in same bot)
+        else:
+            self.session_id = cached_session_id
+            logger.info(
+                f"Has cache, using cached session_id {self.session_id} (bot_id={bot_id})"
+            )
         self.prompt = task_data.get("prompt", "")
         self.project_path = None
 
@@ -459,8 +500,8 @@ class ClaudeCodeAgent(Agent):
             # Check if bot config is available
             if "bot" in self.task_data and len(self.task_data["bot"]) > 0:
                 bot_config = self.task_data["bot"][0]
-                user_name = self.task_data["user"]["name"]
-                git_url = self.task_data["git_url"]
+                user_name = self.task_data.get("user", {}).get("name", "unknown")
+                git_url = self.task_data.get("git_url", "")
                 # Get config from bot
                 agent_config = self._create_claude_model(
                     bot_config, user_name=user_name, git_url=git_url
@@ -612,7 +653,7 @@ class ClaudeCodeAgent(Agent):
             "max_buffer_size": 50 * 1024 * 1024,  # 50MB
         }
         bots = task_data.get("bot", [])
-        bot_config = bots[0]
+        bot_config = bots[0] if bots else {}
         # Extract all non-None parameters from bot_config
         if bot_config:
             # Extract MCP servers configuration
@@ -736,10 +777,8 @@ class ClaudeCodeAgent(Agent):
                 # Copy ContextVars before creating new event loop
                 # ContextVars don't automatically propagate to new event loops
                 try:
-                    from shared.telemetry.context import (
-                        copy_context_vars,
-                        restore_context_vars,
-                    )
+                    from shared.telemetry.context import (copy_context_vars,
+                                                          restore_context_vars)
 
                     saved_context = copy_context_vars()
                 except ImportError:
@@ -851,37 +890,7 @@ class ClaudeCodeAgent(Agent):
 
             # Create new client if not reusing
             if self.client is None:
-                # Create new client connection
-                logger.info(
-                    f"Creating new Claude client for session_id: {self.session_id}"
-                )
-                logger.info(
-                    f"Initializing Claude client with options: {mask_sensitive_data(self.options)}"
-                )
-
-                if self.options.get("cwd") is None or self.options.get("cwd") == "":
-                    cwd = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
-                    os.makedirs(cwd, exist_ok=True)
-                    self.options["cwd"] = cwd
-
-                if self.options:
-                    code_options = ClaudeAgentOptions(**self.options)
-                    self.client = ClaudeSDKClient(options=code_options)
-                else:
-                    self.client = ClaudeSDKClient()
-
-                # Connect the client
-                await self.client.connect()
-
-                # Store client connection for reuse
-                self._clients[self.session_id] = self.client
-
-                # Register client as a resource for cleanup
-                self.resource_manager.register_resource(
-                    task_id=self.task_id,
-                    resource_id=f"claude_client_{self.session_id}",
-                    is_async=True,
-                )
+                await self._create_and_connect_client()
 
             # Check cancellation again before proceeding
             if self.task_state_manager.is_cancelled(self.task_id):
@@ -892,12 +901,11 @@ class ClaudeCodeAgent(Agent):
             prompt = self.prompt
             if self.options.get("cwd"):
                 prompt = (
-                    prompt
-                    + "\nCurrent working directory: "
-                    + self.options.get("cwd")
-                    + "\n project url:"
-                    + self.task_data.get("git_url")
+                    prompt + "\nCurrent working directory: " + self.options.get("cwd")
                 )
+                git_url = self.task_data.get("git_url")
+                if git_url:
+                    prompt = prompt + "\n project url:" + git_url
 
             progress = 75
             # Update current progress
@@ -907,6 +915,26 @@ class ClaudeCodeAgent(Agent):
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled before sending query")
                 return TaskStatus.COMPLETED
+
+            # If new_session is True, create a new client with subtask_id as session_id
+            # This is needed because different bots may have different skills, MCP servers, etc.
+            # We keep the old client in cache for potential jump-back to previous bot
+            if self.new_session:
+                new_session_id = str(self.subtask_id)
+                old_session_id = self.session_id
+                self.session_id = new_session_id
+                # Update the session_id_map cache for current bot
+                self._session_id_map[self._internal_session_key] = new_session_id
+                # Note: We do NOT close the old client here, because:
+                # 1. Different bots have different skills/MCP servers, so we need separate clients
+                # 2. Pipeline tasks may jump back to previous bots, which need their own clients
+                # 3. The old client's session_id key is different from new one (task_id:bot_id format)
+                # Create new client with current bot's configuration
+                logger.info(
+                    f"new_session=True, creating new client with subtask_id {new_session_id} as session_id "
+                    f"(old: {old_session_id}, internal_key: {self._internal_session_key})"
+                )
+                await self._create_and_connect_client()
 
             # Use session_id to send messages, ensuring messages are in the same session
             # Use the current updated prompt for each execution, even with the same session ID
@@ -936,6 +964,43 @@ class ClaudeCodeAgent(Agent):
 
         except Exception as e:
             return self._handle_execution_error(e, "async execution")
+
+    async def _create_and_connect_client(self) -> None:
+        """
+        Create and connect a new Claude SDK client.
+        Sets up the working directory if needed, creates the client with options,
+        connects it, and stores it in the cache.
+        """
+        logger.info(f"Creating new Claude client for session_id: {self.session_id}")
+        logger.info(
+            f"Initializing Claude client with options: {mask_sensitive_data(self.options)}"
+        )
+
+        # Ensure working directory exists
+        if self.options.get("cwd") is None or self.options.get("cwd") == "":
+            cwd = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
+            os.makedirs(cwd, exist_ok=True)
+            self.options["cwd"] = cwd
+
+        # Create client with options
+        if self.options:
+            code_options = ClaudeAgentOptions(**self.options)
+            self.client = ClaudeSDKClient(options=code_options)
+        else:
+            self.client = ClaudeSDKClient()
+
+        # Connect the client
+        await self.client.connect()
+
+        # Store client connection for reuse
+        self._clients[self.session_id] = self.client
+
+        # Register client as a resource for cleanup
+        self.resource_manager.register_resource(
+            task_id=self.task_id,
+            resource_id=f"claude_client_{self.session_id}",
+            is_async=True,
+        )
 
     def _handle_execution_result(
         self, result_content: str, execution_type: str = "execution"
@@ -1126,9 +1191,7 @@ class ClaudeCodeAgent(Agent):
                     # Copy ContextVars before creating new event loop
                     try:
                         from shared.telemetry.context import (
-                            copy_context_vars,
-                            restore_context_vars,
-                        )
+                            copy_context_vars, restore_context_vars)
 
                         saved_context = copy_context_vars()
                     except ImportError:
@@ -1319,16 +1382,17 @@ class ClaudeCodeAgent(Agent):
                 logger.warning("No auth token available, cannot download attachments")
                 return
 
-            # Determine workspace path
-            workspace = self.project_path or os.path.join(
-                config.WORKSPACE_ROOT, str(self.task_id)
-            )
+            # Determine workspace path for attachments
+            # Attachments should be stored in WORKSPACE_ROOT/task_id, not in the project path
+            # This ensures attachments are accessible at /workspace/{task_id}:executor:attachments/...
+            # instead of /workspace/{task_id}/{repo_name}/{task_id}:executor:attachments/...
+            workspace = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
 
             # Import and use attachment downloader
-            from executor.services.attachment_downloader import AttachmentDownloader
-            from executor.services.attachment_prompt_processor import (
-                AttachmentPromptProcessor,
-            )
+            from executor.services.attachment_downloader import \
+                AttachmentDownloader
+            from executor.services.attachment_prompt_processor import \
+                AttachmentPromptProcessor
 
             downloader = AttachmentDownloader(
                 workspace=workspace,
@@ -1432,12 +1496,15 @@ class ClaudeCodeAgent(Agent):
             import requests
 
             success_count = 0
+            # Get team namespace for skill lookup
+            team_namespace = self.task_data.get("team_namespace", "default")
             for skill_name in skills:
                 try:
                     logger.info(f"Downloading skill: {skill_name}")
 
-                    # Get skill by name
-                    list_url = f"{api_base_url}/api/v1/kinds/skills?name={skill_name}"
+                    # Get skill by name with namespace parameter
+                    # Query order: user's default namespace -> team's namespace -> public
+                    list_url = f"{api_base_url}/api/v1/kinds/skills?name={skill_name}&namespace={team_namespace}"
                     headers = {"Authorization": f"Bearer {auth_token}"}
 
                     response = requests.get(list_url, headers=headers, timeout=30)
@@ -1454,20 +1521,21 @@ class ClaudeCodeAgent(Agent):
                         logger.error(f"Skill '{skill_name}' not found")
                         continue
 
-                    # Extract skill ID from labels
+                    # Extract skill ID and namespace from labels
                     skill_item = skill_items[0]
                     skill_id = (
                         skill_item.get("metadata", {}).get("labels", {}).get("id")
+                    )
+                    skill_namespace = skill_item.get("metadata", {}).get(
+                        "namespace", "default"
                     )
 
                     if not skill_id:
                         logger.error(f"Skill '{skill_name}' has no ID in metadata")
                         continue
 
-                    # Download skill ZIP
-                    download_url = (
-                        f"{api_base_url}/api/v1/kinds/skills/{skill_id}/download"
-                    )
+                    # Download skill ZIP with namespace parameter for group skill support
+                    download_url = f"{api_base_url}/api/v1/kinds/skills/{skill_id}/download?namespace={skill_namespace}"
                     response = requests.get(download_url, headers=headers, timeout=60)
 
                     if response.status_code != 200:

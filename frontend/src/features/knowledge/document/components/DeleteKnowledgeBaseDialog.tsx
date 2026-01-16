@@ -1,8 +1,8 @@
-// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
 import {
   Dialog,
@@ -11,17 +11,17 @@ import {
   DialogTitle,
   DialogFooter,
   DialogDescription,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { useTranslation } from '@/hooks/useTranslation';
-import type { KnowledgeBase } from '@/types/knowledge';
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { KnowledgeBase } from '@/types/knowledge'
 
 interface DeleteKnowledgeBaseDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  knowledgeBase: KnowledgeBase | null;
-  onConfirm: () => Promise<void>;
-  loading?: boolean;
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  knowledgeBase: KnowledgeBase | null
+  onConfirm: () => Promise<void>
+  loading?: boolean
 }
 
 export function DeleteKnowledgeBaseDialog({
@@ -31,22 +31,22 @@ export function DeleteKnowledgeBaseDialog({
   onConfirm,
   loading,
 }: DeleteKnowledgeBaseDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   // Check if knowledge base has documents
-  const hasDocuments = !!(knowledgeBase && knowledgeBase.document_count > 0);
+  const hasDocuments = !!(knowledgeBase && knowledgeBase.document_count > 0)
 
   const handleConfirm = async () => {
     // Prevent deletion if there are documents
     if (hasDocuments) {
-      return;
+      return
     }
     try {
-      await onConfirm();
+      await onConfirm()
     } catch {
       // Error handled by parent
     }
-  };
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -81,5 +81,5 @@ export function DeleteKnowledgeBaseDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
+  )
 }

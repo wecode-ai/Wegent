@@ -1,0 +1,148 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "wegent-chat-shell"
+version = "1.0.0"
+description = "Wegent Chat Shell Service - Full-featured Chat Engine"
+requires-python = ">=3.10,<=3.13"
+
+dependencies = [
+    # FastAPI framework and related dependencies
+    "fastapi>=0.109.1",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.5.3",
+    "pydantic-settings>=2.1.0",
+    "python-multipart>=0.0.6",
+    # CLI framework
+    "click>=8.1.0",
+    # Database related
+    "sqlalchemy>=2.0.25",
+    "pymysql>=1.1.0",
+    "asyncmy>=0.2.9",
+    "cryptography>=42.0.4",
+    "aiosqlite>=0.19.0",
+    # HTTP clients
+    "httpx[socks]>=0.26.0",
+    "aiohttp>=3.8.0",
+    # LangChain and LangGraph
+    "langchain-core>=0.3.0",
+    "langchain>=1.0.0,<2.0.0",
+    "langgraph>=1.0.0,<2.0.0",
+    "langchain-openai>=1.0.0,<2.0.0",
+    "langchain-anthropic>=1.0.0,<2.0.0",
+    "langchain-google-genai>=2.0.0,<5.0.0",
+    "langchain-mcp-adapters>=0.2.1",
+    # Utilities
+    "python-dotenv>=1.0.0",
+    "tenacity>=8.2.3",
+    "pyyaml>=6.0.1",
+    # Logging and monitoring
+    "structlog>=23.1.0",
+    # Data processing and validation
+    "python-dateutil>=2.8.2",
+    # JSON processing
+    "orjson>=3.9.0",
+    # SSE support
+    "sse-starlette>=1.6.5",
+    # MCP support
+    "mcp>=1.0.0",
+    # OpenTelemetry
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-instrumentation-httpx>=0.48b0",
+    # Document parsing
+    "pypdf2>=3.0.0",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.2",
+    "chardet>=5.0.0",
+    "pillow>=12.0.0",
+    "markdown>=3.5.0",
+    "beautifulsoup4>=4.12.0",
+    # E2B sandbox
+    "e2b==2.9.1",
+    "e2b-code-interpreter==2.4.1",
+    # RAG
+    "llama-index-core>=0.12.0",
+    "llama-index-vector-stores-elasticsearch>=0.4.0",
+    "llama-index-vector-stores-qdrant>=0.9.0",
+    "llama-index-embeddings-openai>=0.3.0",
+    # Shared models (monorepo workspace dependency)
+    "wegent-shared",
+]
+
+[tool.uv.sources]
+wegent-shared = { path = "../shared", editable = true }
+
+[dependency-groups]
+dev = [
+    # Testing related
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+    "pytest-httpx>=0.36.0",
+    "pytest-xdist>=3.5.0",
+    # Development tools
+    "black>=23.7.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+    "mypy>=1.5.0",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true
+
+[tool.isort]
+profile = "black"
+line_length = 88
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+skip = [".venv", "venv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+chat-shell = "chat_shell.cli:cli"
+
+[project.optional-dependencies]
+rich = ["rich>=13.0.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["chat_shell"]

@@ -2,33 +2,38 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { ChevronDownIcon, UserGroupIcon, LinkIcon, TrashIcon } from '@heroicons/react/24/outline';
-import { Users } from 'lucide-react';
+import { useState } from 'react'
+import { ChevronDownIcon, UserGroupIcon, LinkIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { Users } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown';
-import { cn } from '@/lib/utils';
-import { TaskDetail } from '@/types/api';
-import { TaskMembersPanel, InviteLinkDialog } from '@/features/tasks/components/group-chat';
-import { taskApis } from '@/apis/tasks';
-import { useRouter } from 'next/navigation';
-import { useTranslation } from '@/hooks/useTranslation';
-import { useUser } from '@/features/common/UserContext';
+} from '@/components/ui/dropdown'
+import { cn } from '@/lib/utils'
+import { TaskDetail } from '@/types/api'
+import {
+  TaskMembersPanel,
+  InviteLinkDialog,
+  BoundKnowledgeBaseSummary,
+} from '@/features/tasks/components/group-chat'
+import { taskApis } from '@/apis/tasks'
+import { useRouter } from 'next/navigation'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
+import { useIsMobile } from './hooks/useMediaQuery'
 
 type TaskTitleDropdownProps = {
-  title?: string;
-  taskDetail?: TaskDetail | null;
-  className?: string;
-  onTaskDeleted?: () => void;
-  onMembersChanged?: () => void; // Callback to refresh task detail when converted to group chat
-};
+  title?: string
+  taskDetail?: TaskDetail | null
+  className?: string
+  onTaskDeleted?: () => void
+  onMembersChanged?: () => void // Callback to refresh task detail when converted to group chat
+}
 
 export default function TaskTitleDropdown({
   title,
@@ -37,63 +42,64 @@ export default function TaskTitleDropdown({
   onTaskDeleted,
   onMembersChanged,
 }: TaskTitleDropdownProps) {
-  const { t } = useTranslation();
-  const router = useRouter();
-  const { user } = useUser();
-  const displayTitle = title;
-  const isGroupChat = taskDetail?.is_group_chat || false;
+  const { t } = useTranslation()
+  const router = useRouter()
+  const { user } = useUser()
+  const isMobile = useIsMobile()
+  const displayTitle = title
+  const isGroupChat = taskDetail?.is_group_chat || false
 
-  const [showMembersDialog, setShowMembersDialog] = useState(false);
-  const [showInviteLinkDialog, setShowInviteLinkDialog] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [showMembersDialog, setShowMembersDialog] = useState(false)
+  const [showInviteLinkDialog, setShowInviteLinkDialog] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const handleViewMembers = () => {
-    setShowMembersDialog(true);
-  };
+    setShowMembersDialog(true)
+  }
 
   const handleManageInviteLink = () => {
-    setShowInviteLinkDialog(true);
-  };
+    setShowInviteLinkDialog(true)
+  }
 
   const handleDeleteGroup = async () => {
-    if (!taskDetail?.id) return;
+    if (!taskDetail?.id) return
 
     const confirmed = confirm(
       isGroupChat
         ? t('groupChat.delete.confirmMessage', '确定要删除这个群聊吗？此操作无法撤销。')
         : t('task.delete.confirmMessage', '确定要删除这个任务吗？此操作无法撤销。')
-    );
+    )
 
-    if (!confirmed) return;
+    if (!confirmed) return
 
-    setIsDeleting(true);
+    setIsDeleting(true)
     try {
-      await taskApis.deleteTask(taskDetail.id);
+      await taskApis.deleteTask(taskDetail.id)
       // Notify parent component
       if (onTaskDeleted) {
-        onTaskDeleted();
+        onTaskDeleted()
       }
       // Clear URL parameters and refresh
       if (typeof window !== 'undefined') {
-        const url = new URL(window.location.href);
-        url.searchParams.delete('taskId');
-        url.searchParams.delete('task_id');
-        router.replace(url.pathname);
+        const url = new URL(window.location.href)
+        url.searchParams.delete('taskId')
+        url.searchParams.delete('task_id')
+        router.replace(url.pathname)
       }
     } catch (error) {
-      console.error('Failed to delete task:', error);
-      alert(t('task.delete.error', '删除失败，请重试'));
+      console.error('Failed to delete task:', error)
+      alert(t('task.delete.error', '删除失败，请重试'))
     } finally {
-      setIsDeleting(false);
+      setIsDeleting(false)
     }
-  };
+  }
 
   // Only show group chat options if it's a true group chat
-  const showGroupChatOptions = isGroupChat;
+  const showGroupChatOptions = isGroupChat
 
   // If no title, don't render anything
   if (!displayTitle) {
-    return null;
+    return null
   }
 
   // If not a group chat, show simple dropdown
@@ -106,13 +112,15 @@ export default function TaskTitleDropdown({
             className={cn(
               'flex items-center gap-2 h-9 px-3 rounded-md',
               'text-text-primary font-medium text-base',
-              'hover:bg-muted transition-colors',
+              'hover:bg-muted active:bg-muted transition-colors',
               'focus:outline-none focus:ring-2 focus:ring-primary/40',
-              'max-w-[300px]',
+              // Responsive max width - smaller on mobile to prevent overflow
+              isMobile ? 'max-w-[120px]' : 'max-w-[300px]',
+              'min-w-0', // Allow shrinking
               className
             )}
           >
-            <span className="truncate">{displayTitle}</span>
+            <span className="truncate min-w-0">{displayTitle}</span>
             <ChevronDownIcon className="h-4 w-4 flex-shrink-0 text-text-muted" />
           </button>
         </DropdownMenuTrigger>
@@ -122,61 +130,70 @@ export default function TaskTitleDropdown({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-    );
+    )
   }
 
   // Group chat dropdown with additional options
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            className={cn(
-              'flex items-center gap-2 h-9 px-3 rounded-md',
-              'text-text-primary font-medium text-base',
-              'hover:bg-muted transition-colors',
-              'focus:outline-none focus:ring-2 focus:ring-primary/40',
-              'max-w-[300px]',
-              className
-            )}
-          >
-            <Users className="h-4 w-4 flex-shrink-0 text-text-muted" />
-            <span className="truncate">{displayTitle}</span>
-            <ChevronDownIcon className="h-4 w-4 flex-shrink-0 text-text-muted" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-56">
-          {/* Members option */}
-          <DropdownMenuItem onClick={handleViewMembers} className="gap-2">
-            <UserGroupIcon className="h-4 w-4" />
-            <span>{t('groupChat.members.title', '人员')}</span>
-          </DropdownMenuItem>
+      <div className="flex items-center gap-1 min-w-0">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                'flex items-center gap-2 h-9 px-3 rounded-md',
+                'text-text-primary font-medium text-base',
+                'hover:bg-muted active:bg-muted transition-colors',
+                'focus:outline-none focus:ring-2 focus:ring-primary/40',
+                // Responsive max width - smaller on mobile to prevent overflow
+                isMobile ? 'max-w-[100px]' : 'max-w-[300px]',
+                'min-w-0', // Allow shrinking
+                className
+              )}
+            >
+              <Users className="h-4 w-4 flex-shrink-0 text-text-muted" />
+              <span className="truncate min-w-0">{displayTitle}</span>
+              <ChevronDownIcon className="h-4 w-4 flex-shrink-0 text-text-muted" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            {/* Members option */}
+            <DropdownMenuItem onClick={handleViewMembers} className="gap-2">
+              <UserGroupIcon className="h-4 w-4" />
+              <span>{t('groupChat.members.title', '人员')}</span>
+            </DropdownMenuItem>
 
-          {/* Invite link option */}
-          <DropdownMenuItem onClick={handleManageInviteLink} className="gap-2">
-            <LinkIcon className="h-4 w-4" />
-            <span>{t('groupChat.inviteLink.manage', '管理群组链接')}</span>
-          </DropdownMenuItem>
+            {/* Invite link option */}
+            <DropdownMenuItem onClick={handleManageInviteLink} className="gap-2">
+              <LinkIcon className="h-4 w-4" />
+              <span>{t('groupChat.inviteLink.manage', '管理群组链接')}</span>
+            </DropdownMenuItem>
 
-          <DropdownMenuSeparator />
+            <DropdownMenuSeparator />
 
-          {/* Delete group option */}
-          <DropdownMenuItem
-            onClick={handleDeleteGroup}
-            disabled={isDeleting}
-            danger
-            className="gap-2"
-          >
-            <TrashIcon className="h-4 w-4" />
-            <span>
-              {isDeleting
-                ? t('common.deleting', '删除中...')
-                : t('groupChat.delete.button', '删除群组')}
-            </span>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+            {/* Delete group option */}
+            <DropdownMenuItem
+              onClick={handleDeleteGroup}
+              disabled={isDeleting}
+              danger
+              className="gap-2"
+            >
+              <TrashIcon className="h-4 w-4" />
+              <span>
+                {isDeleting
+                  ? t('common.deleting', '删除中...')
+                  : t('groupChat.delete.button', '删除群组')}
+              </span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Knowledge Base Summary - shows bound knowledge bases for group chat */}
+        {taskDetail?.id && (
+          <BoundKnowledgeBaseSummary taskId={taskDetail.id} onManageClick={handleViewMembers} />
+        )}
+      </div>
 
       {/* Dialogs */}
       {taskDetail && user && (
@@ -190,7 +207,7 @@ export default function TaskTitleDropdown({
             onLeave={() => {
               // Handle leave group chat
               if (onTaskDeleted) {
-                onTaskDeleted();
+                onTaskDeleted()
               }
             }}
             onMembersChanged={onMembersChanged}
@@ -205,5 +222,5 @@ export default function TaskTitleDropdown({
         </>
       )}
     </>
-  );
+  )
 }

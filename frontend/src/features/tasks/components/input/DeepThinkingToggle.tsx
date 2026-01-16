@@ -2,19 +2,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React from 'react';
-import { Sparkles } from 'lucide-react';
-import { ActionButton } from '@/components/ui/action-button';
-import { useTranslation } from '@/hooks/useTranslation';
-import { cn } from '@/lib/utils';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import React from 'react'
+import { Sparkles } from 'lucide-react'
+import { ActionButton } from '@/components/ui/action-button'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 interface DeepThinkingToggleProps {
-  enabled: boolean;
-  onToggle: (enabled: boolean) => void;
-  disabled?: boolean;
+  enabled: boolean
+  onToggle: (enabled: boolean) => void
+  disabled?: boolean
 }
 
 export default function DeepThinkingToggle({
@@ -22,11 +22,11 @@ export default function DeepThinkingToggle({
   onToggle,
   disabled = false,
 }: DeepThinkingToggleProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   const handleToggle = () => {
-    onToggle(!enabled);
-  };
+    onToggle(!enabled)
+  }
 
   return (
     <TooltipProvider>
@@ -52,5 +52,5 @@ export default function DeepThinkingToggle({
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
-  );
+  )
 }

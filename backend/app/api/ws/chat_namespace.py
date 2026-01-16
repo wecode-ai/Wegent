@@ -149,6 +149,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         Handle client connection.
 
         Verifies JWT token and joins user to their personal room.
+        Rejects new connections during graceful shutdown.
 
         Args:
             sid: Socket ID
@@ -156,13 +157,20 @@ class ChatNamespace(socketio.AsyncNamespace):
             auth: Authentication data (expected: {"token": "..."})
 
         Raises:
-            ConnectionRefusedError: If authentication fails
+            ConnectionRefusedError: If authentication fails or server is shutting down
         """
+        from app.core.shutdown import shutdown_manager
+
         # Generate unique request ID for this WebSocket connection
         request_id = str(uuid.uuid4())[:8]
         set_request_context(request_id)
 
         logger.info(f"[WS] Connection attempt sid={sid}")
+
+        # Reject new connections during graceful shutdown
+        if shutdown_manager.is_shutting_down:
+            logger.warning(f"[WS] Rejecting connection during shutdown sid={sid}")
+            raise ConnectionRefusedError("Server is shutting down")
 
         # Check auth token
         if not auth or not isinstance(auth, dict):
@@ -241,14 +249,20 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         payload = data  # Already validated by decorator
 
+        logger.info(f"[WS] task:join received: sid={sid}, task_id={payload.task_id}")
+
         session = await self.get_session(sid)
         user_id = session.get("user_id")
 
         if not user_id:
+            logger.warning(f"[WS] task:join error: Not authenticated, sid={sid}")
             return {"error": "Not authenticated"}
 
         # Check permission
         if not await can_access_task(user_id, payload.task_id):
+            logger.warning(
+                f"[WS] task:join error: Access denied, user={user_id}, task={payload.task_id}"
+            )
             return {"error": "Access denied"}
 
         # Join task room
@@ -260,13 +274,23 @@ class ChatNamespace(socketio.AsyncNamespace):
         )
 
         # Check for active streaming
+        logger.info(
+            f"[WS] task:join checking for active streaming, task_id={payload.task_id}"
+        )
         streaming_info = await get_active_streaming(payload.task_id)
+        logger.info(f"[WS] task:join get_active_streaming returned: {streaming_info}")
+
         if streaming_info:
             subtask_id = streaming_info["subtask_id"]
 
             # Get cached content from Redis
             cached_content = await session_manager.get_streaming_content(subtask_id)
             offset = len(cached_content) if cached_content else 0
+
+            logger.info(
+                f"[WS] task:join found active streaming: subtask_id={subtask_id}, "
+                f"cached_content_len={len(cached_content) if cached_content else 0}, offset={offset}"
+            )
 
             return {
                 "streaming": {
@@ -276,6 +300,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                 }
             }
 
+        logger.info(
+            f"[WS] task:join no active streaming found for task_id={payload.task_id}"
+        )
         return {"streaming": None}
 
     @auto_task_context(TaskLeavePayload)
@@ -591,6 +618,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                         attachment_ids_to_link if attachment_ids_to_link else None
                     ),
                     contexts=payload.contexts,
+                    task=task,
+                    user_name=user_name,
                 )
                 if linked_context_ids:
                     logger.info(
@@ -613,6 +642,12 @@ class ChatNamespace(socketio.AsyncNamespace):
                 team_name = team_crd.metadata.name if team_crd.metadata else team.name
                 task_crd = Task.model_validate(task.json)
                 task_title = task_crd.spec.title or ""
+                # Get is_group_chat from task spec, with fallback to payload
+                task_is_group_chat = (
+                    task_crd.spec.is_group_chat
+                    if task_crd.spec
+                    else payload.is_group_chat
+                )
 
                 await ws_emitter.emit_task_created(
                     user_id=user_id,
@@ -620,6 +655,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     title=task_title,
                     team_id=team.id,
                     team_name=team_name,
+                    is_group_chat=task_is_group_chat,
                 )
                 logger.info(
                     f"[WS] chat:send emitted task:created event for task_id={task.id}"
@@ -728,19 +764,16 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         # Build contexts list for the subtask
         contexts_briefs = context_service.get_briefs_by_subtask(db, user_subtask.id)
-        contexts_list = [
-            {
-                "id": ctx.id,
-                "context_type": ctx.context_type,
-                "name": ctx.name,
-                "status": ctx.status,
-                "file_extension": ctx.file_extension,
-                "file_size": ctx.file_size,
-                "mime_type": ctx.mime_type,
-                "document_count": ctx.document_count,
-            }
-            for ctx in contexts_briefs
-        ]
+        # Use Pydantic's model_dump to ensure all fields are serialized correctly
+        contexts_list = [ctx.model_dump(mode="json") for ctx in contexts_briefs]
+
+        # DEBUG: Log contexts being sent via WebSocket
+        for ctx_dict in contexts_list:
+            if ctx_dict.get("context_type") == "table":
+                logger.info(
+                    f"[WS] Sending table context via WebSocket: id={ctx_dict.get('id')}, "
+                    f"name={ctx_dict.get('name')}, source_config={ctx_dict.get('source_config')}"
+                )
 
         # Build legacy attachment info for backward compatibility
         # Note: attachments field is kept for backward compatibility but set to empty
@@ -1340,10 +1373,11 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"success": true} or {"error": "..."}
         """
-        from app.api.ws.events import SkillResponsePayload
-        from app.chat_shell.tools import (
+        from chat_shell.tools import (
             get_pending_request_registry,
         )
+
+        from app.api.ws.events import SkillResponsePayload
 
         request_id = data.get("request_id")
         skill_name = data.get("skill_name")
