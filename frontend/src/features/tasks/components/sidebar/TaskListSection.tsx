@@ -349,14 +349,13 @@ export default function TaskListSection({
         handleStartRename(task.id)
         setClickState({ taskId: null, lastClickTime: 0 })
       } else {
-        // First click - record it and handle as single click
+        // First click - record it and select the task
         setClickState({ taskId: task.id, lastClickTime: now })
-        // Delay single click action to allow for double-click detection
-        // Note: We don't trigger task selection here to avoid conflict
-        // Single click on the row (not title) will still select the task
+        // Trigger task selection on single click
+        handleTaskClick(task)
       }
     },
-    [clickState, handleStartRename, DOUBLE_CLICK_THRESHOLD]
+    [clickState, handleStartRename, DOUBLE_CLICK_THRESHOLD, handleTaskClick]
   )
 
   if (tasks.length === 0) return null
