@@ -44,9 +44,10 @@ function ConversationMessage({
 }) {
   // Backend returns role in uppercase (USER/ASSISTANT), compare case-insensitively
   const isUser = subtask.role?.toUpperCase() === 'USER'
+  const rawValue = subtask.result?.value
   const content = isUser
     ? subtask.prompt || ''
-    : subtask.result?.value || subtask.result?.message || ''
+    : (typeof rawValue === 'string' ? rawValue : '') || (subtask.result?.message as string) || ''
   // Parse timestamp - backend returns local time without timezone suffix
   const timestamp = subtask.created_at ? new Date(subtask.created_at) : null
 
