@@ -400,3 +400,44 @@ class TestGitUtil:
         # @ should be encoded
         assert "%40" in auth_url
         assert "token@special" not in auth_url
+
+    @patch("shared.utils.git_util.subprocess.run")
+    @patch("shared.utils.git_util.setup_git_hooks")
+    def test_clone_repo_with_token_gerrit_username_with_slashes(
+        self, mock_setup_hooks, mock_subprocess
+    ):
+        """Test that Gerrit usernames with multiple / characters are properly URL encoded"""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_subprocess.return_value = mock_result
+        mock_setup_hooks.return_value = (True, None)
+
+        project_url = "https://gerrit.example.com/project"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        # Username with multiple slashes like: domain/subdomain/user
+        username = "corp/team/user123"
+        token = "http/token/test"
+
+        success, error = clone_repo_with_token(
+            project_url, branch, project_path, username, token
+        )
+
+        assert success is True
+        assert error is None
+
+        call_args = mock_subprocess.call_args
+        cmd = call_args[0][0]
+        auth_url = cmd[5]
+
+        # All / in username and token should be encoded as %2F
+        # Count occurrences: username has 2 slashes, token has 2 slashes = 4 total
+        assert auth_url.count("%2F") >= 4
+
+        # Raw username and token with slashes should not appear
+        assert "corp/team/user123" not in auth_url
+        assert "http/token/test" not in auth_url
+
+        # Verify the URL structure is correct (protocol://encoded_user:encoded_token@host/path)
+        assert auth_url.startswith("https://")
+        assert "@gerrit.example.com" in auth_url
