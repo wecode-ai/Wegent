@@ -589,7 +589,9 @@ class TestKBRefIdBasedLookup:
         mock_query.first.return_value = mock_knowledge_base
 
         with patch.object(service, "can_access_knowledge_base", return_value=True):
-            with patch("app.services.knowledge.task_knowledge_base_service.flag_modified"):
+            with patch(
+                "app.services.knowledge.task_knowledge_base_service.flag_modified"
+            ):
                 result = service.sync_subtask_kb_to_task(
                     db=mock_db,
                     task=mock_task,
