@@ -595,11 +595,11 @@ const UserList: React.FC = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
-              {t('common:common.cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button onClick={handleUpdateUser} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t('common:common.save')}
+              {t('common:actions.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -628,11 +628,11 @@ const UserList: React.FC = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsResetPasswordDialogOpen(false)}>
-              {t('common:common.cancel')}
+              {t('common:actions.cancel')}
             </Button>
             <Button onClick={handleResetPassword} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t('common:common.reset')}
+              {t('common:actions.reset')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -648,9 +648,9 @@ const UserList: React.FC = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t('common:common.cancel')}</AlertDialogCancel>
+            <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteUser} className="bg-error hover:bg-error/90">
-              {t('common:common.delete')}
+              {t('common:actions.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
