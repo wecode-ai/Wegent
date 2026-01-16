@@ -196,9 +196,66 @@ def subtask_to_message(
             db, subtask, sender_username, is_group_chat
         )
     else:
-        # For assistant, content is in result.value
+        # For assistant, content is in result.value or result.artifact.content
         if subtask.result and isinstance(subtask.result, dict):
-            content = subtask.result.get("value", "")
+            # Debug logging
+            logger.debug(
+                "[subtask_to_message] Processing assistant subtask %d, result keys: %s, result type: %s",
+                subtask.id,
+                list(subtask.result.keys()),
+                subtask.result.get("type", "N/A"),
+            )
+            # Check if this is an artifact result (from create_artifact/update_artifact tools)
+            # Artifact results have structure: {"type": "artifact", "artifact": {...}}
+            if subtask.result.get("type") == "artifact":
+                from app.models.task import TaskResource
+                from app.utils import format_artifact_for_history
+
+                artifact = subtask.result.get("artifact", {})
+                artifact_id = artifact.get("id", "")
+
+                logger.debug(
+                    "[subtask_to_message] Found artifact: id=%s, title=%s, content_len=%d",
+                    artifact_id,
+                    artifact.get("title", ""),
+                    len(artifact.get("content", "")),
+                )
+
+                # IMPORTANT: subtask.result may contain truncated artifact content (first 10 chars + "...")
+                # to save DB space. We need to load the FULL artifact from task.json["canvas"]
+                full_artifact = None
+                if artifact_id and subtask.task_id:
+                    task = db.query(TaskResource).filter(
+                        TaskResource.id == subtask.task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active.is_(True),
+                    ).first()
+
+                    if task and task.json and "canvas" in task.json:
+                        canvas_artifact = task.json["canvas"].get("artifact")
+                        if canvas_artifact and canvas_artifact.get("id") == artifact_id:
+                            full_artifact = canvas_artifact
+                            logger.info(
+                                "[subtask_to_message] Loaded FULL artifact from canvas: artifact_id=%s, content_len=%d (was: %d)",
+                                artifact_id,
+                                len(full_artifact.get("content", "")),
+                                len(artifact.get("content", ""))
+                            )
+
+                # Use full artifact if available, otherwise fall back to truncated version
+                artifact_to_format = full_artifact if full_artifact else artifact
+
+                if artifact_to_format.get("content"):
+                    # Use shared formatting function
+                    content = format_artifact_for_history(artifact_to_format)
+                    logger.debug(
+                        "[subtask_to_message] Formatted artifact content_len=%d",
+                        len(content)
+                    )
+                else:
+                    content = ""
+            else:
+                content = subtask.result.get("value", "")
         else:
             content = ""
 

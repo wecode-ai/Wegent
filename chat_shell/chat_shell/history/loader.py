@@ -272,12 +272,14 @@ def _load_history_from_db_sync(
     from app.db.session import SessionLocal
     from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
     from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+    from app.models.task import TaskResource
     from app.models.user import User
 
     history: list[dict[str, Any]] = []
 
     db = SessionLocal()
     try:
+        # Load subtask history
         query = (
             db.query(Subtask, User.user_name)
             .outerjoin(User, Subtask.sender_user_id == User.id)
@@ -296,6 +298,11 @@ def _load_history_from_db_sync(
             msg = _build_history_message(db, subtask, sender_username, is_group_chat)
             if msg:
                 history.append(msg)
+
+        # Note: We don't need to inject current artifact at the end anymore,
+        # because _build_history_message now loads full artifacts from task.json["canvas"]
+        # for each artifact message in history.
+
     finally:
         db.close()
 
@@ -315,6 +322,9 @@ def _build_history_message(
     2. Processes attachments first (images or text) - they have priority
     3. Processes knowledge_base contexts with remaining token space
     4. Follows MAX_EXTRACTED_TEXT_LENGTH limit with attachments having priority
+
+    For artifact messages, loads the full artifact from task.json["canvas"]
+    instead of using the truncated version in subtask.result.
     """
     from app.models.subtask import SubtaskRole
     from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
@@ -433,7 +443,79 @@ def _build_history_message(
     elif subtask.role == SubtaskRole.ASSISTANT:
         if not subtask.result or not isinstance(subtask.result, dict):
             return None
+
+        logger.info(
+            "[HistoryLoader] Processing ASSISTANT subtask %d: result_keys=%s, has_artifact=%s, has_value=%s",
+            subtask.id,
+            list(subtask.result.keys()),
+            subtask.result.get("type") == "artifact",
+            "value" in subtask.result
+        )
+
+        # Check if this is an artifact result (from create_artifact/update_artifact tools)
+        # Artifact results have structure: {"type": "artifact", "artifact": {...}}
+        if subtask.result.get("type") == "artifact":
+            from app.models.task import TaskResource
+            from app.utils import format_artifact_for_history
+
+            artifact = subtask.result.get("artifact", {})
+            artifact_id = artifact.get("id", "")
+
+            logger.info(
+                "[HistoryLoader] Found artifact result: subtask_id=%d, artifact_id=%s, has_content=%s, artifact_keys=%s",
+                subtask.id,
+                artifact_id,
+                bool(artifact.get("content")),
+                list(artifact.keys())
+            )
+
+            # IMPORTANT: subtask.result may contain truncated artifact content (first 10 chars + "...")
+            # to save DB space. We need to load the FULL artifact from task.json["canvas"]
+            full_artifact = None
+            if artifact_id and subtask.task_id:
+                task = db.query(TaskResource).filter(
+                    TaskResource.id == subtask.task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active.is_(True),
+                ).first()
+
+                if task and task.json and "canvas" in task.json:
+                    canvas_artifact = task.json["canvas"].get("artifact")
+                    if canvas_artifact and canvas_artifact.get("id") == artifact_id:
+                        full_artifact = canvas_artifact
+                        logger.info(
+                            "[HistoryLoader] Loaded FULL artifact from canvas: artifact_id=%s, content_len=%d (was: %d)",
+                            artifact_id,
+                            len(full_artifact.get("content", "")),
+                            len(artifact.get("content", ""))
+                        )
+
+            # Use full artifact if available, otherwise fall back to truncated version
+            artifact_to_format = full_artifact if full_artifact else artifact
+
+            if artifact_to_format.get("content"):
+                # Use shared formatting function
+                formatted_content = format_artifact_for_history(artifact_to_format)
+                logger.info(
+                    "[HistoryLoader] Formatted artifact for history: subtask_id=%d, formatted_len=%d, preview=%s",
+                    subtask.id,
+                    len(formatted_content),
+                    formatted_content[:200] + "..." if len(formatted_content) > 200 else formatted_content
+                )
+                return {"role": "assistant", "content": formatted_content}
+            else:
+                logger.warning(
+                    "[HistoryLoader] Artifact has no content: subtask_id=%d, artifact=%s",
+                    subtask.id,
+                    artifact_to_format
+                )
+
         content = subtask.result.get("value", "")
+        logger.info(
+            "[HistoryLoader] Using value field: subtask_id=%d, content_len=%d",
+            subtask.id,
+            len(content) if content else 0
+        )
         return {"role": "assistant", "content": content} if content else None
 
     return None

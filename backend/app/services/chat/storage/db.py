@@ -84,10 +84,11 @@ class DatabaseHandler:
         status: str,
         result: dict[str, Any] | None = None,
         error: str | None = None,
+        skip_artifact_save: bool = False,
     ) -> None:
         """Update subtask status asynchronously."""
         await self._run_in_executor(
-            self._update_subtask_sync, subtask_id, status, result, error
+            self._update_subtask_sync, subtask_id, status, result, error, skip_artifact_save
         )
 
     def _update_subtask_sync(
@@ -96,6 +97,7 @@ class DatabaseHandler:
         status: str,
         result: dict[str, Any] | None = None,
         error: str | None = None,
+        skip_artifact_save: bool = False,
     ) -> None:
         """Synchronous subtask update (runs in thread pool)."""
         from app.models.subtask import Subtask, SubtaskStatus
@@ -111,6 +113,10 @@ class DatabaseHandler:
 
                 if result is not None:
                     subtask.result = result
+                    # If result contains artifact, also store in task.json["canvas"]
+                    # Skip if caller already saved the artifact separately
+                    if not skip_artifact_save and result.get("type") == "artifact" and result.get("artifact"):
+                        self._save_artifact_to_canvas(db, subtask.task_id, result["artifact"])
                 if error is not None:
                     subtask.error_message = error
                 if status in _TERMINAL_STATUSES:
@@ -121,6 +127,163 @@ class DatabaseHandler:
             self._update_task_status_sync(task_id)
         except Exception:
             logger.exception("Error updating subtask %s status", subtask_id)
+
+    def _save_artifact_to_canvas(
+        self, db: Session, task_id: int, artifact: dict[str, Any]
+    ) -> None:
+        """Save artifact to task.json['canvas'] with diff-based history.
+
+        This method:
+        1. Gets or initializes canvas data in task.json
+        2. If artifact exists, creates diff and adds to history
+        3. Updates current artifact content
+        """
+        from app.models.task import TaskResource
+        from app.utils import create_diff
+
+        try:
+            task = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.id == task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active,
+                )
+                .first()
+            )
+            if not task:
+                logger.warning("[Canvas] Task %d not found for artifact save", task_id)
+                return
+
+            # Initialize task.json if needed
+            if task.json is None:
+                task.json = {}
+
+            # Initialize canvas structure
+            if "canvas" not in task.json:
+                task.json["canvas"] = {"enabled": True, "artifact": None, "history": []}
+
+            canvas_data = task.json["canvas"]
+            existing_artifact = canvas_data.get("artifact")
+            history = canvas_data.get("history", [])
+            now = datetime.now().isoformat()
+
+            logger.info(
+                "[Canvas] _save_artifact_to_canvas: task_id=%d, has_existing=%s, artifact_id=%s, content_len=%d",
+                task_id,
+                bool(existing_artifact),
+                artifact.get("id", ""),
+                len(artifact.get("content", ""))
+            )
+
+            if existing_artifact:
+                # Update existing artifact - create diff for version history
+                old_content = existing_artifact.get("content", "")
+                new_content = artifact.get("content", "")
+
+                logger.info(
+                    "[Canvas] Updating existing artifact: old_len=%d, new_len=%d, artifact_id=%s",
+                    len(old_content),
+                    len(new_content),
+                    artifact.get("id", "")
+                )
+
+                diff = create_diff(old_content, new_content)
+
+                # Increment version
+                new_version = existing_artifact.get("version", 1) + 1
+                history.append({
+                    "version": new_version,
+                    "diff": diff,
+                    "created_at": now,
+                })
+
+                # Update artifact
+                existing_artifact["content"] = new_content
+                existing_artifact["version"] = new_version
+                if artifact.get("title"):
+                    existing_artifact["title"] = artifact["title"]
+
+                logger.info(
+                    "[Canvas] Updated artifact for task %d: version=%d, diff_len=%d, content_preview=%s",
+                    task_id,
+                    new_version,
+                    len(diff) if diff else 0,
+                    new_content[:100] + "..." if len(new_content) > 100 else new_content
+                )
+            else:
+                # Create new artifact
+                logger.info(
+                    "[Canvas] Creating new artifact: id=%s, type=%s, title=%s, content_len=%d",
+                    artifact.get("id", ""),
+                    artifact.get("artifact_type", "text"),
+                    artifact.get("title", "Untitled"),
+                    len(artifact.get("content", ""))
+                )
+
+                canvas_data["artifact"] = {
+                    "id": artifact.get("id", ""),
+                    "artifact_type": artifact.get("artifact_type", "text"),
+                    "title": artifact.get("title", "Untitled"),
+                    "content": artifact.get("content", ""),
+                    "version": 1,
+                }
+                if artifact.get("language"):
+                    canvas_data["artifact"]["language"] = artifact["language"]
+
+                # Initialize history with first version
+                history = [{"version": 1, "diff": None, "created_at": now}]
+
+                logger.info(
+                    "[Canvas] Created new artifact for task %d: id=%s, content_preview=%s",
+                    task_id,
+                    artifact.get("id", ""),
+                    artifact.get("content", "")[:100] + "..." if len(artifact.get("content", "")) > 100 else artifact.get("content", "")
+                )
+
+            canvas_data["history"] = history
+            canvas_data["enabled"] = True
+            task.json["canvas"] = canvas_data
+            flag_modified(task, "json")
+
+        except Exception:
+            logger.exception("[Canvas] Error saving artifact to canvas for task %d", task_id)
+
+    def _save_artifact_to_canvas_async(self, task_id: int, artifact: dict[str, Any]) -> None:
+        """Save artifact to task.json['canvas'] asynchronously.
+
+        This is a fire-and-forget method that saves the artifact in a thread pool.
+        Used when we need to save the full artifact before truncating for subtask storage.
+        """
+        try:
+            # Run in thread pool executor
+            _db_executor.submit(self._save_artifact_to_canvas_sync, task_id, artifact)
+        except Exception:
+            logger.exception("[Canvas] Error scheduling artifact save for task %d", task_id)
+
+    async def save_artifact_to_canvas(self, task_id: int, artifact: dict[str, Any]) -> None:
+        """Save artifact to task.json['canvas'] asynchronously (awaitable).
+
+        This method waits for the save to complete before returning.
+        Used when we need to ensure the full artifact is saved before truncating.
+        """
+        logger.info(
+            "[Canvas] save_artifact_to_canvas called: task_id=%d, artifact_id=%s, content_len=%d",
+            task_id,
+            artifact.get("id", ""),
+            len(artifact.get("content", "")),
+        )
+        await self._run_in_executor(self._save_artifact_to_canvas_sync, task_id, artifact)
+
+    def _save_artifact_to_canvas_sync(self, task_id: int, artifact: dict[str, Any]) -> None:
+        """Synchronous wrapper for _save_artifact_to_canvas with its own session."""
+        logger.info("[Canvas] _save_artifact_to_canvas_sync started: task_id=%d", task_id)
+        try:
+            with _db_session() as db:
+                self._save_artifact_to_canvas(db, task_id, artifact)
+            logger.info("[Canvas] _save_artifact_to_canvas_sync completed: task_id=%d", task_id)
+        except Exception:
+            logger.exception("[Canvas] Error in sync artifact save for task %d", task_id)
 
     def _update_task_status_sync(self, task_id: int) -> None:
         """Update task status based on subtask status."""
@@ -171,7 +334,13 @@ class DatabaseHandler:
                     new_status = task_crd.status.status
                     progress = task_crd.status.progress
 
-                task.json = task_crd.model_dump(mode="json")
+                # IMPORTANT: Don't completely replace task.json as it may contain
+                # additional fields like "canvas" that are not part of the Task model.
+                # Instead, update only the fields that changed.
+                task_crd_dict = task_crd.model_dump(mode="json")
+                for key, value in task_crd_dict.items():
+                    task.json[key] = value
+
                 task.updated_at = datetime.now()
                 flag_modified(task, "json")
 

@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 
 from langchain_core.tools.base import BaseTool
 
+from .features import Features
+
 
 @dataclass
 class WebSocketStreamConfig:
@@ -28,8 +30,7 @@ class WebSocketStreamConfig:
         message_id: Assistant's message_id for frontend ordering
         user_message_id: User's message_id for history exclusion (prevents duplicate messages)
 
-        enable_web_search: Enable web search tool
-        search_engine: Specific search engine to use
+        features: Unified feature flags (enable_tools, enable_canvas, etc.)
 
         bot_name: Bot name for MCP server loading
         bot_namespace: Bot namespace
@@ -51,17 +52,8 @@ class WebSocketStreamConfig:
     message_id: int | None = None  # Assistant's message_id for ordering in frontend
     user_message_id: int | None = None  # User's message_id for history exclusion
 
-    # Feature flags
-    enable_tools: bool = True  # Enable tools (MCP, web search, skills, etc.)
-    enable_web_search: bool = False
-    search_engine: str | None = None
-
-    # Prompt enhancement options
-    enable_clarification: bool = False
-    enable_deep_thinking: bool = True
-    skills: list[dict] = field(
-        default_factory=list
-    )  # Skill metadata for prompt injection
+    # Feature flags - unified in Features object
+    features: Features = field(default_factory=Features)
 
     # Bot configuration
     bot_name: str = ""
@@ -69,9 +61,45 @@ class WebSocketStreamConfig:
     shell_type: str = "Chat"  # Shell type for frontend display
     extra_tools: list[BaseTool] = field(default_factory=list)
 
+    # Legacy skill metadata for prompt injection (TODO: move to Features?)
+    skills: list[dict] = field(
+        default_factory=list
+    )  # Skill metadata for prompt injection
+
     # Context flags
     has_table_context: bool = False  # Whether user selected table context
 
     def get_username_for_message(self) -> str | None:
         """Get username for message prefix in group chat mode."""
         return self.user_name if self.is_group_chat else None
+
+    # Backward compatibility properties
+    @property
+    def enable_tools(self) -> bool:
+        """Backward compatibility: access features.enable_tools."""
+        return self.features.enable_tools
+
+    @property
+    def enable_web_search(self) -> bool:
+        """Backward compatibility: access features.enable_web_search."""
+        return self.features.enable_web_search
+
+    @property
+    def enable_clarification(self) -> bool:
+        """Backward compatibility: access features.enable_clarification."""
+        return self.features.enable_clarification
+
+    @property
+    def enable_deep_thinking(self) -> bool:
+        """Backward compatibility: access features.enable_deep_thinking."""
+        return self.features.enable_deep_thinking
+
+    @property
+    def enable_canvas(self) -> bool:
+        """Backward compatibility: access features.enable_canvas."""
+        return self.features.enable_canvas
+
+    @property
+    def search_engine(self) -> str | None:
+        """Backward compatibility: access features.search_engine."""
+        return self.features.search_engine

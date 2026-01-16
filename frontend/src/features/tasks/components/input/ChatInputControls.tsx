@@ -11,6 +11,7 @@ import RepositorySelector from '../selector/RepositorySelector'
 import BranchSelector from '../selector/BranchSelector'
 import ClarificationToggle from '../clarification/ClarificationToggle'
 import CorrectionModeToggle from '../CorrectionModeToggle'
+import { CanvasToggle, CanvasPanelToggle } from '@/features/canvas'
 import ChatContextInput from '../chat/ChatContextInput'
 import AttachmentButton from '../AttachmentButton'
 import SendButton from './SendButton'
@@ -63,6 +64,15 @@ export interface ChatInputControlsProps {
   enableCorrectionMode?: boolean
   correctionModelName?: string | null
   onCorrectionModeToggle?: (enabled: boolean, modelId?: string, modelName?: string) => void
+
+  // Canvas
+  canvasEnabled?: boolean
+  onCanvasEnabledChange?: (enabled: boolean) => void
+  isCanvasOpen?: boolean
+  onCanvasOpenChange?: (open: boolean) => void
+  showCanvasToggle?: boolean
+  showCanvasPanelToggle?: boolean
+  isCanvasLocked?: boolean
 
   // Context selection (knowledge bases)
   selectedContexts: ContextItem[]
@@ -128,6 +138,13 @@ export function ChatInputControls({
   enableCorrectionMode = false,
   correctionModelName,
   onCorrectionModeToggle,
+  canvasEnabled = false,
+  onCanvasEnabledChange,
+  isCanvasOpen = false,
+  onCanvasOpenChange,
+  showCanvasToggle = false,
+  showCanvasPanelToggle = false,
+  isCanvasLocked = false,
   selectedContexts,
   setSelectedContexts,
   attachmentState: _attachmentState,
@@ -298,6 +315,25 @@ export function ChatInputControls({
             disabled={isLoading || isStreaming}
             correctionModelName={correctionModelName}
             taskId={selectedTaskDetail?.id ?? null}
+          />
+        )}
+
+        {/* Canvas Toggle Button - show when showCanvasToggle is true (new chat, no messages) */}
+        {showCanvasToggle && onCanvasEnabledChange && (
+          <CanvasToggle
+            enabled={canvasEnabled}
+            onToggle={() => onCanvasEnabledChange(!canvasEnabled)}
+            disabled={isLoading || isStreaming}
+            locked={isCanvasLocked}
+          />
+        )}
+
+        {/* Canvas Panel Toggle Button - show when canvas is enabled and showCanvasPanelToggle is true */}
+        {showCanvasPanelToggle && onCanvasOpenChange && (
+          <CanvasPanelToggle
+            isOpen={isCanvasOpen}
+            onToggle={() => onCanvasOpenChange(!isCanvasOpen)}
+            disabled={isLoading || isStreaming}
           />
         )}
 

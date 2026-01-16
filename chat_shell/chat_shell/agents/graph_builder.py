@@ -302,6 +302,7 @@ class LangGraphAgentBuilder:
         event_count = 0
         streamed_content = False  # Track if we've streamed any content
         final_content = ""  # Store final content for non-streaming fallback
+        tool_name_by_run_id: dict[str, str] = {}  # Track tool names by run_id for on_tool_end
 
         # TTFT tracking variables
         first_token_received = False
@@ -492,6 +493,9 @@ class LangGraphAgentBuilder:
                     # Get run_id to track tool execution pairs
                     run_id = event.get("run_id", "")
                     logger.info("[TOOL] %s started", tool_name)
+                    # Store tool name by run_id for matching in on_tool_end
+                    if run_id:
+                        tool_name_by_run_id[run_id] = tool_name
                     # Notify callback if provided
                     if on_tool_event:
                         on_tool_event(
@@ -507,12 +511,24 @@ class LangGraphAgentBuilder:
                         yield ""
 
                 elif kind == "on_tool_end":
-                    tool_name = event.get("name", "unknown")
                     # Get run_id to match with tool_start
                     run_id = event.get("run_id", "")
                     # Get tool output for logging
                     tool_data = event.get("data", {})
-                    logger.info("[TOOL] %s completed", tool_name)
+
+                    # Try to get tool name from multiple possible locations
+                    # LangGraph astream_events v2 may not have name in on_tool_end
+                    tool_name = event.get("name")
+                    if not tool_name:
+                        # Use stored tool name from on_tool_start (matched by run_id)
+                        tool_name = tool_name_by_run_id.get(run_id, "unknown")
+
+                    logger.info(
+                        "[TOOL] %s completed (run_id=%s, from_stored=%s)",
+                        tool_name,
+                        run_id,
+                        run_id in tool_name_by_run_id,
+                    )
                     # Notify callback if provided
                     if on_tool_event:
                         on_tool_event(

@@ -289,7 +289,11 @@ async def _stream_chat_response(
 
     from chat_shell.agent import ChatAgent
 
-    from app.services.chat.config import ChatConfigBuilder, WebSocketStreamConfig
+    from app.services.chat.config import (
+        ChatConfigBuilder,
+        Features,
+        WebSocketStreamConfig,
+    )
     from app.services.chat.streaming import WebSocketBridge, WebSocketStreamingHandler
 
     db = SessionLocal()
@@ -464,6 +468,12 @@ async def _stream_chat_response(
             extra_tools.extend(skill_tools)
 
         # Create WebSocket stream config
+        # Build Features object from payload
+        features = Features.from_payload(payload)
+        # Override enable_clarification and enable_deep_thinking from chat_config
+        features.enable_clarification = chat_config.enable_clarification
+        features.enable_deep_thinking = chat_config.enable_deep_thinking
+
         ws_config = WebSocketStreamConfig(
             task_id=stream_data.task_id,
             subtask_id=stream_data.subtask_id,
@@ -471,18 +481,13 @@ async def _stream_chat_response(
             user_id=stream_data.user_id,
             user_name=stream_data.user_name,
             is_group_chat=payload.is_group_chat,
-            enable_tools=True,  # Deep thinking enables tools
-            enable_web_search=payload.enable_web_search,
-            search_engine=payload.search_engine,
             message_id=stream_data.assistant_message_id,
             user_message_id=stream_data.user_message_id,  # For history exclusion
             bot_name=chat_config.bot_name,
             bot_namespace=chat_config.bot_namespace,
             shell_type=chat_config.shell_type,  # Pass shell_type from chat_config
             extra_tools=extra_tools,  # Pass extra tools including KnowledgeBaseTool
-            # Prompt enhancement options
-            enable_clarification=chat_config.enable_clarification,
-            enable_deep_thinking=chat_config.enable_deep_thinking,
+            features=features,  # Unified feature flags
             skills=skill_metadata,  # Skill metadata for prompt injection
             has_table_context=has_table_context,  # Pass table context flag
         )
@@ -720,6 +725,7 @@ async def _stream_with_http_adapter(
         enable_web_search=enable_web_search,
         enable_clarification=ws_config.enable_clarification,
         enable_deep_thinking=ws_config.enable_deep_thinking,
+        enable_canvas=ws_config.enable_canvas,  # Use enable_canvas from ws_config
         search_engine=ws_config.search_engine,
         bot_name=ws_config.bot_name,
         bot_namespace=ws_config.bot_namespace,
@@ -1006,14 +1012,62 @@ async def _stream_with_http_adapter(
                 else:
                     logger.info("[HTTP_ADAPTER] No sources in result")
 
+                # Preserve artifact from result (Canvas artifact data)
+                # Artifact is passed through from chat_shell's ResponseDone event
+                # Mark result as artifact type for history API to extract content
+                if result.get("artifact"):
+                    result["type"] = "artifact"
+                    logger.info(
+                        "[HTTP_ADAPTER] Artifact in result: title=%s, content_len=%d",
+                        result["artifact"].get("title", ""),
+                        len(result["artifact"].get("content", "")),
+                    )
+
                 # Update subtask status to COMPLETED in database
                 # This is critical for persistence - without this, messages show as "running" after refresh
                 from app.services.chat.storage.db import db_handler
 
+                # Save full artifact to task.json["canvas"] FIRST (before truncation)
+                # This ensures the complete artifact is stored in canvas
+                # Use synchronous save to ensure it completes before we truncate
+                logger.info(
+                    "[HTTP_ADAPTER] DONE event - result keys: %s, has artifact: %s",
+                    list(result.keys()),
+                    "artifact" in result,
+                )
+                if result.get("artifact"):
+                    logger.info(
+                        "[HTTP_ADAPTER] Saving artifact to canvas: task_id=%d, artifact_id=%s, content_len=%d",
+                        task_id,
+                        result["artifact"].get("id", ""),
+                        len(result["artifact"].get("content", "")),
+                    )
+                    await db_handler.save_artifact_to_canvas(
+                        task_id, result["artifact"]
+                    )
+                else:
+                    logger.warning(
+                        "[HTTP_ADAPTER] No artifact in result to save to canvas, result keys: %s",
+                        list(result.keys()),
+                    )
+
+                # For DB storage, truncate artifact content to save space
+                # Full artifact is already stored separately in task.json["canvas"]
+                result_for_storage = result.copy()
+                if result_for_storage.get("artifact"):
+                    artifact = result_for_storage["artifact"]
+                    content = artifact.get("content", "")
+                    if len(content) > 10:
+                        result_for_storage["artifact"] = {
+                            **artifact,
+                            "content": content[:10] + "...",
+                        }
+
                 await db_handler.update_subtask_status(
                     subtask_id=subtask_id,
                     status="COMPLETED",
-                    result=result,
+                    result=result_for_storage,
+                    skip_artifact_save=True,  # Already saved above
                 )
 
                 await ws_emitter.emit_chat_done(
@@ -1276,6 +1330,16 @@ async def _stream_with_bridge(
                     )
                 )
 
+            # Add Canvas tools for artifact creation
+            from chat_shell.tools.builtin import create_canvas_tools
+
+            canvas_tools = create_canvas_tools()
+            extra_tools.extend(canvas_tools)
+            logger.info(
+                "[BRIDGE] Added Canvas tools: %s",
+                [t.name for t in canvas_tools],
+            )
+
         # Get chat history
         history = await get_chat_history(
             task_id,
@@ -1300,7 +1364,21 @@ async def _stream_with_bridge(
             load_skill_tool=load_skill_tool,
             enable_clarification=ws_config.enable_clarification,
             enable_deep_thinking=ws_config.enable_deep_thinking,
+            enable_canvas=ws_config.enable_canvas,  # Use enable_canvas from ws_config
             skills=ws_config.skills,
+        )
+
+        logger.info(
+            "[BRIDGE] AgentConfig created: task_id=%d, subtask_id=%d, "
+            "enable_clarification=%s, enable_deep_thinking=%s, enable_canvas=%s, "
+            "extra_tools_count=%d, tools=%s",
+            task_id,
+            subtask_id,
+            agent_config.enable_clarification,
+            agent_config.enable_deep_thinking,
+            agent_config.enable_canvas,
+            len(extra_tools),
+            [t.name for t in extra_tools],
         )
 
         # Build messages

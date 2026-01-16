@@ -6,6 +6,7 @@ from app.api.endpoints import (
     admin,
     api_keys,
     auth,
+    canvas,
     groups,
     health,
     knowledge,
@@ -104,6 +105,7 @@ api_router.include_router(
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
+api_router.include_router(canvas.router, prefix="/canvas", tags=["canvas"])
 api_router.include_router(k_router)
 
 # Internal API endpoints (for service-to-service communication)
