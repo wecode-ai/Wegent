@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Users, User, Plus, FileText, Globe, ArrowLeft, Search } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
@@ -17,7 +17,7 @@ import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { listGroups } from '@/apis/groups'
 import { useKnowledgeBases } from '../hooks/useKnowledgeBases'
-import type { Group, GroupRole } from '@/types/group'
+import type { Group } from '@/types/group'
 import type { KnowledgeBase } from '@/types/knowledge'
 
 type DocumentTabType = 'personal' | 'group' | 'external'
@@ -66,33 +66,6 @@ export function KnowledgeDocumentPage() {
 
   // Personal knowledge bases
   const personalKb = useKnowledgeBases({ scope: 'personal' })
-
-  // Build group role map from loaded groups
-  const groupRoleMap = useMemo(() => {
-    const roleMap = new Map<string, GroupRole>()
-    groups.forEach(group => {
-      if (group.my_role) {
-        roleMap.set(group.name, group.my_role)
-      }
-    })
-    return roleMap
-  }, [groups])
-
-  // Helper function to check if user can manage a knowledge base
-  // For personal knowledge bases (namespace === 'default'), always allow
-  // For group knowledge bases, check if user has Developer or higher role
-  const canManageKnowledgeBase = useCallback(
-    (kb: KnowledgeBase) => {
-      // Personal knowledge base - always can manage
-      if (kb.namespace === 'default') {
-        return true
-      }
-      // Group knowledge base - check role
-      const role = groupRoleMap.get(kb.namespace)
-      return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
-    },
-    [groupRoleMap]
-  )
 
   // Load user's groups
   useEffect(() => {
