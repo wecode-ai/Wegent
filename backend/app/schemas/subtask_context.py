@@ -22,6 +22,7 @@ class ContextType(str, Enum):
     ATTACHMENT = "attachment"
     KNOWLEDGE_BASE = "knowledge_base"
     TABLE = "table"
+    SELECTED_DOCUMENTS = "selected_documents"
 
 
 class ContextStatus(str, Enum):
@@ -103,7 +104,16 @@ class SubtaskContextBrief(BaseModel):
 
         # Build source_config for table contexts
         source_config = None
-        if context.context_type == ContextType.TABLE:
+        document_count = type_data.get("document_count")
+
+        # Handle context type as string or enum
+        context_type = context.context_type
+        if hasattr(context_type, "value"):
+            context_type_str = context_type.value
+        else:
+            context_type_str = str(context_type)
+
+        if context_type_str == ContextType.TABLE.value:
             url = type_data.get("url")
             if url:
                 source_config = {"url": url}
@@ -115,6 +125,10 @@ class SubtaskContextBrief(BaseModel):
                     f"[SubtaskContextBrief] Building table context: id={context.id}, "
                     f"url={url}, source_config={source_config}"
                 )
+        elif context_type_str == ContextType.SELECTED_DOCUMENTS.value:
+            # For selected_documents, count the document_ids
+            document_ids = type_data.get("document_ids", [])
+            document_count = len(document_ids) if document_ids else 0
 
         return cls(
             id=context.id,
@@ -124,7 +138,7 @@ class SubtaskContextBrief(BaseModel):
             file_extension=type_data.get("file_extension"),
             file_size=type_data.get("file_size"),
             mime_type=type_data.get("mime_type"),
-            document_count=type_data.get("document_count"),
+            document_count=document_count,
             source_config=source_config,
         )
 

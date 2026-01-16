@@ -12,6 +12,7 @@ import {
   FolderIcon,
   FolderMinusIcon,
   PlusIcon,
+  PencilIcon,
 } from '@heroicons/react/24/outline'
 import { HiOutlineEllipsisVertical } from 'react-icons/hi2'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -35,9 +36,10 @@ import { useRouter } from 'next/navigation'
 interface ProjectTaskMenuProps {
   taskId: number
   projectId: number
+  onRename?: () => void
 }
 
-export function ProjectTaskMenu({ taskId, projectId }: ProjectTaskMenuProps) {
+export function ProjectTaskMenu({ taskId, projectId, onRename }: ProjectTaskMenuProps) {
   const { t } = useTranslation()
   const { t: tProjects } = useTranslation('projects')
   const router = useRouter()
@@ -164,6 +166,19 @@ export function ProjectTaskMenu({ taskId, projectId }: ProjectTaskMenuProps) {
             <FolderMinusIcon className="h-3.5 w-3.5 mr-2" />
             {tProjects('menu.removeFromGroup')}
           </DropdownMenuItem>
+
+          {/* Rename Task */}
+          {onRename && (
+            <DropdownMenuItem
+              onClick={e => {
+                e.stopPropagation()
+                onRename()
+              }}
+            >
+              <PencilIcon className="h-3.5 w-3.5 mr-2" />
+              {t('common:tasks.rename_task')}
+            </DropdownMenuItem>
+          )}
 
           {/* Delete Task */}
           <DropdownMenuItem

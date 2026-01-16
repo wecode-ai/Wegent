@@ -571,6 +571,18 @@ export interface WelcomeConfigResponse {
   tips: ChatTipItem[]
 }
 
+// Default Teams Configuration Types
+export interface DefaultTeamConfig {
+  name: string
+  namespace: string
+}
+
+export interface DefaultTeamsResponse {
+  chat: DefaultTeamConfig | null
+  code: DefaultTeamConfig | null
+  knowledge: DefaultTeamConfig | null
+}
+
 export interface SystemConfigResponse {
   version: number
   teams: number[]

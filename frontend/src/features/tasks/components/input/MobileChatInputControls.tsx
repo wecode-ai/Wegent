@@ -39,6 +39,8 @@ export interface MobileChatInputControlsProps {
   teamId?: number | null
   taskId?: number | null
   taskModelId?: string | null
+  /** Knowledge base ID to exclude from context selector (used in notebook mode) */
+  knowledgeBaseId?: number
 
   // Repository and Branch
   showRepositorySelector: boolean
@@ -96,6 +98,7 @@ export function MobileChatInputControls({
   teamId,
   taskId,
   taskModelId,
+  knowledgeBaseId,
   showRepositorySelector,
   selectedRepo,
   setSelectedRepo,
@@ -202,12 +205,12 @@ export function MobileChatInputControls({
         {supportsAttachments(selectedTeam) && (
           <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
         )}
-
         {/* Context (Knowledge base) */}
         {isChatShell(selectedTeam) && (
           <ChatContextInput
             selectedContexts={selectedContexts}
             onContextsChange={setSelectedContexts}
+            excludeKnowledgeBaseId={knowledgeBaseId}
           />
         )}
 
