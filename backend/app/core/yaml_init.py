@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.user import User
-from app.services.k_batch import batch_service
+from app.services.k_batch import apply_default_resources_sync, batch_service
 
 logger = logging.getLogger(__name__)
 
@@ -665,7 +665,19 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
     logger.info(f"Scanning initialization directory: {init_dir}")
 
     try:
+        # Step 1: Apply public shells and skills (only once, not per-user)
         summary = scan_and_apply_yaml_directory(user_id, init_dir, db, force=force)
+
+        # Step 2: Apply default user resources for admin user
+        # This uses the same logic as creating new users, ensuring consistency
+        # The apply_default_resources_sync checks if resources already exist
+        logger.info(f"Applying default user resources for admin user (id={user_id})...")
+        user_resource_results = apply_default_resources_sync(user_id)
+        if user_resource_results:
+            logger.info(f"Admin user resources applied: {user_resource_results}")
+        else:
+            logger.info("No admin user resources to apply or already exists")
+
         logger.info(f"YAML initialization completed: {summary}")
         return summary
     except Exception as e:

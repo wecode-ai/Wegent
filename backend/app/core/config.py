@@ -159,11 +159,6 @@ class Settings(BaseSettings):
         False  # Force re-initialize YAML resources (delete and recreate)
     )
 
-    # New user initialization data directory
-    # Path to directory containing YAML files with resources to apply when creating new users
-    # Supports the same YAML format as INIT_DATA_DIR (multi-document YAML files)
-    NEW_USER_INIT_DATA_DIR: str = ""
-
     # default header
     EXECUTOR_ENV: str = '{"DEFAULT_HEADERS":{"user":"${task_data.user.name}"}}'
 
