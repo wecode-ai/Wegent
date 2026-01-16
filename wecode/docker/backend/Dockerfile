@@ -54,7 +54,7 @@ RUN sed -i '/\[tool\.uv\.sources\]/,/^$/d' pyproject.toml && \
 COPY backend /app
 # Also copy shared to /app/shared for PYTHONPATH imports
 COPY shared /app/shared
-COPY resource.json /app/resource.json
+COPY resource.yaml /app/new_user_init_data_dir/resource.yaml
 # Create .env file (if it doesn't exist)
 RUN if [ ! -f .env ]; then cp .env.example .env; fi
 
