@@ -75,7 +75,8 @@
   "user": {
     "default_name": "User",
     "logout": "Logout",
-    "login": "Login"
+    "login": "Login",
+    "menu": "User menu"
   },
   "chat": {
     "placeholder_chat": "Use the Agent team to explore and discover",
@@ -587,6 +588,10 @@
   },
   "correction": {
     "result_title": "Correction Result"
+  },
+  "appPreview": {
+    "button": "Preview",
+    "title": "App Preview"
   },
   "userSearch": {
     "placeholder": "Search username or email...",

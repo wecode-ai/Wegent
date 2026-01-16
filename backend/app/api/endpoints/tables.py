@@ -20,7 +20,7 @@ from app.schemas.knowledge import (
     TableUrlValidationRequest,
     TableUrlValidationResponse,
 )
-from app.services.knowledge_service import KnowledgeService
+from app.services.knowledge import KnowledgeService
 from app.services.tables import DataTableService, TableQueryRequest
 from app.services.tables.providers import DingTalkProvider  # noqa: F401
 from app.services.tables.url_parser import TableURLParser

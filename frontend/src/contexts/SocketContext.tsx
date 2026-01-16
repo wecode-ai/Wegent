@@ -37,6 +37,7 @@ import {
   TaskCreatedPayload,
   TaskStatusPayload,
   TaskInvitedPayload,
+  TaskAppUpdatePayload,
   SkillRequestPayload,
   SkillResponsePayload,
   CorrectionStartPayload,
@@ -126,6 +127,8 @@ export interface TaskEventHandlers {
   onTaskCreated?: (data: TaskCreatedPayload) => void
   onTaskInvited?: (data: TaskInvitedPayload) => void
   onTaskStatus?: (data: TaskStatusPayload) => void
+  /** Handler for task:app_update event (app preview data updated, sent to task room) */
+  onTaskAppUpdate?: (data: TaskAppUpdatePayload) => void
 }
 
 /** Skill event handlers for generic skill requests */
@@ -544,17 +547,19 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         return () => {}
       }
 
-      const { onTaskCreated, onTaskInvited, onTaskStatus } = handlers
+      const { onTaskCreated, onTaskInvited, onTaskStatus, onTaskAppUpdate } = handlers
 
       if (onTaskCreated) socket.on(ServerEvents.TASK_CREATED, onTaskCreated)
       if (onTaskInvited) socket.on(ServerEvents.TASK_INVITED, onTaskInvited)
       if (onTaskStatus) socket.on(ServerEvents.TASK_STATUS, onTaskStatus)
+      if (onTaskAppUpdate) socket.on(ServerEvents.TASK_APP_UPDATE, onTaskAppUpdate)
 
       // Return cleanup function
       return () => {
         if (onTaskCreated) socket.off(ServerEvents.TASK_CREATED, onTaskCreated)
         if (onTaskInvited) socket.off(ServerEvents.TASK_INVITED, onTaskInvited)
         if (onTaskStatus) socket.off(ServerEvents.TASK_STATUS, onTaskStatus)
+        if (onTaskAppUpdate) socket.off(ServerEvents.TASK_APP_UPDATE, onTaskAppUpdate)
       }
     },
     [socket]

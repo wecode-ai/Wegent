@@ -14,7 +14,7 @@ function getLocalizedText(lang: 'en' | 'zh') {
   return {
     teamListTitle: lang === 'zh' ? '智能体列表' : 'Team List',
     manageBots: lang === 'zh' ? '管理机器人' : 'Manage Bots',
-    newBot: lang === 'zh' ? '新建Bot' : 'New Bot',
+    newBot: lang === 'zh' ? '新建机器人' : 'New Bot',
     save: lang === 'zh' ? '保存' : 'Save',
     noBots: lang === 'zh' ? '暂无' : 'No bots',
   }
