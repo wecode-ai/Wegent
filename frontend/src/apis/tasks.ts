@@ -246,12 +246,15 @@ export const taskApis = {
   },
 
   getPersonalTasksLite: async (
-    params?: PaginationParams & { status?: TaskStatus }
+    params?: PaginationParams & { status?: TaskStatus; types?: string[] }
   ): Promise<TaskListResponse> => {
     const query = new URLSearchParams()
     if (params?.limit) query.append('limit', params.limit.toString())
     if (params?.page) query.append('page', params.page.toString())
     if (params?.status) query.append('status', params.status)
+    if (params?.types && params.types.length > 0) {
+      query.append('types', params.types.join(','))
+    }
     return apiClient.get(`/tasks/lite/personal?${query}`)
   },
 

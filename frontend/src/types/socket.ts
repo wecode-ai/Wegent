@@ -52,6 +52,9 @@ export const ServerEvents = {
   TASK_INVITED: 'task:invited', // User invited to group chat
   UNREAD_COUNT: 'unread:count',
 
+  // Flow events (to user room)
+  FLOW_EXECUTION_UPDATE: 'flow:execution_update',
+
   // Generic Skill Events
   SKILL_REQUEST: 'skill:request', // Server -> Client: generic skill request
 
@@ -299,6 +302,27 @@ export interface TaskInvitedPayload {
 
 export interface UnreadCountPayload {
   count: number
+}
+
+// ============================================================
+// Flow Event Payloads
+// ============================================================
+
+export interface FlowExecutionUpdatePayload {
+  execution_id: number
+  flow_id: number
+  flow_name: string
+  flow_display_name?: string
+  team_name?: string
+  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'RETRYING' | 'CANCELLED'
+  task_id?: number
+  task_type?: string
+  prompt?: string
+  result_summary?: string
+  error_message?: string
+  trigger_reason?: string
+  created_at: string
+  updated_at: string
 }
 
 // ============================================================

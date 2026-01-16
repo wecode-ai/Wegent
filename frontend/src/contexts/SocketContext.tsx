@@ -44,6 +44,7 @@ import {
   CorrectionChunkPayload,
   CorrectionDonePayload,
   CorrectionErrorPayload,
+  FlowExecutionUpdatePayload,
 } from '@/types/socket'
 
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config'
@@ -106,6 +107,8 @@ interface SocketContextType {
   sendSkillResponse: (payload: SkillResponsePayload) => void
   /** Register correction event handlers */
   registerCorrectionHandlers: (handlers: CorrectionEventHandlers) => () => void
+  /** Register flow event handlers */
+  registerFlowHandlers: (handlers: FlowEventHandlers) => () => void
   /** Register a callback to be called when WebSocket reconnects */
   onReconnect: (callback: ReconnectCallback) => () => void
 }
@@ -141,6 +144,11 @@ export interface CorrectionEventHandlers {
   onCorrectionChunk?: (data: CorrectionChunkPayload) => void
   onCorrectionDone?: (data: CorrectionDonePayload) => void
   onCorrectionError?: (data: CorrectionErrorPayload) => void
+}
+
+/** Flow event handlers for flow execution updates */
+export interface FlowEventHandlers {
+  onFlowExecutionUpdate?: (data: FlowExecutionUpdatePayload) => void
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined)
@@ -636,6 +644,30 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   )
 
   /**
+   * Register flow event handlers for flow execution updates
+   * Returns a cleanup function to unregister handlers
+   */
+  const registerFlowHandlers = useCallback(
+    (handlers: FlowEventHandlers): (() => void) => {
+      if (!socket) {
+        return () => {}
+      }
+
+      const { onFlowExecutionUpdate } = handlers
+
+      if (onFlowExecutionUpdate)
+        socket.on(ServerEvents.FLOW_EXECUTION_UPDATE, onFlowExecutionUpdate)
+
+      // Return cleanup function
+      return () => {
+        if (onFlowExecutionUpdate)
+          socket.off(ServerEvents.FLOW_EXECUTION_UPDATE, onFlowExecutionUpdate)
+      }
+    },
+    [socket]
+  )
+
+  /**
    * Register a callback to be called when WebSocket reconnects
    * This is the single source of truth for reconnection events in the app.
    * Returns a cleanup function to unregister the callback.
@@ -717,6 +749,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         registerSkillHandlers,
         sendSkillResponse,
         registerCorrectionHandlers,
+        registerFlowHandlers,
         onReconnect,
       }}
     >

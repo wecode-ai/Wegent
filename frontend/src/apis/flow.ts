@@ -123,4 +123,11 @@ export const flowApis = {
   async getExecution(id: number): Promise<FlowExecution> {
     return apiClient.get(`/flows/executions/${id}`)
   },
+
+  /**
+   * Cancel a running or pending execution
+   */
+  async cancelExecution(id: number): Promise<FlowExecution> {
+    return apiClient.post(`/flows/executions/${id}/cancel`)
+  },
 }

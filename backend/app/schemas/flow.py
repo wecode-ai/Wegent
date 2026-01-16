@@ -210,6 +210,15 @@ class FlowBase(BaseModel):
     trigger_config: Dict[str, Any] = Field(..., description="Trigger configuration")
     team_id: int = Field(..., description="Team (Agent) ID")
     workspace_id: Optional[int] = Field(None, description="Workspace ID (optional)")
+    # Git repository fields (alternative to workspace_id)
+    git_repo: Optional[str] = Field(
+        None, description="Git repository (e.g., 'owner/repo')"
+    )
+    git_repo_id: Optional[int] = Field(None, description="Git repository ID")
+    git_domain: Optional[str] = Field(
+        None, description="Git domain (e.g., 'github.com')"
+    )
+    branch_name: Optional[str] = Field(None, description="Git branch name")
     prompt_template: str = Field(..., description="Prompt template")
     retry_count: int = Field(0, ge=0, le=3, description="Retry count (0-3)")
     timeout_seconds: int = Field(
@@ -234,6 +243,11 @@ class FlowUpdate(BaseModel):
     trigger_config: Optional[Dict[str, Any]] = None
     team_id: Optional[int] = None
     workspace_id: Optional[int] = None
+    # Git repository fields (alternative to workspace_id)
+    git_repo: Optional[str] = None
+    git_repo_id: Optional[int] = None
+    git_domain: Optional[str] = None
+    branch_name: Optional[str] = None
     prompt_template: Optional[str] = None
     retry_count: Optional[int] = Field(None, ge=0, le=3)
     timeout_seconds: Optional[int] = Field(None, ge=60, le=3600)

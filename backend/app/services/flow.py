@@ -5,6 +5,7 @@
 """
 AI Flow service layer for managing Flow configurations and executions.
 """
+import asyncio
 import json
 import logging
 import re
@@ -54,6 +55,7 @@ VALID_STATE_TRANSITIONS: Dict[FlowExecutionStatus, Set[FlowExecutionStatus]] = {
         FlowExecutionStatus.COMPLETED,
         FlowExecutionStatus.FAILED,
         FlowExecutionStatus.RETRYING,
+        FlowExecutionStatus.CANCELLED,  # Allow cancellation of running executions
     },
     FlowExecutionStatus.RETRYING: {
         FlowExecutionStatus.RUNNING,
@@ -169,6 +171,7 @@ class FlowService:
 
         # Validate workspace if provided
         workspace = None
+        workspace_id = flow_in.workspace_id
         if flow_in.workspace_id:
             workspace = (
                 db.query(TaskResource)
@@ -185,6 +188,16 @@ class FlowService:
                     status_code=400,
                     detail=f"Workspace with id {flow_in.workspace_id} not found",
                 )
+        elif flow_in.git_repo:
+            # Create workspace from git repo info if no workspace_id provided
+            workspace_id = self._create_or_get_workspace(
+                db,
+                user_id=user_id,
+                git_repo=flow_in.git_repo,
+                git_repo_id=flow_in.git_repo_id,
+                git_domain=flow_in.git_domain or "github.com",
+                branch_name=flow_in.branch_name or "main",
+            )
 
         # Generate webhook token and secret for event-type flows
         webhook_token = None
@@ -212,7 +225,7 @@ class FlowService:
             enabled=flow_in.enabled,
             trigger_type=flow_in.trigger_type.value,
             team_id=flow_in.team_id,
-            workspace_id=flow_in.workspace_id,
+            workspace_id=workspace_id,
             webhook_token=webhook_token,
             webhook_secret=webhook_secret,
             next_execution_time=next_execution_time,
@@ -574,6 +587,118 @@ class FlowService:
 
     # ========== Execution Management ==========
 
+    def cancel_execution(
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        user_id: int,
+    ) -> FlowExecutionInDB:
+        """
+        Cancel a flow execution.
+
+        This method allows users to manually cancel a running or pending execution.
+        It will:
+        1. Validate the execution exists and belongs to the user
+        2. Check if the execution can be cancelled (not in terminal state)
+        3. Update the status to CANCELLED
+        4. Emit WebSocket event to notify frontend
+
+        Args:
+            db: Database session
+            execution_id: ID of the execution to cancel
+            user_id: ID of the user requesting cancellation
+
+        Returns:
+            Updated FlowExecutionInDB
+
+        Raises:
+            HTTPException: If execution not found or cannot be cancelled
+        """
+        execution = (
+            db.query(FlowExecution)
+            .filter(
+                FlowExecution.id == execution_id,
+                FlowExecution.user_id == user_id,
+            )
+            .first()
+        )
+
+        if not execution:
+            raise HTTPException(status_code=404, detail="Execution not found")
+
+        current_status = FlowExecutionStatus(execution.status)
+
+        # Check if execution is in a terminal state
+        terminal_states = {
+            FlowExecutionStatus.COMPLETED,
+            FlowExecutionStatus.FAILED,
+            FlowExecutionStatus.CANCELLED,
+        }
+        if current_status in terminal_states:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot cancel execution in {current_status.value} state",
+            )
+
+        # Validate state transition
+        if not validate_state_transition(current_status, FlowExecutionStatus.CANCELLED):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot transition from {current_status.value} to CANCELLED",
+            )
+
+        # Update execution status
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        execution.status = FlowExecutionStatus.CANCELLED.value
+        execution.error_message = "Cancelled by user"
+        execution.completed_at = now_utc
+        execution.updated_at = now_utc
+
+        # Calculate how long it's been running (if in RUNNING state)
+        running_info = ""
+        if current_status == FlowExecutionStatus.RUNNING and execution.started_at:
+            running_duration = now_utc - execution.started_at
+            running_hours = running_duration.total_seconds() / 3600
+            running_info = f", running_hours={running_hours:.2f}h"
+
+        db.commit()
+        db.refresh(execution)
+
+        logger.info(
+            f"[Flow] Execution {execution_id} cancelled by user {user_id}: "
+            f"flow_id={execution.flow_id}, task_id={execution.task_id}, "
+            f"previous_status={current_status.value}{running_info}"
+        )
+
+        # Emit WebSocket event
+        self._emit_flow_execution_update(
+            db=db,
+            execution=execution,
+            status=FlowExecutionStatus.CANCELLED,
+            error_message="Cancelled by user",
+        )
+
+        # Build response
+        exec_dict = self._convert_execution_to_dict(execution)
+
+        # Get flow details
+        flow = (
+            db.query(FlowResource).filter(FlowResource.id == execution.flow_id).first()
+        )
+        if flow:
+            flow_crd = Flow.model_validate(flow.json)
+            exec_dict["flow_name"] = flow.name
+            exec_dict["flow_display_name"] = flow_crd.spec.displayName
+            exec_dict["task_type"] = flow_crd.spec.taskType.value
+
+            if flow.team_id:
+                team = db.query(Kind).filter(Kind.id == flow.team_id).first()
+                if team:
+                    exec_dict["team_name"] = team.name
+
+        return FlowExecutionInDB(**exec_dict)
+
     def list_executions(
         self,
         db: Session,
@@ -739,7 +864,9 @@ class FlowService:
         )
 
         if not execution:
-            logger.warning(f"Execution {execution_id} not found for status update")
+            logger.warning(
+                f"[Flow] Execution {execution_id} not found for status update"
+            )
             return False
 
         current_status = FlowExecutionStatus(execution.status)
@@ -747,8 +874,9 @@ class FlowService:
         # Validate state transition
         if not validate_state_transition(current_status, status):
             logger.warning(
-                f"Invalid state transition for execution {execution_id}: "
-                f"{current_status.value} -> {status.value}"
+                f"[Flow] Invalid state transition for execution {execution_id}: "
+                f"{current_status.value} -> {status.value}, "
+                f"flow_id={execution.flow_id}, task_id={execution.task_id}"
             )
             # Don't raise exception, just skip invalid transitions
             # This prevents race conditions from causing errors
@@ -809,9 +937,40 @@ class FlowService:
                 flag_modified(flow, "json")
 
         db.commit()
+
+        # Build detailed log message
+        log_parts = [
+            f"[Flow] Execution {execution_id} status changed: {current_status.value} -> {status.value}",
+            f"flow_id={execution.flow_id}",
+            f"task_id={execution.task_id}",
+        ]
+        if error_message:
+            log_parts.append(f"error={error_message[:100]}")
+        if result_summary:
+            log_parts.append(f"summary={result_summary[:50]}")
+
+        # Use info level for terminal states, debug for intermediate
+        if status in (
+            FlowExecutionStatus.COMPLETED,
+            FlowExecutionStatus.FAILED,
+            FlowExecutionStatus.CANCELLED,
+        ):
+            logger.info(", ".join(log_parts))
+        else:
+            logger.debug(", ".join(log_parts))
+
+        # Emit WebSocket event to notify frontend of the status update
         logger.debug(
-            f"Updated execution {execution_id} status: {current_status.value} -> {status.value} (version {current_version + 1})"
+            f"[Flow] Emitting WS event for execution {execution_id}, user_id={execution.user_id}"
         )
+        self._emit_flow_execution_update(
+            db=db,
+            execution=execution,
+            status=status,
+            result_summary=result_summary,
+            error_message=error_message,
+        )
+
         return True
 
     # ========== Helper Methods ==========
@@ -848,6 +1007,13 @@ class FlowService:
         db.add(execution)
         db.commit()
         db.refresh(execution)
+
+        logger.info(
+            f"[Flow] Created execution {execution.id}: "
+            f"flow_id={flow.id}, flow_name={flow.name}, "
+            f"trigger_type={trigger_type}, trigger_reason={trigger_reason}, "
+            f"user_id={user_id}, status=PENDING"
+        )
 
         exec_dict = self._convert_execution_to_dict(execution)
         exec_dict["flow_name"] = flow.name
@@ -891,26 +1057,30 @@ class FlowService:
 
             from app.tasks.flow_tasks import execute_flow_task_sync
 
+            logger.info(
+                f"[Flow] Dispatching execution {execution.id} (sync): "
+                f"flow_id={flow.id}, timeout={timeout_seconds}s, retry_count={retry_count}"
+            )
+
             thread = threading.Thread(
                 target=execute_flow_task_sync,
                 args=(flow.id, execution.id, timeout_seconds),
                 daemon=True,
             )
             thread.start()
-            logger.debug(
-                f"[flow_service] Dispatched sync execution {execution.id} for flow {flow.id}"
-            )
         else:
             # Celery async execution (default)
             from app.tasks.flow_tasks import execute_flow_task
+
+            logger.info(
+                f"[Flow] Dispatching execution {execution.id} (celery): "
+                f"flow_id={flow.id}, timeout={timeout_seconds}s, retry_count={retry_count}"
+            )
 
             execute_flow_task.apply_async(
                 args=[flow.id, execution.id],
                 kwargs={"timeout_seconds": timeout_seconds},
                 max_retries=retry_count,
-            )
-            logger.debug(
-                f"[flow_service] Dispatched async execution {execution.id} for flow {flow.id}"
             )
 
     # Keep the old name as alias for backward compatibility
@@ -1223,6 +1393,236 @@ class FlowService:
             created_at=flow.created_at,
             updated_at=flow.updated_at,
         )
+
+    def _create_or_get_workspace(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        git_repo: str,
+        git_repo_id: Optional[int],
+        git_domain: str,
+        branch_name: str,
+    ) -> int:
+        """
+        Create or get a workspace for the given git repository.
+
+        This method checks if a workspace already exists for the given repo/branch,
+        and creates one if it doesn't exist.
+
+        Args:
+            db: Database session
+            user_id: User ID
+            git_repo: Git repository name (e.g., 'owner/repo')
+            git_repo_id: Git repository ID
+            git_domain: Git domain (e.g., 'github.com')
+            branch_name: Git branch name
+
+        Returns:
+            Workspace ID
+        """
+        from app.core.constants import KIND_WORKSPACE
+        from app.models.task import TaskResource
+
+        # Generate a unique workspace name based on repo and branch
+        workspace_name = f"{git_repo.replace('/', '-')}-{branch_name}".lower()[:100]
+        namespace = "default"
+
+        # Check if workspace already exists
+        existing = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.user_id == user_id,
+                TaskResource.kind == KIND_WORKSPACE,
+                TaskResource.name == workspace_name,
+                TaskResource.namespace == namespace,
+                TaskResource.is_active == True,
+            )
+            .first()
+        )
+
+        if existing:
+            return existing.id
+
+        # Build git URL from domain and repo
+        git_url = f"https://{git_domain}/{git_repo}.git"
+
+        # Create workspace CRD JSON
+        workspace_json = {
+            "apiVersion": "wegent.io/v1",
+            "kind": "Workspace",
+            "metadata": {
+                "name": workspace_name,
+                "namespace": namespace,
+            },
+            "spec": {
+                "repository": {
+                    "gitUrl": git_url,
+                    "gitRepo": git_repo,
+                    "gitRepoId": git_repo_id or 0,
+                    "gitDomain": git_domain,
+                    "branchName": branch_name,
+                }
+            },
+        }
+
+        # Create new workspace
+        workspace = TaskResource(
+            user_id=user_id,
+            kind=KIND_WORKSPACE,
+            name=workspace_name,
+            namespace=namespace,
+            json=workspace_json,
+            is_active=True,
+        )
+
+        db.add(workspace)
+        db.flush()  # Get the ID without committing
+
+        return workspace.id
+
+    def _emit_flow_execution_update(
+        self,
+        db: Session,
+        execution: FlowExecution,
+        status: FlowExecutionStatus,
+        result_summary: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """
+        Emit flow:execution_update WebSocket event to notify frontend.
+
+        This method handles async WebSocket emission from a synchronous context
+        by using asyncio.run_coroutine_threadsafe with the main event loop.
+
+        Args:
+            db: Database session
+            execution: The FlowExecution record
+            status: New execution status
+            result_summary: Optional result summary
+            error_message: Optional error message
+        """
+        # Get flow details for the payload
+        flow_name: Optional[str] = None
+        flow_display_name: Optional[str] = None
+        team_name: Optional[str] = None
+        task_type: Optional[str] = None
+
+        try:
+            flow = (
+                db.query(FlowResource)
+                .filter(FlowResource.id == execution.flow_id)
+                .first()
+            )
+            if flow:
+                flow_crd = Flow.model_validate(flow.json)
+                flow_name = flow.name
+                flow_display_name = flow_crd.spec.displayName
+                task_type = flow_crd.spec.taskType.value
+
+                if flow.team_id:
+                    team = db.query(Kind).filter(Kind.id == flow.team_id).first()
+                    if team:
+                        team_name = team.name
+        except Exception as e:
+            logger.warning(f"Failed to get flow details for WS event: {e}")
+
+        async def emit_async():
+            try:
+                from app.services.chat.ws_emitter import get_ws_emitter
+
+                ws_emitter = get_ws_emitter()
+                logger.debug(
+                    f"[WS] emit_async called for execution={execution.id}, ws_emitter={'exists' if ws_emitter else 'None'}"
+                )
+                if ws_emitter:
+                    await ws_emitter.emit_flow_execution_update(
+                        user_id=execution.user_id,
+                        execution_id=execution.id,
+                        flow_id=execution.flow_id,
+                        status=status.value,
+                        flow_name=flow_name,
+                        flow_display_name=flow_display_name,
+                        team_name=team_name,
+                        task_id=execution.task_id,
+                        task_type=task_type,
+                        prompt=execution.prompt,
+                        result_summary=result_summary or execution.result_summary,
+                        error_message=error_message or execution.error_message,
+                        trigger_reason=execution.trigger_reason,
+                        created_at=(
+                            execution.created_at.isoformat()
+                            if execution.created_at
+                            else None
+                        ),
+                        updated_at=(
+                            execution.updated_at.isoformat()
+                            if execution.updated_at
+                            else None
+                        ),
+                    )
+                    logger.debug(
+                        f"[WS] Successfully emitted flow:execution_update for execution={execution.id} status={status.value} user_id={execution.user_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"[WS] ws_emitter is None, cannot emit flow:execution_update for execution={execution.id}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"[WS] Failed to emit flow:execution_update event: {e}",
+                    exc_info=True,
+                )
+
+        # Schedule async execution
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(emit_async())
+            logger.debug(
+                f"[WS] Scheduled flow:execution_update event via loop.create_task for execution={execution.id}"
+            )
+        except RuntimeError:
+            # No running event loop in current thread
+            # Try to use the main event loop reference from ws_emitter
+            logger.debug(
+                f"[WS] No running event loop in current thread, trying main event loop for execution={execution.id}"
+            )
+            try:
+                from app.services.chat.ws_emitter import get_main_event_loop
+
+                main_loop = get_main_event_loop()
+                logger.debug(
+                    f"[WS] main_loop={'exists' if main_loop else 'None'}, is_running={main_loop.is_running() if main_loop else 'N/A'}"
+                )
+                if main_loop and main_loop.is_running():
+                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
+                    logger.debug(
+                        f"[WS] Scheduled flow:execution_update event via run_coroutine_threadsafe for execution={execution.id}"
+                    )
+                else:
+                    # Fallback: try asyncio.get_event_loop()
+                    try:
+                        loop = asyncio.get_event_loop()
+                        logger.debug(
+                            f"[WS] Fallback loop, is_running={loop.is_running()}"
+                        )
+                        if loop.is_running():
+                            asyncio.run_coroutine_threadsafe(emit_async(), loop)
+                            logger.debug(
+                                f"[WS] Scheduled flow:execution_update event via fallback loop for execution={execution.id}"
+                            )
+                        else:
+                            logger.warning(
+                                f"[WS] No running event loop available, cannot emit flow:execution_update for execution={execution.id}"
+                            )
+                    except RuntimeError:
+                        logger.warning(
+                            f"[WS] No event loop available for flow:execution_update for execution={execution.id}"
+                        )
+            except RuntimeError as e:
+                logger.warning(
+                    f"[WS] Could not emit flow:execution_update event - no event loop available: {e}"
+                )
 
     def _convert_execution_to_dict(self, execution: FlowExecution) -> Dict[str, Any]:
         """Convert FlowExecution to dict."""

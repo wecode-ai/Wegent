@@ -126,6 +126,89 @@ def list_executions(
     return FlowExecutionListResponse(total=total, items=items)
 
 
+@router.get("/executions/stale", response_model=List[FlowExecutionInDB])
+def get_stale_executions(
+    hours: int = Query(default=1, ge=1, le=24, description="Hours threshold"),
+    execution_status: Optional[str] = Query(
+        default="RUNNING",
+        alias="status",
+        description="Filter by status (PENDING, RUNNING, etc.)",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get stale executions for debugging purposes.
+
+    Returns executions that have been in the specified status for longer than
+    the given hours threshold. Useful for identifying stuck executions.
+
+    Args:
+        hours: Number of hours to consider as stale (1-24)
+        status: Execution status to filter by (default: RUNNING)
+    """
+    from datetime import timedelta
+
+    from app.models.flow import FlowExecution
+
+    # Calculate threshold
+    threshold = datetime.utcnow() - timedelta(hours=hours)
+
+    # Build query - only show user's own executions
+    query = db.query(FlowExecution).filter(
+        FlowExecution.user_id == current_user.id,
+        FlowExecution.created_at < threshold,
+    )
+
+    # Filter by status if provided
+    if execution_status:
+        query = query.filter(FlowExecution.status == execution_status)
+
+    executions = query.order_by(FlowExecution.created_at.desc()).limit(50).all()
+
+    # Convert to FlowExecutionInDB
+    from app.models.flow import FlowResource
+    from app.models.kind import Kind
+    from app.schemas.flow import Flow
+
+    result = []
+    for exec in executions:
+        exec_dict = {
+            "id": exec.id,
+            "user_id": exec.user_id,
+            "flow_id": exec.flow_id,
+            "task_id": exec.task_id,
+            "trigger_type": exec.trigger_type,
+            "trigger_reason": exec.trigger_reason,
+            "prompt": exec.prompt,
+            "status": FlowExecutionStatus(exec.status),
+            "result_summary": exec.result_summary,
+            "error_message": exec.error_message,
+            "retry_attempt": exec.retry_attempt,
+            "started_at": exec.started_at,
+            "completed_at": exec.completed_at,
+            "created_at": exec.created_at,
+            "updated_at": exec.updated_at,
+        }
+
+        # Get flow details
+        flow = db.query(FlowResource).filter(FlowResource.id == exec.flow_id).first()
+        if flow:
+            flow_crd = Flow.model_validate(flow.json)
+            exec_dict["flow_name"] = flow.name
+            exec_dict["flow_display_name"] = flow_crd.spec.displayName
+            exec_dict["task_type"] = flow_crd.spec.taskType.value
+
+            if flow.team_id:
+                team = db.query(Kind).filter(Kind.id == flow.team_id).first()
+                if team:
+                    exec_dict["team_name"] = team.name
+
+        result.append(FlowExecutionInDB(**exec_dict))
+
+    return result
+
+
 @router.get("/executions/{execution_id}", response_model=FlowExecutionInDB)
 def get_execution(
     execution_id: int,
@@ -139,6 +222,28 @@ def get_execution(
     and any result/error messages.
     """
     return flow_service.get_execution(
+        db=db,
+        execution_id=execution_id,
+        user_id=current_user.id,
+    )
+
+
+@router.post("/executions/{execution_id}/cancel", response_model=FlowExecutionInDB)
+def cancel_execution(
+    execution_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Cancel a running or pending Flow execution.
+
+    This endpoint allows users to manually stop an execution that is in PENDING
+    or RUNNING state. Executions in terminal states (COMPLETED, FAILED, CANCELLED)
+    cannot be cancelled.
+
+    Returns the updated execution record with CANCELLED status.
+    """
+    return flow_service.cancel_execution(
         db=db,
         execution_id=execution_id,
         user_id=current_user.id,

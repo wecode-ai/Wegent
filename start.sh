@@ -715,7 +715,7 @@ kill_process_tree() {
 stop_services() {
     echo -e "${YELLOW}Stopping all Wegent services...${NC}"
 
-    local services=("backend" "frontend" "chat_shell" "executor_manager")
+    local services=("backend" "chat_shell" "executor_manager" "frontend")
     local default_ports=("8000" "8100" "8001" "3000")
 
     for i in "${!services[@]}"; do
@@ -732,38 +732,14 @@ stop_services() {
 
         local stopped=false
 
-        # Method 1: Try to stop using PID file
-        if [ -f "$pid_file" ]; then
-            local pid=$(cat "$pid_file")
-            if kill -0 "$pid" 2>/dev/null; then
-                echo -e "  Stopping $service (PID: $pid)..."
-                # Kill the entire process tree
-                kill_process_tree "$pid" "TERM"
-
-                # Wait for process to exit
-                for j in {1..10}; do
-                    if ! kill -0 "$pid" 2>/dev/null; then
-                        stopped=true
-                        break
-                    fi
-                    sleep 0.5
-                done
-
-                # Force terminate if still running
-                if ! $stopped && kill -0 "$pid" 2>/dev/null; then
-                    echo -e "    Force killing $service..."
-                    kill_process_tree "$pid" "KILL"
-                    sleep 1
-                fi
-            fi
-            rm -f "$pid_file"
-        fi
-
-        # Method 2: Kill any process still using the port
+        # Method 1: Kill any process LISTENING on the port FIRST (most reliable)
+        # Use -sTCP:LISTEN to only match listening servers, not client connections
+        # This ensures we kill the actual service process, not just the parent shell
         if [ -n "$port" ]; then
-            local port_pids=$(lsof -ti :$port 2>/dev/null)
+            local port_pids
+            port_pids=$(lsof -ti :$port -sTCP:LISTEN 2>/dev/null) || true
             if [ -n "$port_pids" ]; then
-                echo -e "  Killing processes on port $port..."
+                echo -e "  Stopping $service on port $port..."
                 for port_pid in $port_pids; do
                     if kill -0 "$port_pid" 2>/dev/null; then
                         kill -TERM "$port_pid" 2>/dev/null || true
@@ -771,13 +747,42 @@ stop_services() {
                 done
                 sleep 1
                 # Force kill if still running
-                port_pids=$(lsof -ti :$port 2>/dev/null)
+                port_pids=$(lsof -ti :$port -sTCP:LISTEN 2>/dev/null) || true
                 for port_pid in $port_pids; do
                     if kill -0 "$port_pid" 2>/dev/null; then
+                        echo -e "    Force killing $service..."
                         kill -9 "$port_pid" 2>/dev/null || true
                     fi
                 done
+                stopped=true
             fi
+        fi
+
+        # Method 2: Also try to stop using PID file (for parent shell process)
+        if [ -f "$pid_file" ]; then
+            local pid=$(cat "$pid_file")
+            if kill -0 "$pid" 2>/dev/null; then
+                if [ "$stopped" = false ]; then
+                    echo -e "  Stopping $service (PID: $pid)..."
+                fi
+                # Kill the entire process tree
+                kill_process_tree "$pid" "TERM"
+
+                # Wait for process to exit
+                for j in {1..10}; do
+                    if ! kill -0 "$pid" 2>/dev/null; then
+                        break
+                    fi
+                    sleep 0.5
+                done
+
+                # Force terminate if still running
+                if kill -0 "$pid" 2>/dev/null; then
+                    kill_process_tree "$pid" "KILL"
+                    sleep 1
+                fi
+            fi
+            rm -f "$pid_file"
         fi
 
         rm -f "$port_file"

@@ -13,6 +13,7 @@ import {
   Clock,
   Copy,
   Edit,
+  Hash,
   Key,
   MoreHorizontal,
   Play,
@@ -151,6 +152,19 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
     [t]
   )
 
+  const handleCopyFlowId = useCallback(
+    async (flow: Flow) => {
+      try {
+        await navigator.clipboard.writeText(String(flow.id))
+        toast.success(t('flow_id_copied'))
+      } catch (error) {
+        console.error('Failed to copy flow ID:', error)
+        toast.error(t('copy_failed'))
+      }
+    },
+    [t]
+  )
+
   const formatNextExecution = (dateStr?: string) => {
     return formatUTCDate(dateStr)
   }
@@ -173,15 +187,6 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <h2 className="text-lg font-semibold">{t('my_flows')}</h2>
-        <Button onClick={onCreateFlow} size="sm">
-          <Plus className="mr-1.5 h-4 w-4" />
-          {t('create_flow')}
-        </Button>
-      </div>
-
       {/* List */}
       <div className="flex-1 overflow-y-auto">
         {flowsLoading && flows.length === 0 ? (
@@ -268,6 +273,10 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
                     <DropdownMenuItem onClick={() => onEditFlow(flow)}>
                       <Edit className="mr-2 h-4 w-4" />
                       {t('edit')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleCopyFlowId(flow)}>
+                      <Hash className="mr-2 h-4 w-4" />
+                      {t('copy_flow_id')}
                     </DropdownMenuItem>
                     {/* Webhook copy options for event triggers */}
                     {flow.trigger_type === 'event' && flow.webhook_url && (

@@ -8,6 +8,7 @@
  * Flow creation/edit form component.
  */
 import { useCallback, useEffect, useState } from 'react'
+import { Copy, Check, Terminal } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -31,7 +32,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { flowApis } from '@/apis/flow'
 import { teamApis } from '@/apis/team'
-import type { Team } from '@/types/api'
+import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
 import type {
   Flow,
   FlowCreateRequest,
@@ -41,6 +42,137 @@ import type {
 } from '@/types/flow'
 import { toast } from 'sonner'
 import { CronSchedulePicker } from './CronSchedulePicker'
+import { RepositorySelector, BranchSelector } from '@/features/tasks/components/selector'
+
+/**
+ * Webhook API Usage Section Component
+ * Shows API endpoint, secret, and example curl command for webhook-type flows
+ */
+function WebhookApiSection({ flow }: { flow: Flow }) {
+  const { t } = useTranslation('flow')
+  const [copiedField, setCopiedField] = useState<string | null>(null)
+
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
+  const fullWebhookUrl = `${baseUrl}${flow.webhook_url}`
+
+  const handleCopy = async (text: string, field: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedField(field)
+      setTimeout(() => setCopiedField(null), 2000)
+    } catch (error) {
+      console.error('Failed to copy:', error)
+    }
+  }
+
+  // Generate curl example
+  const curlExample = flow.webhook_secret
+    ? `# ${t('webhook_with_signature')}
+secret="${flow.webhook_secret}"
+BODY='{"key": "value"}'
+SIGNATURE=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$secret" | cut -d' ' -f2)
+
+curl -X POST "${fullWebhookUrl}" \\
+  -H "Content-Type: application/json" \\
+  -H "X-Webhook-Signature: sha256=$SIGNATURE" \\
+  -d "$BODY"`
+    : `# ${t('webhook_without_signature')}
+curl -X POST "${fullWebhookUrl}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"key": "value"}'`
+
+  return (
+    <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/30 p-4 space-y-4">
+      <div className="flex items-center gap-2">
+        <Terminal className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+        <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+          {t('webhook_api_usage')}
+        </span>
+      </div>
+
+      {/* Webhook URL */}
+      <div className="space-y-1.5">
+        <Label className="text-xs text-text-muted">{t('webhook_endpoint')}</Label>
+        <div className="flex items-center gap-2">
+          <code className="flex-1 text-xs bg-background px-3 py-2 rounded border border-border font-mono truncate">
+            {fullWebhookUrl}
+          </code>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={() => handleCopy(fullWebhookUrl, 'url')}
+          >
+            {copiedField === 'url' ? (
+              <Check className="h-3.5 w-3.5 text-green-500" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
+          </Button>
+        </div>
+      </div>
+
+      {/* Webhook secret */}
+      {flow.webhook_secret && (
+        <div className="space-y-1.5">
+          <Label className="text-xs text-text-muted">{t('webhook_secret_label')}</Label>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 text-xs bg-background px-3 py-2 rounded border border-border font-mono truncate">
+              {flow.webhook_secret}
+            </code>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              onClick={() => handleCopy(flow.webhook_secret!, 'secret')}
+            >
+              {copiedField === 'secret' ? (
+                <Check className="h-3.5 w-3.5 text-green-500" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
+            </Button>
+          </div>
+          <p className="text-xs text-text-muted">{t('webhook_secret_hint')}</p>
+        </div>
+      )}
+
+      {/* Curl Example */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs text-text-muted">{t('webhook_curl_example')}</Label>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-xs"
+            onClick={() => handleCopy(curlExample, 'curl')}
+          >
+            {copiedField === 'curl' ? (
+              <>
+                <Check className="h-3 w-3 mr-1 text-green-500" />
+                {t('common:actions.copied')}
+              </>
+            ) : (
+              <>
+                <Copy className="h-3 w-3 mr-1" />
+                {t('common:actions.copy')}
+              </>
+            )}
+          </Button>
+        </div>
+        <pre className="text-xs bg-background p-3 rounded border border-border font-mono overflow-x-auto whitespace-pre">
+          {curlExample}
+        </pre>
+      </div>
+
+      {/* Payload hint */}
+      <p className="text-xs text-text-muted">{t('webhook_payload_hint')}</p>
+    </div>
+  )
+}
 
 interface FlowFormProps {
   open: boolean
@@ -83,6 +215,10 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
   const [timeoutSeconds, setTimeoutSeconds] = useState(600) // Default 10 minutes
   const [enabled, setEnabled] = useState(true)
 
+  // Repository/Branch state for code-type teams
+  const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
+  const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null)
+
   // Teams for selection
   const [teams, setTeams] = useState<Team[]>([])
   const [teamsLoading, setTeamsLoading] = useState(false)
@@ -108,6 +244,43 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
     }
   }, [open])
 
+  // Get selected team
+  const selectedTeam = teams.find(t => t.id === teamId)
+
+  // Check if selected team is code-type (needs repository selection)
+  const isCodeTypeTeam =
+    selectedTeam?.recommended_mode === 'code' || selectedTeam?.recommended_mode === 'both'
+
+  // Debug log
+  console.log(
+    '[FlowForm] selectedTeam:',
+    selectedTeam?.name,
+    'recommended_mode:',
+    selectedTeam?.recommended_mode,
+    'isCodeTypeTeam:',
+    isCodeTypeTeam
+  )
+
+  // Handle repository change
+  const handleRepoChange = useCallback((repo: GitRepoInfo | null) => {
+    setSelectedRepo(repo)
+    setSelectedBranch(null) // Reset branch when repo changes
+  }, [])
+
+  // Handle branch change
+  const handleBranchChange = useCallback((branch: GitBranch | null) => {
+    setSelectedBranch(branch)
+  }, [])
+
+  // Handle team change - reset repo/branch when team changes
+  const handleTeamChange = useCallback((value: string) => {
+    const newTeamId = parseInt(value)
+    setTeamId(newTeamId)
+    // Reset repository selection when team changes
+    setSelectedRepo(null)
+    setSelectedBranch(null)
+  }, [])
+
   // Reset form when flow changes
   useEffect(() => {
     if (flow) {
@@ -121,6 +294,10 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
       setRetryCount(flow.retry_count)
       setTimeoutSeconds(flow.timeout_seconds || 600)
       setEnabled(flow.enabled)
+      // Note: workspace_id restoration will be handled when we have workspace API
+      // For now, reset repo selection
+      setSelectedRepo(null)
+      setSelectedBranch(null)
     } else {
       setDisplayName('')
       setDescription('')
@@ -132,6 +309,8 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
       setRetryCount(0)
       setTimeoutSeconds(600)
       setEnabled(true)
+      setSelectedRepo(null)
+      setSelectedBranch(null)
     }
   }, [flow, open])
 
@@ -171,6 +350,13 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
           retry_count: retryCount,
           timeout_seconds: timeoutSeconds,
           enabled,
+          // Include git repo info if selected
+          ...(selectedRepo && {
+            git_repo: selectedRepo.git_repo,
+            git_repo_id: selectedRepo.git_repo_id,
+            git_domain: selectedRepo.git_domain,
+            branch_name: selectedBranch?.name || 'main',
+          }),
         }
         await flowApis.updateFlow(flow.id, updateData)
         toast.success(t('update_success'))
@@ -195,6 +381,13 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
           retry_count: retryCount,
           timeout_seconds: timeoutSeconds,
           enabled,
+          // Include git repo info if selected
+          ...(selectedRepo && {
+            git_repo: selectedRepo.git_repo,
+            git_repo_id: selectedRepo.git_repo_id,
+            git_domain: selectedRepo.git_domain,
+            branch_name: selectedBranch?.name || 'main',
+          }),
         }
         await flowApis.createFlow(createData)
         toast.success(t('create_success'))
@@ -219,6 +412,8 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
     retryCount,
     timeoutSeconds,
     enabled,
+    selectedRepo,
+    selectedBranch,
     isEditing,
     flow,
     onSuccess,
@@ -385,164 +580,263 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
-        <DialogHeader>
-          <DialogTitle>{isEditing ? t('edit_flow') : t('create_flow')}</DialogTitle>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogHeader className="pb-4 border-b border-border">
+          <DialogTitle className="text-xl">
+            {isEditing ? t('edit_flow') : t('create_flow')}
+          </DialogTitle>
           <DialogDescription>
             {isEditing ? t('edit_flow_desc') : t('create_flow_desc')}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto space-y-6 py-4">
-          {/* Display Name */}
-          <div>
-            <Label>{t('display_name')} *</Label>
-            <Input
-              value={displayName}
-              onChange={e => setDisplayName(e.target.value)}
-              placeholder={t('display_name_placeholder')}
-            />
+        <div className="flex-1 overflow-y-auto py-6 px-1">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6 px-1">
+            {/* Left Column - Basic Info */}
+            <div className="space-y-5">
+              <div className="pb-2 border-b border-border/50">
+                <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wide">
+                  {t('basic_info') || '基本信息'}
+                </h3>
+              </div>
+
+              {/* Display Name */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">
+                  {t('display_name')} <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  value={displayName}
+                  onChange={e => setDisplayName(e.target.value)}
+                  placeholder={t('display_name_placeholder')}
+                  className="h-10"
+                />
+              </div>
+
+              {/* Description */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">{t('description')}</Label>
+                <Input
+                  value={description}
+                  onChange={e => setDescription(e.target.value)}
+                  placeholder={t('description_placeholder')}
+                  className="h-10"
+                />
+              </div>
+
+              {/* Task Type */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">
+                  {t('task_type')} <span className="text-destructive">*</span>
+                </Label>
+                <Select
+                  value={taskType}
+                  onValueChange={value => setTaskType(value as FlowTaskType)}
+                >
+                  <SelectTrigger className="h-10">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="collection">
+                      {t('task_type_collection')} - {t('task_type_collection_desc')}
+                    </SelectItem>
+                    <SelectItem value="execution">
+                      {t('task_type_execution')} - {t('task_type_execution_desc')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Team Selection */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">
+                  {t('select_team')} <span className="text-destructive">*</span>
+                </Label>
+                <Select
+                  value={teamId?.toString() || ''}
+                  onValueChange={handleTeamChange}
+                  disabled={teamsLoading}
+                >
+                  <SelectTrigger className="h-10">
+                    <SelectValue placeholder={t('select_team_placeholder')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {teams.map(team => (
+                      <SelectItem key={team.id} value={team.id.toString()}>
+                        {team.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Repository Selection - Only show for code-type teams */}
+              {isCodeTypeTeam && (
+                <div className="space-y-3 rounded-lg border border-border bg-background-secondary/30 p-4">
+                  <div className="text-sm font-medium text-text-secondary">
+                    {t('workspace_settings')}
+                  </div>
+
+                  {/* Repository Selection */}
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">{t('select_repository')}</Label>
+                    <div className="border border-border rounded-md px-2 py-1.5">
+                      <RepositorySelector
+                        selectedRepo={selectedRepo}
+                        handleRepoChange={handleRepoChange}
+                        disabled={false}
+                        fullWidth={true}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Branch Selection - Only show when repository is selected */}
+                  {selectedRepo && (
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">{t('select_branch')}</Label>
+                      <div className="border border-border rounded-md px-2 py-1.5">
+                        <BranchSelector
+                          selectedRepo={selectedRepo}
+                          selectedBranch={selectedBranch}
+                          handleBranchChange={handleBranchChange}
+                          disabled={false}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <p className="text-xs text-text-muted">{t('workspace_hint')}</p>
+                </div>
+              )}
+
+              {/* Enabled */}
+              <div className="flex items-center justify-between pt-2">
+                <Label className="text-sm font-medium">{t('enable_flow')}</Label>
+                <Switch checked={enabled} onCheckedChange={setEnabled} />
+              </div>
+            </div>
+
+            {/* Right Column - Trigger & Execution */}
+            <div className="space-y-5">
+              <div className="pb-2 border-b border-border/50">
+                <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wide">
+                  {t('trigger_settings') || '触发设置'}
+                </h3>
+              </div>
+
+              {/* Trigger Type */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">
+                  {t('trigger_type')} <span className="text-destructive">*</span>
+                </Label>
+                <Select value={triggerType} onValueChange={handleTriggerTypeChange}>
+                  <SelectTrigger className="h-10">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cron">{t('trigger_cron')}</SelectItem>
+                    <SelectItem value="interval">{t('trigger_interval')}</SelectItem>
+                    <SelectItem value="one_time">{t('trigger_one_time')}</SelectItem>
+                    <SelectItem value="event">{t('trigger_event')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Trigger Config */}
+              <div className="rounded-lg border border-border bg-background-secondary/30 p-4">
+                <div className="mb-3 text-sm font-medium text-text-secondary">
+                  {t('trigger_config')}
+                </div>
+                {renderTriggerConfig()}
+              </div>
+
+              {/* Webhook API Usage - Only show for event trigger with webhook when editing */}
+              {isEditing &&
+                flow &&
+                triggerType === 'event' &&
+                triggerConfig.event_type === 'webhook' &&
+                flow.webhook_url && <WebhookApiSection flow={flow} />}
+
+              {/* Retry Count & Timeout in a row */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">{t('retry_count')}</Label>
+                  <Select
+                    value={retryCount.toString()}
+                    onValueChange={value => setRetryCount(parseInt(value))}
+                  >
+                    <SelectTrigger className="h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0">0 ({t('no_retry')})</SelectItem>
+                      <SelectItem value="1">1</SelectItem>
+                      <SelectItem value="2">2</SelectItem>
+                      <SelectItem value="3">3</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">{t('timeout_seconds')}</Label>
+                  <Select
+                    value={timeoutSeconds.toString()}
+                    onValueChange={value => setTimeoutSeconds(parseInt(value))}
+                  >
+                    <SelectTrigger className="h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="60">1 {t('timeout_minute')}</SelectItem>
+                      <SelectItem value="120">2 {t('timeout_minutes')}</SelectItem>
+                      <SelectItem value="300">5 {t('timeout_minutes')}</SelectItem>
+                      <SelectItem value="600">
+                        10 {t('timeout_minutes')} ({t('default')})
+                      </SelectItem>
+                      <SelectItem value="900">15 {t('timeout_minutes')}</SelectItem>
+                      <SelectItem value="1800">30 {t('timeout_minutes')}</SelectItem>
+                      <SelectItem value="3600">60 {t('timeout_minutes')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <p className="text-xs text-text-muted -mt-2">{t('timeout_hint')}</p>
+            </div>
           </div>
 
-          {/* Description */}
-          <div>
-            <Label>{t('description')}</Label>
-            <Input
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              placeholder={t('description_placeholder')}
-            />
-          </div>
-
-          {/* Task Type */}
-          <div>
-            <Label>{t('task_type')} *</Label>
-            <Select value={taskType} onValueChange={value => setTaskType(value as FlowTaskType)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="collection">
-                  {t('task_type_collection')} - {t('task_type_collection_desc')}
-                </SelectItem>
-                <SelectItem value="execution">
-                  {t('task_type_execution')} - {t('task_type_execution_desc')}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Trigger Type */}
-          <div>
-            <Label>{t('trigger_type')} *</Label>
-            <Select value={triggerType} onValueChange={handleTriggerTypeChange}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="cron">{t('trigger_cron')}</SelectItem>
-                <SelectItem value="interval">{t('trigger_interval')}</SelectItem>
-                <SelectItem value="one_time">{t('trigger_one_time')}</SelectItem>
-                <SelectItem value="event">{t('trigger_event')}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Trigger Config */}
-          <div className="rounded-lg border border-border p-4">
-            <div className="mb-3 text-sm font-medium">{t('trigger_config')}</div>
-            {renderTriggerConfig()}
-          </div>
-
-          {/* Team Selection */}
-          <div>
-            <Label>{t('select_team')} *</Label>
-            <Select
-              value={teamId?.toString() || ''}
-              onValueChange={value => setTeamId(parseInt(value))}
-              disabled={teamsLoading}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder={t('select_team_placeholder')} />
-              </SelectTrigger>
-              <SelectContent>
-                {teams.map(team => (
-                  <SelectItem key={team.id} value={team.id.toString()}>
-                    {team.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Prompt Template */}
-          <div>
-            <Label>{t('prompt_template')} *</Label>
-            <Textarea
-              value={promptTemplate}
-              onChange={e => setPromptTemplate(e.target.value)}
-              placeholder={t('prompt_template_placeholder')}
-              rows={4}
-            />
-            <p className="mt-1 text-xs text-text-muted">{t('prompt_variables_hint')}</p>
-          </div>
-
-          {/* Retry Count */}
-          <div>
-            <Label>{t('retry_count')}</Label>
-            <Select
-              value={retryCount.toString()}
-              onValueChange={value => setRetryCount(parseInt(value))}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">0 ({t('no_retry')})</SelectItem>
-                <SelectItem value="1">1</SelectItem>
-                <SelectItem value="2">2</SelectItem>
-                <SelectItem value="3">3</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Timeout */}
-          <div>
-            <Label>{t('timeout_seconds')}</Label>
-            <Select
-              value={timeoutSeconds.toString()}
-              onValueChange={value => setTimeoutSeconds(parseInt(value))}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="60">1 {t('timeout_minute')}</SelectItem>
-                <SelectItem value="120">2 {t('timeout_minutes')}</SelectItem>
-                <SelectItem value="300">5 {t('timeout_minutes')}</SelectItem>
-                <SelectItem value="600">
-                  10 {t('timeout_minutes')} ({t('default')})
-                </SelectItem>
-                <SelectItem value="900">15 {t('timeout_minutes')}</SelectItem>
-                <SelectItem value="1800">30 {t('timeout_minutes')}</SelectItem>
-                <SelectItem value="3600">60 {t('timeout_minutes')}</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="mt-1 text-xs text-text-muted">{t('timeout_hint')}</p>
-          </div>
-
-          {/* Enabled */}
-          <div className="flex items-center justify-between">
-            <Label>{t('enable_flow')}</Label>
-            <Switch checked={enabled} onCheckedChange={setEnabled} />
+          {/* Full Width - Prompt Template */}
+          <div className="mt-6 pt-6 border-t border-border/50">
+            <div className="pb-3">
+              <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wide">
+                {t('prompt_config') || 'Prompt 配置'}
+              </h3>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">
+                {t('prompt_template')} <span className="text-destructive">*</span>
+              </Label>
+              <Textarea
+                value={promptTemplate}
+                onChange={e => setPromptTemplate(e.target.value)}
+                placeholder={t('prompt_template_placeholder')}
+                rows={5}
+                className="resize-none"
+              />
+              <p className="text-xs text-text-muted">{t('prompt_variables_hint')}</p>
+            </div>
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+        <DialogFooter className="pt-4 border-t border-border gap-3">
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+            className="min-w-[100px]"
+          >
             {t('common:actions.cancel')}
           </Button>
-          <Button onClick={handleSubmit} disabled={submitting}>
+          <Button onClick={handleSubmit} disabled={submitting} className="min-w-[100px]">
             {submitting
               ? t('common:actions.saving')
               : isEditing

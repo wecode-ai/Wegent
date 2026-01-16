@@ -32,7 +32,9 @@
     "retry": "Retry",
     "toggle_theme": "Toggle Theme",
     "upload": "Upload",
-    "view": "View"
+    "view": "View",
+    "copy": "Copy",
+    "copied": "Copied"
   },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"
@@ -407,7 +409,8 @@
     "open_from_git": "Git",
     "access_denied_title": "Access Denied",
     "access_denied_description": "You don't have permission to access this task. Please contact the task owner to invite you via the \"Invite Members\" feature.",
-    "access_denied_go_home": "Go to Chat"
+    "access_denied_go_home": "Go to Chat",
+    "total_count": "{{count}} items total"
   },
   "settings": {
     "title": "Settings",

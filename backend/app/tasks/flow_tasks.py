@@ -207,8 +207,9 @@ async def _create_flow_task(
     Create task and subtasks for flow execution.
 
     Uses the unified create_chat_task function.
+    Note: Flow identification is done via labels (type='flow') set in _add_flow_labels_to_task,
+    not via the source parameter.
     """
-    from app.core.constants import FLOW_SOURCE
     from app.services.chat.storage import TaskCreationParams, create_chat_task
 
     ws = ctx.workspace_info
@@ -234,7 +235,6 @@ async def _create_flow_task(
         task_id=None,
         should_trigger_ai=True,
         rag_prompt=None,
-        source=FLOW_SOURCE,
     )
 
     if not result.task:
@@ -257,15 +257,18 @@ def _add_flow_labels_to_task(
 ) -> None:
     """Add flow-specific labels to the task.
 
+    Sets:
+    - type='flow': Mark this as a Flow-triggered task
+    - userInteracted='false': Task hidden from history until user interacts
+    - flowId: Associated Flow ID
+    - executionId/flowExecutionId: Associated execution record ID
+
     Args:
         db: Database session
         task: Task resource
         flow_id: Flow ID
         execution_id: Execution ID
         supports_direct_chat: Not used anymore. Kept for backward compatibility.
-            We no longer override the source label - it stays as 'chat_shell'
-            (set by create_chat_task), which ensures executor_manager won't
-            pick up Chat Shell type tasks.
     """
     from app.core.constants import (
         LABEL_EXECUTION_ID,
@@ -276,11 +279,13 @@ def _add_flow_labels_to_task(
 
     task_crd = Task.model_validate(task.json)
     if task_crd.metadata.labels:
+        # Flow task identification
+        task_crd.metadata.labels["type"] = "flow"
+        task_crd.metadata.labels["userInteracted"] = "false"
+        # Flow-specific labels
         task_crd.metadata.labels[LABEL_FLOW_ID] = str(flow_id)
         task_crd.metadata.labels[LABEL_EXECUTION_ID] = str(execution_id)
         task_crd.metadata.labels[LABEL_FLOW_EXECUTION_ID] = str(execution_id)
-        # Don't override source label - keep it as 'chat_shell' from create_chat_task
-        # This ensures executor_manager won't pick up Chat Shell type Flow tasks
     task.json = task_crd.model_dump(mode="json")
     db.commit()
 
@@ -385,9 +390,6 @@ FLOW_BATCH_SIZE = 100
 # Lock timeout for check_due_flows (should be longer than expected execution time)
 CHECK_DUE_FLOWS_LOCK_TIMEOUT = 120  # seconds
 
-# Stale execution threshold (executions in PENDING/RUNNING for too long)
-STALE_EXECUTION_HOURS = 2
-
 
 @celery_app.task(bind=True, name="app.tasks.flow_tasks.check_due_flows")
 def check_due_flows(self):
@@ -426,6 +428,9 @@ def check_due_flows(self):
                 # First, recover any orphaned PENDING executions
                 recovered = _recover_stale_pending_executions(db)
 
+                # Then, cleanup any stale RUNNING executions
+                cleaned_running = _cleanup_stale_running_executions(db)
+
                 # Use UTC for comparison since next_execution_time is stored in UTC
                 now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -454,6 +459,7 @@ def check_due_flows(self):
                         "due_flows": 0,
                         "dispatched": 0,
                         "recovered_pending": recovered,
+                        "cleaned_running": cleaned_running,
                     }
 
                 logger.info(f"[flow_tasks] Found {total_due} flow(s) due for execution")
@@ -538,12 +544,13 @@ def check_due_flows(self):
                         )
 
                 logger.info(
-                    f"[flow_tasks] check_due_flows completed: {dispatched}/{total_due} flows dispatched, {recovered} pending recovered"
+                    f"[flow_tasks] check_due_flows completed: {dispatched}/{total_due} flows dispatched, {recovered} pending recovered, {cleaned_running} running cleaned"
                 )
                 return {
                     "due_flows": total_due,
                     "dispatched": dispatched,
                     "recovered_pending": recovered,
+                    "cleaned_running": cleaned_running,
                 }
 
             except Exception as e:
@@ -574,8 +581,9 @@ def _recover_stale_pending_executions(db: Session) -> int:
 
     try:
         # Find PENDING executions older than threshold (likely orphaned)
+        # Use configurable threshold from settings
         stale_threshold = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
-            hours=STALE_EXECUTION_HOURS
+            hours=settings.FLOW_STALE_PENDING_HOURS
         )
 
         stale_executions = (
@@ -593,12 +601,20 @@ def _recover_stale_pending_executions(db: Session) -> int:
             return 0
 
         logger.info(
-            f"[flow_tasks] Found {len(stale_executions)} stale PENDING executions to recover"
+            f"[flow_tasks] Found {len(stale_executions)} stale PENDING executions to recover "
+            f"(threshold: {settings.FLOW_STALE_PENDING_HOURS}h, before {stale_threshold})"
         )
 
         recovered = 0
         for execution in stale_executions:
             try:
+                # Calculate how long it's been pending
+                pending_duration = (
+                    datetime.now(timezone.utc).replace(tzinfo=None)
+                    - execution.created_at
+                )
+                pending_hours = pending_duration.total_seconds() / 3600
+
                 # Get the flow
                 flow = (
                     db.query(FlowResource)
@@ -612,11 +628,17 @@ def _recover_stale_pending_executions(db: Session) -> int:
                 if not flow:
                     # Flow was deleted, mark execution as CANCELLED
                     execution.status = FlowExecutionStatus.CANCELLED.value
-                    execution.error_message = "Flow was deleted"
+                    execution.error_message = (
+                        "Flow was deleted while execution was pending"
+                    )
                     execution.updated_at = datetime.now(timezone.utc).replace(
                         tzinfo=None
                     )
                     db.commit()
+                    logger.warning(
+                        f"[flow_tasks] Cancelled orphaned PENDING execution {execution.id}: "
+                        f"flow_id={execution.flow_id} was deleted, pending_hours={pending_hours:.1f}h"
+                    )
                     continue
 
                 # Re-dispatch the execution
@@ -644,7 +666,9 @@ def _recover_stale_pending_executions(db: Session) -> int:
                 recovered += 1
 
                 logger.info(
-                    f"[flow_tasks] Recovered stale execution {execution.id} for flow {flow.id}"
+                    f"[flow_tasks] Recovered stale PENDING execution {execution.id}: "
+                    f"flow_id={flow.id}, flow_name={flow.name}, "
+                    f"pending_hours={pending_hours:.1f}h, re-dispatched"
                 )
 
             except Exception as e:
@@ -659,6 +683,94 @@ def _recover_stale_pending_executions(db: Session) -> int:
     except Exception as e:
         logger.error(
             f"[flow_tasks] Error recovering stale executions: {e}", exc_info=True
+        )
+        return 0
+
+
+def _cleanup_stale_running_executions(db: Session) -> int:
+    """
+    Cleanup stale RUNNING executions that have been stuck for too long.
+
+    This handles the case where:
+    1. A FlowExecution was started (RUNNING status)
+    2. The executor/chat_shell never completed or failed to callback
+    3. The execution is now stuck in RUNNING forever
+
+    Uses FLOW_STALE_RUNNING_HOURS from settings (default 3 hours).
+
+    Args:
+        db: Database session
+
+    Returns:
+        Number of cleaned up executions
+    """
+    from app.models.flow import FlowExecution
+    from app.schemas.flow import FlowExecutionStatus
+
+    try:
+        # Use configurable threshold from settings
+        stale_threshold = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+            hours=settings.FLOW_STALE_RUNNING_HOURS
+        )
+
+        stale_executions = (
+            db.query(FlowExecution)
+            .filter(
+                FlowExecution.status == FlowExecutionStatus.RUNNING.value,
+                FlowExecution.started_at < stale_threshold,
+            )
+            .limit(50)  # Limit to avoid processing too many at once
+            .all()
+        )
+
+        if not stale_executions:
+            return 0
+
+        logger.info(
+            f"[flow_tasks] Found {len(stale_executions)} stale RUNNING executions to cleanup "
+            f"(threshold: {settings.FLOW_STALE_RUNNING_HOURS}h, before {stale_threshold})"
+        )
+
+        cleaned = 0
+        for execution in stale_executions:
+            try:
+                # Calculate how long it's been running
+                running_duration = (
+                    datetime.now(timezone.utc).replace(tzinfo=None)
+                    - execution.started_at
+                )
+                running_hours = running_duration.total_seconds() / 3600
+
+                execution.status = FlowExecutionStatus.FAILED.value
+                execution.error_message = (
+                    f"Execution timed out after {running_hours:.1f} hour(s) "
+                    f"(stuck in RUNNING state, threshold: {settings.FLOW_STALE_RUNNING_HOURS}h)"
+                )
+                execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                execution.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                cleaned += 1
+
+                logger.warning(
+                    f"[flow_tasks] Cleaned stale RUNNING execution {execution.id}: "
+                    f"flow_id={execution.flow_id}, task_id={execution.task_id}, "
+                    f"started_at={execution.started_at}, running_hours={running_hours:.1f}h, "
+                    f"reason=exceeded {settings.FLOW_STALE_RUNNING_HOURS}h threshold"
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"[flow_tasks] Failed to cleanup execution {execution.id}: {e}",
+                    exc_info=True,
+                )
+                continue
+
+        db.commit()
+        return cleaned
+
+    except Exception as e:
+        logger.error(
+            f"[flow_tasks] Error cleaning up stale RUNNING executions: {e}",
+            exc_info=True,
         )
         return 0
 
@@ -830,6 +942,19 @@ def execute_flow_task(
                         f"[flow_tasks] Executor type, task {task_id} dispatched to executor_manager"
                     )
 
+                # Update execution status to COMPLETED for Chat Shell type
+                # For Executor type, status will be updated by executor when done
+                if supports_direct_chat:
+                    from app.schemas.flow import FlowExecutionStatus
+                    from app.services.flow import flow_service
+
+                    flow_service.update_execution_status(
+                        db,
+                        execution_id=execution_id,
+                        status=FlowExecutionStatus.COMPLETED,
+                        result_summary=f"Task {task_id} created and AI response triggered",
+                    )
+
             finally:
                 loop.close()
 
@@ -931,6 +1056,12 @@ def check_due_flows_sync():
 
     with get_db_session() as db:
         try:
+            # First, recover any orphaned PENDING executions
+            recovered = _recover_stale_pending_executions(db)
+
+            # Then, cleanup any stale RUNNING executions
+            cleaned_running = _cleanup_stale_running_executions(db)
+
             # Use UTC for comparison since next_execution_time is stored in UTC
             now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -955,7 +1086,12 @@ def check_due_flows_sync():
 
             if not due_flows:
                 logger.debug("[flow_tasks] No flows due for execution (sync)")
-                return {"due_flows": 0, "dispatched": 0}
+                return {
+                    "due_flows": 0,
+                    "dispatched": 0,
+                    "recovered_pending": recovered,
+                    "cleaned_running": cleaned_running,
+                }
 
             logger.info(
                 f"[flow_tasks] Found {len(due_flows)} flow(s) due for execution (sync)"
@@ -1000,9 +1136,14 @@ def check_due_flows_sync():
                     continue
 
             logger.info(
-                f"[flow_tasks] check_due_flows_sync completed: {dispatched}/{len(due_flows)} flows dispatched"
+                f"[flow_tasks] check_due_flows_sync completed: {dispatched}/{len(due_flows)} flows dispatched, {recovered} pending recovered, {cleaned_running} running cleaned"
             )
-            return {"due_flows": len(due_flows), "dispatched": dispatched}
+            return {
+                "due_flows": len(due_flows),
+                "dispatched": dispatched,
+                "recovered_pending": recovered,
+                "cleaned_running": cleaned_running,
+            }
 
         except Exception as e:
             logger.error(

@@ -21,6 +21,7 @@ import {
   Workflow,
   ChevronDown,
   ChevronUp,
+  Settings2,
 } from 'lucide-react'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
@@ -30,6 +31,7 @@ import { isTaskUnread } from '@/utils/taskViewStatus'
 import MobileSidebar from '@/features/layout/MobileSidebar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
+import HistoryManageDialog from './HistoryManageDialog'
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
@@ -87,6 +89,9 @@ export default function TaskSidebar({
   // Group chats collapse/expand state
   const [isGroupChatsExpanded, setIsGroupChatsExpanded] = useState(false)
   const maxVisibleGroupChats = 5
+
+  // History manage dialog state
+  const [isHistoryManageDialogOpen, setIsHistoryManageDialogOpen] = useState(false)
 
   // Use external shortcut display text from parent
   const shortcutDisplayText = externalShortcutDisplayText ?? ''
@@ -602,7 +607,24 @@ export default function TaskSidebar({
                         className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${groupTasks.length > 0 ? 'pt-3 mt-2 border-t border-border' : ''}`}
                       >
                         <div className="flex items-center gap-1">
-                          <span>{t('common:tasks.history_title')}</span>
+                          <TooltipProvider>
+                            <Tooltip delayDuration={300}>
+                              <TooltipTrigger asChild>
+                                <button
+                                  onClick={() => setIsHistoryManageDialogOpen(true)}
+                                  className="flex items-center gap-1 hover:text-text-primary transition-colors group"
+                                >
+                                  <span className="group-hover:underline">
+                                    {t('common:tasks.history_title')}
+                                  </span>
+                                  <Settings2 className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent side="right">
+                                <p>{t('history:actions.search')}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                           <TooltipProvider>
                             <Tooltip delayDuration={300}>
                               <TooltipTrigger asChild>
@@ -709,6 +731,12 @@ export default function TaskSidebar({
       >
         {sidebarContent}
       </MobileSidebar>
+
+      {/* History Manage Dialog */}
+      <HistoryManageDialog
+        open={isHistoryManageDialogOpen}
+        onOpenChange={setIsHistoryManageDialogOpen}
+      />
     </>
   )
 }

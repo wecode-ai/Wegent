@@ -95,6 +95,11 @@ export interface FlowCreateRequest {
   trigger_config: Record<string, unknown>
   team_id: number
   workspace_id?: number
+  // Git repository fields (alternative to workspace_id)
+  git_repo?: string
+  git_repo_id?: number
+  git_domain?: string
+  branch_name?: string
   prompt_template: string
   retry_count?: number
   timeout_seconds?: number // Execution timeout (60-3600s)
@@ -110,6 +115,11 @@ export interface FlowUpdateRequest {
   trigger_config?: Record<string, unknown>
   team_id?: number
   workspace_id?: number
+  // Git repository fields (alternative to workspace_id)
+  git_repo?: string
+  git_repo_id?: number
+  git_domain?: string
+  branch_name?: string
   prompt_template?: string
   retry_count?: number
   timeout_seconds?: number // Execution timeout (60-3600s)

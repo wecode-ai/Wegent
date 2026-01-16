@@ -59,11 +59,16 @@ function SubscriptionsPageContent() {
   return (
     <div className="flex h-full flex-col bg-base">
       {/* Back button header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-white">
-        <Button variant="ghost" size="icon" className="h-9 w-9" onClick={handleBack}>
-          <ArrowLeft className="h-5 w-5" />
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" className="h-9 w-9" onClick={handleBack}>
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <h1 className="text-lg font-semibold">{t('my_flows')}</h1>
+        </div>
+        <Button onClick={handleCreateFlow} size="sm">
+          {t('create_flow')}
         </Button>
-        <h1 className="text-lg font-semibold">{t('my_flows')}</h1>
       </div>
 
       {/* Flow list */}

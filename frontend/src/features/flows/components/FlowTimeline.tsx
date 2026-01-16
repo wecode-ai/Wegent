@@ -8,7 +8,7 @@
  * Flow execution timeline component - Twitter-like social feed style.
  * Displays flow executions as posts similar to social media feeds.
  */
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   AlertCircle,
@@ -16,21 +16,25 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock,
+  Copy,
   Loader2,
   MessageSquare,
   Plus,
   RefreshCw,
   Settings,
   Sparkles,
+  StopCircle,
   XCircle,
   Zap,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { useFlowContext } from '../contexts/flowContext'
 import type { FlowExecution, FlowExecutionStatus } from '@/types/flow'
 import { parseUTCDate } from '@/lib/utils'
 import { paths } from '@/config/paths'
+import { FlowConversationDialog } from './FlowConversationDialog'
 
 interface FlowTimelineProps {
   onCreateFlow?: () => void
@@ -75,7 +79,20 @@ const statusConfig: Record<
 export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
   const { t } = useTranslation('flow')
   const router = useRouter()
-  const { executions, executionsLoading, executionsTotal, loadMoreExecutions } = useFlowContext()
+  const {
+    executions,
+    executionsLoading,
+    executionsRefreshing,
+    executionsTotal,
+    loadMoreExecutions,
+    refreshExecutions,
+    cancelExecution,
+  } = useFlowContext()
+
+  // Dialog state for viewing conversation
+  const [dialogTaskId, setDialogTaskId] = useState<number | null>(null)
+  // Track which execution is currently being cancelled
+  const [cancellingId, setCancellingId] = useState<number | null>(null)
 
   // Group executions by date for section headers
   const groupedExecutions = useMemo(() => {
@@ -163,7 +180,37 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
 
   const handleViewTask = (exec: FlowExecution) => {
     if (exec.task_id) {
-      router.push(`/chat?taskId=${exec.task_id}`)
+      setDialogTaskId(exec.task_id)
+    }
+  }
+
+  const handleCopyIds = async (exec: FlowExecution) => {
+    const ids = [
+      `Execution ID: ${exec.id}`,
+      `Flow ID: ${exec.flow_id}`,
+      exec.task_id ? `Task ID: ${exec.task_id}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    try {
+      await navigator.clipboard.writeText(ids)
+      toast.success(t('feed.ids_copied'))
+    } catch {
+      toast.error(t('copy_failed'))
+    }
+  }
+
+  const handleCancel = async (exec: FlowExecution) => {
+    if (cancellingId) return // Prevent double-click
+    try {
+      setCancellingId(exec.id)
+      await cancelExecution(exec.id)
+      toast.success(t('cancel_success'))
+    } catch {
+      toast.error(t('cancel_failed'))
+    } finally {
+      setCancellingId(null)
     }
   }
 
@@ -177,37 +224,46 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
         {!isLast && <div className="absolute left-5 top-12 bottom-0 w-px bg-border" />}
 
         <div className="flex gap-3 pb-6">
-          {/* Avatar */}
+          {/* Avatar with status ring */}
           <div className="relative flex-shrink-0">
-            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center ring-4 ring-white">
-              <Bot className="h-5 w-5 text-primary" />
-            </div>
-            {/* Status indicator dot */}
             <div
-              className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-white flex items-center justify-center ${
+              className={`h-10 w-10 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center ring-[3px] ${
                 exec.status === 'COMPLETED'
-                  ? 'bg-green-500'
+                  ? 'ring-green-500'
                   : exec.status === 'FAILED'
-                    ? 'bg-red-500'
+                    ? 'ring-red-500'
                     : exec.status === 'RUNNING'
-                      ? 'bg-primary'
-                      : 'bg-gray-400'
+                      ? 'ring-primary animate-pulse'
+                      : exec.status === 'RETRYING'
+                        ? 'ring-amber-500 animate-pulse'
+                        : 'ring-gray-400/50'
               }`}
             >
-              {exec.status === 'RUNNING' && (
-                <div className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
-              )}
+              <Bot className="h-5 w-5 text-primary" />
             </div>
           </div>
 
           {/* Content */}
           <div className="flex-1 min-w-0">
             {/* Header */}
-            <div className="flex items-baseline gap-2 flex-wrap">
-              <span className="font-semibold text-text-primary text-[15px]">{flowName}</span>
-              {exec.team_name && <span className="text-text-muted text-sm">@{exec.team_name}</span>}
-              <span className="text-text-muted text-sm">·</span>
-              <span className="text-text-muted text-sm">{formatRelativeTime(exec.created_at)}</span>
+            <div className="flex items-center gap-2">
+              <div className="flex items-baseline gap-2 flex-wrap flex-1 min-w-0">
+                <span className="font-semibold text-text-primary text-[15px]">{flowName}</span>
+                {exec.team_name && (
+                  <span className="text-text-muted text-sm">@{exec.team_name}</span>
+                )}
+                <span className="text-text-muted text-sm">·</span>
+                <span className="text-text-muted text-sm">
+                  {formatRelativeTime(exec.created_at)}
+                </span>
+              </div>
+              <button
+                onClick={() => handleCopyIds(exec)}
+                className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-surface transition-colors"
+                title={t('feed.copy_ids')}
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </button>
             </div>
 
             {/* Action description */}
@@ -258,17 +314,35 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
               </div>
             )}
 
-            {/* Footer - View details link */}
-            {exec.task_id && (
-              <button
-                onClick={() => handleViewTask(exec)}
-                className="mt-3 inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 transition-colors"
-              >
-                <MessageSquare className="h-3.5 w-3.5" />
-                {t('feed.view_conversation')}
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            )}
+            {/* Footer - Actions */}
+            <div className="mt-3 flex items-center gap-3">
+              {/* Cancel button for PENDING/RUNNING executions */}
+              {(exec.status === 'PENDING' || exec.status === 'RUNNING') && (
+                <button
+                  onClick={() => handleCancel(exec)}
+                  disabled={cancellingId === exec.id}
+                  className="inline-flex items-center gap-1 text-sm text-red-500 hover:text-red-600 transition-colors disabled:opacity-50"
+                >
+                  {cancellingId === exec.id ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <StopCircle className="h-3.5 w-3.5" />
+                  )}
+                  {t('cancel_execution')}
+                </button>
+              )}
+              {/* View conversation link */}
+              {exec.task_id && (
+                <button
+                  onClick={() => handleViewTask(exec)}
+                  className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 transition-colors"
+                >
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  {t('feed.view_conversation')}
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -276,9 +350,16 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
       {/* Feed Content */}
       <div className="flex-1 overflow-y-auto">
+        {/* Refresh indicator */}
+        {executionsRefreshing && (
+          <div className="flex items-center justify-center py-2 bg-surface/80 border-b border-border">
+            <Loader2 className="h-4 w-4 animate-spin text-primary mr-2" />
+            <span className="text-sm text-text-muted">{t('common:actions.loading')}</span>
+          </div>
+        )}
         {executionsLoading && executions.length === 0 ? (
           <div className="flex h-60 items-center justify-center">
             <div className="flex flex-col items-center gap-3 text-text-muted">
@@ -353,6 +434,27 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
           </div>
         )}
       </div>
+
+      {/* Floating Refresh Button */}
+      {executions.length > 0 && (
+        <button
+          onClick={() => refreshExecutions()}
+          disabled={executionsRefreshing}
+          className="absolute bottom-6 right-6 h-10 w-10 rounded-full bg-surface border border-border text-text-muted shadow-sm hover:text-text-primary hover:border-border-hover hover:shadow-md transition-all disabled:opacity-50 flex items-center justify-center cursor-pointer"
+          title={t('feed.refresh')}
+        >
+          <RefreshCw className={`h-4 w-4 ${executionsRefreshing ? 'animate-spin' : ''}`} />
+        </button>
+      )}
+
+      {/* Conversation Dialog */}
+      <FlowConversationDialog
+        taskId={dialogTaskId}
+        open={dialogTaskId !== null}
+        onOpenChange={open => {
+          if (!open) setDialogTaskId(null)
+        }}
+      />
     </div>
   )
 }

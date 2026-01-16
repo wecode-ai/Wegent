@@ -166,6 +166,13 @@ class Settings(BaseSettings):
     FLOW_DEFAULT_TIMEOUT_SECONDS: int = 600  # 10 minutes
     FLOW_DEFAULT_RETRY_COUNT: int = 1
     FLOW_EXECUTION_PAGE_LIMIT: int = 50
+    # Stale execution cleanup thresholds (hours)
+    FLOW_STALE_PENDING_HOURS: int = (
+        2  # PENDING executions older than this will be recovered
+    )
+    FLOW_STALE_RUNNING_HOURS: int = (
+        3  # RUNNING executions older than this will be marked FAILED
+    )
 
     # Circuit breaker configuration
     CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures

@@ -6,7 +6,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Settings2 } from 'lucide-react'
+import { Settings } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
@@ -94,13 +94,13 @@ export default function FlowPage() {
           isSidebarCollapsed={isCollapsed}
         >
           <Button
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9"
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5"
             onClick={handleGoToSubscriptions}
-            title={t('flow:my_flows')}
           >
-            <Settings2 className="h-5 w-5" />
+            <Settings className="h-4 w-4" />
+            {t('flow:feed.manage_subscriptions')}
           </Button>
           <ThemeToggle />
         </TopNavigation>

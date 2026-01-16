@@ -551,3 +551,134 @@ Flow 名称：{{flow_name}}
 3. **任务系统**：通过 `task_kinds_service.create_task_or_append()` 创建 Task
 
 4. **聊天系统**：Chat Shell 类型的 Team 通过聊天触发系统触发 AI 响应
+
+---
+
+## Flow 任务历史对话可见性
+
+### 需求背景
+
+AI Flow 触发的任务默认不应该显示在用户的历史对话列表中，以避免自动任务干扰用户的对话历史。只有当用户主动与 Flow 任务交互（发送新消息）后，该任务才应该出现在历史对话列表中。
+
+### 设计方案
+
+#### Task Labels 标签体系
+
+Task 的 `metadata.labels` 包含以下标签：
+
+| 标签 | 值 | 说明 |
+|------|------|------|
+| `type` | `"online"` \| `"offline"` \| `"flow"` | 任务执行模式。`flow` 表示由 AI Flow 触发的任务 |
+| `taskType` | `"chat"` \| `"code"` | 任务类型 |
+| `source` | `"web"` \| `"api"` \| `"chat_shell"` | 任务来源（用户发起方式） |
+| `flowId` | `"123"` | Flow 任务特有，关联的 Flow ID |
+| `executionId` | `"456"` | Flow 任务特有，关联的执行记录 ID |
+| `userInteracted` | `"true"` \| `"false"` | Flow 任务特有，用户是否已交互 |
+
+#### 可见性规则
+
+1. **Flow 任务创建时**：
+   - `type` 设置为 `"flow"`
+   - `userInteracted` 设置为 `"false"`
+   - 任务不显示在历史对话列表
+
+2. **用户发送消息后**：
+   - `userInteracted` 更新为 `"true"`
+   - 任务显示在历史对话列表
+
+3. **历史对话列表查询**：
+   - 过滤条件：`type != "flow"` OR (`type == "flow"` AND `userInteracted == "true"`)
+
+### 数据流程图
+
+```mermaid
+flowchart TD
+    subgraph FlowTrigger["Flow 触发任务"]
+        FT1["Flow 调度器触发"] --> FT2["创建 Task"]
+        FT2 --> FT3["设置 labels:<br/>type='flow'<br/>userInteracted='false'"]
+        FT3 --> FT4["任务不显示在历史对话"]
+    end
+
+    subgraph UserView["用户查看会话"]
+        UV1["点击 Flow Execution<br/>'查看会话' 按钮"] --> UV2["弹出会话对话框"]
+        UV2 --> UV3{"用户是否发送消息?"}
+        UV3 -->|"否"| UV4["关闭对话框<br/>任务仍不显示"]
+        UV3 -->|"是"| UV5["更新 labels:<br/>userInteracted='true'"]
+        UV5 --> UV6["任务显示在历史对话"]
+    end
+
+    subgraph HistoryList["历史对话列表"]
+        HL1["查询用户任务"] --> HL2{"检查 type"}
+        HL2 -->|"online/offline"| HL3["显示在列表"]
+        HL2 -->|"flow"| HL4{"userInteracted?"}
+        HL4 -->|"true"| HL3
+        HL4 -->|"false"| HL5["不显示"]
+    end
+
+    FT4 -.-> UV1
+    UV6 -.-> HL1
+```
+
+### 时序图
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User as 用户
+    participant FE as 前端
+    participant API as 后端 API
+    participant DB as 数据库
+
+    Note over User,DB: Flow 任务创建（自动触发）
+    API->>DB: 创建 Task (type='flow', userInteracted='false')
+    Note over DB: 任务不显示在历史对话列表
+
+    Note over User,DB: 用户查看 Flow Execution
+    User->>FE: 点击"查看会话"
+    FE->>API: GET /tasks/{task_id}
+    API-->>FE: 返回任务详情
+    FE->>FE: 弹出会话对话框
+
+    Note over User,DB: 用户发送新消息
+    User->>FE: 输入并发送消息
+    FE->>API: POST /chat (task_id, message)
+    API->>DB: 创建 Subtask
+    API->>DB: 更新 Task labels (userInteracted='true')
+    API-->>FE: 返回成功
+    Note over DB: 任务现在显示在历史对话列表
+
+    Note over User,DB: 历史对话列表查询
+    User->>FE: 打开历史对话
+    FE->>API: GET /tasks/lite
+    API->>DB: SELECT * WHERE type != 'flow'<br/>OR userInteracted = 'true'
+    DB-->>API: 任务列表
+    API-->>FE: 返回过滤后的列表
+```
+
+### 实现要点
+
+#### 后端修改
+
+1. **`flow_tasks.py`** - Flow 任务创建时设置标签：
+   ```python
+   # _add_flow_labels_to_task 函数中添加
+   task_crd.metadata.labels["type"] = "flow"
+   task_crd.metadata.labels["userInteracted"] = "false"
+   ```
+
+2. **`task_kinds.py`** - 历史对话列表查询时过滤：
+   ```python
+   # get_user_tasks_lite 等方法中添加过滤逻辑
+   # 过滤掉 type='flow' 且 userInteracted='false' 的任务
+   ```
+
+3. **`chat_namespace.py`** - 用户发送消息时更新标签：
+   ```python
+   # 处理 chat:send 时，如果任务有 flowId 标签
+   # 则更新 userInteracted='true'
+   ```
+
+#### 前端修改
+
+1. **`FlowTimeline.tsx`** - "查看会话"按钮点击时弹出对话框
+2. **对话框组件** - 使用现有会话页面组件，传入 task_id

@@ -164,6 +164,40 @@ export interface AdminPersonalKeyListResponse {
   total: number
 }
 
+// Flow Monitor Types
+export interface FlowMonitorStats {
+  total_executions: number
+  completed_count: number
+  failed_count: number
+  timeout_count: number
+  cancelled_count: number
+  running_count: number
+  pending_count: number
+  success_rate: number
+  failure_rate: number
+  timeout_rate: number
+  active_flows_count: number
+  total_flows_count: number
+}
+
+export interface FlowMonitorError {
+  execution_id: number
+  flow_id: number
+  user_id: number
+  task_id: number | null
+  status: string
+  error_message: string | null
+  trigger_type: string | null
+  created_at: string
+  started_at: string | null
+  completed_at: string | null
+}
+
+export interface FlowMonitorErrorListResponse {
+  total: number
+  items: FlowMonitorError[]
+}
+
 // Public Retriever Types
 export interface AdminPublicRetriever {
   id: number
@@ -432,5 +466,33 @@ export const adminApis = {
    */
   async deletePublicRetriever(retrieverId: number): Promise<void> {
     return apiClient.delete(`/admin/public-retrievers/${retrieverId}`)
+  },
+
+  // ==================== Flow Monitor ====================
+
+  /**
+   * Get flow execution statistics for admin monitoring
+   */
+  async getFlowMonitorStats(hours: number = 24): Promise<FlowMonitorStats> {
+    return apiClient.get(`/admin/flow-monitor/stats?hours=${hours}`)
+  },
+
+  /**
+   * Get list of flow execution errors for admin monitoring
+   */
+  async getFlowMonitorErrors(
+    page: number = 1,
+    limit: number = 50,
+    hours: number = 24,
+    status?: string
+  ): Promise<FlowMonitorErrorListResponse> {
+    const params = new URLSearchParams()
+    params.append('page', String(page))
+    params.append('limit', String(limit))
+    params.append('hours', String(hours))
+    if (status) {
+      params.append('status', status)
+    }
+    return apiClient.get(`/admin/flow-monitor/errors?${params.toString()}`)
   },
 }

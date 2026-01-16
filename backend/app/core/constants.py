@@ -38,12 +38,6 @@ KIND_WORKSPACE = "Workspace"
 KIND_TASK = "Task"
 
 
-# ========== Flow Task Sources ==========
-
-FLOW_SOURCE = "flow"
-CHAT_SOURCE = "chat"
-
-
 # ========== Flow Execution Labels ==========
 
 LABEL_FLOW_ID = "flowId"

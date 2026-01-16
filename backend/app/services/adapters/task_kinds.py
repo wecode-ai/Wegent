@@ -358,12 +358,18 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
 
         # Filter out DELETE status tasks in application layer and restore order
+        # Also filter out Flow tasks that user hasn't interacted with (type='flow' and userInteracted='false')
         id_to_task = {}
         for t in tasks:
             task_crd = Task.model_validate(t.json)
             status = task_crd.status.status if task_crd.status else "PENDING"
-            if status != "DELETE":
-                id_to_task[t.id] = t
+            if status == "DELETE":
+                continue
+            # Filter out non-interacted Flow tasks
+            labels = task_crd.metadata.labels or {}
+            if labels.get("type") == "flow" and labels.get("userInteracted") != "true":
+                continue
+            id_to_task[t.id] = t
 
         # Restore the original order and apply limit
         filtered_tasks = []
@@ -443,12 +449,18 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
 
         # Filter out DELETE status tasks in application layer and restore order
+        # Also filter out Flow tasks that user hasn't interacted with (type='flow' and userInteracted='false')
         id_to_task = {}
         for t in tasks:
             task_crd = Task.model_validate(t.json)
             status = task_crd.status.status if task_crd.status else "PENDING"
-            if status != "DELETE":
-                id_to_task[t.id] = t
+            if status == "DELETE":
+                continue
+            # Filter out non-interacted Flow tasks
+            labels = task_crd.metadata.labels or {}
+            if labels.get("type") == "flow" and labels.get("userInteracted") != "true":
+                continue
+            id_to_task[t.id] = t
 
         # Restore the original order and apply limit
         tasks = []
@@ -694,7 +706,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         return result, len(valid_tasks)
 
     def get_user_personal_tasks_lite(
-        self, db: Session, *, user_id: int, skip: int = 0, limit: int = 50
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 50,
+        types: List[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's personal (non-group-chat) task list with pagination (lightweight version for list display).
@@ -702,7 +720,14 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         A task is personal if:
         - task.json.spec.is_group_chat is NOT true, AND
         - task has NO records in task_members table
+
+        Args:
+            types: List of task types to include. Options: 'online', 'offline', 'flow'.
+                   Default is ['online', 'offline'] if None.
         """
+        if types is None:
+            types = ["online", "offline"]
+
         from app.models.task_member import MemberStatus, TaskMember
 
         # Get all task IDs that are group chats (have members)
@@ -774,7 +799,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
 
         # Filter out DELETE status and group chat tasks
+        # Apply type filter based on 'types' parameter
         valid_tasks = []
+        include_online = "online" in types
+        include_offline = "offline" in types
+        include_flow = "flow" in types
+
         for t in tasks:
             # Skip group chat tasks
             if t.id in all_group_task_ids:
@@ -782,8 +812,30 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
             task_crd = Task.model_validate(t.json)
             status = task_crd.status.status if task_crd.status else "PENDING"
-            if status != "DELETE":
-                valid_tasks.append(t)
+            if status == "DELETE":
+                continue
+
+            # Determine task type from labels
+            labels = task_crd.metadata.labels or {}
+            is_flow = labels.get("type") == "flow"
+            task_type_label = labels.get("taskType", "chat")
+            is_code = task_type_label == "code"
+
+            # Apply type filter
+            if is_flow:
+                # Flow task - include only if 'flow' in types
+                if not include_flow:
+                    continue
+            elif is_code:
+                # Code task (offline) - include only if 'offline' in types
+                if not include_offline:
+                    continue
+            else:
+                # Chat task (online) - include only if 'online' in types
+                if not include_online:
+                    continue
+
+            valid_tasks.append(t)
 
         # Restore original order (by created_at descending) and apply limit
         id_to_task = {t.id: t for t in valid_tasks}
@@ -999,12 +1051,18 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
 
         # Filter out DELETE status tasks and restore order
+        # Also filter out Flow tasks that user hasn't interacted with
         id_to_task = {}
         for t in tasks:
             task_crd = Task.model_validate(t.json)
             status = task_crd.status.status if task_crd.status else "PENDING"
-            if status != "DELETE":
-                id_to_task[t.id] = t
+            if status == "DELETE":
+                continue
+            # Filter out non-interacted Flow tasks
+            labels = task_crd.metadata.labels or {}
+            if labels.get("type") == "flow" and labels.get("userInteracted") != "true":
+                continue
+            id_to_task[t.id] = t
 
         # Restore the original order (by ID descending)
         tasks = [id_to_task[tid] for tid in task_ids if tid in id_to_task]
@@ -1202,6 +1260,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         tasks = db.query(TaskResource).filter(TaskResource.id.in_(task_ids)).all()
 
         # Filter by title and DELETE status in application layer, restore order
+        # Also filter out Flow tasks that user hasn't interacted with
         title_lower = title.lower()
         id_to_task = {}
         for t in tasks:
@@ -1209,8 +1268,15 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             status = task_crd.status.status if task_crd.status else "PENDING"
             task_title = task_crd.spec.title or ""
             # Filter: not DELETE and title matches
-            if status != "DELETE" and title_lower in task_title.lower():
-                id_to_task[t.id] = t
+            if status == "DELETE":
+                continue
+            if title_lower not in task_title.lower():
+                continue
+            # Filter out non-interacted Flow tasks
+            labels = task_crd.metadata.labels or {}
+            if labels.get("type") == "flow" and labels.get("userInteracted") != "true":
+                continue
+            id_to_task[t.id] = t
 
         # Restore the original order and apply limit
         filtered_tasks = []

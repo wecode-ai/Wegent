@@ -141,15 +141,25 @@ def get_group_tasks_lite(
 def get_personal_tasks_lite(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    types: str = Query(
+        "online,offline",
+        description="Comma-separated task types to include: online (chat), offline (code), flow",
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Get current user's personal (non-group-chat) task list (paginated) for fast loading.
     Returns only personal tasks sorted by created_at descending (newest first).
+
+    Types filter:
+    - online: chat tasks (task_type != 'code' and not flow)
+    - offline: code tasks (task_type == 'code')
+    - flow: flow-triggered tasks (labels.type == 'flow')
     """
     skip = (page - 1) * limit
+    type_list = [t.strip() for t in types.split(",") if t.strip()]
     items, total = task_kinds_service.get_user_personal_tasks_lite(
-        db=db, user_id=current_user.id, skip=skip, limit=limit
+        db=db, user_id=current_user.id, skip=skip, limit=limit, types=type_list
     )
     return {"total": total, "items": items}
 

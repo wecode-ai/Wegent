@@ -168,13 +168,16 @@ class ExecutorKindsService(
                 .all()
             )
         else:
+            # Include 'flow' type tasks for executor to pick up (Flow Scheduler triggered Executor-type tasks)
             tasks = (
                 db.query(TaskResource)
                 .filter(
                     TaskResource.kind == "Task",
                     TaskResource.is_active.is_(True),
                     text(
-                        "(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online') "
+                        "(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL "
+                        "    OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online' "
+                        "    OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'flow') "
                         "and JSON_EXTRACT(json, '$.status.status') = :status "
                         "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL "
                         "    OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
@@ -2283,9 +2286,6 @@ class ExecutorKindsService(
             return
 
         try:
-            # Import FlowExecution model
-            from app.models.flow import FlowExecution, FlowResource
-
             # Convert to int if it's a string
             try:
                 execution_id = int(flow_execution_id)
@@ -2295,53 +2295,51 @@ class ExecutorKindsService(
                 )
                 return
 
-            # Find the FlowExecution record
-            execution = (
-                db.query(FlowExecution).filter(FlowExecution.id == execution_id).first()
-            )
+            # Use flow_service.update_execution_status for unified status update and WebSocket emission
+            from app.schemas.flow import FlowExecutionStatus
+            from app.services.flow import flow_service
 
-            if not execution:
+            # Map task status to FlowExecutionStatus
+            status_map = {
+                "COMPLETED": FlowExecutionStatus.COMPLETED,
+                "FAILED": FlowExecutionStatus.FAILED,
+                "CANCELLED": FlowExecutionStatus.CANCELLED,
+            }
+            new_status = status_map.get(task_crd.status.status)
+            if not new_status:
                 logger.warning(
-                    f"FlowExecution {execution_id} not found for task {task_id}"
+                    f"Unknown task status '{task_crd.status.status}' for FlowExecution {execution_id}"
                 )
                 return
 
-            # Update execution status based on task status
+            # Prepare result_summary and error_message
+            result_summary = None
+            error_message = None
             if task_crd.status.status == "COMPLETED":
-                execution.status = "COMPLETED"
-                execution.result_summary = "Task completed successfully"
+                result_summary = "Task completed successfully"
             elif task_crd.status.status == "FAILED":
-                execution.status = "FAILED"
-                execution.error_message = task_crd.status.errorMessage or "Task failed"
+                error_message = task_crd.status.errorMessage or "Task failed"
             elif task_crd.status.status == "CANCELLED":
-                execution.status = "CANCELLED"
-                execution.error_message = "Task was cancelled"
+                error_message = "Task was cancelled"
 
-            execution.completed_at = datetime.now()
-            execution.updated_at = datetime.now()
-            db.add(execution)
-
-            # Also update the Flow's statistics
-            flow = (
-                db.query(FlowResource)
-                .filter(FlowResource.id == execution.flow_id)
-                .first()
+            # Call flow_service to update status (this will also emit WebSocket event)
+            success = flow_service.update_execution_status(
+                db=db,
+                execution_id=execution_id,
+                status=new_status,
+                result_summary=result_summary,
+                error_message=error_message,
             )
 
-            if flow:
-                flow.last_execution_time = datetime.now()
-                flow.last_execution_status = execution.status
-                if execution.status == "COMPLETED":
-                    flow.success_count = (flow.success_count or 0) + 1
-                elif execution.status in ["FAILED", "CANCELLED"]:
-                    flow.failure_count = (flow.failure_count or 0) + 1
-                flow.updated_at = datetime.now()
-                db.add(flow)
-
-            logger.info(
-                f"Updated FlowExecution {execution_id} status to {execution.status} "
-                f"for task {task_id}"
-            )
+            if success:
+                logger.info(
+                    f"Updated FlowExecution {execution_id} status to {new_status.value} "
+                    f"for task {task_id} via flow_service"
+                )
+            else:
+                logger.warning(
+                    f"Failed to update FlowExecution {execution_id} status for task {task_id}"
+                )
 
         except Exception as e:
             logger.error(

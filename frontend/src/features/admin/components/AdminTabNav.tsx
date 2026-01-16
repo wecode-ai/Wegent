@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import { Users, Cpu, Settings, Sparkles, KeyRound, Database } from 'lucide-react'
+import { Users, Cpu, Settings, Sparkles, KeyRound, Database, Activity } from 'lucide-react'
 
 export type AdminTabId =
   | 'users'
@@ -24,6 +24,7 @@ export type AdminTabId =
   | 'public-skills'
   | 'api-keys'
   | 'system-config'
+  | 'monitor'
 
 interface AdminTabNavProps {
   activeTab: AdminTabId
@@ -51,6 +52,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'public-skills', label: t('admin:tabs.public_skills'), icon: Sparkles },
     { id: 'api-keys', label: t('admin:tabs.api_keys'), icon: KeyRound },
     { id: 'system-config', label: t('admin:tabs.system_config'), icon: Settings },
+    { id: 'monitor', label: t('admin:tabs.monitor'), icon: Activity },
   ]
 
   // Update the indicator position when the active tab changes
