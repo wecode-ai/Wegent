@@ -35,7 +35,14 @@
     "knowledgeBase": {
       "title": "Knowledge Base",
       "create": "Create Knowledge Base",
+      "createNotebook": "Create Notebook",
+      "createClassic": "Create Classic Knowledge Base",
       "createDesc": "Create your first knowledge base",
+      "notebookDesc": "Three-column layout with chat and document management",
+      "classicDesc": "Traditional document list layout",
+      "type": "Knowledge Base Type",
+      "typeNotebook": "Notebook",
+      "typeClassic": "Classic",
       "edit": "Edit Knowledge Base",
       "delete": "Delete Knowledge Base",
       "name": "Name",
@@ -319,5 +326,17 @@
       "loadFailed": "Failed to load data tables"
     },
     "analyzing": "Analyzing data table..."
+  },
+  "chatPage": {
+    "title": "Knowledge Base Chat",
+    "summary": "Summary",
+    "contextHint": "This knowledge base is bound to your conversation. Ask questions about its documents.",
+    "documents": "Documents",
+    "showDocuments": "Show Documents",
+    "hideDocuments": "Hide Documents",
+    "backToList": "Back",
+    "notFound": "Knowledge base not found",
+    "createTaskError": "Failed to create conversation",
+    "bindKnowledgeBaseError": "Failed to bind knowledge base"
   }
 }

@@ -17,6 +17,7 @@ type TopNavigationProps = {
   variant?: 'with-sidebar' | 'standalone'
   showLogo?: boolean
   title?: string
+  titleSuffix?: React.ReactNode // Content to render after the title (e.g., bound knowledge base badge)
   taskDetail?: TaskDetail | null
   children?: React.ReactNode
   onMobileSidebarToggle?: () => void
@@ -29,6 +30,7 @@ export default function TopNavigation({
   variant = 'standalone',
   showLogo = false,
   title,
+  titleSuffix,
   taskDetail,
   children,
   onMobileSidebarToggle,
@@ -93,14 +95,13 @@ export default function TopNavigation({
         {title && variant !== 'with-sidebar' && (
           <h1 className="text-xl font-semibold text-text-primary truncate">{title}</h1>
         )}
+
+        {/* Title suffix - content rendered after the title (e.g., bound knowledge base badge) */}
+        {titleSuffix}
       </div>
 
       {/* Right side - User menu and other controls */}
-      {children && (
-        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-          {children}
-        </div>
-      )}
+      {children && <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">{children}</div>}
     </div>
   )
 }

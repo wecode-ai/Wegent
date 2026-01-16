@@ -5,3 +5,4 @@
 export { useKnowledgeBases } from './useKnowledgeBases'
 export { useDocuments } from './useDocuments'
 export { useDocumentDetail } from './useDocumentDetail'
+export { useKnowledgeBaseDetail } from './useKnowledgeBaseDetail'

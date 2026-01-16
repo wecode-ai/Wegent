@@ -50,6 +50,7 @@ class TaskCreationParams:
     git_repo_id: Optional[int] = None
     git_domain: Optional[str] = None
     branch_name: Optional[str] = None
+    task_type: Optional[str] = None  # 'chat', 'code', or 'knowledge'
 
 
 def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
@@ -234,8 +235,10 @@ def create_new_task(
             params.message[:50] + "..." if len(params.message) > 50 else params.message
         )
 
-    # Auto-detect task type based on git_url presence
-    task_type = "code" if params.git_url else "chat"
+    # Use provided task_type, or auto-detect based on git_url presence
+    task_type = params.task_type
+    if not task_type:
+        task_type = "code" if params.git_url else "chat"
 
     logger.info(
         f"[create_new_task] Creating task_json with is_group_chat={params.is_group_chat}"

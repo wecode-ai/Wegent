@@ -19,6 +19,8 @@ interface DocumentItemProps {
   showBorder?: boolean
   selected?: boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
+  /** Compact mode for sidebar display - uses card layout */
+  compact?: boolean
 }
 
 export function DocumentItem({
@@ -30,6 +32,7 @@ export function DocumentItem({
   showBorder = true,
   selected = false,
   onSelect,
+  compact = false,
 }: DocumentItemProps) {
   const { t } = useTranslation()
 
@@ -87,6 +90,104 @@ export function DocumentItem({
     onViewDetail?.(document)
   }
 
+  // Compact mode: Card layout for sidebar
+  if (compact) {
+    return (
+      <div
+        className={`flex items-center gap-3 px-3 py-2.5 bg-base hover:bg-surface transition-colors rounded-lg border border-border group ${onViewDetail ? 'cursor-pointer' : ''}`}
+        onClick={handleRowClick}
+      >
+        {/* Checkbox for batch selection */}
+        {canManage && (
+          <div className="flex-shrink-0" onClick={handleCheckboxClick}>
+            <Checkbox
+              checked={selected}
+              onCheckedChange={handleCheckboxChange}
+              className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+            />
+          </div>
+        )}
+
+        {/* File icon */}
+        <div className="p-1.5 bg-primary/10 rounded flex-shrink-0">
+          {isTable ? (
+            <Table2 className="w-3.5 h-3.5 text-primary" />
+          ) : (
+            <FileText className="w-3.5 h-3.5 text-primary" />
+          )}
+        </div>
+
+        {/* File name and info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm font-medium text-text-primary truncate">{document.name}</span>
+            {tableUrl && (
+              <button
+                className="p-0.5 rounded text-primary hover:bg-primary/10 transition-colors flex-shrink-0"
+                onClick={handleOpenLink}
+                title={t('knowledge:document.document.openLink')}
+              >
+                <ExternalLink className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2 mt-0.5">
+            {/* Type badge */}
+            {isTable ? (
+              <Badge
+                variant="default"
+                size="sm"
+                className="bg-blue-500/10 text-blue-600 border-blue-500/20 text-[10px] px-1.5 py-0"
+              >
+                {t('knowledge:document.document.type.table')}
+              </Badge>
+            ) : (
+              <span className="text-[10px] text-text-muted uppercase">
+                {document.file_extension}
+              </span>
+            )}
+            {/* Size */}
+            {!isTable && (
+              <span className="text-[10px] text-text-muted">
+                {formatFileSize(document.file_size)}
+              </span>
+            )}
+            {/* Status indicator */}
+            <span
+              className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${document.is_active ? 'bg-green-500' : 'bg-yellow-500'}`}
+              title={
+                document.is_active
+                  ? t('knowledge:document.document.indexStatus.available')
+                  : t('knowledge:document.document.indexStatus.unavailable')
+              }
+            />
+          </div>
+        </div>
+
+        {/* Action buttons */}
+        {canManage && (
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              className="p-1 rounded text-primary hover:bg-primary/10 transition-colors"
+              onClick={handleEdit}
+              title={t('common:actions.edit')}
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+            <button
+              className="p-1 rounded text-text-muted hover:text-error hover:bg-error/10 transition-colors"
+              onClick={handleDelete}
+              title={t('common:actions.delete')}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Normal mode: Table row layout
   return (
     <div
       className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group ${showBorder ? 'border-b border-border' : ''} ${onViewDetail ? 'cursor-pointer' : ''}`}

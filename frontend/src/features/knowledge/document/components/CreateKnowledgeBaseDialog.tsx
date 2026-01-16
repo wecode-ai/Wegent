@@ -5,6 +5,7 @@
 'use client'
 
 import { useState } from 'react'
+import { BookOpen, FolderOpen } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -26,7 +27,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { RetrievalSettingsSection, type RetrievalConfig } from './RetrievalSettingsSection'
 import { SummaryModelSelector } from './SummaryModelSelector'
-import type { SummaryModelRef } from '@/types/knowledge'
+import type { SummaryModelRef, KnowledgeBaseType } from '@/types/knowledge'
 
 interface CreateKnowledgeBaseDialogProps {
   open: boolean
@@ -41,6 +42,8 @@ interface CreateKnowledgeBaseDialogProps {
   loading?: boolean
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
+  /** Knowledge base type selected from dropdown menu (read-only in dialog) */
+  kbType?: KnowledgeBaseType
 }
 
 export function CreateKnowledgeBaseDialog({
@@ -50,6 +53,7 @@ export function CreateKnowledgeBaseDialog({
   loading,
   scope,
   groupName,
+  kbType = 'notebook',
 }: CreateKnowledgeBaseDialogProps) {
   const { t } = useTranslation()
   const [name, setName] = useState('')
@@ -153,6 +157,9 @@ export function CreateKnowledgeBaseDialog({
     onOpenChange(newOpen)
   }
 
+  // Determine if this is a notebook type
+  const isNotebook = kbType === 'notebook'
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
@@ -161,6 +168,40 @@ export function CreateKnowledgeBaseDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="max-h-[80vh] overflow-y-auto">
           <div className="space-y-4 py-4">
+            {/* Knowledge Base Type Display (read-only) */}
+            <div className="space-y-2">
+              <Label>{t('knowledge:document.knowledgeBase.type')}</Label>
+              <div
+                className={`flex items-center gap-3 p-3 rounded-md border ${
+                  isNotebook ? 'bg-primary/5 border-primary/20' : 'bg-muted border-border'
+                }`}
+              >
+                <div
+                  className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center ${
+                    isNotebook ? 'bg-primary/10 text-primary' : 'bg-surface text-text-secondary'
+                  }`}
+                >
+                  {isNotebook ? (
+                    <BookOpen className="w-4 h-4" />
+                  ) : (
+                    <FolderOpen className="w-4 h-4" />
+                  )}
+                </div>
+                <div>
+                  <div className="font-medium text-sm">
+                    {isNotebook
+                      ? t('knowledge:document.knowledgeBase.typeNotebook')
+                      : t('knowledge:document.knowledgeBase.typeClassic')}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {isNotebook
+                      ? t('knowledge:document.knowledgeBase.notebookDesc')
+                      : t('knowledge:document.knowledgeBase.classicDesc')}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="name">{t('knowledge:document.knowledgeBase.name')}</Label>
               <Input
