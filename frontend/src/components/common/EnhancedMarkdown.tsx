@@ -14,6 +14,8 @@ import dynamic from 'next/dynamic'
 import type { Components } from 'react-markdown'
 import katex from 'katex'
 import { Check, Copy, Code, ChevronDown, ChevronUp } from 'lucide-react'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
 import 'katex/dist/katex.min.css'
 
@@ -196,6 +198,116 @@ function LaTeXBlock({ code }: { code: string }) {
 }
 
 /**
+ * Component to render code blocks with syntax highlighting and copy functionality
+ * Includes toolbar with language label and copy button
+ */
+interface CodeBlockProps {
+  language: string
+  code: string
+  theme: 'light' | 'dark'
+}
+
+function CodeBlock({ language, code, theme }: CodeBlockProps) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy code:', err)
+    }
+  }, [code])
+
+  // Map common language aliases to syntax highlighter language names
+  const normalizeLanguage = (lang: string): string => {
+    const languageMap: Record<string, string> = {
+      js: 'javascript',
+      ts: 'typescript',
+      py: 'python',
+      rb: 'ruby',
+      sh: 'bash',
+      shell: 'bash',
+      zsh: 'bash',
+      yml: 'yaml',
+      md: 'markdown',
+      dockerfile: 'docker',
+      plaintext: 'text',
+      txt: 'text',
+    }
+    return languageMap[lang.toLowerCase()] || lang.toLowerCase()
+  }
+
+  const normalizedLanguage = normalizeLanguage(language)
+  const displayLanguage = language || 'text'
+
+  return (
+    <div className="group my-4 rounded-lg border border-border bg-surface overflow-hidden">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between px-3 py-1.5 bg-surface-hover/50 border-b border-border">
+        <div className="flex items-center gap-2">
+          <Code className="w-3.5 h-3.5 text-text-secondary" />
+          <span className="text-xs font-medium text-text-secondary">{displayLanguage}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          {/* Copy Button */}
+          <button
+            onClick={handleCopy}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
+            title={copied ? 'Copied!' : 'Copy code'}
+          >
+            {copied ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-green-500" />
+                <span className="hidden sm:inline text-green-500">Copied</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Copy</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Code Content with Syntax Highlighting */}
+      <div className="overflow-x-auto">
+        <SyntaxHighlighter
+          language={normalizedLanguage}
+          style={theme === 'dark' ? oneDark : oneLight}
+          customStyle={{
+            margin: 0,
+            padding: '1rem',
+            background: 'transparent',
+            fontSize: '0.875rem',
+            lineHeight: '1.5',
+          }}
+          codeTagProps={{
+            style: {
+              fontFamily:
+                'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+            },
+          }}
+          showLineNumbers={code.split('\n').length > 3}
+          lineNumberStyle={{
+            minWidth: '2.5em',
+            paddingRight: '1em',
+            color: theme === 'dark' ? '#6b7280' : '#9ca3af',
+            userSelect: 'none',
+          }}
+          wrapLines={true}
+          wrapLongLines={false}
+        >
+          {code}
+        </SyntaxHighlighter>
+      </div>
+    </div>
+  )
+}
+
+/**
  * Check if the content contains LaTeX math formulas
  * Supports: $...$, $$...$$, \[...\], \(...\), \begin{...}...\end{...}, ```latex code blocks
  */
@@ -305,7 +417,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     return parts
   }, [processedSource])
 
-  // Default components with link handling
+  // Default components with link handling and code block rendering
   const defaultComponents = useMemo(
     (): Components => ({
       a: ({ href, children, ...props }) => (
@@ -313,9 +425,36 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
           {children}
         </a>
       ),
+      // Custom code block rendering with syntax highlighting
+      code: ({ className, children, ...props }) => {
+        // Check if this is an inline code or a code block
+        // Code blocks are wrapped in <pre> and have a className with language
+        const match = /language-(\w+)/.exec(className || '')
+        const isInline = !match && !className?.includes('language-')
+
+        // For inline code, render as simple <code> element
+        if (isInline) {
+          return (
+            <code
+              className="px-1.5 py-0.5 rounded bg-surface-hover text-text-primary font-mono text-sm"
+              {...props}
+            >
+              {children}
+            </code>
+          )
+        }
+
+        // For code blocks, extract language and code content
+        const language = match ? match[1] : ''
+        const codeString = String(children).replace(/\n$/, '')
+
+        return <CodeBlock language={language} code={codeString} theme={theme} />
+      },
+      // Override pre to avoid double wrapping
+      pre: ({ children }) => <>{children}</>,
       ...components,
     }),
-    [components]
+    [components, theme]
   )
 
   // Configure remark/rehype plugins based on content
@@ -361,7 +500,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   // If no special blocks, render normally
   if (contentParts.length === 1 && contentParts[0].type === 'markdown') {
     return (
-      <div className="markdown-content" data-color-mode={theme}>
+      <div className="wmde-markdown markdown-content" data-color-mode={theme}>
         {renderMarkdown(processedSource)}
       </div>
     )
@@ -369,7 +508,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
 
   // Render mixed content with mermaid diagrams and latex blocks
   return (
-    <div className="enhanced-markdown" data-color-mode={theme}>
+    <div className="wmde-markdown enhanced-markdown" data-color-mode={theme}>
       {contentParts.map((part, index) => {
         if (part.type === 'mermaid') {
           return <MermaidDiagram key={`mermaid-${index}`} code={part.content} />
