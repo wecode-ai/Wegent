@@ -12,7 +12,7 @@ import {
   Search,
   ChevronUp,
   ChevronDown,
-  FolderOpen,
+  BookOpen,
   Trash2,
   Target,
   FileUp,
@@ -69,6 +69,7 @@ export function DocumentList({
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [batchLoading, setBatchLoading] = useState(false)
+  const [showSearchPopover, setShowSearchPopover] = useState(false)
 
   const filteredAndSortedDocuments = useMemo(() => {
     let result = [...documents]
@@ -217,7 +218,7 @@ export function DocumentList({
             <ArrowLeft className="w-5 h-5" />
           </button>
         )}
-        <FolderOpen className="w-5 h-5 text-primary flex-shrink-0" />
+        <BookOpen className="w-5 h-5 text-primary flex-shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <h2 className="text-base font-medium text-text-primary truncate">
@@ -247,16 +248,57 @@ export function DocumentList({
 
       {/* Search bar and action buttons */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-          <input
-            type="text"
-            className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-            placeholder={t('document.document.search')}
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-          />
-        </div>
+        {/* Search - inline for normal mode, popover for compact mode */}
+        {compact ? (
+          <div className="relative">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowSearchPopover(!showSearchPopover)}
+              className={searchQuery ? 'border-primary' : ''}
+            >
+              <Search className="w-4 h-4" />
+              {searchQuery && (
+                <span className="ml-1 max-w-[60px] truncate text-xs">{searchQuery}</span>
+              )}
+            </Button>
+            {showSearchPopover && (
+              <div className="absolute top-full left-0 mt-1 z-50 bg-base border border-border rounded-md shadow-lg p-2 min-w-[240px]">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+                  <input
+                    type="text"
+                    autoFocus
+                    className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder={t('document.document.search')}
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Escape') {
+                        setShowSearchPopover(false)
+                      }
+                    }}
+                    onBlur={() => {
+                      // Delay to allow click events to fire
+                      setTimeout(() => setShowSearchPopover(false), 150)
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+            <input
+              type="text"
+              className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+              placeholder={t('document.document.search')}
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+            />
+          </div>
+        )}
         {/* Spacer to push buttons to the right */}
         <div className="flex-1" />
 

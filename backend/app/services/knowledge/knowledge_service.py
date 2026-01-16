@@ -145,6 +145,8 @@ class KnowledgeService:
         spec_kwargs = {
             "name": data.name,
             "description": data.description or "",
+            "kbType": data.kb_type
+            or "notebook",  # Default to 'notebook' if not provided
             "retrievalConfig": data.retrieval_config,
             "summaryEnabled": data.summary_enabled,
         }

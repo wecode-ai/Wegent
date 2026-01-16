@@ -6,9 +6,25 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { Users, User, Plus, FileText, Globe, ArrowLeft, Search } from 'lucide-react'
+import {
+  Users,
+  User,
+  Plus,
+  FileText,
+  Globe,
+  ArrowLeft,
+  Search,
+  BookOpen,
+  FolderOpen,
+} from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { Card } from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown'
 import { KnowledgeBaseCard } from './KnowledgeBaseCard'
 import { GroupCard } from './GroupCard'
 import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
@@ -18,7 +34,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { listGroups } from '@/apis/groups'
 import { useKnowledgeBases } from '../hooks/useKnowledgeBases'
 import type { Group } from '@/types/group'
-import type { KnowledgeBase } from '@/types/knowledge'
+import type { KnowledgeBase, KnowledgeBaseType } from '@/types/knowledge'
 
 type DocumentTabType = 'personal' | 'group' | 'external'
 
@@ -58,6 +74,7 @@ export function KnowledgeDocumentPage() {
   // Dialog states
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [createForGroup, setCreateForGroup] = useState<string | null>(null)
+  const [createKbType, setCreateKbType] = useState<KnowledgeBaseType>('notebook')
   const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null)
   const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null)
 
@@ -82,8 +99,9 @@ export function KnowledgeDocumentPage() {
     loadGroups()
   }, [])
 
-  const handleCreateKb = (groupName: string | null) => {
+  const handleCreateKb = (groupName: string | null, kbType: KnowledgeBaseType) => {
     setCreateForGroup(groupName)
+    setCreateKbType(kbType)
     setShowCreateDialog(true)
   }
 
@@ -97,6 +115,7 @@ export function KnowledgeDocumentPage() {
       description: data.description,
       namespace: createForGroup || 'default',
       retrieval_config: data.retrieval_config,
+      kb_type: createKbType,
     })
     setShowCreateDialog(false)
     // Refresh the appropriate list based on whether it's a group or personal knowledge base
@@ -106,6 +125,7 @@ export function KnowledgeDocumentPage() {
       personalKb.refresh()
     }
     setCreateForGroup(null)
+    setCreateKbType('notebook')
   }
 
   const handleUpdate = async (data: Parameters<typeof personalKb.update>[1]) => {
@@ -178,7 +198,7 @@ export function KnowledgeDocumentPage() {
             onSelectKb={handleSelectKb}
             onEditKb={setEditingKb}
             onDeleteKb={setDeletingKb}
-            onCreateKb={() => handleCreateKb(null)}
+            onCreateKb={kbType => handleCreateKb(null, kbType)}
           />
         )}
 
@@ -190,7 +210,7 @@ export function KnowledgeDocumentPage() {
             onSelectKb={handleSelectKb}
             onEditKb={setEditingKb}
             onDeleteKb={setDeletingKb}
-            onCreateKb={handleCreateKb}
+            onCreateKb={(groupName, kbType) => handleCreateKb(groupName, kbType)}
           />
         )}
 
@@ -207,12 +227,16 @@ export function KnowledgeDocumentPage() {
         open={showCreateDialog}
         onOpenChange={open => {
           setShowCreateDialog(open)
-          if (!open) setCreateForGroup(null)
+          if (!open) {
+            setCreateForGroup(null)
+            setCreateKbType('notebook')
+          }
         }}
         onSubmit={handleCreate}
         loading={personalKb.loading}
         scope={createForGroup ? 'group' : 'personal'}
         groupName={createForGroup || undefined}
+        kbType={createKbType}
       />
 
       <EditKnowledgeBaseDialog
@@ -241,7 +265,7 @@ interface PersonalKnowledgeContentProps {
   onSelectKb: (kb: KnowledgeBase) => void
   onEditKb: (kb: KnowledgeBase) => void
   onDeleteKb: (kb: KnowledgeBase) => void
-  onCreateKb: () => void
+  onCreateKb: (kbType: KnowledgeBaseType) => void
 }
 
 function PersonalKnowledgeContent({
@@ -274,21 +298,54 @@ function PersonalKnowledgeContent({
   if (knowledgeBases.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16">
-        <Card
-          padding="lg"
-          className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center w-64 h-48"
-          onClick={onCreateKb}
-        >
-          <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-            <Plus className="w-8 h-8 text-primary" />
-          </div>
-          <h3 className="font-medium text-base mb-2 text-text-primary">
-            {t('knowledge:document.knowledgeBase.create')}
-          </h3>
-          <p className="text-sm text-text-muted text-center">
-            {t('knowledge:document.knowledgeBase.createDesc')}
-          </p>
-        </Card>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Card
+              padding="lg"
+              className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center w-64 h-48"
+            >
+              <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+                <Plus className="w-8 h-8 text-primary" />
+              </div>
+              <h3 className="font-medium text-base mb-2 text-text-primary">
+                {t('knowledge:document.knowledgeBase.create')}
+              </h3>
+              <p className="text-sm text-text-muted text-center">
+                {t('knowledge:document.knowledgeBase.createDesc')}
+              </p>
+            </Card>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="center" className="w-56">
+            <DropdownMenuItem
+              onClick={() => onCreateKb('notebook')}
+              className="flex items-start gap-3 py-3"
+            >
+              <BookOpen className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+              <div>
+                <div className="font-medium">
+                  {t('knowledge:document.knowledgeBase.typeNotebook')}
+                </div>
+                <div className="text-xs text-text-muted">
+                  {t('knowledge:document.knowledgeBase.notebookDesc')}
+                </div>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => onCreateKb('classic')}
+              className="flex items-start gap-3 py-3"
+            >
+              <FolderOpen className="w-5 h-5 text-text-secondary mt-0.5 flex-shrink-0" />
+              <div>
+                <div className="font-medium">
+                  {t('knowledge:document.knowledgeBase.typeClassic')}
+                </div>
+                <div className="text-xs text-text-muted">
+                  {t('knowledge:document.knowledgeBase.classicDesc')}
+                </div>
+              </div>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     )
   }
@@ -310,18 +367,53 @@ function PersonalKnowledgeContent({
       </div>
 
       <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {/* Add knowledge base card */}
+        {/* Add knowledge base card with dropdown */}
         {!searchQuery && (
-          <Card
-            padding="sm"
-            className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center h-[140px]"
-            onClick={onCreateKb}
-          >
-            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center mb-3">
-              <Plus className="w-6 h-6 text-primary" />
-            </div>
-            <h3 className="font-medium text-sm">{t('knowledge:document.knowledgeBase.create')}</h3>
-          </Card>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Card
+                padding="sm"
+                className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center h-[140px]"
+              >
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center mb-3">
+                  <Plus className="w-6 h-6 text-primary" />
+                </div>
+                <h3 className="font-medium text-sm">
+                  {t('knowledge:document.knowledgeBase.create')}
+                </h3>
+              </Card>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="center" className="w-56">
+              <DropdownMenuItem
+                onClick={() => onCreateKb('notebook')}
+                className="flex items-start gap-3 py-3"
+              >
+                <BookOpen className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="font-medium">
+                    {t('knowledge:document.knowledgeBase.typeNotebook')}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {t('knowledge:document.knowledgeBase.notebookDesc')}
+                  </div>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => onCreateKb('classic')}
+                className="flex items-start gap-3 py-3"
+              >
+                <FolderOpen className="w-5 h-5 text-text-secondary mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="font-medium">
+                    {t('knowledge:document.knowledgeBase.typeClassic')}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {t('knowledge:document.knowledgeBase.classicDesc')}
+                  </div>
+                </div>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
 
         {/* Knowledge base cards */}
@@ -355,7 +447,7 @@ interface GroupKnowledgeContentProps {
   onSelectKb: (kb: KnowledgeBase) => void
   onEditKb: (kb: KnowledgeBase) => void
   onDeleteKb: (kb: KnowledgeBase) => void
-  onCreateKb: (groupName: string) => void
+  onCreateKb: (groupName: string, kbType: KnowledgeBaseType) => void
 }
 
 function GroupKnowledgeContent({
@@ -397,7 +489,7 @@ function GroupKnowledgeContent({
         onSelectKb={onSelectKb}
         onEditKb={onEditKb}
         onDeleteKb={onDeleteKb}
-        onCreateKb={() => onCreateKb(selectedGroup.name)}
+        onCreateKb={kbType => onCreateKb(selectedGroup.name, kbType)}
       />
     )
   }
@@ -422,7 +514,7 @@ interface GroupKnowledgeBaseListProps {
   onSelectKb: (kb: KnowledgeBase) => void
   onEditKb: (kb: KnowledgeBase) => void
   onDeleteKb: (kb: KnowledgeBase) => void
-  onCreateKb: () => void
+  onCreateKb: (kbType: KnowledgeBaseType) => void
 }
 
 function GroupKnowledgeBaseList({
@@ -487,21 +579,54 @@ function GroupKnowledgeBaseList({
       ) : knowledgeBases.length === 0 ? (
         canCreate ? (
           <div className="flex flex-col items-center justify-center py-16">
-            <Card
-              padding="lg"
-              className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center w-64 h-48"
-              onClick={onCreateKb}
-            >
-              <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-                <Plus className="w-8 h-8 text-primary" />
-              </div>
-              <h3 className="font-medium text-base mb-2 text-text-primary">
-                {t('knowledge:document.knowledgeBase.create')}
-              </h3>
-              <p className="text-sm text-text-muted text-center">
-                {t('knowledge:document.knowledgeBase.createDesc')}
-              </p>
-            </Card>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Card
+                  padding="lg"
+                  className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center w-64 h-48"
+                >
+                  <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+                    <Plus className="w-8 h-8 text-primary" />
+                  </div>
+                  <h3 className="font-medium text-base mb-2 text-text-primary">
+                    {t('knowledge:document.knowledgeBase.create')}
+                  </h3>
+                  <p className="text-sm text-text-muted text-center">
+                    {t('knowledge:document.knowledgeBase.createDesc')}
+                  </p>
+                </Card>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="center" className="w-56">
+                <DropdownMenuItem
+                  onClick={() => onCreateKb('notebook')}
+                  className="flex items-start gap-3 py-3"
+                >
+                  <BookOpen className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+                  <div>
+                    <div className="font-medium">
+                      {t('knowledge:document.knowledgeBase.typeNotebook')}
+                    </div>
+                    <div className="text-xs text-text-muted">
+                      {t('knowledge:document.knowledgeBase.notebookDesc')}
+                    </div>
+                  </div>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => onCreateKb('classic')}
+                  className="flex items-start gap-3 py-3"
+                >
+                  <FolderOpen className="w-5 h-5 text-text-secondary mt-0.5 flex-shrink-0" />
+                  <div>
+                    <div className="font-medium">
+                      {t('knowledge:document.knowledgeBase.typeClassic')}
+                    </div>
+                    <div className="text-xs text-text-muted">
+                      {t('knowledge:document.knowledgeBase.classicDesc')}
+                    </div>
+                  </div>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
@@ -526,20 +651,53 @@ function GroupKnowledgeBaseList({
           </div>
 
           <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {/* Add knowledge base card - only show if user can create */}
+            {/* Add knowledge base card with dropdown - only show if user can create */}
             {!searchQuery && canCreate && (
-              <Card
-                padding="sm"
-                className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center h-[140px]"
-                onClick={onCreateKb}
-              >
-                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center mb-3">
-                  <Plus className="w-6 h-6 text-primary" />
-                </div>
-                <h3 className="font-medium text-sm">
-                  {t('knowledge:document.knowledgeBase.create')}
-                </h3>
-              </Card>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Card
+                    padding="sm"
+                    className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center h-[140px]"
+                  >
+                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center mb-3">
+                      <Plus className="w-6 h-6 text-primary" />
+                    </div>
+                    <h3 className="font-medium text-sm">
+                      {t('knowledge:document.knowledgeBase.create')}
+                    </h3>
+                  </Card>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="center" className="w-56">
+                  <DropdownMenuItem
+                    onClick={() => onCreateKb('notebook')}
+                    className="flex items-start gap-3 py-3"
+                  >
+                    <BookOpen className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+                    <div>
+                      <div className="font-medium">
+                        {t('knowledge:document.knowledgeBase.typeNotebook')}
+                      </div>
+                      <div className="text-xs text-text-muted">
+                        {t('knowledge:document.knowledgeBase.notebookDesc')}
+                      </div>
+                    </div>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => onCreateKb('classic')}
+                    className="flex items-start gap-3 py-3"
+                  >
+                    <FolderOpen className="w-5 h-5 text-text-secondary mt-0.5 flex-shrink-0" />
+                    <div>
+                      <div className="font-medium">
+                        {t('knowledge:document.knowledgeBase.typeClassic')}
+                      </div>
+                      <div className="text-xs text-text-muted">
+                        {t('knowledge:document.knowledgeBase.classicDesc')}
+                      </div>
+                    </div>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
 
             {/* Knowledge base cards */}

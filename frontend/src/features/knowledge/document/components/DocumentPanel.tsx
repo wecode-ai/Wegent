@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, PanelRightClose, PanelRightOpen, FileText } from 'lucide-react'
+import { ArrowLeft, PanelRightClose, PanelRightOpen, BookOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DocumentList } from './DocumentList'
 import type { KnowledgeBase } from '@/types/knowledge'
@@ -179,7 +179,7 @@ export function DocumentPanel({ knowledgeBase, canManage = true }: DocumentPanel
           title={t('chatPage.showDocuments')}
         >
           <PanelRightOpen className="w-4 h-4" />
-          <FileText className="w-4 h-4" />
+          <BookOpen className="w-4 h-4" />
         </Button>
       </div>
     )
@@ -223,12 +223,6 @@ export function DocumentPanel({ knowledgeBase, canManage = true }: DocumentPanel
         >
           <PanelRightClose className="w-4 h-4" />
         </Button>
-      </div>
-
-      {/* Documents Title */}
-      <div className="flex items-center gap-2 px-4 py-2">
-        <FileText className="w-4 h-4 text-text-muted" />
-        <span className="text-sm font-medium text-text-primary">{t('chatPage.documents')}</span>
       </div>
 
       {/* Document List */}

@@ -4,7 +4,7 @@
 
 'use client'
 
-import { FolderOpen, FileText, Info } from 'lucide-react'
+import { BookOpen, FileText, Info } from 'lucide-react'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -36,7 +36,7 @@ export function KnowledgeBaseSummaryCard({ knowledgeBase }: KnowledgeBaseSummary
         {/* Header with icon and name */}
         <div className="flex items-start gap-3">
           <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-            <FolderOpen className="w-5 h-5 text-primary" />
+            <BookOpen className="w-5 h-5 text-primary" />
           </div>
           <div className="flex-1 min-w-0">
             <h3 className="text-base font-semibold text-text-primary truncate">
@@ -54,9 +54,7 @@ export function KnowledgeBaseSummaryCard({ knowledgeBase }: KnowledgeBaseSummary
         <div className="flex items-center gap-4 text-sm text-text-secondary">
           <div className="flex items-center gap-1.5">
             <FileText className="w-4 h-4" />
-            <span>
-              {t('document_count', { count: knowledgeBase.document_count })}
-            </span>
+            <span>{t('document_count', { count: knowledgeBase.document_count })}</span>
           </div>
           {knowledgeBase.namespace !== 'default' && (
             <div className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs">
@@ -100,9 +98,7 @@ export function KnowledgeBaseSummaryCard({ knowledgeBase }: KnowledgeBaseSummary
         )}
 
         {/* Hint */}
-        <p className="text-xs text-text-muted italic">
-          {t('chatPage.contextHint')}
-        </p>
+        <p className="text-xs text-text-muted italic">{t('chatPage.contextHint')}</p>
       </div>
     </div>
   )
