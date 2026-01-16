@@ -56,9 +56,7 @@ class TestTaskServicesAPI:
         """Test ServiceResponse schema."""
         from app.schemas.service import ServiceResponse
 
-        response = ServiceResponse(
-            app={"name": "Test App", "host": "localhost"}
-        )
+        response = ServiceResponse(app={"name": "Test App", "host": "localhost"})
         assert response.app == {"name": "Test App", "host": "localhost"}
 
     def test_service_response_schema_empty(self):
