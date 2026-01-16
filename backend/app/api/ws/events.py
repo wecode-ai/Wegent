@@ -42,6 +42,9 @@ class ClientEvents:
 class ServerEvents:
     """Server -> Client event names."""
 
+    # Authentication events
+    AUTH_ERROR = "auth:error"  # Token expired or invalid
+
     # Chat streaming events (to task room)
     CHAT_START = "chat:start"
     CHAT_CHUNK = "chat:chunk"
@@ -497,3 +500,17 @@ class GenericAck(BaseModel):
 
     success: bool = True
     error: Optional[str] = None
+
+
+# ============================================================
+# Authentication Error Payloads
+# ============================================================
+
+
+class AuthErrorPayload(BaseModel):
+    """Payload for auth:error event."""
+
+    error: str = Field(..., description="Error message")
+    code: Literal["TOKEN_EXPIRED", "INVALID_TOKEN"] = Field(
+        ..., description="Error code for identifying the type of auth error"
+    )
