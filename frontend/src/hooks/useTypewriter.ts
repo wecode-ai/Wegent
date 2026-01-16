@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 /**
  * Hook to provide a smooth typewriter effect for streaming content.
@@ -11,15 +11,12 @@ import { useState, useEffect, useRef, useCallback } from 'react'
  * smoothly updating string (displayedContent) that "types" out characters.
  *
  * @param content The full content string that updates over time
- * @param speed Base speed in milliseconds per tick (default: 30ms)
+ * @param speed Base speed in milliseconds per tick (default: 15ms)
  * @returns The content to display
  */
-export function useTypewriter(content: string, speed = 30) {
+export function useTypewriter(content: string, speed = 15) {
   const [displayedContent, setDisplayedContent] = useState('')
   const contentRef = useRef(content)
-  const rafIdRef = useRef<number | null>(null)
-  const lastTimeRef = useRef<number>(0)
-  const isRunningRef = useRef(false)
 
   // Update ref when content changes
   useEffect(() => {
@@ -30,22 +27,14 @@ export function useTypewriter(content: string, speed = 30) {
     }
   }, [content, displayedContent.length])
 
-  // Animation frame callback
-  const animate = useCallback(
-    (timestamp: number) => {
-      // Throttle updates based on speed
-      if (timestamp - lastTimeRef.current < speed) {
-        rafIdRef.current = requestAnimationFrame(animate)
-        return
-      }
-      lastTimeRef.current = timestamp
-
+  useEffect(() => {
+    const timer = setInterval(() => {
       setDisplayedContent(current => {
         const target = contentRef.current
 
-        // If caught up or ahead, stop animation
+        // If current is longer than target (e.g. content truncated/reset but not caught above),
+        // or equal, just return target or current.
         if (current.length >= target.length) {
-          isRunningRef.current = false
           return current.length > target.length ? target : current
         }
 
@@ -55,6 +44,7 @@ export function useTypewriter(content: string, speed = 30) {
         // - Small lag (< 5 chars): Type 1 char at a time (smooth typing feel)
         // - Medium lag (5-20 chars): Speed up slightly
         // - Large lag (> 20 chars): Catch up quickly (bulk render)
+        // This prevents the display from falling too far behind the stream.
         let step = 1
         if (lag > 50) {
           step = Math.ceil(lag / 5) // Very fast catchup
@@ -68,31 +58,10 @@ export function useTypewriter(content: string, speed = 30) {
         const nextLength = Math.min(current.length + step, target.length)
         return target.slice(0, nextLength)
       })
+    }, speed)
 
-      // Continue animation if still running
-      if (isRunningRef.current) {
-        rafIdRef.current = requestAnimationFrame(animate)
-      }
-    },
-    [speed]
-  )
-
-  // Start animation when content changes and we're behind
-  useEffect(() => {
-    const shouldAnimate = content.length > displayedContent.length
-
-    if (shouldAnimate && !isRunningRef.current) {
-      isRunningRef.current = true
-      rafIdRef.current = requestAnimationFrame(animate)
-    }
-
-    return () => {
-      if (rafIdRef.current !== null) {
-        cancelAnimationFrame(rafIdRef.current)
-        rafIdRef.current = null
-      }
-    }
-  }, [content, displayedContent.length, animate])
+    return () => clearInterval(timer)
+  }, [speed])
 
   return displayedContent
 }
