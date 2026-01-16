@@ -98,12 +98,15 @@
 }
 
 /* Unify markdown text size with thinking process */
-/* Apply to both .wmde-markdown (legacy @uiw/react-markdown-editor) and .markdown-content/.enhanced-markdown (new EnhancedMarkdown) */
+/* .wmde-markdown provides base styles from @uiw/react-markdown-preview */
+/* These overrides customize font sizes for our design system */
 .wmde-markdown,
 .markdown-content,
 .enhanced-markdown {
   font-size: 0.875rem; /* text-sm = 14px */
   line-height: 1.5;
+  /* Reset background to transparent since wmde-markdown sets a background */
+  background-color: transparent;
 }
 
 .wmde-markdown h1,
@@ -111,65 +114,85 @@
 .wmde-markdown h3,
 .wmde-markdown h4,
 .wmde-markdown h5,
-.wmde-markdown h6,
-.markdown-content h1,
-.markdown-content h2,
-.markdown-content h3,
-.markdown-content h4,
-.markdown-content h5,
-.markdown-content h6 {
+.wmde-markdown h6 {
   font-weight: 600;
   margin-top: 1em;
   margin-bottom: 0.5em;
 }
 
-.wmde-markdown h1,
-.markdown-content h1 {
+.wmde-markdown h1 {
   font-size: 1.25rem;
+  border-bottom: none;
+  padding-bottom: 0;
 } /* 20px */
-.wmde-markdown h2,
-.markdown-content h2 {
+.wmde-markdown h2 {
   font-size: 1.125rem;
+  border-bottom: none;
+  padding-bottom: 0;
 } /* 18px */
-.wmde-markdown h3,
-.markdown-content h3 {
+.wmde-markdown h3 {
   font-size: 1rem;
 } /* 16px */
 .wmde-markdown h4,
 .wmde-markdown h5,
-.wmde-markdown h6,
-.markdown-content h4,
-.markdown-content h5,
-.markdown-content h6 {
+.wmde-markdown h6 {
   font-size: 0.875rem;
 } /* 14px */
 
-.wmde-markdown p,
-.markdown-content p {
+.wmde-markdown p {
   margin-bottom: 0.75em;
 }
 
 .wmde-markdown ul,
-.wmde-markdown ol,
-.markdown-content ul,
-.markdown-content ol {
+.wmde-markdown ol {
   margin-bottom: 0.75em;
   padding-left: 1.5em;
 }
 
-.wmde-markdown li,
-.markdown-content li {
+.wmde-markdown li {
   margin-bottom: 0.25em;
 }
 
+/* Override code block styles to use our design system colors */
 .wmde-markdown code,
-.markdown-content code {
+.wmde-markdown tt {
   font-size: 0.875em;
+  background-color: rgb(var(--color-code-bg));
+  padding: 0.125em 0.375em;
+  border-radius: 0.25rem;
+}
+
+.wmde-markdown pre {
+  background-color: rgb(var(--color-code-bg));
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 0.75em 0;
 }
 
 .wmde-markdown pre code,
-.markdown-content pre code {
+.wmde-markdown pre tt {
   font-size: 0.8125rem; /* 13px */
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+/* Override blockquote styles to use our design system colors */
+.wmde-markdown blockquote {
+  border-left-color: rgb(var(--color-border));
+  color: rgb(var(--color-text-secondary));
+}
+
+/* Override link styles to use our design system colors */
+.wmde-markdown a {
+  color: rgb(var(--color-link));
+}
+
+/* Override hr styles */
+.wmde-markdown hr {
+  background-color: rgb(var(--color-border));
+  border-bottom-color: rgb(var(--color-border));
 }
 
 /* Search icon slide animation */
