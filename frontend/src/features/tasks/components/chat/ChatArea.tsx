@@ -53,6 +53,8 @@ interface ChatAreaProps {
   onTaskCreated?: (taskId: number) => void
   /** Knowledge base ID for knowledge type tasks */
   knowledgeBaseId?: number
+  /** Selected document IDs from DocumentPanel (for notebook mode context injection) */
+  selectedDocumentIds?: number[]
 }
 
 /**
@@ -70,6 +72,7 @@ function ChatAreaContent({
   initialKnowledgeBase,
   onTaskCreated,
   knowledgeBaseId,
+  selectedDocumentIds,
 }: ChatAreaProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -300,6 +303,7 @@ function ChatAreaContent({
     selectedContexts: chatState.selectedContexts,
     resetContexts: chatState.resetContexts,
     onTaskCreated,
+    selectedDocumentIds,
   })
 
   // Determine if there are messages to display (full computation)
