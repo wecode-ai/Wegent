@@ -29,7 +29,9 @@ import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { DocumentPanel, KnowledgeBaseSummaryCard } from '@/features/knowledge/document/components'
 import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-chat'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
+import { listGroups } from '@/apis/groups'
 import type { Team } from '@/types/api'
+import type { GroupRole } from '@/types/group'
 
 /**
  * Desktop-specific implementation of Knowledge Base Chat Page
@@ -103,6 +105,26 @@ export function KnowledgeBaseChatPageDesktop() {
   // Search dialog state
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
 
+  // Group role map for permission checking
+  const [groupRoleMap, setGroupRoleMap] = useState<Map<string, GroupRole>>(new Map())
+
+  // Fetch all groups and build role map for permission checking
+  useEffect(() => {
+    listGroups()
+      .then(response => {
+        const roleMap = new Map<string, GroupRole>()
+        response.items.forEach(group => {
+          if (group.my_role) {
+            roleMap.set(group.name, group.my_role)
+          }
+        })
+        setGroupRoleMap(roleMap)
+      })
+      .catch(error => {
+        console.error('Failed to load groups for role map:', error)
+      })
+  }, [])
+
   // Toggle search dialog callback
   const toggleSearchDialog = useCallback(() => {
     setIsSearchDialogOpen(prev => !prev)
@@ -171,10 +193,11 @@ export function KnowledgeBaseChatPageDesktop() {
     if (knowledgeBase.namespace === 'default') {
       return knowledgeBase.user_id === user.id
     }
-    // Group knowledge base - would need to check group role
-    // For now, default to true if user has access
-    return true
-  }, [knowledgeBase, user])
+    // Group knowledge base - check group role
+    // Developer or higher can edit, Maintainer or higher can delete
+    const groupRole = groupRoleMap.get(knowledgeBase.namespace)
+    return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
+  }, [knowledgeBase, user, groupRoleMap])
 
   // Loading state
   if (kbLoading) {
