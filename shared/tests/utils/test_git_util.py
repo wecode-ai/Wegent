@@ -191,3 +191,253 @@ class TestGitUtil:
         # Verify failure
         assert success is False
         assert "Clone failed" in error
+
+    @patch("shared.utils.git_util.subprocess.run")
+    @patch("shared.utils.git_util.setup_git_hooks")
+    def test_clone_repo_with_token_gerrit_at_symbol(
+        self, mock_setup_hooks, mock_subprocess
+    ):
+        """Test that Gerrit tokens with @ symbol are properly URL encoded"""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_subprocess.return_value = mock_result
+        mock_setup_hooks.return_value = (True, None)
+
+        project_url = "https://gerrit.example.com/project"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        username = "user@domain.com"
+        token = "token@with@at"
+
+        success, error = clone_repo_with_token(
+            project_url, branch, project_path, username, token
+        )
+
+        assert success is True
+        assert error is None
+
+        call_args = mock_subprocess.call_args
+        cmd = call_args[0][0]
+        auth_url = cmd[5]
+
+        # @ symbol should be encoded as %40
+        assert "%40" in auth_url
+        assert "user@domain.com" not in auth_url
+        assert "token@with@at" not in auth_url
+
+    @patch("shared.utils.git_util.subprocess.run")
+    @patch("shared.utils.git_util.setup_git_hooks")
+    def test_clone_repo_with_token_gerrit_percent_symbol(
+        self, mock_setup_hooks, mock_subprocess
+    ):
+        """Test that Gerrit tokens with % symbol are properly URL encoded"""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_subprocess.return_value = mock_result
+        mock_setup_hooks.return_value = (True, None)
+
+        project_url = "https://gerrit.example.com/project"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        username = "testuser"
+        token = "token%with%percent"
+
+        success, error = clone_repo_with_token(
+            project_url, branch, project_path, username, token
+        )
+
+        assert success is True
+        assert error is None
+
+        call_args = mock_subprocess.call_args
+        cmd = call_args[0][0]
+        auth_url = cmd[5]
+
+        # % symbol should be encoded as %25
+        assert "%25" in auth_url
+        assert "token%with%percent" not in auth_url
+
+    @patch("shared.utils.git_util.subprocess.run")
+    @patch("shared.utils.git_util.setup_git_hooks")
+    def test_clone_repo_with_token_gerrit_colon_symbol(
+        self, mock_setup_hooks, mock_subprocess
+    ):
+        """Test that Gerrit tokens with : symbol are properly URL encoded"""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_subprocess.return_value = mock_result
+        mock_setup_hooks.return_value = (True, None)
+
+        project_url = "https://gerrit.example.com/project"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        username = "testuser"
+        token = "token:with:colon"
+
+        success, error = clone_repo_with_token(
+            project_url, branch, project_path, username, token
+        )
+
+        assert success is True
+        assert error is None
+
+        call_args = mock_subprocess.call_args
+        cmd = call_args[0][0]
+        auth_url = cmd[5]
+
+        # : symbol should be encoded as %3A
+        assert "%3A" in auth_url
+        assert "token:with:colon" not in auth_url
+
+    @patch("shared.utils.git_util.subprocess.run")
+    @patch("shared.utils.git_util.setup_git_hooks")
+    def test_clone_repo_with_token_gerrit_mixed_special_chars(
+        self, mock_setup_hooks, mock_subprocess
+    ):
+        """Test that Gerrit tokens with mixed special characters are properly URL encoded"""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_subprocess.return_value = mock_result
+        mock_setup_hooks.return_value = (True, None)
+
+        project_url = "https://gerrit.example.com/project"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        username = "user@company"
+        # Token with multiple special characters: / @ % : + = & ? #
+        token = "abc/def@ghi%jkl:mno+pqr=stu&vwx?yz#123"
+
+        success, error = clone_repo_with_token(
+            project_url, branch, project_path, username, token
+        )
+
+        assert success is True
+        assert error is None
+
+        call_args = mock_subprocess.call_args
+        cmd = call_args[0][0]
+        auth_url = cmd[5]
+
+        # All special characters should be encoded
+        assert "%2F" in auth_url  # / -> %2F
+        assert "%40" in auth_url  # @ -> %40
+        assert "%25" in auth_url  # % -> %25
+        assert "%3A" in auth_url  # : -> %3A
+        assert "%2B" in auth_url  # + -> %2B
+        assert "%3D" in auth_url  # = -> %3D
+        assert "%26" in auth_url  # & -> %26
+        assert "%3F" in auth_url  # ? -> %3F
+        assert "%23" in auth_url  # # -> %23
+
+        # Raw special characters should not appear in the URL
+        assert "abc/def" not in auth_url
+        assert "@ghi" not in auth_url
+
+    @patch("shared.utils.git_util.subprocess.run")
+    @patch("shared.utils.git_util.setup_git_hooks")
+    def test_clone_repo_with_token_gerrit_no_branch(
+        self, mock_setup_hooks, mock_subprocess
+    ):
+        """Test Gerrit URL encoding when no branch is specified"""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_subprocess.return_value = mock_result
+        mock_setup_hooks.return_value = (True, None)
+
+        project_url = "https://gerrit.example.com/project"
+        branch = None  # No branch specified
+        project_path = "/tmp/test-repo"
+        username = "testuser"
+        token = "token/with/slash"
+
+        success, error = clone_repo_with_token(
+            project_url, branch, project_path, username, token
+        )
+
+        assert success is True
+        assert error is None
+
+        call_args = mock_subprocess.call_args
+        cmd = call_args[0][0]
+
+        # When no branch, command is: ['git', 'clone', URL, PATH]
+        auth_url = cmd[2]
+
+        # / should be encoded
+        assert "%2F" in auth_url
+        assert "token/with/slash" not in auth_url
+
+    @patch("shared.utils.git_util.subprocess.run")
+    @patch("shared.utils.git_util.setup_git_hooks")
+    def test_clone_repo_with_token_gerrit_http_protocol(
+        self, mock_setup_hooks, mock_subprocess
+    ):
+        """Test Gerrit URL encoding with HTTP protocol (not HTTPS)"""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_subprocess.return_value = mock_result
+        mock_setup_hooks.return_value = (True, None)
+
+        project_url = "http://gerrit.example.com/project"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        username = "testuser"
+        token = "token@special"
+
+        success, error = clone_repo_with_token(
+            project_url, branch, project_path, username, token
+        )
+
+        assert success is True
+        assert error is None
+
+        call_args = mock_subprocess.call_args
+        cmd = call_args[0][0]
+        auth_url = cmd[5]
+
+        # Should start with http://
+        assert auth_url.startswith("http://")
+        # @ should be encoded
+        assert "%40" in auth_url
+        assert "token@special" not in auth_url
+
+    @patch("shared.utils.git_util.subprocess.run")
+    @patch("shared.utils.git_util.setup_git_hooks")
+    def test_clone_repo_with_token_gerrit_username_with_slashes(
+        self, mock_setup_hooks, mock_subprocess
+    ):
+        """Test that Gerrit usernames with multiple / characters are properly URL encoded"""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_subprocess.return_value = mock_result
+        mock_setup_hooks.return_value = (True, None)
+
+        project_url = "https://gerrit.example.com/project"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        # Username with multiple slashes like: domain/subdomain/user
+        username = "corp/team/user123"
+        token = "http/token/test"
+
+        success, error = clone_repo_with_token(
+            project_url, branch, project_path, username, token
+        )
+
+        assert success is True
+        assert error is None
+
+        call_args = mock_subprocess.call_args
+        cmd = call_args[0][0]
+        auth_url = cmd[5]
+
+        # All / in username and token should be encoded as %2F
+        # Count occurrences: username has 2 slashes, token has 2 slashes = 4 total
+        assert auth_url.count("%2F") >= 4
+
+        # Raw username and token with slashes should not appear
+        assert "corp/team/user123" not in auth_url
+        assert "http/token/test" not in auth_url
+
+        # Verify the URL structure is correct (protocol://encoded_user:encoded_token@host/path)
+        assert auth_url.startswith("https://")
+        assert "@gerrit.example.com" in auth_url
