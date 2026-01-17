@@ -8,7 +8,7 @@
 
 export type DocumentStatus = 'enabled' | 'disabled'
 
-export type DocumentSourceType = 'file' | 'text' | 'table'
+export type DocumentSourceType = 'file' | 'text' | 'table' | 'web'
 
 export type KnowledgeResourceScope = 'personal' | 'group' | 'all'
 
@@ -243,4 +243,30 @@ export interface DocumentDetailResponse {
   content_length?: number
   truncated?: boolean
   summary?: DocumentSummary | null
+}
+
+// Web Scraper types
+export interface WebScrapeRequest {
+  url: string
+}
+
+export interface WebScrapeResponse {
+  title?: string
+  content: string
+  url: string
+  scraped_at: string
+  content_length: number
+  description?: string
+  success: boolean
+  error_code?:
+    | 'INVALID_URL_FORMAT'
+    | 'FETCH_FAILED'
+    | 'FETCH_TIMEOUT'
+    | 'PARSE_FAILED'
+    | 'EMPTY_CONTENT'
+    | 'AUTH_REQUIRED'
+    | 'SSRF_BLOCKED'
+    | 'CONTENT_TOO_LARGE'
+    | 'NOT_HTML'
+  error_message?: string
 }

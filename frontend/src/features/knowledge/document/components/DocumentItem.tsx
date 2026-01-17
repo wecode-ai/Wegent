@@ -4,7 +4,16 @@
 
 'use client'
 
-import { FileText, Trash2, Pencil, ExternalLink, Table2, MoreVertical } from 'lucide-react'
+import {
+  FileText,
+  Trash2,
+  Pencil,
+  ExternalLink,
+  Table2,
+  MoreVertical,
+  Globe,
+  CloudDownload,
+} from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -20,6 +29,7 @@ interface DocumentItemProps {
   document: KnowledgeDocument
   onEdit?: (doc: KnowledgeDocument) => void
   onDelete?: (doc: KnowledgeDocument) => void
+  onRefresh?: (doc: KnowledgeDocument) => void
   onViewDetail?: (doc: KnowledgeDocument) => void
   canManage?: boolean
   showBorder?: boolean
@@ -27,18 +37,22 @@ interface DocumentItemProps {
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   /** Compact mode for sidebar display - uses card layout */
   compact?: boolean
+  /** Whether the document is currently being refreshed */
+  isRefreshing?: boolean
 }
 
 export function DocumentItem({
   document,
   onEdit,
   onDelete,
+  onRefresh,
   onViewDetail,
   canManage = true,
   showBorder = true,
   selected = false,
   onSelect,
   compact = false,
+  isRefreshing = false,
 }: DocumentItemProps) {
   const { t } = useTranslation()
 
@@ -78,6 +92,11 @@ export function DocumentItem({
     onDelete?.(document)
   }
 
+  const handleRefresh = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onRefresh?.(document)
+  }
+
   const handleOpenLink = (e: React.MouseEvent) => {
     e.stopPropagation()
     const url = document.source_config?.url
@@ -85,13 +104,21 @@ export function DocumentItem({
       window.open(url, '_blank', 'noopener,noreferrer')
     }
   }
-
-  // Check if this is a table document
+  // Check document source type
   const isTable = document.source_type === 'table'
-  const tableUrl =
-    isTable && document.source_config?.url && typeof document.source_config.url === 'string'
+  const isWeb = document.source_type === 'web'
+  // URL for table or web documents
+  const sourceUrl =
+    (isTable || isWeb) &&
+    document.source_config?.url &&
+    typeof document.source_config.url === 'string'
       ? document.source_config.url
       : null
+
+  // Get display name - for web documents, remove .md extension
+  const displayName =
+    isWeb && document.name.endsWith('.md') ? document.name.slice(0, -3) : document.name
+
   const handleRowClick = () => {
     onViewDetail?.(document)
   }
@@ -117,8 +144,8 @@ export function DocumentItem({
         {/* File name and info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1">
-            <span className="text-xs font-medium text-text-primary truncate">{document.name}</span>
-            {tableUrl && (
+            <span className="text-xs font-medium text-text-primary truncate">{displayName}</span>
+            {sourceUrl && (
               <button
                 className="p-0.5 rounded text-primary hover:bg-primary/10 transition-colors flex-shrink-0"
                 onClick={handleOpenLink}
@@ -138,13 +165,21 @@ export function DocumentItem({
               >
                 {t('knowledge:document.document.type.table')}
               </Badge>
+            ) : isWeb ? (
+              <Badge
+                variant="default"
+                size="sm"
+                className="bg-green-500/10 text-green-600 border-green-500/20 text-[9px] px-1 py-0"
+              >
+                {t('knowledge:document.document.type.web')}
+              </Badge>
             ) : (
               <span className="text-[9px] text-text-muted uppercase">
                 {document.file_extension}
               </span>
             )}
             {/* Size */}
-            {!isTable && (
+            {!isTable && !isWeb && (
               <span className="text-[9px] text-text-muted">
                 {formatFileSize(document.file_size)}
               </span>
@@ -169,6 +204,8 @@ export function DocumentItem({
           >
             {isTable ? (
               <Table2 className="w-3 h-3 text-primary" />
+            ) : isWeb ? (
+              <Globe className="w-3 h-3 text-primary" />
             ) : (
               <FileText className="w-3 h-3 text-primary" />
             )}
@@ -190,6 +227,16 @@ export function DocumentItem({
                     <Pencil className="w-3.5 h-3.5 mr-2" />
                     {t('common:actions.edit')}
                   </DropdownMenuItem>
+                  {isWeb && onRefresh && (
+                    <DropdownMenuItem onClick={handleRefresh} disabled={isRefreshing}>
+                      <CloudDownload
+                        className={`w-3.5 h-3.5 mr-2 ${isRefreshing ? 'animate-pulse' : ''}`}
+                      />
+                      {isRefreshing
+                        ? t('knowledge:document.upload.web.refetching')
+                        : t('knowledge:document.upload.web.refetch')}
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem danger onClick={handleDelete}>
                     <Trash2 className="w-3.5 h-3.5 mr-2" />
                     {t('common:actions.delete')}
@@ -224,6 +271,8 @@ export function DocumentItem({
       <div className="p-2 bg-primary/10 rounded-lg flex-shrink-0">
         {isTable ? (
           <Table2 className="w-4 h-4 text-primary" />
+        ) : isWeb ? (
+          <Globe className="w-4 h-4 text-primary" />
         ) : (
           <FileText className="w-4 h-4 text-primary" />
         )}
@@ -231,8 +280,8 @@ export function DocumentItem({
 
       {/* File name */}
       <div className="flex-1 min-w-[120px] flex items-center gap-2">
-        <span className="text-sm font-medium text-text-primary truncate">{document.name}</span>
-        {tableUrl && (
+        <span className="text-sm font-medium text-text-primary truncate">{displayName}</span>
+        {sourceUrl && (
           <button
             className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors flex-shrink-0"
             onClick={handleOpenLink}
@@ -242,7 +291,6 @@ export function DocumentItem({
           </button>
         )}
       </div>
-
       {/* Edit button - in the middle area */}
       <div className="w-48 flex-shrink-0 flex items-center justify-center">
         {canManage && (
@@ -266,6 +314,14 @@ export function DocumentItem({
           >
             {t('knowledge:document.document.type.table')}
           </Badge>
+        ) : isWeb ? (
+          <Badge
+            variant="default"
+            size="sm"
+            className="bg-green-500/10 text-green-600 border-green-500/20"
+          >
+            {t('knowledge:document.document.type.web')}
+          </Badge>
         ) : (
           <span className="text-xs text-text-muted uppercase">{document.file_extension}</span>
         )}
@@ -274,10 +330,9 @@ export function DocumentItem({
       {/* Size */}
       <div className="w-20 flex-shrink-0 text-center">
         <span className="text-xs text-text-muted">
-          {isTable ? '-' : formatFileSize(document.file_size)}
+          {isTable || isWeb ? '-' : formatFileSize(document.file_size)}
         </span>
       </div>
-
       {/* Upload date with time */}
       <div className="w-40 flex-shrink-0 text-center">
         <span className="text-xs text-text-muted">{formatDateTime(document.created_at)}</span>
@@ -296,9 +351,29 @@ export function DocumentItem({
         </Badge>
       </div>
 
-      {/* Action button - delete only */}
+      {/* Action buttons */}
       {canManage && (
-        <div className="w-16 flex-shrink-0 flex items-center justify-center">
+        <div className="w-20 flex-shrink-0 flex items-center justify-center gap-1">
+          {/* Re-fetch button - only for web documents */}
+          {isWeb && onRefresh && (
+            <button
+              className={`p-1.5 rounded-md transition-colors ${
+                isRefreshing
+                  ? 'text-primary cursor-not-allowed'
+                  : 'text-text-muted hover:text-primary hover:bg-primary/10'
+              }`}
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              title={
+                isRefreshing
+                  ? t('knowledge:document.upload.web.refetching')
+                  : t('knowledge:document.upload.web.refetch')
+              }
+            >
+              <CloudDownload className={`w-4 h-4 ${isRefreshing ? 'animate-pulse' : ''}`} />
+            </button>
+          )}
+          {/* Delete button */}
           <button
             className="p-1.5 rounded-md text-text-muted hover:text-error hover:bg-error/10 transition-colors"
             onClick={handleDelete}

@@ -85,7 +85,8 @@
         "actions": "操作"
       },
       "type": {
-        "table": "表格"
+        "table": "表格",
+        "web": "网页"
       },
       "search": "搜索文档",
       "empty": "暂无文档",
@@ -188,7 +189,31 @@
         }
       },
       "documentCount": "文档数量",
-      "notebookLimitReached": "笔记本最多支持 50 个文件"
+      "notebookLimitReached": "笔记本最多支持 50 个文件",
+      "web": {
+        "addWebPage": "添加网页",
+        "orAddWebPage": "或输入网页地址",
+        "hint": "输入网页 URL，系统将自动抓取网页内容并添加到知识库。",
+        "urlLabel": "网页地址",
+        "urlPlaceholder": "https://example.com/article",
+        "nameLabel": "文档名称（可选）",
+        "namePlaceholder": "默认使用网页标题",
+        "submitButton": "抓取并添加",
+        "fetching": "正在抓取网页内容...",
+        "success": "网页内容抓取成功",
+        "fetchFailed": "无法访问该网页，请检查 URL 是否正确",
+        "fetchTimeout": "网页请求超时，请稍后重试",
+        "parseFailed": "无法解析网页内容",
+        "emptyContent": "该网页没有可提取的内容",
+        "authRequired": "该网页需要登录，暂不支持",
+        "addFailed": "添加网页失败，请重试",
+        "urlRequired": "请输入网页地址",
+        "refetch": "重新抓取",
+        "refetching": "抓取中...",
+        "refetchSuccess": "网页内容已更新",
+        "refetchFailed": "重新抓取失败",
+        "refetchConfirm": "确定要重新抓取此网页吗？系统将重新获取网页内容并更新文档。"
+      }
     },
     "permission": {
       "noAccess": "您没有操作权限"
