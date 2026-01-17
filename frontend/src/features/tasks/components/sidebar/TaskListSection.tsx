@@ -545,6 +545,16 @@ export default function TaskListSection({
                           handleTaskClick(task)
                         }
                       }}
+                      onDoubleClick={e => {
+                        // Handle double-click on the entire row to start renaming
+                        // This is more reliable than on the span alone because TooltipTrigger
+                        // may interfere with pointer events on child elements
+                        if (editingTaskId !== task.id) {
+                          e.stopPropagation()
+                          e.preventDefault()
+                          handleStartRename(task.id)
+                        }
+                      }}
                       onTouchStart={handleTouchStart(task)}
                       onTouchMove={handleTouchMove}
                       onTouchEnd={handleTouchEnd(task)}
@@ -571,14 +581,7 @@ export default function TaskListSection({
                           }}
                         />
                       ) : (
-                        <span
-                          className="flex-1 min-w-0 text-sm text-text-primary leading-tight truncate"
-                          onDoubleClick={e => {
-                            e.stopPropagation()
-                            e.preventDefault()
-                            handleStartRename(task.id)
-                          }}
-                        >
+                        <span className="flex-1 min-w-0 text-sm text-text-primary leading-tight truncate">
                           {localTitles[task.id] ?? task.title}
                         </span>
                       )}
