@@ -77,6 +77,8 @@ export function DocumentList({
   const [showSearchPopover, setShowSearchPopover] = useState(false)
   // Track if initial selection has been done
   const [initialSelectionDone, setInitialSelectionDone] = useState(false)
+  // Track which document is being refreshed
+  const [refreshingDocId, setRefreshingDocId] = useState<number | null>(null)
 
   // Default select all documents when documents load (for notebook mode)
   useEffect(() => {
@@ -195,6 +197,33 @@ export function DocumentList({
     setShowUpload(false)
   }
 
+  const handleWebAdd = async (url: string, name?: string) => {
+    // Import the API function
+    const { createWebDocument } = await import('@/apis/knowledge')
+
+    // Call backend API to scrape and create document
+    const result = await createWebDocument(url, knowledgeBase.id, name)
+
+    if (!result.success) {
+      throw new Error(result.error_message || 'Failed to create web document')
+    }
+
+    // Refresh document list to show the new document with correct data
+    // This ensures the document has the correct source_type from the backend
+    await refresh()
+
+    // Auto-select newly created document (for notebook mode context injection)
+    if (onSelectionChange && result.document?.id) {
+      setSelectedIds(prev => {
+        const newSet = new Set(prev)
+        newSet.add(result.document!.id)
+        return newSet
+      })
+    }
+
+    setShowUpload(false)
+  }
+
   const handleDelete = async () => {
     if (!deletingDoc) return
     try {
@@ -242,6 +271,28 @@ export function DocumentList({
       // Error handled by hook
     } finally {
       setBatchLoading(false)
+    }
+  }
+
+  // Handle web document re-fetch
+  const handleRefreshWebDocument = async (doc: KnowledgeDocument) => {
+    if (doc.source_type !== 'web') return
+
+    setRefreshingDocId(doc.id)
+    try {
+      const { refreshWebDocument } = await import('@/apis/knowledge')
+      const result = await refreshWebDocument(doc.id)
+
+      if (!result.success) {
+        throw new Error(result.error_message || t('document.upload.web.refetchFailed'))
+      }
+
+      // Refresh document list to show updated data
+      await refresh()
+    } catch {
+      // Error will be shown via toast in the API layer
+    } finally {
+      setRefreshingDocId(null)
     }
   }
 
@@ -343,15 +394,33 @@ export function DocumentList({
         {/* Spacer to push buttons to the right */}
         <div className="flex-1" />
 
-        {/* Refresh button */}
-        <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-        </Button>
+        {/* Refresh list button */}
+        <TooltipProvider>
+          <Tooltip delayDuration={200}>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('common:actions.refresh')}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
         {/* Retrieval test button */}
-        <Button variant="outline" size="sm" onClick={() => setShowRetrievalTest(true)}>
-          <Target className="w-4 h-4" />
-        </Button>
+        <TooltipProvider>
+          <Tooltip delayDuration={200}>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="sm" onClick={() => setShowRetrievalTest(true)}>
+                <Target className="w-4 h-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('document.retrievalTest.button')}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
         {/* Upload button */}
         {canManage && (
@@ -426,6 +495,8 @@ export function DocumentList({
                   onViewDetail={setViewingDoc}
                   onEdit={setEditingDoc}
                   onDelete={setDeletingDoc}
+                  onRefresh={handleRefreshWebDocument}
+                  isRefreshing={refreshingDocId === doc.id}
                   canManage={canManage}
                   showBorder={false}
                   selected={selectedIds.has(doc.id)}
@@ -495,6 +566,8 @@ export function DocumentList({
                   onViewDetail={setViewingDoc}
                   onEdit={setEditingDoc}
                   onDelete={setDeletingDoc}
+                  onRefresh={handleRefreshWebDocument}
+                  isRefreshing={refreshingDocId === doc.id}
                   canManage={canManage}
                   showBorder={index < filteredAndSortedDocuments.length - 1}
                   selected={selectedIds.has(doc.id)}
@@ -534,6 +607,7 @@ export function DocumentList({
         onOpenChange={setShowUpload}
         onUploadComplete={handleUploadComplete}
         onTableAdd={handleTableAdd}
+        onWebAdd={handleWebAdd}
         kbType={knowledgeBase.kb_type}
         currentDocumentCount={documents.length}
       />

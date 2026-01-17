@@ -30,7 +30,7 @@ dependencies = [
     "authlib>=1.3.0",
     "pyjwt>=2.8.0",
     # HTTP clients
-    "httpx[socks]>=0.26.0",
+    "httpx[brotli,socks]>=0.26.0",
     "requests>=2.31.0",
     "aiohttp>=3.8.0",
     # LangChain and LangGraph
@@ -80,8 +80,12 @@ dependencies = [
     "python-magic>=0.4.27",
     "markdown>=3.5.0",
     "beautifulsoup4>=4.12.0",
+    "html2text>=2024.2.26",
     "emoji>=2.9.0",
     "mcp>=1.0.0",
+
+    # Web scraping with JavaScript rendering support
+    "crawl4ai>=0.4.0",
 
     # WebSocket support
     "python-socketio>=5.10.0",

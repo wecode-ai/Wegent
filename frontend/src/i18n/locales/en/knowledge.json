@@ -85,7 +85,8 @@
         "actions": "Actions"
       },
       "type": {
-        "table": "Table"
+        "table": "Table",
+        "web": "Web Page"
       },
       "search": "Search documents",
       "empty": "No documents yet",
@@ -188,7 +189,31 @@
         }
       },
       "documentCount": "Document Count",
-      "notebookLimitReached": "Notebook supports up to 50 files"
+      "notebookLimitReached": "Notebook supports up to 50 files",
+      "web": {
+        "addWebPage": "Add Web Page",
+        "orAddWebPage": "Or enter a web page URL",
+        "hint": "Enter a web page URL to scrape its content and add it to your knowledge base.",
+        "urlLabel": "Web Page URL",
+        "urlPlaceholder": "https://example.com/article",
+        "nameLabel": "Document Name (Optional)",
+        "namePlaceholder": "Uses page title if not specified",
+        "submitButton": "Fetch and Add",
+        "fetching": "Fetching web page...",
+        "success": "Web page content fetched successfully",
+        "fetchFailed": "Unable to access the web page. Please check if the URL is correct",
+        "fetchTimeout": "Request timed out. Please try again later",
+        "parseFailed": "Unable to parse the web page content",
+        "emptyContent": "No extractable content found on the page",
+        "authRequired": "This page requires authentication and cannot be accessed",
+        "addFailed": "Failed to add web page. Please try again",
+        "urlRequired": "Please enter a web page URL",
+        "refetch": "Re-fetch",
+        "refetching": "Fetching...",
+        "refetchSuccess": "Web page content updated",
+        "refetchFailed": "Failed to re-fetch web page",
+        "refetchConfirm": "Re-fetch this web page? This will retrieve the latest content from the URL and update the document."
+      }
     },
     "permission": {
       "noAccess": "You do not have permission to perform this action"

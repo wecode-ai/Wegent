@@ -19,6 +19,7 @@ from app.api.endpoints import (
     tables,
     users,
     utils,
+    web_scraper,
     wiki,
     wizard,
 )
@@ -104,6 +105,9 @@ api_router.include_router(
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
+api_router.include_router(
+    web_scraper.router, prefix="/web-scraper", tags=["web-scraper"]
+)
 api_router.include_router(k_router)
 
 # Internal API endpoints (for service-to-service communication)
