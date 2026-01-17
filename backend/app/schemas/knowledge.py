@@ -38,6 +38,7 @@ class DocumentSourceType(str, Enum):
     FILE = "file"
     TEXT = "text"
     TABLE = "table"
+    WEB = "web"
 
 
 class ResourceScope(str, Enum):
@@ -240,6 +241,17 @@ class KnowledgeDocumentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def ensure_source_type_enum(cls, v):
+        """Convert string to DocumentSourceType enum for ORM compatibility."""
+        if isinstance(v, str):
+            try:
+                return DocumentSourceType(v)
+            except ValueError:
+                return DocumentSourceType.FILE
+        return v
+
     @field_validator("source_config", mode="before")
     @classmethod
     def ensure_source_config_dict(cls, v):
@@ -352,3 +364,26 @@ class DocumentDetailResponse(BaseModel):
     )
     truncated: Optional[bool] = Field(None, description="Whether content was truncated")
     summary: Optional[dict] = Field(None, description="Document summary object")
+
+
+# ============== Web Scraper Schemas ==============
+
+
+class WebScrapeRequest(BaseModel):
+    """Schema for web scrape request."""
+
+    url: str = Field(..., min_length=1, description="URL to scrape")
+
+
+class WebScrapeResponse(BaseModel):
+    """Schema for web scrape response."""
+
+    title: Optional[str] = Field(None, description="Page title")
+    content: str = Field(..., description="Markdown content")
+    url: str = Field(..., description="Source URL")
+    scraped_at: str = Field(..., description="Scrape timestamp (ISO format)")
+    content_length: int = Field(0, description="Content length in characters")
+    description: Optional[str] = Field(None, description="Page description")
+    success: bool = Field(True, description="Whether scraping succeeded")
+    error_code: Optional[str] = Field(None, description="Error code if failed")
+    error_message: Optional[str] = Field(None, description="Error message if failed")

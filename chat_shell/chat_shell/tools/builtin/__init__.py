@@ -9,10 +9,12 @@ from .evaluation import SubmitEvaluationResultTool
 from .file_reader import FileListSkill, FileReaderSkill
 from .knowledge_base import KnowledgeBaseTool
 from .load_skill import LoadSkillTool
+from .web_fetch import WebFetchTool
 from .web_search import WebSearchTool
 
 __all__ = [
     "WebSearchTool",
+    "WebFetchTool",
     "KnowledgeBaseTool",
     "DataTableTool",
     "FileReaderSkill",
