@@ -35,14 +35,14 @@
     "knowledgeBase": {
       "title": "知识库",
       "create": "创建知识库",
-      "createNotebook": "创建 Notebook",
-      "createClassic": "创建普通知识库",
+      "createNotebook": "创建笔记本",
+      "createClassic": "创建知识库",
       "createDesc": "创建您的第一个知识库",
-      "notebookDesc": "三列布局，支持对话和文档管理",
-      "classicDesc": "传统文档列表布局",
+      "notebookDesc": "可直接在笔记本内上传文件并开启对话，最多支持50个文件",
+      "classicDesc": "上传文件后可被聊天引用，知识库内无文件数量限制",
       "type": "知识库类型",
-      "typeNotebook": "Notebook",
-      "typeClassic": "普通知识库",
+      "typeNotebook": "笔记本",
+      "typeClassic": "知识库",
       "edit": "编辑知识库",
       "delete": "删除知识库",
       "name": "知识库名称",
@@ -188,7 +188,7 @@
         }
       },
       "documentCount": "文档数量",
-      "notebookLimitReached": "Notebook 模式知识库最多支持 50 篇文档"
+      "notebookLimitReached": "笔记本最多支持 50 个文件"
     },
     "permission": {
       "noAccess": "您没有操作权限"
