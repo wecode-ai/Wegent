@@ -33,6 +33,7 @@ type TaskTitleDropdownProps = {
   className?: string
   onTaskDeleted?: () => void
   onMembersChanged?: () => void // Callback to refresh task detail when converted to group chat
+  hideGroupChatOptions?: boolean // Hide group chat management options (e.g., in notebook mode)
 }
 
 export default function TaskTitleDropdown({
@@ -41,6 +42,7 @@ export default function TaskTitleDropdown({
   className,
   onTaskDeleted,
   onMembersChanged,
+  hideGroupChatOptions = false,
 }: TaskTitleDropdownProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -94,8 +96,8 @@ export default function TaskTitleDropdown({
     }
   }
 
-  // Only show group chat options if it's a true group chat
-  const showGroupChatOptions = isGroupChat
+  // Only show group chat options if it's a true group chat and not hidden (e.g., in notebook mode)
+  const showGroupChatOptions = isGroupChat && !hideGroupChatOptions
 
   // If no title, don't render anything
   if (!displayTitle) {

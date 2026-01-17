@@ -234,6 +234,7 @@ export function KnowledgeBaseChatPageMobile() {
           onTaskDeleted={handleTaskDeleted}
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={false}
+          hideGroupChatOptions={true}
         >
           {/* Back button */}
           <Button

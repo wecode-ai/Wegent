@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   ArrowLeft,
   Upload,
@@ -18,6 +18,8 @@ import {
   FileUp,
   RefreshCw,
   Info,
+  CheckSquare,
+  Square,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -39,6 +41,8 @@ interface DocumentListProps {
   canManage?: boolean
   /** Compact mode for sidebar display - uses card layout instead of table */
   compact?: boolean
+  /** Callback when document selection changes (for notebook mode context injection) */
+  onSelectionChange?: (documentIds: number[]) => void
 }
 
 type SortField = 'name' | 'size' | 'date'
@@ -49,6 +53,7 @@ export function DocumentList({
   onBack,
   canManage = true,
   compact = false,
+  onSelectionChange,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
@@ -70,6 +75,27 @@ export function DocumentList({
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [batchLoading, setBatchLoading] = useState(false)
   const [showSearchPopover, setShowSearchPopover] = useState(false)
+  // Track if initial selection has been done
+  const [initialSelectionDone, setInitialSelectionDone] = useState(false)
+  // Track which document is being refreshed
+  const [refreshingDocId, setRefreshingDocId] = useState<number | null>(null)
+
+  // Default select all documents when documents load (for notebook mode)
+  useEffect(() => {
+    if (onSelectionChange && documents.length > 0 && !initialSelectionDone) {
+      const allIds = new Set(documents.map(doc => doc.id))
+      setSelectedIds(allIds)
+      onSelectionChange(Array.from(allIds))
+      setInitialSelectionDone(true)
+    }
+  }, [documents, onSelectionChange, initialSelectionDone])
+
+  // Notify parent when selection changes (after initial selection)
+  useEffect(() => {
+    if (onSelectionChange && initialSelectionDone) {
+      onSelectionChange(Array.from(selectedIds))
+    }
+  }, [selectedIds, onSelectionChange, initialSelectionDone])
 
   const filteredAndSortedDocuments = useMemo(() => {
     let result = [...documents]
@@ -122,13 +148,16 @@ export function DocumentList({
     attachments: { attachment: { id: number; filename: string }; file: File }[],
     splitterConfig?: Partial<SplitterConfig>
   ) => {
+    // Track newly created document IDs for auto-selection
+    const newDocumentIds: number[] = []
+
     // Create documents sequentially to ensure all are created
     for (const { attachment, file } of attachments) {
       // Use attachment.filename (which may have been renamed) instead of file.name
       const documentName = attachment.filename || file.name
       const extension = documentName.split('.').pop() || ''
       try {
-        await create({
+        const created = await create({
           attachment_id: attachment.id,
           name: documentName,
           file_extension: extension,
@@ -136,10 +165,24 @@ export function DocumentList({
           splitter_config: splitterConfig,
           source_type: 'file',
         })
+        // Collect newly created document ID
+        if (created?.id) {
+          newDocumentIds.push(created.id)
+        }
       } catch {
         // Continue with next file even if one fails
       }
     }
+
+    // Auto-select newly uploaded documents (for notebook mode context injection)
+    if (onSelectionChange && newDocumentIds.length > 0) {
+      setSelectedIds(prev => {
+        const newSet = new Set(prev)
+        newDocumentIds.forEach(id => newSet.add(id))
+        return newSet
+      })
+    }
+
     setShowUpload(false)
   }
 
@@ -151,6 +194,33 @@ export function DocumentList({
       source_type: 'table',
       source_config: data.source_config,
     })
+    setShowUpload(false)
+  }
+
+  const handleWebAdd = async (url: string, name?: string) => {
+    // Import the API function
+    const { createWebDocument } = await import('@/apis/knowledge')
+
+    // Call backend API to scrape and create document
+    const result = await createWebDocument(url, knowledgeBase.id, name)
+
+    if (!result.success) {
+      throw new Error(result.error_message || 'Failed to create web document')
+    }
+
+    // Refresh document list to show the new document with correct data
+    // This ensures the document has the correct source_type from the backend
+    await refresh()
+
+    // Auto-select newly created document (for notebook mode context injection)
+    if (onSelectionChange && result.document?.id) {
+      setSelectedIds(prev => {
+        const newSet = new Set(prev)
+        newSet.add(result.document!.id)
+        return newSet
+      })
+    }
+
     setShowUpload(false)
   }
 
@@ -201,6 +271,28 @@ export function DocumentList({
       // Error handled by hook
     } finally {
       setBatchLoading(false)
+    }
+  }
+
+  // Handle web document re-fetch
+  const handleRefreshWebDocument = async (doc: KnowledgeDocument) => {
+    if (doc.source_type !== 'web') return
+
+    setRefreshingDocId(doc.id)
+    try {
+      const { refreshWebDocument } = await import('@/apis/knowledge')
+      const result = await refreshWebDocument(doc.id)
+
+      if (!result.success) {
+        throw new Error(result.error_message || t('document.upload.web.refetchFailed'))
+      }
+
+      // Refresh document list to show updated data
+      await refresh()
+    } catch {
+      // Error will be shown via toast in the API layer
+    } finally {
+      setRefreshingDocId(null)
     }
   }
 
@@ -302,15 +394,33 @@ export function DocumentList({
         {/* Spacer to push buttons to the right */}
         <div className="flex-1" />
 
-        {/* Refresh button */}
-        <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-        </Button>
+        {/* Refresh list button */}
+        <TooltipProvider>
+          <Tooltip delayDuration={200}>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('common:actions.refresh')}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
         {/* Retrieval test button */}
-        <Button variant="outline" size="sm" onClick={() => setShowRetrievalTest(true)}>
-          <Target className="w-4 h-4" />
-        </Button>
+        <TooltipProvider>
+          <Tooltip delayDuration={200}>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="sm" onClick={() => setShowRetrievalTest(true)}>
+                <Target className="w-4 h-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('document.retrievalTest.button')}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
         {/* Upload button */}
         {canManage && (
@@ -335,8 +445,8 @@ export function DocumentList({
         </div>
       ) : filteredAndSortedDocuments.length > 0 ? (
         <>
-          {/* Batch action bar - shown when items are selected */}
-          {canManage && selectedIds.size > 0 && (
+          {/* Batch action bar - shown when items are selected (not in notebook mode where selection is for context injection) */}
+          {canManage && selectedIds.size > 0 && !onSelectionChange && (
             <div
               className={`flex items-center gap-3 ${compact ? 'px-2 py-2' : 'px-4 py-2.5'} bg-primary/5 border border-primary/20 rounded-lg`}
             >
@@ -359,6 +469,25 @@ export function DocumentList({
           {/* Compact mode: Card layout */}
           {compact ? (
             <div className="space-y-2">
+              {/* Select all control bar for notebook mode */}
+              {onSelectionChange && filteredAndSortedDocuments.length > 0 && (
+                <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-muted">
+                  <button
+                    onClick={() => handleSelectAll(!isAllSelected)}
+                    className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
+                  >
+                    {isAllSelected ? (
+                      <CheckSquare className="w-3.5 h-3.5 text-primary" />
+                    ) : (
+                      <Square className="w-3.5 h-3.5" />
+                    )}
+                    <span>{t('document.document.batch.selectAll')}</span>
+                  </button>
+                  <span className="text-text-muted">
+                    ({selectedIds.size}/{filteredAndSortedDocuments.length})
+                  </span>
+                </div>
+              )}
               {filteredAndSortedDocuments.map(doc => (
                 <DocumentItem
                   key={doc.id}
@@ -366,6 +495,8 @@ export function DocumentList({
                   onViewDetail={setViewingDoc}
                   onEdit={setEditingDoc}
                   onDelete={setDeletingDoc}
+                  onRefresh={handleRefreshWebDocument}
+                  isRefreshing={refreshingDocId === doc.id}
                   canManage={canManage}
                   showBorder={false}
                   selected={selectedIds.has(doc.id)}
@@ -435,6 +566,8 @@ export function DocumentList({
                   onViewDetail={setViewingDoc}
                   onEdit={setEditingDoc}
                   onDelete={setDeletingDoc}
+                  onRefresh={handleRefreshWebDocument}
+                  isRefreshing={refreshingDocId === doc.id}
                   canManage={canManage}
                   showBorder={index < filteredAndSortedDocuments.length - 1}
                   selected={selectedIds.has(doc.id)}
@@ -474,6 +607,9 @@ export function DocumentList({
         onOpenChange={setShowUpload}
         onUploadComplete={handleUploadComplete}
         onTableAdd={handleTableAdd}
+        onWebAdd={handleWebAdd}
+        kbType={knowledgeBase.kb_type}
+        currentDocumentCount={documents.length}
       />
 
       <EditDocumentDialog

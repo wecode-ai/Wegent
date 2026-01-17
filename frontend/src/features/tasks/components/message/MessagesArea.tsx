@@ -168,6 +168,8 @@ interface MessagesAreaProps {
   isPendingConfirmation?: boolean
   /** Callback when user clicks on a context badge to re-select it */
   onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
+  /** Hide group chat management button (e.g., in notebook mode) */
+  hideGroupChatOptions?: boolean
 }
 
 export default function MessagesArea({
@@ -186,6 +188,7 @@ export default function MessagesArea({
   pendingTaskId,
   isPendingConfirmation,
   onContextReselect,
+  hideGroupChatOptions = false,
 }: MessagesAreaProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -736,7 +739,8 @@ export default function MessagesArea({
 
     const isGroupChatTask = selectedTaskDetail?.is_group_chat || false
     const isChatAgentType = selectedTaskDetail?.team?.agent_type === 'chat'
-    const showMembersButton = isGroupChatTask || isChatAgentType
+    // Hide members button in notebook mode (hideGroupChatOptions)
+    const showMembersButton = !hideGroupChatOptions && (isGroupChatTask || isChatAgentType)
 
     // Mobile: Use a single "More" dropdown menu (like Gemini)
     if (isMobile) {
@@ -884,6 +888,7 @@ export default function MessagesArea({
     handleExportPdf,
     handleExportDocx,
     t,
+    hideGroupChatOptions,
   ])
 
   // Pass share button to parent for rendering in TopNavigation

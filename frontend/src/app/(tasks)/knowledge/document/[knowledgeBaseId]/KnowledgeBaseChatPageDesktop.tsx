@@ -52,6 +52,9 @@ export function KnowledgeBaseChatPageDesktop() {
     ? parseInt(params.knowledgeBaseId as string, 10)
     : null
 
+  // State for selected document IDs from DocumentPanel (for notebook mode context injection)
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<number[]>([])
+
   // Fetch knowledge base details
   const {
     knowledgeBase,
@@ -259,6 +262,7 @@ export function KnowledgeBaseChatPageDesktop() {
           onTaskDeleted={handleTaskDeleted}
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={isCollapsed}
+          hideGroupChatOptions={true}
         >
           {shareButton}
           <GithubStarButton />
@@ -288,6 +292,7 @@ export function KnowledgeBaseChatPageDesktop() {
                 namespace: knowledgeBase.namespace,
                 document_count: knowledgeBase.document_count,
               }}
+              selectedDocumentIds={selectedDocumentIds}
               onTaskCreated={async (taskId: number) => {
                 // Bind the knowledge base to the newly created task
                 try {
@@ -304,7 +309,12 @@ export function KnowledgeBaseChatPageDesktop() {
           </div>
 
           {/* Right panel - Document management */}
-          <DocumentPanel knowledgeBase={knowledgeBase} canManage={canManageKb} />
+          <DocumentPanel
+            knowledgeBase={knowledgeBase}
+            canManage={canManageKb}
+            onDocumentSelectionChange={setSelectedDocumentIds}
+            onNewChat={handleNewTask}
+          />
         </div>
       </div>
 

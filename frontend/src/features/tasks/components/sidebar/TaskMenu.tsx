@@ -12,6 +12,7 @@ import {
   FolderPlusIcon,
   FolderIcon,
   PlusIcon,
+  PencilIcon,
 } from '@heroicons/react/24/outline'
 import { HiOutlineEllipsisVertical } from 'react-icons/hi2'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -33,6 +34,7 @@ interface TaskMenuProps {
   taskId: number
   handleCopyTaskId: (taskId: number) => void
   handleDeleteTask: (taskId: number) => void
+  onRename?: () => void
   isGroupChat?: boolean
 }
 
@@ -40,6 +42,7 @@ export default function TaskMenu({
   taskId,
   handleCopyTaskId,
   handleDeleteTask,
+  onRename,
   isGroupChat = false,
 }: TaskMenuProps) {
   const { t } = useTranslation()
@@ -108,6 +111,19 @@ export default function TaskMenu({
                 </DropdownMenuSubContent>
               </DropdownMenuPortal>
             </DropdownMenuSub>
+          )}
+
+          {/* Rename Task */}
+          {onRename && (
+            <DropdownMenuItem
+              onClick={e => {
+                e.stopPropagation()
+                onRename()
+              }}
+            >
+              <PencilIcon className="h-3.5 w-3.5 mr-2" />
+              {t('common:tasks.rename_task')}
+            </DropdownMenuItem>
           )}
 
           <DropdownMenuItem
