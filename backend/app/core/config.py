@@ -195,6 +195,20 @@ class Settings(BaseSettings):
     ATTACHMENT_AES_IV: str = "1234567890123456"
 
     OTEL_ENABLED: bool = False
+
+    # Web scraper proxy configuration
+    # Supports HTTP, HTTPS, SOCKS5 proxy formats:
+    # - Simple: "http://proxy.example.com:8080"
+    # - With auth: "http://user:pass@proxy.example.com:8080"
+    # - SOCKS5: "socks5://proxy.example.com:1080"
+    # If empty, no proxy will be used (direct connection)
+    WEBSCRAPER_PROXY: str = ""
+    # Proxy mode: "direct" or "fallback"
+    # - "direct": Always use proxy for all requests (proxy must be configured)
+    # - "fallback": Try direct connection first, use proxy only if direct fails
+    # Default is "fallback" for better reliability
+    WEBSCRAPER_PROXY_MODE: str = "fallback"
+
     # Web search configuration
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
     WEB_SEARCH_ENGINES: str = "{}"  # JSON configuration for search API adapter
