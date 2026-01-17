@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Task, TaskType } from '@/types/api'
 import TaskMenu from './TaskMenu'
 import TaskInlineEdit from './TaskInlineEdit'
@@ -110,6 +110,9 @@ export default function TaskListSection({
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
   // Local task titles for optimistic update during rename
   const [localTitles, setLocalTitles] = useState<Record<number, string>>({})
+
+  // Ref to track click timeout for distinguishing single click from double click
+  const clickTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Touch interaction state
   const [touchState, setTouchState] = useState<{
@@ -529,7 +532,15 @@ export default function TaskListSection({
                       onClick={() => {
                         // Don't trigger task click when editing
                         if (editingTaskId !== task.id) {
-                          handleTaskClick(task)
+                          // Clear any existing timeout
+                          if (clickTimeoutRef.current) {
+                            clearTimeout(clickTimeoutRef.current)
+                          }
+                          // Delay task click to allow double-click to cancel it
+                          clickTimeoutRef.current = setTimeout(() => {
+                            handleTaskClick(task)
+                            clickTimeoutRef.current = null
+                          }, 200)
                         }
                       }}
                       onTouchStart={handleTouchStart(task)}
@@ -560,6 +571,11 @@ export default function TaskListSection({
                           onDoubleClick={e => {
                             e.stopPropagation()
                             e.preventDefault()
+                            // Cancel the pending single click
+                            if (clickTimeoutRef.current) {
+                              clearTimeout(clickTimeoutRef.current)
+                              clickTimeoutRef.current = null
+                            }
                             handleStartRename(task.id)
                           }}
                         >
