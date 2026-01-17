@@ -5,7 +5,7 @@
 from datetime import datetime
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 # User Management Schemas
@@ -14,18 +14,34 @@ class AdminUserCreate(BaseModel):
 
     user_name: str = Field(..., min_length=2, max_length=50)
     password: Optional[str] = Field(None, min_length=6)
-    email: Optional[EmailStr] = None
+    email: Optional[EmailStr] = Field(None, validate_default=True)
     role: Literal["admin", "user"] = "user"
     auth_source: Literal["password", "oidc"] = "password"
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def empty_string_to_none(cls, v):
+        """Convert empty string to None for optional email field"""
+        if v == "":
+            return None
+        return v
 
 
 class AdminUserUpdate(BaseModel):
     """Admin user update model"""
 
     user_name: Optional[str] = Field(None, min_length=2, max_length=50)
-    email: Optional[EmailStr] = None
+    email: Optional[EmailStr] = Field(None, validate_default=True)
     role: Optional[Literal["admin", "user"]] = None
     is_active: Optional[bool] = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def empty_string_to_none(cls, v):
+        """Convert empty string to None for optional email field"""
+        if v == "":
+            return None
+        return v
 
 
 class PasswordReset(BaseModel):
