@@ -493,6 +493,7 @@
     "max_length": "Maximum {{max}} characters allowed",
     "min_value": "Minimum value is {{min}}",
     "max_value": "Maximum value is {{max}}",
-    "invalid_format": "Invalid format"
+    "invalid_format": "Invalid format",
+    "recommended": "Recommended"
   }
 }

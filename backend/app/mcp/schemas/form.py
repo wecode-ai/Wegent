@@ -8,7 +8,7 @@ Form-related schemas for MCP interactive tools.
 
 from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class FieldOption(BaseModel):
@@ -63,6 +63,17 @@ class FormField(BaseModel):
     )
     validation: Optional[FieldValidation] = Field(None, description="Validation rules")
     show_when: Optional[ShowCondition] = Field(None, description="Conditional display rule")
+
+    @model_validator(mode="after")
+    def validate_options_for_choice_fields(self) -> "FormField":
+        """Validate that choice fields have options defined."""
+        choice_types = ("single_choice", "multiple_choice")
+        if self.field_type in choice_types:
+            if not self.options or len(self.options) == 0:
+                raise ValueError(
+                    f"Field '{self.field_id}' of type '{self.field_type}' requires non-empty options list"
+                )
+        return self
 
 
 class SendFormInput(BaseModel):

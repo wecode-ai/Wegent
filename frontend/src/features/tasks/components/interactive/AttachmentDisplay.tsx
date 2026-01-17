@@ -21,7 +21,7 @@ export function AttachmentDisplay({ attachments }: AttachmentDisplayProps) {
   }
 
   const formatFileSize = (bytes?: number): string => {
-    if (!bytes) return ''
+    if (bytes == null) return ''
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
@@ -60,7 +60,7 @@ export function AttachmentDisplay({ attachments }: AttachmentDisplayProps) {
           <span className="text-lg">{getFileIcon(attachment.mime_type)}</span>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-text-primary truncate">{attachment.name}</p>
-            {attachment.size && (
+            {attachment.size != null && (
               <p className="text-xs text-text-muted">{formatFileSize(attachment.size)}</p>
             )}
           </div>

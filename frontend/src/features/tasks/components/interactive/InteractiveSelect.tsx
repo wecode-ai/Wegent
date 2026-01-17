@@ -103,7 +103,7 @@ export function InteractiveSelect({
                   {option.label}
                   {option.recommended && (
                     <Badge variant="secondary" className="text-xs">
-                      Recommended
+                      {t('interactive.recommended')}
                     </Badge>
                   )}
                 </Label>

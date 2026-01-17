@@ -4,12 +4,16 @@
 
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { InteractiveFormField } from './InteractiveFormField'
-import type { InteractiveFormDefinition, InteractiveResponsePayload } from './types'
+import type {
+  InteractiveFormDefinition,
+  InteractiveFormField as FormFieldType,
+  InteractiveResponsePayload,
+} from './types'
 
 interface InteractiveFormProps {
   requestId: string
@@ -55,6 +59,39 @@ export function InteractiveForm({
     setValues(initialValues)
   }, [form.fields])
 
+  // Helper function to check if a field is visible based on show_when condition
+  const isFieldVisible = useCallback(
+    (field: FormFieldType): boolean => {
+      if (!field.show_when) return true
+
+      const { field_id, operator, value: conditionValue } = field.show_when
+      const dependentValue = values[field_id]
+
+      switch (operator) {
+        case 'equals':
+          return dependentValue === conditionValue
+        case 'not_equals':
+          return dependentValue !== conditionValue
+        case 'contains':
+          if (typeof dependentValue === 'string') {
+            return dependentValue.includes(String(conditionValue))
+          }
+          if (Array.isArray(dependentValue)) {
+            return dependentValue.includes(conditionValue)
+          }
+          return false
+        case 'in':
+          if (Array.isArray(conditionValue)) {
+            return conditionValue.includes(dependentValue)
+          }
+          return false
+        default:
+          return true
+      }
+    },
+    [values]
+  )
+
   const handleFieldChange = useCallback((fieldId: string, value: unknown) => {
     setValues(prev => ({
       ...prev,
@@ -72,6 +109,9 @@ export function InteractiveForm({
     const newErrors: Record<string, string> = {}
 
     form.fields.forEach(field => {
+      // Skip validation for hidden fields
+      if (!isFieldVisible(field)) return
+
       const value = values[field.field_id]
       const validation = field.validation
 
@@ -126,7 +166,7 @@ export function InteractiveForm({
 
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
-  }, [form.fields, values, t])
+  }, [form.fields, values, t, isFieldVisible])
 
   const handleSubmit = useCallback(() => {
     if (!validateForm()) return

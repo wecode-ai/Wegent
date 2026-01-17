@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { InteractiveFormField as FormFieldType } from './types'
 
 interface InteractiveFormFieldProps {
@@ -33,6 +34,8 @@ export function InteractiveFormField({
   disabled = false,
   error,
 }: InteractiveFormFieldProps) {
+  const { t } = useTranslation('chat')
+
   // Check if field should be shown based on show_when condition
   const isVisible = useMemo(() => {
     if (!field.show_when) return true
@@ -76,7 +79,7 @@ export function InteractiveFormField({
         {isRequired && <span className="text-red-500">*</span>}
       </Label>
 
-      {renderFieldInput(field, value, onChange, disabled)}
+      {renderFieldInput(field, value, onChange, disabled, t('interactive.recommended'))}
 
       {error && <p className="text-xs text-red-500">{error}</p>}
     </div>
@@ -87,7 +90,8 @@ function renderFieldInput(
   field: FormFieldType,
   value: unknown,
   onChange: (value: unknown) => void,
-  disabled: boolean
+  disabled: boolean,
+  recommendedLabel: string
 ) {
   switch (field.field_type) {
     case 'text':
@@ -145,7 +149,7 @@ function renderFieldInput(
                 {option.label}
                 {option.recommended && (
                   <Badge variant="secondary" className="text-xs">
-                    Recommended
+                    {recommendedLabel}
                   </Badge>
                 )}
               </Label>
@@ -154,7 +158,7 @@ function renderFieldInput(
         </RadioGroup>
       )
 
-    case 'multiple_choice':
+    case 'multiple_choice': {
       const selectedValues = (value as string[]) ?? []
       return (
         <div className="space-y-2">
@@ -179,7 +183,7 @@ function renderFieldInput(
                 {option.label}
                 {option.recommended && (
                   <Badge variant="secondary" className="text-xs">
-                    Recommended
+                    {recommendedLabel}
                   </Badge>
                 )}
               </Label>
@@ -187,6 +191,7 @@ function renderFieldInput(
           ))}
         </div>
       )
+    }
 
     case 'datetime':
       return (

@@ -493,6 +493,7 @@
     "max_length": "最多允许 {{max}} 个字符",
     "min_value": "最小值为 {{min}}",
     "max_value": "最大值为 {{max}}",
-    "invalid_format": "格式无效"
+    "invalid_format": "格式无效",
+    "recommended": "推荐"
   }
 }
