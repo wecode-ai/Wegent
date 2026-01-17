@@ -10,6 +10,7 @@ Uses Crawl4AI library which provides:
 - LLM-optimized markdown output
 - Automatic content extraction
 - SSRF protection
+- Proxy support with direct and fallback modes
 """
 
 import logging
@@ -19,6 +20,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
+from app.core.config import settings
 from app.services.url_metadata import _validate_url_for_ssrf
 
 logger = logging.getLogger(__name__)
@@ -164,19 +166,20 @@ class WebScraperService:
 
             crawler = await self._get_crawler()
 
-            # Configure the crawl run
-            # Use domcontentloaded instead of networkidle to avoid timeout on sites
-            # with persistent network activity (GitHub, SPAs with WebSocket, etc.)
-            # Disable remove_overlay_elements to avoid "Execution context was destroyed"
-            # errors on sites with navigation/redirects (e.g., Weibo)
-            run_config = CrawlerRunConfig(
-                wait_until="domcontentloaded",  # Faster than networkidle, avoids timeout
-                page_timeout=WEB_SCRAPER_TIMEOUT,
-                remove_overlay_elements=False,  # Disabled to avoid navigation conflicts
-            )
+            # Get proxy configuration from settings
+            proxy_url = settings.WEBSCRAPER_PROXY
+            proxy_mode = settings.WEBSCRAPER_PROXY_MODE
 
-            # Run the crawler
-            result = await crawler.arun(url=url, config=run_config)
+            # Determine crawl strategy based on proxy mode
+            if proxy_mode == "direct" and proxy_url:
+                # Direct mode: always use proxy
+                result = await self._crawl_with_proxy(crawler, url, proxy_url)
+            elif proxy_mode == "fallback" and proxy_url:
+                # Fallback mode: try direct first, then proxy
+                result = await self._crawl_with_fallback(crawler, url, proxy_url)
+            else:
+                # No proxy configured or empty proxy URL
+                result = await self._crawl_direct(crawler, url)
 
             if result.success:
                 markdown = result.markdown or ""
@@ -222,6 +225,95 @@ class WebScraperService:
             return self._error_result(
                 url, ERROR_FETCH_FAILED, f"Failed to scrape page: {str(e)}"
             )
+
+    def _build_run_config(self, proxy_config: Optional[str] = None):
+        """Build CrawlerRunConfig with optional proxy.
+
+        Args:
+            proxy_config: Proxy URL string (e.g., "http://proxy:8080")
+
+        Returns:
+            CrawlerRunConfig instance
+        """
+        from crawl4ai import CrawlerRunConfig
+
+        # Configure the crawl run
+        # Use domcontentloaded instead of networkidle to avoid timeout on sites
+        # with persistent network activity (GitHub, SPAs with WebSocket, etc.)
+        # Disable remove_overlay_elements to avoid "Execution context was destroyed"
+        # errors on sites with navigation/redirects (e.g., Weibo)
+        config_kwargs = {
+            "wait_until": "domcontentloaded",  # Faster than networkidle, avoids timeout
+            "page_timeout": WEB_SCRAPER_TIMEOUT,
+            "remove_overlay_elements": False,  # Disabled to avoid navigation conflicts
+        }
+
+        if proxy_config:
+            config_kwargs["proxy_config"] = proxy_config
+            logger.debug(f"Using proxy: {proxy_config}")
+
+        return CrawlerRunConfig(**config_kwargs)
+
+    async def _crawl_direct(self, crawler, url: str):
+        """Crawl URL without proxy.
+
+        Args:
+            crawler: AsyncWebCrawler instance
+            url: URL to crawl
+
+        Returns:
+            CrawlResult from crawler
+        """
+        logger.debug(f"Crawling {url} without proxy")
+        run_config = self._build_run_config()
+        return await crawler.arun(url=url, config=run_config)
+
+    async def _crawl_with_proxy(self, crawler, url: str, proxy_url: str):
+        """Crawl URL using proxy.
+
+        Args:
+            crawler: AsyncWebCrawler instance
+            url: URL to crawl
+            proxy_url: Proxy URL string
+
+        Returns:
+            CrawlResult from crawler
+        """
+        logger.debug(f"Crawling {url} with proxy: {proxy_url}")
+        run_config = self._build_run_config(proxy_config=proxy_url)
+        return await crawler.arun(url=url, config=run_config)
+
+    async def _crawl_with_fallback(self, crawler, url: str, proxy_url: str):
+        """Crawl URL with fallback strategy: try direct first, then proxy.
+
+        Args:
+            crawler: AsyncWebCrawler instance
+            url: URL to crawl
+            proxy_url: Proxy URL string for fallback
+
+        Returns:
+            CrawlResult from crawler
+        """
+        # First try direct connection
+        logger.debug(f"Crawling {url} - trying direct connection first")
+        try:
+            result = await self._crawl_direct(crawler, url)
+            if result.success:
+                logger.debug(f"Direct connection succeeded for {url}")
+                return result
+            else:
+                logger.debug(
+                    f"Direct connection failed for {url}: {result.error_message}, "
+                    "falling back to proxy"
+                )
+        except Exception as e:
+            logger.debug(
+                f"Direct connection exception for {url}: {e}, falling back to proxy"
+            )
+
+        # Fallback to proxy
+        logger.info(f"Using proxy fallback for {url}")
+        return await self._crawl_with_proxy(crawler, url, proxy_url)
 
     def _error_result(
         self, url: str, error_code: str, error_message: str
