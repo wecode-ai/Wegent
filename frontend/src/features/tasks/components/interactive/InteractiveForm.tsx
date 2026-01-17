@@ -9,11 +9,7 @@ import { Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { InteractiveFormField } from './InteractiveFormField'
-import type {
-  InteractiveFormDefinition,
-  InteractiveFormField as FormFieldType,
-  InteractiveResponsePayload,
-} from './types'
+import type { InteractiveFormDefinition, InteractiveResponsePayload } from './types'
 
 interface InteractiveFormProps {
   requestId: string
