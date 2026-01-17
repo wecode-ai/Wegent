@@ -4,8 +4,8 @@
 
 'use client'
 
-import { useCallback, useContext } from 'react'
-import { SocketContext } from '@/contexts/SocketContext'
+import { useCallback } from 'react'
+import { useSocket } from '@/contexts/SocketContext'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { InteractiveForm } from './InteractiveForm'
@@ -25,8 +25,7 @@ interface InteractiveMessageProps {
  * Routes to the appropriate component based on message type.
  */
 export function InteractiveMessage({ payload, taskId, disabled = false }: InteractiveMessageProps) {
-  const socketContext = useContext(SocketContext)
-  const socket = socketContext?.socket
+  const { socket } = useSocket()
   const { theme } = useTheme()
 
   const handleSubmit = useCallback(
