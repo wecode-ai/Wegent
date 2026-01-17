@@ -7,7 +7,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Task, TaskType } from '@/types/api'
 import TaskMenu from './TaskMenu'
-import TaskInlineEdit from './TaskInlineEdit'
+import { TaskInlineRename } from '@/components/common/TaskInlineRename'
 import {
   CheckCircle2,
   XCircle,
@@ -319,10 +319,11 @@ export default function TaskListSection({
 
   // Save renamed task
   const handleSaveRename = useCallback(
-    (taskId: number, newTitle: string) => {
+    async (taskId: number, newTitle: string) => {
+      // Call API to update task title
+      await taskApis.updateTask(taskId, { title: newTitle })
       // Optimistic update: update local state immediately
       setLocalTitles(prev => ({ ...prev, [taskId]: newTitle }))
-      setEditingTaskId(null)
       // Refresh tasks to sync with server
       refreshTasks()
     },
@@ -560,11 +561,14 @@ export default function TaskListSection({
 
                       {/* Task title in the middle - supports inline editing */}
                       {editingTaskId === task.id ? (
-                        <TaskInlineEdit
+                        <TaskInlineRename
                           taskId={task.id}
                           initialTitle={localTitles[task.id] ?? task.title}
-                          onSave={newTitle => handleSaveRename(task.id, newTitle)}
-                          onCancel={handleCancelRename}
+                          isEditing={true}
+                          onEditEnd={handleCancelRename}
+                          onSave={async (newTitle: string) => {
+                            await handleSaveRename(task.id, newTitle)
+                          }}
                         />
                       ) : (
                         <span
@@ -580,18 +584,19 @@ export default function TaskListSection({
                       )}
 
                       {/* Status icon on the right - only render container when needed */}
-                      {(shouldShowStatusIcon(task) || isTaskUnread(task)) && editingTaskId !== task.id && (
-                        <div className="flex-shrink-0 relative">
-                          <div className="w-4 h-4 flex items-center justify-center">
-                            {shouldShowStatusIcon(task) && getStatusIcon(task.status)}
+                      {(shouldShowStatusIcon(task) || isTaskUnread(task)) &&
+                        editingTaskId !== task.id && (
+                          <div className="flex-shrink-0 relative">
+                            <div className="w-4 h-4 flex items-center justify-center">
+                              {shouldShowStatusIcon(task) && getStatusIcon(task.status)}
+                            </div>
+                            {isTaskUnread(task) && (
+                              <span
+                                className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task)} animate-pulse-dot`}
+                              />
+                            )}
                           </div>
-                          {isTaskUnread(task) && (
-                            <span
-                              className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task)} animate-pulse-dot`}
-                            />
-                          )}
-                        </div>
-                      )}
+                        )}
 
                       {editingTaskId !== task.id && (
                         <div className="flex-shrink-0">
