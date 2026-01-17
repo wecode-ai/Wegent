@@ -264,7 +264,7 @@ class WebScraperService:
         Returns:
             CrawlResult from crawler
         """
-        logger.debug(f"Crawling {url} without proxy")
+        logger.info(f"Crawling {url} without proxy")
         run_config = self._build_run_config()
         return await crawler.arun(url=url, config=run_config)
 
@@ -279,7 +279,7 @@ class WebScraperService:
         Returns:
             CrawlResult from crawler
         """
-        logger.debug(f"Crawling {url} with proxy: {proxy_url}")
+        logger.info(f"Crawling {url} with proxy: {proxy_url}")
         run_config = self._build_run_config(proxy_config=proxy_url)
         return await crawler.arun(url=url, config=run_config)
 
@@ -295,7 +295,7 @@ class WebScraperService:
             CrawlResult from crawler
         """
         # First try direct connection
-        logger.debug(f"Crawling {url} - trying direct connection first")
+        logger.info(f"Crawling {url} - trying direct connection first")
         try:
             result = await self._crawl_direct(crawler, url)
             if result.success:
