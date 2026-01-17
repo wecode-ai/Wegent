@@ -101,6 +101,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             "task:leave": "on_task_leave",
             "history:sync": "on_history_sync",
             "skill:response": "on_skill_response",
+            "interactive:response": "on_interactive_response",
         }
 
     async def _check_token_expiry(self, sid: str) -> bool:
@@ -1481,6 +1482,217 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         logger.info(f"[WS] skill:response resolved request {request_id}")
         return {"success": True}
+
+    # ============================================================
+    # Interactive Message Events (MCP tools)
+    # ============================================================
+
+    async def on_interactive_response(self, sid: str, data: dict) -> dict:
+        """
+        Handle interactive:response event from frontend.
+
+        This processes user responses to interactive messages (forms, confirms, selects)
+        sent by AI agents via MCP tools. The response data is converted to a user message
+        and sent to the task conversation.
+
+        Args:
+            sid: Socket ID
+            data: InteractiveResponsePayload fields:
+                - request_id: Original request ID from the interactive message
+                - response_type: Type of response (form_submit, confirm, select)
+                - data: User submitted data
+
+        Returns:
+            {"success": true} or {"error": "..."}
+        """
+        from app.api.ws.events import InteractiveResponsePayload
+
+        request_id = data.get("request_id")
+        response_type = data.get("response_type")
+        response_data = data.get("data", {})
+        task_id = data.get("task_id")
+
+        if not request_id:
+            logger.warning("[WS] interactive:response received without request_id")
+            return {"error": "Missing request_id"}
+
+        if not task_id:
+            logger.warning("[WS] interactive:response received without task_id")
+            return {"error": "Missing task_id"}
+
+        logger.info(
+            f"[WS] interactive:response received: request_id={request_id}, "
+            f"response_type={response_type}, task_id={task_id}"
+        )
+
+        # Check token expiry before processing
+        if await self._check_token_expiry(sid):
+            return await self._handle_token_expired(sid)
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        user_name = session.get("user_name")
+
+        if not user_id:
+            logger.error("[WS] interactive:response error: Not authenticated")
+            return {"error": "Not authenticated"}
+
+        db = SessionLocal()
+        try:
+            # Get user and team info
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                logger.error(
+                    f"[WS] interactive:response error: User not found id={user_id}"
+                )
+                return {"error": "User not found"}
+
+            # Get task
+            task = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.id == task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
+                )
+                .first()
+            )
+
+            if not task:
+                logger.error(
+                    f"[WS] interactive:response error: Task not found id={task_id}"
+                )
+                return {"error": "Task not found"}
+
+            # Format the response as a user message
+            message_content = self._format_interactive_response(
+                response_type, response_data, request_id
+            )
+
+            # Get team_id from task
+            task_json = task.json or {}
+            team_id = task_json.get("spec", {}).get("teamRef", {}).get("id")
+
+            if not team_id:
+                logger.error(
+                    f"[WS] interactive:response error: Team not found in task spec"
+                )
+                return {"error": "Team not found in task"}
+
+            # Get team
+            team = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == team_id,
+                    Kind.kind == "Team",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            if not team:
+                logger.error(
+                    f"[WS] interactive:response error: Team not found id={team_id}"
+                )
+                return {"error": "Team not found"}
+
+            # Create user subtask for the response
+            from app.services.chat.storage import create_user_subtask
+
+            user_subtask = create_user_subtask(
+                db=db,
+                task=task,
+                team=team,
+                user=user,
+                message=message_content,
+            )
+
+            logger.info(
+                f"[WS] interactive:response created user subtask: id={user_subtask.id}, "
+                f"message_id={user_subtask.message_id}"
+            )
+
+            # Join task room
+            task_room = f"task:{task_id}"
+            await self.enter_room(sid, task_room)
+
+            # Broadcast user message to room (exclude sender)
+            await self._broadcast_user_message(
+                db=db,
+                user_subtask=user_subtask,
+                task_id=task_id,
+                message=message_content,
+                user_id=user_id,
+                user_name=user_name,
+                attachment_id=None,
+                task_room=task_room,
+                skip_sid=sid,
+            )
+
+            logger.info(
+                f"[WS] interactive:response successful: request_id={request_id}, "
+                f"subtask_id={user_subtask.id}"
+            )
+
+            return {
+                "success": True,
+                "subtask_id": user_subtask.id,
+                "message_id": user_subtask.message_id,
+            }
+
+        except Exception as e:
+            logger.exception(f"[WS] interactive:response exception: {e}")
+            db.rollback()
+            return {"error": f"Internal server error: {str(e)}"}
+        finally:
+            db.close()
+
+    def _format_interactive_response(
+        self, response_type: str, data: dict, request_id: str
+    ) -> str:
+        """
+        Format interactive response data as a user message.
+
+        Args:
+            response_type: Type of response (form_submit, confirm, select)
+            data: User submitted data
+            request_id: Original request ID
+
+        Returns:
+            Formatted message string (Markdown)
+        """
+        if response_type == "form_submit":
+            # Format form data as markdown
+            lines = ["## Form Response\n"]
+            for field_id, value in data.items():
+                if isinstance(value, list):
+                    value_str = ", ".join(str(v) for v in value)
+                else:
+                    value_str = str(value)
+                lines.append(f"- **{field_id}**: {value_str}")
+            return "\n".join(lines)
+
+        elif response_type == "confirm":
+            choice = data.get("confirmed", False)
+            choice_text = "Confirmed" if choice else "Cancelled"
+            return f"User selected: **{choice_text}**"
+
+        elif response_type == "select":
+            selected = data.get("selected", [])
+            if isinstance(selected, list):
+                if len(selected) == 0:
+                    return "User selected: *None*"
+                elif len(selected) == 1:
+                    return f"User selected: **{selected[0]}**"
+                else:
+                    items = ", ".join(f"**{s}**" for s in selected)
+                    return f"User selected: {items}"
+            else:
+                return f"User selected: **{selected}**"
+
+        else:
+            # Unknown type, just stringify the data
+            return f"User response: {data}"
 
 
 def register_chat_namespace(sio: socketio.AsyncServer):

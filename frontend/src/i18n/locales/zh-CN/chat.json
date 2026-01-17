@@ -477,5 +477,22 @@
     "proceeding_to_stage": "正在进入阶段: {{stage}}",
     "pipeline_completed": "流水线已完成",
     "no_task_id": "没有可用的任务 ID"
+  },
+  "interactive": {
+    "submit": "提交",
+    "cancel": "取消",
+    "confirm": "确认",
+    "confirmed": "已确认",
+    "cancelled": "已取消",
+    "form_submitted": "表单已提交",
+    "submit_selection": "提交选择",
+    "selection_submitted": "选择已提交",
+    "field_required": "此字段为必填项",
+    "select_at_least_one": "请至少选择一个选项",
+    "min_length": "最少需要 {{min}} 个字符",
+    "max_length": "最多允许 {{max}} 个字符",
+    "min_value": "最小值为 {{min}}",
+    "max_value": "最大值为 {{max}}",
+    "invalid_format": "格式无效"
   }
 }

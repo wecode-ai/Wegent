@@ -477,5 +477,22 @@
     "proceeding_to_stage": "Proceeding to stage: {{stage}}",
     "pipeline_completed": "Pipeline completed",
     "no_task_id": "No task ID available"
+  },
+  "interactive": {
+    "submit": "Submit",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "confirmed": "Confirmed",
+    "cancelled": "Cancelled",
+    "form_submitted": "Form submitted",
+    "submit_selection": "Submit Selection",
+    "selection_submitted": "Selection submitted",
+    "field_required": "This field is required",
+    "select_at_least_one": "Please select at least one option",
+    "min_length": "Minimum {{min}} characters required",
+    "max_length": "Maximum {{max}} characters allowed",
+    "min_value": "Minimum value is {{min}}",
+    "max_value": "Maximum value is {{max}}",
+    "invalid_format": "Invalid format"
   }
 }
