@@ -5,8 +5,9 @@
 'use client'
 
 import { useCallback, useContext } from 'react'
-import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { SocketContext } from '@/contexts/SocketContext'
+import { useTheme } from '@/features/theme/ThemeProvider'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { InteractiveForm } from './InteractiveForm'
 import { InteractiveConfirm } from './InteractiveConfirm'
 import { InteractiveSelect } from './InteractiveSelect'
@@ -26,6 +27,7 @@ interface InteractiveMessageProps {
 export function InteractiveMessage({ payload, taskId, disabled = false }: InteractiveMessageProps) {
   const socketContext = useContext(SocketContext)
   const socket = socketContext?.socket
+  const { theme } = useTheme()
 
   const handleSubmit = useCallback(
     (response: InteractiveResponsePayload) => {
@@ -47,7 +49,7 @@ export function InteractiveMessage({ payload, taskId, disabled = false }: Intera
         <div className="space-y-2">
           {payload.content && (
             <div className="prose prose-sm dark:prose-invert max-w-none">
-              <MarkdownRenderer content={payload.content} />
+              <EnhancedMarkdown source={payload.content} theme={theme} />
             </div>
           )}
           {payload.attachments && payload.attachments.length > 0 && (

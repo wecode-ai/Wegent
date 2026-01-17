@@ -8,7 +8,8 @@ import { useState, useCallback } from 'react'
 import { Check, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
-import { MarkdownRenderer } from '@/components/MarkdownRenderer'
+import { useTheme } from '@/features/theme/ThemeProvider'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import type { InteractiveConfirmDefinition, InteractiveResponsePayload } from './types'
 
 interface InteractiveConfirmProps {
@@ -30,6 +31,7 @@ export function InteractiveConfirm({
   disabled = false,
 }: InteractiveConfirmProps) {
   const { t } = useTranslation('chat')
+  const { theme } = useTheme()
   const [isSubmitted, setIsSubmitted] = useState(false)
   const [choice, setChoice] = useState<boolean | null>(null)
 
@@ -71,7 +73,7 @@ export function InteractiveConfirm({
       </div>
 
       <div className="prose prose-sm dark:prose-invert max-w-none">
-        <MarkdownRenderer content={confirm.message} />
+        <EnhancedMarkdown source={confirm.message} theme={theme} />
       </div>
 
       {!isSubmitted ? (
