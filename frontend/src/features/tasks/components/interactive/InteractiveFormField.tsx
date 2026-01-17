@@ -4,18 +4,14 @@
 
 'use client'
 
-import { useState, useCallback, useMemo, useEffect } from 'react'
+import { useMemo } from 'react'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
-import type {
-  InteractiveFormField as FormFieldType,
-  InteractiveFieldOption,
-  InteractiveShowCondition,
-} from './types'
+import type { InteractiveFormField as FormFieldType } from './types'
 
 interface InteractiveFormFieldProps {
   field: FormFieldType
