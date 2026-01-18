@@ -43,7 +43,7 @@ import {
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 
 const PublicBotList: React.FC = () => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('admin')
   const { toast } = useToast()
   const [bots, setBots] = useState<AdminPublicBot[]>([])
   const [_total, setTotal] = useState(0)
@@ -80,7 +80,7 @@ const PublicBotList: React.FC = () => {
     } catch (_error) {
       toast({
         variant: 'destructive',
-        title: t('admin:public_bots.errors.load_failed'),
+        title: t('public_bots.errors.load_failed'),
       })
     } finally {
       setLoading(false)
@@ -93,19 +93,19 @@ const PublicBotList: React.FC = () => {
 
   const validateConfig = (value: string): Record<string, unknown> | null => {
     if (!value.trim()) {
-      setConfigError(t('admin:public_bots.errors.config_required'))
+      setConfigError(t('public_bots.errors.config_required'))
       return null
     }
     try {
       const parsed = JSON.parse(value)
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        setConfigError(t('admin:public_bots.errors.config_invalid_json'))
+        setConfigError(t('public_bots.errors.config_invalid_json'))
         return null
       }
       setConfigError('')
       return parsed as Record<string, unknown>
     } catch {
-      setConfigError(t('admin:public_bots.errors.config_invalid_json'))
+      setConfigError(t('public_bots.errors.config_invalid_json'))
       return null
     }
   }
@@ -114,7 +114,7 @@ const PublicBotList: React.FC = () => {
     if (!formData.name.trim()) {
       toast({
         variant: 'destructive',
-        title: t('admin:public_bots.errors.name_required'),
+        title: t('public_bots.errors.name_required'),
       })
       return
     }
@@ -123,7 +123,7 @@ const PublicBotList: React.FC = () => {
     if (!config) {
       toast({
         variant: 'destructive',
-        title: t('admin:public_bots.errors.config_invalid_json'),
+        title: t('public_bots.errors.config_invalid_json'),
       })
       return
     }
@@ -136,14 +136,14 @@ const PublicBotList: React.FC = () => {
         json: config,
       }
       await adminApis.createPublicBot(createData)
-      toast({ title: t('admin:public_bots.success.created') })
+      toast({ title: t('public_bots.success.created') })
       setIsCreateDialogOpen(false)
       resetForm()
       fetchBots()
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('admin:public_bots.errors.create_failed'),
+        title: t('public_bots.errors.create_failed'),
         description: (error as Error).message,
       })
     } finally {
@@ -158,7 +158,7 @@ const PublicBotList: React.FC = () => {
     if (!config) {
       toast({
         variant: 'destructive',
-        title: t('admin:public_bots.errors.config_invalid_json'),
+        title: t('public_bots.errors.config_invalid_json'),
       })
       return
     }
@@ -178,14 +178,14 @@ const PublicBotList: React.FC = () => {
       }
 
       await adminApis.updatePublicBot(selectedBot.id, updateData)
-      toast({ title: t('admin:public_bots.success.updated') })
+      toast({ title: t('public_bots.success.updated') })
       setIsEditDialogOpen(false)
       resetForm()
       fetchBots()
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('admin:public_bots.errors.update_failed'),
+        title: t('public_bots.errors.update_failed'),
         description: (error as Error).message,
       })
     } finally {
@@ -199,14 +199,14 @@ const PublicBotList: React.FC = () => {
     setSaving(true)
     try {
       await adminApis.deletePublicBot(selectedBot.id)
-      toast({ title: t('admin:public_bots.success.deleted') })
+      toast({ title: t('public_bots.success.deleted') })
       setIsDeleteDialogOpen(false)
       setSelectedBot(null)
       fetchBots()
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: t('admin:public_bots.errors.delete_failed'),
+        title: t('public_bots.errors.delete_failed'),
         description: (error as Error).message,
       })
     } finally {
@@ -245,9 +245,9 @@ const PublicBotList: React.FC = () => {
       {/* Header */}
       <div>
         <h2 className="text-xl font-semibold text-text-primary mb-1">
-          {t('admin:public_bots.title')}
+          {t('public_bots.title')}
         </h2>
-        <p className="text-sm text-text-muted">{t('admin:public_bots.description')}</p>
+        <p className="text-sm text-text-muted">{t('public_bots.description')}</p>
       </div>
 
       {/* Content Container */}
@@ -263,7 +263,7 @@ const PublicBotList: React.FC = () => {
         {!loading && bots.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <Bot className="w-12 h-12 text-text-muted mb-4" />
-            <p className="text-text-muted">{t('admin:public_bots.no_bots')}</p>
+            <p className="text-text-muted">{t('public_bots.no_bots')}</p>
           </div>
         )}
 
@@ -284,14 +284,14 @@ const PublicBotList: React.FC = () => {
                           {getDisplayName(bot)}
                         </h3>
                         {bot.is_active ? (
-                          <Tag variant="success">{t('admin:public_bots.status.active')}</Tag>
+                          <Tag variant="success">{t('public_bots.status.active')}</Tag>
                         ) : (
-                          <Tag variant="error">{t('admin:public_bots.status.inactive')}</Tag>
+                          <Tag variant="error">{t('public_bots.status.inactive')}</Tag>
                         )}
                       </div>
                       <div className="flex items-center gap-2 mt-1 text-xs text-text-muted flex-wrap">
                         <span>
-                          {t('admin:public_bots.form.name')}: {bot.name}
+                          {t('public_bots.form.name')}: {bot.name}
                         </span>
                         {bot.ghost_name && (
                           <>
@@ -320,7 +320,7 @@ const PublicBotList: React.FC = () => {
                       size="icon"
                       className="h-8 w-8"
                       onClick={() => openEditDialog(bot)}
-                      title={t('admin:public_bots.edit_bot')}
+                      title={t('public_bots.edit_bot')}
                     >
                       <PencilIcon className="w-4 h-4" />
                     </Button>
@@ -332,7 +332,7 @@ const PublicBotList: React.FC = () => {
                         setSelectedBot(bot)
                         setIsDeleteDialogOpen(true)
                       }}
-                      title={t('admin:public_bots.delete_bot')}
+                      title={t('public_bots.delete_bot')}
                     >
                       <TrashIcon className="w-4 h-4" />
                     </Button>
@@ -348,7 +348,7 @@ const PublicBotList: React.FC = () => {
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
               <UnifiedAddButton onClick={() => setIsCreateDialogOpen(true)}>
-                {t('admin:public_bots.create_bot')}
+                {t('public_bots.create_bot')}
               </UnifiedAddButton>
             </div>
           </div>
@@ -359,30 +359,30 @@ const PublicBotList: React.FC = () => {
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{t('admin:public_bots.create_bot')}</DialogTitle>
-            <DialogDescription>{t('admin:public_bots.create_description')}</DialogDescription>
+            <DialogTitle>{t('public_bots.create_bot')}</DialogTitle>
+            <DialogDescription>{t('public_bots.create_description')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="name">{t('admin:public_bots.form.name')} *</Label>
+              <Label htmlFor="name">{t('public_bots.form.name')} *</Label>
               <Input
                 id="name"
                 value={formData.name}
                 onChange={e => setFormData({ ...formData, name: e.target.value })}
-                placeholder={t('admin:public_bots.form.name_placeholder')}
+                placeholder={t('public_bots.form.name_placeholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="namespace">{t('admin:public_bots.form.namespace')}</Label>
+              <Label htmlFor="namespace">{t('public_bots.form.namespace')}</Label>
               <Input
                 id="namespace"
                 value={formData.namespace}
                 onChange={e => setFormData({ ...formData, namespace: e.target.value })}
-                placeholder={t('admin:public_bots.form.namespace_placeholder')}
+                placeholder={t('public_bots.form.namespace_placeholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="config">{t('admin:public_bots.form.config')} *</Label>
+              <Label htmlFor="config">{t('public_bots.form.config')} *</Label>
               <Textarea
                 id="config"
                 value={formData.config}
@@ -390,20 +390,20 @@ const PublicBotList: React.FC = () => {
                   setFormData({ ...formData, config: e.target.value })
                   validateConfig(e.target.value)
                 }}
-                placeholder={t('admin:public_bots.form.config_placeholder')}
+                placeholder={t('public_bots.form.config_placeholder')}
                 className={`font-mono text-sm min-h-[200px] ${configError ? 'border-error' : ''}`}
               />
               {configError && <p className="text-xs text-error">{configError}</p>}
-              <p className="text-xs text-text-muted">{t('admin:public_bots.form.config_hint')}</p>
+              <p className="text-xs text-text-muted">{t('public_bots.form.config_hint')}</p>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-              {t('admin:common.cancel')}
+              {t('common.cancel')}
             </Button>
             <Button onClick={handleCreateBot} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t('admin:common.create')}
+              {t('common.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -413,29 +413,29 @@ const PublicBotList: React.FC = () => {
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{t('admin:public_bots.edit_bot')}</DialogTitle>
+            <DialogTitle>{t('public_bots.edit_bot')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-name">{t('admin:public_bots.form.name')}</Label>
+              <Label htmlFor="edit-name">{t('public_bots.form.name')}</Label>
               <Input
                 id="edit-name"
                 value={formData.name}
                 onChange={e => setFormData({ ...formData, name: e.target.value })}
-                placeholder={t('admin:public_bots.form.name_placeholder')}
+                placeholder={t('public_bots.form.name_placeholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-namespace">{t('admin:public_bots.form.namespace')}</Label>
+              <Label htmlFor="edit-namespace">{t('public_bots.form.namespace')}</Label>
               <Input
                 id="edit-namespace"
                 value={formData.namespace}
                 onChange={e => setFormData({ ...formData, namespace: e.target.value })}
-                placeholder={t('admin:public_bots.form.namespace_placeholder')}
+                placeholder={t('public_bots.form.namespace_placeholder')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-config">{t('admin:public_bots.form.config')}</Label>
+              <Label htmlFor="edit-config">{t('public_bots.form.config')}</Label>
               <Textarea
                 id="edit-config"
                 value={formData.config}
@@ -443,18 +443,18 @@ const PublicBotList: React.FC = () => {
                   setFormData({ ...formData, config: e.target.value })
                   validateConfig(e.target.value)
                 }}
-                placeholder={t('admin:public_bots.form.config_placeholder')}
+                placeholder={t('public_bots.form.config_placeholder')}
                 className={`font-mono text-sm min-h-[200px] ${configError ? 'border-error' : ''}`}
               />
               {configError && <p className="text-xs text-error">{configError}</p>}
             </div>
             <div className="flex items-center justify-between">
-              <Label htmlFor="edit-is-active">{t('admin:public_bots.columns.status')}</Label>
+              <Label htmlFor="edit-is-active">{t('public_bots.columns.status')}</Label>
               <div className="flex items-center gap-2">
                 <span className="text-sm text-text-muted">
                   {formData.is_active
-                    ? t('admin:public_bots.status.active')
-                    : t('admin:public_bots.status.inactive')}
+                    ? t('public_bots.status.active')
+                    : t('public_bots.status.inactive')}
                 </span>
                 <Switch
                   id="edit-is-active"
@@ -466,11 +466,11 @@ const PublicBotList: React.FC = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
-              {t('admin:common.cancel')}
+              {t('common.cancel')}
             </Button>
             <Button onClick={handleUpdateBot} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t('admin:common.save')}
+              {t('common.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -480,15 +480,15 @@ const PublicBotList: React.FC = () => {
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('admin:public_bots.confirm.delete_title')}</AlertDialogTitle>
+            <AlertDialogTitle>{t('public_bots.confirm.delete_title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('admin:public_bots.confirm.delete_message', { name: selectedBot?.name })}
+              {t('public_bots.confirm.delete_message', { name: selectedBot?.name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t('admin:common.cancel')}</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteBot} className="bg-error hover:bg-error/90">
-              {t('admin:common.delete')}
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

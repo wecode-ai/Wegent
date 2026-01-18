@@ -1749,16 +1749,28 @@ def _validate_team_bot_references(
     Returns:
         (is_valid, error_message)
     """
+    # Defensive type checking
+    if not isinstance(team_json, dict):
+        return (False, "Invalid team JSON: must be an object")
+
     spec = team_json.get("spec", {})
+    if not isinstance(spec, dict):
+        return (False, "Invalid team JSON: 'spec' must be an object")
+
     members = spec.get("members", [])
+    if not isinstance(members, list):
+        return (False, "Invalid team JSON: 'spec.members' must be an array")
 
     for member in members:
-        bot_ref = member.get("botRef", {})
-        bot_name = bot_ref.get("name")
-        bot_namespace = bot_ref.get("namespace", "default")
-
-        if not bot_name:
+        if not isinstance(member, dict):
             continue
+        bot_ref = member.get("botRef", {})
+        if not isinstance(bot_ref, dict):
+            continue
+        bot_name = bot_ref.get("name")
+        if not isinstance(bot_name, str) or not bot_name:
+            continue
+        bot_namespace = bot_ref.get("namespace", "default")
 
         # Check if bot exists as a public resource (user_id=0)
         bot = (
@@ -1792,16 +1804,16 @@ async def list_public_teams(
     """
     Get list of all public teams with pagination
     """
-    query = db.query(Kind).filter(
-        Kind.user_id == 0, Kind.kind == "Team", Kind.namespace == "default"
-    )
+    query = db.query(Kind).filter(Kind.user_id == 0, Kind.kind == "Team")
     total = query.count()
-    teams = query.order_by(Kind.updated_at.desc()).all()
 
-    # Apply pagination
-    start_idx = (page - 1) * limit
-    end_idx = start_idx + limit
-    paginated_teams = teams[start_idx:end_idx]
+    # Apply SQL-level pagination
+    paginated_teams = (
+        query.order_by(Kind.updated_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
 
     return PublicTeamListResponse(
         total=total,
@@ -2036,58 +2048,72 @@ def _validate_bot_resource_references(
     Returns:
         (is_valid, error_message)
     """
+    # Defensive type checking
+    if not isinstance(bot_json, dict):
+        return (False, "Invalid bot JSON: must be an object")
+
     spec = bot_json.get("spec", {})
+    if not isinstance(spec, dict):
+        return (False, "Invalid bot JSON: 'spec' must be an object")
 
     # Validate ghostRef
     ghost_ref = spec.get("ghostRef", {})
-    ghost_name = ghost_ref.get("name")
-    ghost_namespace = ghost_ref.get("namespace", "default")
-    if ghost_name:
-        ghost = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == 0,
-                Kind.kind == "Ghost",
-                Kind.name == ghost_name,
-                Kind.namespace == ghost_namespace,
-                Kind.is_active == True,
+    if ghost_ref and not isinstance(ghost_ref, dict):
+        return (False, "Invalid bot JSON: 'spec.ghostRef' must be an object")
+    if isinstance(ghost_ref, dict):
+        ghost_name = ghost_ref.get("name")
+        ghost_namespace = ghost_ref.get("namespace", "default")
+        if ghost_name and isinstance(ghost_name, str):
+            ghost = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Ghost",
+                    Kind.name == ghost_name,
+                    Kind.namespace == ghost_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
             )
-            .first()
-        )
-        if not ghost:
-            return (
-                False,
-                f"Ghost '{ghost_namespace}/{ghost_name}' is not a public resource. Please create it as a public ghost first.",
-            )
+            if not ghost:
+                return (
+                    False,
+                    f"Ghost '{ghost_namespace}/{ghost_name}' is not a public resource. Please create it as a public ghost first.",
+                )
 
     # Validate shellRef
     shell_ref = spec.get("shellRef", {})
-    shell_name = shell_ref.get("name")
-    shell_namespace = shell_ref.get("namespace", "default")
-    if shell_name:
-        shell = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == 0,
-                Kind.kind == "Shell",
-                Kind.name == shell_name,
-                Kind.namespace == shell_namespace,
-                Kind.is_active == True,
+    if shell_ref and not isinstance(shell_ref, dict):
+        return (False, "Invalid bot JSON: 'spec.shellRef' must be an object")
+    if isinstance(shell_ref, dict):
+        shell_name = shell_ref.get("name")
+        shell_namespace = shell_ref.get("namespace", "default")
+        if shell_name and isinstance(shell_name, str):
+            shell = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Shell",
+                    Kind.name == shell_name,
+                    Kind.namespace == shell_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
             )
-            .first()
-        )
-        if not shell:
-            return (
-                False,
-                f"Shell '{shell_namespace}/{shell_name}' is not a public resource. Please create it as a public shell first.",
-            )
+            if not shell:
+                return (
+                    False,
+                    f"Shell '{shell_namespace}/{shell_name}' is not a public resource. Please create it as a public shell first.",
+                )
 
     # Validate modelRef (optional)
     model_ref = spec.get("modelRef")
     if model_ref:
+        if not isinstance(model_ref, dict):
+            return (False, "Invalid bot JSON: 'spec.modelRef' must be an object")
         model_name = model_ref.get("name")
         model_namespace = model_ref.get("namespace", "default")
-        if model_name:
+        if model_name and isinstance(model_name, str):
             model = (
                 db.query(Kind)
                 .filter(
@@ -2118,16 +2144,16 @@ async def list_public_bots(
     """
     Get list of all public bots with pagination
     """
-    query = db.query(Kind).filter(
-        Kind.user_id == 0, Kind.kind == "Bot", Kind.namespace == "default"
-    )
+    query = db.query(Kind).filter(Kind.user_id == 0, Kind.kind == "Bot")
     total = query.count()
-    bots = query.order_by(Kind.updated_at.desc()).all()
 
-    # Apply pagination
-    start_idx = (page - 1) * limit
-    end_idx = start_idx + limit
-    paginated_bots = bots[start_idx:end_idx]
+    # Apply SQL-level pagination
+    paginated_bots = (
+        query.order_by(Kind.updated_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
 
     items = []
     for bot in paginated_bots:
@@ -2307,8 +2333,7 @@ async def delete_public_bot(
 ):
     """
     Delete a public bot (admin only).
-    Note: This will not delete public teams referencing this bot,
-    but those teams will become non-functional.
+    Deletion is blocked if any public teams (active or inactive) reference this bot.
     """
     bot = (
         db.query(Kind)
@@ -2321,13 +2346,12 @@ async def delete_public_bot(
             detail=f"Public bot with id {bot_id} not found",
         )
 
-    # Check if any public teams reference this bot
+    # Check if any public teams (active or inactive) reference this bot
     teams_using_bot = (
         db.query(Kind)
         .filter(
             Kind.user_id == 0,
             Kind.kind == "Team",
-            Kind.is_active == True,
         )
         .all()
     )
