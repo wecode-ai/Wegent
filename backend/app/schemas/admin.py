@@ -263,3 +263,104 @@ class PublicRetrieverListResponse(BaseModel):
 
     total: int
     items: List[PublicRetrieverResponse]
+
+
+# Public Team Management Schemas
+class PublicTeamCreate(BaseModel):
+    """Public team creation model"""
+
+    name: str = Field(..., min_length=1, max_length=100)
+    namespace: str = Field(default="default", max_length=100)
+    team_json: dict = Field(..., alias="json")
+
+    class Config:
+        populate_by_name = True
+
+
+class PublicTeamUpdate(BaseModel):
+    """Public team update model"""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    namespace: Optional[str] = Field(None, max_length=100)
+    team_json: Optional[dict] = Field(None, alias="json")
+    is_active: Optional[bool] = None
+
+    class Config:
+        populate_by_name = True
+
+
+class PublicTeamResponse(BaseModel):
+    """Public team response model"""
+
+    id: int
+    name: str
+    namespace: str
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    team_json: dict = Field(..., alias="json", serialization_alias="json")
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+
+
+class PublicTeamListResponse(BaseModel):
+    """Public team list response model"""
+
+    total: int
+    items: List[PublicTeamResponse]
+
+
+# Public Bot Management Schemas
+class PublicBotCreate(BaseModel):
+    """Public bot creation model"""
+
+    name: str = Field(..., min_length=1, max_length=100)
+    namespace: str = Field(default="default", max_length=100)
+    bot_json: dict = Field(..., alias="json")
+
+    class Config:
+        populate_by_name = True
+
+
+class PublicBotUpdate(BaseModel):
+    """Public bot update model"""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    namespace: Optional[str] = Field(None, max_length=100)
+    bot_json: Optional[dict] = Field(None, alias="json")
+    is_active: Optional[bool] = None
+
+    class Config:
+        populate_by_name = True
+
+
+class PublicBotResponse(BaseModel):
+    """Public bot response model"""
+
+    id: int
+    name: str
+    namespace: str
+    display_name: Optional[str] = None
+    bot_json: dict = Field(..., alias="json", serialization_alias="json")
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    # Related resource info
+    ghost_name: Optional[str] = None
+    shell_name: Optional[str] = None
+    model_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+
+
+class PublicBotListResponse(BaseModel):
+    """Public bot list response model"""
+
+    total: int
+    items: List[PublicBotResponse]

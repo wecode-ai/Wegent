@@ -6,6 +6,8 @@
     "public_models": "Public Models",
     "public_retrievers": "Public Retrievers",
     "public_skills": "Public Skills",
+    "public_teams": "Public Agents",
+    "public_bots": "Public Bots",
     "api_keys": "API Keys",
     "system_config": "System Config"
   },
@@ -356,6 +358,105 @@
       "load_failed": "Failed to load personal keys",
       "delete_failed": "Failed to delete personal key",
       "toggle_failed": "Failed to toggle personal key status"
+    }
+  },
+  "public_teams": {
+    "title": "Public Agent Management",
+    "description": "Manage system-level public agents available to all users",
+    "create_description": "Create a new public agent. All referenced bots must be public bots.",
+    "loading": "Loading agents...",
+    "no_teams": "No public agents found",
+    "create_team": "Create Agent",
+    "edit_team": "Edit Agent",
+    "delete_team": "Delete Agent",
+    "member_count": "{{count}} Bot(s)",
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "columns": {
+      "id": "ID",
+      "name": "Name",
+      "namespace": "Namespace",
+      "status": "Status",
+      "created_at": "Created At",
+      "actions": "Actions"
+    },
+    "form": {
+      "name": "Agent Name",
+      "name_placeholder": "Enter agent name",
+      "namespace": "Namespace",
+      "namespace_placeholder": "default",
+      "config": "Agent Configuration",
+      "config_placeholder": "Enter agent configuration as JSON",
+      "config_hint": "The configuration must include spec.members referencing public bots"
+    },
+    "confirm": {
+      "delete_title": "Delete Agent",
+      "delete_message": "Are you sure you want to delete public agent \"{{name}}\"? This action cannot be undone."
+    },
+    "success": {
+      "created": "Public agent created successfully",
+      "updated": "Public agent updated successfully",
+      "deleted": "Public agent deleted successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load public agents",
+      "create_failed": "Failed to create public agent",
+      "update_failed": "Failed to update public agent",
+      "delete_failed": "Failed to delete public agent",
+      "name_required": "Agent name is required",
+      "config_required": "Agent configuration is required",
+      "config_invalid_json": "Agent configuration must be valid JSON"
+    }
+  },
+  "public_bots": {
+    "title": "Public Bot Management",
+    "description": "Manage system-level public bots available to all users",
+    "create_description": "Create a new public bot. All referenced resources (Ghost, Shell, Model) must be public.",
+    "loading": "Loading bots...",
+    "no_bots": "No public bots found",
+    "create_bot": "Create Bot",
+    "edit_bot": "Edit Bot",
+    "delete_bot": "Delete Bot",
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "columns": {
+      "id": "ID",
+      "name": "Name",
+      "namespace": "Namespace",
+      "status": "Status",
+      "created_at": "Created At",
+      "actions": "Actions"
+    },
+    "form": {
+      "name": "Bot Name",
+      "name_placeholder": "Enter bot name",
+      "namespace": "Namespace",
+      "namespace_placeholder": "default",
+      "config": "Bot Configuration",
+      "config_placeholder": "Enter bot configuration as JSON",
+      "config_hint": "The configuration must reference public Ghost, Shell, and Model resources"
+    },
+    "confirm": {
+      "delete_title": "Delete Bot",
+      "delete_message": "Are you sure you want to delete public bot \"{{name}}\"? This action cannot be undone."
+    },
+    "success": {
+      "created": "Public bot created successfully",
+      "updated": "Public bot updated successfully",
+      "deleted": "Public bot deleted successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load public bots",
+      "create_failed": "Failed to create public bot",
+      "update_failed": "Failed to update public bot",
+      "delete_failed": "Failed to delete public bot",
+      "name_required": "Bot name is required",
+      "config_required": "Bot configuration is required",
+      "config_invalid_json": "Bot configuration must be valid JSON"
     }
   }
 }
