@@ -298,6 +298,21 @@ class Settings(BaseSettings):
     # Enable/disable automatic summary generation after document indexing
     SUMMARY_ENABLED: bool = True
 
+    # OCR (Optical Character Recognition) configuration
+    # Enable/disable OCR for images and scanned documents
+    # When enabled, Tesseract OCR extracts text from images and scanned PDFs
+    OCR_ENABLED: bool = True
+    # Tesseract language codes for OCR, concatenated with "+"
+    # Supported: eng (English), chi_sim (Simplified Chinese), chi_tra (Traditional Chinese),
+    # jpn (Japanese), kor (Korean)
+    # Example: "eng+chi_sim+chi_tra" for English and Chinese OCR
+    OCR_LANGUAGES: str = "eng+chi_sim+chi_tra+jpn+kor"
+    # PDF parsing strategy for unstructured library
+    # - "fast": Quick extraction without OCR (for native text PDFs)
+    # - "hi_res": High resolution with OCR for scanned pages and embedded images
+    # - "ocr_only": Force OCR on all pages (for fully scanned documents)
+    OCR_STRATEGY: str = "hi_res"
+
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there

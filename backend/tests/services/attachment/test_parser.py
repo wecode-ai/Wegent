@@ -3,11 +3,18 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Unit tests for the document parser service.
+Unit tests for the document parser service using unstructured library.
+
+Tests cover:
+- Extension and MIME type validation
+- Document parsing for all supported formats
+- OCR functionality for images and scanned documents
+- Smart truncation integration
+- Error handling for legacy and unsupported formats
 """
 
 import io
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, Mock
 
 import pytest
 
@@ -388,3 +395,344 @@ done
         assert "application/json" in TEXT_MIME_TYPES
         assert "application/xml" in TEXT_MIME_TYPES
         assert "text/x-python" in TEXT_MIME_TYPES
+
+
+class TestOCRConfiguration:
+    """Test cases for OCR configuration."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.parser = DocumentParser()
+
+    def test_ocr_languages_parsing(self):
+        """Test that OCR languages are properly parsed from settings."""
+        # Default languages should be parsed
+        assert isinstance(self.parser.ocr_languages, list)
+        assert len(self.parser.ocr_languages) > 0
+
+    def test_ocr_enabled_attribute(self):
+        """Test that OCR enabled attribute is set from settings."""
+        assert isinstance(self.parser.ocr_enabled, bool)
+
+    def test_ocr_strategy_attribute(self):
+        """Test that OCR strategy attribute is set from settings."""
+        assert isinstance(self.parser.ocr_strategy, str)
+        assert self.parser.ocr_strategy in ["fast", "hi_res", "ocr_only"]
+
+
+class TestImageParsing:
+    """Test cases for image parsing with OCR."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.parser = DocumentParser()
+
+    def test_get_image_metadata(self):
+        """Test image metadata extraction."""
+        # Create mock image
+        mock_img = MagicMock()
+        mock_img.size = (800, 600)
+        mock_img.mode = "RGB"
+        mock_img.format = "PNG"
+        mock_img._getexif.return_value = None
+
+        binary_data = b"fake image data"
+        metadata = self.parser._get_image_metadata(mock_img, binary_data, ".png")
+
+        assert "[Image File" in metadata
+        assert "800 x 600" in metadata
+        assert "RGB" in metadata
+        assert "PNG" in metadata
+
+    def test_get_image_metadata_with_exif(self):
+        """Test image metadata extraction with EXIF data."""
+        mock_img = MagicMock()
+        mock_img.size = (1920, 1080)
+        mock_img.mode = "RGB"
+        mock_img.format = "JPEG"
+        mock_img._getexif.return_value = {"some": "exif"}
+
+        binary_data = b"fake image data"
+        metadata = self.parser._get_image_metadata(mock_img, binary_data, ".jpg")
+
+        assert "EXIF" in metadata
+
+    def test_extract_image_ocr_success(self):
+        """Test successful OCR extraction from image."""
+        with patch(
+            "unstructured.partition.image.partition_image"
+        ) as mock_partition:
+            # Create mock elements with text
+            mock_element1 = MagicMock()
+            mock_element1.text = "Hello World"
+            mock_element2 = MagicMock()
+            mock_element2.text = "Test OCR"
+            mock_partition.return_value = [mock_element1, mock_element2]
+
+            result = self.parser._extract_image_ocr(b"fake image data")
+
+            assert "Hello World" in result
+            assert "Test OCR" in result
+
+    def test_extract_image_ocr_failure_returns_empty(self):
+        """Test that OCR failure returns empty string instead of raising."""
+        with patch(
+            "unstructured.partition.image.partition_image"
+        ) as mock_partition:
+            mock_partition.side_effect = Exception("OCR failed")
+
+            result = self.parser._extract_image_ocr(b"fake image data")
+
+            assert result == ""
+
+
+class TestPDFParsing:
+    """Test cases for PDF parsing with unstructured."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.parser = DocumentParser()
+
+    def test_parse_pdf_success(self):
+        """Test successful PDF parsing."""
+        with patch(
+            "unstructured.partition.pdf.partition_pdf"
+        ) as mock_partition:
+            mock_element = MagicMock()
+            mock_element.text = "PDF content"
+            mock_element.metadata = MagicMock()
+            mock_element.metadata.page_number = 1
+            mock_partition.return_value = [mock_element]
+
+            result = self.parser._parse_pdf(b"fake pdf", 500000, True)
+
+            assert isinstance(result, ParseResult)
+            assert "PDF content" in result.text
+
+    def test_parse_pdf_encrypted_error(self):
+        """Test that encrypted PDF raises proper error."""
+        with patch(
+            "unstructured.partition.pdf.partition_pdf"
+        ) as mock_partition:
+            mock_partition.side_effect = Exception("File is encrypted")
+
+            with pytest.raises(DocumentParseError) as exc_info:
+                self.parser._parse_pdf(b"encrypted pdf", 500000, True)
+
+            assert exc_info.value.error_code == DocumentParseError.ENCRYPTED_PDF
+
+
+class TestOfficeParsing:
+    """Test cases for Office document parsing."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.parser = DocumentParser()
+
+    def test_parse_docx_success(self):
+        """Test successful Word document parsing."""
+        with patch(
+            "unstructured.partition.auto.partition"
+        ) as mock_partition:
+            mock_element = MagicMock()
+            mock_element.text = "Document paragraph"
+            mock_partition.return_value = [mock_element]
+
+            result = self.parser._parse_office(b"fake docx", ".docx", 500000, True)
+
+            assert isinstance(result, ParseResult)
+            assert "Document paragraph" in result.text
+
+    def test_parse_pptx_success(self):
+        """Test successful PowerPoint parsing."""
+        with patch(
+            "unstructured.partition.auto.partition"
+        ) as mock_partition:
+            mock_element = MagicMock()
+            mock_element.text = "Slide content"
+            mock_element.metadata = MagicMock()
+            mock_element.metadata.page_number = 1
+            mock_partition.return_value = [mock_element]
+
+            result = self.parser._parse_office(b"fake pptx", ".pptx", 500000, True)
+
+            assert isinstance(result, ParseResult)
+            assert "Slide" in result.text or "content" in result.text
+
+    def test_parse_xlsx_success(self):
+        """Test successful Excel parsing."""
+        with patch(
+            "unstructured.partition.auto.partition"
+        ) as mock_partition:
+            mock_element = MagicMock()
+            mock_element.text = "Cell value"
+            mock_element.metadata = MagicMock()
+            mock_element.metadata.page_number = 0
+            mock_element.category = None
+            mock_partition.return_value = [mock_element]
+
+            result = self.parser._parse_office(b"fake xlsx", ".xlsx", 500000, True)
+
+            assert isinstance(result, ParseResult)
+
+
+class TestTextParsing:
+    """Test cases for text file parsing."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.parser = DocumentParser()
+
+    def test_parse_text_with_unstructured(self):
+        """Test text parsing via unstructured."""
+        with patch(
+            "unstructured.partition.auto.partition"
+        ) as mock_partition:
+            mock_element = MagicMock()
+            mock_element.text = "Hello World"
+            mock_partition.return_value = [mock_element]
+
+            result = self.parser._parse_text(b"Hello World", ".txt", 500000, True)
+
+            assert isinstance(result, ParseResult)
+            assert "Hello" in result.text
+
+    def test_parse_text_fallback_utf8(self):
+        """Test text parsing fallback with UTF-8 encoding."""
+        content = "Hello, 世界!"
+        binary_data = content.encode("utf-8")
+
+        result = self.parser._parse_text_fallback(binary_data, 500000, True)
+
+        assert isinstance(result, ParseResult)
+        assert "Hello" in result.text
+        assert "世界" in result.text
+
+    def test_parse_text_fallback_gbk(self):
+        """Test text parsing fallback with GBK encoding."""
+        content = "你好世界"
+        binary_data = content.encode("gbk")
+
+        result = self.parser._parse_text_fallback(binary_data, 500000, True)
+
+        assert isinstance(result, ParseResult)
+        assert "你好世界" in result.text
+
+
+class TestElementProcessing:
+    """Test cases for element processing methods."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.parser = DocumentParser()
+
+    def test_elements_to_text(self):
+        """Test converting elements to formatted text."""
+        mock_element1 = MagicMock()
+        mock_element1.text = "Regular text"
+        mock_element1.category = None
+
+        mock_element2 = MagicMock()
+        mock_element2.text = "Title text"
+        mock_element2.category = "Title"
+
+        result = self.parser._elements_to_text([mock_element1, mock_element2])
+
+        assert "Regular text" in result
+        assert "Title text" in result
+
+    def test_group_elements_by_page(self):
+        """Test grouping elements by page number."""
+        mock_element1 = MagicMock()
+        mock_element1.text = "Page 1 content"
+        mock_element1.metadata = MagicMock()
+        mock_element1.metadata.page_number = 1
+
+        mock_element2 = MagicMock()
+        mock_element2.text = "Page 2 content"
+        mock_element2.metadata = MagicMock()
+        mock_element2.metadata.page_number = 2
+
+        result = self.parser._group_elements_by_page([mock_element1, mock_element2])
+
+        assert len(result) == 2
+        assert "Page 1 content" in result[0]
+        assert "Page 2 content" in result[1]
+
+    def test_elements_to_sheets(self):
+        """Test converting elements to sheet structure."""
+        mock_element = MagicMock()
+        mock_element.text = "Cell A | Cell B"
+        mock_element.metadata = MagicMock()
+        mock_element.metadata.page_number = 0
+        mock_element.category = "Table"
+
+        result = self.parser._elements_to_sheets([mock_element])
+
+        assert len(result) == 1
+        assert result[0]["name"] == "Sheet1"
+        assert len(result[0]["rows"]) > 0
+
+
+class TestLegacyErrorCodes:
+    """Test cases for legacy format error codes."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.parser = DocumentParser()
+
+    def test_get_legacy_error_code_doc(self):
+        """Test error code for .doc files."""
+        assert (
+            self.parser._get_legacy_error_code(".doc")
+            == DocumentParseError.LEGACY_DOC
+        )
+
+    def test_get_legacy_error_code_ppt(self):
+        """Test error code for .ppt files."""
+        assert (
+            self.parser._get_legacy_error_code(".ppt")
+            == DocumentParseError.LEGACY_PPT
+        )
+
+    def test_get_legacy_error_code_xls(self):
+        """Test error code for .xls files."""
+        assert (
+            self.parser._get_legacy_error_code(".xls")
+            == DocumentParseError.LEGACY_XLS
+        )
+
+    def test_get_legacy_error_code_unknown(self):
+        """Test error code for unknown extension."""
+        assert (
+            self.parser._get_legacy_error_code(".unknown")
+            == DocumentParseError.UNSUPPORTED_TYPE
+        )
+
+
+class TestFileTypeCategories:
+    """Test cases for file type category constants."""
+
+    def test_image_extensions(self):
+        """Test image extension set."""
+        expected = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+        assert DocumentParser.IMAGE_EXTENSIONS == expected
+
+    def test_pdf_extension(self):
+        """Test PDF extension set."""
+        assert DocumentParser.PDF_EXTENSION == {".pdf"}
+
+    def test_office_extensions(self):
+        """Test Office extension set."""
+        expected = {".docx", ".pptx", ".xlsx"}
+        assert DocumentParser.OFFICE_EXTENSIONS == expected
+
+    def test_text_extensions(self):
+        """Test text extension set."""
+        expected = {".txt", ".md", ".csv"}
+        assert DocumentParser.TEXT_EXTENSIONS == expected
+
+    def test_legacy_extensions(self):
+        """Test legacy extension set."""
+        expected = {".doc", ".ppt", ".xls"}
+        assert DocumentParser.LEGACY_EXTENSIONS == expected

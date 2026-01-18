@@ -18,6 +18,21 @@ COPY shared /shared
 COPY backend/pyproject.toml .
 RUN uv pip install --system --no-cache -r pyproject.toml
 
+# Install Tesseract OCR with language packs for document parsing
+# Supports: English, Simplified Chinese, Traditional Chinese, Japanese, Korean
+# Also install poppler-utils for PDF processing and libmagic for MIME detection
+RUN dnf install -y \
+    tesseract \
+    tesseract-langpack-eng \
+    tesseract-langpack-chi_sim \
+    tesseract-langpack-chi_tra \
+    tesseract-langpack-jpn \
+    tesseract-langpack-kor \
+    poppler-utils \
+    file \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf/*
+
 # Install Playwright system dependencies for AlmaLinux/RHEL
 # These are required for Chromium browser to run (crawl4ai uses Playwright for web scraping)
 RUN dnf install -y \

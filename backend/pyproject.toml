@@ -70,14 +70,15 @@ dependencies = [
     "opentelemetry-instrumentation-requests>=0.48b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
     "opentelemetry-instrumentation-system-metrics>=0.48b0",
-    # Document parsing for file attachments
-    "pypdf2>=3.0.0",
-    "python-docx>=1.1.0",
-    "python-pptx>=0.6.23",
-    "openpyxl>=3.1.2",
-    "chardet>=5.0.0",
+    # Document parsing for file attachments with OCR support
+    # unstructured handles all document formats: PDF, Word, PowerPoint, Excel, Images
+    # Includes built-in OCR via Tesseract for scanned documents and images
+    "unstructured[all-docs]>=0.16.0",
+    # Image processing
     "pillow>=12.0.0",
+    # MIME type detection
     "python-magic>=0.4.27",
+    # Markdown and HTML processing
     "markdown>=3.5.0",
     "beautifulsoup4>=4.12.0",
     "html2text>=2024.2.26",
