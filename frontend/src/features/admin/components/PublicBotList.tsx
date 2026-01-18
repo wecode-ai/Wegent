@@ -154,6 +154,18 @@ const PublicBotList: React.FC = () => {
   const handleUpdateBot = async () => {
     if (!selectedBot) return
 
+    // Trim and validate name
+    const trimmedName = formData.name.trim()
+    const trimmedNamespace = formData.namespace.trim()
+
+    if (!trimmedName) {
+      toast({
+        variant: 'destructive',
+        title: t('public_bots.errors.name_required'),
+      })
+      return
+    }
+
     const config = validateConfig(formData.config)
     if (!config) {
       toast({
@@ -166,11 +178,11 @@ const PublicBotList: React.FC = () => {
     setSaving(true)
     try {
       const updateData: AdminPublicBotUpdate = {}
-      if (formData.name !== selectedBot.name) {
-        updateData.name = formData.name
+      if (trimmedName !== selectedBot.name) {
+        updateData.name = trimmedName
       }
-      if (formData.namespace !== selectedBot.namespace) {
-        updateData.namespace = formData.namespace
+      if (trimmedNamespace !== selectedBot.namespace) {
+        updateData.namespace = trimmedNamespace || 'default'
       }
       updateData.json = config
       if (formData.is_active !== selectedBot.is_active) {

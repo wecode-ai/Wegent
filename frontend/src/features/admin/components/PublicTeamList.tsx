@@ -154,6 +154,18 @@ const PublicTeamList: React.FC = () => {
   const handleUpdateTeam = async () => {
     if (!selectedTeam) return
 
+    // Trim and validate name
+    const trimmedName = formData.name.trim()
+    const trimmedNamespace = formData.namespace.trim()
+
+    if (!trimmedName) {
+      toast({
+        variant: 'destructive',
+        title: t('public_teams.errors.name_required'),
+      })
+      return
+    }
+
     const config = validateConfig(formData.config)
     if (!config) {
       toast({
@@ -166,11 +178,11 @@ const PublicTeamList: React.FC = () => {
     setSaving(true)
     try {
       const updateData: AdminPublicTeamUpdate = {}
-      if (formData.name !== selectedTeam.name) {
-        updateData.name = formData.name
+      if (trimmedName !== selectedTeam.name) {
+        updateData.name = trimmedName
       }
-      if (formData.namespace !== selectedTeam.namespace) {
-        updateData.namespace = formData.namespace
+      if (trimmedNamespace !== selectedTeam.namespace) {
+        updateData.namespace = trimmedNamespace || 'default'
       }
       updateData.json = config
       if (formData.is_active !== selectedTeam.is_active) {
