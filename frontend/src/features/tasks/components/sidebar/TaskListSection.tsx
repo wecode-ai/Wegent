@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Task, TaskType } from '@/types/api'
 import TaskMenu from './TaskMenu'
 import { TaskInlineRename } from '@/components/common/TaskInlineRename'
@@ -111,6 +111,9 @@ export default function TaskListSection({
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
   // Local task titles for optimistic update during rename
   const [localTitles, setLocalTitles] = useState<Record<number, string>>({})
+  // Click timer ref for distinguishing single-click from double-click
+  const clickTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const clickedTaskRef = useRef<Task | null>(null)
 
   // Touch interaction state
   const [touchState, setTouchState] = useState<{
@@ -251,6 +254,15 @@ export default function TaskListSection({
       }
     }
   }, [touchState.longPressTimer])
+
+  // Cleanup effect for click timer
+  useEffect(() => {
+    return () => {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current)
+      }
+    }
+  }, [])
 
   // Handle clicks outside to close long press menu
   useEffect(() => {
@@ -541,18 +553,25 @@ export default function TaskListSection({
                       }`}
                       onClick={() => {
                         // Don't trigger task click when editing
-                        if (editingTaskId !== task.id) {
-                          handleTaskClick(task)
-                        }
-                      }}
-                      onDoubleClick={e => {
-                        // Handle double-click on the entire row to start renaming
-                        // This is more reliable than on the span alone because TooltipTrigger
-                        // may interfere with pointer events on child elements
-                        if (editingTaskId !== task.id) {
-                          e.stopPropagation()
-                          e.preventDefault()
+                        if (editingTaskId === task.id) return
+
+                        // Use delayed single-click to distinguish from double-click
+                        // If a click timer already exists, this is a double-click
+                        if (clickTimerRef.current && clickedTaskRef.current?.id === task.id) {
+                          // Double-click detected - cancel the single click and start rename
+                          clearTimeout(clickTimerRef.current)
+                          clickTimerRef.current = null
+                          clickedTaskRef.current = null
                           handleStartRename(task.id)
+                        } else {
+                          // First click - set timer for delayed navigation
+                          // If no second click within 250ms, execute single-click action
+                          clickedTaskRef.current = task
+                          clickTimerRef.current = setTimeout(() => {
+                            clickTimerRef.current = null
+                            clickedTaskRef.current = null
+                            handleTaskClick(task)
+                          }, 250)
                         }
                       }}
                       onTouchStart={handleTouchStart(task)}
