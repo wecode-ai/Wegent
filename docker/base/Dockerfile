@@ -6,6 +6,8 @@ FROM almalinux:9.4
 
 RUN dnf upgrade -y \
  && dnf install -y epel-release curl-minimal vim gcc make git wget gnupg python3.12 python3.12-devel python3.12-pip which file file-libs \
+    nspr nss nss-util atk at-spi2-atk cups-libs libxcb libxkbcommon at-spi2-core \
+    libX11 libXcomposite libXdamage libXext libXfixes libXrandr mesa-libgbm cairo pango alsa-lib libdrm \
  && curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - \
  && dnf install -y nodejs gh tar gzip\
  && ln -sf /usr/bin/python3.12 /usr/bin/python \
@@ -21,6 +23,11 @@ RUN dnf upgrade -y \
 # Install uv (Python package manager)
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
+
+# Install Playwright Python package and Chromium browser for crawl4ai web scraping
+# System dependencies are already installed in the main RUN command above
+RUN pip install playwright \
+    && playwright install chromium
 
 # Install SQLite 3.50.4 (required by executor)
 RUN wget https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz && \

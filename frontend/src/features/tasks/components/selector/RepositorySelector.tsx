@@ -132,7 +132,7 @@ export default function RepositorySelector({
           </TooltipProvider>
           <PopoverContent
             className={cn(
-              'p-0 w-auto min-w-[280px] max-w-[90vw] border border-border bg-base',
+              'p-0 w-auto min-w-[280px] max-w-[min(500px,90vw)] border border-border bg-base',
               'shadow-xl rounded-xl overflow-hidden',
               'max-h-[var(--radix-popover-content-available-height,400px)]',
               'flex flex-col'
@@ -254,7 +254,7 @@ export default function RepositorySelector({
           noMatchText={t('branches.no_match')}
           className={fullWidth ? 'w-full' : undefined}
           triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
-          contentClassName={fullWidth ? 'max-w-[400px]' : 'max-w-[280px]'}
+          contentClassName="min-w-[280px] max-w-[min(500px,90vw)] w-auto"
           renderTriggerValue={item => (
             <span className="block" title={item?.label}>
               {item?.label ? truncateMiddle(item.label, fullWidth ? 60 : isMobile ? 20 : 25) : ''}
