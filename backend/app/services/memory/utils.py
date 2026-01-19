@@ -50,11 +50,14 @@ def inject_memories_to_prompt(
         created_at = memory.metadata.get("created_at", "")
         if created_at and isinstance(created_at, str):
             try:
-                # Format: YYYY-MM-DD HH:MM:SS (more precise)
+                # Parse ISO format and format for readability
+                # Input: '2025-01-19T12:30:45.123456+00:00' or '2025-01-19T12:30:45Z'
+                # Output: '2025-01-19 12:30:45' (drop microseconds and timezone for cleaner display)
                 dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
                 date_str = dt.strftime("%Y-%m-%d %H:%M:%S")
             except (ValueError, TypeError):
-                date_str = ""
+                # If parsing fails, use original string (better than empty)
+                date_str = created_at
         else:
             date_str = ""
 
