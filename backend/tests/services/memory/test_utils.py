@@ -13,7 +13,7 @@ from app.services.memory.utils import inject_memories_to_prompt
 
 
 def test_inject_memories_to_prompt_with_dates():
-    """Test injecting memories with timestamps."""
+    """Test injecting memories with timestamps in local timezone."""
     memories = [
         MemorySearchResult(
             id="mem-1",
@@ -38,10 +38,14 @@ def test_inject_memories_to_prompt_with_dates():
     assert "</memory>" in result
     assert base_prompt in result
 
-    # Check content with precise datetime format
-    assert "[2025-01-15 10:30:00]" in result
+    # Check content with local timezone format (includes date and timezone suffix)
+    # Pattern: [YYYY-MM-DD HH:MM:SS TZ] where TZ can be CST, UTC, PST, etc.
+    datetime_pattern = r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [A-Z]{3,4}\]"
+    matches = re.findall(datetime_pattern, result)
+    assert len(matches) == 2, f"Expected 2 timestamps, found {len(matches)}: {matches}"
+
+    # Check memory content is present
     assert "User prefers Python over JavaScript" in result
-    assert "[2025-01-14 15:20:00]" in result
     assert "Project uses FastAPI framework" in result
 
     # Check ordering
@@ -65,8 +69,8 @@ def test_inject_memories_to_prompt_without_dates():
     assert "User likes clean code" in result
     assert "Prefers type hints" in result
 
-    # Should not have datetime-bracket patterns like [YYYY-MM-DD HH:MM:SS]
-    datetime_pattern = r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]"
+    # Should not have datetime-bracket patterns like [YYYY-MM-DD HH:MM:SS TZ]
+    datetime_pattern = r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}( [A-Z]{3,4})?\]"
     assert not re.search(
         datetime_pattern, result
     ), "Should not contain datetime brackets when created_at is missing"
