@@ -23,6 +23,7 @@ class SplitterType(str, Enum):
 
     SEMANTIC = "semantic"  # Semantic-based splitting using embeddings
     SENTENCE = "sentence"  # Sentence/text-based splitting with separators
+    STRUCTURAL_SEMANTIC = "structural_semantic"  # Structural preprocessing + LLM semantic boundary splitting
 
 
 class SemanticSplitterConfig(BaseModel):
@@ -70,8 +71,35 @@ class SentenceSplitterConfig(BaseModel):
         return v
 
 
+class ModelRef(BaseModel):
+    """Reference to a Model CRD."""
+
+    name: str = Field(..., description="Model name")
+    namespace: str = Field("default", description="Model namespace")
+
+
+class StructuralSemanticSplitterConfig(BaseModel):
+    """Configuration for structural semantic splitter.
+
+    This splitter uses a two-phase approach:
+    1. Structure-based splitting: Parse document structure (headings, paragraphs)
+    2. LLM semantic boundary splitting: For chunks > 600 tokens, use LLM to determine semantic boundaries
+    """
+
+    type: Literal["structural_semantic"] = "structural_semantic"
+    max_chunk_tokens: int = Field(
+        600, description="Maximum tokens per chunk (fixed at 600)"
+    )
+    overlap_tokens: int = Field(
+        80, description="Overlap tokens for forced splits (fixed at 80)"
+    )
+    llm_model_ref: ModelRef = Field(..., description="LLM model reference for semantic splitting")
+
+
 # Union type for splitter configuration
-SplitterConfig = Union[SemanticSplitterConfig, SentenceSplitterConfig]
+SplitterConfig = Union[
+    SemanticSplitterConfig, SentenceSplitterConfig, StructuralSemanticSplitterConfig
+]
 
 
 class HybridWeights(BaseModel):

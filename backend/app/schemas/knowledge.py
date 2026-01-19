@@ -387,3 +387,37 @@ class WebScrapeResponse(BaseModel):
     success: bool = Field(True, description="Whether scraping succeeded")
     error_code: Optional[str] = Field(None, description="Error code if failed")
     error_message: Optional[str] = Field(None, description="Error message if failed")
+
+
+# ============== Document Chunks Schemas ==============
+
+
+class ChunkItemResponse(BaseModel):
+    """Schema for a single chunk item."""
+
+    chunk_index: int = Field(..., description="Chunk index (0-based)")
+    content: str = Field(..., description="Chunk text content")
+    token_count: int = Field(..., description="Number of tokens in chunk")
+    start_position: int = Field(..., description="Start position in original document")
+    end_position: int = Field(..., description="End position in original document")
+    forced_split: bool = Field(False, description="Whether this chunk was force split")
+
+
+class DocumentChunksResponse(BaseModel):
+    """Schema for document chunks response."""
+
+    chunks: list[ChunkItemResponse] = Field(default_factory=list, description="List of chunks")
+    total: int = Field(..., description="Total number of chunks")
+    page: int = Field(1, description="Current page number")
+    page_size: int = Field(20, description="Page size")
+    has_non_text_content: bool = Field(False, description="Whether document has non-text content")
+    skipped_elements: list[str] = Field(default_factory=list, description="List of skipped element types")
+
+
+class ChunkDeleteResponse(BaseModel):
+    """Schema for chunk delete response."""
+
+    doc_id: int = Field(..., description="Document ID")
+    chunk_index: int = Field(..., description="Deleted chunk index")
+    status: str = Field(..., description="Operation status")
+    remaining_chunks: int = Field(..., description="Number of remaining chunks")

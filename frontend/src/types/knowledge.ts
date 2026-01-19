@@ -30,7 +30,7 @@ export interface RetrievalConfig {
 }
 
 // Splitter Config types
-export type SplitterType = 'sentence' | 'semantic'
+export type SplitterType = 'sentence' | 'semantic' | 'structural_semantic'
 
 // Base splitter config
 export interface BaseSplitterConfig {
@@ -52,8 +52,25 @@ export interface SemanticSplitterConfig extends BaseSplitterConfig {
   breakpoint_percentile_threshold?: number // 50-100, default 95
 }
 
+// Model reference for structural semantic splitter
+export interface ModelRef {
+  name: string
+  namespace: string
+}
+
+// Structural semantic splitter config
+export interface StructuralSemanticSplitterConfig extends BaseSplitterConfig {
+  type: 'structural_semantic'
+  max_chunk_tokens?: number // Fixed at 600
+  overlap_tokens?: number // Fixed at 80
+  llm_model_ref: ModelRef
+}
+
 // Union type for splitter config
-export type SplitterConfig = SentenceSplitterConfig | SemanticSplitterConfig
+export type SplitterConfig =
+  | SentenceSplitterConfig
+  | SemanticSplitterConfig
+  | StructuralSemanticSplitterConfig
 
 // Summary Model Reference types
 export interface SummaryModelRef {
@@ -132,10 +149,45 @@ export interface KnowledgeDocument {
   user_id: number
   is_active: boolean
   splitter_config?: SplitterConfig
+  chunks?: DocumentChunks // Only for structural_semantic splitter
   source_type: DocumentSourceType
   source_config: Record<string, unknown>
   created_at: string
   updated_at: string
+}
+
+// Chunk related types (for structural_semantic splitter)
+export interface ChunkItem {
+  chunk_index: number
+  content: string
+  token_count: number
+  start_position: number
+  end_position: number
+  forced_split: boolean
+}
+
+export interface DocumentChunks {
+  chunks: ChunkItem[]
+  total_chunks: number
+  overlap_tokens: number
+  has_non_text_content: boolean
+  skipped_elements: string[]
+}
+
+export interface DocumentChunksResponse {
+  chunks: ChunkItem[]
+  total: number
+  page: number
+  page_size: number
+  has_non_text_content: boolean
+  skipped_elements: string[]
+}
+
+export interface ChunkDeleteResponse {
+  doc_id: number
+  chunk_index: number
+  status: string
+  remaining_chunks: number
 }
 
 export interface KnowledgeDocumentCreate {

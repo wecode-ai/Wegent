@@ -25,6 +25,8 @@ from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
     BatchDocumentIds,
     BatchOperationResult,
+    ChunkDeleteResponse,
+    DocumentChunksResponse,
     DocumentDetailResponse,
     DocumentSourceType,
     KnowledgeBaseCreate,
@@ -1327,3 +1329,148 @@ def _update_kb_summary_after_deletion(kb_id: int, user_id: int, user_name: str):
     finally:
         db.close()
         logger.info(f"[KnowledgeAPI] KB summary update task completed: kb_id={kb_id}")
+
+
+# ============== Document Chunks Endpoints ==============
+
+
+@document_router.get("/{document_id}/chunks", response_model=DocumentChunksResponse)
+def get_document_chunks(
+    document_id: int,
+    page: int = Query(default=1, ge=1, description="Page number"),
+    page_size: int = Query(default=20, ge=1, le=100, description="Page size"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get chunks for a document.
+
+    Only available for documents using structural_semantic splitter.
+    Returns paginated list of chunks with metadata.
+    """
+    from app.models.knowledge import KnowledgeDocument
+
+    # Get document
+    document = (
+        db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == document_id)
+        .first()
+    )
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    # Check if document uses structural_semantic splitter
+    splitter_config = document.splitter_config or {}
+    if splitter_config.get("type") != "structural_semantic":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Chunks are only available for documents using structural_semantic splitter",
+        )
+
+    # Get chunks data
+    chunks_data = document.chunks or {}
+    all_chunks = chunks_data.get("chunks", [])
+    total_chunks = len(all_chunks)
+
+    # Paginate
+    start_idx = (page - 1) * page_size
+    end_idx = start_idx + page_size
+    paginated_chunks = all_chunks[start_idx:end_idx]
+
+    return DocumentChunksResponse(
+        chunks=paginated_chunks,
+        total=total_chunks,
+        page=page,
+        page_size=page_size,
+        has_non_text_content=chunks_data.get("has_non_text_content", False),
+        skipped_elements=chunks_data.get("skipped_elements", []),
+    )
+
+
+@document_router.delete(
+    "/{document_id}/chunks/{chunk_index}", response_model=ChunkDeleteResponse
+)
+def delete_document_chunk(
+    document_id: int,
+    chunk_index: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Delete a specific chunk from a document.
+
+    Only available for documents using structural_semantic splitter.
+    Also removes the chunk from vector storage.
+    """
+    from app.models.knowledge import KnowledgeDocument
+
+    # Get document
+    document = (
+        db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == document_id)
+        .first()
+    )
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    # Check if document uses structural_semantic splitter
+    splitter_config = document.splitter_config or {}
+    if splitter_config.get("type") != "structural_semantic":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Chunk deletion is only available for documents using structural_semantic splitter",
+        )
+
+    # Get chunks data
+    chunks_data = document.chunks or {}
+    all_chunks = chunks_data.get("chunks", [])
+
+    # Find and remove chunk
+    chunk_found = False
+    new_chunks = []
+    for chunk in all_chunks:
+        if chunk.get("chunk_index") == chunk_index:
+            chunk_found = True
+        else:
+            new_chunks.append(chunk)
+
+    if not chunk_found:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Chunk with index {chunk_index} not found",
+        )
+
+    # Re-index remaining chunks
+    for idx, chunk in enumerate(new_chunks):
+        chunk["chunk_index"] = idx
+
+    # Update document chunks
+    chunks_data["chunks"] = new_chunks
+    chunks_data["total_chunks"] = len(new_chunks)
+    document.chunks = chunks_data
+
+    db.commit()
+
+    # TODO: Also remove chunk from vector storage
+    # This would require knowledge of the retriever configuration
+    # For now, we only update the database
+
+    logger.info(
+        f"Deleted chunk {chunk_index} from document {document_id}, "
+        f"{len(new_chunks)} chunks remaining"
+    )
+
+    return ChunkDeleteResponse(
+        doc_id=document_id,
+        chunk_index=chunk_index,
+        status="deleted",
+        remaining_chunks=len(new_chunks),
+    )

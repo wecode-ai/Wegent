@@ -13,6 +13,8 @@ import {
   MoreVertical,
   Globe,
   CloudDownload,
+  FileCode,
+  AlertCircle,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -22,6 +24,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -31,6 +39,7 @@ interface DocumentItemProps {
   onDelete?: (doc: KnowledgeDocument) => void
   onRefresh?: (doc: KnowledgeDocument) => void
   onViewDetail?: (doc: KnowledgeDocument) => void
+  onViewChunks?: (doc: KnowledgeDocument) => void
   canManage?: boolean
   showBorder?: boolean
   selected?: boolean
@@ -47,6 +56,7 @@ export function DocumentItem({
   onDelete,
   onRefresh,
   onViewDetail,
+  onViewChunks,
   canManage = true,
   showBorder = true,
   selected = false,
@@ -97,6 +107,11 @@ export function DocumentItem({
     onRefresh?.(document)
   }
 
+  const handleViewChunks = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onViewChunks?.(document)
+  }
+
   const handleOpenLink = (e: React.MouseEvent) => {
     e.stopPropagation()
     const url = document.source_config?.url
@@ -107,6 +122,10 @@ export function DocumentItem({
   // Check document source type
   const isTable = document.source_type === 'table'
   const isWeb = document.source_type === 'web'
+  // Check if document uses structural_semantic splitter
+  const isStructuralSemantic = document.splitter_config?.type === 'structural_semantic'
+  // Check if document has non-text content
+  const hasNonTextContent = document.chunks?.has_non_text_content
   // URL for table or web documents
   const sourceUrl =
     (isTable || isWeb) &&
@@ -339,7 +358,7 @@ export function DocumentItem({
       </div>
 
       {/* Index status (is_active) */}
-      <div className="w-24 flex-shrink-0 text-center">
+      <div className="w-24 flex-shrink-0 text-center flex items-center justify-center gap-1">
         <Badge
           variant={document.is_active ? 'success' : 'warning'}
           size="sm"
@@ -349,11 +368,46 @@ export function DocumentItem({
             ? t('knowledge:document.document.indexStatus.available')
             : t('knowledge:document.document.indexStatus.unavailable')}
         </Badge>
+        {/* Non-text content warning icon */}
+        {hasNonTextContent && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-warning cursor-help">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {t('knowledge:document.hasNonTextContent', {
+                  elements: document.chunks?.skipped_elements?.join(', ') || '',
+                })}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
       </div>
 
       {/* Action buttons */}
       {canManage && (
         <div className="w-20 flex-shrink-0 flex items-center justify-center gap-1">
+          {/* View chunks button - only for structural_semantic splitter */}
+          {isStructuralSemantic && onViewChunks && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+                    onClick={handleViewChunks}
+                  >
+                    <FileCode className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {t('knowledge:document.viewChunks')}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           {/* Re-fetch button - only for web documents */}
           {isWeb && onRefresh && (
             <button

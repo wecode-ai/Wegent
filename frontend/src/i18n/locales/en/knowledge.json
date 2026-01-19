@@ -134,6 +134,15 @@
         "contentLength": "Content Length",
         "characters": "characters",
         "noContent": "No content available"
+      },
+      "viewChunks": "View Chunks",
+      "hasNonTextContent": "This document contains {{elements}} which were skipped during chunking",
+      "chunks": {
+        "title": "Chunks - {{name}}",
+        "empty": "No chunks available",
+        "skippedWarning": "This document contains {{elements}}, which have been automatically skipped",
+        "forcedSplit": "Force split",
+        "pagination": "Page {{current}} of {{total}} ({{count}} chunks total)"
       }
     },
     "upload": {
@@ -259,6 +268,11 @@
       "general": "General",
       "sentence": "Sentence Chunking",
       "semantic": "Semantic Chunking",
+      "structuralSemantic": "Structural Semantic",
+      "structuralSemanticUnsupported": "This file type does not support structural semantic chunking",
+      "llmModel": "LLM Model",
+      "selectLlmModel": "Select LLM model for semantic splitting",
+      "llmModelHint": "This model will be used to determine semantic boundaries when chunks exceed 600 tokens",
       "separator": "Separator",
       "separatorHint": "Character(s) used to split document",
       "chunkSize": "Max Chunk Size",

@@ -31,6 +31,7 @@ import { DocumentUpload, type TableDocument } from './DocumentUpload'
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
 import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
+import { ChunkListDialog } from './ChunkListDialog'
 import { useDocuments } from '../hooks/useDocuments'
 import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -69,6 +70,7 @@ export function DocumentList({
   const [viewingDoc, setViewingDoc] = useState<KnowledgeDocument | null>(null)
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
+  const [viewingChunksDoc, setViewingChunksDoc] = useState<KnowledgeDocument | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [sortField, setSortField] = useState<SortField>('date')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
@@ -496,6 +498,7 @@ export function DocumentList({
                   onEdit={setEditingDoc}
                   onDelete={setDeletingDoc}
                   onRefresh={handleRefreshWebDocument}
+                  onViewChunks={setViewingChunksDoc}
                   isRefreshing={refreshingDocId === doc.id}
                   canManage={canManage}
                   showBorder={false}
@@ -567,6 +570,7 @@ export function DocumentList({
                   onEdit={setEditingDoc}
                   onDelete={setDeletingDoc}
                   onRefresh={handleRefreshWebDocument}
+                  onViewChunks={setViewingChunksDoc}
                   isRefreshing={refreshingDocId === doc.id}
                   canManage={canManage}
                   showBorder={index < filteredAndSortedDocuments.length - 1}
@@ -634,6 +638,13 @@ export function DocumentList({
         open={showRetrievalTest}
         onOpenChange={setShowRetrievalTest}
         knowledgeBase={knowledgeBase}
+      />
+
+      <ChunkListDialog
+        open={!!viewingChunksDoc}
+        onOpenChange={open => !open && setViewingChunksDoc(null)}
+        document={viewingChunksDoc}
+        onChunkDeleted={refresh}
       />
     </div>
   )

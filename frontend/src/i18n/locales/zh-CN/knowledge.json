@@ -134,6 +134,15 @@
         "contentLength": "内容长度",
         "characters": "字符",
         "noContent": "暂无内容"
+      },
+      "viewChunks": "查看分块",
+      "hasNonTextContent": "此文档包含 {{elements}}，已在分块过程中跳过",
+      "chunks": {
+        "title": "分块 - {{name}}",
+        "empty": "暂无分块数据",
+        "skippedWarning": "此文档包含 {{elements}}，已自动跳过",
+        "forcedSplit": "强制分割",
+        "pagination": "第 {{current}} / {{total}} 页（共 {{count}} 个分块）"
       }
     },
     "upload": {
@@ -259,6 +268,11 @@
       "general": "通用",
       "sentence": "句子分段",
       "semantic": "语义分段",
+      "structuralSemantic": "结构语义分段",
+      "structuralSemanticUnsupported": "该文件类型不支持结构语义分段",
+      "llmModel": "LLM 模型",
+      "selectLlmModel": "选择用于语义分割的 LLM 模型",
+      "llmModelHint": "当分块超过 600 tokens 时，将使用此模型判断语义边界",
       "separator": "分段标识符",
       "separatorHint": "用于分割文档的字符",
       "chunkSize": "分段最大长度",

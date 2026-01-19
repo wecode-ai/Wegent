@@ -82,6 +82,9 @@ class KnowledgeDocument(Base):
     splitter_config = Column(
         JSON, nullable=False, default={}
     )  # Splitter configuration for document chunking
+    chunks = Column(
+        JSON, nullable=True, default=None
+    )  # Chunk data (only for structural_semantic splitter)
     source_type = Column(
         String(50), nullable=False, default=DocumentSourceType.FILE.value
     )  # Document source type: file, text, table

@@ -9,6 +9,8 @@
 import { apiClient } from './client'
 import type {
   AccessibleKnowledgeResponse,
+  ChunkDeleteResponse,
+  DocumentChunksResponse,
   KnowledgeBase,
   KnowledgeBaseCreate,
   KnowledgeBaseListResponse,
@@ -212,4 +214,40 @@ export async function refreshWebDocument(documentId: number): Promise<WebDocumen
   return apiClient.post<WebDocumentRefreshResponse>('/web-scraper/refresh-document', {
     document_id: documentId,
   })
+}
+
+// ============== Document Chunks APIs ==============
+
+/**
+ * Get chunks for a document
+ * Only available for documents using structural_semantic splitter
+ * @param documentId The document ID
+ * @param page Page number (default: 1)
+ * @param pageSize Page size (default: 20)
+ * @returns Paginated list of chunks
+ */
+export async function getDocumentChunks(
+  documentId: number,
+  page: number = 1,
+  pageSize: number = 20
+): Promise<DocumentChunksResponse> {
+  return apiClient.get<DocumentChunksResponse>(
+    `/knowledge-documents/${documentId}/chunks?page=${page}&page_size=${pageSize}`
+  )
+}
+
+/**
+ * Delete a specific chunk from a document
+ * Only available for documents using structural_semantic splitter
+ * @param documentId The document ID
+ * @param chunkIndex The chunk index to delete
+ * @returns Delete result with remaining chunk count
+ */
+export async function deleteDocumentChunk(
+  documentId: number,
+  chunkIndex: number
+): Promise<ChunkDeleteResponse> {
+  return apiClient.delete<ChunkDeleteResponse>(
+    `/knowledge-documents/${documentId}/chunks/${chunkIndex}`
+  )
 }
