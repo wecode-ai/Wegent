@@ -86,7 +86,6 @@ dependencies = [
     # Task queue (Celery)
     "celery[redis]>=5.3.0",
     "flower>=2.0.0", # Celery monitoring
-    "celery-redbeat>=2.0.0", # Redis-based Beat scheduler for distributed deployment
     # Circuit breaker pattern
     "pybreaker>=1.0.0",
     # Prometheus metrics
