@@ -18,12 +18,14 @@ def test_inject_memories_to_prompt_with_dates():
         MemorySearchResult(
             id="mem-1",
             memory="User prefers Python over JavaScript",
-            metadata={"created_at": "2025-01-15T10:30:00Z"},
+            metadata={},
+            created_at="2025-01-15T10:30:00Z",
         ),
         MemorySearchResult(
             id="mem-2",
             memory="Project uses FastAPI framework",
-            metadata={"created_at": "2025-01-14T15:20:00Z"},
+            metadata={},
+            created_at="2025-01-14T15:20:00Z",
         ),
     ]
 
@@ -52,7 +54,7 @@ def test_inject_memories_to_prompt_without_dates():
     memories = [
         MemorySearchResult(id="mem-1", memory="User likes clean code", metadata={}),
         MemorySearchResult(
-            id="mem-2", memory="Prefers type hints", metadata={"created_at": ""}
+            id="mem-2", memory="Prefers type hints", metadata={}, created_at=None
         ),
     ]
 
@@ -92,7 +94,8 @@ def test_inject_memories_to_prompt_invalid_date():
         MemorySearchResult(
             id="mem-1",
             memory="Test memory",
-            metadata={"created_at": "invalid-date-format"},
+            metadata={},
+            created_at="invalid-date-format",
         )
     ]
 

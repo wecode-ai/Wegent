@@ -261,7 +261,7 @@ class MemoryManager:
             return
 
         try:
-            # Build metadata
+            # Build metadata (created_at is managed by mem0 automatically)
             metadata = MemoryMetadata(
                 task_id=task_id,
                 subtask_id=subtask_id,
@@ -269,11 +269,7 @@ class MemoryManager:
                 workspace_id=workspace_id,
                 project_id=project_id,
                 is_group_chat=is_group_chat,
-                created_at=datetime.now(timezone.utc).isoformat(),
             )
-
-            # Log the generated timestamp for debugging
-            logger.info("Generated memory timestamp: %s (UTC)", metadata.created_at)
 
             # Call mem0 API with context messages
             result = await self._client.add_memory(

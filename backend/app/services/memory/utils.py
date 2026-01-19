@@ -46,8 +46,9 @@ def inject_memories_to_prompt(
     # Build memory list
     memory_lines = []
     for idx, memory in enumerate(memories, start=1):
-        # Extract created_at from metadata if available
-        created_at = memory.metadata.get("created_at", "")
+        # Extract created_at from top-level memory object (mem0 reserved field)
+        # Note: created_at is managed by mem0 and uses US/Pacific timezone
+        created_at = memory.created_at if hasattr(memory, "created_at") else None
         if created_at and isinstance(created_at, str):
             try:
                 # Parse ISO format and format for readability
@@ -88,6 +89,6 @@ def format_metadata_for_logging(metadata: dict) -> str:
         Formatted string for logging
     """
     # Keep only important fields for logging
-    relevant_fields = ["task_id", "team_id", "group_id", "is_group_chat"]
+    relevant_fields = ["task_id", "team_id", "project_id", "is_group_chat"]
     filtered = {k: v for k, v in metadata.items() if k in relevant_fields}
     return str(filtered)

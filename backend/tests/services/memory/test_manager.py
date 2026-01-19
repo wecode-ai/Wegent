@@ -275,10 +275,11 @@ def test_inject_memories_to_prompt(memory_manager):
         MemorySearchResult(
             id="mem-1",
             memory="User prefers Python",
-            metadata={"created_at": "2025-01-15T10:00:00Z"},
+            metadata={},
+            created_at="2025-01-15T10:00:00Z",
         ),
         MemorySearchResult(
-            id="mem-2", memory="Project uses FastAPI", metadata={"created_at": ""}
+            id="mem-2", memory="Project uses FastAPI", metadata={}, created_at=None
         ),
     ]
 
