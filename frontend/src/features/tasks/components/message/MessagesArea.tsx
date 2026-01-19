@@ -1157,9 +1157,11 @@ export default function MessagesArea({
                 onRegenerate={
                   // Only show regenerate button for:
                   // 1. Single chat (not group chat)
-                  // 2. Last completed AI message
-                  // 3. Not streaming
+                  // 2. No messages currently streaming
+                  // 3. Last completed AI message
+                  // 4. Message status is completed
                   !isGroupChat &&
+                  !isStreaming &&
                   msg.type === 'ai' &&
                   index === lastCompletedAiMessageIndex &&
                   msg.status === 'completed'
