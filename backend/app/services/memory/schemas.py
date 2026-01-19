@@ -4,7 +4,6 @@
 
 """Pydantic schemas for mem0 API interaction."""
 
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -18,7 +17,12 @@ class Message(BaseModel):
 
 
 class MemoryMetadata(BaseModel):
-    """Metadata stored with each memory for flexible querying."""
+    """Metadata stored with each memory for flexible querying.
+
+    Note: created_at and updated_at are reserved fields in mem0 and cannot be
+    stored in metadata. mem0 manages these fields automatically. The default
+    timezone for timestamps is US/Pacific.
+    """
 
     task_id: str = Field(..., description="Task ID (for deletion)")
     subtask_id: str = Field(
@@ -28,14 +32,10 @@ class MemoryMetadata(BaseModel):
     workspace_id: Optional[str] = Field(
         None, description="Workspace ID (for Code tasks)"
     )
-    group_id: Optional[str] = Field(
-        None, description="Conversation group ID (future use)"
+    project_id: Optional[str] = Field(
+        None, description="Project ID for group conversations"
     )
     is_group_chat: bool = Field(False, description="Individual vs group chat")
-    created_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
-        description="Timestamp when memory was created",
-    )
 
 
 class MemoryCreateRequest(BaseModel):
@@ -60,7 +60,11 @@ class MemorySearchRequest(BaseModel):
 
 
 class MemorySearchResult(BaseModel):
-    """Single memory search result."""
+    """Single memory search result.
+
+    Note: created_at is a reserved field managed by mem0 and is returned
+    at the top level (not in metadata). It uses US/Pacific timezone by default.
+    """
 
     id: str = Field(..., description="Memory ID")
     memory: str = Field(..., description="Memory content")
@@ -68,6 +72,7 @@ class MemorySearchResult(BaseModel):
         default_factory=dict, description="Memory metadata"
     )
     score: Optional[float] = Field(None, description="Relevance score")
+    created_at: Optional[str] = Field(None, description="Timestamp (US/Pacific)")
 
 
 class MemorySearchResponse(BaseModel):

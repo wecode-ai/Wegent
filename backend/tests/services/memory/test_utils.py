@@ -13,17 +13,19 @@ from app.services.memory.utils import inject_memories_to_prompt
 
 
 def test_inject_memories_to_prompt_with_dates():
-    """Test injecting memories with timestamps."""
+    """Test injecting memories with timestamps in local timezone."""
     memories = [
         MemorySearchResult(
             id="mem-1",
             memory="User prefers Python over JavaScript",
-            metadata={"created_at": "2025-01-15T10:30:00Z"},
+            metadata={},
+            created_at="2025-01-15T10:30:00Z",
         ),
         MemorySearchResult(
             id="mem-2",
             memory="Project uses FastAPI framework",
-            metadata={"created_at": "2025-01-14T15:20:00Z"},
+            metadata={},
+            created_at="2025-01-14T15:20:00Z",
         ),
     ]
 
@@ -36,10 +38,14 @@ def test_inject_memories_to_prompt_with_dates():
     assert "</memory>" in result
     assert base_prompt in result
 
-    # Check content
-    assert "[2025-01-15]" in result
+    # Check content with local timezone format (includes date and timezone suffix)
+    # Pattern: [YYYY-MM-DD HH:MM:SS TZ] where TZ can be CST, UTC, PST, UTC+08:00, etc.
+    datetime_pattern = r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?: [^\]]+)?\]"
+    matches = re.findall(datetime_pattern, result)
+    assert len(matches) == 2, f"Expected 2 timestamps, found {len(matches)}: {matches}"
+
+    # Check memory content is present
     assert "User prefers Python over JavaScript" in result
-    assert "[2025-01-14]" in result
     assert "Project uses FastAPI framework" in result
 
     # Check ordering
@@ -52,7 +58,7 @@ def test_inject_memories_to_prompt_without_dates():
     memories = [
         MemorySearchResult(id="mem-1", memory="User likes clean code", metadata={}),
         MemorySearchResult(
-            id="mem-2", memory="Prefers type hints", metadata={"created_at": ""}
+            id="mem-2", memory="Prefers type hints", metadata={}, created_at=None
         ),
     ]
 
@@ -63,11 +69,11 @@ def test_inject_memories_to_prompt_without_dates():
     assert "User likes clean code" in result
     assert "Prefers type hints" in result
 
-    # Should not have date-bracket patterns like [YYYY-MM-DD]
-    date_pattern = r"\[\d{4}-\d{2}-\d{2}\]"
+    # Should not have datetime-bracket patterns like [YYYY-MM-DD HH:MM:SS TZ]
+    datetime_pattern = r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}( [A-Z]{3,4})?\]"
     assert not re.search(
-        date_pattern, result
-    ), "Should not contain date brackets when created_at is missing"
+        datetime_pattern, result
+    ), "Should not contain datetime brackets when created_at is missing"
 
     # Verify <memory> tags are present
     assert result.count("<memory>") == 1
@@ -92,7 +98,8 @@ def test_inject_memories_to_prompt_invalid_date():
         MemorySearchResult(
             id="mem-1",
             memory="Test memory",
-            metadata={"created_at": "invalid-date-format"},
+            metadata={},
+            created_at="invalid-date-format",
         )
     ]
 

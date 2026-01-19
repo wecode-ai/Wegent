@@ -745,7 +745,8 @@ async def create_task_and_subtasks(
         current_content = message
         if is_group_chat:
             # Add sender name prefix to current message
-            sender_name = user.user_name
+            # Use user_name if available, otherwise fall back to user_id
+            sender_name = user.user_name if user.user_name else str(user.user_id)
             if not current_content.startswith(f"User[{sender_name}]:"):
                 current_content = f"User[{sender_name}]: {current_content}"
 
@@ -781,7 +782,7 @@ async def create_task_and_subtasks(
                 subtask_id=str(user_subtask.id),
                 messages=context_messages,
                 workspace_id=workspace_id,
-                group_id=None,  # Future: extract from task spec
+                project_id=str(task.project_id) if task.project_id else None,
                 is_group_chat=is_group_chat,
             )
         )

@@ -5,14 +5,21 @@
 """Utility functions for memory service."""
 
 import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List
+
+from shared.telemetry.decorators import (
+    add_span_event,
+    set_span_attribute,
+    trace_sync,
+)
 
 from app.services.memory.schemas import MemorySearchResult
 
 logger = logging.getLogger(__name__)
 
 
+@trace_sync("memory.utils.inject_memories")
 def inject_memories_to_prompt(
     base_prompt: str, memories: List[MemorySearchResult]
 ) -> str:
@@ -32,29 +39,56 @@ def inject_memories_to_prompt(
         <memory>
         The following are relevant memories from previous conversations:
 
-        1. [2025-01-15] User prefers Python over JavaScript for backend tasks
-        2. [2025-01-14] Project uses FastAPI framework with SQLAlchemy ORM
+        1. [2025-01-15 14:30:45 CST] User prefers Python over JavaScript for backend tasks
+        2. [2025-01-14 09:15:22 CST] Project uses FastAPI framework with SQLAlchemy ORM
 
         Use this context to provide personalized responses.
         </memory>
 
         {original_system_prompt}
     """
+    # Set span attributes for observability
+    set_span_attribute("memory.count", len(memories))
+
     if not memories:
+        add_span_event("memory.inject.empty", {"reason": "no_memories_provided"})
         return base_prompt
+
+    # Set memory IDs (truncated to first 5 for performance)
+    memory_ids = [memory.id for memory in memories[:5]]
+    set_span_attribute("memory.ids", ",".join(memory_ids))
+    if len(memories) > 5:
+        set_span_attribute("memory.ids_truncated", True)
 
     # Build memory list
     memory_lines = []
+    parse_errors = 0
     for idx, memory in enumerate(memories, start=1):
-        # Extract created_at from metadata if available
-        created_at = memory.metadata.get("created_at", "")
+        # Extract created_at from top-level memory object (mem0 reserved field)
+        # Note: created_at is managed by mem0 (may use US/Pacific or UTC timezone)
+        created_at = memory.created_at if hasattr(memory, "created_at") else None
         if created_at and isinstance(created_at, str):
             try:
-                # Format: YYYY-MM-DD
+                # Parse ISO format and convert to local timezone
+                # Input: '2025-01-19T12:30:45.123456+00:00' or '2025-01-19T12:30:45Z'
+                # mem0 uses US/Pacific timezone by default, but timestamps should have timezone info
                 dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                date_str = dt.strftime("%Y-%m-%d")
+
+                # Convert to local timezone for display
+                if dt.tzinfo is not None:
+                    # Convert to local timezone
+                    dt_local = dt.astimezone()
+                else:
+                    # If no timezone info, assume it's UTC and convert to local
+                    dt_local = dt.replace(tzinfo=timezone.utc).astimezone()
+
+                # Format with local timezone for clarity
+                # Output: '2025-01-19 12:30:45 CST' or '2025-01-19 12:30:45 UTC+08:00'
+                date_str = dt_local.strftime("%Y-%m-%d %H:%M:%S %Z")
             except (ValueError, TypeError):
-                date_str = ""
+                # If parsing fails, use original string (better than empty)
+                date_str = created_at
+                parse_errors += 1
         else:
             date_str = ""
 
@@ -64,6 +98,14 @@ def inject_memories_to_prompt(
         else:
             memory_lines.append(f"{idx}. {memory.memory}")
 
+    # Track date parsing errors if any occurred
+    if parse_errors > 0:
+        set_span_attribute("memory.date_parse_errors", parse_errors)
+        add_span_event(
+            "memory.date_parse_errors",
+            {"error_count": parse_errors, "total_memories": len(memories)},
+        )
+
     memory_block = (
         "<memory>\n"
         "The following are relevant memories from previous conversations:\n\n"
@@ -72,9 +114,17 @@ def inject_memories_to_prompt(
         "</memory>\n\n"
     )
 
+    # Set output attributes
+    set_span_attribute("memory.block_length", len(memory_block))
+    add_span_event(
+        "memory.inject.success",
+        {"memories_injected": len(memories), "block_length": len(memory_block)},
+    )
+
     return memory_block + base_prompt
 
 
+@trace_sync("memory.utils.format_metadata")
 def format_metadata_for_logging(metadata: dict) -> str:
     """Format metadata dict for logging (redact sensitive fields).
 
@@ -84,7 +134,16 @@ def format_metadata_for_logging(metadata: dict) -> str:
     Returns:
         Formatted string for logging
     """
+    # Set span attributes
+    set_span_attribute("metadata.field_count", len(metadata))
+
     # Keep only important fields for logging
-    relevant_fields = ["task_id", "team_id", "group_id", "is_group_chat"]
+    relevant_fields = ["task_id", "team_id", "project_id", "is_group_chat"]
     filtered = {k: v for k, v in metadata.items() if k in relevant_fields}
+
+    # Track which fields were kept
+    set_span_attribute("metadata.filtered_count", len(filtered))
+    if filtered:
+        set_span_attribute("metadata.filtered_fields", ",".join(filtered.keys()))
+
     return str(filtered)
