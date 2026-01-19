@@ -117,17 +117,17 @@ export default function TaskSidebar({
   // Navigation buttons - always show all buttons
   const navigationButtons = [
     {
+      label: t('common:navigation.flow'),
+      icon: Workflow,
+      path: paths.feed.getHref(),
+      isActive: pageType === 'flow',
+    },
+    {
       label: t('common:navigation.code'),
       icon: Code,
       path: paths.code.getHref(),
       isActive: pageType === 'code',
       tooltip: pageType === 'code' ? t('common:tasks.new_task') : undefined,
-    },
-    {
-      label: t('common:navigation.flow'),
-      icon: Workflow,
-      path: paths.flow.getHref(),
-      isActive: pageType === 'flow',
     },
     {
       label: t('common:navigation.wiki'),

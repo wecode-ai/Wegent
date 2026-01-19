@@ -77,7 +77,7 @@ const statusConfig: Record<
 }
 
 export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
-  const { t } = useTranslation('flow')
+  const { t } = useTranslation('feed')
   const router = useRouter()
   const {
     executions,
@@ -216,7 +216,7 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
 
   const renderPost = (exec: FlowExecution, isLast: boolean) => {
     const status = statusConfig[exec.status]
-    const flowName = exec.flow_display_name || exec.flow_name || t('feed.unnamed_flow')
+    const flowName = exec.flow_display_name || exec.flow_name || t('feed.unnamed_subscription')
 
     return (
       <div key={exec.id} className="relative">
@@ -378,17 +378,17 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
               {onCreateFlow && (
                 <Button onClick={onCreateFlow} className="mb-3">
                   <Plus className="h-4 w-4 mr-1.5" />
-                  {t('create_flow')}
+                  {t('create_subscription')}
                 </Button>
               )}
               <p className="text-xs text-text-muted">
                 {t('feed.empty_settings_hint')}{' '}
                 <button
-                  onClick={() => router.push(paths.flowSubscriptions.getHref())}
+                  onClick={() => router.push(paths.feedSubscriptions.getHref())}
                   className="text-primary hover:underline inline-flex items-center gap-0.5"
                 >
                   <Settings className="h-3 w-3" />
-                  {t('feed.manage_flows')}
+                  {t('feed.manage_subscriptions')}
                 </button>
               </p>
             </div>

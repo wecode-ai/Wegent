@@ -98,7 +98,7 @@ export function FlowConversationDialog({
   open,
   onOpenChange,
 }: FlowConversationDialogProps) {
-  const { t } = useTranslation('flow')
+  const { t } = useTranslation('feed')
   const { theme } = useTheme()
   const router = useRouter()
   const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null)
