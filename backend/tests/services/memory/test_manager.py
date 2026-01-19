@@ -87,7 +87,7 @@ async def test_search_memories_disabled():
 async def test_save_user_message_async_enabled(memory_manager):
     """Test saving user message when feature is enabled."""
     mock_client = AsyncMock()
-    mock_client.add_memory.return_value = {"id": "new-memory-id"}
+    mock_client.add_memory.return_value = {"results": [{"id": "new-memory-id"}]}
 
     memory_manager._client = mock_client
 
@@ -96,7 +96,7 @@ async def test_save_user_message_async_enabled(memory_manager):
         team_id="456",
         task_id="123",
         subtask_id="789",
-        message="Test message",
+        messages=[{"role": "user", "content": "Test message"}],
     )
 
     mock_client.add_memory.assert_called_once()
@@ -122,7 +122,7 @@ async def test_save_user_message_async_disabled():
             team_id="456",
             task_id="123",
             subtask_id="789",
-            message="Test message",
+            messages=[{"role": "user", "content": "Test message"}],
         )
 
 

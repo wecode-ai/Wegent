@@ -153,24 +153,29 @@ class MemoryManager:
         team_id: str,
         task_id: str,
         subtask_id: str,
-        message: str,
+        messages: List[Dict[str, Any]],
         workspace_id: Optional[str] = None,
         group_id: Optional[str] = None,
         is_group_chat: bool = False,
     ) -> None:
-        """Store user message in memory (fire-and-forget).
+        """Store user messages with conversation context in memory (fire-and-forget).
 
         This method is called after user subtask is created.
         Runs in background, doesn't block main flow.
 
-        Only stores USER messages, not AI responses (per requirements).
+        Messages should include recent conversation context (e.g., 2 history + 1 current)
+        to provide better context for memory generation. Each message can be:
+        - {"role": "user", "content": "text"} for user messages
+        - {"role": "assistant", "content": "text"} for AI responses
+
+        For group chat, messages should already have sender names prefixed.
 
         Args:
             user_id: User ID
             team_id: Team/Agent ID
             task_id: Task ID (for deletion)
             subtask_id: Subtask ID (traceability)
-            message: User message content
+            messages: List of messages with conversation context (mem0 format)
             workspace_id: Optional workspace ID (for Code tasks)
             group_id: Optional conversation group ID (future use)
             is_group_chat: Whether this is a group chat
@@ -182,7 +187,11 @@ class MemoryManager:
                     team_id="456",
                     task_id="789",
                     subtask_id="1011",
-                    message="I prefer Python for backend"
+                    messages=[
+                        {"role": "user", "content": "User[Alice]: What's the weather?"},
+                        {"role": "assistant", "content": "It's sunny today."},
+                        {"role": "user", "content": "User[Alice]: I prefer Python for backend"}
+                    ]
                 )
             )
         """
@@ -204,10 +213,7 @@ class MemoryManager:
             # Log the generated timestamp for debugging
             logger.info("Generated memory timestamp: %s (UTC)", metadata.created_at)
 
-            # Build messages (mem0 format)
-            messages = [{"role": "user", "content": message}]
-
-            # Call mem0 API
+            # Call mem0 API with context messages
             result = await self._client.add_memory(
                 user_id=user_id,
                 messages=messages,
@@ -220,11 +226,12 @@ class MemoryManager:
                 if isinstance(result, dict) and "results" in result:
                     memory_count = len(result.get("results", []))
                 logger.info(
-                    "Stored %d memories for user %s, task %s, subtask %s",
+                    "Stored %d memories for user %s, task %s, subtask %s (from %d context messages)",
                     memory_count,
                     user_id,
                     task_id,
                     subtask_id,
+                    len(messages),
                 )
             else:
                 logger.warning(

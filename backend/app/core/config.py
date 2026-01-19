@@ -292,6 +292,9 @@ class Settings(BaseSettings):
     MEMORY_TIMEOUT_SECONDS: float = 2.0
     # Maximum number of memories to inject into system prompt
     MEMORY_MAX_RESULTS: int = 5
+    # Number of recent messages to include as context when saving memory (default: 3 total)
+    # This includes 2 history messages + 1 current message for better memory quality
+    MEMORY_CONTEXT_MESSAGES: int = 3
 
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
