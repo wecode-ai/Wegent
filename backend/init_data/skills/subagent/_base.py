@@ -204,6 +204,7 @@ class SandboxManager:
         user_id: int,
         user_name: str,
         timeout: int = DEFAULT_SANDBOX_TIMEOUT,
+        bot_config: list = None,
     ):
         """Initialize sandbox manager.
 
@@ -214,11 +215,13 @@ class SandboxManager:
             user_id: User ID for sandbox metadata
             user_name: Username for sandbox metadata
             timeout: Sandbox timeout in seconds (default: 30 minutes)
+            bot_config: Bot configuration list (optional)
         """
         self.task_id = task_id
         self.user_id = user_id
         self.user_name = user_name
         self.timeout = timeout
+        self.bot_config = bot_config or []
 
         # Sandbox cache - reuse within same manager instance
         self._sandbox: Any = None
@@ -234,6 +237,7 @@ class SandboxManager:
         user_id: int,
         user_name: str,
         timeout: int = DEFAULT_SANDBOX_TIMEOUT,
+        bot_config: list = None,
     ) -> "SandboxManager":
         """Get or create a singleton SandboxManager instance for the given task_id.
 
@@ -242,13 +246,16 @@ class SandboxManager:
             user_id: User ID for sandbox metadata
             user_name: Username for sandbox metadata
             timeout: Sandbox timeout in seconds (default: 30 minutes)
+            bot_config: Bot configuration list (optional)
 
         Returns:
             SandboxManager instance for the task_id
         """
         if task_id not in cls._instances:
             logger.info(f"[SandboxManager] Creating new instance for task_id={task_id}")
-            cls._instances[task_id] = cls(task_id, user_id, user_name, timeout)
+            cls._instances[task_id] = cls(
+                task_id, user_id, user_name, timeout, bot_config
+            )
         else:
             logger.debug(
                 f"[SandboxManager] Reusing existing instance for task_id={task_id}"
@@ -311,7 +318,26 @@ class SandboxManager:
 
         try:
             # Import E2B SDK (patched at this point)
+            import json
+
             from e2b_code_interpreter import Sandbox
+
+            # Prepare metadata with bot_config if available
+            # Note: E2B SDK metadata type is Dict[str, str], so we need to serialize complex values
+            metadata = {
+                "task_type": task_type,
+                "task_id": str(self.task_id),
+                "user_id": str(self.user_id),
+                "user_name": self.user_name,
+            }
+
+            if workspace_ref:
+                metadata["workspace_ref"] = workspace_ref
+
+            # Serialize bot_config to JSON string if available
+            # E2B SDK only accepts string values in metadata
+            if self.bot_config:
+                metadata["bot_config"] = json.dumps(self.bot_config, ensure_ascii=False)
 
             # Run sandbox creation in thread pool since E2B SDK is sync
             loop = asyncio.get_event_loop()
@@ -320,13 +346,7 @@ class SandboxManager:
                 lambda: Sandbox.create(
                     template=shell_type,
                     timeout=self.timeout,
-                    metadata={
-                        "task_type": task_type,
-                        "task_id": self.task_id,
-                        "user_id": self.user_id,
-                        "user_name": self.user_name,
-                        "workspace_ref": workspace_ref,
-                    },
+                    metadata=metadata,
                 ),
             )
 
@@ -422,6 +442,7 @@ try:
                 user_id=self.user_id,
                 user_name=self.user_name,
                 timeout=DEFAULT_SANDBOX_TIMEOUT,
+                bot_config=self.bot_config,
             )
 
         def kill_sandbox(self) -> None:
