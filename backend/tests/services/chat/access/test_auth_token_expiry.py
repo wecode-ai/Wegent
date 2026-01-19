@@ -92,7 +92,5 @@ class TestGetTokenExpiry:
         """Token without exp claim should return None."""
         # Create token without exp claim
         payload = {"sub": "testuser", "user_id": 1}
-        token = jwt.encode(
-            payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM
-        )
+        token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
         assert get_token_expiry(token) is None

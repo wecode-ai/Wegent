@@ -2,9 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from contextlib import contextmanager
+from typing import Generator
+
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
 
@@ -34,6 +37,30 @@ Base = declarative_base()
 # Wiki tables now use the main database (Base)
 # Alias for backward compatibility
 WikiBase = Base
+
+
+@contextmanager
+def get_db_session() -> Generator[Session, None, None]:
+    """
+    Context manager for database sessions.
+
+    Provides a clean way to manage database sessions with proper cleanup.
+    Use this instead of manually creating SessionLocal() and closing.
+
+    Usage:
+        with get_db_session() as db:
+            # use db...
+            pass
+        # session is automatically closed
+
+    Yields:
+        Database session
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def get_wiki_db():

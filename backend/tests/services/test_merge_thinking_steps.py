@@ -164,7 +164,11 @@ class TestMergeThinkingSteps:
             {
                 "title": "thinking.model_reasoning",
                 "next_action": "continue",
-                "details": {"type": "reasoning", "content": " World", "extra": "value2"},
+                "details": {
+                    "type": "reasoning",
+                    "content": " World",
+                    "extra": "value2",
+                },
             },
         ]
         result = merge_thinking_steps(steps)
