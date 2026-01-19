@@ -89,10 +89,13 @@ export function TaskDndProvider({ children }: TaskDndProviderProps) {
   }, [])
 
   // Configure sensors for both mouse and touch
+  // Use delay + distance constraint to allow double-click events to fire
+  // before drag activation. This prevents dnd-kit from blocking double-click.
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 8, // Minimum drag distance before activation
+        delay: 150, // Wait 150ms before activating drag to allow double-click
+        tolerance: 5, // Allow 5px movement during the delay
       },
     }),
     useSensor(TouchSensor, {
