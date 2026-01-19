@@ -501,7 +501,7 @@ def _test_embedding_connection(
     base_url: Optional[str],
     custom_headers: dict,
 ) -> dict:
-    """Test embedding model connection using LangChain."""
+    """Test embedding model connection using LangChain or native client."""
     if provider_type in ["openai", "openai-responses"]:
         from langchain_openai import OpenAIEmbeddings
 
@@ -529,6 +529,15 @@ def _test_embedding_connection(
             "success": True,
             "message": f"Successfully connected to embedding model {model_id}",
         }
+
+    elif provider_type == "voyage":
+        from app.services.rag.embedding.voyage import verify_voyage_connection
+
+        return verify_voyage_connection(
+            api_key=api_key,
+            model_id=model_id,
+            base_url=base_url,
+        )
 
     else:
         return {

@@ -82,6 +82,7 @@ const PROTOCOL_BY_CATEGORY: Record<
   ],
   embedding: [
     { value: 'openai', label: 'OpenAI Embeddings' },
+    { value: 'voyage', label: 'Voyage AI' },
     { value: 'cohere', label: 'Cohere Embed' },
     { value: 'jina', label: 'Jina AI' },
     { value: 'custom', label: 'Custom API' },
@@ -389,7 +390,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     setTesting(true)
     try {
       const result = await modelApis.testConnection({
-        provider_type: providerType as 'openai' | 'anthropic' | 'gemini',
+        provider_type: providerType as
+          | 'openai'
+          | 'anthropic'
+          | 'gemini'
+          | 'voyage'
+          | 'cohere'
+          | 'jina'
+          | 'custom',
         model_id: finalModelId,
         api_key: apiKey,
         base_url: baseUrl || undefined,
