@@ -726,6 +726,44 @@ class WebSocketEmitter:
             f"[WS] emit correction:error task={task_id} subtask={subtask_id} error={error}"
         )
 
+    # ============================================================
+    # Interactive Message Events (MCP tools)
+    # ============================================================
+
+    async def emit_interactive_message(
+        self,
+        task_id: int,
+        payload: Dict[str, Any],
+    ) -> None:
+        """
+        Emit interactive:message event to task room.
+
+        This is used by MCP tools (send_message, send_form, send_confirm, send_select)
+        to send interactive messages to users.
+
+        Args:
+            task_id: Task ID (used to determine the room)
+            payload: Interactive message payload containing:
+                - request_id: Unique request ID
+                - message_type: Type of message (text, markdown, form, confirm, select)
+                - content: Message content (for text/markdown)
+                - attachments: Attachments (for text/markdown)
+                - form: Form definition (for form type)
+                - confirm: Confirm definition (for confirm type)
+                - select: Select definition (for select type)
+                - timestamp: ISO timestamp
+        """
+        await self.sio.emit(
+            ServerEvents.INTERACTIVE_MESSAGE,
+            payload,
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.info(
+            f"[WS] emit interactive:message task={task_id} "
+            f"type={payload.get('message_type')} request_id={payload.get('request_id')}"
+        )
+
 
 # Global emitter instance (lazy initialized)
 _ws_emitter: Optional[WebSocketEmitter] = None

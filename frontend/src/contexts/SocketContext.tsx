@@ -46,6 +46,7 @@ import {
   CorrectionDonePayload,
   CorrectionErrorPayload,
   AuthErrorPayload,
+  InteractiveMessagePayload,
 } from '@/types/socket'
 
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config'
@@ -110,6 +111,8 @@ interface SocketContextType {
   sendSkillResponse: (payload: SkillResponsePayload) => void
   /** Register correction event handlers */
   registerCorrectionHandlers: (handlers: CorrectionEventHandlers) => () => void
+  /** Register interactive message event handlers (MCP tools) */
+  registerInteractiveHandlers: (handlers: InteractiveEventHandlers) => () => void
   /** Register a callback to be called when WebSocket reconnects */
   onReconnect: (callback: ReconnectCallback) => () => void
 }
@@ -147,6 +150,12 @@ export interface CorrectionEventHandlers {
   onCorrectionChunk?: (data: CorrectionChunkPayload) => void
   onCorrectionDone?: (data: CorrectionDonePayload) => void
   onCorrectionError?: (data: CorrectionErrorPayload) => void
+}
+
+/** Interactive message event handlers (MCP tools) */
+export interface InteractiveEventHandlers {
+  /** Handler for interactive:message event (AI sends interactive content to user) */
+  onInteractiveMessage?: (data: InteractiveMessagePayload) => void
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined)
@@ -667,6 +676,32 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   )
 
   /**
+   * Register interactive message event handlers (MCP tools)
+   * Returns a cleanup function to unregister handlers
+   */
+  const registerInteractiveHandlers = useCallback(
+    (handlers: InteractiveEventHandlers): (() => void) => {
+      if (!socket) {
+        return () => {}
+      }
+
+      const { onInteractiveMessage } = handlers
+
+      if (onInteractiveMessage) {
+        socket.on(ServerEvents.INTERACTIVE_MESSAGE, onInteractiveMessage)
+      }
+
+      // Return cleanup function
+      return () => {
+        if (onInteractiveMessage) {
+          socket.off(ServerEvents.INTERACTIVE_MESSAGE, onInteractiveMessage)
+        }
+      }
+    },
+    [socket]
+  )
+
+  /**
    * Send skill response back to server
    */
   const sendSkillResponse = useCallback(
@@ -765,6 +800,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         registerSkillHandlers,
         sendSkillResponse,
         registerCorrectionHandlers,
+        registerInteractiveHandlers,
         onReconnect,
       }}
     >

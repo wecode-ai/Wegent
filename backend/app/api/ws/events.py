@@ -77,6 +77,15 @@ class ServerEvents:
     # Generic Skill Events
     SKILL_REQUEST = "skill:request"  # Server -> Client: skill request
 
+    # Interactive Message Events (MCP tools)
+    INTERACTIVE_MESSAGE = "interactive:message"  # Server -> Client: interactive message
+
+
+class ClientInteractiveEvents:
+    """Client -> Server interactive event names."""
+
+    INTERACTIVE_RESPONSE = "interactive:response"  # Client -> Server: user response
+
 
 # ============================================================
 # Client -> Server Payloads
@@ -517,3 +526,140 @@ class AuthErrorPayload(BaseModel):
     code: Literal["TOKEN_EXPIRED", "INVALID_TOKEN"] = Field(
         ..., description="Error code for identifying the type of auth error"
     )
+
+
+# ============================================================
+# Interactive Message Payloads (MCP tools)
+# ============================================================
+
+
+class InteractiveAttachment(BaseModel):
+    """Attachment in interactive message."""
+
+    name: str = Field(..., description="File name")
+    url: str = Field(..., description="File URL")
+    mime_type: str = Field(..., description="MIME type")
+    size: Optional[int] = Field(None, description="File size in bytes")
+
+
+class InteractiveFieldOption(BaseModel):
+    """Option for choice fields in forms."""
+
+    value: str = Field(..., description="Option value")
+    label: str = Field(..., description="Display label")
+    recommended: bool = Field(False, description="Whether recommended")
+
+
+class InteractiveFieldValidation(BaseModel):
+    """Validation rules for form fields."""
+
+    required: bool = Field(False, description="Whether required")
+    min_length: Optional[int] = None
+    max_length: Optional[int] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    pattern: Optional[str] = None
+    pattern_message: Optional[str] = None
+
+
+class InteractiveShowCondition(BaseModel):
+    """Conditional display rule for form fields."""
+
+    field_id: str = Field(..., description="Dependent field ID")
+    operator: Literal["equals", "not_equals", "contains", "in"]
+    value: Any
+
+
+class InteractiveFormField(BaseModel):
+    """Form field definition."""
+
+    field_id: str = Field(..., description="Unique field ID")
+    field_type: Literal[
+        "text", "textarea", "number", "single_choice", "multiple_choice", "datetime"
+    ]
+    label: str = Field(..., description="Field label")
+    placeholder: Optional[str] = None
+    default_value: Optional[Any] = None
+    options: Optional[List[InteractiveFieldOption]] = None
+    validation: Optional[InteractiveFieldValidation] = None
+    show_when: Optional[InteractiveShowCondition] = None
+
+
+class InteractiveFormDefinition(BaseModel):
+    """Form definition for interactive forms."""
+
+    title: str = Field(..., description="Form title")
+    description: Optional[str] = None
+    fields: List[InteractiveFormField] = Field(..., description="Form fields")
+    submit_button_text: str = Field("Submit", description="Submit button text")
+
+
+class InteractiveConfirmDefinition(BaseModel):
+    """Confirmation dialog definition."""
+
+    title: str = Field(..., description="Dialog title")
+    message: str = Field(..., description="Confirmation message (Markdown)")
+    confirm_text: str = Field("Confirm", description="Confirm button text")
+    cancel_text: str = Field("Cancel", description="Cancel button text")
+
+
+class InteractiveSelectOption(BaseModel):
+    """Option for selection dialog."""
+
+    value: str = Field(..., description="Option value")
+    label: str = Field(..., description="Display label")
+    description: Optional[str] = None
+    recommended: bool = Field(False, description="Whether recommended")
+
+
+class InteractiveSelectDefinition(BaseModel):
+    """Selection dialog definition."""
+
+    title: str = Field(..., description="Selection title")
+    options: List[InteractiveSelectOption] = Field(..., description="Options")
+    multiple: bool = Field(False, description="Allow multiple selection")
+    description: Optional[str] = None
+
+
+class InteractiveMessagePayload(BaseModel):
+    """
+    Payload for interactive:message event.
+
+    This is sent from server to client when AI agents send interactive
+    messages using MCP tools (send_message, send_form, send_confirm, send_select).
+    """
+
+    request_id: str = Field(..., description="Unique request ID")
+    message_type: Literal["text", "markdown", "form", "confirm", "select"] = Field(
+        ..., description="Type of interactive message"
+    )
+    content: Optional[str] = Field(
+        None, description="Message content for text/markdown types"
+    )
+    attachments: Optional[List[InteractiveAttachment]] = Field(
+        None, description="Attachments for text/markdown types"
+    )
+    form: Optional[InteractiveFormDefinition] = Field(
+        None, description="Form definition for form type"
+    )
+    confirm: Optional[InteractiveConfirmDefinition] = Field(
+        None, description="Confirm definition for confirm type"
+    )
+    select: Optional[InteractiveSelectDefinition] = Field(
+        None, description="Select definition for select type"
+    )
+    timestamp: str = Field(..., description="ISO timestamp")
+
+
+class InteractiveResponsePayload(BaseModel):
+    """
+    Payload for interactive:response event.
+
+    This is sent from client to server when user responds to an interactive message.
+    """
+
+    request_id: str = Field(..., description="Original request ID")
+    response_type: Literal["form_submit", "confirm", "select"] = Field(
+        ..., description="Type of response"
+    )
+    data: Dict[str, Any] = Field(..., description="User submitted data")

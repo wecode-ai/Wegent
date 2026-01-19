@@ -123,3 +123,8 @@ api_router.include_router(
 api_router.include_router(
     services_router, prefix="/internal", tags=["internal-services"]
 )
+
+# MCP Interactive Tools API endpoints
+from app.mcp import mcp_router
+
+api_router.include_router(mcp_router, tags=["mcp-interactive"])

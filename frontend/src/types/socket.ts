@@ -59,6 +59,9 @@ export const ServerEvents = {
   // Generic Skill Events
   SKILL_REQUEST: 'skill:request', // Server -> Client: generic skill request
 
+  // Interactive Message Events (MCP tools)
+  INTERACTIVE_MESSAGE: 'interactive:message', // Server -> Client: interactive message
+
   // Mermaid rendering events (deprecated, use SKILL_REQUEST instead)
   MERMAID_RENDER: 'mermaid:render',
 } as const
@@ -510,4 +513,119 @@ export interface SkillResponsePayload {
   result?: unknown
   /** Error message if failed */
   error?: string | Record<string, unknown>
+}
+
+// ============================================================
+// Interactive Message Payloads (MCP tools)
+// ============================================================
+
+export const InteractiveEvents = {
+  /** Server -> Client: interactive message */
+  INTERACTIVE_MESSAGE: 'interactive:message',
+  /** Client -> Server: user response */
+  INTERACTIVE_RESPONSE: 'interactive:response',
+} as const
+
+export interface InteractiveAttachment {
+  name: string
+  url: string
+  mime_type: string
+  size?: number
+}
+
+export interface InteractiveFieldOption {
+  value: string
+  label: string
+  recommended?: boolean
+}
+
+export interface InteractiveFieldValidation {
+  required?: boolean
+  min_length?: number
+  max_length?: number
+  min?: number
+  max?: number
+  pattern?: string
+  pattern_message?: string
+}
+
+export interface InteractiveShowCondition {
+  field_id: string
+  operator: 'equals' | 'not_equals' | 'contains' | 'in'
+  value: unknown
+}
+
+export type InteractiveFormFieldType =
+  | 'text'
+  | 'textarea'
+  | 'number'
+  | 'single_choice'
+  | 'multiple_choice'
+  | 'datetime'
+
+export interface InteractiveFormField {
+  field_id: string
+  field_type: InteractiveFormFieldType
+  label: string
+  placeholder?: string
+  default_value?: unknown
+  options?: InteractiveFieldOption[]
+  validation?: InteractiveFieldValidation
+  show_when?: InteractiveShowCondition
+}
+
+export interface InteractiveFormDefinition {
+  title: string
+  description?: string
+  fields: InteractiveFormField[]
+  submit_button_text?: string
+}
+
+export interface InteractiveConfirmDefinition {
+  title: string
+  message: string
+  confirm_text?: string
+  cancel_text?: string
+}
+
+export interface InteractiveSelectOption {
+  value: string
+  label: string
+  description?: string
+  recommended?: boolean
+}
+
+export interface InteractiveSelectDefinition {
+  title: string
+  options: InteractiveSelectOption[]
+  multiple?: boolean
+  description?: string
+}
+
+export type InteractiveMessageType = 'text' | 'markdown' | 'form' | 'confirm' | 'select'
+
+/**
+ * Payload for interactive:message event - Server to Client
+ * Sent by AI agents via MCP tools to display interactive content
+ */
+export interface InteractiveMessagePayload {
+  request_id: string
+  message_type: InteractiveMessageType
+  content?: string
+  attachments?: InteractiveAttachment[]
+  form?: InteractiveFormDefinition
+  confirm?: InteractiveConfirmDefinition
+  select?: InteractiveSelectDefinition
+  timestamp: string
+}
+
+/**
+ * Payload for interactive:response event - Client to Server
+ * Sent by frontend when user responds to an interactive message
+ */
+export interface InteractiveResponsePayload {
+  request_id: string
+  response_type: 'form_submit' | 'confirm' | 'select'
+  data: Record<string, unknown>
+  task_id: number
 }
