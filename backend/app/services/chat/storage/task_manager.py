@@ -50,6 +50,10 @@ class TaskCreationParams:
     git_repo_id: Optional[int] = None
     git_domain: Optional[str] = None
     branch_name: Optional[str] = None
+    task_type: Optional[str] = None  # 'chat', 'code', or 'knowledge'
+    knowledge_base_id: Optional[int] = (
+        None  # Knowledge base ID for knowledge type tasks
+    )
 
 
 def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
@@ -234,12 +238,41 @@ def create_new_task(
             params.message[:50] + "..." if len(params.message) > 50 else params.message
         )
 
-    # Auto-detect task type based on git_url presence
-    task_type = "code" if params.git_url else "chat"
+    # Use provided task_type, or auto-detect based on git_url presence
+    task_type = params.task_type
+    if not task_type:
+        task_type = "code" if params.git_url else "chat"
 
     logger.info(
         f"[create_new_task] Creating task_json with is_group_chat={params.is_group_chat}"
     )
+
+    # Build knowledgeBaseRefs if knowledge_base_id is provided
+    knowledge_base_refs = None
+    if params.knowledge_base_id and task_type == "knowledge":
+        # Query the knowledge base to get its name and namespace
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == params.knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if kb:
+            knowledge_base_refs = [
+                {
+                    "id": kb.id,
+                    "name": kb.name,
+                    "namespace": kb.namespace,
+                    "boundBy": user.user_name,
+                    "boundAt": datetime.now().isoformat(),
+                }
+            ]
+            logger.info(
+                f"[create_new_task] Added knowledgeBaseRefs for kb_id={kb.id}, name={kb.name}"
+            )
 
     task_json = {
         "kind": "Task",
@@ -249,6 +282,11 @@ def create_new_task(
             "teamRef": {"name": team.name, "namespace": team.namespace},
             "workspaceRef": {"name": workspace_name, "namespace": "default"},
             "is_group_chat": params.is_group_chat,
+            **(
+                {"knowledgeBaseRefs": knowledge_base_refs}
+                if knowledge_base_refs
+                else {}
+            ),
         },
         "status": {
             "state": "Available",

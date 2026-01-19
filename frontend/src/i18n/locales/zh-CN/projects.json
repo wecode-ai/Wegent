@@ -1,0 +1,74 @@
+{
+  "title": "分组",
+  "newProject": "新建分组",
+  "noProjects": "暂无分组",
+  "noProjectsDesc": "创建一个分组来组织你的对话",
+  "taskCount": "{{count}} 个对话",
+  "emptyProject": "暂无对话",
+  "emptyProjectDesc": "拖拽对话到这里",
+  "dropHere": "放置到此分组",
+  "section": {
+    "title": "对话分组",
+    "empty": "暂无分组，点击 + 创建",
+    "noTasks": "暂无对话"
+  },
+  "actions": {
+    "edit": "编辑",
+    "delete": "删除"
+  },
+  "create": {
+    "title": "新建分组",
+    "description": "创建一个新分组来组织你的对话",
+    "nameLabel": "分组名称",
+    "namePlaceholder": "输入分组名称",
+    "descriptionLabel": "描述（可选）",
+    "descriptionPlaceholder": "输入分组描述",
+    "colorLabel": "颜色",
+    "submit": "创建",
+    "cancel": "取消"
+  },
+  "edit": {
+    "title": "编辑分组",
+    "description": "修改分组信息",
+    "submit": "保存",
+    "cancel": "取消"
+  },
+  "delete": {
+    "title": "删除对话分组",
+    "description": "确定要删除对话分组「{{name}}」吗？分组中的对话不会被删除，只会解除与分组的关联。",
+    "confirm": "删除",
+    "cancel": "取消"
+  },
+  "menu": {
+    "edit": "编辑",
+    "delete": "删除",
+    "removeTask": "从分组移除",
+    "moveToGroup": "移至分组",
+    "createGroup": "创建分组",
+    "removeFromGroup": "从当前分组中移除"
+  },
+  "toast": {
+    "createSuccess": "分组创建成功",
+    "createSuccessDesc": "分组「{{name}}」已创建",
+    "createFailed": "创建分组失败",
+    "updateSuccess": "分组更新成功",
+    "updateFailed": "更新分组失败",
+    "deleteSuccess": "对话分组删除成功",
+    "deleteFailed": "删除分组失败",
+    "addTaskSuccess": "对话已添加到分组",
+    "addTaskFailed": "添加对话失败",
+    "removeTaskSuccess": "对话已从分组移除",
+    "removeTaskFailed": "移除对话失败",
+    "groupChatNotSupported": "对话分组功能暂时不支持群聊加入"
+  },
+  "colors": {
+    "red": "红色",
+    "orange": "橙色",
+    "yellow": "黄色",
+    "green": "绿色",
+    "blue": "蓝色",
+    "purple": "紫色",
+    "pink": "粉色",
+    "gray": "灰色"
+  }
+}

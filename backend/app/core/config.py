@@ -159,10 +159,6 @@ class Settings(BaseSettings):
         False  # Force re-initialize YAML resources (delete and recreate)
     )
 
-    # Default resource file path for new user initialization
-    # Path to JSON file containing default resources to apply when creating new users
-    DEFAULT_RESOURCE_FILE_PATH: str = ""
-
     # default header
     EXECUTOR_ENV: str = '{"DEFAULT_HEADERS":{"user":"${task_data.user.name}"}}'
 
@@ -199,6 +195,20 @@ class Settings(BaseSettings):
     ATTACHMENT_AES_IV: str = "1234567890123456"
 
     OTEL_ENABLED: bool = False
+
+    # Web scraper proxy configuration
+    # Supports HTTP, HTTPS, SOCKS5 proxy formats:
+    # - Simple: "http://proxy.example.com:8080"
+    # - With auth: "http://user:pass@proxy.example.com:8080"
+    # - SOCKS5: "socks5://proxy.example.com:1080"
+    # If empty, no proxy will be used (direct connection)
+    WEBSCRAPER_PROXY: str = ""
+    # Proxy mode: "direct" or "fallback"
+    # - "direct": Always use proxy for all requests (proxy must be configured)
+    # - "fallback": Try direct connection first, use proxy only if direct fails
+    # Default is "fallback" for better reliability
+    WEBSCRAPER_PROXY_MODE: str = "fallback"
+
     # Web search configuration
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
     WEB_SEARCH_ENGINES: str = "{}"  # JSON configuration for search API adapter
@@ -243,6 +253,13 @@ class Settings(BaseSettings):
     # "legacy" - WebSocketStreamingHandler directly emits to WebSocket (current behavior)
     # "bridge" - StreamingCore publishes to Redis channel, WebSocketBridge forwards to WebSocket
     STREAMING_MODE: str = "legacy"
+
+    # Default team configuration for each mode
+    # Format: "name#namespace" (namespace is optional, defaults to "default")
+    # Example: "通用助手#default" or "Code Assistant"
+    DEFAULT_TEAM_CHAT: str = ""  # Default team for chat mode
+    DEFAULT_TEAM_CODE: str = ""  # Default team for code mode
+    DEFAULT_TEAM_KNOWLEDGE: str = ""  # Default team for knowledge mode
 
     # JSON configuration for MCP servers (similar to Claude Desktop format)
     # Example:

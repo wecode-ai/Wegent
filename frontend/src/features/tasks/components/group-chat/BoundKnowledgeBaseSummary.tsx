@@ -4,61 +4,110 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Database, ChevronDown, ChevronUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useTranslation } from '@/hooks/useTranslation'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
+import type { KnowledgeBase } from '@/types/knowledge'
 import { cn } from '@/lib/utils'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
 
+/**
+ * Props for BoundKnowledgeBaseSummary component
+ *
+ * Supports two modes:
+ * 1. Task mode: Pass `taskId` to fetch bound knowledge bases from API (for group chat)
+ * 2. Direct mode: Pass `knowledgeBase` directly (for knowledge page)
+ */
 interface BoundKnowledgeBaseSummaryProps {
-  taskId: number
+  /** Task ID to fetch bound knowledge bases (for group chat) */
+  taskId?: number
+  /** Direct knowledge base data (for knowledge page) */
+  knowledgeBase?: KnowledgeBase
   /** Callback when user clicks to manage knowledge bases */
   onManageClick?: () => void
   /** Custom class name */
   className?: string
+  /** Whether to show the limit info in header (default: true for task mode, false for direct mode) */
+  showLimit?: boolean
 }
 
 /**
- * A compact summary component that displays bound knowledge bases for a group chat.
- * Shows a badge with the count of bound knowledge bases, and a popover with details.
+ * A compact summary component that displays bound knowledge bases.
+ *
+ * Supports two modes:
+ * 1. Task mode: Fetches bound knowledge bases from API using taskId (for group chat)
+ * 2. Direct mode: Uses directly provided knowledgeBase data (for knowledge page)
+ *
+ * Shows a badge with the count of knowledge bases, and a popover with details.
  */
 export default function BoundKnowledgeBaseSummary({
   taskId,
+  knowledgeBase,
   onManageClick,
   className,
+  showLimit,
 }: BoundKnowledgeBaseSummaryProps) {
   const { t } = useTranslation('chat')
-  const [knowledgeBases, setKnowledgeBases] = useState<BoundKnowledgeBaseDetail[]>([])
-  const [loading, setLoading] = useState(true)
+  const [fetchedKnowledgeBases, setFetchedKnowledgeBases] = useState<BoundKnowledgeBaseDetail[]>([])
+  const [loading, setLoading] = useState(!!taskId)
   const [open, setOpen] = useState(false)
 
+  // Determine if we're in task mode or direct mode
+  const isTaskMode = !!taskId && !knowledgeBase
+
+  // Convert direct knowledgeBase to BoundKnowledgeBaseDetail format
+  const directKnowledgeBases = useMemo<BoundKnowledgeBaseDetail[]>(() => {
+    if (!knowledgeBase) return []
+    return [
+      {
+        id: knowledgeBase.id,
+        name: knowledgeBase.name,
+        namespace: knowledgeBase.namespace,
+        display_name: knowledgeBase.name,
+        description: knowledgeBase.description ?? undefined,
+        document_count: knowledgeBase.document_count,
+        bound_by: '',
+        bound_at: '',
+      },
+    ]
+  }, [knowledgeBase])
+
+  // Use fetched or direct knowledge bases
+  const knowledgeBases = isTaskMode ? fetchedKnowledgeBases : directKnowledgeBases
+
+  // Determine whether to show limit (default: true for task mode, false for direct mode)
+  const shouldShowLimit = showLimit ?? isTaskMode
+
   const fetchKnowledgeBases = useCallback(async () => {
+    if (!taskId) return
     setLoading(true)
     try {
       const response = await taskKnowledgeBaseApi.getBoundKnowledgeBases(taskId)
-      setKnowledgeBases(response.items)
+      setFetchedKnowledgeBases(response.items)
     } catch (error) {
       console.error('Failed to fetch bound knowledge bases:', error)
-      setKnowledgeBases([])
+      setFetchedKnowledgeBases([])
     } finally {
       setLoading(false)
     }
   }, [taskId])
 
   useEffect(() => {
-    fetchKnowledgeBases()
-  }, [fetchKnowledgeBases])
+    if (isTaskMode) {
+      fetchKnowledgeBases()
+    }
+  }, [isTaskMode, fetchKnowledgeBases])
 
   // Don't render if no knowledge bases are bound
   if (!loading && knowledgeBases.length === 0) {
     return null
   }
 
-  // Show loading state briefly
+  // Show loading state briefly (only for task mode)
   if (loading) {
     return null
   }
@@ -89,12 +138,14 @@ export default function BoundKnowledgeBaseSummary({
             <h4 className="text-sm font-medium text-text-primary">
               {t('groupChat.knowledge.title')}
             </h4>
-            <span className="text-xs text-text-muted">
-              {t('groupChat.knowledge.limit', {
-                count: knowledgeBases.length,
-                max: 10,
-              })}
-            </span>
+            {shouldShowLimit && (
+              <span className="text-xs text-text-muted">
+                {t('groupChat.knowledge.limit', {
+                  count: knowledgeBases.length,
+                  max: 10,
+                })}
+              </span>
+            )}
           </div>
           <p className="text-xs text-text-muted mt-1">
             {t('knowledgeSummary.totalDocuments', { count: totalDocuments })}

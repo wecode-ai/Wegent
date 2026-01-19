@@ -68,6 +68,13 @@ class TaskResource(Base):
         onupdate=datetime.now,
         comment="Update time",
     )
+    project_id = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        index=True,
+        comment="Project ID for task grouping",
+    )
 
     __table_args__ = (
         UniqueConstraint(

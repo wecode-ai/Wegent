@@ -4,7 +4,7 @@
 
 'use client'
 
-import { FileText, Pencil, Trash2, ArrowRight, Clock } from 'lucide-react'
+import { FileText, Pencil, Trash2, ArrowRight, Clock, BookOpen, FolderOpen } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { KnowledgeBase } from '@/types/knowledge'
@@ -39,14 +39,35 @@ export function KnowledgeBaseCard({
     return `${month}-${day} ${hours}:${minutes}`
   }
 
+  // Determine knowledge base type (default to 'notebook' for backward compatibility)
+  const kbType = knowledgeBase.kb_type || 'notebook'
+  const isNotebook = kbType === 'notebook'
+
   return (
     <Card
       padding="sm"
       className="hover:bg-hover transition-colors cursor-pointer h-[140px] flex flex-col group"
       onClick={onClick}
     >
-      {/* Header with name */}
-      <div className="flex items-start pt-1 mb-2 flex-shrink-0">
+      {/* Header with type icon and name */}
+      <div className="flex items-start pt-1 mb-2 flex-shrink-0 gap-2">
+        {/* Type icon */}
+        <div
+          className={`flex-shrink-0 w-6 h-6 rounded flex items-center justify-center ${
+            isNotebook ? 'bg-primary/10 text-primary' : 'bg-muted text-text-secondary'
+          }`}
+          title={
+            isNotebook
+              ? t('knowledge:document.knowledgeBase.typeNotebook')
+              : t('knowledge:document.knowledgeBase.typeClassic')
+          }
+        >
+          {isNotebook ? (
+            <BookOpen className="w-3.5 h-3.5" />
+          ) : (
+            <FolderOpen className="w-3.5 h-3.5" />
+          )}
+        </div>
         <h3 className="font-medium text-sm leading-relaxed line-clamp-2 flex-1">
           <span className="font-semibold">{knowledgeBase.name}</span>
         </h3>

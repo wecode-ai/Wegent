@@ -37,6 +37,61 @@ from app.services.webhook_notification import Notification, webhook_notification
 logger = logging.getLogger(__name__)
 
 
+def _get_thinking_details_type(step: Dict[str, Any]) -> Optional[str]:
+    """Get the details.type from a thinking step."""
+    details = step.get("details")
+    if isinstance(details, dict):
+        return details.get("type")
+    return None
+
+
+def merge_thinking_steps(thinking_steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Merge adjacent thinking steps that have the same title, next_action, and details.type.
+
+    This reduces the size of thinking data by combining consecutive steps of the same type,
+    particularly useful for reasoning content that comes in token-by-token.
+    """
+    if not thinking_steps:
+        return []
+
+    merged: List[Dict[str, Any]] = []
+
+    def copy_step(step: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a deep copy of a step to avoid mutating the original."""
+        copied = {**step}
+        if "details" in copied and isinstance(copied["details"], dict):
+            copied["details"] = {**copied["details"]}
+        return copied
+
+    for step in thinking_steps:
+        if not merged:
+            merged.append(copy_step(step))
+            continue
+
+        last = merged[-1]
+        current_details_type = _get_thinking_details_type(step)
+        last_details_type = _get_thinking_details_type(last)
+
+        can_merge = (
+            step.get("title") == last.get("title")
+            and step.get("next_action") == last.get("next_action")
+            and current_details_type == last_details_type
+            and current_details_type is not None
+        )
+
+        if can_merge:
+            last_content = last.get("details", {}).get("content", "")
+            new_content = step.get("details", {}).get("content", "")
+            if "details" not in last:
+                last["details"] = {}
+            last["details"]["content"] = last_content + new_content
+        else:
+            merged.append(copy_step(step))
+
+    return merged
+
+
 class ExecutorKindsService(
     BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecutorUpdate]
 ):
@@ -1283,6 +1338,14 @@ class ExecutorKindsService(
                 task.updated_at = datetime.now()
                 flag_modified(task, "json")
                 db.add(task)
+
+        # Merge thinking steps before saving to DB to reduce storage size
+        # This combines adjacent thinking steps with same title/next_action/details.type
+        if subtask_update.result and isinstance(subtask_update.result, dict):
+            raw_thinking = subtask_update.result.get("thinking", [])
+            if isinstance(raw_thinking, list) and raw_thinking:
+                merged_thinking = merge_thinking_steps(raw_thinking)
+                subtask_update.result["thinking"] = merged_thinking
 
         # Update other subtask fields
         update_data = subtask_update.model_dump(

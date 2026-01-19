@@ -44,6 +44,8 @@ export interface ChatInputControlsProps {
   taskId?: number | null
   /** Task's model_id from backend - used as fallback when no session preference exists */
   taskModelId?: string | null
+  /** Knowledge base ID to exclude from context selector (used in notebook mode) */
+  knowledgeBaseId?: number
 
   // Repository and Branch
   showRepositorySelector: boolean
@@ -89,6 +91,9 @@ export interface ChatInputControlsProps {
   // Actions
   onStopStream: () => void
   onSendMessage: () => void
+
+  // Whether there are no available teams (shows disabled state)
+  hasNoTeams?: boolean
 }
 
 /**
@@ -117,6 +122,7 @@ export function ChatInputControls({
   teamId,
   taskId,
   taskModelId,
+  knowledgeBaseId,
   showRepositorySelector,
   selectedRepo,
   setSelectedRepo,
@@ -146,6 +152,7 @@ export function ChatInputControls({
   isSubtaskStreaming,
   onStopStream,
   onSendMessage,
+  hasNoTeams = false,
 }: ChatInputControlsProps) {
   // Always use compact mode (icon only) to save space
   const shouldUseCompactQuota = true
@@ -158,6 +165,7 @@ export function ChatInputControls({
       isStreaming ||
       isModelSelectionRequired ||
       !isAttachmentReadyToSend ||
+      hasNoTeams ||
       (shouldHideChatInput ? false : !taskInputMessage.trim())
 
     if (isStreaming || isStopping) {
@@ -230,6 +238,7 @@ export function ChatInputControls({
         teamId={teamId}
         taskId={taskId}
         taskModelId={taskModelId}
+        knowledgeBaseId={knowledgeBaseId}
         showRepositorySelector={showRepositorySelector}
         selectedRepo={selectedRepo}
         setSelectedRepo={setSelectedRepo}
@@ -255,6 +264,7 @@ export function ChatInputControls({
         isSubtaskStreaming={isSubtaskStreaming}
         onStopStream={onStopStream}
         onSendMessage={onSendMessage}
+        hasNoTeams={hasNoTeams}
       />
     )
   }
@@ -273,6 +283,7 @@ export function ChatInputControls({
           <ChatContextInput
             selectedContexts={selectedContexts}
             onContextsChange={setSelectedContexts}
+            excludeKnowledgeBaseId={knowledgeBaseId}
           />
         )}
 
