@@ -344,6 +344,115 @@ class LongTermMemoryClient:
             )
             return None
 
+    @trace_async("mem0.client.get_memories")
+    async def get_memories(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        timeout: Optional[float] = None,
+    ) -> MemorySearchResponse:
+        """Get all memories for given identifiers with optional metadata filtering.
+
+        This method uses GET /memories endpoint. For metadata-only retrieval,
+        this is more efficient than POST /search with empty query.
+
+        Note: According to OpenAPI spec, standard mem0 API only supports
+        user_id/agent_id/run_id filters. The filters parameter is an extension
+        that may be supported by custom mem0 deployments for metadata filtering.
+
+        Args:
+            user_id: Optional user ID filter
+            agent_id: Optional agent ID filter
+            run_id: Optional run ID filter
+            filters: Optional metadata filters (e.g., {"metadata.task_id": "123"})
+                    This is a custom extension for metadata filtering.
+            limit: Max results to return
+            timeout: Override default timeout for this request
+
+        Returns:
+            MemorySearchResponse with results (empty on failure)
+
+        Example:
+            # Get all memories for a user with metadata filter
+            results = await client.get_memories(
+                user_id="123",
+                filters={"metadata.task_id": "456"},
+                limit=100
+            )
+        """
+        try:
+            session = await self._get_session()
+
+            # Build query parameters
+            params: Dict[str, str] = {}
+            if user_id:
+                params["user_id"] = user_id
+            if agent_id:
+                params["agent_id"] = agent_id
+            if run_id:
+                params["run_id"] = run_id
+            if limit:
+                params["limit"] = str(limit)
+
+            # Add metadata filters if provided (custom extension)
+            # Some mem0 deployments support metadata filtering via query params
+            if filters:
+                for key, value in filters.items():
+                    params[key] = str(value)
+
+            # Use custom timeout if provided
+            request_timeout = (
+                aiohttp.ClientTimeout(total=timeout) if timeout is not None else None
+            )
+
+            async with session.get(
+                f"{self.base_url}/memories",
+                params=params,
+                headers=self._get_headers(),
+                timeout=request_timeout,
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    # API returns {"results": [...]} format
+                    if isinstance(data, dict) and "results" in data:
+                        result = MemorySearchResponse(**data)
+                    else:
+                        # Fallback if format is different
+                        result = MemorySearchResponse(
+                            results=data if isinstance(data, list) else []
+                        )
+                    logger.info(
+                        "Retrieved %d memories (user_id=%s, filters=%s)",
+                        len(result.results),
+                        user_id,
+                        filters,
+                    )
+                    return result
+                else:
+                    error_text = await resp.text()
+                    logger.error(
+                        "Failed to get memories (HTTP %d): %s",
+                        resp.status,
+                        error_text,
+                    )
+                    return MemorySearchResponse(results=[])
+
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Timeout getting memories (timeout=%s)",
+                timeout or self.timeout,
+            )
+            return MemorySearchResponse(results=[])
+        except aiohttp.ClientError as e:
+            logger.warning("Failed to get memories (connection error): %s", e)
+            return MemorySearchResponse(results=[])
+        except Exception as e:
+            logger.error("Unexpected error getting memories: %s", e, exc_info=True)
+            return MemorySearchResponse(results=[])
+
     @trace_async("mem0.client.health_check")
     async def health_check(self) -> bool:
         """Check if mem0 service is healthy.

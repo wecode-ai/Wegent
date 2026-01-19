@@ -231,7 +231,7 @@ async def test_save_user_message_async_disabled():
 async def test_cleanup_task_memories(memory_manager):
     """Test cleanup of task memories."""
     mock_client = AsyncMock()
-    mock_client.search_memories.return_value = MemorySearchResponse(
+    mock_client.get_memories.return_value = MemorySearchResponse(
         results=[
             MemorySearchResult(
                 id="mem-1", memory="Memory 1", metadata={"task_id": 123}
@@ -257,7 +257,7 @@ async def test_cleanup_task_memories(memory_manager):
 async def test_cleanup_task_memories_no_memories(memory_manager):
     """Test cleanup when no memories exist."""
     mock_client = AsyncMock()
-    mock_client.search_memories.return_value = MemorySearchResponse(results=[])
+    mock_client.get_memories.return_value = MemorySearchResponse(results=[])
 
     memory_manager._client = mock_client
 

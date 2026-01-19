@@ -5,8 +5,8 @@
 """Utility functions for memory service."""
 
 import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List
 
 from shared.telemetry.decorators import (
     add_span_event,
@@ -69,11 +69,21 @@ def inject_memories_to_prompt(
         created_at = memory.created_at if hasattr(memory, "created_at") else None
         if created_at and isinstance(created_at, str):
             try:
-                # Parse ISO format and format for readability
+                # Parse ISO format and convert to UTC
                 # Input: '2025-01-19T12:30:45.123456+00:00' or '2025-01-19T12:30:45Z'
-                # Output: '2025-01-19 12:30:45' (drop microseconds and timezone for cleaner display)
+                # mem0 uses US/Pacific timezone by default, but timestamps should have timezone info
                 dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                date_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+
+                # Convert to UTC if not already in UTC
+                if dt.tzinfo is not None:
+                    dt_utc = dt.astimezone(timezone.utc)
+                else:
+                    # If no timezone info, assume it's already UTC
+                    dt_utc = dt.replace(tzinfo=timezone.utc)
+
+                # Format as UTC time without timezone suffix for cleaner display
+                # Output: '2025-01-19 12:30:45' in UTC
+                date_str = dt_utc.strftime("%Y-%m-%d %H:%M:%S")
             except (ValueError, TypeError):
                 # If parsing fails, use original string (better than empty)
                 date_str = created_at
