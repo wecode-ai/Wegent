@@ -80,29 +80,32 @@ class MemoryManager:
         self,
         user_id: str,
         query: str,
-        group_id: Optional[str] = None,
+        project_id: Optional[str] = None,
         timeout: Optional[float] = None,
     ) -> List[MemorySearchResult]:
-        """Search for relevant memories across all conversations.
+        """Search for relevant memories with project-based prioritization.
 
-        This method implements cross-conversation memory retrieval.
-        It searches all memories for the user, not limited to current task/team.
+        This method implements priority-based memory retrieval:
+        1. If project_id is provided, first search within the same project
+        2. Then search user's general memories to fill remaining slots
+        3. Prioritizes project-specific memories over general memories
 
         Uses timeout to avoid blocking chat flow.
 
         Args:
             user_id: User ID
             query: Search query text (user message)
-            group_id: Optional conversation group ID (future use)
+            project_id: Optional project ID for prioritization
             timeout: Override default timeout (default: MEMORY_TIMEOUT_SECONDS)
 
         Returns:
-            List of relevant memories (empty on failure/timeout)
+            List of relevant memories (project memories first, then general)
 
         Example:
             memories = await manager.search_memories(
                 user_id="123",
                 query="How do I deploy to production?",
+                project_id="456",
                 timeout=2.0
             )
         """
@@ -114,29 +117,91 @@ class MemoryManager:
             search_timeout = (
                 timeout if timeout is not None else settings.MEMORY_TIMEOUT_SECONDS
             )
+            max_results = settings.MEMORY_MAX_RESULTS
 
-            # Build metadata filters - only filter by group_id if specified
-            # Do NOT filter by task_id or team_id to enable cross-conversation memory
-            filters = {}
-            if group_id is not None:
-                filters["metadata.group_id"] = group_id
+            # If no project_id, search all memories
+            if project_id is None:
+                result = await self._client.search_memories(
+                    user_id=user_id,
+                    query=query,
+                    filters=None,
+                    limit=max_results,
+                    timeout=search_timeout,
+                )
+                logger.info(
+                    "Retrieved %d cross-conversation memories for user %s (no project filter)",
+                    len(result.results),
+                    user_id,
+                )
+                return result.results
 
-            # Search with timeout
-            result = await self._client.search_memories(
-                user_id=user_id,
-                query=query,
-                filters=filters if filters else None,
-                limit=settings.MEMORY_MAX_RESULTS,
-                timeout=search_timeout,
-            )
+            # Priority-based search: project memories first
+            project_memories = []
+            general_memories = []
 
+            # Step 1: Search project-specific memories (higher priority)
+            try:
+                project_result = await self._client.search_memories(
+                    user_id=user_id,
+                    query=query,
+                    filters={"metadata.project_id": project_id},
+                    limit=max_results,
+                    timeout=search_timeout / 2,  # Use half timeout for first search
+                )
+                project_memories = project_result.results
+                logger.info(
+                    "Retrieved %d project-specific memories (project_id=%s) for user %s",
+                    len(project_memories),
+                    project_id,
+                    user_id,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to search project-specific memories: %s", e, exc_info=True
+                )
+
+            # Step 2: Search general memories (lower priority) if we need more
+            remaining_slots = max_results - len(project_memories)
+            if remaining_slots > 0:
+                try:
+                    # Search for memories without project_id OR with different project_id
+                    # This includes both individual conversations and other projects
+                    general_result = await self._client.search_memories(
+                        user_id=user_id,
+                        query=query,
+                        filters=None,  # Search all to get user's general knowledge
+                        limit=max_results,  # Get more to filter out project-specific ones
+                        timeout=search_timeout / 2,  # Use remaining half timeout
+                    )
+                    # Filter out memories from the current project (already have them)
+                    general_memories = [
+                        m
+                        for m in general_result.results
+                        if m.metadata.get("project_id") != project_id
+                    ][
+                        :remaining_slots
+                    ]  # Take only remaining slots
+                    logger.info(
+                        "Retrieved %d general memories for user %s",
+                        len(general_memories),
+                        user_id,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to search general memories: %s", e, exc_info=True
+                    )
+
+            # Combine: project memories first, then general
+            combined_memories = project_memories + general_memories
             logger.info(
-                "Retrieved %d cross-conversation memories for user %s",
-                len(result.results),
+                "Total %d memories retrieved for user %s (project: %d, general: %d)",
+                len(combined_memories),
                 user_id,
+                len(project_memories),
+                len(general_memories),
             )
 
-            return result.results
+            return combined_memories
 
         except Exception as e:
             logger.error("Unexpected error searching memories: %s", e, exc_info=True)
@@ -151,7 +216,7 @@ class MemoryManager:
         subtask_id: str,
         messages: List[Dict[str, Any]],
         workspace_id: Optional[str] = None,
-        group_id: Optional[str] = None,
+        project_id: Optional[str] = None,
         is_group_chat: bool = False,
     ) -> None:
         """Store user messages with conversation context in memory (fire-and-forget).
@@ -173,7 +238,7 @@ class MemoryManager:
             subtask_id: Subtask ID (traceability)
             messages: List of messages with conversation context (mem0 format)
             workspace_id: Optional workspace ID (for Code tasks)
-            group_id: Optional conversation group ID (future use)
+            project_id: Optional project ID for group conversations
             is_group_chat: Whether this is a group chat
 
         Example:
@@ -187,7 +252,8 @@ class MemoryManager:
                         {"role": "user", "content": "User[Alice]: What's the weather?"},
                         {"role": "assistant", "content": "It's sunny today."},
                         {"role": "user", "content": "User[Alice]: I prefer Python for backend"}
-                    ]
+                    ],
+                    project_id="proj-123"
                 )
             )
         """
@@ -201,7 +267,7 @@ class MemoryManager:
                 subtask_id=subtask_id,
                 team_id=team_id,
                 workspace_id=workspace_id,
-                group_id=group_id,
+                project_id=project_id,
                 is_group_chat=is_group_chat,
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
@@ -222,11 +288,12 @@ class MemoryManager:
                 if isinstance(result, dict) and "results" in result:
                     memory_count = len(result.get("results", []))
                 logger.info(
-                    "Stored %d memories for user %s, task %s, subtask %s (from %d context messages)",
+                    "Stored %d memories for user %s, task %s, subtask %s, project %s (from %d context messages)",
                     memory_count,
                     user_id,
                     task_id,
                     subtask_id,
+                    project_id or "None",
                     len(messages),
                 )
             else:

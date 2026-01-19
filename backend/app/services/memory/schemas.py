@@ -28,8 +28,8 @@ class MemoryMetadata(BaseModel):
     workspace_id: Optional[str] = Field(
         None, description="Workspace ID (for Code tasks)"
     )
-    group_id: Optional[str] = Field(
-        None, description="Conversation group ID (future use)"
+    project_id: Optional[str] = Field(
+        None, description="Project ID for group conversations"
     )
     is_group_chat: bool = Field(False, description="Individual vs group chat")
     created_at: str = Field(

@@ -347,9 +347,9 @@ def setup_chat_session(
                         team_id=str(team.id),
                         task_id=str(task_id),
                         subtask_id=str(user_subtask.id),
-                        message=input_text,
+                        messages=[{"role": "user", "content": input_text}],
                         workspace_id=workspace_id,
-                        group_id=None,
+                        project_id=None,  # Chat session does not belong to a project
                         is_group_chat=is_group_chat,
                     )
                 )

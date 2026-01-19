@@ -781,7 +781,7 @@ async def create_task_and_subtasks(
                 subtask_id=str(user_subtask.id),
                 messages=context_messages,
                 workspace_id=workspace_id,
-                group_id=None,  # Future: extract from task spec
+                project_id=str(task.project_id) if task.project_id else None,
                 is_group_chat=is_group_chat,
             )
         )

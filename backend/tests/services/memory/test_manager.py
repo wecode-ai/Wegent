@@ -84,6 +84,107 @@ async def test_search_memories_disabled():
 
 
 @pytest.mark.asyncio
+async def test_search_memories_with_project_id(memory_manager):
+    """Test memory search with project_id prioritization."""
+    mock_client = AsyncMock()
+
+    # First call: project-specific memories
+    project_memories = MemorySearchResponse(
+        results=[
+            MemorySearchResult(
+                id="proj-mem-1",
+                memory="Project-specific memory 1",
+                metadata={"task_id": "123", "project_id": "proj-1"},
+            ),
+            MemorySearchResult(
+                id="proj-mem-2",
+                memory="Project-specific memory 2",
+                metadata={"task_id": "456", "project_id": "proj-1"},
+            ),
+        ]
+    )
+
+    # Second call: general memories (filtered to exclude project_id)
+    general_memories = MemorySearchResponse(
+        results=[
+            MemorySearchResult(
+                id="gen-mem-1",
+                memory="General memory 1",
+                metadata={"task_id": "789"},
+            ),
+            MemorySearchResult(
+                id="proj-mem-1",
+                memory="Project-specific memory 1",
+                metadata={"task_id": "123", "project_id": "proj-1"},
+            ),
+            MemorySearchResult(
+                id="gen-mem-2",
+                memory="General memory 2",
+                metadata={"task_id": "999"},
+            ),
+        ]
+    )
+
+    mock_client.search_memories.side_effect = [project_memories, general_memories]
+    memory_manager._client = mock_client
+
+    results = await memory_manager.search_memories(
+        user_id="1", query="test query", project_id="proj-1"
+    )
+
+    # Should have 2 project memories + 2 general memories (filtered), limited to 5 total
+    assert len(results) == 4
+    assert results[0].id == "proj-mem-1"
+    assert results[1].id == "proj-mem-2"
+    # General memories should exclude those with matching project_id
+    assert results[2].id == "gen-mem-1"
+    assert results[3].id == "gen-mem-2"
+
+    # Verify two searches were made
+    assert mock_client.search_memories.call_count == 2
+
+    # First call should filter by project_id
+    first_call_filters = mock_client.search_memories.call_args_list[0][1]["filters"]
+    assert first_call_filters == {"metadata.project_id": "proj-1"}
+
+    # Second call should have no filters (search all)
+    second_call_filters = mock_client.search_memories.call_args_list[1][1]["filters"]
+    assert second_call_filters is None
+
+
+@pytest.mark.asyncio
+async def test_search_memories_project_only(memory_manager):
+    """Test memory search when only project memories are found."""
+    mock_client = AsyncMock()
+
+    # First call: enough project memories to fill max_results
+    project_memories = MemorySearchResponse(
+        results=[
+            MemorySearchResult(
+                id=f"proj-mem-{i}",
+                memory=f"Project memory {i}",
+                metadata={"task_id": str(i), "project_id": "proj-1"},
+            )
+            for i in range(5)  # Exactly max_results
+        ]
+    )
+
+    mock_client.search_memories.return_value = project_memories
+    memory_manager._client = mock_client
+
+    results = await memory_manager.search_memories(
+        user_id="1", query="test query", project_id="proj-1"
+    )
+
+    # Should only have project memories, no general search needed
+    assert len(results) == 5
+    assert all("proj-mem" in r.id for r in results)
+
+    # Only one search should be made (project-specific)
+    assert mock_client.search_memories.call_count == 1
+
+
+@pytest.mark.asyncio
 async def test_save_user_message_async_enabled(memory_manager):
     """Test saving user message when feature is enabled."""
     mock_client = AsyncMock()

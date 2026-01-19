@@ -35,6 +35,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask
+from app.models.task import TaskResource
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class StreamTaskData:
 
     # Task data
     task_id: int
+    project_id: Optional[int]  # Project ID for group conversations
 
     # Team data
     team_id: int
@@ -70,7 +72,7 @@ class StreamTaskData:
     @classmethod
     def from_orm(
         cls,
-        task: Kind,
+        task: "TaskResource",
         team: Kind,
         user: User,
         assistant_subtask: Subtask,
@@ -78,7 +80,7 @@ class StreamTaskData:
         """Extract data from ORM objects.
 
         Args:
-            task: Task Kind object
+            task: Task TaskResource object
             team: Team Kind object
             user: User object
             assistant_subtask: Assistant subtask (contains message_id and parent_id)
@@ -88,6 +90,7 @@ class StreamTaskData:
         """
         return cls(
             task_id=task.id,
+            project_id=task.project_id if task.project_id else None,
             team_id=team.id,
             team_user_id=team.user_id,
             team_name=team.name,
@@ -101,7 +104,7 @@ class StreamTaskData:
 
 
 async def trigger_ai_response(
-    task: Kind,
+    task: TaskResource,
     assistant_subtask: Subtask,
     team: Kind,
     user: User,
@@ -129,7 +132,7 @@ async def trigger_ai_response(
     - AI response is handled by executor_manager (no action needed here)
 
     Args:
-        task: Task Kind object
+        task: Task TaskResource object
         assistant_subtask: Assistant subtask for AI response
         team: Team Kind object
         user: User object
@@ -173,7 +176,7 @@ async def trigger_ai_response(
 
 
 async def _trigger_direct_chat(
-    task: Kind,
+    task: TaskResource,
     assistant_subtask: Subtask,
     team: Kind,
     user: User,
@@ -189,7 +192,7 @@ async def _trigger_direct_chat(
     Emits chat:start event and starts streaming in background task.
 
     Args:
-        task: Task Kind object
+        task: Task TaskResource object
         assistant_subtask: Assistant subtask (contains message_id and parent_id for ordering)
         team: Team Kind object
         user: User object
@@ -373,13 +376,16 @@ async def _stream_chat_response(
         if memory_manager.is_enabled:
             try:
                 logger.info(
-                    "[ai_trigger] Searching for relevant memories: user_id=%d",
+                    "[ai_trigger] Searching for relevant memories: user_id=%d, project_id=%s",
                     stream_data.user_id,
+                    stream_data.project_id or "None",
                 )
                 relevant_memories = await memory_manager.search_memories(
                     user_id=str(stream_data.user_id),
                     query=message,
-                    group_id=None,  # Future: extract from task spec
+                    project_id=(
+                        str(stream_data.project_id) if stream_data.project_id else None
+                    ),
                 )
                 logger.info(
                     "[ai_trigger] Found %d relevant memories", len(relevant_memories)
