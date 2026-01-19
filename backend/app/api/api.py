@@ -27,6 +27,7 @@ from app.api.endpoints.adapter import (
     agents,
     attachments,
     bots,
+    canvas,
     chat,
     dify,
     executors,
@@ -73,6 +74,7 @@ api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(
     attachments.router, prefix="/attachments", tags=["attachments"]
 )
+api_router.include_router(canvas.router, prefix="/canvas", tags=["canvas"])
 api_router.include_router(repository.router, prefix="/git", tags=["repository"])
 api_router.include_router(executors.router, prefix="/executors", tags=["executors"])
 api_router.include_router(quota.router, prefix="/quota", tags=["quota"])
