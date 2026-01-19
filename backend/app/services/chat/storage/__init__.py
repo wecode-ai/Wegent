@@ -15,6 +15,7 @@ from .task_manager import (
     TaskCreationResult,
     check_task_status,
     create_assistant_subtask,
+    create_chat_task,
     create_new_task,
     create_task_and_subtasks,
     create_user_subtask,
@@ -48,4 +49,5 @@ __all__ = [
     "update_task_timestamp",
     "initialize_redis_chat_history",
     "create_task_and_subtasks",
+    "create_chat_task",
 ]

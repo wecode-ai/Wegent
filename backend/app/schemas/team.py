@@ -84,6 +84,9 @@ class TeamInDB(TeamBase):
     share_status: int = 0  # 0-private, 1-sharing, 2-shared from others
     agent_type: Optional[str] = None  # agno, claude, dify, etc.
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
+    recommended_mode: Optional[str] = (
+        None  # 'chat', 'code', or 'both' - derived from bind_mode
+    )
 
     class Config:
         from_attributes = True

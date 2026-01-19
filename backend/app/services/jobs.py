@@ -5,6 +5,10 @@
 """
 Background jobs for the application.
 This module contains all background jobs that run periodically.
+
+Note: Flow scheduling has been migrated to Celery. See:
+- app/core/celery_app.py - Celery configuration
+- app/tasks/flow_tasks.py - Flow execution tasks
 """
 
 import asyncio

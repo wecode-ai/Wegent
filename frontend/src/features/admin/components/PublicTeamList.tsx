@@ -267,9 +267,7 @@ const PublicTeamList: React.FC = () => {
     <div className="space-y-3">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">
-          {t('public_teams.title')}
-        </h2>
+        <h2 className="text-xl font-semibold text-text-primary mb-1">{t('public_teams.title')}</h2>
         <p className="text-sm text-text-muted">{t('public_teams.description')}</p>
       </div>
 
