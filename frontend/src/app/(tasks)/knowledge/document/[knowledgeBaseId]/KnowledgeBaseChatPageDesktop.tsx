@@ -142,12 +142,12 @@ export function KnowledgeBaseChatPageDesktop() {
     setShareButton(button)
   }
 
-  // Filter teams for chat mode
+  // Filter teams for knowledge mode
   const filteredTeams = useMemo(() => {
     return teams.filter(team => {
       if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
       if (!team.bind_mode) return true
-      return team.bind_mode.includes('chat')
+      return team.bind_mode.includes('knowledge')
     })
   }, [teams])
 

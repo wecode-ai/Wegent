@@ -27,7 +27,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Create projects table and add project_id to tasks table."""
-    # Create projects table
+    from sqlalchemy import inspect
+
+    conn = op.get_bind()
+    inspector = inspect(conn)
+
+    # Create projects table (already idempotent with IF NOT EXISTS)
     op.execute(
         """
     CREATE TABLE IF NOT EXISTS projects (
@@ -48,20 +53,33 @@ def upgrade() -> None:
     """
     )
 
-    # Add project_id column to tasks table
-    op.execute(
-        """
-        ALTER TABLE tasks
-        ADD COLUMN project_id INT NOT NULL DEFAULT 0 COMMENT 'Project ID for task grouping'
-        """
-    )
+    # Check if project_id column already exists to make migration idempotent
+    columns = [col["name"] for col in inspector.get_columns("tasks")]
+    if "project_id" not in columns:
+        # Add project_id column to tasks table
+        op.execute(
+            """
+            ALTER TABLE tasks
+            ADD COLUMN project_id INT NOT NULL DEFAULT 0 COMMENT 'Project ID for task grouping'
+            """
+        )
 
-    # Add index on project_id
-    op.execute(
-        """
-        CREATE INDEX idx_tasks_project_id ON tasks(project_id)
-        """
-    )
+        # Add index on project_id
+        op.execute(
+            """
+            CREATE INDEX idx_tasks_project_id ON tasks(project_id)
+            """
+        )
+    else:
+        # Column already exists, check if index exists
+        indexes = [idx["name"] for idx in inspector.get_indexes("tasks")]
+        if "idx_tasks_project_id" not in indexes:
+            # Index is missing, create it
+            op.execute(
+                """
+                CREATE INDEX idx_tasks_project_id ON tasks(project_id)
+                """
+            )
 
 
 def downgrade() -> None:

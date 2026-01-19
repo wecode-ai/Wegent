@@ -1328,6 +1328,7 @@ class ExecutorKindsService(
             # keep the previous content in the update to prevent data loss
             # This happens when executor temporarily clears value between thinking steps
             # NOTE: Only apply this fix during RUNNING status, not COMPLETED
+            # When COMPLETED, we should always use the final result from executor
             if not new_content and previous_content:
                 # Keep previous content by updating the result dict
                 if subtask_update.result and isinstance(subtask_update.result, dict):
