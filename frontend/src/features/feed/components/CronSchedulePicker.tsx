@@ -175,8 +175,8 @@ export function CronSchedulePicker({ value, onChange, className }: CronScheduleP
   // Generate hour options (0-23)
   const hourOptions = Array.from({ length: 24 }, (_, i) => i)
 
-  // Generate minute options (0, 15, 30, 45)
-  const minuteOptions = [0, 15, 30, 45]
+  // Generate minute options (0-59)
+  const minuteOptions = Array.from({ length: 60 }, (_, i) => i)
 
   // Generate weekday options
   const weekdayOptions = [

@@ -11,15 +11,16 @@ and avoid blocking the scheduler.
 
 Features:
 - Distributed task queue with Redis broker
-- RedBeat scheduler for periodic tasks (Redis-based, distributed-ready)
+- PersistentScheduler for periodic tasks (file-based, single-instance)
 - Dead letter queue for failed tasks (via signals)
 - Circuit breaker for external service calls
+- Application-level distributed lock to prevent duplicate task execution
 
 Beat Scheduler Storage:
-- RedBeat (default): Uses Redis for schedule storage, suitable for distributed deployment
-  - Automatically handles multi-instance coordination
-  - No database migrations needed
-  - Simpler than SQLAlchemy-based schedulers
+- PersistentScheduler (default): Uses local file for schedule storage
+  - Simple and reliable for single-instance deployment
+  - Application-level distributed lock prevents duplicate execution across workers
+  - No external dependencies beyond Redis for locking
 """
 
 from celery import Celery
@@ -64,17 +65,10 @@ celery_app.conf.update(
             "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
         },
     },
-    # Beat scheduler class - Use RedBeat for Redis-based distributed scheduling
-    beat_scheduler="redbeat.schedulers:RedBeatScheduler",
-    # RedBeat configuration (Redis-based scheduler)
-    redbeat_redis_url=broker_url,  # Use same Redis as broker
-    redbeat_key_prefix="celery:beat:",  # Redis key prefix for beat schedule
-    # Increased lock timeout to prevent "LockNotOwnedError" during GC pauses or slow operations
-    # The lock must be held long enough for the scheduler to complete its tick cycle
-    redbeat_lock_timeout=300,  # Lock timeout in seconds (5 minutes)
-    # Control the maximum sleep interval between beat ticks
-    # This ensures the lock is extended frequently enough before expiration
-    beat_max_loop_interval=60,  # Maximum seconds between scheduler ticks (1 minute)
+    # Beat scheduler class - Use default PersistentScheduler (file-based)
+    # Note: Only run ONE Celery Beat instance in production
+    # Application-level distributed lock in check_due_flows prevents duplicate execution
+    beat_scheduler="celery.beat:PersistentScheduler",
 )
 
 # Import dead letter queue handlers to register signal handlers
