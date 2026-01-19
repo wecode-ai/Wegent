@@ -39,8 +39,8 @@ def inject_memories_to_prompt(
         <memory>
         The following are relevant memories from previous conversations:
 
-        1. [2025-01-15 14:30:45] User prefers Python over JavaScript for backend tasks
-        2. [2025-01-14 09:15:22] Project uses FastAPI framework with SQLAlchemy ORM
+        1. [2025-01-15 14:30:45 CST] User prefers Python over JavaScript for backend tasks
+        2. [2025-01-14 09:15:22 CST] Project uses FastAPI framework with SQLAlchemy ORM
 
         Use this context to provide personalized responses.
         </memory>
@@ -65,25 +65,26 @@ def inject_memories_to_prompt(
     parse_errors = 0
     for idx, memory in enumerate(memories, start=1):
         # Extract created_at from top-level memory object (mem0 reserved field)
-        # Note: created_at is managed by mem0 and uses US/Pacific timezone
+        # Note: created_at is managed by mem0 (may use US/Pacific or UTC timezone)
         created_at = memory.created_at if hasattr(memory, "created_at") else None
         if created_at and isinstance(created_at, str):
             try:
-                # Parse ISO format and convert to UTC
+                # Parse ISO format and convert to local timezone
                 # Input: '2025-01-19T12:30:45.123456+00:00' or '2025-01-19T12:30:45Z'
                 # mem0 uses US/Pacific timezone by default, but timestamps should have timezone info
                 dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
 
-                # Convert to UTC if not already in UTC
+                # Convert to local timezone for display
                 if dt.tzinfo is not None:
-                    dt_utc = dt.astimezone(timezone.utc)
+                    # Convert to local timezone
+                    dt_local = dt.astimezone()
                 else:
-                    # If no timezone info, assume it's already UTC
-                    dt_utc = dt.replace(tzinfo=timezone.utc)
+                    # If no timezone info, assume it's UTC and convert to local
+                    dt_local = dt.replace(tzinfo=timezone.utc).astimezone()
 
-                # Format as UTC time without timezone suffix for cleaner display
-                # Output: '2025-01-19 12:30:45' in UTC
-                date_str = dt_utc.strftime("%Y-%m-%d %H:%M:%S")
+                # Format with local timezone for clarity
+                # Output: '2025-01-19 12:30:45 CST' or '2025-01-19 12:30:45 UTC+08:00'
+                date_str = dt_local.strftime("%Y-%m-%d %H:%M:%S %Z")
             except (ValueError, TypeError):
                 # If parsing fails, use original string (better than empty)
                 date_str = created_at
