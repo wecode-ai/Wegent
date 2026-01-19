@@ -731,6 +731,76 @@ export default function MessagesArea({
     ]
   )
 
+  // Calculate the index of the last completed AI message for regenerate button
+  const lastCompletedAiMessageIndex = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].type === 'ai' && messages[i].status === 'completed') {
+        return i
+      }
+    }
+    return -1
+  }, [messages])
+
+  // Handle regenerate - find last user message, delete last Q&A pair, resend user message
+  const handleRegenerate = useCallback(async () => {
+    if (!selectedTaskDetail?.id || !onSendMessage) return
+
+    // Find the last user message (the question that generated the last AI response)
+    let lastUserMessage: DisplayMessage | null = null
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].type === 'user') {
+        lastUserMessage = messages[i]
+        break
+      }
+    }
+
+    if (!lastUserMessage || !lastUserMessage.content) {
+      toast({
+        variant: 'destructive',
+        title: t('chat:errors.generic_error') || 'Error',
+        description: 'No user message found to regenerate',
+      })
+      return
+    }
+
+    // Save the user message content before deletion
+    const savedContent = lastUserMessage.content
+
+    try {
+      // Delete the last user message and AI response using edit API
+      // The editMessage API deletes the message and all subsequent messages
+      if (lastUserMessage.subtaskId) {
+        const response = await subtaskApis.editMessage(lastUserMessage.subtaskId, savedContent)
+
+        if (response.success) {
+          // Immediately clean up messages from the edited position in local state
+          cleanupMessagesAfterEdit(selectedTaskDetail.id, lastUserMessage.subtaskId)
+
+          // Refresh task detail to reload messages from backend
+          await refreshSelectedTaskDetail(true)
+
+          // Resend the saved user message to trigger new AI response
+          onSendMessage(savedContent)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to regenerate response:', error)
+      toast({
+        variant: 'destructive',
+        title: t('chat:errors.generic_error') || 'Regenerate failed',
+        description: (error as Error)?.message || 'Failed to regenerate response',
+      })
+    }
+  }, [
+    selectedTaskDetail?.id,
+    messages,
+    onSendMessage,
+    cleanupMessagesAfterEdit,
+    refreshSelectedTaskDetail,
+    toast,
+    t,
+  ])
+
   // Memoize share and export buttons
   const shareButton = useMemo(() => {
     if (!selectedTaskDetail?.id || messages.length === 0) {
@@ -1085,6 +1155,18 @@ export default function MessagesArea({
                 onEdit={handleEditMessage}
                 onEditSave={handleEditSave}
                 onEditCancel={handleEditCancel}
+                onRegenerate={
+                  // Only show regenerate button for:
+                  // 1. Single chat (not group chat)
+                  // 2. Last completed AI message
+                  // 3. Not streaming
+                  !isGroupChat &&
+                  msg.type === 'ai' &&
+                  index === lastCompletedAiMessageIndex &&
+                  msg.status === 'completed'
+                    ? handleRegenerate
+                    : undefined
+                }
               />
             )
           })}
