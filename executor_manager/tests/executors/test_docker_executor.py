@@ -438,16 +438,18 @@ class TestDockerExecutor:
         # Should return default host on error
         assert host == "host.docker.internal"
 
+    @patch("executor_manager.executors.docker.utils.get_docker_used_ports")
     @patch("executor_manager.executors.docker.executor.build_callback_url")
     @patch("executor_manager.executors.docker.executor.find_available_port")
     @patch.dict("os.environ", {"EXECUTOR_NETWORK_MODE": "host"}, clear=True)
     @patch("executor_manager.config.config.EXECUTOR_NETWORK_MODE", "host")
     def test_prepare_docker_command_host_mode_no_port_mapping(
-        self, mock_port, mock_callback, executor, sample_task
+        self, mock_port, mock_callback, mock_docker_ports, executor, sample_task
     ):
         """Test that host network mode does not add port mapping"""
         mock_port.return_value = 8080
         mock_callback.return_value = "http://callback.url"
+        mock_docker_ports.return_value = set()  # Mock to avoid actual docker calls
 
         task_info = executor._extract_task_info(sample_task)
         executor_name = "test-executor"
@@ -468,16 +470,18 @@ class TestDockerExecutor:
         # Should still have PORT env var
         assert any("PORT=8080" in str(item) for item in cmd)
 
+    @patch("executor_manager.executors.docker.utils.get_docker_used_ports")
     @patch("executor_manager.executors.docker.executor.build_callback_url")
     @patch("executor_manager.executors.docker.executor.find_available_port")
     @patch.dict("os.environ", {}, clear=True)
     @patch("executor_manager.config.config.EXECUTOR_NETWORK_MODE", "")
     def test_prepare_docker_command_bridge_mode_with_port_mapping(
-        self, mock_port, mock_callback, executor, sample_task
+        self, mock_port, mock_callback, mock_docker_ports, executor, sample_task
     ):
         """Test that bridge network mode adds port mapping"""
         mock_port.return_value = 8080
         mock_callback.return_value = "http://callback.url"
+        mock_docker_ports.return_value = set()  # Mock to avoid actual docker calls
 
         task_info = executor._extract_task_info(sample_task)
         executor_name = "test-executor"
