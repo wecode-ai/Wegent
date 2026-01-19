@@ -512,8 +512,17 @@ test.describe('Chat Image Upload UI Tests', () => {
       // Find and click send button (has data-tour="send-button" attribute)
       const sendButton = page.locator('[data-tour="send-button"]').first()
 
-      // Wait for the button to be visible and click it
+      // Wait for the button to be visible and enabled
       await sendButton.waitFor({ state: 'visible', timeout: 5000 })
+
+      // Wait for button to be enabled (not disabled)
+      await page.waitForFunction(
+        () => {
+          const button = document.querySelector('[data-tour="send-button"]') as HTMLButtonElement
+          return button && !button.disabled
+        },
+        { timeout: 10000 }
+      )
 
       console.log('Sending message to backend...')
       await sendButton.click()
