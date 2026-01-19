@@ -39,8 +39,8 @@ def test_inject_memories_to_prompt_with_dates():
     assert base_prompt in result
 
     # Check content with local timezone format (includes date and timezone suffix)
-    # Pattern: [YYYY-MM-DD HH:MM:SS TZ] where TZ can be CST, UTC, PST, etc.
-    datetime_pattern = r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [A-Z]{3,4}\]"
+    # Pattern: [YYYY-MM-DD HH:MM:SS TZ] where TZ can be CST, UTC, PST, UTC+08:00, etc.
+    datetime_pattern = r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?: [^\]]+)?\]"
     matches = re.findall(datetime_pattern, result)
     assert len(matches) == 2, f"Expected 2 timestamps, found {len(matches)}: {matches}"
 

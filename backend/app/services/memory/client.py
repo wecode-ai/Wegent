@@ -467,6 +467,7 @@ class LongTermMemoryClient:
 
             async with session.get(
                 f"{self.base_url}/health",
+                headers=self._get_headers(),
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
             ) as resp:
                 return resp.status == 200
