@@ -117,7 +117,9 @@ export function ProjectCreateDialog({ open, onOpenChange }: ProjectCreateDialogP
                 <button
                   key={color.id}
                   type="button"
-                  onClick={() => setSelectedColor(selectedColor === color.value ? null : color.value)}
+                  onClick={() =>
+                    setSelectedColor(selectedColor === color.value ? null : color.value)
+                  }
                   className={`w-8 h-8 rounded-full border-2 transition-all ${
                     selectedColor === color.value
                       ? 'border-text-primary scale-110'

@@ -141,9 +141,7 @@ export function TaskInlineRename({
           className={cn(
             'w-full px-1 py-0.5 text-sm bg-transparent rounded',
             'border-2 outline-none transition-colors',
-            error
-              ? 'border-red-500 focus:border-red-500'
-              : 'border-primary focus:border-primary',
+            error ? 'border-red-500 focus:border-red-500' : 'border-primary focus:border-primary',
             isSaving && 'opacity-50 cursor-not-allowed'
           )}
           onClick={handleClick}

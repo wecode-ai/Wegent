@@ -1633,7 +1633,9 @@ class ClaudeCodeAgent(Agent):
             os.makedirs(target_path, exist_ok=True)
             # Also update options["cwd"] so Claude Code uses this directory
             self.options["cwd"] = target_path
-            logger.info(f"Created default workspace for SubAgent configs: {target_path}")
+            logger.info(
+                f"Created default workspace for SubAgent configs: {target_path}"
+            )
 
         # Leader is bot[0], members are bot[1:]
         member_bots = bots[1:]

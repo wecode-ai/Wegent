@@ -16,7 +16,11 @@ interface DraggableTaskWrapperProps {
   disabled?: boolean
 }
 
-export function DraggableTaskWrapper({ task, children, disabled = false }: DraggableTaskWrapperProps) {
+export function DraggableTaskWrapper({
+  task,
+  children,
+  disabled = false,
+}: DraggableTaskWrapperProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: task.id,
     data: {
@@ -27,13 +31,7 @@ export function DraggableTaskWrapper({ task, children, disabled = false }: Dragg
   })
 
   return (
-    <div
-      ref={setNodeRef}
-      className={cn(
-        'relative group/drag',
-        isDragging && 'opacity-50'
-      )}
-    >
+    <div ref={setNodeRef} className={cn('relative group/drag', isDragging && 'opacity-50')}>
       {/* Drag handle - visible on hover */}
       {!disabled && (
         <div

@@ -22,6 +22,7 @@ import PublicTeamList from '@/features/admin/components/PublicTeamList'
 import PublicBotList from '@/features/admin/components/PublicBotList'
 import ApiKeyManagement from '@/features/admin/components/ApiKeyManagement'
 import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel'
+import FlowMonitorPanel from '@/features/admin/components/FlowMonitorPanel'
 import { UserProvider, useUser } from '@/features/common/UserContext'
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
@@ -77,6 +78,7 @@ function AdminContent() {
         'public-bots',
         'api-keys',
         'system-config',
+        'monitor',
       ].includes(tab)
     ) {
       return tab as AdminTabId
@@ -140,6 +142,8 @@ function AdminContent() {
         return <ApiKeyManagement />
       case 'system-config':
         return <SystemConfigPanel />
+      case 'monitor':
+        return <FlowMonitorPanel />
       default:
         return <UserList />
     }

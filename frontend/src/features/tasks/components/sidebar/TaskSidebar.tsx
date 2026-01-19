@@ -18,8 +18,10 @@ import {
   PanelLeftOpen,
   Code,
   BookOpen,
+  Workflow,
   ChevronDown,
   ChevronUp,
+  Settings2,
 } from 'lucide-react'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
@@ -29,6 +31,7 @@ import { isTaskUnread } from '@/utils/taskViewStatus'
 import MobileSidebar from '@/features/layout/MobileSidebar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
+import HistoryManageDialog from './HistoryManageDialog'
 import {
   ProjectSection,
   ProjectProvider,
@@ -40,7 +43,7 @@ import {
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
   setIsMobileSidebarOpen: (open: boolean) => void
-  pageType?: 'chat' | 'code' | 'knowledge'
+  pageType?: 'chat' | 'code' | 'flow' | 'knowledge'
   isCollapsed?: boolean
   onToggleCollapsed?: () => void
   // Search dialog control from parent (for global shortcut support)
@@ -94,6 +97,9 @@ export default function TaskSidebar({
   const [isGroupChatsExpanded, setIsGroupChatsExpanded] = useState(false)
   const maxVisibleGroupChats = 5
 
+  // History manage dialog state
+  const [isHistoryManageDialogOpen, setIsHistoryManageDialogOpen] = useState(false)
+
   // Use external shortcut display text from parent
   const shortcutDisplayText = externalShortcutDisplayText ?? ''
 
@@ -116,6 +122,12 @@ export default function TaskSidebar({
       path: paths.code.getHref(),
       isActive: pageType === 'code',
       tooltip: pageType === 'code' ? t('common:tasks.new_task') : undefined,
+    },
+    {
+      label: t('common:navigation.flow'),
+      icon: Workflow,
+      path: paths.flow.getHref(),
+      isActive: pageType === 'flow',
     },
     {
       label: t('common:navigation.wiki'),
@@ -498,6 +510,8 @@ export default function TaskSidebar({
                 t={t}
                 isSearchResult={isSearchResult}
                 onTaskSelect={() => setIsMobileSidebarOpen(false)}
+                isHistoryManageDialogOpen={isHistoryManageDialogOpen}
+                setIsHistoryManageDialogOpen={setIsHistoryManageDialogOpen}
               />
             )}
             {loadingMore && isSearchResult && (
@@ -536,6 +550,12 @@ export default function TaskSidebar({
       >
         {sidebarContent}
       </MobileSidebar>
+
+      {/* History Manage Dialog */}
+      <HistoryManageDialog
+        open={isHistoryManageDialogOpen}
+        onOpenChange={setIsHistoryManageDialogOpen}
+      />
     </>
   )
 }
@@ -567,6 +587,8 @@ interface TaskHistorySectionProps {
   t: (key: string, options?: Record<string, unknown>) => string
   isSearchResult: boolean
   onTaskSelect: () => void
+  isHistoryManageDialogOpen?: boolean
+  setIsHistoryManageDialogOpen?: (open: boolean) => void
 }
 
 // Import Task type for the component
@@ -595,6 +617,8 @@ function TaskHistorySection({
   t,
   isSearchResult,
   onTaskSelect,
+  isHistoryManageDialogOpen: _isHistoryManageDialogOpen,
+  setIsHistoryManageDialogOpen,
 }: TaskHistorySectionProps) {
   const { projectTaskIds } = useProjectContext()
 
@@ -741,7 +765,28 @@ function TaskHistorySection({
           {!isCollapsed && (
             <div className="px-1 pb-1 pt-3 mt-2 border-t border-border text-xs font-medium text-text-muted flex items-center justify-between">
               <div className="flex items-center gap-1">
-                <span>{t('common:tasks.history_title')}</span>
+                {setIsHistoryManageDialogOpen ? (
+                  <TooltipProvider>
+                    <Tooltip delayDuration={300}>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={() => setIsHistoryManageDialogOpen(true)}
+                          className="flex items-center gap-1 hover:text-text-primary transition-colors group"
+                        >
+                          <span className="group-hover:underline">
+                            {t('common:tasks.history_title')}
+                          </span>
+                          <Settings2 className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        <p>{t('history:actions.search')}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : (
+                  <span>{t('common:tasks.history_title')}</span>
+                )}
                 <TooltipProvider>
                   <Tooltip delayDuration={300}>
                     <TooltipTrigger asChild>
