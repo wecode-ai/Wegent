@@ -146,7 +146,7 @@ class ChatService(ChatInterface):
         add_span_event("process_chat_started", {"task_id": request.task_id})
 
         # Create chat context for resource management
-        context = ChatContext(request)
+        context = ChatContext(request, streaming_state=state, stream_emitter=emitter)
 
         try:
             logger.debug(

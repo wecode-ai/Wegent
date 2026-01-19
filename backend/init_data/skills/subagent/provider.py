@@ -125,6 +125,8 @@ class SubAgentToolProvider(SkillToolProvider):
                 bot_config=bot_config,
                 default_shell_type=config.get("default_shell_type", "ClaudeCode"),
                 timeout=config.get("timeout", 7200),
+                streaming_state=context.streaming_state,
+                stream_emitter=context.stream_emitter,
             )
 
             logger.info(

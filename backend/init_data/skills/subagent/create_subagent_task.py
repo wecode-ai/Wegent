@@ -222,6 +222,11 @@ Note: This operation may take several minutes for complex tasks."""
     user_name: str = ""
     bot_config: list = []  # Bot config list [{shell_type, agent_config}, ...]
 
+    # Streaming support for tool events (HTTP mode)
+    streaming_state: Any = None  # StreamingState for adding thinking steps
+    stream_emitter: Any = None  # StreamEmitter for emitting events
+    _tool_run_id: Optional[str] = None  # Track run_id for event pairing
+
     # Configuration
     default_shell_type: str = "ClaudeCode"
     timeout: int = DEFAULT_EXECUTION_TIMEOUT
@@ -286,25 +291,18 @@ Note: This operation may take several minutes for complex tasks."""
             )
             effective_shell_type = self.default_shell_type
 
-        # Emit status update via WebSocket if available
-        if self.ws_emitter:
-            try:
-                await self.ws_emitter.emit_tool_call(
-                    task_id=self.task_id,
-                    tool_name=self.name,
-                    tool_input={
-                        "task_prompt": (
-                            task_prompt[:200] + "..."
-                            if len(task_prompt) > 200
-                            else task_prompt
-                        ),
-                        "shell_type": effective_shell_type,
-                        "workspace_ref": workspace_ref,
-                    },
-                    status="running",
-                )
-            except Exception as e:
-                logger.warning(f"[SubAgentTool] Failed to emit tool status: {e}")
+        # Emit tool start event via streaming (HTTP mode)
+        self._emit_tool_event(
+            status="started",
+            display_title="正在生成代码执行中",
+            tool_input={
+                "task_prompt": (
+                    task_prompt[:100] + "..." if len(task_prompt) > 100 else task_prompt
+                ),
+                "shell_type": effective_shell_type,
+                "workspace_ref": workspace_ref,
+            },
+        )
 
         try:
             # E2B SDK is patched at module load time, just import and use
@@ -343,14 +341,30 @@ Note: This operation may take several minutes for complex tasks."""
             try:
                 result_data = json.loads(result)
                 if result_data.get("success"):
+                    self._emit_tool_event(
+                        status="completed",
+                        display_title="代码执行完成",
+                        tool_output={"summary": result_data.get("summary", "")[:200]},
+                    )
                     await self._emit_tool_status(
                         "completed", "Task completed successfully", result_data
                     )
                 else:
+                    self._emit_tool_event(
+                        status="failed",
+                        display_title="代码执行失败",
+                        tool_output={
+                            "error": result_data.get("error", "Unknown error")
+                        },
+                    )
                     await self._emit_tool_status(
                         "failed", result_data.get("error", "Task failed"), result_data
                     )
             except json.JSONDecodeError:
+                self._emit_tool_event(
+                    status="completed",
+                    display_title="代码执行完成",
+                )
                 await self._emit_tool_status("completed", "Task completed")
             return result
 
@@ -360,6 +374,11 @@ Note: This operation may take several minutes for complex tasks."""
                 exc_info=True,
             )
             error_msg = "E2B SDK not available. Please install e2b-code-interpreter."
+            self._emit_tool_event(
+                status="failed",
+                display_title="代码执行失败",
+                tool_output={"error": error_msg},
+            )
             await self._emit_tool_status("failed", error_msg)
             return self._format_error(error_msg)
         except Exception as e:
@@ -368,6 +387,11 @@ Note: This operation may take several minutes for complex tasks."""
                 exc_info=True,
             )
             error_msg = f"Unexpected error: {e}"
+            self._emit_tool_event(
+                status="failed",
+                display_title="代码执行失败",
+                tool_output={"error": error_msg},
+            )
             await self._emit_tool_status("failed", error_msg)
             return self._format_error(error_msg)
 
@@ -706,6 +730,82 @@ Note: This operation may take several minutes for complex tasks."""
             ),
         }
         return json.dumps(response, ensure_ascii=False, indent=2)
+
+    def _emit_tool_event(
+        self,
+        status: str,
+        display_title: str,
+        tool_input: dict = None,
+        tool_output: dict = None,
+    ) -> None:
+        """Emit tool event via streaming (HTTP mode).
+
+        This method adds a thinking step to the streaming state and emits
+        it through the SSE stream. The event will be forwarded by backend
+        to the frontend via WebSocket.
+
+        Args:
+            status: Event status ("started", "completed", "failed")
+            display_title: Human-readable title (e.g., "正在生成代码执行中")
+            tool_input: Optional tool input for started status
+            tool_output: Optional tool output for completed/failed status
+        """
+        import uuid
+
+        if not self.streaming_state or not self.stream_emitter:
+            logger.debug(
+                "[SubAgentTool] No streaming state/emitter, skipping event: %s",
+                display_title,
+            )
+            return
+
+        try:
+            # Generate or reuse run_id for event pairing
+            if status == "started":
+                self._tool_run_id = f"subagent-{self.subtask_id}-{uuid.uuid4().hex[:8]}"
+            run_id = self._tool_run_id or f"subagent-{self.subtask_id}"
+
+            # Build thinking step
+            thinking_step = {
+                "title": display_title,
+                "next_action": "continue",
+                "run_id": run_id,
+                "details": {
+                    "type": "tool_use" if status == "started" else "tool_result",
+                    "status": status,
+                    "tool_name": self.name,
+                    "name": self.name,
+                    "input": tool_input or {},
+                },
+            }
+
+            if tool_output:
+                thinking_step["details"]["output"] = tool_output
+
+            # Add to streaming state
+            self.streaming_state.add_thinking_step(thinking_step)
+
+            # Emit chunk with thinking data
+            current_result = self.streaming_state.get_current_result(
+                include_value=False, slim_thinking=True
+            )
+            chunk_data = {
+                "type": "chunk",
+                "content": "",
+                "offset": self.streaming_state.offset,
+                "subtask_id": self.streaming_state.subtask_id,
+                "result": current_result,
+            }
+            self.stream_emitter.emit_json(chunk_data)
+
+            logger.info(
+                "[SubAgentTool] Emitted tool event: status=%s, title=%s, run_id=%s",
+                status,
+                display_title,
+                run_id,
+            )
+        except Exception as e:
+            logger.warning("[SubAgentTool] Failed to emit tool event: %s", e)
 
     async def _emit_tool_status(
         self, status: str, message: str = "", result: dict = None
