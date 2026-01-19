@@ -689,3 +689,157 @@ async def create_task_and_subtasks(
         ai_triggered=should_trigger_ai,
         rag_prompt=rag_prompt,
     )
+
+
+async def create_chat_task(
+    db: Session,
+    user: User,
+    team: Kind,
+    message: str,
+    params: TaskCreationParams,
+    task_id: Optional[int] = None,
+    should_trigger_ai: bool = True,
+    rag_prompt: Optional[str] = None,
+    source: str = "web",
+) -> TaskCreationResult:
+    """
+    Unified chat task creation entry point.
+
+    Automatically determines whether to use Chat Shell or Executor path
+    based on team configuration. This eliminates duplicate code between
+    WebSocket chat:send and Flow task execution.
+
+    Args:
+        db: Database session
+        user: User creating the message
+        team: Team Kind object
+        message: User message
+        params: Task creation parameters
+        task_id: Optional existing task ID
+        should_trigger_ai: If True, create both USER and ASSISTANT subtasks
+        rag_prompt: Optional RAG-enhanced prompt for AI inference
+        source: Source of the task ("web", "flow", "api")
+
+    Returns:
+        TaskCreationResult with task and subtask information
+    """
+    from app.models.subtask import SubtaskRole
+    from app.models.task import TaskResource
+    from app.schemas.task import TaskCreate
+    from app.services.adapters.task_kinds import task_kinds_service
+    from app.services.chat.config import should_use_direct_chat
+
+    # Log input parameters for debugging (DEBUG level to avoid log noise)
+    logger.debug(
+        f"[create_chat_task] Entry: team_id={team.id}, user_id={user.id}, "
+        f"task_id={task_id}, source={source}, should_trigger_ai={should_trigger_ai}"
+    )
+
+    supports_direct_chat = should_use_direct_chat(db, team, user.id)
+    logger.debug(f"[create_chat_task] supports_direct_chat={supports_direct_chat}")
+
+    if supports_direct_chat:
+        # Chat Shell path - use create_task_and_subtasks
+        logger.debug("[create_chat_task] Using Chat Shell path")
+        result = await create_task_and_subtasks(
+            db=db,
+            user=user,
+            team=team,
+            message=message,
+            params=params,
+            task_id=task_id,
+            should_trigger_ai=should_trigger_ai,
+            rag_prompt=rag_prompt,
+        )
+        logger.debug(
+            f"[create_chat_task] Chat Shell result: task_id={result.task.id if result.task else None}"
+        )
+        return result
+    else:
+        # Executor path - use task_kinds_service.create_task_or_append
+        logger.debug("[create_chat_task] Using Executor path")
+
+        # Auto-detect task type based on git_url presence
+        task_type = "code" if params.git_url else "chat"
+
+        # Build TaskCreate object
+        task_create = TaskCreate(
+            title=params.title,
+            team_id=team.id,
+            team_name=team.name,
+            team_namespace=team.namespace,
+            git_url=params.git_url or "",
+            git_repo=params.git_repo or "",
+            git_repo_id=params.git_repo_id or 0,
+            git_domain=params.git_domain or "",
+            branch_name=params.branch_name or "",
+            prompt=message,
+            type="online",
+            task_type=task_type,
+            auto_delete_executor="false",
+            source=source,
+            model_id=params.model_id,
+            force_override_bot_model=params.force_override_bot_model,
+        )
+
+        # Call create_task_or_append (synchronous method)
+        task_dict = task_kinds_service.create_task_or_append(
+            db=db,
+            obj_in=task_create,
+            user=user,
+            task_id=task_id,
+        )
+
+        created_task_id = task_dict["id"]
+
+        # Get the task TaskResource object from database
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == created_task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active == True,
+            )
+            .first()
+        )
+
+        logger.debug(
+            f"[create_chat_task] Executor task created: task_id={created_task_id}"
+        )
+
+        # Query the created subtasks from database
+        # Get the latest USER subtask for this task
+        user_subtask = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == created_task_id,
+                Subtask.role == SubtaskRole.USER,
+            )
+            .order_by(Subtask.id.desc())
+            .first()
+        )
+
+        # Get the latest ASSISTANT subtask for this task (if should_trigger_ai)
+        assistant_subtask = None
+        if should_trigger_ai:
+            assistant_subtask = (
+                db.query(Subtask)
+                .filter(
+                    Subtask.task_id == created_task_id,
+                    Subtask.role == SubtaskRole.ASSISTANT,
+                )
+                .order_by(Subtask.id.desc())
+                .first()
+            )
+
+        logger.debug(
+            f"[create_chat_task] Executor result: task_id={task.id if task else None}"
+        )
+
+        return TaskCreationResult(
+            task=task,
+            user_subtask=user_subtask,
+            assistant_subtask=assistant_subtask,
+            ai_triggered=should_trigger_ai,
+            rag_prompt=rag_prompt,
+        )

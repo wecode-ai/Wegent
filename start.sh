@@ -595,17 +595,17 @@ check_frontend_dependencies() {
 get_local_ip() {
     # Try to get the local IP address, fallback to localhost if not available
     local ip=""
-    
+
     # Method 1: Try Linux ip command (most reliable, works on Linux)
     if command -v ip &> /dev/null; then
         ip=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
     fi
-    
+
     # Method 2: Try hostname -I (works on some Linux, gets first non-loopback IP)
     if [ -z "$ip" ] && command -v hostname &> /dev/null; then
         ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     fi
-    
+
     # Method 3: Try macOS/BSD ifconfig (works on macOS)
     # Filter out docker/bridge interfaces (br-, docker, veth)
     if [ -z "$ip" ] && command -v ifconfig &> /dev/null; then
@@ -615,12 +615,12 @@ get_local_ip() {
             ip=$(ifconfig | grep -v "^br-\|^docker\|^veth" | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
         fi
     fi
-    
+
     # Fallback to localhost if no IP found
     if [ -z "$ip" ]; then
         ip="localhost"
     fi
-    
+
     echo "$ip"
 }
 
@@ -957,7 +957,7 @@ start_services() {
         echo -e "${YELLOW}This appears to be your first time running Wegent.${NC}"
         echo -e "${YELLOW}Let's create a configuration file (.env) first.${NC}"
         echo ""
-        
+
         # Run the init config wizard in embedded mode (don't exit after saving)
         if ! init_config "embedded"; then
             echo -e "${RED}Configuration setup cancelled. Exiting.${NC}"
