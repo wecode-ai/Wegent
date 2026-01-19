@@ -491,6 +491,9 @@ class ChatConfigBuilder:
                     "skill_id": skill.id,  # Include skill ID for provider loading
                     "skill_user_id": skill.user_id,  # Include user_id for security check
                 }
+                # Include config if present in skill spec
+                if skill_crd.spec.config:
+                    skill_data["config"] = skill_crd.spec.config
                 # Include tools configuration if present in skill spec
                 # Convert SkillToolDeclaration objects to dicts for serialization
                 if skill_crd.spec.tools:
