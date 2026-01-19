@@ -24,7 +24,7 @@ import { ProjectDeleteDialog } from './ProjectDeleteDialog'
 import { DroppableProject } from './DroppableProject'
 import { DraggableProjectTask } from './DraggableProjectTask'
 import { ProjectTaskMenu } from './ProjectTaskMenu'
-import { ProjectWithTasks, ProjectTask } from '@/types/api'
+import { ProjectWithTasks, ProjectTask, Task } from '@/types/api'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -85,8 +85,16 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
     // Set project task as selected (for project section highlight)
     setSelectedProjectTaskId(projectTask.task_id)
 
-    // Clear TaskContext's selectedTask to remove highlight from history section
-    setSelectedTask(null)
+    // IMPORTANT: Set selected task with minimal data to prevent "New Conversation" flash
+    // This ensures TaskContext has a task ID immediately, so ChatArea doesn't show
+    // the empty state while waiting for URL params to sync and task details to load.
+    // The full task details will be fetched by TaskContext via refreshSelectedTaskDetail().
+    setSelectedTask({
+      id: projectTask.task_id,
+      title: projectTask.task_title || '',
+      status: projectTask.task_status,
+      is_group_chat: projectTask.is_group_chat,
+    } as Task)
 
     // Navigate to the appropriate page based on task type
     const params = new URLSearchParams()
@@ -199,14 +207,11 @@ function ProjectItem({
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
 
   // Handle double-click to start renaming
-  const handleDoubleClick = useCallback(
-    (e: React.MouseEvent, taskId: number) => {
-      e.stopPropagation()
-      e.preventDefault()
-      setEditingTaskId(taskId)
-    },
-    []
-  )
+  const handleDoubleClick = useCallback((e: React.MouseEvent, taskId: number) => {
+    e.stopPropagation()
+    e.preventDefault()
+    setEditingTaskId(taskId)
+  }, [])
 
   // Handle rename save
   const handleRenameSave = useCallback(
