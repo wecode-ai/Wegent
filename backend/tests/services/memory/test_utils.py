@@ -36,10 +36,10 @@ def test_inject_memories_to_prompt_with_dates():
     assert "</memory>" in result
     assert base_prompt in result
 
-    # Check content
-    assert "[2025-01-15]" in result
+    # Check content with precise datetime format
+    assert "[2025-01-15 10:30:00]" in result
     assert "User prefers Python over JavaScript" in result
-    assert "[2025-01-14]" in result
+    assert "[2025-01-14 15:20:00]" in result
     assert "Project uses FastAPI framework" in result
 
     # Check ordering
@@ -63,11 +63,11 @@ def test_inject_memories_to_prompt_without_dates():
     assert "User likes clean code" in result
     assert "Prefers type hints" in result
 
-    # Should not have date-bracket patterns like [YYYY-MM-DD]
-    date_pattern = r"\[\d{4}-\d{2}-\d{2}\]"
+    # Should not have datetime-bracket patterns like [YYYY-MM-DD HH:MM:SS]
+    datetime_pattern = r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]"
     assert not re.search(
-        date_pattern, result
-    ), "Should not contain date brackets when created_at is missing"
+        datetime_pattern, result
+    ), "Should not contain datetime brackets when created_at is missing"
 
     # Verify <memory> tags are present
     assert result.count("<memory>") == 1

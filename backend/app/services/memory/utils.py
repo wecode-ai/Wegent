@@ -32,8 +32,8 @@ def inject_memories_to_prompt(
         <memory>
         The following are relevant memories from previous conversations:
 
-        1. [2025-01-15] User prefers Python over JavaScript for backend tasks
-        2. [2025-01-14] Project uses FastAPI framework with SQLAlchemy ORM
+        1. [2025-01-15 14:30:45] User prefers Python over JavaScript for backend tasks
+        2. [2025-01-14 09:15:22] Project uses FastAPI framework with SQLAlchemy ORM
 
         Use this context to provide personalized responses.
         </memory>
@@ -50,9 +50,9 @@ def inject_memories_to_prompt(
         created_at = memory.metadata.get("created_at", "")
         if created_at and isinstance(created_at, str):
             try:
-                # Format: YYYY-MM-DD
+                # Format: YYYY-MM-DD HH:MM:SS (more precise)
                 dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                date_str = dt.strftime("%Y-%m-%d")
+                date_str = dt.strftime("%Y-%m-%d %H:%M:%S")
             except (ValueError, TypeError):
                 date_str = ""
         else:
