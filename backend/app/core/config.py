@@ -256,9 +256,8 @@ class Settings(BaseSettings):
 
     # Default team configuration for each mode
     # Format: "name#namespace" (namespace is optional, defaults to "default")
-    # Example: "通用助手#default" or "Code Assistant"
-    DEFAULT_TEAM_CHAT: str = ""  # Default team for chat mode
-    DEFAULT_TEAM_CODE: str = ""  # Default team for code mode
+    DEFAULT_TEAM_CHAT: str = "wegent-chat#default"  # Default team for chat mode
+    DEFAULT_TEAM_CODE: str = "wegent-notebook#default"  # Default team for code mode
     DEFAULT_TEAM_KNOWLEDGE: str = ""  # Default team for knowledge mode
 
     # JSON configuration for MCP servers (similar to Claude Desktop format)
