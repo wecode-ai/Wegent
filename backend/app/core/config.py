@@ -58,8 +58,8 @@ class Settings(BaseSettings):
     DB_AUTO_MIGRATE: bool = True
 
     # Database connection pool configuration (for multi-worker deployments)
-    DB_POOL_SIZE: int = 5  # Number of connections to keep in the pool
-    DB_MAX_OVERFLOW: int = 10  # Max connections that can be created beyond pool_size
+    DB_POOL_SIZE: int = 10  # Number of connections to keep in the pool
+    DB_MAX_OVERFLOW: int = 20  # Max connections that can be created beyond pool_size
     DB_POOL_RECYCLE: int = 3600  # Recycle connections after N seconds (avoid MySQL timeout)
     DB_POOL_TIMEOUT: int = 30  # Seconds to wait before giving up on getting a connection
 

@@ -102,8 +102,8 @@ class TestDatabaseConnectionPoolConfig:
         assert hasattr(settings, "DB_POOL_TIMEOUT"), "Config should have DB_POOL_TIMEOUT"
 
         # Verify default values
-        assert settings.DB_POOL_SIZE == 5
-        assert settings.DB_MAX_OVERFLOW == 10
+        assert settings.DB_POOL_SIZE == 10
+        assert settings.DB_MAX_OVERFLOW == 20
         assert settings.DB_POOL_RECYCLE == 3600
         assert settings.DB_POOL_TIMEOUT == 30
 
