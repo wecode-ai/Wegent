@@ -273,6 +273,7 @@
       "llmModel": "LLM 模型",
       "selectLlmModel": "选择用于语义分割的 LLM 模型",
       "llmModelHint": "当分块超过 600 tokens 时，将使用此模型判断语义边界",
+      "noLlmModel": "暂无 LLM 模型可用，请先在设置中配置。",
       "separator": "分段标识符",
       "separatorHint": "用于分割文档的字符",
       "chunkSize": "分段最大长度",

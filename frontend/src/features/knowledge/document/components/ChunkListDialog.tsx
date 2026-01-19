@@ -171,6 +171,8 @@ export function ChunkListDialog({
                       variant="ghost"
                       size="sm"
                       onClick={() => toggleExpand(chunk.chunk_index)}
+                      aria-expanded={expandedChunks.has(chunk.chunk_index)}
+                      aria-label={expandedChunks.has(chunk.chunk_index) ? t('common:actions.collapse') : t('common:actions.expand')}
                     >
                       {expandedChunks.has(chunk.chunk_index) ? (
                         <ChevronUp className="w-4 h-4" />
@@ -183,6 +185,7 @@ export function ChunkListDialog({
                       size="sm"
                       onClick={() => handleDeleteChunk(chunk.chunk_index)}
                       disabled={deletingChunk === chunk.chunk_index}
+                      aria-label={t('common:actions.delete')}
                     >
                       {deletingChunk === chunk.chunk_index ? (
                         <Spinner className="w-4 h-4" />

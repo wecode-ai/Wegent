@@ -273,6 +273,7 @@
       "llmModel": "LLM Model",
       "selectLlmModel": "Select LLM model for semantic splitting",
       "llmModelHint": "This model will be used to determine semantic boundaries when chunks exceed 600 tokens",
+      "noLlmModel": "No LLM model available. Please configure one in Settings.",
       "separator": "Separator",
       "separatorHint": "Character(s) used to split document",
       "chunkSize": "Max Chunk Size",

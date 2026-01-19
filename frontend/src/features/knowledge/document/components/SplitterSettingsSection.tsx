@@ -202,7 +202,7 @@ export function SplitterSettingsSection({
             {loadingModels ? (
               <div className="text-sm text-text-secondary">{t('common:actions.loading')}</div>
             ) : llmModels.length === 0 ? (
-              <p className="text-sm text-warning">{t('document.retrieval.noEmbeddingModel')}</p>
+              <p className="text-sm text-warning">{t('knowledge:document.splitter.noLlmModel')}</p>
             ) : (
               <>
                 <SearchableSelect

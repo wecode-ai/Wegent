@@ -1363,6 +1363,14 @@ def get_document_chunks(
             detail="Document not found",
         )
 
+    # Check KB access permission
+    kb = KnowledgeService.get_knowledge_base(db, document.kind_id, current_user.id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access this document",
+        )
+
     # Check if document uses structural_semantic splitter
     splitter_config = document.splitter_config or {}
     if splitter_config.get("type") != "structural_semantic":
@@ -1419,6 +1427,14 @@ def delete_document_chunk(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document not found",
+        )
+
+    # Check KB access permission
+    kb = KnowledgeService.get_knowledge_base(db, document.kind_id, current_user.id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to modify this document",
         )
 
     # Check if document uses structural_semantic splitter
