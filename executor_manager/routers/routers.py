@@ -312,6 +312,21 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
             logger.warning(
                 f"Failed to update status for task {request.task_id}: {result}"
             )
+
+        # Remove task from RunningTaskTracker when completed or failed
+        # This prevents false-positive heartbeat timeout detection
+        status_lower = request.status.lower() if request.status else ""
+        if status_lower in ("completed", "failed", "cancelled", "success"):
+            try:
+                from executor_manager.services.task_heartbeat_manager import \
+                    get_running_task_tracker
+
+                tracker = get_running_task_tracker()
+                tracker.remove_running_task(request.task_id)
+                logger.debug(f"Removed task {request.task_id} from RunningTaskTracker")
+            except Exception as e:
+                logger.debug(f"Failed to remove task from RunningTaskTracker: {e}")
+
         logger.info(f"Successfully processed callback for task {request.task_id}")
         return {
             "status": "success",

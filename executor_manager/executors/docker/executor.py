@@ -307,6 +307,29 @@ class DockerExecutor(Executor):
                 f"Started Docker container {executor_name} with ID {container_id}"
             )
 
+            # Register regular tasks to RunningTaskTracker for heartbeat monitoring
+            # This enables OOM detection for non-sandbox tasks
+            is_sandbox_task = task.get("type") == "sandbox"
+            if not is_validation_task and not is_sandbox_task:
+                try:
+                    from executor_manager.services.task_heartbeat_manager import \
+                        get_running_task_tracker
+
+                    tracker = get_running_task_tracker()
+                    tracker.add_running_task(
+                        task_id=task_id,
+                        subtask_id=task_info["subtask_id"],
+                        executor_name=executor_name,
+                        task_type=task.get("type", "online"),
+                    )
+                    logger.debug(
+                        f"Registered task {task_id} to RunningTaskTracker for heartbeat monitoring"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to register task to RunningTaskTracker: {e}"
+                    )
+
             # For validation tasks, report starting_container stage
             if is_validation_task:
                 self._report_validation_stage(
@@ -683,41 +706,62 @@ class DockerExecutor(Executor):
             cmd.extend(["-e", f"CALLBACK_URL={callback_url}"])
 
     def _add_sandbox_env_vars(self, cmd: List[str], task: Dict[str, Any]) -> None:
-        """Add sandbox-specific environment variables for heartbeat service.
+        """Add environment variables for heartbeat service.
 
-        For sandbox type tasks, this adds:
-        - SANDBOX_ID: Used by heartbeat service to identify the sandbox
-        - HEARTBEAT_ENABLED: Enable heartbeat service for sandbox containers
-        - EXECUTOR_MANAGER_HEARTBEAT_BASE_URL: Used by heartbeat service for heartbeat endpoint
+        This enables heartbeat monitoring for ALL task types to detect executor
+        crashes (OOM, etc.). When an executor container dies unexpectedly, the
+        heartbeat stops and executor_manager can detect this via heartbeat timeout,
+        then mark the task as failed.
+
+        For sandbox type tasks, uses sandbox_id as the identifier.
+        For regular tasks, uses task_id as the identifier.
+
+        Environment variables added:
+        - SANDBOX_ID: Identifier for heartbeat service (sandbox_id or task_id)
+        - HEARTBEAT_ENABLED: Enable heartbeat service
+        - EXECUTOR_MANAGER_HEARTBEAT_BASE_URL: Heartbeat endpoint base URL
 
         Args:
             cmd: Docker command list to extend
-            task: Task dictionary containing sandbox_metadata
+            task: Task dictionary containing task info and sandbox_metadata
         """
-        is_sandbox = task.get("type") == "sandbox"
-        if not is_sandbox:
+        # Skip validation tasks - they are short-lived and don't need heartbeat
+        if task.get("type") == "validation":
             return
 
-        # Get sandbox_id from metadata
+        # Get identifier: use sandbox_id for sandbox tasks, task_id for regular tasks
+        is_sandbox = task.get("type") == "sandbox"
         sandbox_metadata = task.get("sandbox_metadata", {})
-        sandbox_id = sandbox_metadata.get("sandbox_id")
 
-        if sandbox_id:
-            cmd.extend(["-e", f"SANDBOX_ID={sandbox_id}"])
-            cmd.extend(["-e", "HEARTBEAT_ENABLED=true"])
+        if is_sandbox:
+            # For sandbox tasks, use sandbox_id
+            heartbeat_id = sandbox_metadata.get("sandbox_id")
+        else:
+            # For regular tasks, use task_id as string
+            heartbeat_id = str(task.get("task_id", ""))
 
-            # Build heartbeat base URL from callback URL
-            callback_url = build_callback_url(task)
-            if callback_url and "/callback" in callback_url:
-                # Convert callback URL to base URL for heartbeat service
-                # From: http://host:port/executor-manager/callback
-                # To:   http://host:port/executor-manager
-                base_url = callback_url.replace("/callback", "")
-                cmd.extend(["-e", f"EXECUTOR_MANAGER_HEARTBEAT_BASE_URL={base_url}"])
+        if not heartbeat_id:
+            logger.debug("No heartbeat_id available, skipping heartbeat env vars")
+            return
 
-            logger.info(
-                f"Added sandbox env vars: SANDBOX_ID={sandbox_id}, HEARTBEAT_ENABLED=true"
-            )
+        # Add heartbeat environment variables
+        cmd.extend(["-e", f"SANDBOX_ID={heartbeat_id}"])
+        cmd.extend(["-e", "HEARTBEAT_ENABLED=true"])
+
+        # Build heartbeat base URL from callback URL
+        callback_url = build_callback_url(task)
+        if callback_url and "/callback" in callback_url:
+            # Convert callback URL to base URL for heartbeat service
+            # From: http://host:port/executor-manager/callback
+            # To:   http://host:port/executor-manager
+            base_url = callback_url.replace("/callback", "")
+            cmd.extend(["-e", f"EXECUTOR_MANAGER_HEARTBEAT_BASE_URL={base_url}"])
+
+        task_type = "sandbox" if is_sandbox else "regular"
+        logger.info(
+            f"Added heartbeat env vars for {task_type} task: "
+            f"SANDBOX_ID={heartbeat_id}, HEARTBEAT_ENABLED=true"
+        )
 
     def _add_trace_context(self, cmd: List[str]) -> None:
         """

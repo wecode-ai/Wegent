@@ -1352,6 +1352,22 @@ class ExecutorKindsService(
             exclude={"subtask_title", "task_title"}, exclude_unset=True
         )
         for field, value in update_data.items():
+            if field == "result" and value is not None:
+                # Preserve existing thinking when task fails without new thinking data
+                # This handles OOM/crash scenarios where executor sends error without thinking
+                existing_result = subtask.result or {}
+                new_has_thinking = isinstance(value, dict) and value.get("thinking")
+                existing_has_thinking = isinstance(
+                    existing_result, dict
+                ) and existing_result.get("thinking")
+
+                if (
+                    subtask_update.status == SubtaskStatus.FAILED
+                    and not new_has_thinking
+                    and existing_has_thinking
+                ):
+                    value["thinking"] = existing_result["thinking"]
+
             setattr(subtask, field, value)
 
         # Set completion time
