@@ -736,9 +736,9 @@ export default function MessagesArea({
 
   // Handle regenerate - find the user message before the AI message and resend it
   const handleRegenerate = useCallback(
-    async (aiMessage: DisplayMessage) => {
-      // 1. Find the index of this AI message
-      const aiIndex = messages.findIndex(m => m.id === aiMessage.id)
+    async (aiMessage: Message) => {
+      // 1. Find the index of this AI message by subtaskId
+      const aiIndex = messages.findIndex(m => m.subtaskId === aiMessage.subtaskId)
       if (aiIndex < 0) return
 
       // 2. Find the preceding user message
@@ -1034,7 +1034,7 @@ export default function MessagesArea({
               if (msg.type !== 'ai') return false
               for (let i = messages.length - 1; i >= 0; i--) {
                 if (messages[i].type === 'ai') {
-                  return messages[i].id === msg.id
+                  return messages[i].subtaskId === msg.subtaskId
                 }
               }
               return false
