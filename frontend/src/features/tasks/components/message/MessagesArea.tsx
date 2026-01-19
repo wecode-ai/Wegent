@@ -754,11 +754,12 @@ export default function MessagesArea({
       }
     }
 
-    if (!lastUserMessage || !lastUserMessage.content) {
+    // Check all required fields including subtaskId
+    if (!lastUserMessage || !lastUserMessage.content || !lastUserMessage.subtaskId) {
       toast({
         variant: 'destructive',
         title: t('chat:errors.generic_error') || 'Error',
-        description: 'No user message found to regenerate',
+        description: t('chat:errors.no_message_to_regenerate') || 'No user message found to regenerate',
       })
       return
     }
@@ -769,26 +770,24 @@ export default function MessagesArea({
     try {
       // Delete the last user message and AI response using edit API
       // The editMessage API deletes the message and all subsequent messages
-      if (lastUserMessage.subtaskId) {
-        const response = await subtaskApis.editMessage(lastUserMessage.subtaskId, savedContent)
+      const response = await subtaskApis.editMessage(lastUserMessage.subtaskId, savedContent)
 
-        if (response.success) {
-          // Immediately clean up messages from the edited position in local state
-          cleanupMessagesAfterEdit(selectedTaskDetail.id, lastUserMessage.subtaskId)
+      if (response.success) {
+        // Immediately clean up messages from the edited position in local state
+        cleanupMessagesAfterEdit(selectedTaskDetail.id, lastUserMessage.subtaskId)
 
-          // Refresh task detail to reload messages from backend
-          await refreshSelectedTaskDetail(true)
+        // Refresh task detail to reload messages from backend
+        await refreshSelectedTaskDetail(true)
 
-          // Resend the saved user message to trigger new AI response
-          onSendMessage(savedContent)
-        }
+        // Resend the saved user message to trigger new AI response
+        onSendMessage(savedContent)
       }
     } catch (error) {
       console.error('Failed to regenerate response:', error)
       toast({
         variant: 'destructive',
-        title: t('chat:errors.generic_error') || 'Regenerate failed',
-        description: (error as Error)?.message || 'Failed to regenerate response',
+        title: t('chat:actions.regenerate_failed') || 'Regenerate failed',
+        description: (error as Error)?.message || t('chat:errors.regenerate_failed_desc') || 'Failed to regenerate response',
       })
     }
   }, [

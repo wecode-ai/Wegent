@@ -12,6 +12,7 @@
     "clear": "清空聊天",
     "copy": "复制",
     "regenerate": "重新生成",
+    "regenerate_failed": "重新生成失败",
     "stop": "停止",
     "retry": "重试",
     "edit": "编辑",
@@ -196,7 +197,9 @@
     "network_error": "网络连接失败：请检查网络连接后重试",
     "timeout_error": "请求超时：服务响应时间过长，请稍后重试",
     "generic_error": "请求失败：未知错误，请重试或联系管理员",
-    "copy_error": "复制错误详情"
+    "copy_error": "复制错误详情",
+    "no_message_to_regenerate": "未找到可重新生成的用户消息",
+    "regenerate_failed_desc": "重新生成回复失败"
   },
   "clarification": {
     "title": "智能追问 (Smart Follow-up)",

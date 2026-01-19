@@ -12,6 +12,7 @@
     "clear": "Clear Chat",
     "copy": "Copy",
     "regenerate": "Regenerate",
+    "regenerate_failed": "Regenerate failed",
     "stop": "Stop",
     "retry": "Retry",
     "edit": "Edit",
@@ -196,7 +197,9 @@
     "network_error": "Network error: Please check your connection and try again",
     "timeout_error": "Request timeout: Service response time exceeded, please try again later",
     "generic_error": "Request failed: Unknown error, please try again or contact administrator",
-    "copy_error": "Copy error details"
+    "copy_error": "Copy error details",
+    "no_message_to_regenerate": "No user message found to regenerate",
+    "regenerate_failed_desc": "Failed to regenerate response"
   },
   "clarification": {
     "title": "Smart Follow-up",
