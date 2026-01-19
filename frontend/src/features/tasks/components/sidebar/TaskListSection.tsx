@@ -4,10 +4,10 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Task, TaskType } from '@/types/api'
 import TaskMenu from './TaskMenu'
-import TaskInlineEdit from './TaskInlineEdit'
+import { TaskInlineRename } from '@/components/common/TaskInlineRename'
 import {
   CheckCircle2,
   XCircle,
@@ -111,6 +111,9 @@ export default function TaskListSection({
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
   // Local task titles for optimistic update during rename
   const [localTitles, setLocalTitles] = useState<Record<number, string>>({})
+  // Click timer ref for distinguishing single-click from double-click
+  const clickTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const clickedTaskRef = useRef<Task | null>(null)
 
   // Touch interaction state
   const [touchState, setTouchState] = useState<{
@@ -252,6 +255,15 @@ export default function TaskListSection({
     }
   }, [touchState.longPressTimer])
 
+  // Cleanup effect for click timer
+  useEffect(() => {
+    return () => {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current)
+      }
+    }
+  }, [])
+
   // Handle clicks outside to close long press menu
   useEffect(() => {
     const handleClickOutside = () => {
@@ -319,10 +331,11 @@ export default function TaskListSection({
 
   // Save renamed task
   const handleSaveRename = useCallback(
-    (taskId: number, newTitle: string) => {
+    async (taskId: number, newTitle: string) => {
+      // Call API to update task title
+      await taskApis.updateTask(taskId, { title: newTitle })
       // Optimistic update: update local state immediately
       setLocalTitles(prev => ({ ...prev, [taskId]: newTitle }))
-      setEditingTaskId(null)
       // Refresh tasks to sync with server
       refreshTasks()
     },
@@ -540,8 +553,25 @@ export default function TaskListSection({
                       }`}
                       onClick={() => {
                         // Don't trigger task click when editing
-                        if (editingTaskId !== task.id) {
-                          handleTaskClick(task)
+                        if (editingTaskId === task.id) return
+
+                        // Use delayed single-click to distinguish from double-click
+                        // If a click timer already exists, this is a double-click
+                        if (clickTimerRef.current && clickedTaskRef.current?.id === task.id) {
+                          // Double-click detected - cancel the single click and start rename
+                          clearTimeout(clickTimerRef.current)
+                          clickTimerRef.current = null
+                          clickedTaskRef.current = null
+                          handleStartRename(task.id)
+                        } else {
+                          // First click - set timer for delayed navigation
+                          // If no second click within 250ms, execute single-click action
+                          clickedTaskRef.current = task
+                          clickTimerRef.current = setTimeout(() => {
+                            clickTimerRef.current = null
+                            clickedTaskRef.current = null
+                            handleTaskClick(task)
+                          }, 250)
                         }
                       }}
                       onTouchStart={handleTouchStart(task)}
@@ -560,38 +590,35 @@ export default function TaskListSection({
 
                       {/* Task title in the middle - supports inline editing */}
                       {editingTaskId === task.id ? (
-                        <TaskInlineEdit
+                        <TaskInlineRename
                           taskId={task.id}
                           initialTitle={localTitles[task.id] ?? task.title}
-                          onSave={newTitle => handleSaveRename(task.id, newTitle)}
-                          onCancel={handleCancelRename}
+                          isEditing={true}
+                          onEditEnd={handleCancelRename}
+                          onSave={async (newTitle: string) => {
+                            await handleSaveRename(task.id, newTitle)
+                          }}
                         />
                       ) : (
-                        <span
-                          className="flex-1 min-w-0 text-sm text-text-primary leading-tight truncate"
-                          onDoubleClick={e => {
-                            e.stopPropagation()
-                            e.preventDefault()
-                            handleStartRename(task.id)
-                          }}
-                        >
+                        <span className="flex-1 min-w-0 text-sm text-text-primary leading-tight truncate">
                           {localTitles[task.id] ?? task.title}
                         </span>
                       )}
 
                       {/* Status icon on the right - only render container when needed */}
-                      {(shouldShowStatusIcon(task) || isTaskUnread(task)) && editingTaskId !== task.id && (
-                        <div className="flex-shrink-0 relative">
-                          <div className="w-4 h-4 flex items-center justify-center">
-                            {shouldShowStatusIcon(task) && getStatusIcon(task.status)}
+                      {(shouldShowStatusIcon(task) || isTaskUnread(task)) &&
+                        editingTaskId !== task.id && (
+                          <div className="flex-shrink-0 relative">
+                            <div className="w-4 h-4 flex items-center justify-center">
+                              {shouldShowStatusIcon(task) && getStatusIcon(task.status)}
+                            </div>
+                            {isTaskUnread(task) && (
+                              <span
+                                className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task)} animate-pulse-dot`}
+                              />
+                            )}
                           </div>
-                          {isTaskUnread(task) && (
-                            <span
-                              className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task)} animate-pulse-dot`}
-                            />
-                          )}
-                        </div>
-                      )}
+                        )}
 
                       {editingTaskId !== task.id && (
                         <div className="flex-shrink-0">
