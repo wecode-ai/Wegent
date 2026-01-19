@@ -78,7 +78,8 @@
   "user": {
     "default_name": "User",
     "logout": "Logout",
-    "login": "Login"
+    "login": "Login",
+    "menu": "User menu"
   },
   "chat": {
     "placeholder_chat": "Use the Agent team to explore and discover",
@@ -208,6 +209,10 @@
     "more_teams": "View more teams",
     "more_actions": "More Actions",
     "no_teams": "No teams available",
+    "no_teams_title": "No Agents Available",
+    "no_teams_description": "Create your first agent to start intelligent conversations",
+    "create_first_team": "Create Agent",
+    "system_recommended": "Recommended",
     "new_team": "New Team",
     "search_placeholder": "Search team...",
     "no_match": "No matching teams",
@@ -398,6 +403,9 @@
     "copy_task_id": "Copy TaskId",
     "cancel_task": "Cancel Task",
     "delete_task": "Delete Task",
+    "rename_task": "Rename Task",
+    "rename_empty_error": "Task name cannot be empty",
+    "rename_save_error": "Failed to save, please try again",
     "searching": "Searching...",
     "refreshing": "Syncing...",
     "press_enter_to_search": "Press Enter to search",
@@ -591,6 +599,10 @@
   },
   "correction": {
     "result_title": "Correction Result"
+  },
+  "appPreview": {
+    "button": "Preview",
+    "title": "App Preview"
   },
   "userSearch": {
     "placeholder": "Search username or email...",

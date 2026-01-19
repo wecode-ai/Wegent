@@ -78,7 +78,7 @@
     },
     "confirm": {
       "delete_title": "删除用户",
-      "delete_message": "确定要删除用户 \"{{name}}\" 吗？此操作将禁用该账号。",
+      "delete_message": "确定要删除用户 \"{{name}}\" 吗？此操作将永久删除该账号。",
       "reset_password_title": "重置密码",
       "reset_password_message": "请为用户 \"{{name}}\" 输入新密码",
       "toggle_status_title": "切换状态",

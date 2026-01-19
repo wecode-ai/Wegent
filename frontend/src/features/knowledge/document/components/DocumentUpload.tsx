@@ -19,6 +19,7 @@ import {
   Pencil,
   Link,
   Check,
+  Globe,
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -43,15 +44,17 @@ import { SplitterSettingsSection, type SplitterConfig } from './SplitterSettings
 import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { validateTableUrl } from '@/apis/knowledge'
-
 // Upload mode type
-type UploadMode = 'file' | 'text' | 'table'
+type UploadMode = 'file' | 'text' | 'table' | 'web'
 
 // Table document data
 export interface TableDocument {
   name: string
   source_config: { url: string }
 }
+
+// Maximum documents allowed in notebook mode
+export const NOTEBOOK_MAX_DOCUMENTS = 50
 
 interface DocumentUploadProps {
   open: boolean
@@ -61,6 +64,12 @@ interface DocumentUploadProps {
     splitterConfig?: Partial<SplitterConfig>
   ) => Promise<void>
   onTableAdd?: (data: TableDocument) => Promise<void>
+  /** Callback to add a web page document. Backend handles scraping and document creation. */
+  onWebAdd?: (url: string, name?: string) => Promise<void>
+  /** Knowledge base type: 'notebook' or 'classic' */
+  kbType?: string
+  /** Current document count in the knowledge base */
+  currentDocumentCount?: number
 }
 
 export function DocumentUpload({
@@ -68,6 +77,9 @@ export function DocumentUpload({
   onOpenChange,
   onUploadComplete,
   onTableAdd,
+  onWebAdd,
+  kbType = 'classic',
+  currentDocumentCount = 0,
 }: DocumentUploadProps) {
   const { t } = useTranslation('knowledge')
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -101,6 +113,13 @@ export function DocumentUpload({
   const [tableUrlValidating, setTableUrlValidating] = useState(false)
   const [tableUrlValid, setTableUrlValid] = useState<boolean | null>(null)
   const [tableUrlProvider, setTableUrlProvider] = useState<string | null>(null)
+
+  // Web page input state
+  const [webUrl, setWebUrl] = useState('')
+  const [webName, setWebName] = useState('')
+  const [webError, setWebError] = useState<string | null>(null)
+  const [webSubmitting, setWebSubmitting] = useState(false)
+  const [webFetching, setWebFetching] = useState(false)
 
   // File rename editing state
   const [editingFileId, setEditingFileId] = useState<string | null>(null)
@@ -236,6 +255,11 @@ export function DocumentUpload({
     setTableUrlValid(null)
     setTableUrlProvider(null)
     setTableUrlValidating(false)
+    setWebUrl('')
+    setWebName('')
+    setWebError(null)
+    setWebSubmitting(false)
+    setWebFetching(false)
     onOpenChange(false)
   }
 
@@ -430,6 +454,73 @@ export function DocumentUpload({
     setTableUrlValidating(false)
   }
 
+  // Handle web page submission
+  const handleWebSubmit = useCallback(async () => {
+    // Validate URL
+    if (!webUrl.trim()) {
+      setWebError(t('document.upload.web.urlRequired'))
+      return
+    }
+
+    // Basic URL validation
+    try {
+      new URL(webUrl.trim())
+    } catch {
+      setWebError(t('document.upload.validation.invalidUrlFormat'))
+      return
+    }
+
+    if (!onWebAdd) {
+      setWebError('Web add handler not configured')
+      return
+    }
+
+    setWebSubmitting(true)
+    setWebFetching(true)
+    setWebError(null)
+
+    try {
+      // Call the parent handler - backend handles scraping and document creation
+      await onWebAdd(webUrl.trim(), webName.trim() || undefined)
+
+      // Reset and close on success
+      setWebUrl('')
+      setWebName('')
+      setUploadMode('file')
+      handleClose()
+    } catch (err) {
+      // Map error messages from backend
+      const errorMessage = err instanceof Error ? err.message : t('document.upload.web.addFailed')
+      // Check for specific error codes in the message
+      if (errorMessage.includes('FETCH_FAILED')) {
+        setWebError(t('document.upload.web.fetchFailed'))
+      } else if (errorMessage.includes('FETCH_TIMEOUT')) {
+        setWebError(t('document.upload.web.fetchTimeout'))
+      } else if (errorMessage.includes('PARSE_FAILED')) {
+        setWebError(t('document.upload.web.parseFailed'))
+      } else if (errorMessage.includes('EMPTY_CONTENT')) {
+        setWebError(t('document.upload.web.emptyContent'))
+      } else if (errorMessage.includes('AUTH_REQUIRED')) {
+        setWebError(t('document.upload.web.authRequired'))
+      } else {
+        setWebError(errorMessage)
+      }
+    } finally {
+      setWebSubmitting(false)
+      setWebFetching(false)
+    }
+  }, [webUrl, webName, onWebAdd, t, handleClose])
+
+  // Handle back from web mode
+  const handleBackFromWebMode = () => {
+    setUploadMode('file')
+    setWebUrl('')
+    setWebName('')
+    setWebError(null)
+    setWebSubmitting(false)
+    setWebFetching(false)
+  }
+
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -552,6 +643,11 @@ export function DocumentUpload({
     </>
   )
 
+  // Check if notebook mode has reached document limit
+  const isNotebookMode = kbType === 'notebook'
+  const totalDocumentCount = currentDocumentCount + successCount
+  const isAtLimit = isNotebookMode && totalDocumentCount >= NOTEBOOK_MAX_DOCUMENTS
+
   // Render file upload mode
   const renderFileMode = () => (
     <>
@@ -629,6 +725,64 @@ export function DocumentUpload({
             disabled={state.isUploading}
           />
         </div>
+
+        {/* Web URL Input Section - inline style like the reference image */}
+        {onWebAdd && (
+          <div className="mt-4 border border-dashed border-border rounded-lg bg-surface/50">
+            <div className="p-6 flex flex-col items-center justify-center min-h-[120px]">
+              <p className="text-text-primary font-medium text-sm mb-4">
+                {t('document.upload.web.orAddWebPage')}
+              </p>
+              <div className="flex items-center gap-2 w-full max-w-xl">
+                <div className="relative flex-1">
+                  <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+                  <Input
+                    placeholder={t('document.upload.web.urlPlaceholder')}
+                    value={webUrl}
+                    onChange={e => {
+                      setWebUrl(e.target.value)
+                      if (webError) setWebError(null)
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && webUrl.trim()) {
+                        handleWebSubmit()
+                      }
+                    }}
+                    className="h-10 pl-9 pr-4"
+                    disabled={webSubmitting || state.isUploading}
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-10 w-10 shrink-0"
+                  onClick={handleWebSubmit}
+                  disabled={!webUrl.trim() || webSubmitting || state.isUploading}
+                >
+                  {webSubmitting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Link className="w-4 h-4" />
+                  )}
+                </Button>
+              </div>
+              {/* Web error message */}
+              {webError && (
+                <div className="flex items-center gap-2 mt-3 p-2 bg-error/10 text-error rounded-lg text-xs w-full max-w-xl">
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span>{webError}</span>
+                </div>
+              )}
+              {/* Fetching status */}
+              {webFetching && (
+                <div className="flex items-center gap-2 mt-3 p-2 bg-primary/10 text-primary rounded-lg text-xs w-full max-w-xl">
+                  <Loader2 className="w-3.5 h-3.5 flex-shrink-0 animate-spin" />
+                  <span>{t('document.upload.web.fetching')}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Validation Error */}
         {validationError && (
@@ -808,6 +962,25 @@ export function DocumentUpload({
             )}
           </div>
         )}
+
+        {/* Notebook mode document limit progress bar - at the bottom */}
+        {isNotebookMode && (
+          <div className="mt-4 space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-text-secondary">{t('document.upload.documentCount')}</span>
+              <span className={cn('font-medium', isAtLimit ? 'text-error' : 'text-text-primary')}>
+                {totalDocumentCount}/{NOTEBOOK_MAX_DOCUMENTS}
+              </span>
+            </div>
+            <Progress
+              value={(totalDocumentCount / NOTEBOOK_MAX_DOCUMENTS) * 100}
+              className={cn('h-2', isAtLimit && '[&>div]:bg-error')}
+            />
+            {isAtLimit && (
+              <p className="text-xs text-error">{t('document.upload.notebookLimitReached')}</p>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex justify-end gap-2">
@@ -966,6 +1139,97 @@ export function DocumentUpload({
     </>
   )
 
+  // Render web page mode
+  const renderWebMode = () => (
+    <>
+      <DialogHeader className="flex flex-row items-center gap-2 space-y-0">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          onClick={handleBackFromWebMode}
+        >
+          <ArrowLeft className="w-4 h-4" />
+        </Button>
+        <DialogTitle>{t('document.upload.web.addWebPage')}</DialogTitle>
+      </DialogHeader>
+
+      <div className="py-4 space-y-4">
+        {/* Hint text */}
+        <p className="text-sm text-text-secondary">{t('document.upload.web.hint')}</p>
+
+        {/* URL input */}
+        <div className="space-y-2">
+          <Label htmlFor="web-url" className="text-sm font-medium">
+            {t('document.upload.web.urlLabel')}
+          </Label>
+          <Input
+            id="web-url"
+            placeholder={t('document.upload.web.urlPlaceholder')}
+            value={webUrl}
+            onChange={e => {
+              setWebUrl(e.target.value)
+              if (webError) setWebError(null)
+            }}
+            className="h-9"
+            disabled={webSubmitting}
+          />
+        </div>
+
+        {/* Document name input (optional) */}
+        <div className="space-y-2">
+          <Label htmlFor="web-name" className="text-sm font-medium">
+            {t('document.upload.web.nameLabel')}
+          </Label>
+          <Input
+            id="web-name"
+            placeholder={t('document.upload.web.namePlaceholder')}
+            value={webName}
+            onChange={e => setWebName(e.target.value)}
+            className="h-9"
+            disabled={webSubmitting}
+          />
+        </div>
+
+        {/* Fetching status */}
+        {webFetching && (
+          <div className="flex items-center gap-2 p-3 bg-primary/10 text-primary rounded-lg text-sm">
+            <Loader2 className="w-4 h-4 flex-shrink-0 animate-spin" />
+            <span>{t('document.upload.web.fetching')}</span>
+          </div>
+        )}
+
+        {/* Error message */}
+        {webError && (
+          <div className="flex items-center gap-2 p-3 bg-error/10 text-error rounded-lg text-sm">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span>{webError}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={handleBackFromWebMode} disabled={webSubmitting}>
+          {t('common:actions.cancel')}
+        </Button>
+        <Button
+          variant="primary"
+          onClick={handleWebSubmit}
+          disabled={!webUrl.trim() || webSubmitting}
+        >
+          {webSubmitting ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              {webFetching ? t('document.upload.web.fetching') : t('document.upload.adding')}
+            </>
+          ) : (
+            t('document.upload.web.submitButton')
+          )}
+        </Button>
+      </div>
+    </>
+  )
+
   // Render mode selector
   const renderContent = () => {
     switch (uploadMode) {
@@ -973,6 +1237,8 @@ export function DocumentUpload({
         return renderTextMode()
       case 'table':
         return renderTableMode()
+      case 'web':
+        return renderWebMode()
       default:
         return renderFileMode()
     }

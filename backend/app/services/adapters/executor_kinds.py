@@ -10,6 +10,14 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import HTTPException
+from shared.telemetry.context import (
+    SpanAttributes,
+    set_task_context,
+    set_user_context,
+)
+
+# Import telemetry utilities
+from shared.telemetry.core import get_tracer, is_telemetry_enabled
 from shared.utils.crypto import decrypt_api_key
 from sqlalchemy import and_, func, text
 from sqlalchemy.orm import Session, selectinload
@@ -27,6 +35,61 @@ from app.services.context import context_service
 from app.services.webhook_notification import Notification, webhook_notification_service
 
 logger = logging.getLogger(__name__)
+
+
+def _get_thinking_details_type(step: Dict[str, Any]) -> Optional[str]:
+    """Get the details.type from a thinking step."""
+    details = step.get("details")
+    if isinstance(details, dict):
+        return details.get("type")
+    return None
+
+
+def merge_thinking_steps(thinking_steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Merge adjacent thinking steps that have the same title, next_action, and details.type.
+
+    This reduces the size of thinking data by combining consecutive steps of the same type,
+    particularly useful for reasoning content that comes in token-by-token.
+    """
+    if not thinking_steps:
+        return []
+
+    merged: List[Dict[str, Any]] = []
+
+    def copy_step(step: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a deep copy of a step to avoid mutating the original."""
+        copied = {**step}
+        if "details" in copied and isinstance(copied["details"], dict):
+            copied["details"] = {**copied["details"]}
+        return copied
+
+    for step in thinking_steps:
+        if not merged:
+            merged.append(copy_step(step))
+            continue
+
+        last = merged[-1]
+        current_details_type = _get_thinking_details_type(step)
+        last_details_type = _get_thinking_details_type(last)
+
+        can_merge = (
+            step.get("title") == last.get("title")
+            and step.get("next_action") == last.get("next_action")
+            and current_details_type == last_details_type
+            and current_details_type is not None
+        )
+
+        if can_merge:
+            last_content = last.get("details", {}).get("content", "")
+            new_content = step.get("details", {}).get("content", "")
+            if "details" not in last:
+                last["details"] = {}
+            last["details"]["content"] = last_content + new_content
+        else:
+            merged.append(copy_step(step))
+
+    return merged
 
 
 class ExecutorKindsService(
@@ -1152,7 +1215,78 @@ class ExecutorKindsService(
         logger.info(
             f"dispatch subtasks response count={len(formatted_subtasks)} ids={subtask_ids}"
         )
+
+        # Start a new trace for each dispatched task
+        # This creates a root span for the task execution lifecycle
+        self._start_dispatch_traces(formatted_subtasks)
+
         return {"tasks": formatted_subtasks}
+
+    def _start_dispatch_traces(self, formatted_subtasks: List[Dict]) -> None:
+        """
+        Start a new trace for each dispatched task.
+
+        This method creates a root span for each task being dispatched to executor.
+        The trace context is added to the task data so executor can continue the trace.
+
+        Args:
+            formatted_subtasks: List of formatted subtask dictionaries
+        """
+        if not is_telemetry_enabled():
+            return
+
+        if not formatted_subtasks:
+            return
+
+        try:
+            from opentelemetry import trace
+            from shared.telemetry.context import get_trace_context_for_propagation
+
+            tracer = get_tracer("backend.dispatch")
+
+            for task_data in formatted_subtasks:
+                task_id = task_data.get("task_id")
+                subtask_id = task_data.get("subtask_id")
+                user_data = task_data.get("user", {})
+                user_id = user_data.get("id") if user_data else None
+                user_name = user_data.get("name") if user_data else None
+                task_title = task_data.get("task_title", "")
+
+                # Create a new root span for the task dispatch
+                # Use PRODUCER kind to indicate this starts a new trace for async processing
+                with tracer.start_as_current_span(
+                    name="task.dispatch",
+                    kind=trace.SpanKind.PRODUCER,
+                ) as span:
+                    # Set task and user context attributes
+                    span.set_attribute(SpanAttributes.TASK_ID, task_id)
+                    span.set_attribute(SpanAttributes.SUBTASK_ID, subtask_id)
+                    if user_id:
+                        span.set_attribute(SpanAttributes.USER_ID, str(user_id))
+                    if user_name:
+                        span.set_attribute(SpanAttributes.USER_NAME, user_name)
+                    span.set_attribute("task.title", task_title)
+                    span.set_attribute("dispatch.type", "executor")
+
+                    # Get bot info for tracing
+                    bots = task_data.get("bot", [])
+                    if bots:
+                        bot_names = [b.get("name", "") for b in bots]
+                        shell_types = [b.get("shell_type", "") for b in bots]
+                        span.set_attribute("bot.names", ",".join(bot_names))
+                        span.set_attribute("shell.types", ",".join(shell_types))
+
+                    # Extract trace context for propagation to executor
+                    trace_context = get_trace_context_for_propagation()
+                    if trace_context:
+                        # Add trace context to task data for executor to continue the trace
+                        task_data["trace_context"] = trace_context
+                        logger.debug(
+                            f"Added trace context to task {task_id}: traceparent={trace_context.get('traceparent', 'N/A')}"
+                        )
+
+        except Exception as e:
+            logger.warning(f"Failed to start dispatch traces: {e}")
 
     async def update_subtask(
         self, db: Session, *, subtask_update: SubtaskExecutorUpdate
@@ -1190,14 +1324,15 @@ class ExecutorKindsService(
                 if isinstance(new_value, str):
                     new_content = new_value
 
-        # CRITICAL FIX: If executor sends empty value but we have previous content,
-        # keep the previous content in the update to prevent data loss
-        # This happens when executor temporarily clears value between thinking steps
-        if not new_content and previous_content:
-            # Keep previous content by updating the result dict
-            if subtask_update.result and isinstance(subtask_update.result, dict):
-                subtask_update.result["value"] = previous_content
-                new_content = previous_content
+            # CRITICAL FIX: If executor sends empty value but we have previous content,
+            # keep the previous content in the update to prevent data loss
+            # This happens when executor temporarily clears value between thinking steps
+            # NOTE: Only apply this fix during RUNNING status, not COMPLETED
+            if not new_content and previous_content:
+                # Keep previous content by updating the result dict
+                if subtask_update.result and isinstance(subtask_update.result, dict):
+                    subtask_update.result["value"] = previous_content
+                    new_content = previous_content
 
         # Update subtask title (if provided)
         if subtask_update.subtask_title:
@@ -1221,6 +1356,14 @@ class ExecutorKindsService(
                 task.updated_at = datetime.now()
                 flag_modified(task, "json")
                 db.add(task)
+
+        # Merge thinking steps before saving to DB to reduce storage size
+        # This combines adjacent thinking steps with same title/next_action/details.type
+        if subtask_update.result and isinstance(subtask_update.result, dict):
+            raw_thinking = subtask_update.result.get("thinking", [])
+            if isinstance(raw_thinking, list) and raw_thinking:
+                merged_thinking = merge_thinking_steps(raw_thinking)
+                subtask_update.result["thinking"] = merged_thinking
 
         # Update other subtask fields
         update_data = subtask_update.model_dump(

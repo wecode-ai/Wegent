@@ -321,6 +321,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         Includes tasks owned by user AND tasks user is a member of (group chats).
         """
         # Use raw SQL to get task IDs where user is owner OR member
+        # Exclude system namespace tasks (background tasks)
         count_sql = text(
             """
             SELECT COUNT(DISTINCT k.id)
@@ -328,12 +329,14 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
+            AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
         """
         )
         total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
         # Get task IDs sorted by created_at
+        # Exclude system namespace tasks (background tasks)
         ids_sql = text(
             """
             SELECT DISTINCT k.id, k.created_at
@@ -341,6 +344,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
+            AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             ORDER BY k.created_at DESC
             LIMIT :limit OFFSET :skip
@@ -359,11 +363,15 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         # Filter out DELETE status tasks in application layer and restore order
         # Also filter out Flow tasks that user hasn't interacted with (type='flow' and userInteracted='false')
+        # Also filter out background tasks (source=background_executor)
         id_to_task = {}
         for t in tasks:
             task_crd = Task.model_validate(t.json)
             status = task_crd.status.status if task_crd.status else "PENDING"
             if status == "DELETE":
+                continue
+            # Filter out background tasks
+            if self._is_background_task(task_crd):
                 continue
             # Filter out non-interacted Flow tasks
             labels = task_crd.metadata.labels or {}
@@ -412,6 +420,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         """
         # Get task IDs where user is owner OR member
         # Use raw SQL with UNION for efficiency
+        # Exclude system namespace tasks (background tasks)
         count_sql = text(
             """
             SELECT COUNT(DISTINCT k.id)
@@ -419,12 +428,14 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
+            AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
         """
         )
         total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
         # Get task IDs sorted by created_at, including both owned and member tasks
+        # Exclude system namespace tasks (background tasks)
         ids_sql = text(
             """
             SELECT DISTINCT k.id, k.created_at
@@ -432,6 +443,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
+            AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             ORDER BY k.created_at DESC
             LIMIT :limit OFFSET :skip
@@ -450,11 +462,15 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         # Filter out DELETE status tasks in application layer and restore order
         # Also filter out Flow tasks that user hasn't interacted with (type='flow' and userInteracted='false')
+        # Also filter out background tasks (source=background_executor)
         id_to_task = {}
         for t in tasks:
             task_crd = Task.model_validate(t.json)
             status = task_crd.status.status if task_crd.status else "PENDING"
             if status == "DELETE":
+                continue
+            # Filter out background tasks
+            if self._is_background_task(task_crd):
                 continue
             # Filter out non-interacted Flow tasks
             labels = task_crd.metadata.labels or {}
@@ -606,6 +622,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             if not is_group_chat:
                 is_group_chat = member_counts.get(task.id, 0) > 0
 
+            # Extract knowledge_base_id from knowledgeBaseRefs for knowledge type tasks
+            knowledge_base_id = None
+            if task_type == "knowledge" and task_crd.spec.knowledgeBaseRefs:
+                # Get the first knowledge base reference's id
+                first_kb_ref = task_crd.spec.knowledgeBaseRefs[0]
+                knowledge_base_id = first_kb_ref.id
+
             result.append(
                 {
                     "id": task.id,
@@ -619,6 +642,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "team_id": team_id,
                     "git_repo": git_repo,
                     "is_group_chat": is_group_chat,
+                    "knowledge_base_id": knowledge_base_id,
                 }
             )
 
@@ -638,6 +662,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         # Get all task IDs where user is owner or member
         # First get task IDs that are group chats (have members)
+        # Exclude system namespace tasks (background tasks)
         member_task_ids_sql = text(
             """
             SELECT DISTINCT tm.task_id
@@ -646,6 +671,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             WHERE tm.status = 'ACTIVE'
             AND k.kind = 'Task'
             AND k.is_active = true
+            AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.user_id = :user_id)
         """
         )
@@ -655,6 +681,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         member_task_ids = {row[0] for row in member_task_ids_result}
 
         # Also get tasks where is_group_chat is explicitly set to true in JSON
+        # Exclude system namespace tasks (background tasks)
         explicit_group_sql = text(
             """
             SELECT DISTINCT k.id
@@ -662,6 +689,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
+            AND k.namespace != 'system'
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
         """
@@ -731,6 +759,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         from app.models.task_member import MemberStatus, TaskMember
 
         # Get all task IDs that are group chats (have members)
+        # Exclude system namespace tasks (background tasks)
         member_task_ids_sql = text(
             """
             SELECT DISTINCT tm.task_id
@@ -739,18 +768,21 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             WHERE tm.status = 'ACTIVE'
             AND k.kind = 'Task'
             AND k.is_active = true
+            AND k.namespace != 'system'
         """
         )
         member_task_ids_result = db.execute(member_task_ids_sql).fetchall()
         member_task_ids = {row[0] for row in member_task_ids_result}
 
         # Also get task IDs where is_group_chat is explicitly set to true
+        # Exclude system namespace tasks (background tasks)
         explicit_group_sql = text(
             """
             SELECT DISTINCT k.id
             FROM tasks k
             WHERE k.kind = 'Task'
             AND k.is_active = true
+            AND k.namespace != 'system'
             AND k.user_id = :user_id
             AND JSON_EXTRACT(k.json, '$.spec.is_group_chat') = true
         """
@@ -764,24 +796,28 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         all_group_task_ids = member_task_ids | explicit_group_ids
 
         # Get user's owned tasks (not group chats)
+        # Exclude system namespace tasks (background tasks)
         count_sql = text(
             """
             SELECT COUNT(*)
             FROM tasks k
             WHERE k.kind = 'Task'
             AND k.is_active = true
+            AND k.namespace != 'system'
             AND k.user_id = :user_id
         """
         )
         total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
         # Get task IDs sorted by created_at, excluding group chats
+        # Exclude system namespace tasks (background tasks)
         ids_sql = text(
             """
             SELECT k.id, k.created_at
             FROM tasks k
             WHERE k.kind = 'Task'
             AND k.is_active = true
+            AND k.namespace != 'system'
             AND k.user_id = :user_id
             ORDER BY k.created_at DESC
             LIMIT :limit OFFSET :skip
@@ -999,6 +1035,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             if not is_group_chat:
                 is_group_chat = member_counts.get(task.id, 0) > 0
 
+            # Extract knowledge_base_id from knowledgeBaseRefs for knowledge type tasks
+            knowledge_base_id = None
+            if task_type == "knowledge" and task_crd.spec.knowledgeBaseRefs:
+                # Get the first knowledge base reference's id
+                first_kb_ref = task_crd.spec.knowledgeBaseRefs[0]
+                knowledge_base_id = first_kb_ref.id
+
             result.append(
                 {
                     "id": task.id,
@@ -1012,6 +1055,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "team_id": team_id,
                     "git_repo": git_repo,
                     "is_group_chat": is_group_chat,
+                    "knowledge_base_id": knowledge_base_id,
                 }
             )
 
@@ -1026,6 +1070,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         Includes tasks owned by user AND tasks user is a member of (group chats).
         """
         # Get task IDs where user is owner OR member, with ID > since_id
+        # Exclude system namespace tasks (background tasks)
         ids_sql = text(
             """
             SELECT DISTINCT k.id, k.created_at
@@ -1033,6 +1078,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
             WHERE k.kind = 'Task'
             AND k.is_active = true
+            AND k.namespace != 'system'
             AND k.id > :since_id
             AND (k.user_id = :user_id OR tm.id IS NOT NULL)
             ORDER BY k.id DESC
@@ -1200,6 +1246,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             if not is_group_chat:
                 is_group_chat = member_counts.get(task.id, 0) > 0
 
+            # Extract knowledge_base_id from knowledgeBaseRefs for knowledge type tasks
+            knowledge_base_id = None
+            if task_type == "knowledge" and task_crd.spec.knowledgeBaseRefs:
+                # Get the first knowledge base reference's id
+                first_kb_ref = task_crd.spec.knowledgeBaseRefs[0]
+                knowledge_base_id = first_kb_ref.id
+
             result.append(
                 {
                     "id": task.id,
@@ -1213,6 +1266,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "team_id": team_id,
                     "git_repo": git_repo,
                     "is_group_chat": is_group_chat,
+                    "knowledge_base_id": knowledge_base_id,
                 }
             )
 
@@ -1227,23 +1281,27 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         Title matching and DELETE status filtering are done in application layer.
         """
         # Use raw SQL to get task IDs without JSON_EXTRACT in WHERE clause
+        # Exclude system namespace tasks (background tasks)
         count_sql = text(
             """
             SELECT COUNT(*) FROM tasks
             WHERE user_id = :user_id
             AND kind = 'Task'
             AND is_active = true
+            AND namespace != 'system'
         """
         )
         total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
         # Get task IDs sorted by created_at (fetch more to account for filtering)
+        # Exclude system namespace tasks (background tasks)
         ids_sql = text(
             """
             SELECT id FROM tasks
             WHERE user_id = :user_id
             AND kind = 'Task'
             AND is_active = true
+            AND namespace != 'system'
             ORDER BY created_at DESC
             LIMIT :limit OFFSET :skip
         """
@@ -2350,6 +2408,16 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             else False
         )
 
+        # Extract app from task status
+        app_data = None
+        if task_crd.status and task_crd.status.app:
+            app_data = task_crd.status.app.model_dump()
+            logger.info(f"[_convert_to_task_dict] Found app data: {app_data}")
+        else:
+            logger.info(
+                f"[_convert_to_task_dict] No app data found. status={task_crd.status}, app={task_crd.status.app if task_crd.status else 'N/A'}"
+            )
+
         return {
             "id": task.id,
             "type": type,
@@ -2373,6 +2441,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             "completed_at": completed_at,
             "model_id": model_id,
             "is_group_chat": is_group_chat,  # Add is_group_chat field
+            "app": app_data,  # App preview info
         }
 
     def _convert_team_to_dict(
@@ -2813,6 +2882,28 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         return result
 
+    def _is_background_task(self, task_crd: Task) -> bool:
+        """
+        Check if a task is a background task that should be hidden from user task lists.
+
+        Background tasks include:
+        - Summary generation tasks (taskType=summary)
+        - Tasks created by background_executor (source=background_executor)
+        """
+        try:
+            labels = task_crd.metadata.labels
+            if not labels:
+                return False
+
+            # Check for background task indicators
+            return (
+                labels.get("taskType") == "summary"
+                or labels.get("source") == "background_executor"
+                or labels.get("type") == "background"
+            )
+        except Exception:
+            return False
+
     def _convert_to_task_dict_optimized(
         self, task: Kind, related_data: Dict[str, Any], task_crd: Task
     ) -> Dict[str, Any]:
@@ -2855,6 +2946,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             "updated_at": related_data.get("updated_at", task.updated_at),
             "completed_at": related_data.get("completed_at"),
             "is_group_chat": related_data.get("is_group_chat", False),
+            "app": (
+                task_crd.status.app.model_dump()
+                if task_crd.status and task_crd.status.app
+                else None
+            ),
         }
 
 

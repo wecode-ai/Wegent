@@ -24,7 +24,7 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import { taskApis } from '@/apis/tasks'
 import type { TaskDetail, TaskDetailSubtask } from '@/types/api'
 import { cn } from '@/lib/utils'
-import MarkdownWithMermaid from '@/components/common/MarkdownWithMermaid'
+import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 
 interface FlowConversationDialogProps {
   taskId: number | null
@@ -79,7 +79,7 @@ function ConversationMessage({
             <div className="whitespace-pre-wrap text-sm text-left">{content}</div>
           ) : (
             <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
-              <MarkdownWithMermaid source={content as string} theme={theme} />
+              <EnhancedMarkdown source={content as string} theme={theme} />
             </div>
           )}
         </div>

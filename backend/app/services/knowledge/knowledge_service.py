@@ -6,6 +6,7 @@
 Knowledge base and document service using kinds table.
 """
 
+from dataclasses import dataclass
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -36,6 +37,29 @@ from app.services.group_permission import (
     get_effective_role_in_group,
     get_user_groups,
 )
+
+
+@dataclass
+class DocumentDeleteResult:
+    """Result of a document deletion operation.
+
+    Contains information needed to trigger KB summary updates after deletion.
+    """
+
+    success: bool
+    kb_id: Optional[int] = None
+
+
+@dataclass
+class BatchDeleteResult:
+    """Result of a batch document deletion operation.
+
+    Contains the standard batch operation result plus additional info
+    for triggering KB summary updates.
+    """
+
+    result: BatchOperationResult
+    kb_ids: list[int]  # Unique KB IDs from successfully deleted documents
 
 
 class KnowledgeService:
@@ -118,6 +142,18 @@ class KnowledgeService:
                 )
 
         # Build CRD structure
+        spec_kwargs = {
+            "name": data.name,
+            "description": data.description or "",
+            "kbType": data.kb_type
+            or "notebook",  # Default to 'notebook' if not provided
+            "retrievalConfig": data.retrieval_config,
+            "summaryEnabled": data.summary_enabled,
+        }
+        # Add summaryModelRef if provided
+        if data.summary_model_ref:
+            spec_kwargs["summaryModelRef"] = data.summary_model_ref
+
         kb_crd = KnowledgeBaseCRD(
             apiVersion="agent.wecode.io/v1",
             kind="KnowledgeBase",
@@ -125,11 +161,7 @@ class KnowledgeService:
                 name=kb_name,
                 namespace=data.namespace,
             ),
-            spec=KnowledgeBaseSpec(
-                name=data.name,
-                description=data.description or "",
-                retrievalConfig=data.retrieval_config,
-            ),
+            spec=KnowledgeBaseSpec(**spec_kwargs),
         )
 
         # Build resource data
@@ -363,6 +395,15 @@ class KnowledgeService:
                     )
                 spec["retrievalConfig"] = current_retrieval_config
 
+        # Update summary_enabled if provided
+        if data.summary_enabled is not None:
+            spec["summaryEnabled"] = data.summary_enabled
+
+        # Update summary_model_ref if explicitly provided (including null to clear)
+        # Use model_fields_set to detect if the field was explicitly passed
+        if "summary_model_ref" in data.model_fields_set:
+            spec["summaryModelRef"] = data.summary_model_ref
+
         kb_json["spec"] = spec
         kb.json = kb_json
         # Mark JSON field as modified so SQLAlchemy detects the change
@@ -504,6 +545,9 @@ class KnowledgeService:
 
     # ============== Knowledge Document Operations ==============
 
+    # Maximum number of documents allowed in notebook mode knowledge base
+    NOTEBOOK_MAX_DOCUMENTS = 50
+
     @staticmethod
     def create_document(
         db: Session,
@@ -537,6 +581,17 @@ class KnowledgeService:
             ):
                 raise ValueError(
                     "Only Owner or Maintainer can add documents to this knowledge base"
+                )
+
+        # Check document limit for notebook mode knowledge base
+        kb_spec = kb.json.get("spec", {})
+        kb_type = kb_spec.get("kbType", "notebook")
+        if kb_type == "notebook":
+            current_count = KnowledgeService.get_document_count(db, knowledge_base_id)
+            if current_count >= KnowledgeService.NOTEBOOK_MAX_DOCUMENTS:
+                raise ValueError(
+                    f"Notebook mode knowledge base can have at most {KnowledgeService.NOTEBOOK_MAX_DOCUMENTS} documents. "
+                    f"Current count: {current_count}"
                 )
 
         document = KnowledgeDocument(
@@ -682,7 +737,7 @@ class KnowledgeService:
         db: Session,
         document_id: int,
         user_id: int,
-    ) -> bool:
+    ) -> DocumentDeleteResult:
         """
         Physically delete a document, its RAG index, and associated attachment.
 
@@ -692,7 +747,7 @@ class KnowledgeService:
             user_id: Requesting user ID
 
         Returns:
-            True if deleted, False if not found
+            DocumentDeleteResult with success status and kb_id for summary updates
 
         Raises:
             ValueError: If permission denied
@@ -727,7 +782,7 @@ class KnowledgeService:
 
         doc = KnowledgeService.get_document(db, document_id, user_id)
         if not doc:
-            return False
+            return DocumentDeleteResult(success=False, kb_id=None)
 
         # Check permission for team knowledge base
         kb = (
@@ -837,7 +892,7 @@ class KnowledgeService:
                     exc_info=True,
                 )
 
-        return True
+        return DocumentDeleteResult(success=True, kb_id=kind_id)
 
     # ============== Accessible Knowledge Query ==============
 
@@ -873,7 +928,8 @@ class KnowledgeService:
             AccessibleKnowledgeBase(
                 id=kb.id,
                 name=kb.json.get("spec", {}).get("name", ""),
-                description=kb.json.get("spec", {}).get("description"),
+                description=kb.json.get("spec", {}).get("description")
+                or None,  # Convert empty string to None
                 document_count=KnowledgeService.get_active_document_count(db, kb.id),
                 updated_at=kb.updated_at,
             )
@@ -917,7 +973,8 @@ class KnowledgeService:
                             AccessibleKnowledgeBase(
                                 id=kb.id,
                                 name=kb.json.get("spec", {}).get("name", ""),
-                                description=kb.json.get("spec", {}).get("description"),
+                                description=kb.json.get("spec", {}).get("description")
+                                or None,  # Convert empty string to None
                                 document_count=KnowledgeService.get_active_document_count(
                                     db, kb.id
                                 ),
@@ -974,7 +1031,7 @@ class KnowledgeService:
         db: Session,
         document_ids: list[int],
         user_id: int,
-    ) -> BatchOperationResult:
+    ) -> BatchDeleteResult:
         """
         Batch delete multiple documents.
 
@@ -984,26 +1041,34 @@ class KnowledgeService:
             user_id: Requesting user ID
 
         Returns:
-            BatchOperationResult with success/failure counts
+            BatchDeleteResult with operation result and KB IDs for summary updates
         """
         success_count = 0
         failed_ids = []
+        kb_ids = set()  # Collect unique KB IDs from deleted documents
 
         for doc_id in document_ids:
             try:
-                deleted = KnowledgeService.delete_document(db, doc_id, user_id)
-                if deleted:
+                result = KnowledgeService.delete_document(db, doc_id, user_id)
+                if result.success:
                     success_count += 1
+                    if result.kb_id is not None:
+                        kb_ids.add(result.kb_id)
                 else:
                     failed_ids.append(doc_id)
             except (ValueError, Exception):
                 failed_ids.append(doc_id)
 
-        return BatchOperationResult(
+        operation_result = BatchOperationResult(
             success_count=success_count,
             failed_count=len(failed_ids),
             failed_ids=failed_ids,
             message=f"Successfully deleted {success_count} documents, {len(failed_ids)} failed",
+        )
+
+        return BatchDeleteResult(
+            result=operation_result,
+            kb_ids=list(kb_ids),
         )
 
     @staticmethod

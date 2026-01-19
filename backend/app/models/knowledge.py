@@ -45,6 +45,7 @@ class DocumentSourceType(str, PyEnum):
     FILE = "file"  # Uploaded file
     TEXT = "text"  # Pasted text
     TABLE = "table"  # External table (DingTalk, Feishu, etc.)
+    WEB = "web"  # Web page (scraped URL)
 
 
 class KnowledgeDocument(Base):
@@ -87,6 +88,7 @@ class KnowledgeDocument(Base):
     source_config = Column(
         JSON, nullable=False, default={}
     )  # Source configuration (e.g., {"url": "..."} for table)
+    summary = Column(JSON, nullable=True)  # Document summary information (JSON)
     created_at = Column(DateTime, nullable=False, default=func.now())
     updated_at = Column(
         DateTime, nullable=False, default=func.now(), onupdate=func.now()

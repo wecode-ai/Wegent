@@ -16,7 +16,7 @@ import {
 import { Loader2 } from 'lucide-react'
 
 import { Bot, Team } from '@/types/api'
-import { TeamMode, getFilteredBotsForMode, AgentType } from './team-modes'
+import { TeamMode, getFilteredBotsForMode, AgentType, getActualShellType } from './team-modes'
 import { createTeam, updateTeam } from '../services/teams'
 import TeamEditDrawer from './TeamEditDrawer'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -70,7 +70,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [mode, setMode] = useState<TeamMode>('solo')
-  const [bindMode, setBindMode] = useState<('chat' | 'code')[]>(['chat', 'code'])
+  const [bindMode, setBindMode] = useState<('chat' | 'code' | 'knowledge')[]>(['chat', 'code'])
   const [icon, setIcon] = useState<string | null>(null)
 
   // Bot selection state
@@ -129,7 +129,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       solo: null,
       pipeline: ['ClaudeCode', 'Agno'],
       route: ['Agno'],
-      coordinate: ['Agno'],
+      coordinate: ['Agno', 'ClaudeCode'],
       collaborate: ['Agno'],
     }
     const allowed = MODE_AGENT_FILTER[mode]
@@ -273,16 +273,41 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     return leader?.shell_type === 'Dify'
   }, [leaderBotId, filteredBots])
 
+  // Build shell map for looking up actual shell types
+  const shellMap = useMemo(() => {
+    const map = new Map<string, UnifiedShell>()
+    shells.forEach(shell => map.set(shell.name, shell))
+    return map
+  }, [shells])
+
   // Leader change handler
   const onLeaderChange = (botId: number) => {
+    // If new Leader is in selected members, remove it first
     if (selectedBotKeys.some(k => Number(k) === botId)) {
       setSelectedBotKeys(prev => prev.filter(k => Number(k) !== botId))
     }
 
     const newLeader = filteredBots.find((b: Bot) => b.id === botId)
+
+    // Dify Leader does not support members
     if (newLeader?.shell_type === 'Dify') {
       setSelectedBotKeys([])
+      setLeaderBotId(botId)
+      return
     }
+
+    // Get the new Leader's actual shell type
+    const newLeaderShellType = getActualShellType(newLeader?.shell_type || '', shellMap)
+
+    // Clear all selected members that are incompatible with the new Leader type
+    setSelectedBotKeys(prev =>
+      prev.filter(key => {
+        const bot = bots.find(b => b.id === Number(key))
+        if (!bot) return false
+        const botShellType = getActualShellType(bot.shell_type, shellMap)
+        return botShellType === newLeaderShellType
+      })
+    )
 
     setLeaderBotId(botId)
   }
@@ -528,6 +553,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             <TeamModeEditor
               mode={mode}
               filteredBots={filteredBots}
+              shells={shells}
               setBots={setBots}
               selectedBotKeys={selectedBotKeys}
               setSelectedBotKeys={setSelectedBotKeys}

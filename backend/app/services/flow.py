@@ -5,7 +5,6 @@
 """
 AI Flow service layer for managing Flow configurations and executions.
 """
-import asyncio
 import json
 import logging
 import re
@@ -1525,8 +1524,8 @@ class FlowService:
         """
         Emit flow:execution_update WebSocket event to notify frontend.
 
-        This method handles async WebSocket emission from a synchronous context
-        by using asyncio.run_coroutine_threadsafe with the main event loop.
+        Uses sync Redis publish to Socket.IO's internal channel to avoid
+        asyncio event loop conflicts in Celery workers.
 
         Args:
             db: Database session
@@ -1560,102 +1559,68 @@ class FlowService:
         except Exception as e:
             logger.warning(f"Failed to get flow details for WS event: {e}")
 
-        async def emit_async():
-            try:
-                from app.services.chat.ws_emitter import get_ws_emitter
+        # Build payload
+        payload = {
+            "execution_id": execution.id,
+            "flow_id": execution.flow_id,
+            "status": status.value,
+            "task_id": execution.task_id,
+            "prompt": execution.prompt,
+            "result_summary": result_summary or execution.result_summary,
+            "error_message": error_message or execution.error_message,
+            "trigger_reason": execution.trigger_reason,
+            "created_at": (
+                execution.created_at.isoformat() if execution.created_at else None
+            ),
+            "updated_at": (
+                execution.updated_at.isoformat() if execution.updated_at else None
+            ),
+        }
 
-                ws_emitter = get_ws_emitter()
-                logger.debug(
-                    f"[WS] emit_async called for execution={execution.id}, ws_emitter={'exists' if ws_emitter else 'None'}"
-                )
-                if ws_emitter:
-                    await ws_emitter.emit_flow_execution_update(
-                        user_id=execution.user_id,
-                        execution_id=execution.id,
-                        flow_id=execution.flow_id,
-                        status=status.value,
-                        flow_name=flow_name,
-                        flow_display_name=flow_display_name,
-                        team_name=team_name,
-                        task_id=execution.task_id,
-                        task_type=task_type,
-                        prompt=execution.prompt,
-                        result_summary=result_summary or execution.result_summary,
-                        error_message=error_message or execution.error_message,
-                        trigger_reason=execution.trigger_reason,
-                        created_at=(
-                            execution.created_at.isoformat()
-                            if execution.created_at
-                            else None
-                        ),
-                        updated_at=(
-                            execution.updated_at.isoformat()
-                            if execution.updated_at
-                            else None
-                        ),
-                    )
-                    logger.debug(
-                        f"[WS] Successfully emitted flow:execution_update for execution={execution.id} status={status.value} user_id={execution.user_id}"
-                    )
-                else:
-                    logger.warning(
-                        f"[WS] ws_emitter is None, cannot emit flow:execution_update for execution={execution.id}"
-                    )
-            except Exception as e:
-                logger.error(
-                    f"[WS] Failed to emit flow:execution_update event: {e}",
-                    exc_info=True,
-                )
+        # Add optional fields
+        if flow_name:
+            payload["flow_name"] = flow_name
+        if flow_display_name:
+            payload["flow_display_name"] = flow_display_name
+        if team_name:
+            payload["team_name"] = team_name
+        if task_type:
+            payload["task_type"] = task_type
 
-        # Schedule async execution
+        # Publish to Socket.IO via sync Redis (works in Celery workers)
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(emit_async())
-            logger.debug(
-                f"[WS] Scheduled flow:execution_update event via loop.create_task for execution={execution.id}"
-            )
-        except RuntimeError:
-            # No running event loop in current thread
-            # Try to use the main event loop reference from ws_emitter
-            logger.debug(
-                f"[WS] No running event loop in current thread, trying main event loop for execution={execution.id}"
-            )
-            try:
-                from app.services.chat.ws_emitter import get_main_event_loop
+            import redis
 
-                main_loop = get_main_event_loop()
-                logger.debug(
-                    f"[WS] main_loop={'exists' if main_loop else 'None'}, is_running={main_loop.is_running() if main_loop else 'N/A'}"
-                )
-                if main_loop and main_loop.is_running():
-                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
-                    logger.debug(
-                        f"[WS] Scheduled flow:execution_update event via run_coroutine_threadsafe for execution={execution.id}"
-                    )
-                else:
-                    # Fallback: try asyncio.get_event_loop()
-                    try:
-                        loop = asyncio.get_event_loop()
-                        logger.debug(
-                            f"[WS] Fallback loop, is_running={loop.is_running()}"
-                        )
-                        if loop.is_running():
-                            asyncio.run_coroutine_threadsafe(emit_async(), loop)
-                            logger.debug(
-                                f"[WS] Scheduled flow:execution_update event via fallback loop for execution={execution.id}"
-                            )
-                        else:
-                            logger.warning(
-                                f"[WS] No running event loop available, cannot emit flow:execution_update for execution={execution.id}"
-                            )
-                    except RuntimeError:
-                        logger.warning(
-                            f"[WS] No event loop available for flow:execution_update for execution={execution.id}"
-                        )
-            except RuntimeError as e:
-                logger.warning(
-                    f"[WS] Could not emit flow:execution_update event - no event loop available: {e}"
-                )
+            from app.core.config import settings
+
+            # Use sync Redis client to publish to Socket.IO's internal channel
+            redis_client = redis.from_url(settings.REDIS_URL, decode_responses=False)
+
+            # Socket.IO AsyncRedisManager uses this channel format
+            socketio_channel = "socketio"
+
+            # Build Socket.IO internal message format
+            socketio_message = {
+                "method": "emit",
+                "event": "flow:execution_update",
+                "data": [payload],
+                "namespace": "/chat",
+                "room": f"user:{execution.user_id}",
+            }
+
+            # Publish to Redis
+            redis_client.publish(socketio_channel, json.dumps(socketio_message))
+            redis_client.close()
+
+            logger.debug(
+                f"[WS] Published flow:execution_update to Redis for execution={execution.id} "
+                f"status={status.value} user_id={execution.user_id}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[WS] Failed to publish flow:execution_update to Redis: {e}",
+                exc_info=True,
+            )
 
     def _convert_execution_to_dict(self, execution: FlowExecution) -> Dict[str, Any]:
         """Convert FlowExecution to dict."""

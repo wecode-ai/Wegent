@@ -28,42 +28,62 @@ import {
 } from '../utils'
 import { RenderContext, checkNewPage, renderStyledText, renderCodeBlock, renderTable } from './base'
 import { renderMermaidDiagram, isMermaidLanguage } from './mermaid'
+import { renderMathFormula, extractMathBlocks, containsMathFormulas } from './math'
 /**
  * Content part type for parsed message content
  */
 interface ContentPart {
-  type: 'text' | 'code'
+  type: 'text' | 'code' | 'math'
   content: string
   language?: string
+  displayMode?: boolean
 }
 
 /**
- * Parse message content into text and code block parts using regex
+ * Parse message content into text, code block, and math parts using regex
  * This handles cases where code block markers are on the same line as text
  *
  * @param content - Raw message content
- * @returns Array of content parts (text and code blocks)
+ * @returns Array of content parts (text, code blocks, and math blocks)
  */
 function parseMessageContent(content: string): ContentPart[] {
   const parts: ContentPart[] = []
 
+  // First, extract code blocks
   // Regex to match code blocks: ```language\ncontent``` or ```language content```
-  // The language is optional, and the content can span multiple lines
-  // This regex handles cases where ``` is not at the start of a line
   const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g
 
   let lastIndex = 0
   let match: RegExpExecArray | null
 
   while ((match = codeBlockRegex.exec(content)) !== null) {
-    // Add text before this code block
+    // Add text/math content before this code block
     if (match.index > lastIndex) {
       const textBefore = content.substring(lastIndex, match.index)
       if (textBefore.trim()) {
-        parts.push({
-          type: 'text',
-          content: textBefore,
-        })
+        // Check if this text contains math formulas
+        if (containsMathFormulas(textBefore)) {
+          const mathParts = extractMathBlocks(textBefore)
+          for (const mathPart of mathParts) {
+            if (mathPart.type === 'math') {
+              parts.push({
+                type: 'math',
+                content: mathPart.content,
+                displayMode: mathPart.displayMode,
+              })
+            } else if (mathPart.content.trim()) {
+              parts.push({
+                type: 'text',
+                content: mathPart.content,
+              })
+            }
+          }
+        } else {
+          parts.push({
+            type: 'text',
+            content: textBefore,
+          })
+        }
       }
     }
 
@@ -80,23 +100,60 @@ function parseMessageContent(content: string): ContentPart[] {
     lastIndex = match.index + match[0].length
   }
 
-  // Add remaining text after the last code block
+  // Add remaining text/math after the last code block
   if (lastIndex < content.length) {
     const textAfter = content.substring(lastIndex)
     if (textAfter.trim()) {
-      parts.push({
-        type: 'text',
-        content: textAfter,
-      })
+      // Check if remaining text contains math formulas
+      if (containsMathFormulas(textAfter)) {
+        const mathParts = extractMathBlocks(textAfter)
+        for (const mathPart of mathParts) {
+          if (mathPart.type === 'math') {
+            parts.push({
+              type: 'math',
+              content: mathPart.content,
+              displayMode: mathPart.displayMode,
+            })
+          } else if (mathPart.content.trim()) {
+            parts.push({
+              type: 'text',
+              content: mathPart.content,
+            })
+          }
+        }
+      } else {
+        parts.push({
+          type: 'text',
+          content: textAfter,
+        })
+      }
     }
   }
 
-  // If no code blocks found, return the entire content as text
+  // If no parts found, check if entire content has math
   if (parts.length === 0 && content.trim()) {
-    parts.push({
-      type: 'text',
-      content,
-    })
+    if (containsMathFormulas(content)) {
+      const mathParts = extractMathBlocks(content)
+      for (const mathPart of mathParts) {
+        if (mathPart.type === 'math') {
+          parts.push({
+            type: 'math',
+            content: mathPart.content,
+            displayMode: mathPart.displayMode,
+          })
+        } else if (mathPart.content.trim()) {
+          parts.push({
+            type: 'text',
+            content: mathPart.content,
+          })
+        }
+      }
+    } else {
+      parts.push({
+        type: 'text',
+        content,
+      })
+    }
   }
 
   return parts
@@ -571,7 +628,7 @@ function detectMermaidFromContent(content: string): boolean {
 /**
  * Render message content within a chat bubble
  * Uses regex-based parsing to correctly handle code blocks that are inline with text
- * Supports async rendering for mermaid diagrams
+ * Supports async rendering for mermaid diagrams and math formulas
  */
 export async function renderMessageContentInBubble(
   ctx: RenderContext,
@@ -579,7 +636,7 @@ export async function renderMessageContentInBubble(
   startX: number,
   maxWidth: number
 ): Promise<void> {
-  // Parse content into text and code block parts using regex
+  // Parse content into text, code block, and math parts using regex
   const parts = parseMessageContent(content)
 
   // Render each part
@@ -594,6 +651,14 @@ export async function renderMessageContentInBubble(
 
       if (codeContent.trim()) {
         await renderCodeBlockWithMermaidSupport(ctx, codeContent, language, startX, maxWidth)
+      }
+    } else if (part.type === 'math') {
+      // Render math formula
+      const mathContent = part.content
+      const displayMode = part.displayMode || false
+
+      if (mathContent.trim()) {
+        renderMathFormula(ctx, mathContent, startX, maxWidth, displayMode)
       }
     }
   }

@@ -5,7 +5,7 @@
 import json
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -81,13 +81,11 @@ async def delete_git_token(
 @router.post("", response_model=UserInDB, status_code=status.HTTP_201_CREATED)
 def create_user(
     user_create: UserCreate,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_admin_user),
 ):
-    """Create new user"""
-    return user_service.create_user(
-        db=db, obj_in=user_create, background_tasks=background_tasks
-    )
+    """Create new user (admin only)"""
+    return user_service.create_user(db=db, obj_in=user_create)
 
 
 QUICK_ACCESS_CONFIG_KEY = "quick_access_recommended"
@@ -312,6 +310,59 @@ class SearchUsersResponse(BaseModel):
 
     users: list[UserSearchItem]
     total: int
+
+
+# ==================== Default Teams Configuration ====================
+
+
+class DefaultTeamConfig(BaseModel):
+    """Default team configuration for a single mode"""
+
+    name: str
+    namespace: str
+
+
+class DefaultTeamsResponse(BaseModel):
+    """Response model for default teams configuration"""
+
+    chat: Optional[DefaultTeamConfig] = None
+    code: Optional[DefaultTeamConfig] = None
+    knowledge: Optional[DefaultTeamConfig] = None
+
+
+def parse_default_team_config(config_value: str) -> Optional[DefaultTeamConfig]:
+    """Parse default team config from environment variable format 'name#namespace'"""
+    if not config_value or not config_value.strip():
+        return None
+
+    parts = config_value.strip().split("#", 1)
+    name = parts[0].strip()
+    namespace = parts[1].strip() if len(parts) > 1 else "default"
+
+    if not name:
+        return None
+
+    return DefaultTeamConfig(name=name, namespace=namespace)
+
+
+@router.get("/default-teams", response_model=DefaultTeamsResponse)
+async def get_default_teams(
+    _current_user: User = Depends(security.get_current_user),  # noqa: ARG001
+):
+    """
+    Get default team configuration for each mode (chat, code, knowledge).
+    These are system-level configurations from environment variables.
+    """
+    from app.core.config import settings
+
+    return DefaultTeamsResponse(
+        chat=parse_default_team_config(settings.DEFAULT_TEAM_CHAT),
+        code=parse_default_team_config(settings.DEFAULT_TEAM_CODE),
+        knowledge=parse_default_team_config(settings.DEFAULT_TEAM_KNOWLEDGE),
+    )
+
+
+# ==================== User Search ====================
 
 
 @router.get("/search", response_model=SearchUsersResponse)

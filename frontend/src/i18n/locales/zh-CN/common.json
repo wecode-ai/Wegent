@@ -78,7 +78,8 @@
   "user": {
     "default_name": "用户",
     "logout": "退出登录",
-    "login": "登录"
+    "login": "登录",
+    "menu": "用户菜单"
   },
   "chat": {
     "placeholder_chat": "使用智能体进行探索和发现",
@@ -208,6 +209,10 @@
     "more_teams": "查看更多智能体",
     "more_actions": "更多操作",
     "no_teams": "没有可用的智能体",
+    "no_teams_title": "还没有可用的智能体",
+    "no_teams_description": "创建您的第一个智能体，开始智能对话",
+    "create_first_team": "创建智能体",
+    "system_recommended": "系统推荐",
     "new_team": "新建智能体",
     "search_placeholder": "搜索智能体...",
     "no_match": "没有匹配的智能体",
@@ -398,6 +403,9 @@
     "copy_task_id": "复制任务ID",
     "cancel_task": "取消任务",
     "delete_task": "删除任务",
+    "rename_task": "重命名任务",
+    "rename_empty_error": "任务名称不能为空",
+    "rename_save_error": "保存失败，请重试",
     "searching": "搜索中...",
     "refreshing": "同步中...",
     "press_enter_to_search": "按 Enter 键搜索",
@@ -591,6 +599,10 @@
   },
   "correction": {
     "result_title": "纠正结果"
+  },
+  "appPreview": {
+    "button": "预览",
+    "title": "应用预览"
   },
   "userSearch": {
     "placeholder": "搜索用户名或邮箱...",

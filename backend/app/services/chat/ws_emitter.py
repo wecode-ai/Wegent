@@ -510,6 +510,32 @@ class WebSocketEmitter:
         )
         logger.debug(f"[WS] emit unread:count user={user_id} count={count}")
 
+    async def emit_task_app_update(
+        self,
+        task_id: int,
+        app: Dict[str, Any],
+    ) -> None:
+        """
+        Emit task:app_update event to task room.
+
+        This notifies clients viewing this task about app data changes.
+        Used by expose_service tool when app preview becomes available.
+
+        Args:
+            task_id: Task ID
+            app: App data (name, address, previewUrl)
+        """
+        await self.sio.emit(
+            ServerEvents.TASK_APP_UPDATE,
+            {
+                "task_id": task_id,
+                "app": app,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.info(f"[WS] emit task:app_update task={task_id} app={app}")
+
     # ============================================================
     # Generic Skill Events
     # ============================================================

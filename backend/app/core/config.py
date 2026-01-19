@@ -244,6 +244,20 @@ class Settings(BaseSettings):
     ATTACHMENT_AES_IV: str = "1234567890123456"
 
     OTEL_ENABLED: bool = False
+
+    # Web scraper proxy configuration
+    # Supports HTTP, HTTPS, SOCKS5 proxy formats:
+    # - Simple: "http://proxy.example.com:8080"
+    # - With auth: "http://user:pass@proxy.example.com:8080"
+    # - SOCKS5: "socks5://proxy.example.com:1080"
+    # If empty, no proxy will be used (direct connection)
+    WEBSCRAPER_PROXY: str = ""
+    # Proxy mode: "direct" or "fallback"
+    # - "direct": Always use proxy for all requests (proxy must be configured)
+    # - "fallback": Try direct connection first, use proxy only if direct fails
+    # Default is "fallback" for better reliability
+    WEBSCRAPER_PROXY_MODE: str = "fallback"
+
     # Web search configuration
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
     WEB_SEARCH_ENGINES: str = "{}"  # JSON configuration for search API adapter
@@ -289,6 +303,13 @@ class Settings(BaseSettings):
     # "bridge" - StreamingCore publishes to Redis channel, WebSocketBridge forwards to WebSocket
     STREAMING_MODE: str = "legacy"
 
+    # Default team configuration for each mode
+    # Format: "name#namespace" (namespace is optional, defaults to "default")
+    # Example: "通用助手#default" or "Code Assistant"
+    DEFAULT_TEAM_CHAT: str = ""  # Default team for chat mode
+    DEFAULT_TEAM_CODE: str = ""  # Default team for code mode
+    DEFAULT_TEAM_KNOWLEDGE: str = ""  # Default team for knowledge mode
+
     # JSON configuration for MCP servers (similar to Claude Desktop format)
     # Example:
     # {
@@ -321,6 +342,10 @@ class Settings(BaseSettings):
     # Format: {"dingtalk":{"appKey":"...","appSecret":"...","operatorId":"...","userMapping":{...}}}
     # See backend/app/services/tables/DATA_TABLE_CONFIG_EXAMPLE.md for details
     DATA_TABLE_CONFIG: str = ""
+
+    # Knowledge base and document summary configuration
+    # Enable/disable automatic summary generation after document indexing
+    SUMMARY_ENABLED: bool = True
 
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config

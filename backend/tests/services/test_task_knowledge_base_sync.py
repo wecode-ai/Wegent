@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
-from app.services.task_knowledge_base_service import TaskKnowledgeBaseService
+from app.services.knowledge import TaskKnowledgeBaseService
 
 
 @pytest.mark.unit
@@ -82,7 +82,7 @@ class TestSyncSubtaskKBToTask:
         ) as mock_access:
             # Mock flag_modified to avoid SQLAlchemy state error
             with patch(
-                "app.services.task_knowledge_base_service.flag_modified"
+                "app.services.knowledge.task_knowledge_base_service.flag_modified"
             ) as mock_flag:
                 result = service.sync_subtask_kb_to_task(
                     db=mock_db,
@@ -496,14 +496,14 @@ class TestKBRefIdBasedLookup:
                     ):
                         with patch.object(service, "get_user", return_value=mock_user):
                             with patch(
-                                "app.services.task_knowledge_base_service.task_member_service"
+                                "app.services.knowledge.task_knowledge_base_service.task_member_service"
                             ) as mock_member:
                                 mock_member.is_member.return_value = True
                                 with patch(
-                                    "app.services.task_knowledge_base_service.flag_modified"
+                                    "app.services.knowledge.task_knowledge_base_service.flag_modified"
                                 ):
                                     with patch(
-                                        "app.services.task_knowledge_base_service.KnowledgeService"
+                                        "app.services.knowledge.task_knowledge_base_service.KnowledgeService"
                                     ) as mock_ks:
                                         mock_ks.get_active_document_count.return_value = (
                                             5
@@ -552,7 +552,7 @@ class TestKBRefIdBasedLookup:
                         return_value=mock_knowledge_base,
                     ):
                         with patch(
-                            "app.services.task_knowledge_base_service.task_member_service"
+                            "app.services.knowledge.task_knowledge_base_service.task_member_service"
                         ) as mock_member:
                             mock_member.is_member.return_value = True
 
@@ -589,7 +589,9 @@ class TestKBRefIdBasedLookup:
         mock_query.first.return_value = mock_knowledge_base
 
         with patch.object(service, "can_access_knowledge_base", return_value=True):
-            with patch("app.services.task_knowledge_base_service.flag_modified"):
+            with patch(
+                "app.services.knowledge.task_knowledge_base_service.flag_modified"
+            ):
                 result = service.sync_subtask_kb_to_task(
                     db=mock_db,
                     task=mock_task,
@@ -734,7 +736,7 @@ class TestKBRefAutoMigration:
         refs_to_migrate = [(0, 10), (1, 20)]
 
         with patch(
-            "app.services.task_knowledge_base_service.flag_modified"
+            "app.services.knowledge.task_knowledge_base_service.flag_modified"
         ) as mock_flag:
             service._batch_migrate_kb_refs(mock_db, mock_task, refs_to_migrate)
 
@@ -764,7 +766,7 @@ class TestContextsIdBasedLookup:
         )
 
         with patch(
-            "app.services.task_knowledge_base_service.task_knowledge_base_service"
+            "app.services.knowledge.task_knowledge_base_service.task_knowledge_base_service"
         ) as mock_service:
             mock_service.get_bound_knowledge_base_ids.return_value = [10, 20, 30]
 
@@ -783,7 +785,7 @@ class TestContextsIdBasedLookup:
         )
 
         with patch(
-            "app.services.task_knowledge_base_service.task_knowledge_base_service"
+            "app.services.knowledge.task_knowledge_base_service.task_knowledge_base_service"
         ) as mock_service:
             mock_service.get_bound_knowledge_base_ids.side_effect = Exception(
                 "DB connection failed"
@@ -801,7 +803,7 @@ class TestContextsIdBasedLookup:
         )
 
         with patch(
-            "app.services.task_knowledge_base_service.task_knowledge_base_service"
+            "app.services.knowledge.task_knowledge_base_service.task_knowledge_base_service"
         ) as mock_service:
             mock_service.get_bound_knowledge_base_ids.return_value = []
 

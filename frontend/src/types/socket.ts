@@ -24,6 +24,9 @@ export const ClientEvents = {
 // Server -> Client Events
 // ============================================================
 export const ServerEvents = {
+  // Authentication events
+  AUTH_ERROR: 'auth:error', // Token expired or invalid
+
   // Chat streaming events (to task room)
   CHAT_START: 'chat:start',
   CHAT_CHUNK: 'chat:chunk',
@@ -50,6 +53,7 @@ export const ServerEvents = {
   TASK_STATUS: 'task:status',
   TASK_SHARED: 'task:shared',
   TASK_INVITED: 'task:invited', // User invited to group chat
+  TASK_APP_UPDATE: 'task:app_update', // App data updated (to task room)
   UNREAD_COUNT: 'unread:count',
 
   // Flow events (to user room)
@@ -100,7 +104,9 @@ export interface ChatSendPayload {
   git_repo_id?: number
   git_domain?: string
   branch_name?: string
-  task_type?: 'chat' | 'code'
+  task_type?: 'chat' | 'code' | 'knowledge'
+  // Knowledge base ID for knowledge type tasks
+  knowledge_base_id?: number
 }
 
 export interface ChatCancelPayload {
@@ -135,6 +141,11 @@ export interface HistorySyncPayload {
 // ============================================================
 // Server -> Client Payloads
 // ============================================================
+
+export interface AuthErrorPayload {
+  error: string
+  code: 'TOKEN_EXPIRED' | 'INVALID_TOKEN' | string
+}
 
 export interface SourceReference {
   /** Source index number (e.g., 1, 2, 3) */
@@ -298,6 +309,16 @@ export interface TaskInvitedPayload {
   }
   is_group_chat: boolean
   created_at: string
+}
+
+export interface TaskAppUpdatePayload {
+  task_id: number
+  app: {
+    name: string
+    address: string
+    previewUrl: string
+    mysql?: string
+  }
 }
 
 export interface UnreadCountPayload {

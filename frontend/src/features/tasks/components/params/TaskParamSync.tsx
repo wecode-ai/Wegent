@@ -30,7 +30,9 @@ export default function TaskParamSync() {
   selectedTaskDetailRef.current = selectedTaskDetail
 
   useEffect(() => {
-    const taskId = searchParams.get('taskId')
+    // Support multiple URL parameter formats for taskId
+    const taskId =
+      searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
 
     // If no taskId in URL, clear selection
     // Use ref to check current state without adding to dependencies

@@ -174,7 +174,7 @@ def with_circuit_breaker_async(
     Async version of circuit breaker decorator.
 
     This wrapper properly integrates with pybreaker by:
-    - Checking circuit state before calling (rejects requests when OPEN)
+    - Using breaker.call_async() which handles state transitions automatically
     - Recording successes and failures to trigger state transitions
     - Supporting fallback when circuit is open
 
@@ -187,8 +187,10 @@ def with_circuit_breaker_async(
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            # Check circuit state before calling
-            if breaker.current_state == pybreaker.STATE_OPEN:
+            try:
+                # Use pybreaker's built-in async support
+                return await breaker.call_async(func, *args, **kwargs)
+            except pybreaker.CircuitBreakerError as e:
                 CIRCUIT_BREAKER_REJECTED.labels(breaker_name=breaker.name).inc()
                 logger.error(
                     f"[CircuitBreaker] {breaker.name} is OPEN, rejecting request"
@@ -202,25 +204,7 @@ def with_circuit_breaker_async(
                 raise CircuitBreakerOpenError(
                     breaker.name,
                     f"Service temporarily unavailable. Circuit will reset in {breaker.reset_timeout}s",
-                )
-
-            try:
-                result = await func(*args, **kwargs)
-                # Record success to trigger state transition (e.g., HALF_OPEN -> CLOSED)
-                # Use _success_call to properly update the circuit breaker state
-                breaker._success_call()
-                # Also notify listeners for metrics tracking
-                for listener in breaker.listeners:
-                    listener.success(breaker)
-                return result
-            except Exception as e:
-                # Record failure to trigger state transition (e.g., CLOSED -> OPEN)
-                # Use _failure_call to properly update the circuit breaker state
-                breaker._failure_call()
-                # Also notify listeners for metrics tracking
-                for listener in breaker.listeners:
-                    listener.failure(breaker, e)
-                raise
+                ) from e
 
         return wrapper
 

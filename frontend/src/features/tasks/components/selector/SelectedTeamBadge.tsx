@@ -12,6 +12,8 @@ interface SelectedTeamBadgeProps {
   team: Team
   onClear?: () => void
   showClearButton?: boolean
+  /** Whether to show tooltip on hover. Set to false when used inside another Tooltip to avoid nesting issues. */
+  showTooltip?: boolean
 }
 
 /**
@@ -23,6 +25,7 @@ export function SelectedTeamBadge({
   team,
   onClear,
   showClearButton = false,
+  showTooltip = true,
 }: SelectedTeamBadgeProps) {
   const badgeContent = (
     <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-base text-primary text-base leading-[18px]">
@@ -42,8 +45,13 @@ export function SelectedTeamBadge({
     </div>
   )
 
-  // Tooltip content: prioritize description, fallback to name
-  const tooltipText = team.description || team.name
+  // If tooltip is disabled, just return the badge content
+  if (!showTooltip) {
+    return <div className="cursor-default">{badgeContent}</div>
+  }
+
+  // Tooltip content: prioritize description (if not empty), fallback to name
+  const tooltipText = team.description?.trim() || team.name
 
   return (
     <TooltipProvider>

@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import threading
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -51,7 +53,7 @@ from app.schemas.task import TaskCreate, TaskInDB
 from app.schemas.user import Token, UserInDB, UserInfo
 from app.services.adapters.public_retriever import public_retriever_service
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.k_batch import batch_service
+from app.services.k_batch import apply_default_resources_async, batch_service
 from app.services.kind import kind_service
 from app.services.user import user_service
 
@@ -166,10 +168,19 @@ async def create_user(
         role=user_data.role,
         auth_source=user_data.auth_source,
         is_active=True,
+        git_info=[],
+        preferences="{}",
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    # Apply default resources for the new user in a background thread
+    def run_async_task():
+        asyncio.run(apply_default_resources_async(new_user.id))
+
+    thread = threading.Thread(target=run_async_task, daemon=True)
+    thread.start()
 
     return AdminUserResponse(
         id=new_user.id,
@@ -264,7 +275,7 @@ async def delete_user(
     current_user: User = Depends(get_admin_user),
 ):
     """
-    Delete a user (soft delete by setting is_active=False)
+    Delete a user (hard delete - permanently removes the user from database)
     """
     # Query user directly to avoid decrypt_user_git_info modifying the object
     user = db.query(User).filter(User.id == user_id).first()
@@ -281,8 +292,8 @@ async def delete_user(
             detail="Cannot delete your own account",
         )
 
-    # Soft delete
-    user.is_active = False
+    # Hard delete - permanently remove the user
+    db.delete(user)
     db.commit()
 
     return None

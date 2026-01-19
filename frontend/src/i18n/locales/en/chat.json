@@ -4,6 +4,9 @@
     "input": "Type your message here...",
     "empty": "No messages yet. Start a conversation!"
   },
+  "input": {
+    "no_team_placeholder": "Please select or create an agent first"
+  },
   "actions": {
     "send": "Send",
     "clear": "Clear Chat",
@@ -34,7 +37,9 @@
     "thinking": "AI is thinking...",
     "error": "Failed to send message",
     "connecting": "Connecting...",
-    "disconnected": "Disconnected"
+    "disconnected": "Disconnected",
+    "reconnecting": "Reconnecting... (attempt {{count}})",
+    "reconnected": "Reconnected"
   },
   "messages": {
     "assistant": "AI Assistant",

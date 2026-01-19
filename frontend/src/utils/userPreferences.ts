@@ -11,6 +11,7 @@ const STORAGE_KEYS = {
   LAST_TEAM_ID: 'wegent_last_team_id',
   LAST_TEAM_ID_CHAT: 'wegent_last_team_id_chat',
   LAST_TEAM_ID_CODE: 'wegent_last_team_id_code',
+  LAST_TEAM_ID_KNOWLEDGE: 'wegent_last_team_id_knowledge',
   LAST_REPO_ID: 'wegent_last_repo_id',
   LAST_REPO_NAME: 'wegent_last_repo_name',
 } as const
@@ -79,15 +80,22 @@ export function getLastTeamId(): number | null {
 }
 
 /**
- * Save user's last selected team for a specific mode (chat/code)
+ * Save user's last selected team for a specific mode (chat/code/knowledge)
  */
-export function saveLastTeamByMode(teamId: number, mode: 'chat' | 'code'): void {
+export function saveLastTeamByMode(teamId: number, mode: 'chat' | 'code' | 'knowledge'): void {
   try {
     if (!teamId || isNaN(teamId)) {
       console.warn('[userPreferences] Invalid team ID, not saving:', teamId)
       return
     }
-    const key = mode === 'chat' ? STORAGE_KEYS.LAST_TEAM_ID_CHAT : STORAGE_KEYS.LAST_TEAM_ID_CODE
+    let key: string
+    if (mode === 'chat') {
+      key = STORAGE_KEYS.LAST_TEAM_ID_CHAT
+    } else if (mode === 'code') {
+      key = STORAGE_KEYS.LAST_TEAM_ID_CODE
+    } else {
+      key = STORAGE_KEYS.LAST_TEAM_ID_KNOWLEDGE
+    }
     localStorage.setItem(key, String(teamId))
     // Also save to the generic key for backward compatibility
     localStorage.setItem(STORAGE_KEYS.LAST_TEAM_ID, String(teamId))
@@ -97,11 +105,18 @@ export function saveLastTeamByMode(teamId: number, mode: 'chat' | 'code'): void 
 }
 
 /**
- * Get user's last selected team ID for a specific mode (chat/code)
+ * Get user's last selected team ID for a specific mode (chat/code/knowledge)
  */
-export function getLastTeamIdByMode(mode: 'chat' | 'code'): number | null {
+export function getLastTeamIdByMode(mode: 'chat' | 'code' | 'knowledge'): number | null {
   try {
-    const key = mode === 'chat' ? STORAGE_KEYS.LAST_TEAM_ID_CHAT : STORAGE_KEYS.LAST_TEAM_ID_CODE
+    let key: string
+    if (mode === 'chat') {
+      key = STORAGE_KEYS.LAST_TEAM_ID_CHAT
+    } else if (mode === 'code') {
+      key = STORAGE_KEYS.LAST_TEAM_ID_CODE
+    } else {
+      key = STORAGE_KEYS.LAST_TEAM_ID_KNOWLEDGE
+    }
     const teamId = localStorage.getItem(key)
     if (!teamId || teamId === 'undefined' || teamId === 'null' || teamId === 'NaN') {
       // console.log(

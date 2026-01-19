@@ -4,6 +4,9 @@
     "input": "在此输入您的消息...",
     "empty": "还没有消息。开始对话吧！"
   },
+  "input": {
+    "no_team_placeholder": "请先选择或创建智能体"
+  },
   "actions": {
     "send": "发送",
     "clear": "清空聊天",
@@ -34,7 +37,9 @@
     "thinking": "AI 正在思考...",
     "error": "发送消息失败",
     "connecting": "连接中...",
-    "disconnected": "连接断开"
+    "disconnected": "连接断开",
+    "reconnecting": "正在重连...（第 {{count}} 次尝试）",
+    "reconnected": "已重新连接"
   },
   "messages": {
     "assistant": "AI 助手",
