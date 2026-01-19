@@ -541,8 +541,9 @@ def _test_embedding_connection(
             }
 
         # Construct embeddings endpoint
-        embeddings_base_url = f"{base_url.rstrip('/').rstrip('/embeddings')}"
-
+        embeddings_base_url = base_url.rstrip("/")
+        if embeddings_base_url.endswith("/embeddings"):
+            embeddings_base_url = embeddings_base_url[: -len("/embeddings")]
         # Build kwargs for OpenAIEmbeddings
         embeddings_kwargs = {
             "model": model_id,
