@@ -13,7 +13,10 @@ from shared.telemetry.decorators import (
     set_span_attribute,
     trace_sync,
 )
+from sqlalchemy.orm import Session
 
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.user import User
 from app.services.memory.schemas import MemorySearchResult
 
 logger = logging.getLogger(__name__)
@@ -147,3 +150,119 @@ def format_metadata_for_logging(metadata: dict) -> str:
         set_span_attribute("metadata.filtered_fields", ",".join(filtered.keys()))
 
     return str(filtered)
+
+
+@trace_sync("memory.utils.build_context_messages")
+def build_context_messages(
+    db: Session,
+    existing_subtasks: List[Subtask],
+    current_message: str,
+    current_user: User,
+    is_group_chat: bool,
+    context_limit: int,
+) -> List[Dict[str, str]]:
+    """Build context messages for memory storage.
+
+    Collects recent completed messages from history and adds the current message.
+    For group chat, adds sender name prefix to user messages.
+
+    Args:
+        db: Database session
+        existing_subtasks: List of existing subtasks (sorted by message_id desc)
+        current_message: Current user message content
+        current_user: Current user sending the message
+        is_group_chat: Whether this is a group chat
+        context_limit: Maximum number of messages to include (includes current message)
+
+    Returns:
+        List of message dicts with role and content, in chronological order
+
+    Example:
+        [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there!"},
+            {"role": "user", "content": "How are you?"}
+        ]
+
+        For group chat:
+        [
+            {"role": "user", "content": "User[alice]: Hello"},
+            {"role": "assistant", "content": "Hi Alice!"},
+            {"role": "user", "content": "User[bob]: How are you?"}
+        ]
+    """
+    # Set span attributes for observability
+    set_span_attribute("context.limit", context_limit)
+    set_span_attribute("context.is_group_chat", is_group_chat)
+    set_span_attribute("context.existing_count", len(existing_subtasks))
+
+    context_messages = []
+
+    # Filter for completed USER and ASSISTANT messages only
+    completed_subtasks = [
+        st
+        for st in existing_subtasks
+        if st.status == SubtaskStatus.COMPLETED
+        and st.role in (SubtaskRole.USER, SubtaskRole.ASSISTANT)
+    ]
+
+    # Get the last (context_limit - 1) completed messages as history
+    history_count = min(context_limit - 1, len(completed_subtasks))
+    set_span_attribute("context.history_count", history_count)
+
+    for i in range(history_count):
+        subtask = completed_subtasks[i]
+        role = "user" if subtask.role == SubtaskRole.USER else "assistant"
+
+        # Extract content based on role
+        if subtask.role == SubtaskRole.USER:
+            content = subtask.prompt or ""
+        else:  # ASSISTANT
+            content = ""
+            if subtask.result and isinstance(subtask.result, dict):
+                content = subtask.result.get("value", "")
+
+        # Skip empty messages
+        if not content:
+            continue
+
+        # For group chat user messages, add sender name prefix if not already present
+        if role == "user" and is_group_chat:
+            # Get sender user_name from user table
+            sender = db.query(User).filter(User.id == subtask.sender_user_id).first()
+            sender_name = (
+                sender.user_name if sender else f"User{subtask.sender_user_id}"
+            )
+            # Add prefix if not already present
+            if not content.startswith(f"User[{sender_name}]:"):
+                content = f"User[{sender_name}]: {content}"
+
+        context_messages.append({"role": role, "content": content})
+
+    # Reverse to maintain chronological order (oldest to newest)
+    context_messages.reverse()
+
+    # Add current user message
+    current_content = current_message
+    if is_group_chat:
+        # Add sender name prefix to current message
+        sender_name = (
+            current_user.user_name if current_user.user_name else str(current_user.id)
+        )
+        if not current_content.startswith(f"User[{sender_name}]:"):
+            current_content = f"User[{sender_name}]: {current_content}"
+
+    context_messages.append({"role": "user", "content": current_content})
+
+    # Set output attributes
+    set_span_attribute("context.output_count", len(context_messages))
+    add_span_event(
+        "context.build.success",
+        {
+            "history_messages": history_count,
+            "output_messages": len(context_messages),
+            "is_group_chat": is_group_chat,
+        },
+    )
+
+    return context_messages
