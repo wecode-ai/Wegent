@@ -393,8 +393,9 @@ class WebScrapeResponse(BaseModel):
 
 
 class ChunkItemResponse(BaseModel):
-    """Schema for a single chunk item."""
+    """Schema for a single chunk item - extended with new fields for backward compatibility."""
 
+    # Required fields (backward compatible)
     chunk_index: int = Field(..., description="Chunk index (0-based)")
     content: str = Field(..., description="Chunk text content")
     token_count: int = Field(..., description="Number of tokens in chunk")
@@ -402,9 +403,22 @@ class ChunkItemResponse(BaseModel):
     end_position: int = Field(..., description="End position in original document")
     forced_split: bool = Field(False, description="Whether this chunk was force split")
 
+    # New optional fields (with defaults for backward compatibility)
+    chunk_type: Optional[str] = Field(
+        None, description="Block type: heading/paragraph/code/table/flow/list/qa"
+    )
+    title_path: Optional[list[str]] = Field(None, description="Heading hierarchy path")
+    page_number: Optional[int] = Field(None, description="Page number (for PDF)")
+    line_start: Optional[int] = Field(None, description="Start line number")
+    line_end: Optional[int] = Field(None, description="End line number")
+    is_merged: bool = Field(False, description="Whether merged from smaller chunks")
+    is_split: bool = Field(False, description="Whether split from larger chunk")
+    split_index: Optional[int] = Field(None, description="Split index if split")
+    notes: Optional[str] = Field(None, description="Processing notes")
+
 
 class DocumentChunksResponse(BaseModel):
-    """Schema for document chunks response."""
+    """Schema for document chunks response - extended with new fields."""
 
     chunks: list[ChunkItemResponse] = Field(default_factory=list, description="List of chunks")
     total: int = Field(..., description="Total number of chunks")
@@ -412,6 +426,12 @@ class DocumentChunksResponse(BaseModel):
     page_size: int = Field(20, description="Page size")
     has_non_text_content: bool = Field(False, description="Whether document has non-text content")
     skipped_elements: list[str] = Field(default_factory=list, description="List of skipped element types")
+
+    # New optional fields (with defaults for backward compatibility)
+    skipped_elements_detail: Optional[list[dict]] = Field(
+        None, description="Detailed skipped elements with location info"
+    )
+    processing_stats: Optional[dict] = Field(None, description="Processing statistics")
 
 
 class ChunkDeleteResponse(BaseModel):

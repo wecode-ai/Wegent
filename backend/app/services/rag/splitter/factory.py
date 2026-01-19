@@ -54,10 +54,10 @@ def create_splitter(
             separator=config.separator,
         )
     elif isinstance(config, StructuralSemanticSplitterConfig):
-        # For structural semantic splitter, LLM client is set up separately
-        # when performing async splitting with LLM
+        # For structural semantic splitter, use the new six-phase pipeline
         return StructuralSemanticSplitter(
-            llm_client=None,  # Will be set up during async splitting
+            llm_client=None,  # Deprecated, kept for backward compatibility
+            min_chunk_tokens=getattr(config, "min_chunk_tokens", 100),
             max_chunk_tokens=config.max_chunk_tokens,
             overlap_tokens=config.overlap_tokens,
         )

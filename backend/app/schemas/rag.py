@@ -81,19 +81,28 @@ class ModelRef(BaseModel):
 class StructuralSemanticSplitterConfig(BaseModel):
     """Configuration for structural semantic splitter.
 
-    This splitter uses a two-phase approach:
-    1. Structure-based splitting: Parse document structure (headings, paragraphs)
-    2. LLM semantic boundary splitting: For chunks > 600 tokens, use LLM to determine semantic boundaries
+    This splitter implements a six-phase document processing pipeline:
+    1. Text Extraction - Extract text, detect and skip non-text content
+    2. Structure Recognition - Identify heading/paragraph/code/table/flow/list/qa
+    3. Noise Filtering - Remove TOC, headers/footers, duplicates
+    4. Structural Chunking - Split by semantic closure
+    5. Token Splitting - Merge small, split large, ensure limits
+    6. Content Cleaning - Normalize and clean content by type
     """
 
     type: Literal["structural_semantic"] = "structural_semantic"
+    min_chunk_tokens: int = Field(
+        100, ge=50, le=500, description="Minimum tokens per chunk (default: 100)"
+    )
     max_chunk_tokens: int = Field(
-        600, description="Maximum tokens per chunk (fixed at 600)"
+        600, ge=200, le=2000, description="Maximum tokens per chunk (default: 600)"
     )
     overlap_tokens: int = Field(
-        80, description="Overlap tokens for forced splits (fixed at 80)"
+        80, ge=0, le=200, description="Overlap tokens for forced splits (default: 80)"
     )
-    llm_model_ref: ModelRef = Field(..., description="LLM model reference for semantic splitting")
+    llm_model_ref: Optional[ModelRef] = Field(
+        None, description="Deprecated: LLM model reference (no longer used)"
+    )
 
 
 # Union type for splitter configuration
