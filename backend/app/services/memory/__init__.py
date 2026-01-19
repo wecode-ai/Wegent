@@ -19,5 +19,11 @@ Design principles:
 
 from app.services.memory.client import LongTermMemoryClient
 from app.services.memory.manager import MemoryManager, get_memory_manager
+from app.services.memory.utils import build_context_messages
 
-__all__ = ["LongTermMemoryClient", "MemoryManager", "get_memory_manager"]
+__all__ = [
+    "LongTermMemoryClient",
+    "MemoryManager",
+    "get_memory_manager",
+    "build_context_messages",
+]

@@ -304,7 +304,8 @@ def setup_chat_session(
     if enable_chat_bot:
         import asyncio
 
-        from app.services.memory import get_memory_manager
+        from app.core.config import settings
+        from app.services.memory import build_context_messages, get_memory_manager
 
         memory_manager = get_memory_manager()
         if memory_manager.is_enabled:
@@ -315,6 +316,16 @@ def setup_chat_session(
                 else None
             )
             is_group_chat = task_crd.spec.is_group_chat
+
+            # Build context messages using shared utility
+            context_messages = build_context_messages(
+                db=db,
+                existing_subtasks=existing_subtasks,
+                current_message=input_text,
+                current_user=user,
+                is_group_chat=is_group_chat,
+                context_limit=settings.MEMORY_CONTEXT_MESSAGES,
+            )
 
             # Create task with proper exception handling
             def _log_memory_task_exception(task_obj: asyncio.Task) -> None:
@@ -347,7 +358,7 @@ def setup_chat_session(
                         team_id=str(team.id),
                         task_id=str(task_id),
                         subtask_id=str(user_subtask.id),
-                        messages=[{"role": "user", "content": input_text}],
+                        messages=context_messages,
                         workspace_id=workspace_id,
                         project_id=str(task.project_id) if task.project_id else None,
                         is_group_chat=is_group_chat,
