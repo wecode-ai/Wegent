@@ -62,7 +62,7 @@ const triggerTypeIcons: Record<FlowTriggerType, React.ReactNode> = {
 }
 
 export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
-  const { t } = useTranslation('flow')
+  const { t } = useTranslation('feed')
   const { flows, flowsLoading, flowsTotal, refreshFlows, loadMoreFlows, refreshExecutions } =
     useFlowContext()
 

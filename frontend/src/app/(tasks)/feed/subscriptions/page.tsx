@@ -13,8 +13,8 @@ import {
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
-import { FlowList, FlowForm } from '@/features/flows/components'
-import { FlowProvider, useFlowContext } from '@/features/flows/contexts/flowContext'
+import { FlowList, FlowForm } from '@/features/feed/components'
+import { FlowProvider, useFlowContext } from '@/features/feed/contexts/flowContext'
 import { Button } from '@/components/ui/button'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
@@ -29,7 +29,7 @@ import type { Flow } from '@/types/flow'
  * Page for managing flow subscriptions (我的订阅).
  */
 function SubscriptionsPageContent() {
-  const { t } = useTranslation('flow')
+  const { t } = useTranslation('feed')
   const router = useRouter()
   const { refreshFlows, refreshExecutions } = useFlowContext()
 
@@ -53,7 +53,7 @@ function SubscriptionsPageContent() {
   }, [refreshFlows, refreshExecutions])
 
   const handleBack = () => {
-    router.push('/flow')
+    router.push('/feed')
   }
 
   return (
@@ -67,7 +67,7 @@ function SubscriptionsPageContent() {
           <h1 className="text-lg font-semibold">{t('my_flows')}</h1>
         </div>
         <Button onClick={handleCreateFlow} size="sm">
-          {t('create_flow')}
+          {t('create_subscription')}
         </Button>
       </div>
 
