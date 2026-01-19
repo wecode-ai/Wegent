@@ -7,7 +7,7 @@ name = "wegent-executor"
 version = "1.0.0"
 description = "Wegent Task Executor Service"
 readme = "BUILD.md"
-requires-python = ">=3.10,<=3.13"
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "ag-ui-protocol==0.1.8",
     "agno==2.1.5",
@@ -25,6 +25,13 @@ dependencies = [
     "requests==2.31.0",
     "sqlalchemy==2.0.43",
     "uvicorn==0.25.0",
+
+    # envd Connect RPC dependencies
+    "grpcio>=1.68.0",
+    "grpcio-tools>=1.68.0",
+    "protobuf>=5.29.5,<7.0.0",
+    "watchdog==4.0.0",
+    "psutil>=5.9.0",
 
     # OpenTelemetry core packages
     "opentelemetry-api>=1.27.0",

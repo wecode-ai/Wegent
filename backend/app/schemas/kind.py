@@ -550,6 +550,11 @@ class SkillSpec(BaseModel):
         "REQUIRED: Skills must explicitly specify bindShells to be available. "
         "If not specified or empty, the skill will NOT be available for any shell type.",
     )
+    config: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Skill-level configuration shared by all tools. "
+        "Tool-specific configs override these values.",
+    )
     tools: Optional[List[SkillToolDeclaration]] = Field(
         None,
         description="Tool declarations for skill-tool binding. "

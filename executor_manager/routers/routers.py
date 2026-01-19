@@ -228,7 +228,7 @@ class CallbackRequest(BaseModel):
     task_type: Optional[str] = (
         None  # Task type: "validation" for validation tasks, None for regular tasks
     )
-    subagent_metadata: Optional[Dict[str, Any]] = None  # SubAgent metadata from task
+    sandbox_metadata: Optional[Dict[str, Any]] = None  # Sandbox metadata from task
 
 
 @api_router.post("/callback")

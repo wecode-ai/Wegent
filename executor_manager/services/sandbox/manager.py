@@ -877,7 +877,7 @@ class SandboxManager(metaclass=SingletonMeta):
             executions, _ = await self.list_executions(sandbox_id)
             for execution in executions:
                 if execution.status == ExecutionStatus.RUNNING:
-                    execution.set_failed("SubAgent crashed")
+                    execution.set_failed("Sandbox crashed")
                     self._repository.save_execution(execution)
                     logger.info(
                         f"[SandboxManager] Marked execution {execution.execution_id} as failed "
@@ -894,7 +894,7 @@ class SandboxManager(metaclass=SingletonMeta):
         # GC will clean up the data later
         sandbox = self._repository.load_sandbox(sandbox_id)
         if sandbox:
-            sandbox.set_failed("SubAgent crashed")
+            sandbox.set_failed("Sandbox crashed")
             self._repository.save_sandbox(sandbox)
             # Remove from active set to prevent repeated heartbeat checks
             self._repository.remove_from_active_set(sandbox_id)
