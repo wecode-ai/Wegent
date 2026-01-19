@@ -134,12 +134,25 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: Optional[str] = None  # If None/empty, uses REDIS_URL
     CELERY_RESULT_BACKEND: Optional[str] = None  # If None/empty, uses REDIS_URL
 
+    # Celery Beat scheduler configuration
+    # "default" = SQLite file (single instance only)
+    # "sqlalchemy" = MySQL database (multi-instance deployment)
+    CELERY_BEAT_SCHEDULER: str = "default"
+    # Database URL for Beat scheduler (only used when CELERY_BEAT_SCHEDULER="sqlalchemy")
+    # If None/empty, uses DATABASE_URL
+    CELERY_BEAT_DATABASE_URL: Optional[str] = None
+
     # Embedded Celery configuration
     # When True, Backend starts Celery worker/beat as daemon threads (for local dev)
     # When False, Celery must be started separately (for production)
     EMBEDDED_CELERY_ENABLED: bool = True
 
-    @field_validator("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", mode="before")
+    @field_validator(
+        "CELERY_BROKER_URL",
+        "CELERY_RESULT_BACKEND",
+        "CELERY_BEAT_DATABASE_URL",
+        mode="before",
+    )
     @classmethod
     def empty_str_to_none(cls, v: Any) -> Optional[str]:
         """Convert empty strings to None for proper fallback to REDIS_URL."""

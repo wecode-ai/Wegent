@@ -11,9 +11,15 @@ and avoid blocking the scheduler.
 
 Features:
 - Distributed task queue with Redis broker
-- Beat scheduler for periodic tasks
+- RedBeat scheduler for periodic tasks (Redis-based, distributed-ready)
 - Dead letter queue for failed tasks (via signals)
 - Circuit breaker for external service calls
+
+Beat Scheduler Storage:
+- RedBeat (default): Uses Redis for schedule storage, suitable for distributed deployment
+  - Automatically handles multi-instance coordination
+  - No database migrations needed
+  - Simpler than SQLAlchemy-based schedulers
 """
 
 from celery import Celery
@@ -58,6 +64,10 @@ celery_app.conf.update(
             "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
         },
     },
+    # RedBeat configuration (Redis-based scheduler)
+    redbeat_redis_url=broker_url,  # Use same Redis as broker
+    redbeat_key_prefix="celery:beat:",  # Redis key prefix for beat schedule
+    redbeat_lock_timeout=30,  # Lock timeout in seconds for distributed coordination
 )
 
 # Import dead letter queue handlers to register signal handlers

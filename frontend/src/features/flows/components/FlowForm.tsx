@@ -43,6 +43,7 @@ import type {
 import { toast } from 'sonner'
 import { CronSchedulePicker } from './CronSchedulePicker'
 import { RepositorySelector, BranchSelector } from '@/features/tasks/components/selector'
+import { parseUTCDate } from '@/lib/utils'
 
 /**
  * Webhook API Usage Section Component
@@ -471,11 +472,12 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
           </div>
         )
       case 'one_time': {
-        // Convert ISO string to local datetime-local format (YYYY-MM-DDTHH:mm)
+        // Convert UTC ISO string to local datetime-local format (YYYY-MM-DDTHH:mm)
         const getLocalDateTimeValue = (isoString: string | undefined): string => {
           if (!isoString) return ''
-          const date = new Date(isoString)
-          if (isNaN(date.getTime())) return ''
+          // Use parseUTCDate to correctly parse UTC time from backend
+          const date = parseUTCDate(isoString)
+          if (!date || isNaN(date.getTime())) return ''
           // Format as local time for datetime-local input
           const year = date.getFullYear()
           const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -493,6 +495,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
               value={getLocalDateTimeValue(triggerConfig.execute_at as string)}
               onChange={e => {
                 if (e.target.value) {
+                  // Convert local datetime-local value to UTC ISO string
                   setTriggerConfig({
                     ...triggerConfig,
                     execute_at: new Date(e.target.value).toISOString(),

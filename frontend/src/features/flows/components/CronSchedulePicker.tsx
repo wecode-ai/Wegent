@@ -52,7 +52,7 @@ const PRESETS = [
   { key: 'monthly_1st_9am', expression: '0 9 1 * *' },
 ]
 
-// Parse cron expression to schedule state
+// Parse cron expression to schedule state (converts UTC time to local time)
 function parseCronExpression(expression: string): ScheduleState {
   // Check if it matches a preset
   const preset = PRESETS.find(p => p.expression === expression)
@@ -81,29 +81,38 @@ function parseCronExpression(expression: string): ScheduleState {
 
   // Daily pattern: "M H * * *"
   if (dayOfMonth === '*' && dayOfWeek === '*' && !hour.includes('*') && !hour.includes('/')) {
+    const utcHour = parseInt(hour) || 9
+    const utcMinute = parseInt(minute) || 0
+    const local = utcToLocal(utcHour, utcMinute)
     return {
       type: 'daily',
-      hour: parseInt(hour) || 9,
-      minute: parseInt(minute) || 0,
+      hour: local.hour,
+      minute: local.minute,
     }
   }
 
   // Weekly pattern: "M H * * D"
   if (dayOfMonth === '*' && dayOfWeek !== '*' && !dayOfWeek.includes('-')) {
+    const utcHour = parseInt(hour) || 9
+    const utcMinute = parseInt(minute) || 0
+    const local = utcToLocal(utcHour, utcMinute)
     return {
       type: 'weekly',
-      hour: parseInt(hour) || 9,
-      minute: parseInt(minute) || 0,
+      hour: local.hour,
+      minute: local.minute,
       weekday: parseInt(dayOfWeek) || 1,
     }
   }
 
   // Monthly pattern: "M H D * *"
   if (dayOfMonth !== '*' && dayOfWeek === '*') {
+    const utcHour = parseInt(hour) || 9
+    const utcMinute = parseInt(minute) || 0
+    const local = utcToLocal(utcHour, utcMinute)
     return {
       type: 'monthly',
-      hour: parseInt(hour) || 9,
-      minute: parseInt(minute) || 0,
+      hour: local.hour,
+      minute: local.minute,
       monthDay: parseInt(dayOfMonth) || 1,
     }
   }
@@ -112,7 +121,33 @@ function parseCronExpression(expression: string): ScheduleState {
   return { type: 'preset', preset: 'daily_9am' }
 }
 
-// Generate cron expression from schedule state
+// Convert local time to UTC time for cron expression
+function localToUTC(hour: number, minute: number): { hour: number; minute: number } {
+  // Create a date with the local time
+  const localDate = new Date()
+  localDate.setHours(hour, minute, 0, 0)
+
+  // Get UTC hours and minutes
+  return {
+    hour: localDate.getUTCHours(),
+    minute: localDate.getUTCMinutes(),
+  }
+}
+
+// Convert UTC time to local time for display
+function utcToLocal(hour: number, minute: number): { hour: number; minute: number } {
+  // Create a UTC date
+  const utcDate = new Date()
+  utcDate.setUTCHours(hour, minute, 0, 0)
+
+  // Get local hours and minutes
+  return {
+    hour: utcDate.getHours(),
+    minute: utcDate.getMinutes(),
+  }
+}
+
+// Generate cron expression from schedule state (converts local time to UTC)
 function generateCronExpression(state: ScheduleState): string {
   switch (state.type) {
     case 'preset': {
@@ -121,12 +156,18 @@ function generateCronExpression(state: ScheduleState): string {
     }
     case 'hourly':
       return `${state.minute || 0} */${state.hourlyInterval || 1} * * *`
-    case 'daily':
-      return `${state.minute || 0} ${state.hour || 9} * * *`
-    case 'weekly':
-      return `${state.minute || 0} ${state.hour || 9} * * ${state.weekday || 1}`
-    case 'monthly':
-      return `${state.minute || 0} ${state.hour || 9} ${state.monthDay || 1} * *`
+    case 'daily': {
+      const utc = localToUTC(state.hour || 9, state.minute || 0)
+      return `${utc.minute} ${utc.hour} * * *`
+    }
+    case 'weekly': {
+      const utc = localToUTC(state.hour || 9, state.minute || 0)
+      return `${utc.minute} ${utc.hour} * * ${state.weekday || 1}`
+    }
+    case 'monthly': {
+      const utc = localToUTC(state.hour || 9, state.minute || 0)
+      return `${utc.minute} ${utc.hour} ${state.monthDay || 1} * *`
+    }
     default:
       return '0 9 * * *'
   }
