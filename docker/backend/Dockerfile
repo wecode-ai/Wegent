@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest
+FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.2.1
 
 # Set working directory
 WORKDIR /app
@@ -17,35 +17,6 @@ COPY shared /shared
 # Copy pyproject.toml and install dependencies
 COPY backend/pyproject.toml .
 RUN uv pip install --system --no-cache -r pyproject.toml
-
-# Install Playwright system dependencies for AlmaLinux/RHEL
-# These are required for Chromium browser to run (crawl4ai uses Playwright for web scraping)
-RUN dnf install -y \
-    nspr \
-    nss \
-    nss-util \
-    atk \
-    at-spi2-atk \
-    cups-libs \
-    libxcb \
-    libxkbcommon \
-    at-spi2-core \
-    libX11 \
-    libXcomposite \
-    libXdamage \
-    libXext \
-    libXfixes \
-    libXrandr \
-    mesa-libgbm \
-    cairo \
-    pango \
-    alsa-lib \
-    libdrm \
-    && dnf clean all \
-    && rm -rf /var/cache/dnf/*
-
-# Install Playwright Chromium browser for crawl4ai web scraping
-RUN playwright install chromium
 
 # Copy application code
 COPY backend /app
