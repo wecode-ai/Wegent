@@ -145,7 +145,7 @@ class LongTermMemoryClient:
                     memory_ids = []
                     if isinstance(result, dict) and "results" in result:
                         memory_ids = [
-                            item.get("id")
+                            str(item.get("id"))
                             for item in result.get("results", [])
                             if isinstance(item, dict) and "id" in item
                         ]

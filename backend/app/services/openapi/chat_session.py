@@ -349,7 +349,7 @@ def setup_chat_session(
                         subtask_id=str(user_subtask.id),
                         messages=[{"role": "user", "content": input_text}],
                         workspace_id=workspace_id,
-                        project_id=None,  # Chat session does not belong to a project
+                        project_id=str(task.project_id) if task.project_id else None,
                         is_group_chat=is_group_chat,
                     )
                 )
