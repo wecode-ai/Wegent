@@ -189,6 +189,18 @@ services:
       - "host.docker.internal:host-gateway"
     container_name: wegent-executor-manager
     restart: always
+    entrypoint:
+      - sh
+      - -c
+      - |
+        echo "=== Pulling executor image: $${EXECUTOR_IMAGE} ===" >&2
+        if docker pull $${EXECUTOR_IMAGE} 2>&1; then
+          echo "=== Successfully pulled executor image ===" >&2
+        else
+          echo "=== Failed to pull executor image, will use cached version ===" >&2
+        fi
+        echo "=== Starting executor manager ===" >&2
+        exec uvicorn main:app --host 0.0.0.0 --port $${PORT:-8001}
     ports:
       - "${EXECUTOR_MANAGER_PORT:-8001}:8001"
     environment:
