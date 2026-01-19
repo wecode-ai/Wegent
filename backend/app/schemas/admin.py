@@ -364,3 +364,101 @@ class PublicBotListResponse(BaseModel):
 
     total: int
     items: List[PublicBotResponse]
+
+
+# Public Ghost Management Schemas
+class PublicGhostCreate(BaseModel):
+    """Public ghost creation model"""
+
+    name: str = Field(..., min_length=1, max_length=100)
+    namespace: str = Field(default="default", max_length=100)
+    ghost_json: dict = Field(..., alias="json")
+
+    class Config:
+        populate_by_name = True
+
+
+class PublicGhostUpdate(BaseModel):
+    """Public ghost update model"""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    namespace: Optional[str] = Field(None, max_length=100)
+    ghost_json: Optional[dict] = Field(None, alias="json")
+    is_active: Optional[bool] = None
+
+    class Config:
+        populate_by_name = True
+
+
+class PublicGhostResponse(BaseModel):
+    """Public ghost response model"""
+
+    id: int
+    name: str
+    namespace: str
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    ghost_json: dict = Field(..., alias="json", serialization_alias="json")
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+
+
+class PublicGhostListResponse(BaseModel):
+    """Public ghost list response model"""
+
+    total: int
+    items: List[PublicGhostResponse]
+
+
+# Public Shell Management Schemas
+class PublicShellCreate(BaseModel):
+    """Public shell creation model"""
+
+    name: str = Field(..., min_length=1, max_length=100)
+    namespace: str = Field(default="default", max_length=100)
+    shell_json: dict = Field(..., alias="json")
+
+    class Config:
+        populate_by_name = True
+
+
+class PublicShellUpdate(BaseModel):
+    """Public shell update model"""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    namespace: Optional[str] = Field(None, max_length=100)
+    shell_json: Optional[dict] = Field(None, alias="json")
+    is_active: Optional[bool] = None
+
+    class Config:
+        populate_by_name = True
+
+
+class PublicShellResponse(BaseModel):
+    """Public shell response model"""
+
+    id: int
+    name: str
+    namespace: str
+    display_name: Optional[str] = None
+    shell_type: Optional[str] = None
+    shell_json: dict = Field(..., alias="json", serialization_alias="json")
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+
+
+class PublicShellListResponse(BaseModel):
+    """Public shell list response model"""
+
+    total: int
+    items: List[PublicShellResponse]

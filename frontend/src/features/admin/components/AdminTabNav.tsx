@@ -15,13 +15,26 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import { Users, Cpu, Settings, Sparkles, KeyRound, Database, Bot, UsersRound } from 'lucide-react'
+import {
+  Users,
+  Cpu,
+  Settings,
+  Sparkles,
+  KeyRound,
+  Database,
+  Bot,
+  UsersRound,
+  Ghost,
+  Terminal,
+} from 'lucide-react'
 
 export type AdminTabId =
   | 'users'
   | 'public-models'
   | 'public-retrievers'
   | 'public-skills'
+  | 'public-ghosts'
+  | 'public-shells'
   | 'public-teams'
   | 'public-bots'
   | 'api-keys'
@@ -51,6 +64,8 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'public-models', label: t('admin:tabs.public_models'), icon: Cpu },
     { id: 'public-retrievers', label: t('admin:tabs.public_retrievers'), icon: Database },
     { id: 'public-skills', label: t('admin:tabs.public_skills'), icon: Sparkles },
+    { id: 'public-ghosts', label: t('admin:tabs.public_ghosts'), icon: Ghost },
+    { id: 'public-shells', label: t('admin:tabs.public_shells'), icon: Terminal },
     { id: 'public-teams', label: t('admin:tabs.public_teams'), icon: UsersRound },
     { id: 'public-bots', label: t('admin:tabs.public_bots'), icon: Bot },
     { id: 'api-keys', label: t('admin:tabs.api_keys'), icon: KeyRound },

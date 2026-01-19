@@ -15,6 +15,8 @@ import UserList from '@/features/admin/components/UserList'
 import PublicModelList from '@/features/admin/components/PublicModelList'
 import PublicRetrieverList from '@/features/admin/components/PublicRetrieverList'
 import PublicSkillList from '@/features/admin/components/PublicSkillList'
+import PublicGhostList from '@/features/admin/components/PublicGhostList'
+import PublicShellList from '@/features/admin/components/PublicShellList'
 import PublicTeamList from '@/features/admin/components/PublicTeamList'
 import PublicBotList from '@/features/admin/components/PublicBotList'
 import ApiKeyManagement from '@/features/admin/components/ApiKeyManagement'
@@ -68,6 +70,8 @@ function AdminContent() {
         'public-models',
         'public-retrievers',
         'public-skills',
+        'public-ghosts',
+        'public-shells',
         'public-teams',
         'public-bots',
         'api-keys',
@@ -123,6 +127,10 @@ function AdminContent() {
         return <PublicRetrieverList />
       case 'public-skills':
         return <PublicSkillList />
+      case 'public-ghosts':
+        return <PublicGhostList />
+      case 'public-shells':
+        return <PublicShellList />
       case 'public-teams':
         return <PublicTeamList />
       case 'public-bots':

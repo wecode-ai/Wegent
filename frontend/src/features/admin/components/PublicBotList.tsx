@@ -12,6 +12,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Bot, Loader2 } from 'lucide-react'
 import { PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline'
 import { useToast } from '@/hooks/use-toast'
@@ -39,8 +46,14 @@ import {
   AdminPublicBot,
   AdminPublicBotCreate,
   AdminPublicBotUpdate,
+  AdminPublicGhost,
+  AdminPublicShell,
+  AdminPublicModel,
 } from '@/apis/admin'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
+
+// Special value for "None" selection
+const NONE_VALUE = '__none__'
 
 const PublicBotList: React.FC = () => {
   const { t } = useTranslation('admin')
@@ -49,6 +62,12 @@ const PublicBotList: React.FC = () => {
   const [_total, setTotal] = useState(0)
   const [page, _setPage] = useState(1)
   const [loading, setLoading] = useState(true)
+
+  // Available resources for selection
+  const [ghosts, setGhosts] = useState<AdminPublicGhost[]>([])
+  const [shells, setShells] = useState<AdminPublicShell[]>([])
+  const [models, setModels] = useState<AdminPublicModel[]>([])
+  const [loadingResources, setLoadingResources] = useState(false)
 
   // Dialog states
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
@@ -87,9 +106,37 @@ const PublicBotList: React.FC = () => {
     }
   }, [page, toast, t])
 
+  // Fetch available resources (ghosts, shells, models)
+  const fetchResources = useCallback(async () => {
+    setLoadingResources(true)
+    try {
+      const [ghostsRes, shellsRes, modelsRes] = await Promise.all([
+        adminApis.getPublicGhosts(1, 100),
+        adminApis.getPublicShells(1, 100),
+        adminApis.getPublicModels(1, 100),
+      ])
+      // Only show active resources
+      setGhosts(ghostsRes.items.filter(g => g.is_active))
+      setShells(shellsRes.items.filter(s => s.is_active))
+      setModels(modelsRes.items.filter(m => m.is_active))
+    } catch (_error) {
+      // Silently fail - resources are optional
+      console.error('Failed to load resources:', _error)
+    } finally {
+      setLoadingResources(false)
+    }
+  }, [])
+
   useEffect(() => {
     fetchBots()
   }, [fetchBots])
+
+  // Load resources when dialog opens
+  useEffect(() => {
+    if (isCreateDialogOpen || isEditDialogOpen) {
+      fetchResources()
+    }
+  }, [isCreateDialogOpen, isEditDialogOpen, fetchResources])
 
   const validateConfig = (value: string): Record<string, unknown> | null => {
     if (!value.trim()) {
@@ -108,6 +155,57 @@ const PublicBotList: React.FC = () => {
       setConfigError(t('public_bots.errors.config_invalid_json'))
       return null
     }
+  }
+
+  // Extract refs from config
+  const extractRefsFromConfig = (
+    configStr: string
+  ): { ghostRef: string; shellRef: string; modelRef: string } => {
+    try {
+      const config = JSON.parse(configStr)
+      const spec = (config.spec as Record<string, unknown>) || {}
+      return {
+        ghostRef: (spec.ghostRef as string) || '',
+        shellRef: (spec.shellRef as string) || '',
+        modelRef: (spec.modelRef as string) || '',
+      }
+    } catch {
+      return { ghostRef: '', shellRef: '', modelRef: '' }
+    }
+  }
+
+  // Update config with new ref value
+  const updateConfigWithRef = (
+    configStr: string,
+    refKey: 'ghostRef' | 'shellRef' | 'modelRef',
+    refValue: string
+  ): string => {
+    try {
+      const config = JSON.parse(configStr)
+      if (!config.spec || typeof config.spec !== 'object') {
+        config.spec = {}
+      }
+      if (refValue && refValue !== NONE_VALUE) {
+        config.spec[refKey] = refValue
+      } else {
+        delete config.spec[refKey]
+      }
+      return JSON.stringify(config, null, 2)
+    } catch {
+      // If config is invalid, return as-is
+      return configStr
+    }
+  }
+
+  // Handle selector change - update config
+  const handleRefChange = (refKey: 'ghostRef' | 'shellRef' | 'modelRef', value: string) => {
+    const newConfig = updateConfigWithRef(
+      formData.config,
+      refKey,
+      value === NONE_VALUE ? '' : value
+    )
+    setFormData({ ...formData, config: newConfig })
+    validateConfig(newConfig)
   }
 
   const handleCreateBot = async () => {
@@ -252,13 +350,45 @@ const PublicBotList: React.FC = () => {
     return bot.display_name || bot.name
   }
 
+  // Get current refs from config for selector display
+  const currentRefs = extractRefsFromConfig(formData.config)
+
+  // Render the resource selector
+  const renderResourceSelector = (
+    id: string,
+    label: string,
+    value: string,
+    onChange: (value: string) => void,
+    options: { name: string; display_name: string | null; namespace: string }[],
+    placeholder: string,
+    noneLabel: string
+  ) => (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <Select value={value || NONE_VALUE} onValueChange={onChange}>
+        <SelectTrigger id={id}>
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={NONE_VALUE}>{noneLabel}</SelectItem>
+          {options.map(option => (
+            <SelectItem key={option.name} value={option.name}>
+              {option.display_name || option.name}
+              {option.namespace !== 'default' && (
+                <span className="text-text-muted ml-1">({option.namespace})</span>
+              )}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+
   return (
     <div className="space-y-3">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">
-          {t('public_bots.title')}
-        </h2>
+        <h2 className="text-xl font-semibold text-text-primary mb-1">{t('public_bots.title')}</h2>
         <p className="text-sm text-text-muted">{t('public_bots.description')}</p>
       </div>
 
@@ -369,7 +499,7 @@ const PublicBotList: React.FC = () => {
 
       {/* Create Bot Dialog */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t('public_bots.create_bot')}</DialogTitle>
             <DialogDescription>{t('public_bots.create_description')}</DialogDescription>
@@ -393,6 +523,45 @@ const PublicBotList: React.FC = () => {
                 placeholder={t('public_bots.form.namespace_placeholder')}
               />
             </div>
+
+            {/* Resource Selectors */}
+            {loadingResources ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                <span className="text-sm text-text-muted">{t('common.loading')}</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {renderResourceSelector(
+                  'ghost',
+                  t('public_bots.form.ghost'),
+                  currentRefs.ghostRef,
+                  value => handleRefChange('ghostRef', value),
+                  ghosts,
+                  t('public_bots.form.ghost_placeholder'),
+                  t('public_bots.form.ghost_none')
+                )}
+                {renderResourceSelector(
+                  'shell',
+                  t('public_bots.form.shell'),
+                  currentRefs.shellRef,
+                  value => handleRefChange('shellRef', value),
+                  shells,
+                  t('public_bots.form.shell_placeholder'),
+                  t('public_bots.form.shell_none')
+                )}
+                {renderResourceSelector(
+                  'model',
+                  t('public_bots.form.model'),
+                  currentRefs.modelRef,
+                  value => handleRefChange('modelRef', value),
+                  models,
+                  t('public_bots.form.model_placeholder'),
+                  t('public_bots.form.model_none')
+                )}
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="config">{t('public_bots.form.config')} *</Label>
               <Textarea
@@ -423,7 +592,7 @@ const PublicBotList: React.FC = () => {
 
       {/* Edit Bot Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t('public_bots.edit_bot')}</DialogTitle>
           </DialogHeader>
@@ -446,6 +615,45 @@ const PublicBotList: React.FC = () => {
                 placeholder={t('public_bots.form.namespace_placeholder')}
               />
             </div>
+
+            {/* Resource Selectors */}
+            {loadingResources ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                <span className="text-sm text-text-muted">{t('common.loading')}</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {renderResourceSelector(
+                  'edit-ghost',
+                  t('public_bots.form.ghost'),
+                  currentRefs.ghostRef,
+                  value => handleRefChange('ghostRef', value),
+                  ghosts,
+                  t('public_bots.form.ghost_placeholder'),
+                  t('public_bots.form.ghost_none')
+                )}
+                {renderResourceSelector(
+                  'edit-shell',
+                  t('public_bots.form.shell'),
+                  currentRefs.shellRef,
+                  value => handleRefChange('shellRef', value),
+                  shells,
+                  t('public_bots.form.shell_placeholder'),
+                  t('public_bots.form.shell_none')
+                )}
+                {renderResourceSelector(
+                  'edit-model',
+                  t('public_bots.form.model'),
+                  currentRefs.modelRef,
+                  value => handleRefChange('modelRef', value),
+                  models,
+                  t('public_bots.form.model_placeholder'),
+                  t('public_bots.form.model_none')
+                )}
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="edit-config">{t('public_bots.form.config')}</Label>
               <Textarea

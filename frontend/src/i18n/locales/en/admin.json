@@ -8,6 +8,8 @@
     "public_skills": "Public Skills",
     "public_teams": "Public Agents",
     "public_bots": "Public Bots",
+    "public_ghosts": "Public Ghosts",
+    "public_shells": "Public Shells",
     "api_keys": "API Keys",
     "system_config": "System Config"
   },
@@ -436,6 +438,15 @@
       "name_placeholder": "Enter bot name",
       "namespace": "Namespace",
       "namespace_placeholder": "default",
+      "ghost": "Ghost",
+      "ghost_placeholder": "Select a Ghost (optional)",
+      "ghost_none": "None",
+      "shell": "Shell",
+      "shell_placeholder": "Select a Shell (optional)",
+      "shell_none": "None",
+      "model": "Model",
+      "model_placeholder": "Select a Model (optional)",
+      "model_none": "None",
       "config": "Bot Configuration",
       "config_placeholder": "Enter bot configuration as JSON",
       "config_hint": "The configuration must reference public Ghost, Shell, and Model resources"
@@ -457,6 +468,107 @@
       "name_required": "Bot name is required",
       "config_required": "Bot configuration is required",
       "config_invalid_json": "Bot configuration must be valid JSON"
+    }
+  },
+  "public_ghosts": {
+    "title": "Public Ghost Management",
+    "description": "Manage system-level public ghosts (system prompts) available to all users",
+    "create_description": "Create a new public ghost. Ghosts define system prompts and tool configurations for bots.",
+    "loading": "Loading ghosts...",
+    "no_ghosts": "No public ghosts found",
+    "create_ghost": "Create Ghost",
+    "edit_ghost": "Edit Ghost",
+    "delete_ghost": "Delete Ghost",
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "columns": {
+      "id": "ID",
+      "name": "Name",
+      "namespace": "Namespace",
+      "status": "Status",
+      "created_at": "Created At",
+      "actions": "Actions"
+    },
+    "form": {
+      "name": "Ghost Name",
+      "name_placeholder": "Enter ghost name",
+      "namespace": "Namespace",
+      "namespace_placeholder": "default",
+      "config": "Ghost Configuration",
+      "config_placeholder": "Enter ghost configuration as JSON",
+      "config_hint": "The configuration should include spec.systemPrompt and optionally spec.mcpServers, spec.skills"
+    },
+    "confirm": {
+      "delete_title": "Delete Ghost",
+      "delete_message": "Are you sure you want to delete public ghost \"{{name}}\"? This action cannot be undone.",
+      "delete_in_use_message": "This ghost is referenced by public bots and cannot be deleted."
+    },
+    "success": {
+      "created": "Public ghost created successfully",
+      "updated": "Public ghost updated successfully",
+      "deleted": "Public ghost deleted successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load public ghosts",
+      "create_failed": "Failed to create public ghost",
+      "update_failed": "Failed to update public ghost",
+      "delete_failed": "Failed to delete public ghost",
+      "name_required": "Ghost name is required",
+      "config_required": "Ghost configuration is required",
+      "config_invalid_json": "Ghost configuration must be valid JSON"
+    }
+  },
+  "public_shells": {
+    "title": "Public Shell Management",
+    "description": "Manage system-level public shells (execution environments) available to all users",
+    "create_description": "Create a new public shell. Shells define the execution environment for bots.",
+    "loading": "Loading shells...",
+    "no_shells": "No public shells found",
+    "create_shell": "Create Shell",
+    "edit_shell": "Edit Shell",
+    "delete_shell": "Delete Shell",
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "columns": {
+      "id": "ID",
+      "name": "Name",
+      "namespace": "Namespace",
+      "shell_type": "Shell Type",
+      "status": "Status",
+      "created_at": "Created At",
+      "actions": "Actions"
+    },
+    "form": {
+      "name": "Shell Name",
+      "name_placeholder": "Enter shell name",
+      "namespace": "Namespace",
+      "namespace_placeholder": "default",
+      "config": "Shell Configuration",
+      "config_placeholder": "Enter shell configuration as JSON",
+      "config_hint": "The configuration should include spec.shellType (ClaudeCode, Agno, Dify, Chat)"
+    },
+    "confirm": {
+      "delete_title": "Delete Shell",
+      "delete_message": "Are you sure you want to delete public shell \"{{name}}\"? This action cannot be undone.",
+      "delete_in_use_message": "This shell is referenced by public bots and cannot be deleted."
+    },
+    "success": {
+      "created": "Public shell created successfully",
+      "updated": "Public shell updated successfully",
+      "deleted": "Public shell deleted successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load public shells",
+      "create_failed": "Failed to create public shell",
+      "update_failed": "Failed to update public shell",
+      "delete_failed": "Failed to delete public shell",
+      "name_required": "Shell name is required",
+      "config_required": "Shell configuration is required",
+      "config_invalid_json": "Shell configuration must be valid JSON"
     }
   }
 }
