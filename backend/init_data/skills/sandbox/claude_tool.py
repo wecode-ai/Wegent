@@ -72,7 +72,7 @@ class SandboxClaudeTool(BaseSandboxTool):
     """
 
     name: str = "sandbox_claude"
-    display_name: str = "Execute Claude Command"
+    display_name: str = "执行 Claude 命令"
     description: str = """Execute a Claude command in an isolated sandbox environment with streaming output.
 
 Use this tool to delegate tasks to Claude in a containerized environment, such as generating presentations, writing code, or creating documents.

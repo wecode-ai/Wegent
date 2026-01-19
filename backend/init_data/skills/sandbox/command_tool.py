@@ -62,7 +62,7 @@ class SandboxCommandTool(BaseSandboxTool):
     """
 
     name: str = "sandbox_command"
-    display_name: str = "Execute Command"
+    display_name: str = "执行命令"
     description: str = """Execute a command in an isolated sandbox environment.
 
 Use this tool to run shell commands safely in a containerized environment.

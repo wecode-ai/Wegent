@@ -58,7 +58,7 @@ class SandboxReadFileTool(BaseSandboxTool):
     """
 
     name: str = "sandbox_read_file"
-    display_name: str = "Read File from Sandbox"
+    display_name: str = "读取文件"
     description: str = """Read the contents of a file from the sandbox environment.
 
 Use this tool to read files stored in the sandbox filesystem.

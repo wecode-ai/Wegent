@@ -1,6 +1,6 @@
 ---
 description: "Provides isolated sandbox execution environments for safely executing commands, running code, and managing filesystems. Ideal for code testing, file management, and command execution. The sandbox_claude tool is available for advanced use cases but should only be used when explicitly requested by the user."
-displayName: "Sandbox Environment"
+displayName: "沙箱环境"
 version: "2.1.0"
 author: "Wegent Team"
 tags: ["sandbox", "code-execution", "filesystem", "automation"]

@@ -66,7 +66,7 @@ class SandboxWriteFileTool(BaseSandboxTool):
     """
 
     name: str = "sandbox_write_file"
-    display_name: str = "Write File to Sandbox"
+    display_name: str = "写入文件"
     description: str = """Write content to a file in the sandbox environment.
 
 Use this tool to create or overwrite files in the sandbox filesystem.

@@ -57,7 +57,7 @@ class SandboxListFilesTool(BaseSandboxTool):
     """
 
     name: str = "sandbox_list_files"
-    display_name: str = "List Files in Sandbox"
+    display_name: str = "列出文件"
     description: str = """List files and directories in the sandbox environment.
 
 Use this tool to explore the sandbox filesystem structure.
