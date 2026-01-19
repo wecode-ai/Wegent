@@ -378,8 +378,8 @@ def remove_task_from_project(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found in project")
 
-    # Remove task from project by setting project_id to NULL
-    task.project_id = None
+    # Remove task from project by setting project_id to 0 (default value for no project)
+    task.project_id = 0
     db.commit()
 
 
