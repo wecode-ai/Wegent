@@ -9,6 +9,7 @@ Document indexing orchestration.
 import logging
 import tempfile
 import uuid
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -18,6 +19,10 @@ from llama_index.core import Document, SimpleDirectoryReader
 from app.schemas.rag import SplitterConfig
 from app.services.rag.splitter import SemanticSplitter, SentenceSplitter
 from app.services.rag.splitter.factory import create_splitter
+from app.services.rag.splitter.structural_semantic import (
+    DocumentChunks,
+    StructuralSemanticSplitter,
+)
 from app.services.rag.storage.base import BaseStorageBackend
 
 logger = logging.getLogger(__name__)
@@ -207,7 +212,7 @@ class DocumentIndexer:
             **kwargs: Additional parameters
 
         Returns:
-            Indexing result dict
+            Indexing result dict (includes chunks_data for StructuralSemanticSplitter)
         """
         # Sanitize document metadata to prevent ES mapping conflicts
         # This removes complex nested structures from PPTX/DOCX metadata
@@ -215,7 +220,18 @@ class DocumentIndexer:
             doc.metadata = sanitize_metadata(doc.metadata)
 
         # Split documents into nodes
-        nodes = self.splitter.split_documents(documents)
+        # For StructuralSemanticSplitter, also get chunks data for DB storage
+        chunks_data = None
+        if isinstance(self.splitter, StructuralSemanticSplitter):
+            nodes, document_chunks = self.splitter.split_documents_with_chunks(documents)
+            # Convert dataclass to dict for JSON storage
+            chunks_data = asdict(document_chunks)
+            logger.info(
+                f"StructuralSemanticSplitter created {document_chunks.total_chunks} chunks, "
+                f"has_non_text_content={document_chunks.has_non_text_content}"
+            )
+        else:
+            nodes = self.splitter.split_documents(documents)
 
         # Prepare metadata
         created_at = datetime.now(timezone.utc).isoformat()
@@ -241,5 +257,9 @@ class DocumentIndexer:
                 "created_at": created_at,
             }
         )
+
+        # Add chunks data for DB storage (only for StructuralSemanticSplitter)
+        if chunks_data is not None:
+            result["chunks_data"] = chunks_data
 
         return result

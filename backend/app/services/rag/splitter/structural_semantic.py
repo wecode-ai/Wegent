@@ -294,20 +294,26 @@ Identify the best split points to create chunks of roughly equal size while pres
             logger.error(f"LLM semantic splitting failed: {e}")
             return [chunk for chunk, _ in self.force_split_with_overlap(text)]
 
-    def split_documents(self, documents: List[Document]) -> List[BaseNode]:
+    def split_documents_with_chunks(
+        self, documents: List[Document]
+    ) -> Tuple[List[BaseNode], DocumentChunks]:
         """
-        Split documents into nodes using structural semantic approach.
+        Split documents into nodes and return both nodes and chunks data.
 
-        This is a synchronous wrapper that processes documents without
-        using the LLM (for compatibility with existing pipeline).
+        This is a synchronous method that processes documents without
+        using the LLM for semantic boundary detection.
 
         Args:
             documents: List of LlamaIndex Document objects
 
         Returns:
-            List of TextNode objects
+            Tuple of (List of TextNode objects, DocumentChunks for DB storage)
         """
         nodes = []
+        all_chunk_items = []
+        has_non_text = False
+        all_skipped = set()
+        chunk_index = 0
 
         for doc in documents:
             text = doc.text or ""
@@ -315,8 +321,10 @@ Identify the best split points to create chunks of roughly equal size while pres
                 continue
 
             # Detect and remove non-text content
-            has_non_text, skipped = self.detect_non_text_content(text)
-            if has_non_text:
+            doc_has_non_text, skipped = self.detect_non_text_content(text)
+            if doc_has_non_text:
+                has_non_text = True
+                all_skipped.update(skipped)
                 text = self.remove_non_text_content(text)
                 logger.info(f"Skipped non-text elements: {skipped}")
 
@@ -340,6 +348,18 @@ Identify the best split points to create chunks of roughly equal size while pres
                         },
                     )
                     nodes.append(node)
+
+                    # Create ChunkItem for DB storage
+                    chunk_item = ChunkItem(
+                        chunk_index=chunk_index,
+                        content=block,
+                        token_count=block_tokens,
+                        start_position=position,
+                        end_position=position + len(block),
+                        forced_split=False,
+                    )
+                    all_chunk_items.append(chunk_item)
+                    chunk_index += 1
                     position += len(block)
                 else:
                     # Block exceeds limit - force split with overlap
@@ -357,8 +377,45 @@ Identify the best split points to create chunks of roughly equal size while pres
                             },
                         )
                         nodes.append(node)
+
+                        # Create ChunkItem for DB storage
+                        chunk_item = ChunkItem(
+                            chunk_index=chunk_index,
+                            content=chunk_text,
+                            token_count=chunk_tokens,
+                            start_position=position,
+                            end_position=position + len(chunk_text),
+                            forced_split=is_forced,
+                        )
+                        all_chunk_items.append(chunk_item)
+                        chunk_index += 1
                         position += len(chunk_text)
 
+        # Build DocumentChunks
+        document_chunks = DocumentChunks(
+            chunks=all_chunk_items,
+            total_chunks=len(all_chunk_items),
+            overlap_tokens=self.overlap_tokens,
+            has_non_text_content=has_non_text,
+            skipped_elements=list(all_skipped),
+        )
+
+        return nodes, document_chunks
+
+    def split_documents(self, documents: List[Document]) -> List[BaseNode]:
+        """
+        Split documents into nodes using structural semantic approach.
+
+        This is a synchronous wrapper that processes documents without
+        using the LLM (for compatibility with existing pipeline).
+
+        Args:
+            documents: List of LlamaIndex Document objects
+
+        Returns:
+            List of TextNode objects
+        """
+        nodes, _ = self.split_documents_with_chunks(documents)
         return nodes
 
     async def split_documents_with_llm(

@@ -683,6 +683,13 @@ def _index_document_background(
             if doc:
                 doc.is_active = True
                 doc.status = DocumentStatus.ENABLED
+                # Save chunks data if available (from StructuralSemanticSplitter)
+                if result.get("chunks_data"):
+                    doc.chunks = result["chunks_data"]
+                    logger.info(
+                        f"Saved {result['chunks_data'].get('total_chunks', 0)} chunks "
+                        f"to document {document_id}"
+                    )
                 db.commit()
                 logger.info(
                     f"Updated document {document_id} is_active to True and status to enabled after successful indexing"
