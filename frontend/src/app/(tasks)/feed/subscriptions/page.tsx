@@ -64,7 +64,7 @@ function SubscriptionsPageContent() {
           <Button variant="ghost" size="icon" className="h-9 w-9" onClick={handleBack}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h1 className="text-lg font-semibold">{t('my_flows')}</h1>
+          <h1 className="text-lg font-semibold">{t('my_subscriptions')}</h1>
         </div>
         <Button onClick={handleCreateFlow} size="sm">
           {t('create_subscription')}

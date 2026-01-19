@@ -216,7 +216,7 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
 
   const renderPost = (exec: FlowExecution, isLast: boolean) => {
     const status = statusConfig[exec.status]
-    const flowName = exec.flow_display_name || exec.flow_name || t('feed.unnamed_flow')
+    const flowName = exec.flow_display_name || exec.flow_name || t('feed.unnamed_subscription')
 
     return (
       <div key={exec.id} className="relative">
@@ -388,7 +388,7 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
                   className="text-primary hover:underline inline-flex items-center gap-0.5"
                 >
                   <Settings className="h-3 w-3" />
-                  {t('feed.manage_flows')}
+                  {t('feed.manage_subscriptions')}
                 </button>
               </p>
             </div>

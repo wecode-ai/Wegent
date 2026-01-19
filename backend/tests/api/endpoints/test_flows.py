@@ -331,3 +331,149 @@ class TestFlowExecutionEndpoints:
             headers={"Authorization": f"Bearer {test_token}"},
         )
         assert response.status_code == status.HTTP_200_OK
+
+
+class TestFlowTimezoneHandling:
+    """Test timezone handling in Flow scheduling."""
+
+    @pytest.fixture
+    def test_team(self, test_db, test_user):
+        """Create a test team."""
+        team = Kind(
+            user_id=test_user.id,
+            kind="Team",
+            name="test-team-tz",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Team",
+                "metadata": {"name": "test-team-tz", "namespace": "default"},
+                "spec": {"displayName": "Test Team TZ", "members": []},
+            },
+            is_active=True,
+        )
+        test_db.add(team)
+        test_db.commit()
+        test_db.refresh(team)
+        return team
+
+    def test_create_flow_with_asia_shanghai_timezone(
+        self, test_client: TestClient, test_user: User, test_team, test_token: str
+    ):
+        """
+        Test creating a flow with Asia/Shanghai timezone.
+
+        Scenario: User sets 21:15 in Asia/Shanghai timezone
+        Expected: next_execution_time should be 21:15 CST (13:15 UTC)
+        """
+        response = test_client.post(
+            "/api/flows",
+            json={
+                "name": "shanghai-flow",
+                "display_name": "Shanghai Flow",
+                "task_type": "collection",
+                "trigger_type": "cron",
+                "trigger_config": {
+                    "expression": "15 21 * * *",  # 21:15 in user's timezone
+                    "timezone": "Asia/Shanghai",
+                },
+                "team_id": test_team.id,
+                "prompt_template": "Test prompt",
+                "retry_count": 0,
+                "enabled": True,
+            },
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+        assert response.status_code == status.HTTP_201_CREATED
+        data = response.json()
+
+        # Verify the flow was created with correct timezone
+        assert data["trigger_config"]["timezone"] == "Asia/Shanghai"
+        assert data["trigger_config"]["expression"] == "15 21 * * *"
+
+        # Verify next_execution_time is calculated correctly
+        # The time should be stored in UTC (21:15 CST = 13:15 UTC)
+        next_exec = datetime.fromisoformat(
+            data["next_execution_time"].replace("Z", "+00:00")
+        )
+        assert next_exec.hour == 13  # 21:15 CST = 13:15 UTC
+        assert next_exec.minute == 15
+
+    def test_create_flow_with_utc_timezone(
+        self, test_client: TestClient, test_user: User, test_team, test_token: str
+    ):
+        """
+        Test creating a flow with UTC timezone.
+
+        Scenario: User sets 09:00 in UTC timezone
+        Expected: next_execution_time should be 09:00 UTC
+        """
+        response = test_client.post(
+            "/api/flows",
+            json={
+                "name": "utc-flow",
+                "display_name": "UTC Flow",
+                "task_type": "collection",
+                "trigger_type": "cron",
+                "trigger_config": {
+                    "expression": "0 9 * * *",  # 09:00 UTC
+                    "timezone": "UTC",
+                },
+                "team_id": test_team.id,
+                "prompt_template": "Test prompt",
+                "retry_count": 0,
+                "enabled": True,
+            },
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+        assert response.status_code == status.HTTP_201_CREATED
+        data = response.json()
+
+        # Verify next_execution_time is 09:00 UTC
+        next_exec = datetime.fromisoformat(
+            data["next_execution_time"].replace("Z", "+00:00")
+        )
+        assert next_exec.hour == 9
+        assert next_exec.minute == 0
+
+    def test_create_flow_with_america_new_york_timezone(
+        self, test_client: TestClient, test_user: User, test_team, test_token: str
+    ):
+        """
+        Test creating a flow with America/New_York timezone.
+
+        Scenario: User sets 14:30 in America/New_York timezone
+        Expected: next_execution_time should be 14:30 EST/EDT (19:30 or 18:30 UTC depending on DST)
+        """
+        response = test_client.post(
+            "/api/flows",
+            json={
+                "name": "ny-flow",
+                "display_name": "New York Flow",
+                "task_type": "collection",
+                "trigger_type": "cron",
+                "trigger_config": {
+                    "expression": "30 14 * * *",  # 14:30 in user's timezone
+                    "timezone": "America/New_York",
+                },
+                "team_id": test_team.id,
+                "prompt_template": "Test prompt",
+                "retry_count": 0,
+                "enabled": True,
+            },
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+        assert response.status_code == status.HTTP_201_CREATED
+        data = response.json()
+
+        # Verify the flow was created with correct timezone
+        assert data["trigger_config"]["timezone"] == "America/New_York"
+        assert data["trigger_config"]["expression"] == "30 14 * * *"
+
+        # Verify next_execution_time is calculated correctly
+        # 14:30 EST = 19:30 UTC (winter) or 14:30 EDT = 18:30 UTC (summer)
+        next_exec = datetime.fromisoformat(
+            data["next_execution_time"].replace("Z", "+00:00")
+        )
+        assert next_exec.hour in [18, 19]  # Depends on DST
+        assert next_exec.minute == 30
