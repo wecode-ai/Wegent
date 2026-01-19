@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Default resources for new users 
+# Public resources (Ghost, Bot, Team) - accessible by all users (user_id=0)
 ---
 apiVersion: agent.wecode.io/v1
 kind: Ghost
@@ -215,7 +215,7 @@ spec:
     - Do NOT include additional explanatory text outside the markdown structure
     - The final prompt should be comprehensive and actionable
     - Always include the emoji icons in headings for visual recognition
-    - Even if the user’s request is very clear, prompts should still be generated rather than directly modifying files.
+    - Even if the user's request is very clear, prompts should still be generated rather than directly modifying files.
     - **CRITICAL**: When outputting clarification questions, you MUST wrap the ENTIRE question section (starting from `## 🤔 Clarification Questions`) in a markdown code block using triple backticks (```markdown ... ```). This is REQUIRED for proper rendering. Do NOT output the questions directly without the code block wrapper.
 
     ## Example Flow
@@ -561,7 +561,8 @@ status:
 apiVersion: agent.wecode.io/v1
 kind: Team
 metadata:
-  name: chat-team
+  name: wegent-chat
+  displayName: Wegent Chat
   namespace: default
 spec:
   description: A general-purpose chat team for helpful, harmless, and honest AI assistance.
@@ -574,6 +575,79 @@ spec:
   collaborationModel: solo
   bind_mode:
     - chat
+  workflow:
+    mode: solo
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: wegent-knowledge
+  namespace: default
+spec:
+  skills:
+    - mermaid-diagram
+  mcpServers: {}
+  systemPrompt: |
+    You are "Wegent Notebook Agent", a research and writing assistant whose knowledge is strictly limited to the materials provided by the user in the current conversation（in chinese). Your behavior and output style are inspired by Google NotebookLM: material-centric, evidence-first, and focused on helping users understand, organize, and reuse their own content.
+
+    Your goal is to help the user:
+    - Understand complex materials
+    - Extract key points and structure
+    - Identify inconsistencies or open questions
+    - Produce reusable outputs such as summaries, structured notes, comparisons, FAQs, study cards, and writing drafts
+
+    Core Principles (Must Follow):
+    1) Material-only reasoning: You may only rely on information explicitly provided by the user in this conversation. Do NOT introduce external knowledge as fact.
+
+    2) Say "not provided" when needed: If the materials do not support a conclusion, explicitly state that the information is not available.
+
+    3) Source naming rule (STRICT): When referencing or citing materials, you MUST use the original document names exactly as provided by the user (such as file names, titles, or labels appearing in the pasted content). You MUST NOT use abstract placeholders such as "Document 1", "Doc 2", "Source A", or any numbered or aliased references. If multiple materials are relevant, repeat their full original names instead of abbreviations. If original names is too long, you can reduce length but keep user can recognize it. If a material does not have a clear document name, explicitly say "the material without a specified document name" or ask the user to provide a name before proceeding.
+
+    4) Evidence-aware answers: Every important conclusion must clearly indicate which named document or material section it is based on, using the original document name in plain text.
+
+    5) Clarify before answering: For complex tasks, restate the user's goal and briefly explain how you will use the provided materials before answering.
+
+    6) Structured output by default: Prefer structured formats such as headings, bullet points, and tables.
+
+    Startup message:
+    "I will work strictly from the materials you provide. When referencing information, I will always use the original document names you give, never numbered placeholders, and I will clearly separate facts, inferences, and unknowns."
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: wegent-knowledge-bot
+  namespace: default
+spec:
+  ghostRef:
+    name: wegent-knowledge
+    namespace: default
+  shellRef:
+    name: Chat
+    namespace: default
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: wegent-notebook
+  displayName: Wegent Notebook
+  namespace: default
+spec:
+  description: A research and writing assistant inspired by Google NotebookLM, focused on material-centric, evidence-first analysis.
+  members:
+    - role: leader
+      botRef:
+        name: wegent-knowledge-bot
+        namespace: default
+      prompt: ""
+  collaborationModel: solo
+  bind_mode:
+    - knowledge
   workflow:
     mode: solo
 status:

@@ -49,17 +49,19 @@ class FlowResource(Base):
     # Scheduling fields (denormalized for efficient queries)
     enabled = Column(Boolean, default=True, nullable=False, index=True)
     trigger_type = Column(String(50), nullable=False, index=True)
-    team_id = Column(Integer, nullable=True, index=True)
-    workspace_id = Column(Integer, nullable=True)
+    team_id = Column(Integer, nullable=False, index=True)
+    workspace_id = Column(Integer, nullable=False, default=0)  # 0 means no workspace
 
     # Webhook support
-    webhook_token = Column(String(255), nullable=True, unique=True)
-    webhook_secret = Column(String(255), nullable=True)  # HMAC signing secret
+    webhook_token = Column(String(255), nullable=False, default="")
+    webhook_secret = Column(
+        String(255), nullable=False, default=""
+    )  # HMAC signing secret
 
     # Execution statistics
-    last_execution_time = Column(DateTime, nullable=True)
-    last_execution_status = Column(String(50), nullable=True)
-    next_execution_time = Column(DateTime, nullable=True, index=True)
+    last_execution_time = Column(DateTime, nullable=False)
+    last_execution_status = Column(String(50), nullable=False, default="")
+    next_execution_time = Column(DateTime, nullable=False)
     execution_count = Column(Integer, default=0, nullable=False)
     success_count = Column(Integer, default=0, nullable=False)
     failure_count = Column(Integer, default=0, nullable=False)
@@ -109,19 +111,23 @@ class FlowExecution(Base):
     )
 
     # Task reference (the actual task created for this execution)
-    task_id = Column(Integer, nullable=True, index=True)
+    task_id = Column(
+        Integer, nullable=False, default=0, index=True
+    )  # 0 means no task yet
 
     # Trigger information
     trigger_type = Column(String(50), nullable=False)  # cron, interval, webhook, etc.
-    trigger_reason = Column(String(500), nullable=True)  # Human-readable reason
+    trigger_reason = Column(
+        String(500), nullable=False, default=""
+    )  # Human-readable reason
 
     # Resolved prompt (with variables substituted)
     prompt = Column(Text, nullable=False)
 
     # Execution status
     status = Column(String(50), default="PENDING", nullable=False, index=True)
-    result_summary = Column(Text, nullable=True)
-    error_message = Column(Text, nullable=True)
+    result_summary = Column(Text, nullable=False, default="")
+    error_message = Column(Text, nullable=False, default="")
 
     # Retry tracking
     retry_attempt = Column(Integer, default=0, nullable=False)
@@ -130,8 +136,8 @@ class FlowExecution(Base):
     version = Column(Integer, default=0, nullable=False)
 
     # Timing (stored in UTC)
-    started_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
+    started_at = Column(DateTime, nullable=False)
+    completed_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False

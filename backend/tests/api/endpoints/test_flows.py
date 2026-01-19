@@ -64,6 +64,7 @@ class TestFlowEndpoints:
             },
             "status": {"state": "Available"},
         }
+        now = datetime.utcnow()
         flow = FlowResource(
             user_id=test_user.id,
             kind="Flow",
@@ -74,6 +75,9 @@ class TestFlowEndpoints:
             enabled=True,
             trigger_type="cron",
             team_id=test_team.id,
+            last_execution_time=now,
+            last_execution_status="",
+            next_execution_time=now + timedelta(days=1),
         )
         test_db.add(flow)
         test_db.commit()
@@ -232,6 +236,7 @@ class TestFlowExecutionEndpoints:
     @pytest.fixture
     def test_flow(self, test_db, test_user, test_team):
         """Create a test flow."""
+        now = datetime.utcnow()
         flow = FlowResource(
             user_id=test_user.id,
             kind="Flow",
@@ -253,6 +258,9 @@ class TestFlowExecutionEndpoints:
             enabled=True,
             trigger_type="cron",
             team_id=test_team.id,
+            last_execution_time=now,
+            last_execution_status="",
+            next_execution_time=now + timedelta(days=1),
         )
         test_db.add(flow)
         test_db.commit()

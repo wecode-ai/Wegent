@@ -212,6 +212,9 @@ class FlowService:
         next_execution_time = self.calculate_next_execution_time(
             flow_in.trigger_type, flow_in.trigger_config
         )
+        # Ensure next_execution_time is never None
+        if next_execution_time is None:
+            next_execution_time = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # Create Flow resource
         flow = FlowResource(
@@ -224,12 +227,13 @@ class FlowService:
             enabled=flow_in.enabled,
             trigger_type=flow_in.trigger_type.value,
             team_id=flow_in.team_id,
-            workspace_id=workspace_id,
-            webhook_token=webhook_token,
-            webhook_secret=webhook_secret,
+            workspace_id=workspace_id or 0,  # Use 0 if workspace_id is None
+            webhook_token=webhook_token or "",  # Use empty string if None
+            webhook_secret=webhook_secret or "",  # Use empty string if None
             next_execution_time=next_execution_time,
+            last_execution_time=datetime.now(timezone.utc).replace(tzinfo=None),
+            last_execution_status="",
         )
-
         db.add(flow)
         db.commit()
         db.refresh(flow)
@@ -358,9 +362,10 @@ class FlowService:
                 flow_crd.spec.workspaceRef = FlowWorkspaceRef(
                     name=workspace.name, namespace=workspace.namespace
                 )
+                flow.workspace_id = update_data["workspace_id"]
             else:
                 flow_crd.spec.workspaceRef = None
-            flow.workspace_id = update_data["workspace_id"]
+                flow.workspace_id = 0  # Use 0 instead of None
 
         # Update other fields
         if "display_name" in update_data:
@@ -399,8 +404,10 @@ class FlowService:
                 and flow.trigger_type != FlowTriggerType.EVENT.value
             ):
                 flow.webhook_token = secrets.token_urlsafe(32)
+                flow.webhook_secret = secrets.token_urlsafe(32)
             elif trigger_type != FlowTriggerType.EVENT:
-                flow.webhook_token = None
+                flow.webhook_token = ""
+                flow.webhook_secret = ""
 
             flow_crd.spec.trigger = self._build_trigger_config(
                 trigger_type, trigger_config
@@ -412,8 +419,9 @@ class FlowService:
             )
 
             # Recalculate next execution time
-            flow.next_execution_time = self.calculate_next_execution_time(
-                trigger_type, trigger_config
+            next_time = self.calculate_next_execution_time(trigger_type, trigger_config)
+            flow.next_execution_time = next_time or datetime.now(timezone.utc).replace(
+                tzinfo=None
             )
 
         # Update status with webhook URL
@@ -488,12 +496,15 @@ class FlowService:
 
         # Recalculate next execution time if enabling
         if enabled:
-            flow.next_execution_time = self.calculate_next_execution_time(
+            next_time = self.calculate_next_execution_time(
                 flow.trigger_type,
                 self.extract_trigger_config(flow_crd.spec.trigger),
             )
+            flow.next_execution_time = next_time or datetime.now(timezone.utc).replace(
+                tzinfo=None
+            )
         else:
-            flow.next_execution_time = None
+            flow.next_execution_time = datetime.now(timezone.utc).replace(tzinfo=None)
 
         flow.json = flow_crd.model_dump(mode="json")
         flow.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1030,10 +1041,15 @@ class FlowService:
         execution = FlowExecution(
             user_id=user_id,
             flow_id=flow.id,
+            task_id=0,  # No task created yet
             trigger_type=trigger_type,
-            trigger_reason=trigger_reason,
+            trigger_reason=trigger_reason or "",
             prompt=resolved_prompt,
             status=FlowExecutionStatus.PENDING.value,
+            result_summary="",
+            error_message="",
+            started_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            completed_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
 
         db.add(execution)
