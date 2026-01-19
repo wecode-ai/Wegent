@@ -463,13 +463,20 @@ async def sandbox_heartbeat(sandbox_id: str, http_request: Request):
         if bot_config_str:
             try:
                 # Deserialize bot_config from JSON string
-                bot_config = json.loads(bot_config_str) if isinstance(bot_config_str, str) else bot_config_str
+                bot_config = (
+                    json.loads(bot_config_str)
+                    if isinstance(bot_config_str, str)
+                    else bot_config_str
+                )
 
                 # Find ClaudeCode bot in configuration
                 claude_bot = None
                 if isinstance(bot_config, list):
                     for bot in bot_config:
-                        if isinstance(bot, dict) and bot.get("shell_type", "").lower() == "claudecode":
+                        if (
+                            isinstance(bot, dict)
+                            and bot.get("shell_type", "").lower() == "claudecode"
+                        ):
                             claude_bot = bot
                             break
 

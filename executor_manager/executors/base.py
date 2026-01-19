@@ -20,10 +20,10 @@ class Executor(abc.ABC):
     ) -> Dict[str, Any]:
         """
         Get the IDs of all tasks currently being executed.
-        
+
         Args:
             label_selector: Optional selector to filter tasks
-            
+
         Returns:
             Dict containing a list of current task IDs and related information
         """

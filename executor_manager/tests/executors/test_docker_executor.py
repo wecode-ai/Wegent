@@ -105,14 +105,14 @@ class TestDockerExecutor:
         with pytest.raises(ValueError, match="Executor image not provided"):
             executor._get_executor_image(task)
 
-    @patch("executor_manager.executors.docker.utils.get_docker_used_ports")
+    @patch("executor_manager.executors.docker.executor.find_available_port")
     @patch("executor_manager.executors.docker.executor.build_callback_url")
     def test_prepare_docker_command(
-        self, mock_callback, mock_get_ports, executor, sample_task
+        self, mock_callback, mock_find_port, executor, sample_task
     ):
         """Test preparing Docker run command"""
-        # Mock get_docker_used_ports to avoid actual Docker command execution
-        mock_get_ports.return_value = set()
+        # Mock find_available_port to avoid actual Docker command execution
+        mock_find_port.return_value = 8080
         mock_callback.return_value = "http://callback.url"
 
         task_info = executor._extract_task_info(sample_task)
@@ -324,3 +324,173 @@ class TestDockerExecutor:
             progress=50,
             status=TaskStatus.RUNNING.value,
         )
+
+    @patch.dict("os.environ", {}, clear=True)
+    @patch("executor_manager.config.config.EXECUTOR_NETWORK_MODE", "")
+    def test_add_network_config_default(self, executor):
+        """Test network config with default settings (no env vars set)"""
+        cmd = []
+        network_mode = executor._add_network_config(cmd)
+
+        # Should not add --network flag for default
+        assert "--network" not in cmd
+        assert network_mode == "bridge"
+
+    @patch.dict("os.environ", {"EXECUTOR_NETWORK_MODE": "host"}, clear=True)
+    @patch("executor_manager.config.config.EXECUTOR_NETWORK_MODE", "host")
+    def test_add_network_config_host_mode(self, executor):
+        """Test network config with EXECUTOR_NETWORK_MODE=host"""
+        cmd = []
+        network_mode = executor._add_network_config(cmd)
+
+        assert "--network" in cmd
+        assert "host" in cmd
+        assert network_mode == "host"
+
+    @patch.dict("os.environ", {"EXECUTOR_NETWORK_MODE": "bridge"}, clear=True)
+    @patch("executor_manager.config.config.EXECUTOR_NETWORK_MODE", "bridge")
+    def test_add_network_config_bridge_mode(self, executor):
+        """Test network config with EXECUTOR_NETWORK_MODE=bridge"""
+        cmd = []
+        network_mode = executor._add_network_config(cmd)
+
+        assert "--network" in cmd
+        assert "bridge" in cmd
+        assert network_mode == "bridge"
+
+    @patch.dict("os.environ", {"NETWORK": "my-network"}, clear=True)
+    @patch("executor_manager.config.config.EXECUTOR_NETWORK_MODE", "")
+    def test_add_network_config_legacy_network(self, executor):
+        """Test network config with legacy NETWORK env var"""
+        cmd = []
+        network_mode = executor._add_network_config(cmd)
+
+        assert "--network" in cmd
+        assert "my-network" in cmd
+        assert network_mode == "my-network"
+
+    @patch.dict(
+        "os.environ",
+        {"EXECUTOR_NETWORK_MODE": "host", "NETWORK": "my-network"},
+        clear=True,
+    )
+    @patch("executor_manager.config.config.EXECUTOR_NETWORK_MODE", "host")
+    def test_add_network_config_priority(self, executor):
+        """Test that EXECUTOR_NETWORK_MODE has priority over NETWORK"""
+        cmd = []
+        network_mode = executor._add_network_config(cmd)
+
+        # Should use EXECUTOR_NETWORK_MODE, not NETWORK
+        assert "--network" in cmd
+        assert "host" in cmd
+        assert "my-network" not in cmd
+        assert network_mode == "host"
+
+    def test_get_container_host_host_mode(self, executor, mock_subprocess):
+        """Test _get_container_host returns localhost for host network mode"""
+        mock_subprocess.run.return_value = MagicMock(
+            stdout="host\n", returncode=0, stderr=""
+        )
+
+        host = executor._get_container_host("test-container")
+
+        assert host == "localhost"
+        mock_subprocess.run.assert_called_with(
+            [
+                "docker",
+                "inspect",
+                "--format",
+                "{{.HostConfig.NetworkMode}}",
+                "test-container",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+
+    def test_get_container_host_bridge_mode(self, executor, mock_subprocess):
+        """Test _get_container_host returns DEFAULT_DOCKER_HOST for bridge mode"""
+        mock_subprocess.run.return_value = MagicMock(
+            stdout="bridge\n", returncode=0, stderr=""
+        )
+
+        host = executor._get_container_host("test-container")
+
+        assert host == "host.docker.internal"
+
+    def test_get_container_host_custom_network(self, executor, mock_subprocess):
+        """Test _get_container_host returns DEFAULT_DOCKER_HOST for custom network"""
+        mock_subprocess.run.return_value = MagicMock(
+            stdout="my-custom-network\n", returncode=0, stderr=""
+        )
+
+        host = executor._get_container_host("test-container")
+
+        assert host == "host.docker.internal"
+
+    def test_get_container_host_error(self, executor, mock_subprocess):
+        """Test _get_container_host returns DEFAULT_DOCKER_HOST on error"""
+        mock_subprocess.run.side_effect = Exception("Docker error")
+
+        host = executor._get_container_host("test-container")
+
+        # Should return default host on error
+        assert host == "host.docker.internal"
+
+    @patch("executor_manager.executors.docker.executor.build_callback_url")
+    @patch("executor_manager.executors.docker.executor.find_available_port")
+    @patch.dict("os.environ", {"EXECUTOR_NETWORK_MODE": "host"}, clear=True)
+    @patch("executor_manager.config.config.EXECUTOR_NETWORK_MODE", "host")
+    def test_prepare_docker_command_host_mode_no_port_mapping(
+        self, mock_port, mock_callback, executor, sample_task
+    ):
+        """Test that host network mode does not add port mapping"""
+        mock_port.return_value = 8080
+        mock_callback.return_value = "http://callback.url"
+
+        task_info = executor._extract_task_info(sample_task)
+        executor_name = "test-executor"
+        executor_image = "test/executor:latest"
+
+        cmd = executor._prepare_docker_command(
+            sample_task, task_info, executor_name, executor_image
+        )
+
+        # Should have --network host
+        assert "--network" in cmd
+        host_idx = cmd.index("--network")
+        assert cmd[host_idx + 1] == "host"
+
+        # Should NOT have -p flag (port mapping)
+        assert "-p" not in cmd
+
+        # Should still have PORT env var
+        assert any("PORT=8080" in str(item) for item in cmd)
+
+    @patch("executor_manager.executors.docker.executor.build_callback_url")
+    @patch("executor_manager.executors.docker.executor.find_available_port")
+    @patch.dict("os.environ", {}, clear=True)
+    @patch("executor_manager.config.config.EXECUTOR_NETWORK_MODE", "")
+    def test_prepare_docker_command_bridge_mode_with_port_mapping(
+        self, mock_port, mock_callback, executor, sample_task
+    ):
+        """Test that bridge network mode adds port mapping"""
+        mock_port.return_value = 8080
+        mock_callback.return_value = "http://callback.url"
+
+        task_info = executor._extract_task_info(sample_task)
+        executor_name = "test-executor"
+        executor_image = "test/executor:latest"
+
+        cmd = executor._prepare_docker_command(
+            sample_task, task_info, executor_name, executor_image
+        )
+
+        # Should have -p flag (port mapping)
+        assert "-p" in cmd
+        p_idx = cmd.index("-p")
+        assert cmd[p_idx + 1] == "8080:8080"
+
+        # Should have PORT env var
+        assert any("PORT=8080" in str(item) for item in cmd)

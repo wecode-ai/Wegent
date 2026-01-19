@@ -95,14 +95,16 @@ class TaskApiClient:
         return self._handle_response(
             response, expect_json=True, context="fetching tasks"
         )
-        
+
     def update_fetch_params(self, limit=None, task_status=None):
         """Update task fetch parameters"""
         if limit is not None:
             self.limit = limit
         if task_status is not None:
             self.task_status = task_status
-        logger.info(f"Updated fetch parameters: limit={self.limit}, task_status={self.task_status}")
+        logger.info(
+            f"Updated fetch parameters: limit={self.limit}, task_status={self.task_status}"
+        )
 
     def update_task_status_by_fields(self, task_id, subtask_id, progress=0, **kwargs):
         """Update task status in API"""
@@ -177,19 +179,21 @@ class TaskApiClient:
             raise requests.RequestException(
                 f"Server error ({response.status_code}) during {context}"
             )
-            
+
     def fetch_subtasks(self, task_id):
         """Fetch subtasks for a specific task ID"""
         logger.info(f"Fetching subtasks for task ID: {task_id}")
         try:
-            return self._request_with_retry(lambda: self._do_fetch_subtasks(task_id), max_retries=1)
+            return self._request_with_retry(
+                lambda: self._do_fetch_subtasks(task_id), max_retries=1
+            )
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse response data: {e}")
             return False, str(e)
         except Exception as e:
             logger.error(f"Unexpected error during fetch_subtasks: {e}")
             return False, str(e)
-            
+
     def _do_fetch_subtasks(self, task_id):
         """Execute the API request to fetch subtasks for a specific task ID"""
         # Build URL with query parameters
@@ -199,7 +203,7 @@ class TaskApiClient:
         return self._handle_response(
             response, expect_json=True, context=f"fetching subtasks for task {task_id}"
         )
-    
+
     def fetch_offline_tasks(self):
         """Fetch offline tasks from API"""
         logger.info("Fetching offline tasks...")
@@ -211,7 +215,7 @@ class TaskApiClient:
         except Exception as e:
             logger.error(f"Unexpected error during fetch_offline_tasks: {e}")
             return False, str(e)
-    
+
     def _do_fetch_offline_tasks(self):
         """Execute the API request to fetch offline tasks"""
         # Build URL with query parameters for offline tasks
@@ -221,7 +225,7 @@ class TaskApiClient:
         return self._handle_response(
             response, expect_json=True, context="fetching offline tasks"
         )
-    
+
     def update_offline_fetch_params(self, limit=None):
         """Update offline task fetch parameters"""
         if limit is not None:

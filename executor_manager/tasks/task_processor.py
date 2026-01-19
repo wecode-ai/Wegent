@@ -10,12 +10,13 @@
 Task processing module, handles tasks fetched from API
 """
 
+from shared.logger import setup_logger
+from shared.telemetry.decorators import set_span_attribute, trace_sync
+
 from executor_manager.clients.task_api_client import TaskApiClient
 from executor_manager.config import config
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.github.github_app import get_github_app
-from shared.logger import setup_logger
-from shared.telemetry.decorators import set_span_attribute, trace_sync
 
 logger = setup_logger(__name__)
 
