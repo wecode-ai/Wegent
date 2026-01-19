@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Common E2B sandbox utilities for subagent tools.
+"""Common E2B sandbox utilities for sandbox tools.
 
 This module provides shared functionality for tools that need to interact
 with E2B sandboxes, including:
@@ -395,8 +395,8 @@ patch_e2b_sdk()
 try:
     from langchain_core.tools import BaseTool
 
-    class BaseSubAgentTool(BaseTool):
-        """Base class for SubAgent tools with common dependencies and configuration.
+    class BaseSandboxTool(BaseTool):
+        """Base class for Sandbox tools with common dependencies and configuration.
 
         This base class provides common attributes and sandbox management for all
         tools that need to interact with E2B sandboxes. Subclasses should override
@@ -517,6 +517,6 @@ try:
 except ImportError:
     # If langchain_core is not available, define a placeholder
     logger.warning(
-        "[BaseSubAgentTool] langchain_core not available, BaseSubAgentTool not defined"
+        "[BaseSandboxTool] langchain_core not available, BaseSandboxTool not defined"
     )
-    BaseSubAgentTool = None
+    BaseSandboxTool = None

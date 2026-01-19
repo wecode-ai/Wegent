@@ -37,7 +37,7 @@ COPY shared /app/shared
 # This includes:
 # - 01-default-resources.yaml: Default Ghost, Model, Shell, Bot, Team resources
 # - 02-public-shells.yaml: Public shell configurations
-# - skills/: Skill packages (mermaid-diagram, wiki_submit, subagent)
+# - skills/: Skill packages (mermaid-diagram, wiki_submit, sandbox)
 COPY backend/init_data /app/init_data
 
 # Create .env file (if it doesn't exist)

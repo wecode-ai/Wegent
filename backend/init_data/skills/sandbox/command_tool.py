@@ -40,21 +40,21 @@ class SandboxCommandInput(BaseModel):
 # Import base class here - use try/except to handle both direct and dynamic loading
 try:
     # Try relative import (for direct usage)
-    from ._base import BaseSubAgentTool
+    from ._base import BaseSandboxTool
 except ImportError:
-    # Try absolute import (for dynamic loading as skill_pkg_subagent)
+    # Try absolute import (for dynamic loading as skill_pkg_sandbox)
     import sys
 
     # Get the package name dynamically
-    package_name = __name__.rsplit(".", 1)[0]  # e.g., 'skill_pkg_subagent'
+    package_name = __name__.rsplit(".", 1)[0]  # e.g., 'skill_pkg_sandbox'
     _base_module = sys.modules.get(f"{package_name}._base")
     if _base_module:
-        BaseSubAgentTool = _base_module.BaseSubAgentTool
+        BaseSandboxTool = _base_module.BaseSandboxTool
     else:
         raise ImportError(f"Cannot import _base from {package_name}")
 
 
-class SandboxCommandTool(BaseSubAgentTool):
+class SandboxCommandTool(BaseSandboxTool):
     """Tool for executing commands in E2B sandbox.
 
     This tool provides direct command execution in an isolated

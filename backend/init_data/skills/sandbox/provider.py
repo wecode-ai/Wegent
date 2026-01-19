@@ -2,13 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""SubAgent tool provider using E2B Sandbox API.
+"""Sandbox tool provider using E2B Sandbox API.
 
-This module provides the SubAgentToolProvider class that creates
-CreateSubAgentTaskTool instances for skills that need to delegate
-complex tasks to SubAgents running in isolated execution environments.
+This module provides the SandboxToolProvider class that creates
+various Sandbox tool instances for executing commands, managing files,
+and running Claude AI tasks in isolated execution environments.
 
-The tool uses the E2B-like Sandbox API for lifecycle management:
+The tools use the E2B-like Sandbox API for lifecycle management:
 - Sandbox creation and reuse
 - Execution management
 - HTTP polling for status
@@ -22,26 +22,29 @@ from chat_shell.skills import SkillToolContext, SkillToolProvider
 from langchain_core.tools import BaseTool
 
 
-class SubAgentToolProvider(SkillToolProvider):
-    """Tool provider for SubAgent task creation using E2B Sandbox API.
+class SandboxToolProvider(SkillToolProvider):
+    """Tool provider for Sandbox operations using E2B Sandbox API.
 
-    This provider creates CreateSubAgentTaskTool instances that allow
-    Chat Shell agents to delegate complex tasks to SubAgents running
-    in isolated Docker environments (ClaudeCode or Agno).
+    This provider creates various Sandbox tool instances that allow
+    Chat Shell agents to execute commands, manage files, and run Claude AI
+    tasks in isolated Docker environments (ClaudeCode or Agno).
 
     Example SKILL.md configuration:
         tools:
-          - name: create_subagent_task
-            provider: subagent
+          - name: sandbox_command
+            provider: sandbox
+          - name: sandbox_claude
+            provider: sandbox
             config:
-              default_shell_type: "ClaudeCode"
-              timeout: 7200  # Execution timeout in seconds
+              command_timeout: 1800
+          - name: sandbox_list_files
+            provider: sandbox
     """
 
     def _prepare_base_params(
         self, context: SkillToolContext, tool_config: Optional[dict[str, Any]]
     ) -> dict[str, Any]:
-        """Prepare common parameters for all SubAgent tools.
+        """Prepare common parameters for all Sandbox tools.
 
         Args:
             context: Context with dependencies
@@ -68,9 +71,9 @@ class SubAgentToolProvider(SkillToolProvider):
         """Return the provider name used in SKILL.md.
 
         Returns:
-            The string "subagent"
+            The string "sandbox"
         """
-        return "subagent"
+        return "sandbox"
 
     @property
     def supported_tools(self) -> list[str]:
@@ -80,7 +83,6 @@ class SubAgentToolProvider(SkillToolProvider):
             List containing supported tool names
         """
         return [
-            "create_subagent_task",
             "sandbox_command",
             "sandbox_claude",
             "sandbox_list_files",
@@ -94,7 +96,7 @@ class SubAgentToolProvider(SkillToolProvider):
         context: SkillToolContext,
         tool_config: Optional[dict[str, Any]] = None,
     ) -> BaseTool:
-        """Create a SubAgent tool instance.
+        """Create a Sandbox tool instance.
 
         Args:
             tool_name: Name of the tool to create
@@ -114,7 +116,7 @@ class SubAgentToolProvider(SkillToolProvider):
         logger = logging.getLogger(__name__)
 
         logger.info(
-            f"[SubAgentProvider] ===== CREATE_TOOL START ===== tool_name={tool_name}, "
+            f"[SandboxProvider] ===== CREATE_TOOL START ===== tool_name={tool_name}, "
             f"task_id={context.task_id}, subtask_id={context.subtask_id}, "
             f"user_id={context.user_id}, user_name={context.user_name}"
         )
@@ -123,34 +125,7 @@ class SubAgentToolProvider(SkillToolProvider):
         base_params = self._prepare_base_params(context, tool_config)
         config = tool_config or {}
 
-        if tool_name == "create_subagent_task":
-            # Import from local module within this skill package
-            from .create_subagent_task import CreateSubAgentTaskTool
-
-            # Log bot config details if available
-            bot_config = base_params["bot_config"]
-            logger.info(
-                f"[SubAgentProvider] Bot config from tool_config: "
-                f"has_config={bool(bot_config)}, "
-                f"count={len(bot_config) if bot_config else 0}"
-            )
-
-            if bot_config and len(bot_config) > 0:
-                first_config = bot_config[0]
-                agent_config = first_config.get("agent_config", {})
-                env_config = agent_config.get("env", {})
-                logger.info(
-                    f"[SubAgentProvider] First bot config details: "
-                    f"shell_type={first_config.get('shell_type')}, "
-                    f"model={env_config.get('model')}, "
-                    f"has_api_key={bool(env_config.get('api_key'))}, "
-                    f"base_url={env_config.get('base_url')}, "
-                    f"model_id={env_config.get('model_id')}"
-                )
-
-            tool_instance = CreateSubAgentTaskTool(**base_params)
-
-        elif tool_name == "sandbox_command":
+        if tool_name == "sandbox_command":
             from .command_tool import SandboxCommandTool
 
             tool_instance = SandboxCommandTool(
@@ -191,7 +166,7 @@ class SubAgentToolProvider(SkillToolProvider):
             raise ValueError(f"Unknown tool: {tool_name}")
 
         logger.info(
-            f"[SubAgentProvider] ===== TOOL INSTANCE CREATED ===== "
+            f"[SandboxProvider] ===== TOOL INSTANCE CREATED ===== "
             f"tool_name={tool_instance.name}, "
             f"display_name={tool_instance.display_name}"
         )
@@ -199,7 +174,7 @@ class SubAgentToolProvider(SkillToolProvider):
         return tool_instance
 
     def validate_config(self, tool_config: dict[str, Any]) -> bool:
-        """Validate SubAgent tool configuration.
+        """Validate Sandbox tool configuration.
 
         Args:
             tool_config: Configuration to validate
