@@ -329,9 +329,7 @@ export function useChatAreaState({
   const isTeamCompatibleWithMode = useCallback(
     (team: Team): boolean => {
       if (!team.bind_mode || team.bind_mode.length === 0) return false
-      // Knowledge mode uses chat mode teams
-      const modeToCheck = taskType === 'knowledge' ? 'chat' : taskType
-      return team.bind_mode.includes(modeToCheck)
+      return team.bind_mode.includes(taskType)
     },
     [taskType]
   )
