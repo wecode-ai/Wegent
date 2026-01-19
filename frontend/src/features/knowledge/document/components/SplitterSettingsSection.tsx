@@ -56,7 +56,15 @@ export function SplitterSettingsSection({
   const { models: llmModels, loading: loadingModels } = useLlmModels()
   const [overlapError, setOverlapError] = useState('')
 
-  const splitterType = (config.type as SplitterType) || 'structural_semantic'
+  // Check if structural semantic is supported for current file
+  const structuralSemanticAvailable = isStructuralSemanticSupported(fileExtension)
+
+  // Structural semantic requires LLM models to be available
+  const structuralSemanticEnabled = structuralSemanticAvailable && llmModels.length > 0
+
+  // Determine the default splitter type based on availability
+  const defaultSplitterType: SplitterType = structuralSemanticEnabled ? 'structural_semantic' : 'semantic'
+  const splitterType = (config.type as SplitterType) || defaultSplitterType
 
   // Sentence splitter config
   const sentenceConfig = config as Partial<SentenceSplitterConfig>
@@ -72,9 +80,6 @@ export function SplitterSettingsSection({
 
   // Structural semantic splitter config
   const structuralConfig = config as Partial<StructuralSemanticSplitterConfig>
-
-  // Check if structural semantic is supported for current file
-  const structuralSemanticAvailable = isStructuralSemanticSupported(fileExtension)
 
   useEffect(() => {
     if (splitterType === 'sentence' && chunkOverlap >= chunkSize) {
@@ -153,8 +158,9 @@ export function SplitterSettingsSection({
   }
 
   // Build splitter type items based on availability
+  // Only show structural_semantic if both file type is supported AND LLM models are available
   const splitterTypeItems = [
-    ...(structuralSemanticAvailable
+    ...(structuralSemanticEnabled
       ? [{ value: 'structural_semantic', label: t('knowledge:document.splitter.structuralSemantic') }]
       : []),
     { value: 'semantic', label: t('knowledge:document.splitter.semantic') },
