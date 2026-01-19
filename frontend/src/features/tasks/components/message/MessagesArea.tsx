@@ -1007,6 +1007,16 @@ export default function MessagesArea({
     [appliedCorrections]
   )
 
+  // Pre-compute the last AI message subtaskId to avoid O(n²) complexity in render loop
+  const lastAiMessageSubtaskId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].type === 'ai') {
+        return messages[i].subtaskId
+      }
+    }
+    return null
+  }, [messages])
+
   return (
     <div
       className="flex-1 w-full max-w-3xl mx-auto flex flex-col"
@@ -1029,16 +1039,8 @@ export default function MessagesArea({
               msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false
 
             // Calculate if this is the last AI message (for regenerate button)
-            // Find the last AI message index by iterating from the end
-            const isLastAiMessage = (() => {
-              if (msg.type !== 'ai') return false
-              for (let i = messages.length - 1; i >= 0; i--) {
-                if (messages[i].type === 'ai') {
-                  return messages[i].subtaskId === msg.subtaskId
-                }
-              }
-              return false
-            })()
+            const isLastAiMessage =
+              msg.type === 'ai' && msg.subtaskId === lastAiMessageSubtaskId
 
             // Check if this AI message has a correction result
             const hasCorrectionResult =

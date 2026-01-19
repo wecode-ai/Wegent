@@ -190,7 +190,9 @@ const BubbleTools = ({
               />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{t('chat:actions.regenerate') || 'Regenerate'}</TooltipContent>
+          <TooltipContent>
+            {t('chat:regenerate.tooltip') || t('chat:actions.regenerate') || 'Regenerate'}
+          </TooltipContent>
         </Tooltip>
       )}
       {/* Feedback buttons: like and dislike */}
