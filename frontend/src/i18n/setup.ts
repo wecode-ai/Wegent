@@ -26,7 +26,7 @@ async function loadTranslations() {
     'knowledge',
     'shared-task',
     'promptTune',
-    'flow',
+    'feed',
     'projects',
   ]
 
@@ -77,7 +77,7 @@ export async function initI18n() {
       'knowledge',
       'shared-task',
       'promptTune',
-      'flow',
+      'feed',
       'projects',
     ],
   })
