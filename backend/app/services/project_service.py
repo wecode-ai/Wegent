@@ -256,9 +256,9 @@ def delete_project(db: Session, project_id: int, user_id: int) -> None:
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Clear project_id for all tasks in this project
+    # Clear project_id for all tasks in this project (set to 0, not NULL)
     db.query(TaskResource).filter(TaskResource.project_id == project_id).update(
-        {TaskResource.project_id: None}
+        {TaskResource.project_id: 0}
     )
 
     # Soft delete the project
