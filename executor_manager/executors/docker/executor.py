@@ -68,6 +68,63 @@ class DockerExecutor(Executor):
             logger.error(f"Docker is not available: {e}")
             raise RuntimeError("Docker is not available")
 
+    def _should_enable_seccomp(self) -> bool:
+        """
+        Detect if seccomp should be enabled based on kernel version or configuration.
+
+        Older kernels (< 4.0, such as CentOS 7's 3.10) may have compatibility
+        issues with Docker's default seccomp profile, causing EPERM errors.
+
+        Returns:
+            bool: True if seccomp should be enabled (default Docker behavior)
+        """
+        # Check environment variable override first
+        env_enable = os.getenv("ENABLE_SECCOMP", "").lower()
+        if env_enable == "true":
+            logger.info("Seccomp will be enabled via ENABLE_SECCOMP=true env var")
+            return True
+        elif env_enable == "false":
+            logger.info("Seccomp will be disabled via ENABLE_SECCOMP=false env var")
+            return False
+
+        # Auto-detect based on kernel version (when env var is empty)
+        try:
+            result = self.subprocess.run(
+                ["uname", "-r"], capture_output=True, text=True, timeout=5, check=True
+            )
+            kernel_version = result.stdout.strip()
+
+            # Parse kernel version (e.g., "3.10.0-1160.el7.x86_64")
+            version_parts = kernel_version.split(".")
+            if len(version_parts) >= 2:
+                try:
+                    major_version = int(version_parts[0])
+                    minor_version = int(version_parts[1].split("-")[0])
+
+                    # Disable seccomp for kernels < 4.0 (compatibility)
+                    if major_version < 4:
+                        logger.info(
+                            f"Detected kernel {kernel_version} (< 4.0), "
+                            "will disable seccomp for compatibility"
+                        )
+                        return False
+                    else:
+                        logger.debug(
+                            f"Detected kernel {kernel_version} (>= 4.0), "
+                            "seccomp will remain enabled"
+                        )
+                        return True
+                except ValueError as e:
+                    logger.warning(
+                        f"Failed to parse kernel version '{kernel_version}': {e}"
+                    )
+
+        except Exception as e:
+            logger.warning(f"Failed to detect kernel version: {e}")
+
+        # Default: enable seccomp for security
+        return True
+
     def submit_executor(
         self, task: Dict[str, Any], callback: Optional[callable] = None
     ) -> Dict[str, Any]:
@@ -506,6 +563,7 @@ class DockerExecutor(Executor):
             "docker",
             "run",
             "-d",  # Run in background mode
+            "--init",  # Enable init process (tini) for proper signal handling and process cleanup
             "--name",
             executor_name,
             # Add labels for container management
@@ -524,6 +582,12 @@ class DockerExecutor(Executor):
             "--label",
             f"subtask_next_id={task.get('subtask_next_id', '')}",
         ]
+
+        # Conditionally disable seccomp for older kernels (e.g., CentOS 7)
+        # This fixes EPERM errors with Bun/Node.js runtimes on kernels < 4.0
+        if not self._should_enable_seccomp():
+            cmd.extend(["--security-opt", "seccomp=unconfined"])
+            logger.info("Disabled seccomp for compatibility with older kernel")
 
         # Environment variables
         # For sandbox type, do NOT set TASK_INFO to prevent auto-execution

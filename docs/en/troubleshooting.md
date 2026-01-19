@@ -177,6 +177,110 @@ docker network ls
 docker network inspect wegent-network
 ```
 
+### Issue 5: Database Migration Issue - Missing project_id Column
+
+**Symptoms**: Application startup error `Unknown column 'tasks.project_id' in 'field list'`
+
+**Error Log Example**:
+```
+ERROR [-] : [executor_job] cleanup_stale_executors error: (pymysql.err.OperationalError) 
+(1054, "Unknown column 'tasks.project_id' in 'field list'")
+```
+
+**Cause**: Alembic migration record shows as applied, but actual DDL operations were not successfully executed, causing database schema to be inconsistent with code models.
+
+**Diagnostic Steps**:
+
+**1. Check current migration version**
+```bash
+docker exec wegent-backend bash -c "cd /app && alembic current"
+# Should show: s9t0u1v2w3x4 (head) (mergepoint) or newer
+```
+
+**2. Verify table structure**
+```bash
+docker exec wegent-mysql mysql -uroot -p123456 task_manager -e "DESCRIBE tasks;"
+# Check if project_id column exists
+```
+
+**Solutions**:
+
+**Method 1: Use Auto-Fix Script (Recommended)**
+```bash
+# Run fix script
+./scripts/fix-missing-project-id.sh
+
+# The script will automatically:
+# 1. Check if project_id column exists
+# 2. Create projects table (if not exists)
+# 3. Add project_id column to tasks table
+# 4. Create index
+# 5. Verify the fix
+```
+
+**Method 2: Manual Fix**
+
+> **Note**: The following commands use default values from `docker-compose.yml` (password: `123456`, database: `task_manager`).
+> If you modified these values, adjust the `-p` and database name parameters accordingly.
+
+```bash
+# 1. Check if projects table exists
+docker exec wegent-mysql mysql -uroot -p123456 task_manager -e "SHOW TABLES LIKE 'projects';"
+
+# 2. Create projects table (if not exists)
+docker exec wegent-mysql mysql -uroot -p123456 task_manager -e "
+CREATE TABLE IF NOT EXISTS projects (
+    id INT NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
+    user_id INT NOT NULL DEFAULT 0 COMMENT 'Project owner user ID',
+    name VARCHAR(100) NOT NULL DEFAULT '' COMMENT 'Project name',
+    description VARCHAR(256) NOT NULL DEFAULT '' COMMENT 'Project description',
+    color VARCHAR(20) NOT NULL DEFAULT '' COMMENT 'Project color identifier',
+    sort_order INT NOT NULL DEFAULT 0 COMMENT 'Sort order for display',
+    is_expanded TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'Whether the project is expanded in UI',
+    is_active TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'Whether the project is active',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation timestamp',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last update timestamp',
+    PRIMARY KEY (id),
+    KEY idx_projects_user_id (user_id),
+    KEY idx_projects_sort_order (sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Projects table for task organization';
+"
+
+# 3. Add project_id column
+docker exec wegent-mysql mysql -uroot -p123456 task_manager -e "
+ALTER TABLE tasks ADD COLUMN project_id INT NOT NULL DEFAULT 0 COMMENT 'Project ID for task grouping';
+"
+
+# 4. Create index
+docker exec wegent-mysql mysql -uroot -p123456 task_manager -e "
+CREATE INDEX idx_tasks_project_id ON tasks(project_id);
+"
+
+# 5. Verify fix
+docker exec wegent-mysql mysql -uroot -p123456 task_manager -e "DESCRIBE tasks;"
+```
+
+**Method 3: Re-run Migration (if above fails)**
+```bash
+# Note: This attempts to re-apply migration, may error but won't cause data loss
+docker exec wegent-backend bash -c "cd /app && alembic upgrade head"
+```
+
+**Verify Fix**:
+```bash
+# 1. Restart backend service
+docker restart wegent-backend
+
+# 2. Check logs to confirm no errors
+docker logs -f wegent-backend --tail 50
+
+# 3. Should see output like:
+# ✓ Alembic migrations completed successfully
+# ✓ YAML data initialization completed
+```
+
+**Prevention**: This issue has been fixed in the migration script with idempotency checks. Future updates will automatically detect and skip existing columns.
+
 ---
 
 ## 🌐 Network & Connection Issues
