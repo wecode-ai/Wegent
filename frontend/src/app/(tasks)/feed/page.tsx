@@ -13,7 +13,7 @@ import {
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
-import { FlowPage as FlowPageContent } from '@/features/flows/components'
+import { FlowPage as FlowPageContent } from '@/features/feed/components'
 import { Button } from '@/components/ui/button'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
@@ -63,7 +63,7 @@ export default function FlowPage() {
 
   // Handle go to subscriptions settings
   const handleGoToSubscriptions = () => {
-    router.push('/flow/subscriptions')
+    router.push('/feed/subscriptions')
   }
 
   return (
@@ -100,7 +100,7 @@ export default function FlowPage() {
             onClick={handleGoToSubscriptions}
           >
             <Settings className="h-4 w-4" />
-            {t('flow:feed.manage_subscriptions')}
+            {t('feed:feed.manage_subscriptions')}
           </Button>
           <ThemeToggle />
         </TopNavigation>

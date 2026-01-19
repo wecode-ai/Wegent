@@ -137,7 +137,7 @@ function generateCronExpression(state: ScheduleState): string {
 }
 
 export function CronSchedulePicker({ value, onChange, className }: CronSchedulePickerProps) {
-  const { t } = useTranslation('flow')
+  const { t } = useTranslation('feed')
   const [schedule, setSchedule] = useState<ScheduleState>(() => parseCronExpression(value))
 
   // Sync with external value changes

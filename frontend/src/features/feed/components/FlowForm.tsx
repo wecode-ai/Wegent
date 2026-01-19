@@ -50,7 +50,7 @@ import { parseUTCDate } from '@/lib/utils'
  * Shows API endpoint, secret, and example curl command for webhook-type flows
  */
 function WebhookApiSection({ flow }: { flow: Flow }) {
-  const { t } = useTranslation('flow')
+  const { t } = useTranslation('feed')
   const [copiedField, setCopiedField] = useState<string | null>(null)
 
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
@@ -199,7 +199,7 @@ const defaultTriggerConfig: Record<FlowTriggerType, Record<string, unknown>> = {
 }
 
 export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps) {
-  const { t } = useTranslation('flow')
+  const { t } = useTranslation('feed')
   const isEditing = !!flow
 
   // Form state
@@ -586,10 +586,10 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader className="pb-4 border-b border-border">
           <DialogTitle className="text-xl">
-            {isEditing ? t('edit_flow') : t('create_flow')}
+            {isEditing ? t('edit_subscription') : t('create_subscription')}
           </DialogTitle>
           <DialogDescription>
-            {isEditing ? t('edit_flow_desc') : t('create_flow_desc')}
+            {isEditing ? t('edit_subscription_desc') : t('create_subscription_desc')}
           </DialogDescription>
         </DialogHeader>
 
@@ -714,7 +714,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
 
               {/* Enabled */}
               <div className="flex items-center justify-between pt-2">
-                <Label className="text-sm font-medium">{t('enable_flow')}</Label>
+                <Label className="text-sm font-medium">{t('enable_subscription')}</Label>
                 <Switch checked={enabled} onCheckedChange={setEnabled} />
               </div>
             </div>
