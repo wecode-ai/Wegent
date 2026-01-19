@@ -125,17 +125,14 @@ function ChatAreaContent({
   const lastSyncedTaskIdRef = useRef<number | null>(null)
 
   // Filter teams by bind_mode based on current mode
-  // For knowledge type, use 'chat' mode teams since knowledge chat is essentially chat mode
   const filteredTeams = useMemo(() => {
     const teamsWithValidBindMode = teams.filter(team => {
       if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
       return true
     })
-    // Knowledge type uses chat mode teams
-    const modeToFilter = taskType === 'knowledge' ? 'chat' : taskType
     return teamsWithValidBindMode.filter(team => {
       if (!team.bind_mode) return true
-      return team.bind_mode.includes(modeToFilter)
+      return team.bind_mode.includes(taskType)
     })
   }, [teams, taskType])
 
