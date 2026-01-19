@@ -204,6 +204,11 @@ services:
       - EXECUTOR_PORT_RANGE_MIN=${EXECUTOR_PORT_RANGE_MIN:-10001}
       - EXECUTOR_PORT_RANGE_MAX=${EXECUTOR_PORT_RANGE_MAX:-10100}
       - EXECUTOR_WORKSPACE=${EXECUTOR_WORKSPACE:-${HOME}/wecode-bot}
+      # Seccomp Configuration
+      # Set to 'true' (default) to enable seccomp (default Docker behavior)
+      # Set to 'false' to disable seccomp (add --security-opt seccomp=unconfined)
+      # Leave empty to auto-detect based on kernel version
+      - ENABLE_SECCOMP=${ENABLE_SECCOMP:-true}
       # OpenTelemetry Configuration (uncomment to enable)
       # - OTEL_ENABLED=true
       # - OTEL_SERVICE_NAME=wegent-executor-manager
