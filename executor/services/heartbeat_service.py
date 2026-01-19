@@ -61,6 +61,7 @@ class HeartbeatService:
         self._enabled = os.getenv("HEARTBEAT_ENABLED", "true").lower() == "true"
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._claude_initialized = False  # Track if Claude has been initialized
 
         # Build heartbeat URL
         if heartbeat_url:
@@ -199,6 +200,18 @@ class HeartbeatService:
                 logger.debug(
                     f"[HeartbeatService] Heartbeat sent: sandbox_id={self._sandbox_id}"
                 )
+
+                # Check if response contains Claude configuration
+                try:
+                    response_data = response.json()
+                    if not self._claude_initialized and "claude_config" in response_data:
+                        # Initialize Claude Code on first heartbeat if configuration is provided
+                        self._initialize_claude(response_data["claude_config"])
+                except Exception as e:
+                    logger.warning(
+                        f"[HeartbeatService] Failed to process Claude config: {e}"
+                    )
+
                 return True
             else:
                 logger.warning(
@@ -216,6 +229,62 @@ class HeartbeatService:
         except Exception as e:
             logger.error(f"[HeartbeatService] Unexpected error: {e}")
             return False
+
+    def _initialize_claude(self, claude_config: dict) -> None:
+        """Initialize Claude Code using configuration from heartbeat response.
+
+        This method is called once when the first heartbeat receives Claude configuration.
+        It creates the ClaudeCodeAgent and runs initialization to:
+        - Save Claude settings to ~/.claude/settings.json
+        - Save Claude user config to ~/.claude.json
+        - Download and deploy skills to ~/.claude/skills/
+
+        Args:
+            claude_config: Claude configuration dict with bot, user, and team info
+        """
+        if self._claude_initialized:
+            return
+
+        try:
+            logger.info(
+                f"[HeartbeatService] Initializing Claude Code for sandbox {self._sandbox_id}..."
+            )
+
+            # Import here to avoid circular dependencies
+            from executor.agents.claude_code.claude_code_agent import \
+                ClaudeCodeAgent
+            from shared.status import TaskStatus
+
+            # Create minimal task data for initialization
+            init_task_data = {
+                "task_id": int(self._sandbox_id) if self._sandbox_id.isdigit() else -1,
+                "subtask_id": -1,
+                "bot": [claude_config.get("bot")],
+                "user": claude_config.get("user", {}),
+                "team": claude_config.get("team", {}),
+            }
+
+            # Create ClaudeCodeAgent instance
+            agent = ClaudeCodeAgent(init_task_data)
+
+            # Run initialization
+            init_status = agent.initialize()
+
+            if init_status == TaskStatus.SUCCESS:
+                self._claude_initialized = True
+                logger.info(
+                    f"[HeartbeatService] Claude Code initialized successfully for sandbox {self._sandbox_id}"
+                )
+            else:
+                logger.warning(
+                    f"[HeartbeatService] Claude Code initialization returned status: {init_status}"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"[HeartbeatService] Failed to initialize Claude Code: {e}",
+                exc_info=True,
+            )
 
 
 # Module-level functions for easy access
