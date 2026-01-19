@@ -12,6 +12,7 @@ from pydantic_settings import (
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
+from shared.utils.settings import NoInterpolationDotEnvSettingsSource
 
 
 class Settings(BaseSettings):
@@ -133,11 +134,17 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> Tuple[PydanticBaseSettingsSource, ...]:
-        """Customize settings sources."""
+        """Customize settings sources to use NoInterpolationDotEnvSettingsSource.
+
+        This ensures that template variables like ${{user.name}} in .env files
+        are preserved and not incorrectly parsed by dotenv's interpolation.
+
+        See: shared/utils/settings.py for implementation details.
+        """
         return (
             init_settings,
             env_settings,
-            dotenv_settings,
+            NoInterpolationDotEnvSettingsSource(settings_cls),
             file_secret_settings,
         )
 
