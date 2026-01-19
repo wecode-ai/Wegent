@@ -27,6 +27,7 @@ class ChatSessionSetup(NamedTuple):
 
     task: TaskResource
     task_id: int
+    user_subtask: Subtask  # User message subtask (for history exclusion)
     assistant_subtask: Subtask
     existing_subtasks: List[Subtask]
     model_config: Any
@@ -296,6 +297,7 @@ def setup_chat_session(
     return ChatSessionSetup(
         task=task,
         task_id=task_id,
+        user_subtask=user_subtask,
         assistant_subtask=assistant_subtask,
         existing_subtasks=existing_subtasks,
         model_config=model_config,

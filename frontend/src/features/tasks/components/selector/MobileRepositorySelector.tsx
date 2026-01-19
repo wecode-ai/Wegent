@@ -116,7 +116,7 @@ export default function MobileRepositorySelector({
       </PopoverTrigger>
       <PopoverContent
         className={cn(
-          'p-0 w-[280px] border border-border bg-base',
+          'p-0 w-auto min-w-[280px] max-w-[min(500px,90vw)] border border-border bg-base',
           'shadow-xl rounded-xl overflow-hidden',
           'max-h-[400px] flex flex-col'
         )}

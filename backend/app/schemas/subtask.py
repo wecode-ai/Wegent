@@ -161,6 +161,14 @@ class SubtaskContextBrief(BaseModel):
                     f"[SubtaskContextBrief/subtask.py] Building table context: id={context.id}, "
                     f"url={url}, source_config={base_data['source_config']}"
                 )
+        elif context.context_type == "selected_documents":
+            # Selected documents context for notebook mode
+            # Contains knowledge_base_id and document_ids in type_data
+            base_data.update(
+                {
+                    "document_count": len(type_data.get("document_ids", [])),
+                }
+            )
 
         return cls(**base_data)
 

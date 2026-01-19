@@ -2,20 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.0.1
+FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.2.1
 
 # Set working directory
 WORKDIR /app
-
-# Install system dependencies required by python-magic
-RUN dnf install -y file file-libs && dnf clean all
-
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    export PATH="/root/.local/bin:${PATH}" && \
-    uv --version
-
-ENV PATH="/root/.local/bin:${PATH}"
 
 # Copy local dependencies first (required for pyproject.toml)
 # Paths must match pyproject.toml [tool.uv.sources] relative paths from /app:

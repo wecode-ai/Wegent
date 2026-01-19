@@ -220,7 +220,7 @@ export default function TeamList({
   }
 
   // Get target page based on team's bind_mode and current filter
-  const getTargetPage = (team: Team): 'chat' | 'code' => {
+  const getTargetPage = (team: Team): 'chat' | 'code' | 'knowledge' => {
     const bindMode = team.bind_mode || ['chat', 'code']
     // If team only supports one mode, use that
     if (bindMode.length === 1) {
@@ -255,6 +255,11 @@ export default function TeamList({
   // Helper function to check if a team is a group resource
   const isGroupTeam = (team: Team) => {
     return team.namespace && team.namespace !== 'default'
+  }
+
+  // Helper function to check if a team is a public/system team (user_id = 0)
+  const isPublicTeam = (team: Team) => {
+    return team.user_id === 0
   }
 
   // Helper function to check permissions for a specific group resource
@@ -391,6 +396,8 @@ export default function TeamList({
 
   // Check if edit button should be shown
   const shouldShowEdit = (team: Team) => {
+    // Public teams are read-only for all users (managed by admin)
+    if (isPublicTeam(team)) return false
     // Shared teams don't show edit button
     if (team.share_status === 2) return false
     // For group teams, check group permissions
@@ -403,6 +410,8 @@ export default function TeamList({
 
   // Check if delete/unbind button should be shown
   const shouldShowDelete = (team: Team) => {
+    // Public teams cannot be deleted by regular users (managed by admin)
+    if (isPublicTeam(team)) return false
     // For group teams, check group permissions
     if (isGroupTeam(team)) {
       return canDeleteGroupResource(team.namespace!)
@@ -418,6 +427,8 @@ export default function TeamList({
 
   // Check if share button should be shown
   const shouldShowShare = (team: Team) => {
+    // Public teams don't support sharing (they're already globally available)
+    if (isPublicTeam(team)) return false
     // Group teams don't support sharing (for now)
     if (isGroupTeam(team)) return false
     // Personal teams (no share_status or share_status=0 or share_status=1) show share button
@@ -426,6 +437,8 @@ export default function TeamList({
 
   // Check if copy button should be shown (same permission as create)
   const shouldShowCopy = (team: Team) => {
+    // For public teams, copy is allowed for personal use
+    if (isPublicTeam(team)) return true
     // For group teams, check group permissions (need create permission)
     if (isGroupTeam(team)) {
       return canDeleteGroupResource(team.namespace!) // Maintainer/Owner can create
@@ -503,6 +516,15 @@ export default function TeamList({
                             />
                           }
                           tags={[
+                            ...(isPublicTeam(team)
+                              ? [
+                                  {
+                                    key: 'public',
+                                    label: t('teams.public'),
+                                    variant: 'default' as const,
+                                  },
+                                ]
+                              : []),
                             ...(team.workflow?.mode
                               ? [
                                   {

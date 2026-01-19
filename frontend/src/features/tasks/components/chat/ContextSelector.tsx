@@ -39,6 +39,8 @@ interface ContextSelectorProps {
   taskId?: number
   /** Whether this is a group chat - if true, shows bound knowledge bases section */
   isGroupChat?: boolean
+  /** Knowledge base ID to exclude from the list (used in notebook mode to hide current KB) */
+  excludeKnowledgeBaseId?: number
 }
 
 interface KnowledgeBaseItemProps {
@@ -110,6 +112,7 @@ export default function ContextSelector({
   children,
   taskId,
   isGroupChat,
+  excludeKnowledgeBaseId,
 }: ContextSelectorProps) {
   const { t } = useTranslation()
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
@@ -182,13 +185,14 @@ export default function ContextSelector({
     fetchTables()
   }, [fetchTables])
 
-  // Sort knowledge bases by name and exclude bound ones from user list
+  // Sort knowledge bases by name and exclude bound ones and current notebook KB from user list
   const sortedKnowledgeBases = useMemo(() => {
     const boundIds = new Set(boundKnowledgeBases.map(kb => kb.id))
     return [...knowledgeBases]
       .filter(kb => !boundIds.has(kb.id))
+      .filter(kb => excludeKnowledgeBaseId === undefined || kb.id !== excludeKnowledgeBaseId)
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [knowledgeBases, boundKnowledgeBases])
+  }, [knowledgeBases, boundKnowledgeBases, excludeKnowledgeBaseId])
 
   // Check if a context item is selected
   const isSelected = (id: number | string) => {

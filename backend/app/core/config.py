@@ -3,9 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
-from typing import Any, Mapping, Tuple, Type
+from typing import Any, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
+from pydantic import field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -129,6 +130,67 @@ class Settings(BaseSettings):
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
 
+    # Celery configuration
+    CELERY_BROKER_URL: Optional[str] = None  # If None/empty, uses REDIS_URL
+    CELERY_RESULT_BACKEND: Optional[str] = None  # If None/empty, uses REDIS_URL
+
+    # Celery Beat scheduler configuration
+    # "default" = SQLite file (single instance only)
+    # "sqlalchemy" = MySQL database (multi-instance deployment)
+    CELERY_BEAT_SCHEDULER: str = "default"
+    # Database URL for Beat scheduler (only used when CELERY_BEAT_SCHEDULER="sqlalchemy")
+    # If None/empty, uses DATABASE_URL
+    CELERY_BEAT_DATABASE_URL: Optional[str] = None
+
+    # Embedded Celery configuration
+    # When True, Backend starts Celery worker/beat as daemon threads (for local dev)
+    # When False, Celery must be started separately (for production)
+    EMBEDDED_CELERY_ENABLED: bool = True
+
+    @field_validator(
+        "CELERY_BROKER_URL",
+        "CELERY_RESULT_BACKEND",
+        "CELERY_BEAT_DATABASE_URL",
+        mode="before",
+    )
+    @classmethod
+    def empty_str_to_none(cls, v: Any) -> Optional[str]:
+        """Convert empty strings to None for proper fallback to REDIS_URL."""
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
+
+    # Scheduler backend configuration
+    # Supported backends: "celery" (default), "apscheduler", "xxljob"
+    SCHEDULER_BACKEND: str = "celery"
+
+    # APScheduler configuration (only used when SCHEDULER_BACKEND="apscheduler")
+    APSCHEDULER_JOB_STORE: str = "memory"  # "memory" or "sqlite"
+    APSCHEDULER_SQLITE_PATH: str = "scheduler_jobs.db"
+
+    # XXL-JOB configuration (only used when SCHEDULER_BACKEND="xxljob")
+    XXLJOB_ADMIN_ADDRESSES: str = ""  # Comma-separated admin URLs
+    XXLJOB_APP_NAME: str = "wegent-executor"
+    XXLJOB_ACCESS_TOKEN: str = ""
+    XXLJOB_EXECUTOR_PORT: int = 9999
+
+    # Flow scheduler configuration
+    FLOW_SCHEDULER_INTERVAL_SECONDS: int = 60
+    FLOW_DEFAULT_TIMEOUT_SECONDS: int = 600  # 10 minutes
+    FLOW_DEFAULT_RETRY_COUNT: int = 1
+    FLOW_EXECUTION_PAGE_LIMIT: int = 50
+    # Stale execution cleanup thresholds (hours)
+    FLOW_STALE_PENDING_HOURS: int = (
+        2  # PENDING executions older than this will be recovered
+    )
+    FLOW_STALE_RUNNING_HOURS: int = (
+        3  # RUNNING executions older than this will be marked FAILED
+    )
+
+    # Circuit breaker configuration
+    CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures
+    CIRCUIT_BREAKER_RESET_TIMEOUT: int = 60  # Try to recover after 60 seconds
+
     # Service extension module (empty = disabled)
     SERVICE_EXTENSION: str = ""
 
@@ -195,6 +257,20 @@ class Settings(BaseSettings):
     ATTACHMENT_AES_IV: str = "1234567890123456"
 
     OTEL_ENABLED: bool = False
+
+    # Web scraper proxy configuration
+    # Supports HTTP, HTTPS, SOCKS5 proxy formats:
+    # - Simple: "http://proxy.example.com:8080"
+    # - With auth: "http://user:pass@proxy.example.com:8080"
+    # - SOCKS5: "socks5://proxy.example.com:1080"
+    # If empty, no proxy will be used (direct connection)
+    WEBSCRAPER_PROXY: str = ""
+    # Proxy mode: "direct" or "fallback"
+    # - "direct": Always use proxy for all requests (proxy must be configured)
+    # - "fallback": Try direct connection first, use proxy only if direct fails
+    # Default is "fallback" for better reliability
+    WEBSCRAPER_PROXY_MODE: str = "fallback"
+
     # Web search configuration
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
     WEB_SEARCH_ENGINES: str = "{}"  # JSON configuration for search API adapter
@@ -240,6 +316,13 @@ class Settings(BaseSettings):
     # "bridge" - StreamingCore publishes to Redis channel, WebSocketBridge forwards to WebSocket
     STREAMING_MODE: str = "legacy"
 
+    # Default team configuration for each mode
+    # Format: "name#namespace" (namespace is optional, defaults to "default")
+    # Example: "通用助手#default" or "Code Assistant"
+    DEFAULT_TEAM_CHAT: str = ""  # Default team for chat mode
+    DEFAULT_TEAM_CODE: str = ""  # Default team for code mode
+    DEFAULT_TEAM_KNOWLEDGE: str = ""  # Default team for knowledge mode
+
     # JSON configuration for MCP servers (similar to Claude Desktop format)
     # Example:
     # {
@@ -272,6 +355,10 @@ class Settings(BaseSettings):
     # Format: {"dingtalk":{"appKey":"...","appSecret":"...","operatorId":"...","userMapping":{...}}}
     # See backend/app/services/tables/DATA_TABLE_CONFIG_EXAMPLE.md for details
     DATA_TABLE_CONFIG: str = ""
+
+    # Knowledge base and document summary configuration
+    # Enable/disable automatic summary generation after document indexing
+    SUMMARY_ENABLED: bool = True
 
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config

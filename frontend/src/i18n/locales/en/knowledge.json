@@ -35,7 +35,14 @@
     "knowledgeBase": {
       "title": "Knowledge Base",
       "create": "Create Knowledge Base",
+      "createNotebook": "Create Notebook",
+      "createClassic": "Create Knowledge Base",
       "createDesc": "Create your first knowledge base",
+      "notebookDesc": "Upload files and start conversations directly in the notebook, supports up to 50 files",
+      "classicDesc": "Uploaded files can be referenced in chat, no file limit in knowledge base",
+      "type": "Type",
+      "typeNotebook": "Notebook",
+      "typeClassic": "Knowledge Base",
       "edit": "Edit Knowledge Base",
       "delete": "Delete Knowledge Base",
       "name": "Name",
@@ -65,7 +72,7 @@
       },
       "indexStatus": {
         "available": "Indexed",
-        "unavailable": "Not Indexed"
+        "unavailable": "Index Unavailable"
       },
       "openLink": "Open Link",
       "columns": {
@@ -78,7 +85,8 @@
         "actions": "Actions"
       },
       "type": {
-        "table": "Table"
+        "table": "Table",
+        "web": "Web Page"
       },
       "search": "Search documents",
       "empty": "No documents yet",
@@ -99,9 +107,33 @@
       "uploadSuccess": "File uploaded successfully",
       "batch": {
         "selected": "{{count}} selected",
+        "selectAll": "Select All",
         "enable": "Enable",
         "disable": "Disable",
         "delete": "Delete"
+      },
+      "detail": {
+        "title": "Document Detail",
+        "backToList": "Back to List",
+        "summary": "Document Summary",
+        "status": "Status",
+        "statusValues": {
+          "pending": "Pending",
+          "generating": "Generating",
+          "completed": "Completed",
+          "failed": "Failed"
+        },
+        "topics": "Topics",
+        "metaInfo": "Metadata",
+        "content": "Document Content",
+        "truncated": "Content Truncated",
+        "copy": "Copy",
+        "copied": "Copied",
+        "copySuccess": "Copied successfully",
+        "copyError": "Failed to copy",
+        "contentLength": "Content Length",
+        "characters": "characters",
+        "noContent": "No content available"
       }
     },
     "upload": {
@@ -155,6 +187,32 @@
         "provider": {
           "dingtalk": "DingTalk Table"
         }
+      },
+      "documentCount": "Document Count",
+      "notebookLimitReached": "Notebook supports up to 50 files",
+      "web": {
+        "addWebPage": "Add Web Page",
+        "orAddWebPage": "Or enter a web page URL",
+        "hint": "Enter a web page URL to scrape its content and add it to your knowledge base.",
+        "urlLabel": "Web Page URL",
+        "urlPlaceholder": "https://example.com/article",
+        "nameLabel": "Document Name (Optional)",
+        "namePlaceholder": "Uses page title if not specified",
+        "submitButton": "Fetch and Add",
+        "fetching": "Fetching web page...",
+        "success": "Web page content fetched successfully",
+        "fetchFailed": "Unable to access the web page. Please check if the URL is correct",
+        "fetchTimeout": "Request timed out. Please try again later",
+        "parseFailed": "Unable to parse the web page content",
+        "emptyContent": "No extractable content found on the page",
+        "authRequired": "This page requires authentication and cannot be accessed",
+        "addFailed": "Failed to add web page. Please try again",
+        "urlRequired": "Please enter a web page URL",
+        "refetch": "Re-fetch",
+        "refetching": "Fetching...",
+        "refetchSuccess": "Web page content updated",
+        "refetchFailed": "Failed to re-fetch web page",
+        "refetchConfirm": "Re-fetch this web page? This will retrieve the latest content from the URL and update the document."
       }
     },
     "permission": {
@@ -213,6 +271,14 @@
       "bufferSizeHint": "Buffer size for semantic chunking (1-10)",
       "breakpointThreshold": "Breakpoint Threshold",
       "breakpointThresholdHint": "Percentile threshold for determining breakpoints (50-100)"
+    },
+    "summary": {
+      "enableLabel": "Auto-generate Summary",
+      "enableDescription": "Generate summaries on upload to improve search and retrieval quality",
+      "selectModel": "Select summary model",
+      "modelRequired": "Please select a model for summary generation",
+      "modelPlaceholder": "Search models...",
+      "noModel": "No model selected"
     },
     "retrievalTest": {
       "button": "Retrieval Test",
@@ -288,5 +354,18 @@
       "loadFailed": "Failed to load data tables"
     },
     "analyzing": "Analyzing data table..."
+  },
+  "chatPage": {
+    "title": "Knowledge Base Chat",
+    "summary": "Summary",
+    "contextHint": "This knowledge base is bound to your conversation. Ask questions about its documents.",
+    "documents": "Documents",
+    "showDocuments": "Show Documents",
+    "hideDocuments": "Hide Documents",
+    "backToList": "Back",
+    "notFound": "Knowledge base not found",
+    "createTaskError": "Failed to create conversation",
+    "bindKnowledgeBaseError": "Failed to bind knowledge base",
+    "newNote": "New Note"
   }
 }

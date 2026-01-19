@@ -17,24 +17,28 @@ type TopNavigationProps = {
   variant?: 'with-sidebar' | 'standalone'
   showLogo?: boolean
   title?: string
+  titleSuffix?: React.ReactNode // Content to render after the title (e.g., bound knowledge base badge)
   taskDetail?: TaskDetail | null
   children?: React.ReactNode
   onMobileSidebarToggle?: () => void
   onTaskDeleted?: () => void
   onMembersChanged?: () => void // Callback to refresh task detail when converted to group chat
   isSidebarCollapsed?: boolean
+  hideGroupChatOptions?: boolean // Hide group chat management options (e.g., in notebook mode)
 }
 
 export default function TopNavigation({
   variant = 'standalone',
   showLogo = false,
   title,
+  titleSuffix,
   taskDetail,
   children,
   onMobileSidebarToggle,
   onTaskDeleted,
   onMembersChanged,
   isSidebarCollapsed = false,
+  hideGroupChatOptions = false,
 }: TopNavigationProps) {
   const { t } = useTranslation()
   const isMobile = useIsMobile()
@@ -86,6 +90,7 @@ export default function TopNavigation({
             taskDetail={taskDetail}
             onTaskDeleted={onTaskDeleted}
             onMembersChanged={onMembersChanged}
+            hideGroupChatOptions={hideGroupChatOptions}
           />
         )}
 
@@ -93,6 +98,9 @@ export default function TopNavigation({
         {title && variant !== 'with-sidebar' && (
           <h1 className="text-xl font-semibold text-text-primary truncate">{title}</h1>
         )}
+
+        {/* Title suffix - content rendered after the title (e.g., bound knowledge base badge) */}
+        {titleSuffix}
       </div>
 
       {/* Right side - User menu and other controls */}

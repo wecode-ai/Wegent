@@ -105,13 +105,14 @@ class TestDockerExecutor:
         with pytest.raises(ValueError, match="Executor image not provided"):
             executor._get_executor_image(task)
 
-    @patch("executor_manager.executors.docker.executor.find_available_port")
+    @patch("executor_manager.executors.docker.utils.get_docker_used_ports")
     @patch("executor_manager.executors.docker.executor.build_callback_url")
     def test_prepare_docker_command(
-        self, mock_callback, mock_port, executor, sample_task
+        self, mock_callback, mock_get_ports, executor, sample_task
     ):
         """Test preparing Docker run command"""
-        mock_port.return_value = 8080
+        # Mock get_docker_used_ports to avoid actual Docker command execution
+        mock_get_ports.return_value = set()
         mock_callback.return_value = "http://callback.url"
 
         task_info = executor._extract_task_info(sample_task)

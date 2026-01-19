@@ -530,6 +530,45 @@ def _test_embedding_connection(
             "message": f"Successfully connected to embedding model {model_id}",
         }
 
+    elif provider_type == "custom":
+        """Test custom OpenAI-compatible embedding API connection."""
+        from langchain_openai import OpenAIEmbeddings
+
+        if not base_url:
+            return {
+                "success": False,
+                "message": "base_url is required for custom provider",
+            }
+
+        # Construct embeddings endpoint
+        embeddings_base_url = base_url.rstrip("/")
+        if embeddings_base_url.endswith("/embeddings"):
+            embeddings_base_url = embeddings_base_url[: -len("/embeddings")]
+        # Build kwargs for OpenAIEmbeddings
+        embeddings_kwargs = {
+            "model": model_id,
+            "api_key": api_key,
+            "base_url": embeddings_base_url,
+        }
+
+        # Add custom headers if provided
+        if custom_headers and isinstance(custom_headers, dict):
+            embeddings_kwargs["default_headers"] = custom_headers
+
+        try:
+            embeddings = OpenAIEmbeddings(**embeddings_kwargs)
+            embeddings.embed_query("test")
+            return {
+                "success": True,
+                "message": f"Successfully connected to custom embedding model {model_id}",
+            }
+        except Exception as e:
+            logger.error(f"Custom embedding connection test failed: {str(e)}")
+            return {
+                "success": False,
+                "message": f"Custom embedding connection failed: {str(e)}",
+            }
+
     else:
         return {
             "success": False,

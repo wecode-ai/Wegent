@@ -10,6 +10,14 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import HTTPException
+from shared.telemetry.context import (
+    SpanAttributes,
+    set_task_context,
+    set_user_context,
+)
+
+# Import telemetry utilities
+from shared.telemetry.core import get_tracer, is_telemetry_enabled
 from shared.utils.crypto import decrypt_api_key
 from sqlalchemy import and_, func, text
 from sqlalchemy.orm import Session, selectinload
@@ -27,6 +35,61 @@ from app.services.context import context_service
 from app.services.webhook_notification import Notification, webhook_notification_service
 
 logger = logging.getLogger(__name__)
+
+
+def _get_thinking_details_type(step: Dict[str, Any]) -> Optional[str]:
+    """Get the details.type from a thinking step."""
+    details = step.get("details")
+    if isinstance(details, dict):
+        return details.get("type")
+    return None
+
+
+def merge_thinking_steps(thinking_steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Merge adjacent thinking steps that have the same title, next_action, and details.type.
+
+    This reduces the size of thinking data by combining consecutive steps of the same type,
+    particularly useful for reasoning content that comes in token-by-token.
+    """
+    if not thinking_steps:
+        return []
+
+    merged: List[Dict[str, Any]] = []
+
+    def copy_step(step: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a deep copy of a step to avoid mutating the original."""
+        copied = {**step}
+        if "details" in copied and isinstance(copied["details"], dict):
+            copied["details"] = {**copied["details"]}
+        return copied
+
+    for step in thinking_steps:
+        if not merged:
+            merged.append(copy_step(step))
+            continue
+
+        last = merged[-1]
+        current_details_type = _get_thinking_details_type(step)
+        last_details_type = _get_thinking_details_type(last)
+
+        can_merge = (
+            step.get("title") == last.get("title")
+            and step.get("next_action") == last.get("next_action")
+            and current_details_type == last_details_type
+            and current_details_type is not None
+        )
+
+        if can_merge:
+            last_content = last.get("details", {}).get("content", "")
+            new_content = step.get("details", {}).get("content", "")
+            if "details" not in last:
+                last["details"] = {}
+            last["details"]["content"] = last_content + new_content
+        else:
+            merged.append(copy_step(step))
+
+    return merged
 
 
 class ExecutorKindsService(
@@ -132,9 +195,23 @@ class ExecutorKindsService(
     def _get_first_subtasks_for_tasks(
         self, db: Session, status: str, limit: int, type: str
     ) -> List[Subtask]:
-        """Get first subtask for multiple tasks using tasks table"""
+        """Get first subtask for multiple tasks using tasks table.
+
+        Note: This method filters out Chat Shell type tasks because they are handled
+        directly by the backend (via WebSocket or Flow Scheduler), not by executor_manager.
+        Chat Shell tasks are identified by:
+        - source='chat_shell' (WebSocket chat)
+        - source='flow' with Chat shell type (Flow Scheduler triggered)
+        """
         # Step 1: First query tasks table to get limit tasks
+        # Exclude tasks that should be handled by Chat Shell (not executor_manager)
+        # - source='chat_shell': Direct WebSocket chat
+        # - source='flow': Flow Scheduler triggered (Chat Shell type is handled by Flow Scheduler directly)
         tasks = None
+        # Note: We exclude 'chat_shell' source tasks because they are handled
+        # directly by the backend (via WebSocket). However, we DO NOT exclude
+        # 'flow' source tasks because Flow Scheduler can trigger Executor-type tasks
+        # that need to be picked up by executor_manager.
         if type == "offline":
             tasks = (
                 db.query(TaskResource)
@@ -144,7 +221,8 @@ class ExecutorKindsService(
                     text(
                         "JSON_EXTRACT(json, '$.metadata.labels.type') = 'offline' "
                         "and JSON_EXTRACT(json, '$.status.status') = :status "
-                        "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
+                        "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL "
+                        "    OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
                     ),
                 )
                 .params(status=status)
@@ -153,15 +231,19 @@ class ExecutorKindsService(
                 .all()
             )
         else:
+            # Include 'flow' type tasks for executor to pick up (Flow Scheduler triggered Executor-type tasks)
             tasks = (
                 db.query(TaskResource)
                 .filter(
                     TaskResource.kind == "Task",
                     TaskResource.is_active.is_(True),
                     text(
-                        "(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online') "
+                        "(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL "
+                        "    OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online' "
+                        "    OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'flow') "
                         "and JSON_EXTRACT(json, '$.status.status') = :status "
-                        "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
+                        "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL "
+                        "    OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
                     ),
                 )
                 .params(status=status)
@@ -1133,7 +1215,78 @@ class ExecutorKindsService(
         logger.info(
             f"dispatch subtasks response count={len(formatted_subtasks)} ids={subtask_ids}"
         )
+
+        # Start a new trace for each dispatched task
+        # This creates a root span for the task execution lifecycle
+        self._start_dispatch_traces(formatted_subtasks)
+
         return {"tasks": formatted_subtasks}
+
+    def _start_dispatch_traces(self, formatted_subtasks: List[Dict]) -> None:
+        """
+        Start a new trace for each dispatched task.
+
+        This method creates a root span for each task being dispatched to executor.
+        The trace context is added to the task data so executor can continue the trace.
+
+        Args:
+            formatted_subtasks: List of formatted subtask dictionaries
+        """
+        if not is_telemetry_enabled():
+            return
+
+        if not formatted_subtasks:
+            return
+
+        try:
+            from opentelemetry import trace
+            from shared.telemetry.context import get_trace_context_for_propagation
+
+            tracer = get_tracer("backend.dispatch")
+
+            for task_data in formatted_subtasks:
+                task_id = task_data.get("task_id")
+                subtask_id = task_data.get("subtask_id")
+                user_data = task_data.get("user", {})
+                user_id = user_data.get("id") if user_data else None
+                user_name = user_data.get("name") if user_data else None
+                task_title = task_data.get("task_title", "")
+
+                # Create a new root span for the task dispatch
+                # Use PRODUCER kind to indicate this starts a new trace for async processing
+                with tracer.start_as_current_span(
+                    name="task.dispatch",
+                    kind=trace.SpanKind.PRODUCER,
+                ) as span:
+                    # Set task and user context attributes
+                    span.set_attribute(SpanAttributes.TASK_ID, task_id)
+                    span.set_attribute(SpanAttributes.SUBTASK_ID, subtask_id)
+                    if user_id:
+                        span.set_attribute(SpanAttributes.USER_ID, str(user_id))
+                    if user_name:
+                        span.set_attribute(SpanAttributes.USER_NAME, user_name)
+                    span.set_attribute("task.title", task_title)
+                    span.set_attribute("dispatch.type", "executor")
+
+                    # Get bot info for tracing
+                    bots = task_data.get("bot", [])
+                    if bots:
+                        bot_names = [b.get("name", "") for b in bots]
+                        shell_types = [b.get("shell_type", "") for b in bots]
+                        span.set_attribute("bot.names", ",".join(bot_names))
+                        span.set_attribute("shell.types", ",".join(shell_types))
+
+                    # Extract trace context for propagation to executor
+                    trace_context = get_trace_context_for_propagation()
+                    if trace_context:
+                        # Add trace context to task data for executor to continue the trace
+                        task_data["trace_context"] = trace_context
+                        logger.debug(
+                            f"Added trace context to task {task_id}: traceparent={trace_context.get('traceparent', 'N/A')}"
+                        )
+
+        except Exception as e:
+            logger.warning(f"Failed to start dispatch traces: {e}")
 
     async def update_subtask(
         self, db: Session, *, subtask_update: SubtaskExecutorUpdate
@@ -1171,14 +1324,16 @@ class ExecutorKindsService(
                 if isinstance(new_value, str):
                     new_content = new_value
 
-        # CRITICAL FIX: If executor sends empty value but we have previous content,
-        # keep the previous content in the update to prevent data loss
-        # This happens when executor temporarily clears value between thinking steps
-        if not new_content and previous_content:
-            # Keep previous content by updating the result dict
-            if subtask_update.result and isinstance(subtask_update.result, dict):
-                subtask_update.result["value"] = previous_content
-                new_content = previous_content
+            # CRITICAL FIX: If executor sends empty value but we have previous content,
+            # keep the previous content in the update to prevent data loss
+            # This happens when executor temporarily clears value between thinking steps
+            # NOTE: Only apply this fix during RUNNING status, not COMPLETED
+            # When COMPLETED, we should always use the final result from executor
+            if not new_content and previous_content:
+                # Keep previous content by updating the result dict
+                if subtask_update.result and isinstance(subtask_update.result, dict):
+                    subtask_update.result["value"] = previous_content
+                    new_content = previous_content
 
         # Update subtask title (if provided)
         if subtask_update.subtask_title:
@@ -1202,6 +1357,14 @@ class ExecutorKindsService(
                 task.updated_at = datetime.now()
                 flag_modified(task, "json")
                 db.add(task)
+
+        # Merge thinking steps before saving to DB to reduce storage size
+        # This combines adjacent thinking steps with same title/next_action/details.type
+        if subtask_update.result and isinstance(subtask_update.result, dict):
+            raw_thinking = subtask_update.result.get("thinking", [])
+            if isinstance(raw_thinking, list) and raw_thinking:
+                merged_thinking = merge_thinking_steps(raw_thinking)
+                subtask_update.result["thinking"] = merged_thinking
 
         # Update other subtask fields
         update_data = subtask_update.model_dump(
@@ -1445,6 +1608,9 @@ class ExecutorKindsService(
 
         # Send notification when task is completed or failed
         self._send_task_completion_notification(db, task_id, task_crd)
+
+        # Update Flow execution status if this is a Flow task
+        self._update_flow_execution_status(db, task_id, task_crd)
 
         # Send WebSocket event for task status update
         if task_crd.status:
@@ -2230,6 +2396,99 @@ class ExecutorKindsService(
         except Exception as e:
             logger.error(
                 f"Failed to schedule webhook notification for task {task_id}: {str(e)}"
+            )
+
+    def _update_flow_execution_status(
+        self, db: Session, task_id: int, task_crd: Task
+    ) -> None:
+        """
+        Update Flow execution status when a Flow-triggered task completes.
+
+        This method checks if the task was triggered by a Flow (via flowExecutionId label),
+        and if so, updates the corresponding FlowExecution record in the database.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            task_crd: Task CRD object
+        """
+        # Only update when task is in a final state
+        if not task_crd.status or task_crd.status.status not in [
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED",
+        ]:
+            return
+
+        # Check if this task was triggered by a Flow
+        flow_execution_id = None
+        if task_crd.metadata and task_crd.metadata.labels:
+            flow_execution_id = task_crd.metadata.labels.get("flowExecutionId")
+
+        if not flow_execution_id:
+            # Not a Flow-triggered task
+            return
+
+        try:
+            # Convert to int if it's a string
+            try:
+                execution_id = int(flow_execution_id)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Invalid flowExecutionId '{flow_execution_id}' for task {task_id}"
+                )
+                return
+
+            # Use flow_service.update_execution_status for unified status update and WebSocket emission
+            from app.schemas.flow import FlowExecutionStatus
+            from app.services.flow import flow_service
+
+            # Map task status to FlowExecutionStatus
+            status_map = {
+                "COMPLETED": FlowExecutionStatus.COMPLETED,
+                "FAILED": FlowExecutionStatus.FAILED,
+                "CANCELLED": FlowExecutionStatus.CANCELLED,
+            }
+            new_status = status_map.get(task_crd.status.status)
+            if not new_status:
+                logger.warning(
+                    f"Unknown task status '{task_crd.status.status}' for FlowExecution {execution_id}"
+                )
+                return
+
+            # Prepare result_summary and error_message
+            result_summary = None
+            error_message = None
+            if task_crd.status.status == "COMPLETED":
+                result_summary = "Task completed successfully"
+            elif task_crd.status.status == "FAILED":
+                error_message = task_crd.status.errorMessage or "Task failed"
+            elif task_crd.status.status == "CANCELLED":
+                error_message = "Task was cancelled"
+
+            # Call flow_service to update status (this will also emit WebSocket event)
+            success = flow_service.update_execution_status(
+                db=db,
+                execution_id=execution_id,
+                status=new_status,
+                result_summary=result_summary,
+                error_message=error_message,
+            )
+
+            if success:
+                logger.info(
+                    f"Updated FlowExecution {execution_id} status to {new_status.value} "
+                    f"for task {task_id} via flow_service"
+                )
+            else:
+                logger.warning(
+                    f"Failed to update FlowExecution {execution_id} status for task {task_id}"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Failed to update Flow execution status for task {task_id}: {str(e)}",
+                exc_info=True,
             )
 
     def delete_executor_task_sync(

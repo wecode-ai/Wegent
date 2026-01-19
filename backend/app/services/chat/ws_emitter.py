@@ -510,6 +510,32 @@ class WebSocketEmitter:
         )
         logger.debug(f"[WS] emit unread:count user={user_id} count={count}")
 
+    async def emit_task_app_update(
+        self,
+        task_id: int,
+        app: Dict[str, Any],
+    ) -> None:
+        """
+        Emit task:app_update event to task room.
+
+        This notifies clients viewing this task about app data changes.
+        Used by expose_service tool when app preview becomes available.
+
+        Args:
+            task_id: Task ID
+            app: App data (name, address, previewUrl)
+        """
+        await self.sio.emit(
+            ServerEvents.TASK_APP_UPDATE,
+            {
+                "task_id": task_id,
+                "app": app,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.info(f"[WS] emit task:app_update task={task_id} app={app}")
+
     # ============================================================
     # Generic Skill Events
     # ============================================================
@@ -698,6 +724,88 @@ class WebSocketEmitter:
         )
         logger.warning(
             f"[WS] emit correction:error task={task_id} subtask={subtask_id} error={error}"
+        )
+
+    # ============================================================
+    # Flow Events (to user room)
+    # ============================================================
+
+    async def emit_flow_execution_update(
+        self,
+        user_id: int,
+        execution_id: int,
+        flow_id: int,
+        status: str,
+        flow_name: str | None = None,
+        flow_display_name: str | None = None,
+        team_name: str | None = None,
+        task_id: int | None = None,
+        task_type: str | None = None,
+        prompt: str | None = None,
+        result_summary: str | None = None,
+        error_message: str | None = None,
+        trigger_reason: str | None = None,
+        created_at: str | None = None,
+        updated_at: str | None = None,
+    ) -> None:
+        """
+        Emit flow:execution_update event to user room.
+
+        Args:
+            user_id: User ID (owner of the flow)
+            execution_id: Flow execution ID
+            flow_id: Flow ID
+            status: Execution status (PENDING, RUNNING, COMPLETED, FAILED, etc.)
+            flow_name: Flow name
+            flow_display_name: Flow display name
+            team_name: Team name
+            task_id: Associated task ID
+            task_type: Task type (execution/collection)
+            prompt: Prompt used
+            result_summary: Result summary
+            error_message: Error message if failed
+            trigger_reason: Trigger reason
+            created_at: Creation timestamp
+            updated_at: Last update timestamp
+        """
+        payload = {
+            "execution_id": execution_id,
+            "flow_id": flow_id,
+            "status": status,
+            "created_at": created_at or datetime.now().isoformat(),
+            "updated_at": updated_at or datetime.now().isoformat(),
+        }
+        if flow_name is not None:
+            payload["flow_name"] = flow_name
+        if flow_display_name is not None:
+            payload["flow_display_name"] = flow_display_name
+        if team_name is not None:
+            payload["team_name"] = team_name
+        if task_id is not None:
+            payload["task_id"] = task_id
+        if task_type is not None:
+            payload["task_type"] = task_type
+        if prompt is not None:
+            payload["prompt"] = prompt
+        if result_summary is not None:
+            payload["result_summary"] = result_summary
+        if error_message is not None:
+            payload["error_message"] = error_message
+        if trigger_reason is not None:
+            payload["trigger_reason"] = trigger_reason
+
+        logger.debug(
+            f"[WS] emit_flow_execution_update called: user={user_id} execution={execution_id} status={status} room=user:{user_id}"
+        )
+
+        await self.sio.emit(
+            ServerEvents.FLOW_EXECUTION_UPDATE,
+            payload,
+            room=f"user:{user_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            f"[WS] emit flow:execution_update SENT to room user:{user_id} execution={execution_id} status={status}"
         )
 
 

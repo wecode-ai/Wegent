@@ -8,7 +8,7 @@ Pydantic schemas for knowledge base and document management.
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Dict, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -18,6 +18,7 @@ from app.schemas.kind import (
     HybridWeights,
     RetrievalConfig,
     RetrieverRef,
+    SummaryModelRef,
 )
 
 # Import SplitterConfig from rag.py to use unified splitter configuration
@@ -37,6 +38,7 @@ class DocumentSourceType(str, Enum):
     FILE = "file"
     TEXT = "text"
     TABLE = "table"
+    WEB = "web"
 
 
 class ResourceScope(str, Enum):
@@ -58,8 +60,20 @@ class KnowledgeBaseCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
     namespace: str = Field(default="default", max_length=255)
+    kb_type: Optional[str] = Field(
+        "notebook",
+        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+    )
     retrieval_config: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
+    )
+    summary_enabled: bool = Field(
+        default=False,
+        description="Enable automatic summary generation for documents",
+    )
+    summary_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
     )
 
 
@@ -89,6 +103,14 @@ class KnowledgeBaseUpdate(BaseModel):
         None,
         description="Retrieval configuration update (excludes retriever and embedding model)",
     )
+    summary_enabled: Optional[bool] = Field(
+        None,
+        description="Enable automatic summary generation for documents",
+    )
+    summary_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
+    )
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -99,10 +121,26 @@ class KnowledgeBaseResponse(BaseModel):
     description: Optional[str] = None
     user_id: int
     namespace: str
+    kb_type: Optional[str] = Field(
+        "notebook",
+        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+    )
     document_count: int
     is_active: bool
     retrieval_config: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
+    )
+    summary_enabled: bool = Field(
+        default=False,
+        description="Enable automatic summary generation for documents",
+    )
+    summary_model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model reference for summary generation",
+    )
+    summary: Optional[dict] = Field(
+        None,
+        description="Knowledge base summary (short_summary, long_summary, topics, etc.)",
     )
     created_at: datetime
     updated_at: datetime
@@ -116,14 +154,24 @@ class KnowledgeBaseResponse(BaseModel):
             document_count: Document count (should be queried from database)
         """
         spec = kind.json.get("spec", {})
+        # Extract summary from spec.summary if available
+        summary = spec.get("summary")
+        # Extract summary_model_ref from spec
+        summary_model_ref = spec.get("summaryModelRef")
+        # Extract kb_type from spec, default to 'notebook' for backward compatibility
+        kb_type = spec.get("kbType", "notebook")
         return cls(
             id=kind.id,
             name=spec.get("name", ""),
-            description=spec.get("description"),
+            description=spec.get("description") or None,  # Convert empty string to None
             user_id=kind.user_id,
             namespace=kind.namespace,
+            kb_type=kb_type,
             document_count=document_count,
             retrieval_config=spec.get("retrievalConfig"),
+            summary_enabled=spec.get("summaryEnabled", False),
+            summary_model_ref=summary_model_ref,
+            summary=summary,
             is_active=kind.is_active,
             created_at=kind.created_at,
             updated_at=kind.updated_at,
@@ -192,6 +240,17 @@ class KnowledgeDocumentResponse(BaseModel):
     )
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("source_type", mode="before")
+    @classmethod
+    def ensure_source_type_enum(cls, v):
+        """Convert string to DocumentSourceType enum for ORM compatibility."""
+        if isinstance(v, str):
+            try:
+                return DocumentSourceType(v)
+            except ValueError:
+                return DocumentSourceType.FILE
+        return v
 
     @field_validator("source_config", mode="before")
     @classmethod
@@ -288,3 +347,43 @@ class TableUrlValidationResponse(BaseModel):
     error_message: Optional[str] = Field(
         None, description="Error message if validation failed"
     )
+
+
+# ============== Document Detail Schemas ==============
+
+
+class DocumentDetailResponse(BaseModel):
+    """Schema for document detail response (content + summary)."""
+
+    document_id: int = Field(..., description="Document ID")
+    content: Optional[str] = Field(
+        None, description="Extracted text content from document"
+    )
+    content_length: Optional[int] = Field(
+        None, description="Length of content in characters"
+    )
+    truncated: Optional[bool] = Field(None, description="Whether content was truncated")
+    summary: Optional[dict] = Field(None, description="Document summary object")
+
+
+# ============== Web Scraper Schemas ==============
+
+
+class WebScrapeRequest(BaseModel):
+    """Schema for web scrape request."""
+
+    url: str = Field(..., min_length=1, description="URL to scrape")
+
+
+class WebScrapeResponse(BaseModel):
+    """Schema for web scrape response."""
+
+    title: Optional[str] = Field(None, description="Page title")
+    content: str = Field(..., description="Markdown content")
+    url: str = Field(..., description="Source URL")
+    scraped_at: str = Field(..., description="Scrape timestamp (ISO format)")
+    content_length: int = Field(0, description="Content length in characters")
+    description: Optional[str] = Field(None, description="Page description")
+    success: bool = Field(True, description="Whether scraping succeeded")
+    error_code: Optional[str] = Field(None, description="Error code if failed")
+    error_message: Optional[str] = Field(None, description="Error message if failed")

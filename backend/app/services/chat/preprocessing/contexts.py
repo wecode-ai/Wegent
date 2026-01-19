@@ -7,6 +7,7 @@
 Handles processing of subtask contexts including:
 - Attachments (text documents and images for vision models)
 - Knowledge bases (RAG retrieval)
+- Selected documents (direct injection for notebook mode)
 
 Replaces the original attachments.py with unified context support.
 
@@ -20,6 +21,7 @@ from typing import Any, List, Optional, Tuple
 from langchain_core.tools import BaseTool
 from sqlalchemy.orm import Session
 
+from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
 
@@ -359,13 +361,19 @@ def link_contexts_to_subtask(
     if attachment_ids:
         linked_context_ids.extend(attachment_ids)
 
-    # Prepare knowledge base and table contexts for batch creation
-    kb_contexts_to_create, table_contexts_to_create = _prepare_contexts_for_creation(
-        contexts, subtask_id, user_id
-    )
+    # Prepare knowledge base, table, and selected_documents contexts for batch creation
+    (
+        kb_contexts_to_create,
+        table_contexts_to_create,
+        selected_docs_contexts_to_create,
+    ) = _prepare_contexts_for_creation(contexts, subtask_id, user_id)
 
     # Combine all contexts to create
-    all_contexts_to_create = kb_contexts_to_create + table_contexts_to_create
+    all_contexts_to_create = (
+        kb_contexts_to_create
+        + table_contexts_to_create
+        + selected_docs_contexts_to_create
+    )
 
     # Execute all database operations in a single transaction
     try:
@@ -408,8 +416,9 @@ def _sync_kb_contexts_to_task(
         user_id: User ID who selected the KBs
         user_name: Pre-queried user name for boundBy field
     """
-    from app.services.task_knowledge_base_service import task_knowledge_base_service
+    from app.services.knowledge import TaskKnowledgeBaseService
 
+    task_kb_service = TaskKnowledgeBaseService()
     for kb_context in kb_contexts:
         knowledge_id = (
             kb_context.type_data.get("knowledge_id") if kb_context.type_data else None
@@ -418,7 +427,7 @@ def _sync_kb_contexts_to_task(
             continue
 
         try:
-            synced = task_knowledge_base_service.sync_subtask_kb_to_task(
+            synced = task_kb_service.sync_subtask_kb_to_task(
                 db=db,
                 task=task,
                 knowledge_id=knowledge_id,
@@ -442,9 +451,9 @@ def _prepare_contexts_for_creation(
     contexts: List[Any] | None,
     subtask_id: int,
     user_id: int,
-) -> Tuple[List[SubtaskContext], List[SubtaskContext]]:
+) -> Tuple[List[SubtaskContext], List[SubtaskContext], List[SubtaskContext]]:
     """
-    Prepare knowledge base and table contexts for batch creation.
+    Prepare knowledge base, table, and selected_documents contexts for batch creation.
 
     Args:
         contexts: List of ContextItem objects from payload
@@ -452,13 +461,18 @@ def _prepare_contexts_for_creation(
         user_id: User ID
 
     Returns:
-        Tuple of (kb_contexts, table_contexts) ready for insertion
+        Tuple of (kb_contexts, table_contexts, selected_docs_contexts) ready for insertion
     """
     kb_contexts_to_create: List[SubtaskContext] = []
     table_contexts_to_create: List[SubtaskContext] = []
+    selected_docs_contexts_to_create: List[SubtaskContext] = []
 
     if not contexts:
-        return kb_contexts_to_create, table_contexts_to_create
+        return (
+            kb_contexts_to_create,
+            table_contexts_to_create,
+            selected_docs_contexts_to_create,
+        )
 
     for ctx in contexts:
         if ctx.type == "knowledge_base":
@@ -519,7 +533,41 @@ def _prepare_contexts_for_creation(
                 logger.warning(f"Failed to prepare table context: {e}")
                 continue
 
-    return kb_contexts_to_create, table_contexts_to_create
+        elif ctx.type == "selected_documents":
+            # Handle selected_documents context type for notebook mode
+            # This stores the selected document IDs from the DocumentPanel
+            try:
+                docs_data = ctx.data
+                knowledge_base_id = docs_data.get("knowledge_base_id")
+                document_ids = docs_data.get("document_ids", [])
+
+                if knowledge_base_id and document_ids:
+                    # Create SubtaskContext object for selected documents
+                    selected_docs_context = SubtaskContext(
+                        subtask_id=subtask_id,
+                        user_id=user_id,
+                        context_type=ContextType.SELECTED_DOCUMENTS.value,
+                        name=f"Selected Documents ({len(document_ids)} files)",
+                        status=ContextStatus.READY.value,
+                        type_data={
+                            "knowledge_base_id": int(knowledge_base_id),
+                            "document_ids": document_ids,
+                        },
+                    )
+                    selected_docs_contexts_to_create.append(selected_docs_context)
+                    logger.info(
+                        f"Prepared selected_documents context: kb_id={knowledge_base_id}, "
+                        f"doc_ids={document_ids}"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to prepare selected_documents context: {e}")
+                continue
+
+    return (
+        kb_contexts_to_create,
+        table_contexts_to_create,
+        selected_docs_contexts_to_create,
+    )
 
 
 def _batch_update_and_insert_contexts(
@@ -580,9 +628,14 @@ def _batch_update_and_insert_contexts(
         table_count = sum(
             1 for c in contexts_to_create if c.context_type == ContextType.TABLE.value
         )
+        selected_docs_count = sum(
+            1
+            for c in contexts_to_create
+            if c.context_type == ContextType.SELECTED_DOCUMENTS.value
+        )
         logger.info(
-            f"Created {kb_count} knowledge base contexts and {table_count} table contexts "
-            f"for subtask {subtask_id}"
+            f"Created {kb_count} knowledge base contexts, {table_count} table contexts, "
+            f"and {selected_docs_count} selected_documents contexts for subtask {subtask_id}"
         )
 
     return created_context_ids
@@ -662,11 +715,17 @@ async def prepare_contexts_for_chat(
         if c.context_type == ContextType.TABLE.value
         and c.status == ContextStatus.READY.value
     ]
+    selected_docs_contexts = [
+        c
+        for c in contexts
+        if c.context_type == ContextType.SELECTED_DOCUMENTS.value
+        and c.status == ContextStatus.READY.value
+    ]
 
     logger.info(
         f"[prepare_contexts_for_chat] subtask={user_subtask_id}: "
         f"{len(attachment_contexts)} attachments, {len(kb_contexts)} knowledge bases, "
-        f"{len(table_contexts)} tables"
+        f"{len(table_contexts)} tables, {len(selected_docs_contexts)} selected_documents"
     )
 
     # 1. Process attachment contexts - inject into message
@@ -727,6 +786,27 @@ async def prepare_contexts_for_chat(
                 f"[prepare_contexts_for_chat] Added {len(parsed_tables)} table(s) to system prompt. "
                 f"Table contexts will be passed to chat_shell for DataTableTool creation."
             )
+
+    # 4. Process selected_documents contexts - direct injection or RAG fallback
+    logger.info(
+        f"[prepare_contexts_for_chat] SELECTED_DOCS_CHECK: subtask={user_subtask_id}, "
+        f"selected_docs_contexts_count={len(selected_docs_contexts)}, "
+        f"contexts_data={[c.type_data for c in selected_docs_contexts]}"
+    )
+    if selected_docs_contexts:
+        from .selected_documents import process_selected_documents_contexts
+
+        final_message, enhanced_system_prompt, extra_tools = (
+            process_selected_documents_contexts(
+                db=db,
+                selected_docs_contexts=selected_docs_contexts,
+                user_id=user_id,
+                message=final_message,
+                base_system_prompt=enhanced_system_prompt,
+                extra_tools=extra_tools,
+                user_subtask_id=user_subtask_id,
+            )
+        )
 
     has_table_context = len(table_contexts) > 0
     return (
@@ -918,7 +998,9 @@ def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
     Returns:
         List of knowledge base IDs bound to the task
     """
-    from app.services.task_knowledge_base_service import task_knowledge_base_service
+    from app.services.knowledge.task_knowledge_base_service import (
+        task_knowledge_base_service,
+    )
 
     logger.info(f"[_get_bound_knowledge_base_ids] START task_id={task_id}")
 

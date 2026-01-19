@@ -213,6 +213,110 @@ OPTIMIZE TABLE tasks;
 OPTIMIZE TABLE task_logs;
 ```
 
+### 问题 6: 数据库迁移问题 - 缺少 project_id 列
+
+**症状**: 应用启动时报错 `Unknown column 'tasks.project_id' in 'field list'`
+
+**错误日志示例**:
+```
+ERROR [-] : [executor_job] cleanup_stale_executors error: (pymysql.err.OperationalError) 
+(1054, "Unknown column 'tasks.project_id' in 'field list'")
+```
+
+**原因**: Alembic 迁移记录显示已应用，但实际的 DDL 操作未成功执行，导致数据库表结构与代码模型不一致。
+
+**诊断步骤**:
+
+**1. 检查当前迁移版本**
+```bash
+docker exec wegent-backend bash -c "cd /app && alembic current"
+# 应显示: s9t0u1v2w3x4 (head) (mergepoint) 或更新的版本
+```
+
+**2. 验证表结构**
+```bash
+docker exec wegent-mysql mysql -uroot -p123456 task_manager -e "DESCRIBE tasks;"
+# 检查是否包含 project_id 列
+```
+
+**解决方案**:
+
+**方法 1: 使用自动修复脚本（推荐）**
+```bash
+# 运行修复脚本
+./scripts/fix-missing-project-id.sh
+
+# 脚本会自动：
+# 1. 检查 project_id 列是否存在
+# 2. 创建 projects 表（如果不存在）
+# 3. 添加 project_id 列到 tasks 表
+# 4. 创建索引
+# 5. 验证修复结果
+```
+
+**方法 2: 手动修复**
+
+> **注意**：以下命令使用 `docker-compose.yml` 中的默认配置（密码：`123456`，数据库：`task_manager`）。
+> 如果您修改了这些值，请相应调整命令中的 `-p` 和数据库名称参数。
+
+```bash
+# 1. 检查 projects 表是否存在
+docker exec wegent-mysql mysql -uroot -p123456 task_manager -e "SHOW TABLES LIKE 'projects';"
+
+# 2. 创建 projects 表（如果不存在）
+docker exec wegent-mysql mysql -uroot -p123456 task_manager -e "
+CREATE TABLE IF NOT EXISTS projects (
+    id INT NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
+    user_id INT NOT NULL DEFAULT 0 COMMENT 'Project owner user ID',
+    name VARCHAR(100) NOT NULL DEFAULT '' COMMENT 'Project name',
+    description VARCHAR(256) NOT NULL DEFAULT '' COMMENT 'Project description',
+    color VARCHAR(20) NOT NULL DEFAULT '' COMMENT 'Project color identifier',
+    sort_order INT NOT NULL DEFAULT 0 COMMENT 'Sort order for display',
+    is_expanded TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'Whether the project is expanded in UI',
+    is_active TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'Whether the project is active',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation timestamp',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last update timestamp',
+    PRIMARY KEY (id),
+    KEY idx_projects_user_id (user_id),
+    KEY idx_projects_sort_order (sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Projects table for task organization';
+"
+
+# 3. 添加 project_id 列
+docker exec wegent-mysql mysql -uroot -p123456 task_manager -e "
+ALTER TABLE tasks ADD COLUMN project_id INT NOT NULL DEFAULT 0 COMMENT 'Project ID for task grouping';
+"
+
+# 4. 创建索引
+docker exec wegent-mysql mysql -uroot -p123456 task_manager -e "
+CREATE INDEX idx_tasks_project_id ON tasks(project_id);
+"
+
+# 5. 验证修复
+docker exec wegent-mysql mysql -uroot -p123456 task_manager -e "DESCRIBE tasks;"
+```
+
+**方法 3: 重新运行迁移（如果上述方法失败）**
+```bash
+# 注意：这会尝试重新应用迁移，可能报错但不会造成数据损失
+docker exec wegent-backend bash -c "cd /app && alembic upgrade head"
+```
+
+**验证修复**:
+```bash
+# 1. 重启 backend 服务
+docker restart wegent-backend
+
+# 2. 查看日志确认没有错误
+docker logs -f wegent-backend --tail 50
+
+# 3. 应该看到类似输出：
+# ✓ Alembic migrations completed successfully
+# ✓ YAML data initialization completed
+```
+
+**预防措施**: 该问题已在迁移脚本中修复，添加了幂等性检查。未来更新时，迁移脚本会自动检测并跳过已存在的列。
+
 ---
 
 ## 🌐 网络和连接问题

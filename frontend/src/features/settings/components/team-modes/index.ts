@@ -22,13 +22,14 @@ export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
  * Mode to supported agent types mapping
  * - solo: All agent types (ClaudeCode, Agno, Dify)
  * - pipeline: ClaudeCode and Agno only (no Dify)
- * - route/coordinate/collaborate: Agno only (multi-agent collaboration modes)
+ * - route/collaborate: Agno only (multi-agent collaboration modes)
+ * - coordinate: Agno and ClaudeCode (supports both agent types)
  */
 const MODE_AGENT_FILTER: Record<TeamMode, AgentType[] | null> = {
   solo: null, // null means all agents are allowed
   pipeline: ['ClaudeCode', 'Agno'],
   route: ['Agno'],
-  coordinate: ['Agno'],
+  coordinate: ['Agno', 'ClaudeCode'],
   collaborate: ['Agno'],
 }
 
@@ -41,7 +42,7 @@ const MODE_AGENT_FILTER: Record<TeamMode, AgentType[] | null> = {
  * @param shellMap - Map of shell name to UnifiedShell object
  * @returns The actual shell type (ClaudeCode, Agno, Dify, etc.)
  */
-function getActualShellType(shellType: string, shellMap: Map<string, UnifiedShell>): string {
+export function getActualShellType(shellType: string, shellMap: Map<string, UnifiedShell>): string {
   // First check if shellType is already a known agent type
   const knownAgentTypes: AgentType[] = ['ClaudeCode', 'Agno', 'Dify']
   if (knownAgentTypes.includes(shellType as AgentType)) {
