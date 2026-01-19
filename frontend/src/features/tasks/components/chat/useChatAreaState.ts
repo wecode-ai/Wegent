@@ -356,21 +356,29 @@ export function useChatAreaState({
         return teams[0] || null
       }
 
-      // Find team by name + namespace (exact match)
-      const matchedTeam = teams.find(
+      // Normalize namespace to handle undefined case
+      const normalizedNamespace = defaultConfig.namespace || 'default'
+
+      // Find all teams matching name + namespace
+      const matchedTeams = teams.filter(
         team =>
-          team.name === defaultConfig.name &&
-          (team.namespace || 'default') === defaultConfig.namespace
+          team.name === defaultConfig.name && (team.namespace || 'default') === normalizedNamespace
       )
 
-      if (matchedTeam) {
+      if (matchedTeams.length > 0) {
+        // Prioritize public team (user_id === 0) over personal team
+        const publicTeam = matchedTeams.find(team => team.user_id === 0)
+        const selectedTeam = publicTeam || matchedTeams[0]
+
         console.log(
           '[useChatAreaState] Found default team for mode:',
           taskType,
-          matchedTeam.name,
-          matchedTeam.namespace
+          selectedTeam.name,
+          normalizedNamespace,
+          'isPublic:',
+          selectedTeam.user_id === 0
         )
-        return matchedTeam
+        return selectedTeam
       }
 
       // No match found, use first team
