@@ -7,6 +7,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from shared.telemetry.decorators import trace_async
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -113,6 +114,7 @@ def _team_to_response(team: Kind) -> PublicTeamResponse:
 
 
 @router.get("/public-teams", response_model=PublicTeamListResponse)
+@trace_async()
 async def list_public_teams(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
@@ -144,6 +146,7 @@ async def list_public_teams(
     response_model=PublicTeamResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@trace_async()
 async def create_public_team(
     team_data: PublicTeamCreate,
     db: Session = Depends(get_db),
@@ -194,6 +197,7 @@ async def create_public_team(
 
 
 @router.put("/public-teams/{team_id}", response_model=PublicTeamResponse)
+@trace_async()
 async def update_public_team(
     team_data: PublicTeamUpdate,
     team_id: int = Path(..., description="Team ID"),
@@ -260,6 +264,7 @@ async def update_public_team(
 
 
 @router.delete("/public-teams/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
+@trace_async()
 async def delete_public_team(
     team_id: int = Path(..., description="Team ID"),
     db: Session = Depends(get_db),

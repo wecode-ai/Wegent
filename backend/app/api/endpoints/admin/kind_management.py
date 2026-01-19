@@ -263,9 +263,7 @@ async def admin_delete_user_resource(
     # Delete resource
     kind_service.delete_resource(user_id, kind, namespace, name)
 
-    return {
-        "message": f"Successfully deleted {kind} resource '{name}' for user {user_id}"
-    }
+    return None
 
 
 # ==================== Admin Batch Operation Endpoints ====================

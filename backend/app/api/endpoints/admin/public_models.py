@@ -187,7 +187,8 @@ async def delete_public_model(
     current_user: User = Depends(get_admin_user),
 ):
     """
-    Delete a public model (admin only)
+    Delete a public model (admin only).
+    Deletion is blocked if any public bots (active or inactive) reference this model.
     """
     model = (
         db.query(Kind)
@@ -198,6 +199,41 @@ async def delete_public_model(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Public model with id {model_id} not found",
+        )
+
+    # Check if any public bots (active or inactive) reference this model
+    bots_using_model = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == 0,
+            Kind.kind == "Bot",
+        )
+        .all()
+    )
+
+    referencing_bots = []
+    for bot in bots_using_model:
+        # Defensive validation: ensure bot.json is a dict
+        if not isinstance(bot.json, dict):
+            continue
+        spec = bot.json.get("spec", {})
+        # Defensive validation: ensure spec is a dict
+        if not isinstance(spec, dict):
+            continue
+        model_ref = spec.get("modelRef")
+        # Defensive validation: ensure modelRef is a dict
+        if not isinstance(model_ref, dict):
+            continue
+        if (
+            model_ref.get("name") == model.name
+            and model_ref.get("namespace", "default") == model.namespace
+        ):
+            referencing_bots.append(bot.name)
+
+    if referencing_bots:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot delete model '{model.name}' because it is referenced by public bots: {', '.join(referencing_bots)}",
         )
 
     db.delete(model)

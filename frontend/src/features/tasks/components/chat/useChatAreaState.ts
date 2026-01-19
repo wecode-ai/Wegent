@@ -356,11 +356,13 @@ export function useChatAreaState({
         return teams[0] || null
       }
 
+      // Normalize namespace to handle undefined case
+      const normalizedNamespace = defaultConfig.namespace || 'default'
+
       // Find all teams matching name + namespace
       const matchedTeams = teams.filter(
         team =>
-          team.name === defaultConfig.name &&
-          (team.namespace || 'default') === defaultConfig.namespace
+          team.name === defaultConfig.name && (team.namespace || 'default') === normalizedNamespace
       )
 
       if (matchedTeams.length > 0) {
@@ -372,7 +374,7 @@ export function useChatAreaState({
           '[useChatAreaState] Found default team for mode:',
           taskType,
           selectedTeam.name,
-          selectedTeam.namespace,
+          normalizedNamespace,
           'isPublic:',
           selectedTeam.user_id === 0
         )
