@@ -8,11 +8,18 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from shared.telemetry.decorators import (
+    add_span_event,
+    set_span_attribute,
+    trace_sync,
+)
+
 from app.services.memory.schemas import MemorySearchResult
 
 logger = logging.getLogger(__name__)
 
 
+@trace_sync("memory.utils.inject_memories")
 def inject_memories_to_prompt(
     base_prompt: str, memories: List[MemorySearchResult]
 ) -> str:
@@ -40,11 +47,22 @@ def inject_memories_to_prompt(
 
         {original_system_prompt}
     """
+    # Set span attributes for observability
+    set_span_attribute("memory.count", len(memories))
+
     if not memories:
+        add_span_event("memory.inject.empty", {"reason": "no_memories_provided"})
         return base_prompt
+
+    # Set memory IDs (truncated to first 5 for performance)
+    memory_ids = [memory.id for memory in memories[:5]]
+    set_span_attribute("memory.ids", ",".join(memory_ids))
+    if len(memories) > 5:
+        set_span_attribute("memory.ids_truncated", True)
 
     # Build memory list
     memory_lines = []
+    parse_errors = 0
     for idx, memory in enumerate(memories, start=1):
         # Extract created_at from top-level memory object (mem0 reserved field)
         # Note: created_at is managed by mem0 and uses US/Pacific timezone
@@ -59,6 +77,7 @@ def inject_memories_to_prompt(
             except (ValueError, TypeError):
                 # If parsing fails, use original string (better than empty)
                 date_str = created_at
+                parse_errors += 1
         else:
             date_str = ""
 
@@ -68,6 +87,14 @@ def inject_memories_to_prompt(
         else:
             memory_lines.append(f"{idx}. {memory.memory}")
 
+    # Track date parsing errors if any occurred
+    if parse_errors > 0:
+        set_span_attribute("memory.date_parse_errors", parse_errors)
+        add_span_event(
+            "memory.date_parse_errors",
+            {"error_count": parse_errors, "total_memories": len(memories)},
+        )
+
     memory_block = (
         "<memory>\n"
         "The following are relevant memories from previous conversations:\n\n"
@@ -76,9 +103,17 @@ def inject_memories_to_prompt(
         "</memory>\n\n"
     )
 
+    # Set output attributes
+    set_span_attribute("memory.block_length", len(memory_block))
+    add_span_event(
+        "memory.inject.success",
+        {"memories_injected": len(memories), "block_length": len(memory_block)},
+    )
+
     return memory_block + base_prompt
 
 
+@trace_sync("memory.utils.format_metadata")
 def format_metadata_for_logging(metadata: dict) -> str:
     """Format metadata dict for logging (redact sensitive fields).
 
@@ -88,7 +123,16 @@ def format_metadata_for_logging(metadata: dict) -> str:
     Returns:
         Formatted string for logging
     """
+    # Set span attributes
+    set_span_attribute("metadata.field_count", len(metadata))
+
     # Keep only important fields for logging
     relevant_fields = ["task_id", "team_id", "project_id", "is_group_chat"]
     filtered = {k: v for k, v in metadata.items() if k in relevant_fields}
+
+    # Track which fields were kept
+    set_span_attribute("metadata.filtered_count", len(filtered))
+    if filtered:
+        set_span_attribute("metadata.filtered_fields", ",".join(filtered.keys()))
+
     return str(filtered)
