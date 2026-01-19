@@ -50,6 +50,8 @@ ENV SHUTDOWN_REJECT_NEW_REQUESTS=true
 RUN sed -i '/\[tool\.uv\.sources\]/,/^$/d' pyproject.toml && \
     uv pip install --system --no-cache -r pyproject.toml
 
+RUN PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright playwright install chromium && playwright install-deps chromium
+
 # Copy application code
 COPY backend /app
 # Also copy shared to /app/shared for PYTHONPATH imports
