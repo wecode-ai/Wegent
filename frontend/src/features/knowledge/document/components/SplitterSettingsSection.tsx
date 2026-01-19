@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { SearchableSelect } from '@/components/ui/searchable-select'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useLlmModels } from '../hooks/useLlmModels'
+import type { UnifiedModel } from '@/apis/models'
 import type {
   SplitterConfig,
   SplitterType,
@@ -161,7 +162,7 @@ export function SplitterSettingsSection({
   ]
 
   // Format model label with source type
-  const formatModelLabel = (model: { name: string; displayName?: string; type: string }) => {
+  const formatModelLabel = (model: UnifiedModel) => {
     const displayName = model.displayName || model.name
     const sourceLabel = getSourceTypeLabel(model.type, t)
     return `[${sourceLabel}] ${displayName}`
