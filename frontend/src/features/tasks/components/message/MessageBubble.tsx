@@ -160,6 +160,12 @@ export interface MessageBubbleProps {
   onEditSave?: (content: string) => Promise<void>
   /** Callback when user cancels editing */
   onEditCancel?: () => void
+  /** Whether this is the last AI message */
+  isLastAiMessage?: boolean
+  /** Handler for regenerate action */
+  onRegenerate?: (msg: Message) => void
+  /** Whether regenerate is in progress */
+  isRegenerating?: boolean
 }
 
 // Component for rendering a paragraph with hover action button
@@ -279,6 +285,9 @@ const MessageBubble = memo(
     onEdit,
     onEditSave,
     onEditCancel,
+    isLastAiMessage,
+    onRegenerate,
+    isRegenerating,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
@@ -612,6 +621,15 @@ const MessageBubble = memo(
               like: t('chat:messages.like') || 'Like',
               dislike: t('chat:messages.dislike') || 'Dislike',
             }}
+            showRegenerate={
+              !isGroupChat &&
+              isLastAiMessage &&
+              (msg.subtaskStatus === 'COMPLETED' || msg.status === 'completed') &&
+              msg.subtaskStatus !== 'RUNNING' &&
+              msg.status !== 'streaming'
+            }
+            onRegenerate={() => onRegenerate?.(msg)}
+            isRegenerating={isRegenerating}
           />
         </>
       )
@@ -1581,7 +1599,9 @@ const MessageBubble = memo(
       prevProps.msg.status === nextProps.msg.status &&
       prevProps.msg.error === nextProps.msg.error &&
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&
-      prevProps.isEditing === nextProps.isEditing
+      prevProps.isEditing === nextProps.isEditing &&
+      prevProps.isLastAiMessage === nextProps.isLastAiMessage &&
+      prevProps.isRegenerating === nextProps.isRegenerating
 
     return shouldSkipRender
   }

@@ -27,6 +27,10 @@
     "confirm_button": "确认",
     "confirming": "处理中..."
   },
+  "regenerate": {
+    "failed": "重新生成失败",
+    "tooltip": "重新生成回复"
+  },
   "quote": {
     "ask_wegent": "询问 Wegent",
     "quoted_text": "引用内容",

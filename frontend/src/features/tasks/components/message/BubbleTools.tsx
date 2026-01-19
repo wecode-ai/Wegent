@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Copy, Check, ThumbsUp, ThumbsDown, Pencil } from 'lucide-react'
+import { Copy, Check, ThumbsUp, ThumbsDown, Pencil, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from 'react-i18next'
@@ -142,6 +142,12 @@ export interface BubbleToolsProps {
     like: string
     dislike: string
   }
+  /** Handler for regenerate button click */
+  onRegenerate?: () => void
+  /** Whether regenerate button should be shown */
+  showRegenerate?: boolean
+  /** Whether regenerate is in progress */
+  isRegenerating?: boolean
 }
 
 // Bubble toolbar: supports copy button, feedback buttons, and extensible tool buttons
@@ -153,6 +159,9 @@ const BubbleTools = ({
   onLike,
   onDislike,
   feedbackLabels,
+  onRegenerate,
+  showRegenerate,
+  isRegenerating,
 }: BubbleToolsProps) => {
   const { t } = useTranslation()
 
@@ -165,6 +174,25 @@ const BubbleTools = ({
         tooltip={t('chat:actions.copy') || 'Copy'}
         className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
       />
+      {/* Regenerate button - only shown when showRegenerate is true */}
+      {showRegenerate && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onRegenerate}
+              disabled={isRegenerating}
+              className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec disabled:opacity-50"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 text-text-muted ${isRegenerating ? 'animate-spin' : ''}`}
+              />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('chat:actions.regenerate') || 'Regenerate'}</TooltipContent>
+        </Tooltip>
+      )}
       {/* Feedback buttons: like and dislike */}
       <Tooltip>
         <TooltipTrigger asChild>

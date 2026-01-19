@@ -27,6 +27,10 @@
     "confirm_button": "Confirm",
     "confirming": "Processing..."
   },
+  "regenerate": {
+    "failed": "Failed to regenerate response",
+    "tooltip": "Regenerate response"
+  },
   "quote": {
     "ask_wegent": "Ask Wegent",
     "quoted_text": "Quoted text",

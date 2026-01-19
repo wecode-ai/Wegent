@@ -233,6 +233,9 @@ export default function MessagesArea({
   // Message edit state
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
 
+  // Regenerate state
+  const [isRegenerating, setIsRegenerating] = useState(false)
+
   // Correction mode state
   const [correctionResults, setCorrectionResults] = useState<Map<number, CorrectionResponse>>(
     new Map()
@@ -731,6 +734,71 @@ export default function MessagesArea({
     ]
   )
 
+  // Handle regenerate - find the user message before the AI message and resend it
+  const handleRegenerate = useCallback(
+    async (aiMessage: DisplayMessage) => {
+      // 1. Find the index of this AI message
+      const aiIndex = messages.findIndex(m => m.id === aiMessage.id)
+      if (aiIndex < 0) return
+
+      // 2. Find the preceding user message
+      const userMessage = messages[aiIndex - 1]
+      if (!userMessage || userMessage.type !== 'user') {
+        console.error('No user message found before AI message')
+        return
+      }
+
+      // 3. Get the subtask ID of the user message for API call
+      const userSubtaskId = userMessage.subtaskId
+      if (!userSubtaskId) {
+        console.error('User message has no subtaskId')
+        return
+      }
+
+      // 4. Save original content for potential recovery
+      const originalUserContent = userMessage.content
+
+      setIsRegenerating(true)
+      try {
+        // 5. Call the edit message API with the SAME content (this will delete the AI response)
+        const response = await subtaskApis.editMessage(userSubtaskId, originalUserContent)
+
+        if (response.success) {
+          // 6. Clean up local messages from the edited position
+          if (selectedTaskDetail?.id) {
+            cleanupMessagesAfterEdit(selectedTaskDetail.id, userSubtaskId)
+          }
+
+          // 7. Refresh task detail to sync with backend
+          await refreshSelectedTaskDetail(true)
+
+          // 8. Resend the same user message to trigger new AI response
+          if (onSendMessage) {
+            onSendMessage(originalUserContent)
+          }
+        }
+      } catch (error) {
+        console.error('Failed to regenerate:', error)
+        toast({
+          variant: 'destructive',
+          title: t('chat:regenerate.failed') || 'Failed to regenerate response',
+          description: (error as Error)?.message || 'Unknown error',
+        })
+      } finally {
+        setIsRegenerating(false)
+      }
+    },
+    [
+      messages,
+      selectedTaskDetail?.id,
+      cleanupMessagesAfterEdit,
+      refreshSelectedTaskDetail,
+      onSendMessage,
+      toast,
+      t,
+    ]
+  )
+
   // Memoize share and export buttons
   const shareButton = useMemo(() => {
     if (!selectedTaskDetail?.id || messages.length === 0) {
@@ -960,6 +1028,18 @@ export default function MessagesArea({
             const isCurrentUserMessage =
               msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false
 
+            // Calculate if this is the last AI message (for regenerate button)
+            // Find the last AI message index by iterating from the end
+            const isLastAiMessage = (() => {
+              if (msg.type !== 'ai') return false
+              for (let i = messages.length - 1; i >= 0; i--) {
+                if (messages[i].type === 'ai') {
+                  return messages[i].id === msg.id
+                }
+              }
+              return false
+            })()
+
             // Check if this AI message has a correction result
             const hasCorrectionResult =
               msg.type === 'ai' &&
@@ -1085,6 +1165,9 @@ export default function MessagesArea({
                 onEdit={handleEditMessage}
                 onEditSave={handleEditSave}
                 onEditCancel={handleEditCancel}
+                isLastAiMessage={isLastAiMessage}
+                onRegenerate={!isGroupChat ? handleRegenerate : undefined}
+                isRegenerating={isRegenerating}
               />
             )
           })}
