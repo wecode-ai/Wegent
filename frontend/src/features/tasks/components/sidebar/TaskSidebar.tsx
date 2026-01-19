@@ -645,8 +645,16 @@ function TaskHistorySection({
       {filteredGroupTasks.length > 0 && (
         <>
           {!isCollapsed && (
-            <div className="px-1 pb-1 text-xs font-medium text-text-muted">
-              {t('common:tasks.group_chats')}
+            <div className="px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between">
+              <span>{t('common:tasks.group_chats')}</span>
+              {unreadGroupChats.length > 0 && (
+                <button
+                  onClick={handleMarkAllAsViewed}
+                  className="text-xs text-text-muted hover:text-text-primary transition-colors"
+                >
+                  {t('common:tasks.mark_all_read')} ({unreadGroupChats.length})
+                </button>
+              )}
             </div>
           )}
           <TaskListSection

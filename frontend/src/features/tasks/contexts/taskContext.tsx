@@ -151,9 +151,15 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     try {
       const results = await Promise.all(requests)
       const allItems = results.flatMap(res => res.items || [])
+      // Ensure is_group_chat is set for all group tasks
+      // This is needed because the API may not return this field
+      const itemsWithGroupFlag = allItems.map(item => ({
+        ...item,
+        is_group_chat: true,
+      }))
       const lastPageItems = results[results.length - 1]?.items || []
       return {
-        items: allItems,
+        items: itemsWithGroupFlag,
         hasMore: lastPageItems.length === limit,
         pages: pagesArr,
         error: false,
