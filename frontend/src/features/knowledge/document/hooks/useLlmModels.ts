@@ -19,13 +19,13 @@ export function useLlmModels(scope?: 'personal' | 'group' | 'all', groupName?: s
   const fetchModels = useCallback(async () => {
     try {
       setLoading(true)
-      // Use modelApis.getUnifiedModels with scope support and filter by chat type (LLM models)
+      // Use modelApis.getUnifiedModels with scope support and filter by LLM type
       const response = await modelApis.getUnifiedModels(
         undefined, // shellType
         false, // includeConfig
         scope || 'all', // scope - default to 'all' to include personal + group + public models
         groupName, // groupName
-        'chat' // modelCategoryType - filter by chat/LLM models
+        'llm' // modelCategoryType - filter by LLM models
       )
       const data = response?.data || []
       // Sort by type priority based on scope, then by name
