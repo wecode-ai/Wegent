@@ -12,9 +12,16 @@ from app.core.config import settings
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 
 # Create sync database engine with timezone configuration
+# Increase pool size to handle concurrent requests in E2E tests and production
+# Default SQLAlchemy: pool_size=5, max_overflow=10 (total 15 connections)
+# New settings: pool_size=10, max_overflow=20 (total 30 connections)
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+    pool_timeout=30,
+    pool_recycle=3600,  # Recycle connections after 1 hour to avoid stale connections
     connect_args={"charset": "utf8mb4", "init_command": "SET time_zone = '+08:00'"},
 )
 
