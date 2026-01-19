@@ -15,7 +15,11 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Shell, Team
 from app.schemas.openapi_response import (
+    InputFunctionCall,
+    InputFunctionCallOutput,
     InputItem,
+    InputItemReference,
+    InputMessage,
     WegentTool,
 )
 from app.services.readers.kinds import KindType, kindReader
@@ -115,18 +119,27 @@ def extract_input_text(input_data: Union[str, List[InputItem]]) -> str:
     """
     Extract the user input text from the input field.
 
+    Handles all OpenAI Responses API input types:
+    - str: Direct string input
+    - List containing:
+      - InputMessage: User/assistant messages
+      - InputFunctionCall: Function call items from previous responses
+      - InputFunctionCallOutput: Function call output items
+      - InputItemReference: References to previous items
+
     Args:
-        input_data: Either a string or list of InputItem
+        input_data: Either a string or list of input items
 
     Returns:
-        The user's input text
+        The user's input text (from the last user message)
     """
     if isinstance(input_data, str):
         return input_data
 
     # For list input, get the last user message
     for item in reversed(input_data):
-        if isinstance(item, InputItem) and item.role == "user":
+        # Handle InputMessage type (Pydantic model)
+        if isinstance(item, InputMessage) and item.role == "user":
             # content can be str or List[InputTextContent]
             if isinstance(item.content, str):
                 return item.content
@@ -139,6 +152,8 @@ def extract_input_text(input_data: Union[str, List[InputItem]]) -> str:
                     elif isinstance(content_item, dict) and "text" in content_item:
                         texts.append(content_item["text"])
                 return " ".join(texts)
+
+        # Handle dict with role="user" (for backward compatibility)
         elif isinstance(item, dict) and item.get("role") == "user":
             content = item.get("content", "")
             if isinstance(content, str):
@@ -150,6 +165,9 @@ def extract_input_text(input_data: Union[str, List[InputItem]]) -> str:
                     if isinstance(content_item, dict) and "text" in content_item:
                         texts.append(content_item["text"])
                 return " ".join(texts)
+
+        # Skip non-message types (InputFunctionCall, InputFunctionCallOutput, InputItemReference)
+        # These don't contain user input text
 
     # If no user message found, return empty string
     return ""

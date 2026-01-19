@@ -32,8 +32,11 @@ class HTTPAdapter(ChatInterface):
         "response.start": ChatEventType.START,
         "content.delta": ChatEventType.CHUNK,
         "thinking.delta": ChatEventType.THINKING,
+        "reasoning.delta": ChatEventType.REASONING,  # DeepSeek R1, etc.
         "tool.start": ChatEventType.TOOL_START,
+        "tool.progress": ChatEventType.TOOL_PROGRESS,
         "tool.done": ChatEventType.TOOL_RESULT,
+        "sources.update": ChatEventType.SOURCES_UPDATE,
         "response.done": ChatEventType.DONE,
         "response.cancelled": ChatEventType.CANCELLED,
         "response.error": ChatEventType.ERROR,
@@ -455,6 +458,19 @@ class HTTPAdapter(ChatInterface):
                     text = data.get("text", "")
                     if text:
                         event_data["content"] = text
+                elif event_type == ChatEventType.REASONING:
+                    # Reasoning content is in "text" field (DeepSeek R1, etc.)
+                    text = data.get("text", "")
+                    if text:
+                        event_data["content"] = text
+                elif event_type == ChatEventType.SOURCES_UPDATE:
+                    # Sources update event contains source citations
+                    event_data["sources"] = data.get("sources", [])
+                elif event_type == ChatEventType.TOOL_PROGRESS:
+                    # Tool progress event has {id, progress, message}
+                    event_data["id"] = data.get("id", "")
+                    event_data["progress"] = data.get("progress", 0)
+                    event_data["message"] = data.get("message", "")
                 elif event_type == ChatEventType.DONE:
                     # Done event - chat_shell's ResponseDone has {id, usage, stop_reason, sources}
                     # The actual response content is NOT in this event, it's accumulated from CHUNK events

@@ -15,13 +15,30 @@ from typing import Any, AsyncIterator, Optional
 
 
 class ChatEventType(str, Enum):
-    """Types of chat events emitted during streaming."""
+    """Types of chat events emitted during streaming.
+
+    Maps to chat_shell ResponseEventType:
+    - START: response.start
+    - CHUNK: content.delta
+    - THINKING: thinking.delta
+    - REASONING: reasoning.delta (DeepSeek R1, etc.)
+    - TOOL_START: tool.start
+    - TOOL_PROGRESS: tool.progress
+    - TOOL_RESULT: tool.done
+    - SOURCES_UPDATE: sources.update
+    - DONE: response.done
+    - CANCELLED: response.cancelled
+    - ERROR: response.error
+    """
 
     START = "start"
     CHUNK = "chunk"
     THINKING = "thinking"
+    REASONING = "reasoning"  # For reasoning models (DeepSeek R1, etc.)
     TOOL_START = "tool_start"
+    TOOL_PROGRESS = "tool_progress"  # Tool execution progress
     TOOL_RESULT = "tool_result"
+    SOURCES_UPDATE = "sources_update"  # Knowledge base citations
     DONE = "done"
     CANCELLED = "cancelled"
     ERROR = "error"

@@ -844,13 +844,13 @@ class TestOpenAPIResponsesHelpers:
 
     def test_extract_input_text_list(self):
         """Test extracting input text from list."""
-        from app.schemas.openapi_response import InputItem
+        from app.schemas.openapi_response import InputMessage
         from app.services.openapi.helpers import extract_input_text
 
         input_list = [
-            InputItem(role="user", content="First message"),
-            InputItem(role="assistant", content="Response"),
-            InputItem(role="user", content="Second message"),
+            InputMessage(role="user", content="First message"),
+            InputMessage(role="assistant", content="Response"),
+            InputMessage(role="user", content="Second message"),
         ]
         result = extract_input_text(input_list)
         assert result == "Second message"
