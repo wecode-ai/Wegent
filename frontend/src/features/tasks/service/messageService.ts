@@ -120,10 +120,7 @@ export async function sendMessage(params: {
     return { error: 'Please select Team', newTask: null }
   }
 
-  // For code type tasks, repository is required
-  if (taskType === 'code' && !repo) {
-    return { error: 'Please select a repository for code tasks', newTask: null }
-  }
+  // Repository is now optional for code tasks - removed validation
 
   // Unified delegation to taskApis.sendTaskMessage (internally handles whether to create a task first)
   const payload: { task_id?: number; message: string } & CreateTaskRequest = {
