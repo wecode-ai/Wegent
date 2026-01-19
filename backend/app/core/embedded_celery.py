@@ -27,9 +27,10 @@ from celery import Celery
 
 logger = logging.getLogger(__name__)
 
-# Global references to threads
+# Global references to threads and beat instance
 _worker_thread: Optional[threading.Thread] = None
 _beat_thread: Optional[threading.Thread] = None
+_beat_instance = None  # Store Beat instance for graceful shutdown
 _shutdown_event = threading.Event()
 
 
@@ -57,15 +58,19 @@ def _run_worker(app: Celery) -> None:
 
 def _run_beat(app: Celery) -> None:
     """Run Celery beat scheduler in a thread."""
+    global _beat_instance
     try:
         logger.info("[EmbeddedCelery] Starting beat thread...")
         from celery.apps.beat import Beat
 
         beat = Beat(app=app, loglevel="INFO")
+        _beat_instance = beat
         beat.run()
     except Exception as e:
         if not _shutdown_event.is_set():
             logger.error(f"[EmbeddedCelery] Beat error: {e}")
+    finally:
+        _beat_instance = None
 
 
 def start_embedded_celery() -> None:
@@ -97,18 +102,55 @@ def start_embedded_celery() -> None:
     logger.info("[EmbeddedCelery] Beat thread started")
 
 
-def stop_embedded_celery() -> None:
-    """Signal embedded Celery to stop."""
-    global _worker_thread, _beat_thread
+def stop_embedded_celery(timeout: float = 10.0) -> None:
+    """
+    Gracefully stop embedded Celery worker and beat.
+
+    This ensures that:
+    1. Beat scheduler releases its Redis lock properly
+    2. Worker completes current tasks before shutdown
+
+    Args:
+        timeout: Maximum seconds to wait for graceful shutdown
+    """
+    global _worker_thread, _beat_thread, _beat_instance
 
     logger.info("[EmbeddedCelery] Stopping embedded Celery...")
     _shutdown_event.set()
 
-    # The threads are daemon threads, so they will be killed when the main process exits
-    # We don't need to explicitly join them
+    # Step 1: Gracefully stop Beat scheduler to release Redis lock
+    if _beat_instance is not None:
+        try:
+            logger.info("[EmbeddedCelery] Stopping beat scheduler gracefully...")
+            # Access the service (scheduler) from Beat instance
+            if hasattr(_beat_instance, "service") and _beat_instance.service:
+                scheduler = _beat_instance.service.scheduler
+                if scheduler and hasattr(scheduler, "lock"):
+                    # Release the RedBeat lock before shutdown
+                    try:
+                        scheduler.lock.release()
+                        logger.info("[EmbeddedCelery] Released RedBeat lock")
+                    except Exception as e:
+                        logger.warning(f"[EmbeddedCelery] Failed to release lock: {e}")
+        except Exception as e:
+            logger.warning(f"[EmbeddedCelery] Error during beat shutdown: {e}")
+
+    # Step 2: Wait for threads to finish (with timeout)
+    if _beat_thread and _beat_thread.is_alive():
+        logger.info("[EmbeddedCelery] Waiting for beat thread to stop...")
+        _beat_thread.join(timeout=timeout / 2)
+        if _beat_thread.is_alive():
+            logger.warning("[EmbeddedCelery] Beat thread did not stop gracefully")
+
+    if _worker_thread and _worker_thread.is_alive():
+        logger.info("[EmbeddedCelery] Waiting for worker thread to stop...")
+        _worker_thread.join(timeout=timeout / 2)
+        if _worker_thread.is_alive():
+            logger.warning("[EmbeddedCelery] Worker thread did not stop gracefully")
 
     _worker_thread = None
     _beat_thread = None
+    _beat_instance = None
     logger.info("[EmbeddedCelery] Embedded Celery stopped")
 
 

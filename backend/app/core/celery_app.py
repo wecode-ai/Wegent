@@ -64,10 +64,17 @@ celery_app.conf.update(
             "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
         },
     },
+    # Beat scheduler class - Use RedBeat for Redis-based distributed scheduling
+    beat_scheduler="redbeat.schedulers:RedBeatScheduler",
     # RedBeat configuration (Redis-based scheduler)
     redbeat_redis_url=broker_url,  # Use same Redis as broker
     redbeat_key_prefix="celery:beat:",  # Redis key prefix for beat schedule
-    redbeat_lock_timeout=30,  # Lock timeout in seconds for distributed coordination
+    # Increased lock timeout to prevent "LockNotOwnedError" during GC pauses or slow operations
+    # The lock must be held long enough for the scheduler to complete its tick cycle
+    redbeat_lock_timeout=300,  # Lock timeout in seconds (5 minutes)
+    # Control the maximum sleep interval between beat ticks
+    # This ensures the lock is extended frequently enough before expiration
+    beat_max_loop_interval=60,  # Maximum seconds between scheduler ticks (1 minute)
 )
 
 # Import dead letter queue handlers to register signal handlers
