@@ -65,13 +65,13 @@ class RetryConfig:
     """Retry configuration for callback operations."""
 
     callback_max_retries: int = field(
-        default_factory=lambda: int(os.getenv("SUBAGENT_CALLBACK_MAX_RETRIES", "3"))
+        default_factory=lambda: int(os.getenv("SANDBOX_CALLBACK_MAX_RETRIES", "3"))
     )
     callback_retry_delay: float = field(
-        default_factory=lambda: float(os.getenv("SUBAGENT_CALLBACK_RETRY_DELAY", "2"))
+        default_factory=lambda: float(os.getenv("SANDBOX_CALLBACK_RETRY_DELAY", "2"))
     )
     callback_timeout: float = field(
-        default_factory=lambda: float(os.getenv("SUBAGENT_CALLBACK_TIMEOUT", "10.0"))
+        default_factory=lambda: float(os.getenv("SANDBOX_CALLBACK_TIMEOUT", "10.0"))
     )
 
 
@@ -80,7 +80,7 @@ class ExecutorConfig:
     """Executor-related configuration."""
 
     executor_binding_ttl: int = field(
-        default_factory=lambda: int(os.getenv("SUBAGENT_EXECUTOR_BINDING_TTL", "86400"))
+        default_factory=lambda: int(os.getenv("SANDBOX_EXECUTOR_BINDING_TTL", "86400"))
     )
     executor_image: str = field(default_factory=lambda: os.getenv("EXECUTOR_IMAGE", ""))
     callback_url: str = field(

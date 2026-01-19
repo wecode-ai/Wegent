@@ -147,8 +147,8 @@ class DockerExecutor(Executor):
 
         # Check if this is a validation task (validation tasks use negative task_id)
         is_validation_task = task.get("type") == "validation"
-        # Check if this is a SubAgent task (internal tasks with callback routing)
-        is_subagent_task = task.get("type") == "subagent"
+        # Check if this is a Sandbox task (internal tasks with callback routing)
+        is_sandbox_task = task.get("type") == "sandbox"
 
         # Initialize execution status
         execution_status = {
@@ -174,11 +174,11 @@ class DockerExecutor(Executor):
             # Unified exception handling
             self._handle_execution_exception(e, task_id, execution_status)
 
-        # Call callback function only for regular tasks (not validation or subagent tasks)
-        # Validation/SubAgent tasks don't exist in the database, so we skip the callback
+        # Call callback function only for regular tasks (not validation or sandbox tasks)
+        # Validation/Sandbox tasks don't exist in the database, so we skip the callback
         # to avoid 404 errors when trying to update non-existent task status
-        # SubAgent tasks use their own callback mechanism via task_type="subagent"
-        if not is_validation_task and not is_subagent_task:
+        # Sandbox tasks use their own callback mechanism via task_type="sandbox"
+        if not is_validation_task and not is_sandbox_task:
             self._call_callback(
                 callback,
                 task_id,
