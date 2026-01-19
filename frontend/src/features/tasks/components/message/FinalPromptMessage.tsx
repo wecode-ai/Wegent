@@ -5,7 +5,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Copy, Check, Plus, Star, RefreshCw, Edit3, X, Save } from 'lucide-react'
+import { Copy, Check, Plus, Star, RefreshCw, Edit3, X, Save, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { FinalPromptData, Team, GitRepoInfo, GitBranch } from '@/types/api'
 import MarkdownEditor from '@uiw/react-markdown-editor'
@@ -48,6 +48,8 @@ export default function FinalPromptMessage({
   const [copied, setCopied] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editedPrompt, setEditedPrompt] = useState(data.final_prompt)
+  // Track if user has saved edited content that differs from original
+  const [savedPrompt, setSavedPrompt] = useState<string | null>(null)
   const [isConfirming, setIsConfirming] = useState(false)
   // Track if confirmation was already submitted to prevent duplicate submissions
   const [hasConfirmed, setHasConfirmed] = useState(false)
@@ -55,9 +57,19 @@ export default function FinalPromptMessage({
   // Single source of truth: isPendingConfirmation from pipeline_stage_info.is_pending_confirmation
   const showPipelineActions = isPendingConfirmation
 
+  // Check if prompt has been edited (saved and different from original)
+  const hasBeenEdited = savedPrompt !== null && savedPrompt !== data.final_prompt
+
+  // Get the prompt to use for copy/create task operations
+  const getEffectivePrompt = () => {
+    if (isEditing) return editedPrompt
+    if (savedPrompt !== null) return savedPrompt
+    return data.final_prompt
+  }
+
   const handleCopy = async () => {
     try {
-      const textToCopy = isEditing ? editedPrompt : data.final_prompt
+      const textToCopy = getEffectivePrompt()
       if (
         typeof navigator !== 'undefined' &&
         navigator.clipboard &&
@@ -98,7 +110,7 @@ export default function FinalPromptMessage({
 
     // Store prompt data in sessionStorage for the new task page
     const promptData = {
-      prompt: isEditing ? editedPrompt : data.final_prompt,
+      prompt: getEffectivePrompt(),
       teamId: selectedTeam.id,
       repoId: selectedRepo.git_repo_id,
       branch: selectedBranch.name,
@@ -132,7 +144,7 @@ export default function FinalPromptMessage({
     setIsConfirming(true)
     try {
       const response = await taskApis.confirmPipelineStage(taskId, {
-        confirmed_prompt: isEditing ? editedPrompt : data.final_prompt,
+        confirmed_prompt: getEffectivePrompt(),
         action: 'continue',
       })
 
@@ -160,18 +172,35 @@ export default function FinalPromptMessage({
   }
 
   const handleStartEdit = () => {
-    setEditedPrompt(data.final_prompt)
+    // Start editing from the current effective prompt (saved or original)
+    setEditedPrompt(savedPrompt !== null ? savedPrompt : data.final_prompt)
     setIsEditing(true)
   }
 
   const handleCancelEdit = () => {
-    setEditedPrompt(data.final_prompt)
+    // Discard changes, restore to saved state (or original if no saved state)
+    setEditedPrompt(savedPrompt !== null ? savedPrompt : data.final_prompt)
     setIsEditing(false)
   }
 
   const handleSaveEdit = () => {
+    // Validate non-empty prompt before saving
+    const trimmed = editedPrompt.trim()
+    if (!trimmed) {
+      toast({
+        variant: 'destructive',
+        title: t('clarification.prompt_empty_error'),
+      })
+      return
+    }
+    // Save the edited prompt
+    setSavedPrompt(editedPrompt)
     setIsEditing(false)
-    // Keep edited prompt for submission
+  }
+
+  const handleRestoreOriginal = () => {
+    // Restore to original prompt while staying in edit mode
+    setEditedPrompt(data.final_prompt)
   }
 
   return (
@@ -183,8 +212,13 @@ export default function FinalPromptMessage({
           <h3 className="text-base font-semibold text-blue-400">
             {t('clarification.final_prompt_title')}
           </h3>
+          {hasBeenEdited && (
+            <span className="text-xs text-amber-500 font-medium">
+              {t('clarification.edited')}
+            </span>
+          )}
         </div>
-        {showPipelineActions && !isEditing && (
+        {!isEditing && (
           <Button
             variant="ghost"
             size="sm"
@@ -212,6 +246,16 @@ export default function FinalPromptMessage({
                 <X className="w-4 h-4 mr-1" />
                 {t('common:cancel')}
               </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRestoreOriginal}
+                disabled={editedPrompt === data.final_prompt}
+                className="text-amber-600 hover:text-amber-500"
+              >
+                <RotateCcw className="w-4 h-4 mr-1" />
+                {t('clarification.restore_original')}
+              </Button>
               <Button variant="secondary" size="sm" onClick={handleSaveEdit}>
                 <Save className="w-4 h-4 mr-1" />
                 {t('pipeline.save_changes')}
@@ -220,7 +264,7 @@ export default function FinalPromptMessage({
           </div>
         ) : (
           <MarkdownEditor.Markdown
-            source={data.final_prompt}
+            source={savedPrompt !== null ? savedPrompt : data.final_prompt}
             style={{ background: 'transparent' }}
             wrapperElement={{ 'data-color-mode': theme }}
             components={{

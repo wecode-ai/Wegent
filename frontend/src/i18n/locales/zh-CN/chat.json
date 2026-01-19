@@ -229,7 +229,10 @@
     "question": "问题",
     "required_field": "此问题必须回答",
     "additional_thoughts": "其他想法或补充说明",
-    "additional_placeholder": "在此输入其他想法、补充需求或特殊说明..."
+    "additional_placeholder": "在此输入其他想法、补充需求或特殊说明...",
+    "restore_original": "恢复原文",
+    "edited": "(已编辑)",
+    "prompt_empty_error": "提示词不能为空"
   },
   "export": {
     "export": "导出",
