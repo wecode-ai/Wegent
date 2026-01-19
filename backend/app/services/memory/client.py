@@ -188,7 +188,8 @@ class LongTermMemoryClient:
         Args:
             user_id: User ID (mem0 identifier)
             query: Search query text
-            filters: Optional metadata filters (e.g., {"metadata.task_id": 123})
+            filters: Optional metadata filters (e.g., {"task_id": "123", "project_id": "456"})
+                    Note: mem0 automatically adds "metadata." prefix, so use field names directly
             limit: Max results to return
             timeout: Override default timeout for this request
 
@@ -199,7 +200,7 @@ class LongTermMemoryClient:
             results = await client.search_memories(
                 user_id="123",
                 query="Python preferences",
-                filters={"metadata.task_id": 456},
+                filters={"task_id": "456"},
                 limit=5,
                 timeout=2.0
             )
@@ -367,7 +368,8 @@ class LongTermMemoryClient:
             user_id: Optional user ID filter
             agent_id: Optional agent ID filter
             run_id: Optional run ID filter
-            filters: Optional metadata filters (e.g., {"metadata.task_id": "123"})
+            filters: Optional metadata filters (e.g., {"task_id": "123", "project_id": "456"})
+                    Note: mem0 automatically adds "metadata." prefix, so use field names directly
                     This is a custom extension for metadata filtering.
             limit: Max results to return
             timeout: Override default timeout for this request
@@ -379,7 +381,7 @@ class LongTermMemoryClient:
             # Get all memories for a user with metadata filter
             results = await client.get_memories(
                 user_id="123",
-                filters={"metadata.task_id": "456"},
+                filters={"task_id": "456"},
                 limit=100
             )
         """

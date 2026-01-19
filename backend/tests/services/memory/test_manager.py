@@ -145,7 +145,7 @@ async def test_search_memories_with_project_id(memory_manager):
 
     # First call should filter by project_id
     first_call_filters = mock_client.search_memories.call_args_list[0][1]["filters"]
-    assert first_call_filters == {"metadata.project_id": "proj-1"}
+    assert first_call_filters == {"project_id": "proj-1"}
 
     # Second call should have no filters (search all)
     second_call_filters = mock_client.search_memories.call_args_list[1][1]["filters"]

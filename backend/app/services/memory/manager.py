@@ -143,7 +143,7 @@ class MemoryManager:
                 project_result = await self._client.search_memories(
                     user_id=user_id,
                     query=query,
-                    filters={"metadata.project_id": project_id},
+                    filters={"project_id": project_id},
                     limit=max_results,
                     timeout=search_timeout / 2,  # Use half timeout for first search
                 )
@@ -345,7 +345,7 @@ class MemoryManager:
                 # Step 1: Get memories with this task_id (metadata-only retrieval)
                 search_result = await self._client.get_memories(
                     user_id=user_id,
-                    filters={"metadata.task_id": task_id},
+                    filters={"task_id": task_id},
                     limit=batch_size,
                 )
 
