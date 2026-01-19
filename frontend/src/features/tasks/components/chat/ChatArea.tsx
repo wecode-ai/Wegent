@@ -456,6 +456,43 @@ function ChatAreaContent({
     [chatState]
   )
 
+  // Callback for regenerating the last AI response in single chat
+  // This finds the last user message and resends it to trigger a new AI response
+  const handleRegenerate = useCallback(async () => {
+    // Get messages from stream state (single source of truth)
+    const streamState = selectedTaskDetail?.id
+      ? getStreamState(selectedTaskDetail.id)
+      : undefined
+
+    if (!streamState?.messages || streamState.messages.size === 0) {
+      return
+    }
+
+    // Convert Map to array and sort by timestamp
+    const messagesArray = Array.from(streamState.messages.values()).sort(
+      (a, b) => a.timestamp - b.timestamp
+    )
+
+    // Find the last completed AI message
+    const lastAIIndex = messagesArray
+      .map((m, i) => ({ msg: m, index: i }))
+      .filter(item => item.msg.type === 'ai' && item.msg.status === 'completed')
+      .pop()?.index
+
+    if (lastAIIndex === undefined || lastAIIndex < 1) {
+      return
+    }
+
+    // Find the user message before the last AI message
+    const userMessage = messagesArray[lastAIIndex - 1]
+    if (!userMessage || userMessage.type !== 'user') {
+      return
+    }
+
+    // Resend the user message to regenerate AI response
+    await streamHandlers.handleSendMessage(userMessage.content)
+  }, [selectedTaskDetail?.id, getStreamState, streamHandlers])
+
   // Handle access denied state
   if (accessDenied) {
     const handleGoHome = () => {
@@ -630,6 +667,7 @@ function ChatAreaContent({
               onSendMessage={handleSendMessageFromChild}
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
               onRetry={streamHandlers.handleRetry}
+              onRegenerate={handleRegenerate}
               enableCorrectionMode={chatState.enableCorrectionMode}
               correctionModelId={chatState.correctionModelId}
               enableCorrectionWebSearch={chatState.enableCorrectionWebSearch}

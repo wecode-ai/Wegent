@@ -149,6 +149,8 @@ interface MessagesAreaProps {
   onSendMessage?: (content: string) => void
   isGroupChat?: boolean
   onRetry?: (message: Message) => void
+  /** Callback for regenerating the last AI message (single chat only) */
+  onRegenerate?: () => void
   // Correction mode props
   enableCorrectionMode?: boolean
   correctionModelId?: string | null
@@ -181,6 +183,7 @@ export default function MessagesArea({
   onSendMessage,
   isGroupChat = false,
   onRetry,
+  onRegenerate,
   enableCorrectionMode = false,
   correctionModelId = null,
   enableCorrectionWebSearch = false,
@@ -973,6 +976,15 @@ export default function MessagesArea({
               ? correctionResults.get(msg.subtaskId)
               : undefined
 
+            // Check if this is the last completed AI message (for regenerate button)
+            // Only show regenerate for single chat, not streaming, and completed AI messages
+            const isLastCompletedAIMessage =
+              msg.type === 'ai' &&
+              msg.status === 'completed' &&
+              !isGroupChat &&
+              !isStreaming &&
+              !messages.slice(index + 1).some(m => m.type === 'ai' && m.status === 'completed')
+
             // Use StreamingMessageBubble for streaming AI messages
             if (msg.type === 'ai' && msg.status === 'streaming') {
               return (
@@ -1085,6 +1097,8 @@ export default function MessagesArea({
                 onEdit={handleEditMessage}
                 onEditSave={handleEditSave}
                 onEditCancel={handleEditCancel}
+                isLastAIMessage={isLastCompletedAIMessage}
+                onRegenerate={isLastCompletedAIMessage ? onRegenerate : undefined}
               />
             )
           })}

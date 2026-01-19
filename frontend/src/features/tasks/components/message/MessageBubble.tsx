@@ -36,7 +36,7 @@ import FinalPromptMessage from './FinalPromptMessage'
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary'
 import ContextBadgeList from './ContextBadgeList'
 import StreamingWaitIndicator from './StreamingWaitIndicator'
-import BubbleTools, { CopyButton, EditButton } from './BubbleTools'
+import BubbleTools, { CopyButton, EditButton, RegenerateButton } from './BubbleTools'
 import InlineMessageEdit from './InlineMessageEdit'
 import { SourceReferences } from '../chat/SourceReferences'
 import CollapsibleMessage from './CollapsibleMessage'
@@ -160,6 +160,10 @@ export interface MessageBubbleProps {
   onEditSave?: (content: string) => Promise<void>
   /** Callback when user cancels editing */
   onEditCancel?: () => void
+  /** Callback when user clicks regenerate button for the last AI message (single chat only) */
+  onRegenerate?: () => void
+  /** Whether this is the last AI message (used for showing regenerate button) */
+  isLastAIMessage?: boolean
 }
 
 // Component for rendering a paragraph with hover action button
@@ -279,6 +283,8 @@ const MessageBubble = memo(
     onEdit,
     onEditSave,
     onEditCancel,
+    onRegenerate,
+    isLastAIMessage,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
@@ -604,6 +610,17 @@ const MessageBubble = memo(
                   trace.download(msg.type, msg.subtaskId)
                 },
               },
+              // Regenerate button - only show for last AI message in single chat when not streaming
+              ...(isLastAIMessage && !isGroupChat && !isStreaming && onRegenerate
+                ? [
+                    {
+                      key: 'regenerate',
+                      title: t('chat:actions.regenerate') || 'Regenerate',
+                      icon: <RefreshCw className="h-4 w-4 text-text-muted" />,
+                      onClick: onRegenerate,
+                    },
+                  ]
+                : []),
             ]}
             feedback={feedback}
             onLike={handleLike}
@@ -1581,7 +1598,9 @@ const MessageBubble = memo(
       prevProps.msg.status === nextProps.msg.status &&
       prevProps.msg.error === nextProps.msg.error &&
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&
-      prevProps.isEditing === nextProps.isEditing
+      prevProps.isEditing === nextProps.isEditing &&
+      prevProps.isLastAIMessage === nextProps.isLastAIMessage &&
+      prevProps.onRegenerate === nextProps.onRegenerate
 
     return shouldSkipRender
   }
