@@ -1081,6 +1081,11 @@
       "confirmMessage": "Are you sure you want to delete this group chat? This action cannot be undone."
     }
   },
+  "model": {
+    "typePublic": "Public",
+    "typePersonal": "Personal",
+    "typeGroup": "Group"
+  },
   "attachment": {
     "errors": {
       "unsupported_type": "Unsupported file format",

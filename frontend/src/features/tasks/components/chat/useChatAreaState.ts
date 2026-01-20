@@ -39,6 +39,15 @@ export interface UseChatAreaStateOptions {
     namespace: string
     document_count?: number
   } | null
+  /**
+   * Initial model reference for auto-selecting model (e.g., from knowledge base summary model).
+   * Used when creating a new task in notebook mode to inherit the summary model.
+   */
+  initialModelRef?: {
+    name: string
+    namespace: string
+    type: 'public' | 'user' | 'group'
+  } | null
 }
 
 export interface ChatAreaState {
@@ -152,6 +161,7 @@ export function useChatAreaState({
   taskType,
   selectedTeamForNewTask,
   initialKnowledgeBase,
+  initialModelRef,
 }: UseChatAreaStateOptions): ChatAreaState {
   // In notebook mode (taskType === 'knowledge'), don't show the current notebook's KB in selectedContexts
   // because it's automatically bound to the task on creation
@@ -471,6 +481,32 @@ export function useChatAreaState({
     selectedTaskDetail,
     selectedContexts.length,
   ])
+
+  // Initialize selectedModel with initialModelRef when starting a new chat in notebook mode
+  // This is used to inherit the summary model from the knowledge base
+  useEffect(() => {
+    // Only initialize when:
+    // 1. We have an initialModelRef
+    // 2. No task is currently selected (new chat)
+    // 3. selectedModel is not already set
+    // 4. In notebook mode (taskType === 'knowledge')
+    if (
+      taskType === 'knowledge' &&
+      initialModelRef &&
+      !selectedTaskDetail &&
+      !selectedModel
+    ) {
+      const initialModel: Model = {
+        name: initialModelRef.name,
+        provider: '', // Will be determined by ModelSelector when fetching models
+        modelId: initialModelRef.name,
+        type: initialModelRef.type,
+      }
+      setSelectedModel(initialModel)
+      // Enable force override since we're inheriting from knowledge base config
+      setForceOverride(true)
+    }
+  }, [taskType, initialModelRef, selectedTaskDetail, selectedModel])
 
   // Compute UI flags
   const shouldHideQuotaUsage = useMemo(() => {

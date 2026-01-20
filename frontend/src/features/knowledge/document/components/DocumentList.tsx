@@ -20,6 +20,7 @@ import {
   Info,
   CheckSquare,
   Square,
+  AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -32,6 +33,8 @@ import { DeleteDocumentDialog } from './DeleteDocumentDialog'
 import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
 import { useDocuments } from '../hooks/useDocuments'
+import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
+import { toast } from '@/hooks/use-toast'
 import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -43,6 +46,8 @@ interface DocumentListProps {
   compact?: boolean
   /** Callback when document selection changes (for notebook mode context injection) */
   onSelectionChange?: (documentIds: number[]) => void
+  /** Callback to refresh knowledge base details (used after summary retry) */
+  onRefreshKnowledgeBase?: () => void
 }
 
 type SortField = 'name' | 'size' | 'date'
@@ -54,6 +59,7 @@ export function DocumentList({
   canManage = true,
   compact = false,
   onSelectionChange,
+  onRefreshKnowledgeBase,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
@@ -79,6 +85,37 @@ export function DocumentList({
   const [initialSelectionDone, setInitialSelectionDone] = useState(false)
   // Track which document is being refreshed
   const [refreshingDocId, setRefreshingDocId] = useState<number | null>(null)
+  // Track if summary is being retried
+  const [isSummaryRetrying, setIsSummaryRetrying] = useState(false)
+
+  // Check if summary generation failed
+  const isSummaryFailed = knowledgeBase.summary?.status === 'failed'
+  const summaryError = knowledgeBase.summary?.error
+
+  // Handle retry summary generation
+  const handleRetrySummary = async () => {
+    setIsSummaryRetrying(true)
+    try {
+      await refreshKnowledgeBaseSummary(knowledgeBase.id)
+      toast({
+        description: t('chatPage.summaryRetrying'),
+      })
+      // Refresh knowledge base details after a short delay
+      if (onRefreshKnowledgeBase) {
+        setTimeout(() => {
+          onRefreshKnowledgeBase()
+        }, 2000)
+      }
+    } catch (err) {
+      console.error('Failed to refresh summary:', err)
+      toast({
+        variant: 'destructive',
+        description: t('chatPage.summaryFailed'),
+      })
+    } finally {
+      setIsSummaryRetrying(false)
+    }
+  }
 
   // Default select all documents when documents load (for notebook mode)
   useEffect(() => {
@@ -316,8 +353,8 @@ export function DocumentList({
             <h2 className="text-base font-medium text-text-primary truncate">
               {knowledgeBase.name}
             </h2>
-            {/* Summary tooltip - next to title */}
-            {longSummary && (
+            {/* Summary tooltip - next to title (only show if not failed) */}
+            {longSummary && !isSummaryFailed && (
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>
@@ -330,6 +367,35 @@ export function DocumentList({
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
+            )}
+            {/* Summary failed warning - with retry button */}
+            {isSummaryFailed && (
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <button className="flex-shrink-0 p-0.5 rounded text-amber-500 hover:bg-surface transition-colors">
+                      <AlertTriangle className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" align="start" className="max-w-md">
+                    <p className="text-sm leading-relaxed">
+                      {summaryError || t('chatPage.summaryFailedHint')}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            {isSummaryFailed && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRetrySummary}
+                disabled={isSummaryRetrying}
+                className="h-6 px-2 text-xs text-amber-500 hover:text-amber-600"
+              >
+                <RefreshCw className={`w-3 h-3 mr-1 ${isSummaryRetrying ? 'animate-spin' : ''}`} />
+                {isSummaryRetrying ? t('chatPage.summaryRetrying') : t('chatPage.summaryRetry')}
+              </Button>
             )}
           </div>
           {knowledgeBase.description && (

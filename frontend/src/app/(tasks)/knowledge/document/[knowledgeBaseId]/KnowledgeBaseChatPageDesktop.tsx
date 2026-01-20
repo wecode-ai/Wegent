@@ -202,6 +202,19 @@ export function KnowledgeBaseChatPageDesktop() {
     return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
   }, [knowledgeBase, user, groupRoleMap])
 
+  // Compute initial model reference from knowledge base's summary model
+  // This is used to auto-inherit the summary model for new chats in notebook mode
+  const initialModelRef = useMemo(() => {
+    // Only use initial model ref when:
+    // 1. Knowledge base has summary enabled
+    // 2. Knowledge base has a valid summary_model_ref
+    // 3. No task is currently open (new chat)
+    if (!hasOpenTask && knowledgeBase?.summary_enabled && knowledgeBase?.summary_model_ref) {
+      return knowledgeBase.summary_model_ref
+    }
+    return null
+  }, [hasOpenTask, knowledgeBase?.summary_enabled, knowledgeBase?.summary_model_ref])
+
   // Loading state
   if (kbLoading) {
     return (
@@ -293,6 +306,7 @@ export function KnowledgeBaseChatPageDesktop() {
                 document_count: knowledgeBase.document_count,
               }}
               selectedDocumentIds={selectedDocumentIds}
+              initialModelRef={initialModelRef}
               onTaskCreated={async (taskId: number) => {
                 // Bind the knowledge base to the newly created task
                 try {

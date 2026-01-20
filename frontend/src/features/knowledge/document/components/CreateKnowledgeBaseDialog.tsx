@@ -58,7 +58,8 @@ export function CreateKnowledgeBaseDialog({
   const { t } = useTranslation()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [summaryEnabled, setSummaryEnabled] = useState(false)
+  // Default enable summary for notebook type, disable for classic type
+  const [summaryEnabled, setSummaryEnabled] = useState(kbType === 'notebook')
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   const [summaryModelError, setSummaryModelError] = useState('')
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({
@@ -139,7 +140,8 @@ export function CreateKnowledgeBaseDialog({
     if (!newOpen) {
       setName('')
       setDescription('')
-      setSummaryEnabled(false)
+      // Reset summaryEnabled based on kbType: enabled for notebook, disabled for classic
+      setSummaryEnabled(kbType === 'notebook')
       setSummaryModelRef(null)
       setSummaryModelError('')
       setRetrievalConfig({
