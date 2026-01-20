@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Celery application configuration for Flow Scheduler.
+Celery application configuration for Subscription Scheduler.
 
 This module configures Celery for distributed task execution,
 separating trigger from execution to enable parallel processing
@@ -36,7 +36,7 @@ celery_app = Celery(
     "wegent",
     broker=broker_url,
     backend=result_backend,
-    include=["app.tasks.flow_tasks"],
+    include=["app.tasks.subscription_tasks"],
 )
 
 # Celery configuration
@@ -60,14 +60,14 @@ celery_app.conf.update(
     task_default_retry_delay=60,  # 1 minute default retry delay
     # Beat schedule for periodic tasks
     beat_schedule={
-        "check-due-flows": {
-            "task": "app.tasks.flow_tasks.check_due_flows",
+        "check-due-subscriptions": {
+            "task": "app.tasks.subscription_tasks.check_due_subscriptions",
             "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
         },
     },
     # Beat scheduler class - Use default PersistentScheduler (file-based)
     # Note: Only run ONE Celery Beat instance in production
-    # Application-level distributed lock in check_due_flows prevents duplicate execution
+    # Application-level distributed lock in check_due_subscriptions prevents duplicate execution
     beat_scheduler="celery.beat:PersistentScheduler",
 )
 

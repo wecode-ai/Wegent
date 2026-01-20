@@ -52,6 +52,8 @@
   "timeout_hint": "Maximum time for AI to complete the task",
   "default": "default",
   "enable_subscription": "Enable Subscription",
+  "preserve_history": "Preserve History",
+  "preserve_history_hint": "When enabled, AI can see previous execution history to track changes",
   "enabled_success": "Subscription enabled",
   "disabled_success": "Subscription disabled",
   "toggle_failed": "Failed to toggle subscription",
@@ -86,6 +88,7 @@
   "validation_display_name_required": "Name is required",
   "validation_team_required": "Please select an agent",
   "validation_prompt_required": "Prompt template is required",
+  "validation_model_required": "The selected agent has no model configured. Please select a model",
   "next_execution": "Next run",
   "executions": "Runs",
   "yesterday": "Yesterday",
@@ -116,6 +119,15 @@
   "loading_branches": "Loading branches...",
   "no_branches": "No branches available",
   "workspace_hint": "Code-type agents require a repository and branch selection",
+
+  "model_settings": "Model Settings",
+  "select_model": "Select Model",
+  "select_model_placeholder": "Use default model",
+  "search_model": "Search models...",
+  "no_model_found": "No model found",
+  "use_default_model": "Use default model",
+  "model_hint": "Optional: Specify a model for task execution. If not selected, the agent's default model will be used",
+  "model_required_hint": "The selected agent has no model configured. You must select a model",
 
   "schedule_type": "Schedule Type",
   "schedule_preset": "Common Presets",
@@ -153,6 +165,9 @@
   "preset_weekly_monday_9am": "Every Monday at 9 AM",
   "preset_monthly_1st_9am": "1st of Month at 9 AM",
 
+  "tabs": {
+    "all": "All"
+  },
   "feed": {
     "title": "Feed",
     "empty_title": "No activities yet",
@@ -169,6 +184,9 @@
     "retry_count": "Retried {{count}} times",
     "view_details": "View Details",
     "view_conversation": "View conversation",
+    "show_prompt": "Show prompt",
+    "collapse": "Collapse",
+    "expand": "Expand",
     "load_more": "Load More",
     "refresh": "Refresh",
     "copy_ids": "Copy IDs",

@@ -31,8 +31,8 @@ class APSchedulerBackend(SchedulerBackend):
     - Scenarios where Redis is not available
     """
 
-    # Core job ID for the check_due_flows periodic task
-    CHECK_DUE_FLOWS_JOB_ID = "check-due-flows"
+    # Core job ID for the check_due_subscriptions periodic task
+    CHECK_DUE_SUBSCRIPTIONS_JOB_ID = "check-due-subscriptions"
 
     def __init__(self, job_store: str = "memory"):
         """
@@ -116,58 +116,60 @@ class APSchedulerBackend(SchedulerBackend):
             self._scheduler.start()
             logger.info("[APSchedulerBackend] Scheduler started")
 
-        # Add the core check_due_flows job
-        self._add_check_due_flows_job()
+        # Add the core check_due_subscriptions job
+        self._add_check_due_subscriptions_job()
 
         self._state = SchedulerState.RUNNING
 
-    def _add_check_due_flows_job(self) -> None:
-        """Add the check_due_flows periodic job."""
+    def _add_check_due_subscriptions_job(self) -> None:
+        """Add the check_due_subscriptions periodic job."""
         from app.core.config import settings
 
         # Check if job already exists
-        existing_job = self._scheduler.get_job(self.CHECK_DUE_FLOWS_JOB_ID)
+        existing_job = self._scheduler.get_job(self.CHECK_DUE_SUBSCRIPTIONS_JOB_ID)
         if existing_job:
             logger.info(
-                f"[APSchedulerBackend] Job {self.CHECK_DUE_FLOWS_JOB_ID} already exists"
+                f"[APSchedulerBackend] Job {self.CHECK_DUE_SUBSCRIPTIONS_JOB_ID} already exists"
             )
             return
 
-        def check_due_flows_wrapper():
-            """Wrapper to execute check_due_flows synchronously."""
+        def check_due_subscriptions_wrapper():
+            """Wrapper to execute check_due_subscriptions synchronously."""
             try:
-                from app.tasks.flow_tasks import check_due_flows_sync
+                from app.tasks.subscription_tasks import check_due_subscriptions_sync
 
-                check_due_flows_sync()
+                check_due_subscriptions_sync()
             except ImportError:
                 # Fallback to async version if sync not available
                 logger.warning(
-                    "[APSchedulerBackend] check_due_flows_sync not available, "
+                    "[APSchedulerBackend] check_due_subscriptions_sync not available, "
                     "using Celery task directly"
                 )
-                from app.tasks.flow_tasks import check_due_flows
+                from app.tasks.subscription_tasks import check_due_subscriptions
 
                 # Call the underlying function, not the Celery task
-                check_due_flows()
+                check_due_subscriptions()
 
         try:
             from apscheduler.triggers.interval import IntervalTrigger
 
             self._scheduler.add_job(
-                check_due_flows_wrapper,
+                check_due_subscriptions_wrapper,
                 trigger=IntervalTrigger(
                     seconds=settings.FLOW_SCHEDULER_INTERVAL_SECONDS
                 ),
-                id=self.CHECK_DUE_FLOWS_JOB_ID,
-                name="Check Due Flows",
+                id=self.CHECK_DUE_SUBSCRIPTIONS_JOB_ID,
+                name="Check Due Subscriptions",
                 replace_existing=True,
             )
             logger.info(
-                f"[APSchedulerBackend] Added job {self.CHECK_DUE_FLOWS_JOB_ID} "
+                f"[APSchedulerBackend] Added job {self.CHECK_DUE_SUBSCRIPTIONS_JOB_ID} "
                 f"with interval {settings.FLOW_SCHEDULER_INTERVAL_SECONDS}s"
             )
         except Exception as e:
-            logger.error(f"[APSchedulerBackend] Failed to add check_due_flows job: {e}")
+            logger.error(
+                f"[APSchedulerBackend] Failed to add check_due_subscriptions job: {e}"
+            )
 
     def stop(self, wait: bool = True) -> None:
         """

@@ -7,8 +7,8 @@
 This module provides an abstraction layer for emitting chat events,
 allowing different implementations for different contexts:
 - WebSocketEventEmitter: For real-time WebSocket communication
-- NoOpEventEmitter: For background tasks without WebSocket (e.g., Flow Scheduler)
-- FlowEventEmitter: For Flow Scheduler tasks that need to update FlowExecution status
+- NoOpEventEmitter: For background tasks without WebSocket (e.g., Subscription Scheduler)
+- SubscriptionEventEmitter: For Subscription Scheduler tasks that need to update BackgroundExecution status
 
 This separation follows the Strategy pattern, keeping business logic
 independent of the event delivery mechanism.
@@ -294,22 +294,22 @@ class NoOpEventEmitter(ChatEventEmitter):
         )
 
 
-class FlowEventEmitter(NoOpEventEmitter):
-    """Event emitter for Flow Scheduler tasks.
+class SubscriptionEventEmitter(NoOpEventEmitter):
+    """Event emitter for Subscription Scheduler tasks.
 
-    Extends NoOpEventEmitter to update FlowExecution status when
-    chat streaming completes or fails. This ensures Flow execution
+    Extends NoOpEventEmitter to update BackgroundExecution status when
+    chat streaming completes or fails. This ensures Subscription execution
     status is properly tracked even without WebSocket connections.
 
     Args:
-        execution_id: The FlowExecution ID to update on completion/error
+        execution_id: The BackgroundExecution ID to update on completion/error
     """
 
     def __init__(self, execution_id: int):
-        """Initialize FlowEventEmitter.
+        """Initialize SubscriptionEventEmitter.
 
         Args:
-            execution_id: The FlowExecution ID to update
+            execution_id: The BackgroundExecution ID to update
         """
         self.execution_id = execution_id
 
@@ -321,13 +321,13 @@ class FlowEventEmitter(NoOpEventEmitter):
         result: Optional[Dict[str, Any]] = None,
         message_id: Optional[int] = None,
     ) -> None:
-        """Emit chat:done event and update FlowExecution status to COMPLETED."""
+        """Emit chat:done event and update BackgroundExecution status to COMPLETED."""
         logger.info(
-            f"[FlowEmitter] chat:done task={task_id} subtask={subtask_id} "
+            f"[SubscriptionEmitter] chat:done task={task_id} subtask={subtask_id} "
             f"execution_id={self.execution_id}"
         )
 
-        # Update FlowExecution status to COMPLETED
+        # Update BackgroundExecution status to COMPLETED
         await self._update_execution_status(
             status="COMPLETED",
             result_summary=self._extract_result_summary(result),
@@ -340,13 +340,13 @@ class FlowEventEmitter(NoOpEventEmitter):
         error: str,
         message_id: Optional[int] = None,
     ) -> None:
-        """Emit chat:error event and update FlowExecution status to FAILED."""
+        """Emit chat:error event and update BackgroundExecution status to FAILED."""
         logger.warning(
-            f"[FlowEmitter] chat:error task={task_id} subtask={subtask_id} "
+            f"[SubscriptionEmitter] chat:error task={task_id} subtask={subtask_id} "
             f"execution_id={self.execution_id} error={error}"
         )
 
-        # Update FlowExecution status to FAILED
+        # Update BackgroundExecution status to FAILED
         await self._update_execution_status(
             status="FAILED",
             error_message=error,
@@ -357,13 +357,13 @@ class FlowEventEmitter(NoOpEventEmitter):
         task_id: int,
         subtask_id: int,
     ) -> None:
-        """Emit chat:cancelled event and update FlowExecution status to CANCELLED."""
+        """Emit chat:cancelled event and update BackgroundExecution status to CANCELLED."""
         logger.info(
-            f"[FlowEmitter] chat:cancelled task={task_id} subtask={subtask_id} "
+            f"[SubscriptionEmitter] chat:cancelled task={task_id} subtask={subtask_id} "
             f"execution_id={self.execution_id}"
         )
 
-        # Update FlowExecution status to CANCELLED
+        # Update BackgroundExecution status to CANCELLED
         await self._update_execution_status(status="CANCELLED")
 
     async def _update_execution_status(
@@ -372,7 +372,7 @@ class FlowEventEmitter(NoOpEventEmitter):
         result_summary: Optional[str] = None,
         error_message: Optional[str] = None,
     ) -> None:
-        """Update FlowExecution status in database.
+        """Update BackgroundExecution status in database.
 
         Args:
             status: New status (COMPLETED, FAILED, CANCELLED)
@@ -381,23 +381,23 @@ class FlowEventEmitter(NoOpEventEmitter):
         """
         try:
             from app.db.session import get_db_session
-            from app.schemas.flow import FlowExecutionStatus
-            from app.services.flow import flow_service
+            from app.schemas.subscription import BackgroundExecutionStatus
+            from app.services.subscription import subscription_service
 
             with get_db_session() as db:
-                flow_service.update_execution_status(
+                subscription_service.update_execution_status(
                     db,
                     execution_id=self.execution_id,
-                    status=FlowExecutionStatus(status),
+                    status=BackgroundExecutionStatus(status),
                     result_summary=result_summary,
                     error_message=error_message,
                 )
                 logger.info(
-                    f"[FlowEmitter] Updated execution {self.execution_id} status to {status}"
+                    f"[SubscriptionEmitter] Updated execution {self.execution_id} status to {status}"
                 )
         except Exception as e:
             logger.error(
-                f"[FlowEmitter] Failed to update execution {self.execution_id} "
+                f"[SubscriptionEmitter] Failed to update execution {self.execution_id} "
                 f"status to {status}: {e}"
             )
 
@@ -425,6 +425,10 @@ class FlowEventEmitter(NoOpEventEmitter):
         if len(value) > max_length:
             return value[:max_length] + "..."
         return value
+
+
+# Backward compatibility alias
+FlowEventEmitter = SubscriptionEventEmitter
 
 
 # Factory function to get the appropriate emitter

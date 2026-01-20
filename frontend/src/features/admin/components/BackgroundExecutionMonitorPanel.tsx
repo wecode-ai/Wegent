@@ -6,7 +6,11 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { adminApis, FlowMonitorStats, FlowMonitorError } from '@/apis/admin'
+import {
+  adminApis,
+  BackgroundExecutionMonitorStats,
+  BackgroundExecutionMonitorError,
+} from '@/apis/admin'
 import { toast } from 'sonner'
 import {
   Activity,
@@ -96,10 +100,10 @@ function formatDateTime(dateStr: string | null): string {
   })
 }
 
-export function FlowMonitorPanel() {
+export function BackgroundExecutionMonitorPanel() {
   const { t } = useTranslation()
-  const [stats, setStats] = useState<FlowMonitorStats | null>(null)
-  const [errors, setErrors] = useState<FlowMonitorError[]>([])
+  const [stats, setStats] = useState<BackgroundExecutionMonitorStats | null>(null)
+  const [errors, setErrors] = useState<BackgroundExecutionMonitorError[]>([])
   const [total, setTotal] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -112,10 +116,10 @@ export function FlowMonitorPanel() {
 
   const loadStats = useCallback(async () => {
     try {
-      const data = await adminApis.getFlowMonitorStats(parseInt(timeRange))
+      const data = await adminApis.getBackgroundExecutionMonitorStats(parseInt(timeRange))
       setStats(data)
     } catch (error) {
-      console.error('Failed to load flow monitor stats:', error)
+      console.error('Failed to load background execution monitor stats:', error)
       toast.error(t('admin:monitor.errors.load_stats_failed'))
     }
   }, [timeRange, t])
@@ -123,11 +127,16 @@ export function FlowMonitorPanel() {
   const loadErrors = useCallback(async () => {
     try {
       const status = statusFilter === 'all' ? undefined : statusFilter
-      const data = await adminApis.getFlowMonitorErrors(page, limit, parseInt(timeRange), status)
+      const data = await adminApis.getBackgroundExecutionMonitorErrors(
+        page,
+        limit,
+        parseInt(timeRange),
+        status
+      )
       setErrors(data.items)
       setTotal(data.total)
     } catch (error) {
-      console.error('Failed to load flow monitor errors:', error)
+      console.error('Failed to load background execution monitor errors:', error)
       toast.error(t('admin:monitor.errors.load_errors_failed'))
     }
   }, [page, timeRange, statusFilter, t])
@@ -231,20 +240,20 @@ export function FlowMonitorPanel() {
         </div>
       )}
 
-      {/* Flow Stats */}
+      {/* Subscription Stats */}
       {stats && (
         <div className="grid grid-cols-2 gap-4">
           <StatCard
-            title={t('admin:monitor.stats.active_flows')}
-            value={stats.active_flows_count}
+            title={t('admin:monitor.stats.active_subscriptions')}
+            value={stats.active_subscriptions_count}
             icon={<Activity className="h-5 w-5" />}
-            subtitle={t('admin:monitor.stats.enabled_flows')}
+            subtitle={t('admin:monitor.stats.enabled_subscriptions')}
           />
           <StatCard
-            title={t('admin:monitor.stats.total_flows')}
-            value={stats.total_flows_count}
+            title={t('admin:monitor.stats.total_subscriptions')}
+            value={stats.total_subscriptions_count}
             icon={<AlertTriangle className="h-5 w-5" />}
-            subtitle={t('admin:monitor.stats.all_flows')}
+            subtitle={t('admin:monitor.stats.all_subscriptions')}
           />
         </div>
       )}
@@ -291,7 +300,7 @@ export function FlowMonitorPanel() {
                         {error.trigger_type && <Tag variant="default">{error.trigger_type}</Tag>}
                       </div>
                       <div className="flex items-center gap-3 text-xs text-text-muted">
-                        <span>Flow: {error.flow_id}</span>
+                        <span>Subscription: {error.subscription_id}</span>
                         <span>User: {error.user_id}</span>
                         {error.task_id && <span>Task: {error.task_id}</span>}
                         <span>{formatDateTime(error.created_at)}</span>
@@ -351,4 +360,4 @@ export function FlowMonitorPanel() {
   )
 }
 
-export default FlowMonitorPanel
+export default BackgroundExecutionMonitorPanel

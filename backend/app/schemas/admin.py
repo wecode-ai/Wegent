@@ -265,9 +265,9 @@ class PublicRetrieverListResponse(BaseModel):
     items: List[PublicRetrieverResponse]
 
 
-# Flow Monitor Schemas
-class FlowMonitorStats(BaseModel):
-    """Flow execution statistics for admin monitoring"""
+# Subscription Monitor Schemas (formerly Flow Monitor)
+class SubscriptionMonitorStats(BaseModel):
+    """Subscription execution statistics for admin monitoring"""
 
     total_executions: int = Field(..., description="Total number of executions")
     completed_count: int = Field(..., description="Number of completed executions")
@@ -281,15 +281,19 @@ class FlowMonitorStats(BaseModel):
     success_rate: float = Field(..., description="Success rate (0-100)")
     failure_rate: float = Field(..., description="Failure rate (0-100)")
     timeout_rate: float = Field(..., description="Timeout rate (0-100)")
-    active_flows_count: int = Field(..., description="Number of active flows")
-    total_flows_count: int = Field(..., description="Total number of flows")
+    active_subscriptions_count: int = Field(
+        ..., description="Number of active subscriptions"
+    )
+    total_subscriptions_count: int = Field(
+        ..., description="Total number of subscriptions"
+    )
 
 
-class FlowMonitorError(BaseModel):
-    """Individual error record for flow monitor (privacy-preserving)"""
+class SubscriptionMonitorError(BaseModel):
+    """Individual error record for subscription monitor (privacy-preserving)"""
 
     execution_id: int = Field(..., description="Execution ID")
-    flow_id: int = Field(..., description="Flow ID")
+    subscription_id: int = Field(..., description="Subscription ID")
     user_id: int = Field(..., description="User ID")
     task_id: Optional[int] = Field(None, description="Associated task ID")
     status: str = Field(..., description="Execution status")
@@ -300,11 +304,17 @@ class FlowMonitorError(BaseModel):
     completed_at: Optional[datetime] = Field(None, description="Completion time")
 
 
-class FlowMonitorErrorListResponse(BaseModel):
-    """Error list response for flow monitor"""
+class SubscriptionMonitorErrorListResponse(BaseModel):
+    """Error list response for subscription monitor"""
 
     total: int
-    items: List[FlowMonitorError]
+    items: List[SubscriptionMonitorError]
+
+
+# Backward compatibility aliases
+FlowMonitorStats = SubscriptionMonitorStats
+FlowMonitorError = SubscriptionMonitorError
+FlowMonitorErrorListResponse = SubscriptionMonitorErrorListResponse
 
 
 # Public Team Management Schemas

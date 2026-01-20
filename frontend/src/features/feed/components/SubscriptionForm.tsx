@@ -5,10 +5,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Flow creation/edit form component.
+ * Subscription creation/edit form component.
  */
 import { useCallback, useEffect, useState } from 'react'
-import { Copy, Check, Terminal } from 'lucide-react'
+import { Copy, Check, Terminal, Brain, ChevronDown } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -30,31 +30,50 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
-import { flowApis } from '@/apis/flow'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
+import { subscriptionApis } from '@/apis/subscription'
 import { teamApis } from '@/apis/team'
+import { modelApis, UnifiedModel } from '@/apis/models'
 import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
 import type {
-  Flow,
-  FlowCreateRequest,
-  FlowTaskType,
-  FlowTriggerType,
-  FlowUpdateRequest,
-} from '@/types/flow'
+  Subscription,
+  SubscriptionCreateRequest,
+  SubscriptionTaskType,
+  SubscriptionTriggerType,
+  SubscriptionUpdateRequest,
+} from '@/types/subscription'
 import { toast } from 'sonner'
 import { CronSchedulePicker } from './CronSchedulePicker'
 import { RepositorySelector, BranchSelector } from '@/features/tasks/components/selector'
-import { parseUTCDate } from '@/lib/utils'
+import { cn, parseUTCDate } from '@/lib/utils'
+
+// Model type for selector
+interface SubscriptionModel {
+  name: string
+  displayName?: string | null
+  provider?: string
+  modelId?: string
+  type?: string
+}
 
 /**
  * Webhook API Usage Section Component
- * Shows API endpoint, secret, and example curl command for webhook-type flows
+ * Shows API endpoint, secret, and example curl command for webhook-type subscriptions
  */
-function WebhookApiSection({ flow }: { flow: Flow }) {
+function WebhookApiSection({ subscription }: { subscription: Subscription }) {
   const { t } = useTranslation('feed')
   const [copiedField, setCopiedField] = useState<string | null>(null)
 
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
-  const fullWebhookUrl = `${baseUrl}${flow.webhook_url}`
+  const fullWebhookUrl = `${baseUrl}${subscription.webhook_url}`
 
   const handleCopy = async (text: string, field: string) => {
     try {
@@ -67,11 +86,11 @@ function WebhookApiSection({ flow }: { flow: Flow }) {
   }
 
   // Generate curl example
-  const curlExample = flow.webhook_secret
+  const curlExample = subscription.webhook_secret
     ? `# ${t('webhook_with_signature')}
-secret="${flow.webhook_secret}"
+SECRET="${subscription.webhook_secret}"
 BODY='{"key": "value"}'
-SIGNATURE=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$secret" | cut -d' ' -f2)
+SIGNATURE=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | cut -d' ' -f2)
 
 curl -X POST "${fullWebhookUrl}" \\
   -H "Content-Type: application/json" \\
@@ -114,20 +133,20 @@ curl -X POST "${fullWebhookUrl}" \\
         </div>
       </div>
 
-      {/* Webhook secret */}
-      {flow.webhook_secret && (
+      {/* Webhook Secret */}
+      {subscription.webhook_secret && (
         <div className="space-y-1.5">
           <Label className="text-xs text-text-muted">{t('webhook_secret_label')}</Label>
           <div className="flex items-center gap-2">
             <code className="flex-1 text-xs bg-background px-3 py-2 rounded border border-border font-mono truncate">
-              {flow.webhook_secret}
+              {subscription.webhook_secret}
             </code>
             <Button
               type="button"
               variant="outline"
               size="icon"
               className="h-8 w-8 shrink-0"
-              onClick={() => handleCopy(flow.webhook_secret!, 'secret')}
+              onClick={() => handleCopy(subscription.webhook_secret!, 'secret')}
             >
               {copiedField === 'secret' ? (
                 <Check className="h-3.5 w-3.5 text-green-500" />
@@ -175,10 +194,10 @@ curl -X POST "${fullWebhookUrl}" \\
   )
 }
 
-interface FlowFormProps {
+interface SubscriptionFormProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  flow?: Flow | null
+  subscription?: Subscription | null
   onSuccess: () => void
 }
 
@@ -191,22 +210,27 @@ const getUserTimezone = (): string => {
   }
 }
 
-const defaultTriggerConfig: Record<FlowTriggerType, Record<string, unknown>> = {
+const defaultTriggerConfig: Record<SubscriptionTriggerType, Record<string, unknown>> = {
   cron: { expression: '0 9 * * *', timezone: getUserTimezone() },
   interval: { value: 1, unit: 'hours' },
   one_time: { execute_at: new Date().toISOString() },
   event: { event_type: 'webhook' },
 }
 
-export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps) {
+export function SubscriptionForm({
+  open,
+  onOpenChange,
+  subscription,
+  onSuccess,
+}: SubscriptionFormProps) {
   const { t } = useTranslation('feed')
-  const isEditing = !!flow
+  const isEditing = !!subscription
 
   // Form state
   const [displayName, setDisplayName] = useState('')
   const [description, setDescription] = useState('')
-  const [taskType, setTaskType] = useState<FlowTaskType>('collection')
-  const [triggerType, setTriggerType] = useState<FlowTriggerType>('cron')
+  const [taskType, setTaskType] = useState<SubscriptionTaskType>('collection')
+  const [triggerType, setTriggerType] = useState<SubscriptionTriggerType>('cron')
   const [triggerConfig, setTriggerConfig] = useState<Record<string, unknown>>(
     defaultTriggerConfig.cron
   )
@@ -215,6 +239,14 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
   const [retryCount, setRetryCount] = useState(0)
   const [timeoutSeconds, setTimeoutSeconds] = useState(600) // Default 10 minutes
   const [enabled, setEnabled] = useState(true)
+  const [preserveHistory, setPreserveHistory] = useState(false) // History preservation
+
+  // Model selection state
+  const [selectedModel, setSelectedModel] = useState<SubscriptionModel | null>(null)
+  const [models, setModels] = useState<SubscriptionModel[]>([])
+  const [modelsLoading, setModelsLoading] = useState(false)
+  const [modelSelectorOpen, setModelSelectorOpen] = useState(false)
+  const [modelSearchValue, setModelSearchValue] = useState('')
 
   // Repository/Branch state for code-type teams
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
@@ -227,13 +259,23 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
   // Submit state
   const [submitting, setSubmitting] = useState(false)
 
-  // Load teams
+  // Load teams - only show teams with chat or code mode (exclude knowledge-only teams)
   useEffect(() => {
     const loadTeams = async () => {
       setTeamsLoading(true)
       try {
         const response = await teamApis.getTeams({ page: 1, limit: 100 })
-        setTeams(response.items)
+        // Filter teams to only include those with chat or code mode
+        const filteredTeams = response.items.filter(team => {
+          const bindMode = team.bind_mode
+          // If bind_mode is not set, include the team (backward compatibility)
+          if (!bindMode || bindMode.length === 0) {
+            return true
+          }
+          // Include team if it has chat or code mode
+          return bindMode.includes('chat') || bindMode.includes('code')
+        })
+        setTeams(filteredTeams)
       } catch (error) {
         console.error('Failed to load teams:', error)
       } finally {
@@ -245,6 +287,31 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
     }
   }, [open])
 
+  // Load models
+  useEffect(() => {
+    const loadModels = async () => {
+      setModelsLoading(true)
+      try {
+        const response = await modelApis.getUnifiedModels(undefined, false, 'all')
+        const modelList: SubscriptionModel[] = response.data.map((m: UnifiedModel) => ({
+          name: m.name,
+          displayName: m.displayName,
+          provider: m.provider || undefined,
+          modelId: m.modelId || undefined,
+          type: m.type,
+        }))
+        setModels(modelList)
+      } catch (error) {
+        console.error('Failed to load models:', error)
+      } finally {
+        setModelsLoading(false)
+      }
+    }
+    if (open) {
+      loadModels()
+    }
+  }, [open])
+
   // Get selected team
   const selectedTeam = teams.find(t => t.id === teamId)
 
@@ -252,15 +319,22 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
   const isCodeTypeTeam =
     selectedTeam?.recommended_mode === 'code' || selectedTeam?.recommended_mode === 'both'
 
-  // Debug log
-  console.log(
-    '[FlowForm] selectedTeam:',
-    selectedTeam?.name,
-    'recommended_mode:',
-    selectedTeam?.recommended_mode,
-    'isCodeTypeTeam:',
-    isCodeTypeTeam
-  )
+  // Check if selected team has model configured in any of its bots
+  const teamHasModel = (() => {
+    if (!selectedTeam?.bots || selectedTeam.bots.length === 0) {
+      return false
+    }
+    // Check if any bot has a model configured (bind_model in agent_config)
+    return selectedTeam.bots.some(teamBot => {
+      const agentConfig = teamBot.bot?.agent_config
+      if (!agentConfig) return false
+      // Check for bind_model field which indicates a model is configured
+      return !!(agentConfig as Record<string, unknown>).bind_model
+    })
+  })()
+
+  // Determine if model selection is required (team has no model and user hasn't selected one)
+  const modelRequired = !teamHasModel && !selectedModel
 
   // Handle repository change
   const handleRepoChange = useCallback((repo: GitRepoInfo | null) => {
@@ -282,23 +356,33 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
     setSelectedBranch(null)
   }, [])
 
-  // Reset form when flow changes
+  // Reset form when subscription changes
   useEffect(() => {
-    if (flow) {
-      setDisplayName(flow.display_name)
-      setDescription(flow.description || '')
-      setTaskType(flow.task_type)
-      setTriggerType(flow.trigger_type)
-      setTriggerConfig(flow.trigger_config)
-      setTeamId(flow.team_id)
-      setPromptTemplate(flow.prompt_template)
-      setRetryCount(flow.retry_count)
-      setTimeoutSeconds(flow.timeout_seconds || 600)
-      setEnabled(flow.enabled)
+    if (subscription) {
+      setDisplayName(subscription.display_name)
+      setDescription(subscription.description || '')
+      setTaskType(subscription.task_type)
+      setTriggerType(subscription.trigger_type)
+      setTriggerConfig(subscription.trigger_config)
+      setTeamId(subscription.team_id)
+      setPromptTemplate(subscription.prompt_template)
+      setRetryCount(subscription.retry_count)
+      setTimeoutSeconds(subscription.timeout_seconds || 600)
+      setEnabled(subscription.enabled)
+      setPreserveHistory(subscription.preserve_history || false)
       // Note: workspace_id restoration will be handled when we have workspace API
       // For now, reset repo selection
       setSelectedRepo(null)
       setSelectedBranch(null)
+      // Restore model selection from subscription
+      if (subscription.model_ref) {
+        setSelectedModel({
+          name: subscription.model_ref.name,
+          displayName: subscription.model_ref.name, // Will be updated when models load
+        })
+      } else {
+        setSelectedModel(null)
+      }
     } else {
       setDisplayName('')
       setDescription('')
@@ -310,13 +394,25 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
       setRetryCount(0)
       setTimeoutSeconds(600)
       setEnabled(true)
+      setPreserveHistory(false)
       setSelectedRepo(null)
       setSelectedBranch(null)
+      setSelectedModel(null)
     }
-  }, [flow, open])
+  }, [subscription, open])
+
+  // Update selected model display name when models load
+  useEffect(() => {
+    if (selectedModel && models.length > 0) {
+      const foundModel = models.find(m => m.name === selectedModel.name)
+      if (foundModel && foundModel.displayName !== selectedModel.displayName) {
+        setSelectedModel(foundModel)
+      }
+    }
+  }, [models, selectedModel])
 
   // Handle trigger type change
-  const handleTriggerTypeChange = useCallback((value: FlowTriggerType) => {
+  const handleTriggerTypeChange = useCallback((value: SubscriptionTriggerType) => {
     setTriggerType(value)
     setTriggerConfig(defaultTriggerConfig[value])
   }, [])
@@ -337,10 +433,23 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
       return
     }
 
+    // Check if model is required but not selected
+    // Find the team to check if it has model configured
+    const team = teams.find(t => t.id === teamId)
+    const hasTeamModel = team?.bots?.some(teamBot => {
+      const agentConfig = teamBot.bot?.agent_config
+      return agentConfig && !!(agentConfig as Record<string, unknown>).bind_model
+    })
+
+    if (!hasTeamModel && !selectedModel) {
+      toast.error(t('validation_model_required'))
+      return
+    }
+
     setSubmitting(true)
     try {
-      if (isEditing && flow) {
-        const updateData: FlowUpdateRequest = {
+      if (isEditing && subscription) {
+        const updateData: SubscriptionUpdateRequest = {
           display_name: displayName,
           description: description || undefined,
           task_type: taskType,
@@ -351,6 +460,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
           retry_count: retryCount,
           timeout_seconds: timeoutSeconds,
           enabled,
+          preserve_history: preserveHistory,
           // Include git repo info if selected
           ...(selectedRepo && {
             git_repo: selectedRepo.git_repo,
@@ -358,8 +468,11 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
             git_domain: selectedRepo.git_domain,
             branch_name: selectedBranch?.name || 'main',
           }),
+          // Include model selection - always override bot model when specified
+          model_ref: selectedModel ? { name: selectedModel.name, namespace: 'default' } : undefined,
+          force_override_bot_model: !!selectedModel, // Always override when model is selected
         }
-        await flowApis.updateFlow(flow.id, updateData)
+        await subscriptionApis.updateSubscription(subscription.id, updateData)
         toast.success(t('update_success'))
       } else {
         // Generate name from display name
@@ -368,9 +481,9 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-|-$/g, '')
-            .slice(0, 50) || `flow-${Date.now()}`
+            .slice(0, 50) || `subscription-${Date.now()}`
 
-        const createData: FlowCreateRequest = {
+        const createData: SubscriptionCreateRequest = {
           name: generatedName,
           display_name: displayName,
           description: description || undefined,
@@ -382,6 +495,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
           retry_count: retryCount,
           timeout_seconds: timeoutSeconds,
           enabled,
+          preserve_history: preserveHistory,
           // Include git repo info if selected
           ...(selectedRepo && {
             git_repo: selectedRepo.git_repo,
@@ -389,15 +503,18 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
             git_domain: selectedRepo.git_domain,
             branch_name: selectedBranch?.name || 'main',
           }),
+          // Include model selection - always override bot model when specified
+          model_ref: selectedModel ? { name: selectedModel.name, namespace: 'default' } : undefined,
+          force_override_bot_model: !!selectedModel, // Always override when model is selected
         }
-        await flowApis.createFlow(createData)
+        await subscriptionApis.createSubscription(createData)
         toast.success(t('create_success'))
       }
       onSuccess()
       onOpenChange(false)
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : t('save_failed')
-      console.error('Failed to save flow:', error)
+      console.error('Failed to save subscription:', error)
       toast.error(errorMessage)
     } finally {
       setSubmitting(false)
@@ -413,14 +530,27 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
     retryCount,
     timeoutSeconds,
     enabled,
+    preserveHistory,
     selectedRepo,
     selectedBranch,
+    selectedModel,
     isEditing,
-    flow,
+    subscription,
     onSuccess,
     onOpenChange,
     t,
+    teams,
   ])
+
+  // Filter models based on search
+  const filteredModels = models.filter(model => {
+    const searchLower = modelSearchValue.toLowerCase()
+    return (
+      model.name.toLowerCase().includes(searchLower) ||
+      (model.displayName && model.displayName.toLowerCase().includes(searchLower)) ||
+      (model.provider && model.provider.toLowerCase().includes(searchLower))
+    )
+  })
 
   const renderTriggerConfig = () => {
     switch (triggerType) {
@@ -634,7 +764,7 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
                 </Label>
                 <Select
                   value={taskType}
-                  onValueChange={value => setTaskType(value as FlowTaskType)}
+                  onValueChange={value => setTaskType(value as SubscriptionTaskType)}
                 >
                   <SelectTrigger className="h-10">
                     <SelectValue />
@@ -712,6 +842,110 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
                 </div>
               )}
 
+              {/* Model Selection */}
+              <div className="space-y-3 rounded-lg border border-border bg-background-secondary/30 p-4">
+                <div className="flex items-center gap-2">
+                  <Brain className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-medium text-text-secondary">
+                    {t('model_settings')}
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">{t('select_model')}</Label>
+                  <Popover open={modelSelectorOpen} onOpenChange={setModelSelectorOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={modelSelectorOpen}
+                        className="w-full justify-between h-10"
+                        disabled={modelsLoading}
+                      >
+                        {modelsLoading ? (
+                          t('common:loading')
+                        ) : selectedModel ? (
+                          <span className="truncate">
+                            {selectedModel.displayName || selectedModel.name}
+                          </span>
+                        ) : (
+                          <span className="text-text-muted">{t('select_model_placeholder')}</span>
+                        )}
+                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[400px] p-0" align="start">
+                      <Command>
+                        <CommandInput
+                          placeholder={t('search_model')}
+                          value={modelSearchValue}
+                          onValueChange={setModelSearchValue}
+                        />
+                        <CommandList>
+                          <CommandEmpty>{t('no_model_found')}</CommandEmpty>
+                          <CommandGroup>
+                            {/* Option to clear selection */}
+                            <CommandItem
+                              value="__clear__"
+                              onSelect={() => {
+                                setSelectedModel(null)
+                                setModelSelectorOpen(false)
+                                setModelSearchValue('')
+                              }}
+                            >
+                              <span className="text-text-muted">{t('use_default_model')}</span>
+                            </CommandItem>
+                            {filteredModels.map(model => (
+                              <CommandItem
+                                key={model.name}
+                                value={model.name}
+                                onSelect={() => {
+                                  setSelectedModel(model)
+                                  setModelSelectorOpen(false)
+                                  setModelSearchValue('')
+                                }}
+                              >
+                                <div className="flex flex-col">
+                                  <span
+                                    className={cn(
+                                      selectedModel?.name === model.name && 'font-medium'
+                                    )}
+                                  >
+                                    {model.displayName || model.name}
+                                  </span>
+                                  <span className="text-xs text-text-muted">
+                                    {model.provider} · {model.modelId}
+                                  </span>
+                                </div>
+                                {selectedModel?.name === model.name && (
+                                  <Check className="ml-auto h-4 w-4" />
+                                )}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                  <p className="text-xs text-text-muted">
+                    {modelRequired ? (
+                      <span className="text-destructive">{t('model_required_hint')}</span>
+                    ) : (
+                      t('model_hint')
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              {/* Preserve History */}
+              <div className="flex items-center justify-between pt-2">
+                <div className="space-y-0.5">
+                  <Label className="text-sm font-medium">{t('preserve_history')}</Label>
+                  <p className="text-xs text-text-muted">{t('preserve_history_hint')}</p>
+                </div>
+                <Switch checked={preserveHistory} onCheckedChange={setPreserveHistory} />
+              </div>
+
               {/* Enabled */}
               <div className="flex items-center justify-between pt-2">
                 <Label className="text-sm font-medium">{t('enable_subscription')}</Label>
@@ -755,10 +989,10 @@ export function FlowForm({ open, onOpenChange, flow, onSuccess }: FlowFormProps)
 
               {/* Webhook API Usage - Only show for event trigger with webhook when editing */}
               {isEditing &&
-                flow &&
+                subscription &&
                 triggerType === 'event' &&
                 triggerConfig.event_type === 'webhook' &&
-                flow.webhook_url && <WebhookApiSection flow={flow} />}
+                subscription.webhook_url && <WebhookApiSection subscription={subscription} />}
 
               {/* Retry Count & Timeout in a row */}
               <div className="grid grid-cols-2 gap-4">
