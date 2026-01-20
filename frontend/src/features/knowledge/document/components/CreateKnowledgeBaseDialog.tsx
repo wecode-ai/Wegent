@@ -120,7 +120,8 @@ export function CreateKnowledgeBaseDialog({
       })
       setName('')
       setDescription('')
-      setSummaryEnabled(false)
+      // Reset summaryEnabled based on kbType: enabled for notebook, disabled for classic
+      setSummaryEnabled(kbType === 'notebook')
       setSummaryModelRef(null)
       setRetrievalConfig({
         retrieval_mode: 'vector',
