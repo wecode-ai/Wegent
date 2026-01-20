@@ -373,11 +373,14 @@ async def _stream_chat_response(
         memory_manager = get_memory_manager()
         relevant_memories = []
 
+        # Fetch user from database to check memory preference
+        user = db.query(User).filter(User.id == stream_data.user_id).first()
+
         # Check user preference first
-        if not is_memory_enabled_for_user(user):
+        if user is None or not is_memory_enabled_for_user(user):
             logger.info(
                 "[ai_trigger] Long-term memory disabled by user preference: user_id=%d",
-                user.id,
+                stream_data.user_id,
             )
         elif memory_manager.is_enabled:
             try:

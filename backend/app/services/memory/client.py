@@ -72,6 +72,7 @@ class LongTermMemoryClient:
             timeout if timeout is not None else settings.MEMORY_TIMEOUT_SECONDS
         )
         self._session: Optional[aiohttp.ClientSession] = None
+        self._session_lock = asyncio.Lock()
 
     def _get_headers(self) -> Dict[str, str]:
         """Build HTTP headers for mem0 API requests.
@@ -85,15 +86,21 @@ class LongTermMemoryClient:
         return headers
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session (lazy initialization).
+        """Get or create aiohttp session (lazy initialization with thread-safety).
+
+        Uses double-check locking pattern to prevent race conditions when
+        multiple coroutines attempt to create the session simultaneously.
 
         Returns:
             aiohttp ClientSession instance
         """
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.timeout)
-            )
+            async with self._session_lock:
+                # Double-check after acquiring lock
+                if self._session is None or self._session.closed:
+                    self._session = aiohttp.ClientSession(
+                        timeout=aiohttp.ClientTimeout(total=self.timeout)
+                    )
         return self._session
 
     async def close(self) -> None:
@@ -396,7 +403,7 @@ class LongTermMemoryClient:
                 params["agent_id"] = agent_id
             if run_id:
                 params["run_id"] = run_id
-            if limit:
+            if limit is not None:
                 params["limit"] = str(limit)
 
             # Add metadata filters if provided (custom extension)
