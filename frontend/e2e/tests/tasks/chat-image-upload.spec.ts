@@ -196,8 +196,11 @@ test.describe('Chat Image Upload UI Tests', () => {
   /**
    * Helper function to select the test team in the chat UI
    * Flow: Click "More/更多" button -> Search for team -> Click on team in dropdown
+   *
+   * Note: After creating a team via API, the frontend may not have the latest team list.
+   * This function will retry with page reload if the team is not found initially.
    */
-  async function selectTestTeam(page: Page): Promise<boolean> {
+  async function selectTestTeam(page: Page, retryWithReload = true): Promise<boolean> {
     try {
       // Wait for page to be ready
       await page.waitForLoadState('networkidle')
@@ -254,6 +257,16 @@ test.describe('Chat Image Upload UI Tests', () => {
         await teamCard.click()
         await page.waitForTimeout(500)
         return true
+      }
+
+      // If team not found and retry is enabled, reload the page to refresh team list
+      if (retryWithReload) {
+        console.log('Team not found, reloading page to refresh team list...')
+        await page.reload()
+        await page.waitForLoadState('networkidle')
+        await page.waitForTimeout(2000)
+        // Retry without reload to avoid infinite loop
+        return selectTestTeam(page, false)
       }
 
       console.warn(`Could not find or select team: ${TEST_TEAM_NAME}`)
@@ -427,11 +440,13 @@ test.describe('Chat Image Upload UI Tests', () => {
       const teamSelected = await selectTestTeam(page)
       if (!teamSelected) {
         console.warn('Could not select test team')
+        await page.screenshot({ path: 'test-results/e2e-team-selection-failed.png' })
         test.skip()
         return
       }
 
-      await page.waitForTimeout(1000)
+      // Wait for team selection to take effect
+      await page.waitForTimeout(2000)
 
       // Find file input
       const fileInput = page.locator('input[type="file"]').first()
@@ -439,6 +454,7 @@ test.describe('Chat Image Upload UI Tests', () => {
 
       if (!hasFileInput) {
         console.warn('No file input found, Chat Shell may not be properly configured')
+        await page.screenshot({ path: 'test-results/e2e-no-file-input.png' })
         test.skip()
         return
       }
@@ -447,10 +463,29 @@ test.describe('Chat Image Upload UI Tests', () => {
       console.log('Uploading image to backend...')
       await fileInput.setInputFiles(testImagePath)
 
-      // Wait for upload to complete - the attachment needs to be ready before sending
-      // isAttachmentReadyToSend must be true for canSubmit to be true
+      // Wait for upload to complete by checking for attachment preview
+      // The attachment preview appears when upload is successful
       console.log('Waiting for image upload to complete...')
-      await page.waitForTimeout(3000)
+      const attachmentPreview = page.locator(
+        '[data-testid="attachment-preview"], [class*="attachment"], [class*="preview"], [class*="AttachmentPreview"]'
+      )
+
+      // Wait up to 10 seconds for attachment preview to appear
+      const uploadComplete = await attachmentPreview
+        .isVisible({ timeout: 10000 })
+        .catch(() => false)
+
+      if (!uploadComplete) {
+        console.warn('Attachment preview not visible, upload may have failed')
+        // Take screenshot for debugging
+        await page.screenshot({ path: 'test-results/e2e-upload-failed.png' })
+        // Continue anyway - the upload might have succeeded but preview is not visible
+      } else {
+        console.log('Attachment preview visible, upload successful')
+      }
+
+      // Additional wait for state to propagate
+      await page.waitForTimeout(1000)
 
       // Select model if required (Chat Shell teams may need explicit model selection)
       // The model selector shows a Brain icon and may show "请选择模型" when required
@@ -459,6 +494,7 @@ test.describe('Chat Image Upload UI Tests', () => {
       if (await modelSelectorButton.isVisible({ timeout: 2000 }).catch(() => false)) {
         // Check if model selection is required (button shows error state or "请选择模型")
         const buttonText = await modelSelectorButton.textContent()
+        console.log('Model selector button text:', buttonText)
         if (
           buttonText?.includes('请选择模型') ||
           buttonText?.includes('model_required') ||
@@ -479,6 +515,8 @@ test.describe('Chat Image Upload UI Tests', () => {
             if (await anyModelOption.isVisible({ timeout: 2000 }).catch(() => false)) {
               await anyModelOption.click()
               console.log('Selected first available model')
+            } else {
+              console.warn('No model options available')
             }
           }
           await page.waitForTimeout(500)
@@ -489,6 +527,7 @@ test.describe('Chat Image Upload UI Tests', () => {
       const messageInput = page.locator('[data-testid="message-input"]').first()
       if (!(await messageInput.isVisible({ timeout: 5000 }).catch(() => false))) {
         console.warn('Message input not visible')
+        await page.screenshot({ path: 'test-results/e2e-no-message-input.png' })
         test.skip()
         return
       }
@@ -515,10 +554,37 @@ test.describe('Chat Image Upload UI Tests', () => {
       // Wait for the button to be visible
       await sendButton.waitFor({ state: 'visible', timeout: 5000 })
 
+      // Check button state before waiting
+      const isDisabled = await sendButton.isDisabled()
+      console.log('Send button disabled:', isDisabled)
+
+      // If button is disabled, take a screenshot for debugging
+      if (isDisabled) {
+        await page.screenshot({ path: 'test-results/e2e-send-button-disabled.png' })
+        // Log more debug info
+        const buttonClasses = await sendButton.getAttribute('class')
+        console.log('Send button classes:', buttonClasses)
+      }
+
       // Wait for the button to be enabled (canSubmit = true)
       // This requires: !isLoading && !isStreaming && !isModelSelectionRequired && isAttachmentReadyToSend
       console.log('Waiting for send button to be enabled...')
-      await expect(sendButton).toBeEnabled({ timeout: 15000 })
+
+      // Use a try-catch to handle timeout and provide better error message
+      try {
+        await expect(sendButton).toBeEnabled({ timeout: 15000 })
+      } catch {
+        // Take screenshot on failure
+        await page.screenshot({ path: 'test-results/e2e-send-button-timeout.png' })
+        // Log the current state for debugging
+        console.error('Send button did not become enabled within timeout')
+        console.error(
+          'Possible causes: isLoading=true, isStreaming=true, isModelSelectionRequired=true, or isAttachmentReadyToSend=false'
+        )
+        throw new Error(
+          'Send button remained disabled. Check if attachment upload completed and model is selected.'
+        )
+      }
 
       console.log('Sending message to backend...')
       await sendButton.click()
