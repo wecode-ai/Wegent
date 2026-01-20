@@ -93,8 +93,7 @@ class BackgroundExecutionManager:
             status=BackgroundExecutionStatus.PENDING.value,
             result_summary="",
             error_message="",
-            started_at=None,
-            completed_at=None,
+            # started_at and completed_at use model defaults (datetime.utcnow)
         )
 
         db.add(execution)

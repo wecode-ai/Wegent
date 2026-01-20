@@ -71,8 +71,10 @@ class BackgroundExecution(Base):
     version = Column(Integer, default=0, nullable=False)
 
     # Timing (stored in UTC)
-    started_at = Column(DateTime, nullable=False)
-    completed_at = Column(DateTime, nullable=False)
+    # started_at is set when execution starts (RUNNING state), default to created_at
+    # completed_at is set when execution finishes (COMPLETED/FAILED/CANCELLED state), default to created_at
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
