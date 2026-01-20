@@ -51,6 +51,9 @@ export default function TaskMenu({
   const { projects, addTaskToProject } = useProjectContext()
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
 
+  // Check if task can be deleted (terminal status only)
+  const isDeletable = ['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status)
+
   const handleMoveToGroup = async (projectId: number) => {
     await addTaskToProject(projectId, task.id)
   }
@@ -127,24 +130,27 @@ export default function TaskMenu({
             </DropdownMenuItem>
           )}
 
-          <DropdownMenuItem
-            onClick={e => {
-              e.stopPropagation()
-              handleDeleteTask(task)
-            }}
-          >
-            {isGroupChat ? (
-              <>
-                <ArrowRightOnRectangleIcon className="h-3.5 w-3.5 mr-2" />
-                {t('common:groupChat.leave')}
-              </>
-            ) : (
-              <>
-                <TrashIcon className="h-3.5 w-3.5 mr-2" />
-                {t('common:tasks.delete_task')}
-              </>
-            )}
-          </DropdownMenuItem>
+          {/* Delete/Leave - only show for terminal status tasks */}
+          {isDeletable && (
+            <DropdownMenuItem
+              onClick={e => {
+                e.stopPropagation()
+                handleDeleteTask(task)
+              }}
+            >
+              {isGroupChat ? (
+                <>
+                  <ArrowRightOnRectangleIcon className="h-3.5 w-3.5 mr-2" />
+                  {t('common:groupChat.leave')}
+                </>
+              ) : (
+                <>
+                  <TrashIcon className="h-3.5 w-3.5 mr-2" />
+                  {t('common:tasks.delete_task')}
+                </>
+              )}
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 

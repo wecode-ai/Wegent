@@ -548,6 +548,7 @@ class TaskOperationsMixin:
         ).update(
             {
                 BackgroundExecution.status: "CANCELLED",
+                BackgroundExecution.completed_at: datetime.now(),
                 BackgroundExecution.updated_at: datetime.now(),
             }
         )
