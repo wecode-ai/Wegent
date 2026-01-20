@@ -187,7 +187,9 @@
     "subtask_completed": "Subtask completed",
     "subtask_failed": "Subtask failed:",
     "unknown_error": "Unknown error",
-    "download": "Download"
+    "download": "Download",
+    "slides": "{{count}} slide(s)",
+    "pptx_download": "Download Presentation"
   },
   "teams": {
     "title": "Team List",

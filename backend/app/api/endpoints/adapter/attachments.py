@@ -24,6 +24,7 @@ from app.schemas.subtask_context import (
     AttachmentDetailResponse,
     AttachmentResponse,
     TruncationInfo,
+    GeneratedPPTXResponse,
 )
 from app.services.attachment.parser import DocumentParseError, DocumentParser
 from app.services.context import context_service
@@ -430,3 +431,245 @@ async def get_attachment_by_subtask(
         raise HTTPException(status_code=403, detail="Access denied")
 
     return AttachmentDetailResponse.from_context(context)
+
+
+# ============================================================
+# Generated PPTX Endpoints
+# ============================================================
+
+
+@router.get("/pptx/{pptx_context_id}", response_model=GeneratedPPTXResponse)
+async def get_generated_pptx(
+    pptx_context_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get generated PPTX details by context ID.
+
+    Returns:
+        Generated PPTX details including slide count and preview image IDs
+    """
+    context = context_service.get_context_optional(
+        db=db,
+        context_id=pptx_context_id,
+    )
+
+    if context is None:
+        raise HTTPException(status_code=404, detail="Generated PPTX not found")
+
+    # Verify it's a GENERATED_PPTX type
+    if context.context_type != ContextType.GENERATED_PPTX.value:
+        raise HTTPException(status_code=404, detail="Generated PPTX not found")
+
+    # Check access permission
+    has_access = context.user_id == current_user.id
+
+    if not has_access and context.subtask_id > 0:
+        from app.models.subtask import Subtask
+        from app.models.task import TaskResource
+        from app.models.task_member import MemberStatus, TaskMember
+
+        subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
+        if subtask:
+            task = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.id == subtask.task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.user_id == current_user.id,
+                )
+                .first()
+            )
+            if task:
+                has_access = True
+            else:
+                task_member = (
+                    db.query(TaskMember)
+                    .filter(
+                        TaskMember.task_id == subtask.task_id,
+                        TaskMember.user_id == current_user.id,
+                        TaskMember.status == MemberStatus.ACTIVE,
+                    )
+                    .first()
+                )
+                has_access = task_member is not None
+
+    if not has_access:
+        raise HTTPException(status_code=404, detail="Generated PPTX not found")
+
+    return GeneratedPPTXResponse.from_context(context)
+
+
+@router.get("/pptx/{pptx_context_id}/download")
+async def download_generated_pptx(
+    pptx_context_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Download the generated PPTX file.
+
+    Returns:
+        PPTX file binary data with appropriate content type
+    """
+    context = context_service.get_context_optional(
+        db=db,
+        context_id=pptx_context_id,
+    )
+
+    if context is None:
+        raise HTTPException(status_code=404, detail="Generated PPTX not found")
+
+    # Verify it's a GENERATED_PPTX type
+    if context.context_type != ContextType.GENERATED_PPTX.value:
+        raise HTTPException(status_code=404, detail="Generated PPTX not found")
+
+    # Check access permission
+    has_access = context.user_id == current_user.id
+
+    if not has_access and context.subtask_id > 0:
+        from app.models.subtask import Subtask
+        from app.models.task import TaskResource
+        from app.models.task_member import MemberStatus, TaskMember
+
+        subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
+        if subtask:
+            task = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.id == subtask.task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.user_id == current_user.id,
+                )
+                .first()
+            )
+            if task:
+                has_access = True
+            else:
+                task_member = (
+                    db.query(TaskMember)
+                    .filter(
+                        TaskMember.task_id == subtask.task_id,
+                        TaskMember.user_id == current_user.id,
+                        TaskMember.status == MemberStatus.ACTIVE,
+                    )
+                    .first()
+                )
+                has_access = task_member is not None
+
+    if not has_access:
+        raise HTTPException(status_code=404, detail="Generated PPTX not found")
+
+    # Get PPTX binary data
+    binary_data = context_service.get_generated_pptx_binary(
+        db=db,
+        context=context,
+    )
+
+    if binary_data is None:
+        logger.error(
+            f"Failed to retrieve binary data for generated PPTX {pptx_context_id}"
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to retrieve PPTX data"
+        )
+
+    # Encode filename for Content-Disposition header
+    encoded_filename = quote(context.name)
+
+    return Response(
+        content=binary_data,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+        },
+    )
+
+
+@router.get("/pptx/{pptx_context_id}/preview/{preview_index}")
+async def download_generated_pptx_preview(
+    pptx_context_id: int,
+    preview_index: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Download a specific preview image from a generated PPTX.
+
+    Args:
+        pptx_context_id: The context ID of the generated PPTX
+        preview_index: 0-based index of the preview image
+
+    Returns:
+        Image binary data with appropriate content type
+    """
+    context = context_service.get_context_optional(
+        db=db,
+        context_id=pptx_context_id,
+    )
+
+    if context is None:
+        raise HTTPException(status_code=404, detail="Generated PPTX not found")
+
+    # Verify it's a GENERATED_PPTX type
+    if context.context_type != ContextType.GENERATED_PPTX.value:
+        raise HTTPException(status_code=404, detail="Generated PPTX not found")
+
+    # Check access permission
+    has_access = context.user_id == current_user.id
+
+    if not has_access and context.subtask_id > 0:
+        from app.models.subtask import Subtask
+        from app.models.task import TaskResource
+        from app.models.task_member import MemberStatus, TaskMember
+
+        subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
+        if subtask:
+            task = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.id == subtask.task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.user_id == current_user.id,
+                )
+                .first()
+            )
+            if task:
+                has_access = True
+            else:
+                task_member = (
+                    db.query(TaskMember)
+                    .filter(
+                        TaskMember.task_id == subtask.task_id,
+                        TaskMember.user_id == current_user.id,
+                        TaskMember.status == MemberStatus.ACTIVE,
+                    )
+                    .first()
+                )
+                has_access = task_member is not None
+
+    if not has_access:
+        raise HTTPException(status_code=404, detail="Generated PPTX not found")
+
+    # Get preview image binary data
+    binary_data = context_service.get_generated_pptx_preview_binary(
+        db=db,
+        context=context,
+        preview_index=preview_index,
+    )
+
+    if binary_data is None:
+        raise HTTPException(
+            status_code=404, detail=f"Preview image {preview_index} not found"
+        )
+
+    # Determine content type based on image data
+    content_type = "image/jpeg"
+    if binary_data[:8] == b'\x89PNG\r\n\x1a\n':
+        content_type = "image/png"
+
+    return Response(
+        content=binary_data,
+        media_type=content_type,
+    )

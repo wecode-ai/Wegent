@@ -63,6 +63,7 @@ class ChatRequest:
     enable_web_search: bool = False
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
+    enable_pptx_generation: bool = False  # Enable PPTX generation tool
     search_engine: Optional[str] = None
 
     # Bot configuration

@@ -5,11 +5,13 @@
 'use client'
 
 import React, { ReactNode } from 'react'
-import { Database, Table2 } from 'lucide-react'
+import { Database, Table2, Presentation, Download } from 'lucide-react'
 import AttachmentPreview from '../input/AttachmentPreview'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
+import { formatFileSize } from '@/lib/utils'
+import { downloadAttachment } from '@/apis/attachments'
 
 /**
  * Base preview component for context items (attachments, knowledge bases, etc.)
@@ -93,6 +95,8 @@ function ContextBadgeItem({
       return <KnowledgeBaseBadge context={context} />
     case 'table':
       return <TableBadge context={context} _onReselect={onReselect} />
+    case 'generated_pptx':
+      return <GeneratedPPTXBadge context={context} />
     default:
       return null
   }
@@ -219,6 +223,70 @@ function TableBadge({
         subtitle={subtitle}
         className={isClickable ? 'hover:shadow-md hover:border-blue-500/50 transition-all' : ''}
       />
+    </div>
+  )
+}
+
+/**
+ * Generated PPTX badge - displays presentation info with download button
+ *
+ * Shows slide count and file size, provides download functionality
+ */
+function GeneratedPPTXBadge({ context }: { context: SubtaskContextBrief }) {
+  const { t } = useTranslation('common')
+  const [isDownloading, setIsDownloading] = React.useState(false)
+
+  // Build subtitle with slide count and file size
+  const slideCount = (context as { slide_count?: number }).slide_count
+  const fileSize = context.file_size
+  const subtitleParts: string[] = []
+
+  if (slideCount !== undefined && slideCount > 0) {
+    subtitleParts.push(`${slideCount} ${t('common:slides', { count: slideCount }) || 'slides'}`)
+  }
+  if (fileSize !== undefined && fileSize > 0) {
+    subtitleParts.push(formatFileSize(fileSize))
+  }
+
+  const subtitle = subtitleParts.join(' • ') || undefined
+
+  // Get the PPTX attachment ID for download
+  // The pptx_attachment_id is stored in type_data but may be passed through preview_images
+  const pptxAttachmentId = (context as { pptx_attachment_id?: number }).pptx_attachment_id || context.id
+
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (isDownloading) return
+
+    setIsDownloading(true)
+    try {
+      await downloadAttachment(pptxAttachmentId, context.name)
+    } catch (error) {
+      console.error('Failed to download PPTX:', error)
+    } finally {
+      setIsDownloading(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3 p-3 bg-muted rounded-lg border border-border mb-2 max-w-full">
+      <div className="text-2xl flex-shrink-0">
+        <Presentation className="text-orange-500" />
+      </div>
+      <div className="flex-1 min-w-0 overflow-hidden">
+        <div className="font-medium text-sm truncate" title={context.name}>
+          {context.name}
+        </div>
+        {subtitle && <div className="text-xs text-text-muted">{subtitle}</div>}
+      </div>
+      <button
+        onClick={handleDownload}
+        disabled={isDownloading}
+        className="flex-shrink-0 p-2 rounded-md hover:bg-surface transition-colors disabled:opacity-50"
+        title={t('common:download') || 'Download'}
+      >
+        <Download className={`w-4 h-4 text-text-secondary ${isDownloading ? 'animate-pulse' : ''}`} />
+      </button>
     </div>
   )
 }

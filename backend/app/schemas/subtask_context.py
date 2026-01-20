@@ -23,6 +23,7 @@ class ContextType(str, Enum):
     KNOWLEDGE_BASE = "knowledge_base"
     TABLE = "table"
     SELECTED_DOCUMENTS = "selected_documents"
+    GENERATED_PPTX = "generated_pptx"
 
 
 class ContextStatus(str, Enum):
@@ -93,6 +94,9 @@ class SubtaskContextBrief(BaseModel):
     document_count: Optional[int] = None
     # Table fields (from type_data) - nested structure to match frontend expectation
     source_config: Optional[Dict[str, Any]] = None
+    # Generated PPTX fields (from type_data)
+    slide_count: Optional[int] = None
+    preview_images: Optional[List[int]] = None  # List of attachment IDs for preview thumbnails
 
     class Config:
         from_attributes = True
@@ -113,6 +117,10 @@ class SubtaskContextBrief(BaseModel):
         else:
             context_type_str = str(context_type)
 
+        # Handle PPTX-specific fields
+        slide_count = None
+        preview_images = None
+
         if context_type_str == ContextType.TABLE.value:
             url = type_data.get("url")
             if url:
@@ -129,6 +137,10 @@ class SubtaskContextBrief(BaseModel):
             # For selected_documents, count the document_ids
             document_ids = type_data.get("document_ids", [])
             document_count = len(document_ids) if document_ids else 0
+        elif context_type_str == ContextType.GENERATED_PPTX.value:
+            # For generated PPTX, include slide count and preview images
+            slide_count = type_data.get("slide_count")
+            preview_images = type_data.get("preview_images", [])
 
         return cls(
             id=context.id,
@@ -140,6 +152,8 @@ class SubtaskContextBrief(BaseModel):
             mime_type=type_data.get("mime_type"),
             document_count=document_count,
             source_config=source_config,
+            slide_count=slide_count,
+            preview_images=preview_images,
         )
 
 
@@ -254,3 +268,52 @@ class TableContextCreate(BaseModel):
     document_id: int
     name: str
     url: Optional[str] = None
+
+
+# ============================================================
+# Generated PPTX Schemas
+# ============================================================
+
+
+class GeneratedPPTXContextCreate(BaseModel):
+    """Data for creating generated PPTX context."""
+
+    name: str  # Presentation title
+    slide_count: int
+    pptx_attachment_id: int  # ID of the PPTX file attachment
+    preview_images: List[int] = Field(default_factory=list)  # IDs of thumbnail attachments
+
+
+class GeneratedPPTXResponse(BaseModel):
+    """Response for generated PPTX."""
+
+    id: int
+    name: str
+    status: str
+    slide_count: int
+    pptx_attachment_id: int  # ID for downloading the PPTX
+    preview_images: List[int] = Field(default_factory=list)  # IDs for preview thumbnails
+    file_size: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+    @classmethod
+    def from_context(cls, context) -> "GeneratedPPTXResponse":
+        """Create from SubtaskContext model."""
+        type_data = context.type_data or {}
+        return cls(
+            id=context.id,
+            name=context.name,
+            status=(
+                context.status
+                if isinstance(context.status, str)
+                else context.status.value
+            ),
+            slide_count=type_data.get("slide_count", 0),
+            pptx_attachment_id=type_data.get("pptx_attachment_id", 0),
+            preview_images=type_data.get("preview_images", []),
+            file_size=type_data.get("file_size"),
+            created_at=context.created_at,
+        )

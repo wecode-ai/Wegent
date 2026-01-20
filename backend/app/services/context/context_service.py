@@ -21,6 +21,7 @@ from app.schemas.subtask_context import (
     KnowledgeBaseContextCreate,
     SubtaskContextBrief,
     TruncationInfo,
+    GeneratedPPTXContextCreate,
 )
 from app.services.attachment.parser import (
     DocumentParseError,
@@ -963,6 +964,282 @@ class ContextService:
             .order_by(SubtaskContext.created_at.desc())
             .all()
         )
+
+    # ==================== Generated PPTX Operations ====================
+
+    def store_generated_pptx(
+        self,
+        db: Session,
+        user_id: int,
+        pptx_filename: str,
+        pptx_binary: bytes,
+        preview_images: List[bytes],
+        slide_count: int,
+        subtask_id: int = 0,
+    ) -> SubtaskContext:
+        """
+        Store a generated PPTX presentation with its preview thumbnails.
+
+        This method:
+        1. Stores the PPTX file as an attachment
+        2. Stores each preview image as an attachment
+        3. Creates a GENERATED_PPTX context linking everything together
+
+        Args:
+            db: Database session
+            user_id: User ID
+            pptx_filename: Filename for the PPTX file
+            pptx_binary: PPTX file binary data
+            preview_images: List of preview image binaries (JPG/PNG)
+            slide_count: Number of slides in the presentation
+            subtask_id: Subtask ID to link to (0 means unlinked)
+
+        Returns:
+            Created SubtaskContext record for the generated PPTX
+        """
+        # Store the PPTX file as attachment
+        pptx_context, _ = self.upload_attachment(
+            db=db,
+            user_id=user_id,
+            filename=pptx_filename,
+            binary_data=pptx_binary,
+            subtask_id=0,  # Don't link directly, will be linked via GENERATED_PPTX
+        )
+
+        # Store preview images as attachments
+        preview_attachment_ids = []
+        for idx, img_binary in enumerate(preview_images):
+            # Determine image extension based on content
+            img_ext = ".jpg"  # Default to JPEG
+            if img_binary[:8] == b'\x89PNG\r\n\x1a\n':
+                img_ext = ".png"
+
+            img_filename = f"{pptx_filename}_preview_{idx + 1}{img_ext}"
+            img_context, _ = self.upload_attachment(
+                db=db,
+                user_id=user_id,
+                filename=img_filename,
+                binary_data=img_binary,
+                subtask_id=0,  # Don't link directly
+            )
+            preview_attachment_ids.append(img_context.id)
+
+        # Calculate total file size
+        file_size = len(pptx_binary)
+
+        # Use placeholder subtask_id if not provided
+        effective_subtask_id = (
+            subtask_id if subtask_id > 0 else self.UNLINKED_SUBTASK_ID
+        )
+
+        # Create the GENERATED_PPTX context record
+        context = SubtaskContext(
+            subtask_id=effective_subtask_id,
+            user_id=user_id,
+            context_type=ContextType.GENERATED_PPTX.value,
+            name=pptx_filename,
+            status=ContextStatus.READY.value,
+            binary_data=b"",  # Empty - actual data stored in linked attachments
+            image_base64="",  # Empty string for NOT NULL constraint
+            extracted_text="",  # Empty string for NOT NULL constraint
+            error_message="",  # Empty string for NOT NULL constraint
+            type_data={
+                "slide_count": slide_count,
+                "file_size": file_size,
+                "pptx_attachment_id": pptx_context.id,
+                "preview_images": preview_attachment_ids,
+                "original_filename": pptx_filename,
+                "file_extension": ".pptx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            },
+        )
+        db.add(context)
+        db.commit()
+        db.refresh(context)
+
+        logger.info(
+            f"Generated PPTX stored: id={context.id}, filename={pptx_filename}, "
+            f"slides={slide_count}, preview_count={len(preview_attachment_ids)}, "
+            f"pptx_attachment_id={pptx_context.id}"
+        )
+
+        return context
+
+    def get_generated_pptx_binary(
+        self,
+        db: Session,
+        context: SubtaskContext,
+    ) -> Optional[bytes]:
+        """
+        Get binary data for a generated PPTX from its linked attachment.
+
+        Args:
+            db: Database session
+            context: SubtaskContext record of type GENERATED_PPTX
+
+        Returns:
+            PPTX binary data or None if not found
+        """
+        if context.context_type != ContextType.GENERATED_PPTX.value:
+            return None
+
+        type_data = context.type_data or {}
+        pptx_attachment_id = type_data.get("pptx_attachment_id")
+        if not pptx_attachment_id:
+            logger.warning(
+                f"GENERATED_PPTX context {context.id} has no pptx_attachment_id"
+            )
+            return None
+
+        # Get the linked PPTX attachment
+        pptx_context = self.get_context_optional(db, pptx_attachment_id)
+        if pptx_context is None:
+            logger.warning(
+                f"PPTX attachment {pptx_attachment_id} not found for context {context.id}"
+            )
+            return None
+
+        return self.get_attachment_binary_data(db, pptx_context)
+
+    def get_generated_pptx_preview_binary(
+        self,
+        db: Session,
+        context: SubtaskContext,
+        preview_index: int = 0,
+    ) -> Optional[bytes]:
+        """
+        Get binary data for a specific preview image from a generated PPTX.
+
+        Args:
+            db: Database session
+            context: SubtaskContext record of type GENERATED_PPTX
+            preview_index: Index of the preview image (0-based)
+
+        Returns:
+            Preview image binary data or None if not found
+        """
+        if context.context_type != ContextType.GENERATED_PPTX.value:
+            return None
+
+        type_data = context.type_data or {}
+        preview_images = type_data.get("preview_images", [])
+
+        if preview_index < 0 or preview_index >= len(preview_images):
+            logger.warning(
+                f"Preview index {preview_index} out of range for context {context.id}"
+            )
+            return None
+
+        preview_attachment_id = preview_images[preview_index]
+
+        # Get the linked preview attachment
+        preview_context = self.get_context_optional(db, preview_attachment_id)
+        if preview_context is None:
+            logger.warning(
+                f"Preview attachment {preview_attachment_id} not found for context {context.id}"
+            )
+            return None
+
+        return self.get_attachment_binary_data(db, preview_context)
+
+    def update_generated_pptx(
+        self,
+        db: Session,
+        context: SubtaskContext,
+        pptx_binary: bytes,
+        preview_images: List[bytes],
+        slide_count: int,
+    ) -> SubtaskContext:
+        """
+        Update a generated PPTX with new content (for iterative refinement).
+
+        This method:
+        1. Updates the linked PPTX attachment with new binary
+        2. Updates/adds preview images
+        3. Updates the GENERATED_PPTX context metadata
+
+        Args:
+            db: Database session
+            context: Existing GENERATED_PPTX context to update
+            pptx_binary: New PPTX file binary data
+            preview_images: New list of preview image binaries
+            slide_count: New number of slides
+
+        Returns:
+            Updated SubtaskContext record
+        """
+        if context.context_type != ContextType.GENERATED_PPTX.value:
+            raise ValueError(f"Context {context.id} is not a GENERATED_PPTX type")
+
+        type_data = context.type_data or {}
+        pptx_attachment_id = type_data.get("pptx_attachment_id")
+
+        if not pptx_attachment_id:
+            raise ValueError(
+                f"GENERATED_PPTX context {context.id} has no pptx_attachment_id"
+            )
+
+        # Update the PPTX attachment
+        pptx_context = self.get_context_optional(db, pptx_attachment_id)
+        if pptx_context:
+            # Get storage backend and update the file
+            storage_backend = get_storage_backend(db)
+            storage_key = pptx_context.storage_key
+
+            if storage_key:
+                # Encrypt if needed
+                is_encrypted = _should_encrypt()
+                data_to_store = pptx_binary
+                if is_encrypted:
+                    data_to_store = encrypt_attachment(pptx_binary)
+
+                # Update the binary data
+                metadata = {
+                    "filename": context.name,
+                    "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    "file_size": len(pptx_binary),
+                    "user_id": context.user_id,
+                    "is_encrypted": is_encrypted,
+                }
+                storage_backend.save(storage_key, data_to_store, metadata)
+
+        # Handle preview images
+        old_preview_ids = type_data.get("preview_images", [])
+        new_preview_ids = []
+
+        # Store new preview images
+        for idx, img_binary in enumerate(preview_images):
+            img_ext = ".jpg"
+            if img_binary[:8] == b'\x89PNG\r\n\x1a\n':
+                img_ext = ".png"
+
+            img_filename = f"{context.name}_preview_{idx + 1}{img_ext}"
+            img_context, _ = self.upload_attachment(
+                db=db,
+                user_id=context.user_id,
+                filename=img_filename,
+                binary_data=img_binary,
+                subtask_id=0,
+            )
+            new_preview_ids.append(img_context.id)
+
+        # Update context metadata
+        context.type_data = {
+            **type_data,
+            "slide_count": slide_count,
+            "file_size": len(pptx_binary),
+            "preview_images": new_preview_ids,
+        }
+        context.status = ContextStatus.READY.value
+        db.commit()
+        db.refresh(context)
+
+        logger.info(
+            f"Generated PPTX updated: id={context.id}, slides={slide_count}, "
+            f"preview_count={len(new_preview_ids)}"
+        )
+
+        return context
 
 
 # Global service instance

@@ -514,7 +514,7 @@ export interface MultiAttachmentUploadState {
 }
 
 // Subtask Context Types (unified context system)
-export type ContextType = 'attachment' | 'knowledge_base' | 'table'
+export type ContextType = 'attachment' | 'knowledge_base' | 'table' | 'generated_pptx'
 export type ContextStatus = 'pending' | 'uploading' | 'parsing' | 'ready' | 'failed'
 
 export interface SubtaskContextBrief {
@@ -532,6 +532,10 @@ export interface SubtaskContextBrief {
   source_config?: {
     url?: string
   } | null
+  // Generated PPTX fields (from type_data)
+  slide_count?: number | null
+  preview_images?: number[] | null // List of attachment IDs for preview thumbnails
+  pptx_attachment_id?: number | null // ID for downloading the PPTX
 }
 
 // Quick Access Types

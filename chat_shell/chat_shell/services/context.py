@@ -565,6 +565,21 @@ class ChatContext:
                 len(self._request.table_contexts),
             )
 
+        # Add PPTXGeneratorTool if enabled
+        if self._request.enable_pptx_generation:
+            from chat_shell.tools.builtin import PPTXGeneratorTool
+
+            pptx_tool = PPTXGeneratorTool(
+                task_id=self._request.task_id,
+                subtask_id=self._request.subtask_id,
+                user_id=self._request.user_id,
+            )
+            extra_tools.append(pptx_tool)
+            logger.debug(
+                "[CHAT_CONTEXT] Added PPTXGeneratorTool for task %d",
+                self._request.task_id,
+            )
+
         # === External Tools ===
 
         # Add KB tools

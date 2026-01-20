@@ -41,6 +41,7 @@ class ContextType(str, PyEnum):
     KNOWLEDGE_BASE = "knowledge_base"
     TABLE = "table"
     SELECTED_DOCUMENTS = "selected_documents"  # Selected documents from notebook mode for direct injection
+    GENERATED_PPTX = "generated_pptx"  # AI-generated PowerPoint presentation with preview images
 
 
 class ContextStatus(str, PyEnum):

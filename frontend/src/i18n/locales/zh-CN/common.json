@@ -187,7 +187,9 @@
     "subtask_completed": "子任务已完成",
     "subtask_failed": "子任务失败：",
     "unknown_error": "未知错误",
-    "download": "下载"
+    "download": "下载",
+    "slides": "{{count}} 页幻灯片",
+    "pptx_download": "下载演示文稿"
   },
   "teams": {
     "title": "智能体列表",
