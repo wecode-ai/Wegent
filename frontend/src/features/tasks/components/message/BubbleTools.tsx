@@ -142,12 +142,14 @@ export interface BubbleToolsProps {
     like: string
     dislike: string
   }
-  /** Handler for regenerate button click */
-  onRegenerate?: () => void
+  /** Handler for regenerate button click (opens model selection popover) */
+  onRegenerateClick?: () => void
   /** Whether regenerate button should be shown */
   showRegenerate?: boolean
   /** Whether regenerate is in progress */
   isRegenerating?: boolean
+  /** Optional render prop for custom regenerate button with popover */
+  renderRegenerateButton?: (defaultButton: React.ReactNode) => React.ReactNode
 }
 
 // Bubble toolbar: supports copy button, feedback buttons, and extensible tool buttons
@@ -159,9 +161,10 @@ const BubbleTools = ({
   onLike,
   onDislike,
   feedbackLabels,
-  onRegenerate,
+  onRegenerateClick,
   showRegenerate,
   isRegenerating,
+  renderRegenerateButton,
 }: BubbleToolsProps) => {
   const { t } = useTranslation()
 
@@ -175,26 +178,32 @@ const BubbleTools = ({
         className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
       />
       {/* Regenerate button - only shown when showRegenerate is true */}
-      {showRegenerate && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onRegenerate}
-              disabled={isRegenerating}
-              className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec disabled:opacity-50"
-            >
-              <RefreshCw
-                className={`h-3.5 w-3.5 text-text-muted ${isRegenerating ? 'animate-spin' : ''}`}
-              />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            {t('chat:regenerate.tooltip') || t('chat:actions.regenerate') || 'Regenerate'}
-          </TooltipContent>
-        </Tooltip>
-      )}
+      {showRegenerate &&
+        (() => {
+          const defaultButton = (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onRegenerateClick}
+                  disabled={isRegenerating}
+                  className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec disabled:opacity-50"
+                >
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 text-text-muted ${isRegenerating ? 'animate-spin' : ''}`}
+                  />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {t('chat:regenerate.tooltip') || t('chat:actions.regenerate') || 'Regenerate'}
+              </TooltipContent>
+            </Tooltip>
+          )
+
+          // Use custom render function if provided (for popover wrapping)
+          return renderRegenerateButton ? renderRegenerateButton(defaultButton) : defaultButton
+        })()}
       {/* Feedback buttons: like and dislike */}
       <Tooltip>
         <TooltipTrigger asChild>

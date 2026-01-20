@@ -29,7 +29,9 @@
   },
   "regenerate": {
     "failed": "重新生成失败",
-    "tooltip": "重新生成回复"
+    "tooltip": "重新生成回复",
+    "select_model": "选择模型",
+    "select_model_desc": "选择用于重新生成的模型"
   },
   "quote": {
     "ask_wegent": "询问 Wegent",

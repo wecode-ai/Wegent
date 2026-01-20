@@ -40,8 +40,10 @@ import BubbleTools, { CopyButton, EditButton } from './BubbleTools'
 import InlineMessageEdit from './InlineMessageEdit'
 import { SourceReferences } from '../chat/SourceReferences'
 import CollapsibleMessage from './CollapsibleMessage'
+import RegenerateModelPopover from './RegenerateModelPopover'
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api'
 import type { SourceReference } from '@/types/socket'
+import type { Model } from '../../hooks/useModelSelection'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { useMessageFeedback } from '@/hooks/useMessageFeedback'
 import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartUrlRenderer'
@@ -162,8 +164,8 @@ export interface MessageBubbleProps {
   onEditCancel?: () => void
   /** Whether this is the last AI message */
   isLastAiMessage?: boolean
-  /** Handler for regenerate action */
-  onRegenerate?: (msg: Message) => void
+  /** Handler for regenerate action - receives the message and selected model */
+  onRegenerate?: (msg: Message, model: Model) => void
   /** Whether regenerate is in progress */
   isRegenerating?: boolean
 }
@@ -291,6 +293,9 @@ const MessageBubble = memo(
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
+
+    // State for regenerate model popover
+    const [isRegeneratePopoverOpen, setIsRegeneratePopoverOpen] = useState(false)
 
     // Use feedback hook for managing like/dislike state with localStorage persistence
     const { feedback, handleLike, handleDislike } = useMessageFeedback({
@@ -628,8 +633,20 @@ const MessageBubble = memo(
               msg.subtaskStatus !== 'RUNNING' &&
               msg.status !== 'streaming'
             }
-            onRegenerate={() => onRegenerate?.(msg)}
+            onRegenerateClick={() => setIsRegeneratePopoverOpen(true)}
             isRegenerating={isRegenerating}
+            renderRegenerateButton={defaultButton => (
+              <RegenerateModelPopover
+                open={isRegeneratePopoverOpen}
+                onOpenChange={setIsRegeneratePopoverOpen}
+                selectedTeam={selectedTeam ?? null}
+                onSelectModel={model => {
+                  onRegenerate?.(msg, model)
+                }}
+                isLoading={isRegenerating}
+                trigger={defaultButton}
+              />
+            )}
           />
         </>
       )

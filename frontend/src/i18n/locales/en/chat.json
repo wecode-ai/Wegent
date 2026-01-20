@@ -29,7 +29,9 @@
   },
   "regenerate": {
     "failed": "Failed to regenerate response",
-    "tooltip": "Regenerate response"
+    "tooltip": "Regenerate response",
+    "select_model": "Select Model",
+    "select_model_desc": "Choose a model for regeneration"
   },
   "quote": {
     "ask_wegent": "Ask Wegent",

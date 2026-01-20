@@ -57,6 +57,7 @@ import CorrectionProgressIndicator, {
 } from '../CorrectionProgressIndicator'
 import { useSocket } from '@/contexts/SocketContext'
 import type { CorrectionStage, CorrectionField } from '@/types/socket'
+import type { Model } from '../../hooks/useModelSelection'
 
 /**
  * Component to render a streaming message with typewriter effect.
@@ -147,6 +148,8 @@ interface MessagesAreaProps {
   onShareButtonRender?: (button: React.ReactNode) => void
   onContentChange?: () => void
   onSendMessage?: (content: string) => void
+  /** Callback for sending message with a specific model override (used for regenerate) */
+  onSendMessageWithModel?: (content: string, model: Model) => void
   isGroupChat?: boolean
   onRetry?: (message: Message) => void
   // Correction mode props
@@ -179,6 +182,7 @@ export default function MessagesArea({
   onContentChange,
   onShareButtonRender,
   onSendMessage,
+  onSendMessageWithModel,
   isGroupChat = false,
   onRetry,
   enableCorrectionMode = false,
@@ -734,9 +738,9 @@ export default function MessagesArea({
     ]
   )
 
-  // Handle regenerate - find the user message before the AI message and resend it
+  // Handle regenerate - find the user message before the AI message and resend it with selected model
   const handleRegenerate = useCallback(
-    async (aiMessage: Message) => {
+    async (aiMessage: Message, selectedModel: Model) => {
       // 1. Find the index of this AI message by subtaskId
       const aiIndex = messages.findIndex(m => m.subtaskId === aiMessage.subtaskId)
       if (aiIndex < 0) return
@@ -772,8 +776,11 @@ export default function MessagesArea({
           // 7. Refresh task detail to sync with backend
           await refreshSelectedTaskDetail(true)
 
-          // 8. Resend the same user message to trigger new AI response
-          if (onSendMessage) {
+          // 8. Resend the same user message with the selected model to trigger new AI response
+          if (onSendMessageWithModel) {
+            onSendMessageWithModel(originalUserContent, selectedModel)
+          } else if (onSendMessage) {
+            // Fallback to regular send if model override is not supported
             onSendMessage(originalUserContent)
           }
         }
@@ -794,6 +801,7 @@ export default function MessagesArea({
       cleanupMessagesAfterEdit,
       refreshSelectedTaskDetail,
       onSendMessage,
+      onSendMessageWithModel,
       toast,
       t,
     ]
@@ -1039,8 +1047,7 @@ export default function MessagesArea({
               msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false
 
             // Calculate if this is the last AI message (for regenerate button)
-            const isLastAiMessage =
-              msg.type === 'ai' && msg.subtaskId === lastAiMessageSubtaskId
+            const isLastAiMessage = msg.type === 'ai' && msg.subtaskId === lastAiMessageSubtaskId
 
             // Check if this AI message has a correction result
             const hasCorrectionResult =

@@ -89,6 +89,8 @@ export interface ChatStreamHandlers {
 
   // Actions
   handleSendMessage: (overrideMessage?: string) => Promise<void>
+  /** Send a message with a temporary model override (used for regeneration) */
+  handleSendMessageWithModel: (overrideMessage: string, modelOverride: Model) => Promise<void>
   handleRetry: (message: {
     content: string
     type: string
@@ -630,6 +632,182 @@ export function useChatStreamHandlers({
     ]
   )
 
+  /**
+   * Send a message with a temporary model override.
+   * This is used for regeneration where user selects a specific model for that single regeneration.
+   * The model override only affects this single call and does not change the session's model preference.
+   */
+  const handleSendMessageWithModel = useCallback(
+    async (overrideMessage: string, modelOverride: Model) => {
+      const message = overrideMessage.trim()
+      if (!message && !shouldHideChatInput) return
+
+      if (!isAttachmentReadyToSend) {
+        toast({
+          variant: 'destructive',
+          title: '请等待文件上传完成',
+        })
+        return
+      }
+
+      // For code type tasks, repository is required
+      const effectiveRepo =
+        selectedRepo ||
+        (selectedTaskDetail
+          ? {
+              git_url: selectedTaskDetail.git_url,
+              git_repo: selectedTaskDetail.git_repo,
+              git_repo_id: selectedTaskDetail.git_repo_id,
+              git_domain: selectedTaskDetail.git_domain,
+            }
+          : null)
+
+      if (taskType === 'code' && showRepositorySelector && !effectiveRepo?.git_repo) {
+        toast({
+          variant: 'destructive',
+          title: 'Please select a repository for code tasks',
+        })
+        return
+      }
+
+      setIsLoading(true)
+
+      // Set local pending state immediately
+      setLocalPendingMessage(message)
+      setTaskInputMessage('')
+      // Note: Don't reset attachments for regeneration since we're resending the same message
+      resetContexts?.()
+
+      // Use the override model instead of the selected model
+      const modelId = modelOverride.name === DEFAULT_MODEL_NAME ? undefined : modelOverride.name
+
+      // Prepare message with external API parameters
+      let finalMessage = message
+      if (Object.keys(externalApiParams).length > 0) {
+        const paramsJson = JSON.stringify(externalApiParams)
+        finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`
+      }
+
+      try {
+        const immediateTaskId = selectedTaskDetail?.id || -Date.now()
+
+        // Build pending contexts for immediate display (empty for regeneration)
+        const pendingContexts: Array<{
+          id: number
+          context_type: 'attachment' | 'knowledge_base' | 'table'
+          name: string
+          status: 'pending' | 'ready'
+          file_extension?: string
+          file_size?: number
+          mime_type?: string
+          document_count?: number
+          source_config?: {
+            url?: string
+          }
+        }> = []
+
+        const tempTaskId = await contextSendMessage(
+          {
+            message: finalMessage,
+            team_id: selectedTeam?.id ?? 0,
+            task_id: selectedTaskDetail?.id,
+            model_id: modelId,
+            force_override_bot_model: true, // Always force override when using model override
+            attachment_ids: [],
+            enable_deep_thinking: enableDeepThinking,
+            enable_clarification: enableClarification,
+            is_group_chat: selectedTaskDetail?.is_group_chat || false,
+            git_url: showRepositorySelector ? effectiveRepo?.git_url : undefined,
+            git_repo: showRepositorySelector ? effectiveRepo?.git_repo : undefined,
+            git_repo_id: showRepositorySelector ? effectiveRepo?.git_repo_id : undefined,
+            git_domain: showRepositorySelector ? effectiveRepo?.git_domain : undefined,
+            branch_name: showRepositorySelector
+              ? selectedBranch?.name || selectedTaskDetail?.branch_name
+              : undefined,
+            task_type: taskType,
+            knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
+          },
+          {
+            pendingUserMessage: message,
+            pendingAttachments: [],
+            pendingContexts: pendingContexts.length > 0 ? pendingContexts : undefined,
+            immediateTaskId: immediateTaskId,
+            currentUserId: user?.id,
+            onMessageSent: (
+              _localMessageId: string,
+              completedTaskId: number,
+              _subtaskId: number
+            ) => {
+              if (completedTaskId > 0) {
+                setPendingTaskId(completedTaskId)
+              }
+
+              // Call onTaskCreated callback when a new task is created
+              if (completedTaskId && !selectedTaskDetail?.id && onTaskCreated) {
+                onTaskCreated(completedTaskId)
+              }
+
+              if (completedTaskId && !selectedTaskDetail?.id) {
+                const params = new URLSearchParams(Array.from(searchParams.entries()))
+                params.set('taskId', String(completedTaskId))
+                router.push(`?${params.toString()}`)
+                refreshTasks()
+              }
+
+              if (selectedTaskDetail?.is_group_chat && completedTaskId) {
+                markTaskAsViewed(
+                  completedTaskId,
+                  selectedTaskDetail.status,
+                  new Date().toISOString()
+                )
+              }
+            },
+            onError: (error: Error) => {
+              handleSendError(error, message)
+            },
+          }
+        )
+
+        if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
+          setPendingTaskId(tempTaskId)
+        }
+
+        setTimeout(() => scrollToBottom(true), 0)
+      } catch (err) {
+        handleSendError(err as Error, message)
+      }
+
+      setIsLoading(false)
+    },
+    [
+      shouldHideChatInput,
+      isAttachmentReadyToSend,
+      toast,
+      selectedTeam,
+      resetContexts,
+      selectedTaskDetail,
+      contextSendMessage,
+      enableDeepThinking,
+      enableClarification,
+      refreshTasks,
+      searchParams,
+      router,
+      showRepositorySelector,
+      selectedRepo,
+      selectedBranch,
+      taskType,
+      knowledgeBaseId,
+      markTaskAsViewed,
+      user?.id,
+      handleSendError,
+      scrollToBottom,
+      setIsLoading,
+      setTaskInputMessage,
+      externalApiParams,
+      onTaskCreated,
+    ]
+  )
+
   // Update ref when handleSendMessage changes
   useEffect(() => {
     handleSendMessageRef.current = handleSendMessage
@@ -770,6 +948,7 @@ export function useChatStreamHandlers({
 
     // Actions
     handleSendMessage,
+    handleSendMessageWithModel,
     handleRetry,
     handleCancelTask,
     stopStream,
