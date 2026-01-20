@@ -316,6 +316,17 @@ def update_cache_repo(
         logger.error(f"Cache user ID error: {e}")
         return False, str(e)
 
+    # Security: Validate cache path is within allowed base directory
+    try:
+        user_base_dir = get_user_cache_base_dir()
+        _validate_cache_path(cache_path, user_base_dir)
+        logger.debug(
+            f"Cache path security validation passed for user_{user_id}: {cache_path}"
+        )
+    except ValueError as e:
+        logger.error(f"Cache path security validation failed: {e}")
+        return False, f"Security error: {e}"
+
     try:
         logger.info(f"Updating cache repository for user_id {user_id}: {cache_path}")
 
