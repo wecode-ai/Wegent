@@ -139,8 +139,18 @@ function parseCronExpression(expression: string): ScheduleState {
     }
   }
 
-  // Monthly pattern: "M H D * *"
+  // Monthly pattern: "M H D * *" or "M H L * *" (last day)
   if (dayOfMonth !== '*' && dayOfWeek === '*') {
+    // Handle 'L' for last day of month
+    if (dayOfMonth.toUpperCase() === 'L') {
+      return {
+        ...defaultState,
+        frequency: 'monthly',
+        hour: hourValue,
+        minute: minuteValue,
+        monthDay: -1, // -1 represents last day
+      }
+    }
     const parsedDay = parseInt(dayOfMonth)
     if (!isNaN(parsedDay)) {
       return {
@@ -187,7 +197,7 @@ function generateCronExpression(state: ScheduleState): string {
     }
 
     case 'monthly':
-      return `${state.minute} ${state.hour} ${state.monthDay} * *`
+      return `${state.minute} ${state.hour} ${state.monthDay === -1 ? 'L' : state.monthDay} * *`
 
     case 'custom':
       return state.customExpression
