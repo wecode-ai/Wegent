@@ -154,6 +154,44 @@
   "weekday_saturday": "星期六",
   "weekday_sunday": "星期日",
 
+  "weekday_short_mon": "一",
+  "weekday_short_tue": "二",
+  "weekday_short_wed": "三",
+  "weekday_short_thu": "四",
+  "weekday_short_fri": "五",
+  "weekday_short_sat": "六",
+  "weekday_short_sun": "日",
+
+  "schedule_frequency": "执行频率",
+  "frequency_hourly": "每小时",
+  "frequency_daily": "每天",
+  "frequency_weekly": "每周",
+  "frequency_monthly": "每月",
+  "frequency_custom": "自定义",
+
+  "hourly_interval": "间隔小时数",
+  "hourly_interval_hint": "每 {{interval}} 小时执行一次",
+  "at_minute_label": "在第几分钟执行",
+
+  "execute_hour": "执行小时",
+  "execute_minute": "执行分钟",
+  "more_hours": "更多",
+  "custom_minute": "自定义",
+
+  "select_weekdays": "选择星期",
+  "month_day_select": "选择日期",
+  "last_day": "最后一天",
+
+  "execution_preview": "执行计划预览",
+  "next_run": "下次执行",
+
+  "advanced_cron_editor": "高级：查看/编辑 cron 表达式",
+  "cron_format_hint": "格式：分 时 日 月 周（如：0 9 * * 1-5 = 工作日每天上午9点）",
+  "cron_format_label": "格式",
+  "cron_format_parts": "分 时 日 月 周",
+  "cron_example": "示例：0 9 * * 1-5 = 工作日每天上午9点",
+  "cron_invalid_expression": "无效的 Cron 表达式",
+
   "preset_every_hour": "每小时",
   "preset_every_2_hours": "每 2 小时",
   "preset_every_6_hours": "每 6 小时",

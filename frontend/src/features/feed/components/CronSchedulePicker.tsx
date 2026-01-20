@@ -5,78 +5,150 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * User-friendly cron schedule picker component.
- * Provides preset options and visual time selection instead of raw cron expression input.
+ * User-friendly cron schedule picker component with Google Calendar style.
+ * Provides toggle button groups, weekday multi-select, time quick select,
+ * and execution time preview.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { Toggle } from '@/components/ui/toggle'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { cn } from '@/lib/utils'
+import { ChevronRight, Calendar, Clock } from 'lucide-react'
+import { CronExpressionParser } from 'cron-parser'
 
 interface CronSchedulePickerProps {
   value: string
   onChange: (expression: string) => void
   className?: string
+  timezone?: string
 }
 
-type ScheduleType = 'preset' | 'daily' | 'weekly' | 'monthly' | 'hourly'
+type FrequencyType = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom'
 
 interface ScheduleState {
-  type: ScheduleType
-  preset?: string
-  hour?: number
-  minute?: number
-  weekday?: number
-  monthDay?: number
-  hourlyInterval?: number
+  frequency: FrequencyType
+  hour: number
+  minute: number
+  weekdays: number[]
+  monthDay: number
+  hourlyInterval: number
+  customExpression: string
 }
 
-// Preset cron expressions with their display keys
-const PRESETS = [
-  { key: 'every_hour', expression: '0 * * * *' },
-  { key: 'every_2_hours', expression: '0 */2 * * *' },
-  { key: 'every_6_hours', expression: '0 */6 * * *' },
-  { key: 'every_12_hours', expression: '0 */12 * * *' },
-  { key: 'daily_9am', expression: '0 9 * * *' },
-  { key: 'daily_noon', expression: '0 12 * * *' },
-  { key: 'daily_6pm', expression: '0 18 * * *' },
-  { key: 'weekdays_9am', expression: '0 9 * * 1-5' },
-  { key: 'weekly_monday_9am', expression: '0 9 * * 1' },
-  { key: 'monthly_1st_9am', expression: '0 9 1 * *' },
+// Common hour quick select options
+const COMMON_HOURS = [6, 9, 12, 15, 18, 21]
+
+// Common minute quick select options
+const COMMON_MINUTES = [0, 15, 30, 45]
+
+// Hourly interval options
+const HOURLY_INTERVALS = [1, 2, 3, 4, 6, 8, 12]
+
+// Common month day options
+const COMMON_MONTH_DAYS = [1, 5, 10, 15, 20, 25]
+
+// Weekday definitions (0 = Sunday, 1 = Monday, etc.)
+const WEEKDAYS = [
+  { value: 1, key: 'mon' },
+  { value: 2, key: 'tue' },
+  { value: 3, key: 'wed' },
+  { value: 4, key: 'thu' },
+  { value: 5, key: 'fri' },
+  { value: 6, key: 'sat' },
+  { value: 0, key: 'sun' },
 ]
 
-// Parse cron expression to schedule state
-// The cron expression represents time in the user's configured timezone (from trigger_config.timezone).
-// Backend handles timezone conversion to UTC, so we parse the expression as-is without conversion.
+/**
+ * Parse cron expression to schedule state
+ */
 function parseCronExpression(expression: string): ScheduleState {
-  // Check if it matches a preset
-  const preset = PRESETS.find(p => p.expression === expression)
-  if (preset) {
-    return { type: 'preset', preset: preset.key }
+  const defaultState: ScheduleState = {
+    frequency: 'daily',
+    hour: 9,
+    minute: 0,
+    weekdays: [1], // Monday
+    monthDay: 1,
+    hourlyInterval: 2,
+    customExpression: expression,
   }
 
-  const parts = expression.split(' ')
+  const parts = expression.trim().split(/\s+/)
   if (parts.length !== 5) {
-    return { type: 'preset', preset: 'daily_9am' }
+    return { ...defaultState, frequency: 'custom' }
   }
 
   const [minute, hour, dayOfMonth, , dayOfWeek] = parts
 
-  // Hourly pattern: "0 */N * * *" or "M */N * * *"
-  if (hour.startsWith('*/') && dayOfMonth === '*' && dayOfWeek === '*') {
-    const interval = parseInt(hour.slice(2))
-    if (!isNaN(interval)) {
+  // Parse minute
+  const parsedMinute = parseInt(minute)
+  const minuteValue = isNaN(parsedMinute) ? 0 : parsedMinute
+
+  // Hourly pattern: "M */N * * *" or "M * * * *"
+  if (hour === '*' || hour.startsWith('*/')) {
+    const interval = hour === '*' ? 1 : parseInt(hour.slice(2))
+    if (!isNaN(interval) && dayOfMonth === '*' && dayOfWeek === '*') {
       return {
-        type: 'hourly',
+        ...defaultState,
+        frequency: 'hourly',
         hourlyInterval: interval,
-        minute: parseInt(minute) || 0,
+        minute: minuteValue,
+      }
+    }
+  }
+
+  // Parse hour for other patterns
+  const parsedHour = parseInt(hour)
+  const hourValue = isNaN(parsedHour) ? 9 : parsedHour
+
+  // Weekly pattern: "M H * * D" or "M H * * D,D,D"
+  if (dayOfMonth === '*' && dayOfWeek !== '*' && !dayOfWeek.includes('-')) {
+    const weekdayValues = dayOfWeek
+      .split(',')
+      .map(d => parseInt(d))
+      .filter(d => !isNaN(d))
+    if (weekdayValues.length > 0) {
+      return {
+        ...defaultState,
+        frequency: 'weekly',
+        hour: hourValue,
+        minute: minuteValue,
+        weekdays: weekdayValues,
+      }
+    }
+  }
+
+  // Weekly pattern with range: "M H * * 1-5"
+  if (dayOfMonth === '*' && dayOfWeek.includes('-')) {
+    const [start, end] = dayOfWeek.split('-').map(d => parseInt(d))
+    if (!isNaN(start) && !isNaN(end)) {
+      const weekdayValues: number[] = []
+      for (let i = start; i <= end; i++) {
+        weekdayValues.push(i)
+      }
+      return {
+        ...defaultState,
+        frequency: 'weekly',
+        hour: hourValue,
+        minute: minuteValue,
+        weekdays: weekdayValues,
+      }
+    }
+  }
+
+  // Monthly pattern: "M H D * *"
+  if (dayOfMonth !== '*' && dayOfWeek === '*') {
+    const parsedDay = parseInt(dayOfMonth)
+    if (!isNaN(parsedDay)) {
+      return {
+        ...defaultState,
+        frequency: 'monthly',
+        hour: hourValue,
+        minute: minuteValue,
+        monthDay: parsedDay,
       }
     }
   }
@@ -84,61 +156,109 @@ function parseCronExpression(expression: string): ScheduleState {
   // Daily pattern: "M H * * *"
   if (dayOfMonth === '*' && dayOfWeek === '*' && !hour.includes('*') && !hour.includes('/')) {
     return {
-      type: 'daily',
-      hour: parseInt(hour) || 9,
-      minute: parseInt(minute) || 0,
+      ...defaultState,
+      frequency: 'daily',
+      hour: hourValue,
+      minute: minuteValue,
     }
   }
 
-  // Weekly pattern: "M H * * D"
-  if (dayOfMonth === '*' && dayOfWeek !== '*' && !dayOfWeek.includes('-')) {
-    return {
-      type: 'weekly',
-      hour: parseInt(hour) || 9,
-      minute: parseInt(minute) || 0,
-      weekday: parseInt(dayOfWeek) || 1,
-    }
-  }
-
-  // Monthly pattern: "M H D * *"
-  if (dayOfMonth !== '*' && dayOfWeek === '*') {
-    return {
-      type: 'monthly',
-      hour: parseInt(hour) || 9,
-      minute: parseInt(minute) || 0,
-      monthDay: parseInt(dayOfMonth) || 1,
-    }
-  }
-
-  // Default to preset
-  return { type: 'preset', preset: 'daily_9am' }
+  // Fallback to custom
+  return { ...defaultState, frequency: 'custom', customExpression: expression }
 }
 
-// Generate cron expression from schedule state
-// The cron expression represents time in the user's configured timezone.
-// Backend will convert this to UTC based on trigger_config.timezone.
+/**
+ * Generate cron expression from schedule state
+ */
 function generateCronExpression(state: ScheduleState): string {
-  switch (state.type) {
-    case 'preset': {
-      const preset = PRESETS.find(p => p.key === state.preset)
-      return preset?.expression || '0 9 * * *'
-    }
+  switch (state.frequency) {
     case 'hourly':
-      return `${state.minute || 0} */${state.hourlyInterval || 1} * * *`
+      if (state.hourlyInterval === 1) {
+        return `${state.minute} * * * *`
+      }
+      return `${state.minute} */${state.hourlyInterval} * * *`
+
     case 'daily':
-      return `${state.minute || 0} ${state.hour || 9} * * *`
-    case 'weekly':
-      return `${state.minute || 0} ${state.hour || 9} * * ${state.weekday || 1}`
+      return `${state.minute} ${state.hour} * * *`
+
+    case 'weekly': {
+      const weekdayStr = state.weekdays.sort((a, b) => a - b).join(',')
+      return `${state.minute} ${state.hour} * * ${weekdayStr || '1'}`
+    }
+
     case 'monthly':
-      return `${state.minute || 0} ${state.hour || 9} ${state.monthDay || 1} * *`
+      return `${state.minute} ${state.hour} ${state.monthDay} * *`
+
+    case 'custom':
+      return state.customExpression
+
     default:
       return '0 9 * * *'
   }
 }
 
-export function CronSchedulePicker({ value, onChange, className }: CronSchedulePickerProps) {
+/**
+ * Validate cron expression
+ */
+function isValidCronExpression(expression: string): boolean {
+  try {
+    CronExpressionParser.parse(expression)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Calculate next N execution times
+ */
+function getNextExecutions(expression: string, timezone: string, count: number = 5): Date[] {
+  try {
+    const cronExpression = CronExpressionParser.parse(expression, {
+      tz: timezone,
+      currentDate: new Date(),
+    })
+    const runs: Date[] = []
+    for (let i = 0; i < count; i++) {
+      const next = cronExpression.next()
+      if (next) {
+        runs.push(next.toDate())
+      }
+    }
+    return runs
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Format date for preview display
+ */
+function formatExecutionDate(date: Date, t: (key: string) => string): string {
+  const weekdayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+  const weekday = t(`weekday_short_${weekdayKeys[date.getDay()]}`)
+
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+
+  return `${year}-${month}-${day} (${weekday}) ${hours}:${minutes}`
+}
+
+export function CronSchedulePicker({
+  value,
+  onChange,
+  className,
+  timezone = Intl.DateTimeFormat().resolvedOptions().timeZone,
+}: CronSchedulePickerProps) {
   const { t } = useTranslation('feed')
   const [schedule, setSchedule] = useState<ScheduleState>(() => parseCronExpression(value))
+  const [showAllHours, setShowAllHours] = useState(false)
+  const [showCustomMinute, setShowCustomMinute] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [customExpressionError, setCustomExpressionError] = useState<string | null>(null)
 
   // Sync with external value changes
   useEffect(() => {
@@ -151,299 +271,443 @@ export function CronSchedulePicker({ value, onChange, className }: CronScheduleP
     (newSchedule: ScheduleState) => {
       setSchedule(newSchedule)
       const expression = generateCronExpression(newSchedule)
-      onChange(expression)
+      if (isValidCronExpression(expression)) {
+        setCustomExpressionError(null)
+        onChange(expression)
+      }
     },
     [onChange]
   )
 
-  const handleTypeChange = useCallback(
-    (type: ScheduleType) => {
+  // Handle frequency change
+  const handleFrequencyChange = useCallback(
+    (frequency: string) => {
+      if (!frequency) return
       const newSchedule: ScheduleState = {
-        type,
-        hour: schedule.hour || 9,
-        minute: schedule.minute || 0,
-        weekday: schedule.weekday || 1,
-        monthDay: schedule.monthDay || 1,
-        hourlyInterval: schedule.hourlyInterval || 2,
-        preset: type === 'preset' ? 'daily_9am' : undefined,
+        ...schedule,
+        frequency: frequency as FrequencyType,
+      }
+      // Reset to defaults if switching to custom
+      if (frequency === 'custom') {
+        newSchedule.customExpression = generateCronExpression(schedule)
       }
       updateSchedule(newSchedule)
     },
     [schedule, updateSchedule]
   )
 
-  // Generate hour options (0-23)
-  const hourOptions = Array.from({ length: 24 }, (_, i) => i)
+  // Handle weekday toggle
+  const handleWeekdayToggle = useCallback(
+    (weekday: number) => {
+      const currentWeekdays = schedule.weekdays
+      let newWeekdays: number[]
 
-  // Generate minute options (0-59)
-  const minuteOptions = Array.from({ length: 60 }, (_, i) => i)
+      if (currentWeekdays.includes(weekday)) {
+        // Remove weekday, but keep at least one
+        newWeekdays = currentWeekdays.filter(d => d !== weekday)
+        if (newWeekdays.length === 0) {
+          newWeekdays = [weekday]
+        }
+      } else {
+        // Add weekday
+        newWeekdays = [...currentWeekdays, weekday]
+      }
 
-  // Generate weekday options
-  const weekdayOptions = [
-    { value: 1, key: 'monday' },
-    { value: 2, key: 'tuesday' },
-    { value: 3, key: 'wednesday' },
-    { value: 4, key: 'thursday' },
-    { value: 5, key: 'friday' },
-    { value: 6, key: 'saturday' },
-    { value: 0, key: 'sunday' },
-  ]
+      updateSchedule({ ...schedule, weekdays: newWeekdays })
+    },
+    [schedule, updateSchedule]
+  )
 
-  // Generate month day options (1-31)
-  const monthDayOptions = Array.from({ length: 31 }, (_, i) => i + 1)
+  // Handle custom expression change
+  const handleCustomExpressionChange = useCallback(
+    (expression: string) => {
+      setSchedule(prev => ({ ...prev, customExpression: expression }))
 
-  // Generate hourly interval options
-  const hourlyIntervalOptions = [1, 2, 3, 4, 6, 8, 12]
+      if (isValidCronExpression(expression)) {
+        setCustomExpressionError(null)
+        onChange(expression)
+      } else {
+        setCustomExpressionError(t('cron_invalid_expression'))
+      }
+    },
+    [onChange, t]
+  )
+
+  // Calculate next executions
+  const nextExecutions = useMemo(() => {
+    const expression = generateCronExpression(schedule)
+    return getNextExecutions(expression, timezone, 5)
+  }, [schedule, timezone])
+
+  // Current cron expression
+  const currentExpression = useMemo(() => generateCronExpression(schedule), [schedule])
+
+  // Check if current minute is a common value
+  const isCommonMinute = COMMON_MINUTES.includes(schedule.minute)
 
   return (
     <div className={cn('space-y-4', className)}>
-      {/* Schedule Type Selection */}
-      <div>
-        <Label className="text-sm font-medium">{t('schedule_type')}</Label>
-        <Select value={schedule.type} onValueChange={handleTypeChange}>
-          <SelectTrigger className="mt-1.5">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="preset">{t('schedule_preset')}</SelectItem>
-            <SelectItem value="hourly">{t('schedule_hourly')}</SelectItem>
-            <SelectItem value="daily">{t('schedule_daily')}</SelectItem>
-            <SelectItem value="weekly">{t('schedule_weekly')}</SelectItem>
-            <SelectItem value="monthly">{t('schedule_monthly')}</SelectItem>
-          </SelectContent>
-        </Select>
+      {/* Frequency Toggle Group */}
+      <div className="space-y-2">
+        <Label className="text-sm font-medium">{t('schedule_frequency')}</Label>
+        <ToggleGroup
+          type="single"
+          value={schedule.frequency}
+          onValueChange={handleFrequencyChange}
+          className="flex flex-wrap gap-2"
+        >
+          <ToggleGroupItem value="hourly" className="flex-1 min-w-[70px]">
+            {t('frequency_hourly')}
+          </ToggleGroupItem>
+          <ToggleGroupItem value="daily" className="flex-1 min-w-[70px]">
+            {t('frequency_daily')}
+          </ToggleGroupItem>
+          <ToggleGroupItem value="weekly" className="flex-1 min-w-[70px]">
+            {t('frequency_weekly')}
+          </ToggleGroupItem>
+          <ToggleGroupItem value="monthly" className="flex-1 min-w-[70px]">
+            {t('frequency_monthly')}
+          </ToggleGroupItem>
+          <ToggleGroupItem value="custom" className="flex-1 min-w-[70px]">
+            {t('frequency_custom')}
+          </ToggleGroupItem>
+        </ToggleGroup>
       </div>
 
-      {/* Preset Selection */}
-      {schedule.type === 'preset' && (
-        <div>
-          <Label className="text-sm font-medium">{t('schedule_preset_select')}</Label>
-          <Select
-            value={schedule.preset || 'daily_9am'}
-            onValueChange={preset => updateSchedule({ ...schedule, preset })}
-          >
-            <SelectTrigger className="mt-1.5">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PRESETS.map(preset => (
-                <SelectItem key={preset.key} value={preset.key}>
-                  {t(`preset_${preset.key}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
       {/* Hourly Configuration */}
-      {schedule.type === 'hourly' && (
-        <div className="flex items-center gap-3">
-          <div className="flex-1">
-            <Label className="text-sm font-medium">{t('every')}</Label>
-            <Select
-              value={String(schedule.hourlyInterval || 2)}
-              onValueChange={v => updateSchedule({ ...schedule, hourlyInterval: parseInt(v) })}
-            >
-              <SelectTrigger className="mt-1.5">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {hourlyIntervalOptions.map(interval => (
-                  <SelectItem key={interval} value={String(interval)}>
-                    {interval} {t('unit_hours')}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      {schedule.frequency === 'hourly' && (
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">{t('hourly_interval')}</Label>
+            <div className="flex flex-wrap gap-2">
+              {HOURLY_INTERVALS.map(interval => (
+                <Toggle
+                  key={interval}
+                  pressed={schedule.hourlyInterval === interval}
+                  onPressedChange={() => updateSchedule({ ...schedule, hourlyInterval: interval })}
+                  className="min-w-[44px]"
+                >
+                  {interval}
+                </Toggle>
+              ))}
+            </div>
+            <p className="text-xs text-text-muted">
+              {t('hourly_interval_hint', { interval: schedule.hourlyInterval })}
+            </p>
           </div>
-          <div className="flex-1">
-            <Label className="text-sm font-medium">{t('at_minute')}</Label>
-            <Select
-              value={String(schedule.minute || 0)}
-              onValueChange={v => updateSchedule({ ...schedule, minute: parseInt(v) })}
-            >
-              <SelectTrigger className="mt-1.5">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {minuteOptions.map(minute => (
-                  <SelectItem key={minute} value={String(minute)}>
-                    {String(minute).padStart(2, '0')} {t('minute_suffix')}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">{t('at_minute_label')}</Label>
+            <div className="flex flex-wrap gap-2">
+              {COMMON_MINUTES.map(minute => (
+                <Toggle
+                  key={minute}
+                  pressed={schedule.minute === minute}
+                  onPressedChange={() => updateSchedule({ ...schedule, minute })}
+                  className="min-w-[44px]"
+                >
+                  {String(minute).padStart(2, '0')}
+                </Toggle>
+              ))}
+            </div>
           </div>
         </div>
       )}
 
       {/* Daily Configuration */}
-      {schedule.type === 'daily' && (
-        <div>
-          <Label className="text-sm font-medium">{t('execute_time')}</Label>
-          <div className="mt-1.5 flex items-center gap-2">
-            <Select
-              value={String(schedule.hour || 9)}
-              onValueChange={v => updateSchedule({ ...schedule, hour: parseInt(v) })}
-            >
-              <SelectTrigger className="w-24">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {hourOptions.map(hour => (
-                  <SelectItem key={hour} value={String(hour)}>
+      {schedule.frequency === 'daily' && (
+        <div className="space-y-3">
+          {/* Hour Selection */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">{t('execute_hour')}</Label>
+            <div className="flex flex-wrap gap-2">
+              {COMMON_HOURS.map(hour => (
+                <Toggle
+                  key={hour}
+                  pressed={schedule.hour === hour}
+                  onPressedChange={() => updateSchedule({ ...schedule, hour })}
+                  className="min-w-[44px]"
+                >
+                  {String(hour).padStart(2, '0')}
+                </Toggle>
+              ))}
+              <Toggle
+                pressed={showAllHours}
+                onPressedChange={setShowAllHours}
+                className="min-w-[60px]"
+              >
+                {t('more_hours')}
+              </Toggle>
+            </div>
+            {showAllHours && (
+              <div className="flex flex-wrap gap-1 p-3 bg-surface rounded-md border border-border">
+                {Array.from({ length: 24 }, (_, i) => i).map(hour => (
+                  <Toggle
+                    key={hour}
+                    pressed={schedule.hour === hour}
+                    onPressedChange={() => updateSchedule({ ...schedule, hour })}
+                    size="sm"
+                    className="w-10 h-8"
+                  >
                     {String(hour).padStart(2, '0')}
-                  </SelectItem>
+                  </Toggle>
                 ))}
-              </SelectContent>
-            </Select>
-            <span className="text-text-secondary">:</span>
-            <Select
-              value={String(schedule.minute || 0)}
-              onValueChange={v => updateSchedule({ ...schedule, minute: parseInt(v) })}
-            >
-              <SelectTrigger className="w-24">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {minuteOptions.map(minute => (
-                  <SelectItem key={minute} value={String(minute)}>
-                    {String(minute).padStart(2, '0')}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              </div>
+            )}
+          </div>
+
+          {/* Minute Selection */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">{t('execute_minute')}</Label>
+            <div className="flex flex-wrap gap-2">
+              {COMMON_MINUTES.map(minute => (
+                <Toggle
+                  key={minute}
+                  pressed={schedule.minute === minute && !showCustomMinute}
+                  onPressedChange={() => {
+                    setShowCustomMinute(false)
+                    updateSchedule({ ...schedule, minute })
+                  }}
+                  className="min-w-[44px]"
+                >
+                  {String(minute).padStart(2, '0')}
+                </Toggle>
+              ))}
+              <Toggle
+                pressed={showCustomMinute || !isCommonMinute}
+                onPressedChange={() => setShowCustomMinute(true)}
+                className="min-w-[70px]"
+              >
+                {t('custom_minute')}
+              </Toggle>
+            </div>
+            {(showCustomMinute || !isCommonMinute) && (
+              <Input
+                type="number"
+                min={0}
+                max={59}
+                value={schedule.minute}
+                onChange={e => {
+                  const val = parseInt(e.target.value)
+                  if (!isNaN(val) && val >= 0 && val <= 59) {
+                    updateSchedule({ ...schedule, minute: val })
+                  }
+                }}
+                className="w-24"
+                placeholder="0-59"
+              />
+            )}
           </div>
         </div>
       )}
 
       {/* Weekly Configuration */}
-      {schedule.type === 'weekly' && (
+      {schedule.frequency === 'weekly' && (
         <div className="space-y-3">
-          <div>
-            <Label className="text-sm font-medium">{t('weekday')}</Label>
-            <Select
-              value={String(schedule.weekday ?? 1)}
-              onValueChange={v => updateSchedule({ ...schedule, weekday: parseInt(v) })}
-            >
-              <SelectTrigger className="mt-1.5">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {weekdayOptions.map(day => (
-                  <SelectItem key={day.value} value={String(day.value)}>
-                    {t(`weekday_${day.key}`)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          {/* Weekday Multi-Select */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">{t('select_weekdays')}</Label>
+            <div className="flex flex-wrap gap-2">
+              {WEEKDAYS.map(day => (
+                <Toggle
+                  key={day.value}
+                  pressed={schedule.weekdays.includes(day.value)}
+                  onPressedChange={() => handleWeekdayToggle(day.value)}
+                  variant="pill"
+                  className="w-10 h-10 rounded-full"
+                >
+                  {t(`weekday_short_${day.key}`)}
+                </Toggle>
+              ))}
+            </div>
           </div>
-          <div>
+
+          {/* Time Selection */}
+          <div className="space-y-2">
             <Label className="text-sm font-medium">{t('execute_time')}</Label>
-            <div className="mt-1.5 flex items-center gap-2">
-              <Select
-                value={String(schedule.hour || 9)}
-                onValueChange={v => updateSchedule({ ...schedule, hour: parseInt(v) })}
-              >
-                <SelectTrigger className="w-24">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {hourOptions.map(hour => (
-                    <SelectItem key={hour} value={String(hour)}>
-                      {String(hour).padStart(2, '0')}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="flex items-center gap-2">
+              <div className="flex flex-wrap gap-2">
+                {COMMON_HOURS.map(hour => (
+                  <Toggle
+                    key={hour}
+                    pressed={schedule.hour === hour}
+                    onPressedChange={() => updateSchedule({ ...schedule, hour })}
+                    size="sm"
+                    className="min-w-[40px]"
+                  >
+                    {String(hour).padStart(2, '0')}
+                  </Toggle>
+                ))}
+              </div>
               <span className="text-text-secondary">:</span>
-              <Select
-                value={String(schedule.minute || 0)}
-                onValueChange={v => updateSchedule({ ...schedule, minute: parseInt(v) })}
-              >
-                <SelectTrigger className="w-24">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {minuteOptions.map(minute => (
-                    <SelectItem key={minute} value={String(minute)}>
-                      {String(minute).padStart(2, '0')}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex gap-1">
+                {COMMON_MINUTES.map(minute => (
+                  <Toggle
+                    key={minute}
+                    pressed={schedule.minute === minute}
+                    onPressedChange={() => updateSchedule({ ...schedule, minute })}
+                    size="sm"
+                    className="min-w-[40px]"
+                  >
+                    {String(minute).padStart(2, '0')}
+                  </Toggle>
+                ))}
+              </div>
             </div>
           </div>
         </div>
       )}
 
       {/* Monthly Configuration */}
-      {schedule.type === 'monthly' && (
+      {schedule.frequency === 'monthly' && (
         <div className="space-y-3">
-          <div>
-            <Label className="text-sm font-medium">{t('month_day')}</Label>
-            <Select
-              value={String(schedule.monthDay || 1)}
-              onValueChange={v => updateSchedule({ ...schedule, monthDay: parseInt(v) })}
-            >
-              <SelectTrigger className="mt-1.5">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {monthDayOptions.map(day => (
-                  <SelectItem key={day} value={String(day)}>
-                    {t('day_of_month', { day })}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          {/* Day of Month Selection */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">{t('month_day_select')}</Label>
+            <div className="flex flex-wrap gap-2">
+              {COMMON_MONTH_DAYS.map(day => (
+                <Toggle
+                  key={day}
+                  pressed={schedule.monthDay === day}
+                  onPressedChange={() => updateSchedule({ ...schedule, monthDay: day })}
+                  className="min-w-[44px]"
+                >
+                  {day}
+                </Toggle>
+              ))}
+              <Toggle
+                pressed={schedule.monthDay === -1}
+                onPressedChange={() => updateSchedule({ ...schedule, monthDay: -1 })}
+                className="min-w-[80px]"
+              >
+                {t('last_day')}
+              </Toggle>
+            </div>
+            {!COMMON_MONTH_DAYS.includes(schedule.monthDay) && schedule.monthDay !== -1 && (
+              <Input
+                type="number"
+                min={1}
+                max={31}
+                value={schedule.monthDay}
+                onChange={e => {
+                  const val = parseInt(e.target.value)
+                  if (!isNaN(val) && val >= 1 && val <= 31) {
+                    updateSchedule({ ...schedule, monthDay: val })
+                  }
+                }}
+                className="w-24"
+                placeholder="1-31"
+              />
+            )}
           </div>
-          <div>
+
+          {/* Time Selection */}
+          <div className="space-y-2">
             <Label className="text-sm font-medium">{t('execute_time')}</Label>
-            <div className="mt-1.5 flex items-center gap-2">
-              <Select
-                value={String(schedule.hour || 9)}
-                onValueChange={v => updateSchedule({ ...schedule, hour: parseInt(v) })}
-              >
-                <SelectTrigger className="w-24">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {hourOptions.map(hour => (
-                    <SelectItem key={hour} value={String(hour)}>
-                      {String(hour).padStart(2, '0')}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="flex items-center gap-2">
+              <div className="flex flex-wrap gap-2">
+                {COMMON_HOURS.map(hour => (
+                  <Toggle
+                    key={hour}
+                    pressed={schedule.hour === hour}
+                    onPressedChange={() => updateSchedule({ ...schedule, hour })}
+                    size="sm"
+                    className="min-w-[40px]"
+                  >
+                    {String(hour).padStart(2, '0')}
+                  </Toggle>
+                ))}
+              </div>
               <span className="text-text-secondary">:</span>
-              <Select
-                value={String(schedule.minute || 0)}
-                onValueChange={v => updateSchedule({ ...schedule, minute: parseInt(v) })}
-              >
-                <SelectTrigger className="w-24">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {minuteOptions.map(minute => (
-                    <SelectItem key={minute} value={String(minute)}>
-                      {String(minute).padStart(2, '0')}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex gap-1">
+                {COMMON_MINUTES.map(minute => (
+                  <Toggle
+                    key={minute}
+                    pressed={schedule.minute === minute}
+                    onPressedChange={() => updateSchedule({ ...schedule, minute })}
+                    size="sm"
+                    className="min-w-[40px]"
+                  >
+                    {String(minute).padStart(2, '0')}
+                  </Toggle>
+                ))}
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Preview */}
-      <div className="rounded-md bg-surface p-3">
-        <p className="text-xs text-text-muted">
-          {t('cron_preview')}: <code className="font-mono">{value}</code>
-        </p>
-      </div>
+      {/* Custom Expression */}
+      {schedule.frequency === 'custom' && (
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">{t('cron_expression')}</Label>
+          <Input
+            value={schedule.customExpression}
+            onChange={e => handleCustomExpressionChange(e.target.value)}
+            placeholder="0 9 * * *"
+            className={cn(customExpressionError && 'border-error')}
+          />
+          {customExpressionError && <p className="text-xs text-error">{customExpressionError}</p>}
+          <p className="text-xs text-text-muted">{t('cron_format_hint')}</p>
+        </div>
+      )}
+
+      {/* Execution Preview */}
+      {nextExecutions.length > 0 && (
+        <div className="rounded-md bg-surface border border-border p-3 space-y-2">
+          <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
+            <Calendar className="h-4 w-4" />
+            {t('execution_preview')}
+          </div>
+          <ul className="space-y-1 text-sm text-text-secondary">
+            {nextExecutions.map((date, index) => (
+              <li key={index} className="flex items-center gap-2">
+                <Clock className="h-3 w-3 text-text-muted" />
+                <span className={index === 0 ? 'text-primary font-medium' : ''}>
+                  {index === 0 && `${t('next_run')}: `}
+                  {formatExecutionDate(date, t)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Advanced: Cron Expression Editor */}
+      <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <CollapsibleTrigger className="flex items-center gap-1 text-sm text-text-muted hover:text-text-primary transition-colors">
+          <ChevronRight
+            className={cn('h-4 w-4 transition-transform', advancedOpen && 'rotate-90')}
+          />
+          {t('advanced_cron_editor')}
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2">
+          <div className="rounded-md bg-surface border border-border p-3 space-y-2">
+            <div className="space-y-1">
+              <Label className="text-xs text-text-muted">{t('cron_expression')}</Label>
+              <Input
+                value={currentExpression}
+                onChange={e => {
+                  const expression = e.target.value
+                  if (isValidCronExpression(expression)) {
+                    const parsed = parseCronExpression(expression)
+                    setSchedule(parsed)
+                    onChange(expression)
+                  }
+                }}
+                className="font-mono text-sm"
+                placeholder="0 9 * * *"
+              />
+            </div>
+            <div className="text-xs text-text-muted space-y-1">
+              <p>
+                💡 {t('cron_format_label')}: {t('cron_format_parts')}
+              </p>
+              <p>{t('cron_example')}</p>
+            </div>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   )
 }

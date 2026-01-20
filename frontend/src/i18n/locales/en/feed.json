@@ -154,6 +154,44 @@
   "weekday_saturday": "Saturday",
   "weekday_sunday": "Sunday",
 
+  "weekday_short_mon": "Mon",
+  "weekday_short_tue": "Tue",
+  "weekday_short_wed": "Wed",
+  "weekday_short_thu": "Thu",
+  "weekday_short_fri": "Fri",
+  "weekday_short_sat": "Sat",
+  "weekday_short_sun": "Sun",
+
+  "schedule_frequency": "Frequency",
+  "frequency_hourly": "Hourly",
+  "frequency_daily": "Daily",
+  "frequency_weekly": "Weekly",
+  "frequency_monthly": "Monthly",
+  "frequency_custom": "Custom",
+
+  "hourly_interval": "Interval (hours)",
+  "hourly_interval_hint": "Execute every {{interval}} hour(s)",
+  "at_minute_label": "At minute",
+
+  "execute_hour": "Hour",
+  "execute_minute": "Minute",
+  "more_hours": "More",
+  "custom_minute": "Custom",
+
+  "select_weekdays": "Select Days",
+  "month_day_select": "Select Day",
+  "last_day": "Last Day",
+
+  "execution_preview": "Execution Preview",
+  "next_run": "Next run",
+
+  "advanced_cron_editor": "Advanced: View/Edit cron expression",
+  "cron_format_hint": "Format: min hour day month weekday (e.g., 0 9 * * 1-5 = Weekdays at 9 AM)",
+  "cron_format_label": "Format",
+  "cron_format_parts": "min hour day month weekday",
+  "cron_example": "Example: 0 9 * * 1-5 = Weekdays at 9 AM",
+  "cron_invalid_expression": "Invalid cron expression",
+
   "preset_every_hour": "Every Hour",
   "preset_every_2_hours": "Every 2 Hours",
   "preset_every_6_hours": "Every 6 Hours",
