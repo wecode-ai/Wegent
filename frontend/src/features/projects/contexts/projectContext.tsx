@@ -9,6 +9,7 @@ import { ProjectWithTasks, ProjectTask } from '@/types/api'
 import { projectApis, CreateProjectRequest, UpdateProjectRequest } from '@/apis/projects'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { ApiError } from '@/apis/client'
 
 interface ProjectContextValue {
   // Data
@@ -245,8 +246,10 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
         // since the task should no longer be associated with the project anyway
         const message = err instanceof Error ? err.message : 'Failed to remove task from project'
         // Only show error toast for unexpected errors, not for 404 (task not found)
+        // Check both ApiError status code and error message for "not found" (case-insensitive)
         const isNotFoundError =
-          err instanceof Error && (err.message.includes('404') || err.message.includes('not found'))
+          (err instanceof ApiError && err.status === 404) ||
+          (err instanceof Error && err.message.toLowerCase().includes('not found'))
         if (!isNotFoundError) {
           toast({
             title: t('toast.removeTaskFailed'),
