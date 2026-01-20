@@ -63,7 +63,7 @@ get_local_ip() {
 # Default configuration
 DEFAULT_PORT=8001
 DEFAULT_HOST="0.0.0.0"
-DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:latest"
+DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:1.1.2-12"
 DEFAULT_TASK_API_DOMAIN="http://$(get_local_ip):8000"
 PYTHON_PATH=""
 

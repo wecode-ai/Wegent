@@ -430,11 +430,11 @@ async def sandbox_heartbeat(sandbox_id: str, http_request: Request):
         f"[SandboxAPI] Heartbeat received: sandbox_id={sandbox_id} from {client_ip}"
     )
 
-    from executor_manager.services.heartbeat_manager import \
-        get_heartbeat_manager
+    from executor_manager.services.heartbeat_manager import (
+        HeartbeatType, get_heartbeat_manager)
 
     heartbeat_mgr = get_heartbeat_manager()
-    success = heartbeat_mgr.update_heartbeat(sandbox_id)
+    success = heartbeat_mgr.update_heartbeat(sandbox_id, HeartbeatType.SANDBOX)
 
     if not success:
         logger.warning(

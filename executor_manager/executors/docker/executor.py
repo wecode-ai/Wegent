@@ -666,8 +666,8 @@ class DockerExecutor(Executor):
         # Add callback URL
         self._add_callback_url(cmd, task)
 
-        # Add sandbox-specific environment variables for heartbeat service
-        self._add_sandbox_env_vars(cmd, task)
+        # Add heartbeat environment variables for OOM detection
+        self._add_heartbeat_env_vars(cmd, task)
 
         # Add OpenTelemetry trace context for distributed tracing
         self._add_trace_context(cmd)
@@ -705,19 +705,18 @@ class DockerExecutor(Executor):
         if callback_url:
             cmd.extend(["-e", f"CALLBACK_URL={callback_url}"])
 
-    def _add_sandbox_env_vars(self, cmd: List[str], task: Dict[str, Any]) -> None:
+    def _add_heartbeat_env_vars(self, cmd: List[str], task: Dict[str, Any]) -> None:
         """Add environment variables for heartbeat service.
 
-        This enables heartbeat monitoring for ALL task types to detect executor
-        crashes (OOM, etc.). When an executor container dies unexpectedly, the
-        heartbeat stops and executor_manager can detect this via heartbeat timeout,
-        then mark the task as failed.
+        This enables heartbeat monitoring for both sandbox and regular tasks
+        to detect executor crashes (OOM, etc.).
 
-        For sandbox type tasks, uses sandbox_id as the identifier.
-        For regular tasks, uses task_id as the identifier.
+        For sandbox tasks: uses sandbox_id as identifier, HEARTBEAT_TYPE=sandbox
+        For regular tasks: uses task_id as identifier, HEARTBEAT_TYPE=task
 
         Environment variables added:
-        - SANDBOX_ID: Identifier for heartbeat service (sandbox_id or task_id)
+        - HEARTBEAT_ID: Identifier for heartbeat service (sandbox_id or task_id)
+        - HEARTBEAT_TYPE: Type of heartbeat (sandbox or task)
         - HEARTBEAT_ENABLED: Enable heartbeat service
         - EXECUTOR_MANAGER_HEARTBEAT_BASE_URL: Heartbeat endpoint base URL
 
@@ -726,26 +725,29 @@ class DockerExecutor(Executor):
             task: Task dictionary containing task info and sandbox_metadata
         """
         # Skip validation tasks - they are short-lived and don't need heartbeat
-        if task.get("type") == "validation":
+        task_type = task.get("type", "online")
+        if task_type == "validation":
             return
 
-        # Get identifier: use sandbox_id for sandbox tasks, task_id for regular tasks
-        is_sandbox = task.get("type") == "sandbox"
-        sandbox_metadata = task.get("sandbox_metadata", {})
+        is_sandbox = task_type == "sandbox"
 
+        # Determine heartbeat ID and type
         if is_sandbox:
-            # For sandbox tasks, use sandbox_id
+            sandbox_metadata = task.get("sandbox_metadata", {})
             heartbeat_id = sandbox_metadata.get("sandbox_id")
+            heartbeat_type = "sandbox"
         else:
-            # For regular tasks, use task_id as string
+            # For regular tasks, use task_id
             heartbeat_id = str(task.get("task_id", ""))
+            heartbeat_type = "task"
 
         if not heartbeat_id:
             logger.debug("No heartbeat_id available, skipping heartbeat env vars")
             return
 
         # Add heartbeat environment variables
-        cmd.extend(["-e", f"SANDBOX_ID={heartbeat_id}"])
+        cmd.extend(["-e", f"HEARTBEAT_ID={heartbeat_id}"])
+        cmd.extend(["-e", f"HEARTBEAT_TYPE={heartbeat_type}"])
         cmd.extend(["-e", "HEARTBEAT_ENABLED=true"])
 
         # Build heartbeat base URL from callback URL
@@ -757,10 +759,9 @@ class DockerExecutor(Executor):
             base_url = callback_url.replace("/callback", "")
             cmd.extend(["-e", f"EXECUTOR_MANAGER_HEARTBEAT_BASE_URL={base_url}"])
 
-        task_type = "sandbox" if is_sandbox else "regular"
         logger.info(
-            f"Added heartbeat env vars for {task_type} task: "
-            f"SANDBOX_ID={heartbeat_id}, HEARTBEAT_ENABLED=true"
+            f"Added heartbeat env vars for {heartbeat_type} task: "
+            f"HEARTBEAT_ID={heartbeat_id}, HEARTBEAT_TYPE={heartbeat_type}"
         )
 
     def _add_trace_context(self, cmd: List[str]) -> None:

@@ -297,8 +297,8 @@ class RunningTaskTracker:
         """
         from executor_manager.common.distributed_lock import \
             get_distributed_lock
-        from executor_manager.services.heartbeat_manager import \
-            get_heartbeat_manager
+        from executor_manager.services.heartbeat_manager import (
+            HeartbeatType, get_heartbeat_manager)
 
         # Acquire distributed lock to prevent concurrent execution across multiple replicas
         lock = get_distributed_lock()
@@ -324,10 +324,14 @@ class RunningTaskTracker:
                     if not task_id_str:
                         continue
 
-                    # Check heartbeat - returns False if key missing or expired
-                    if not heartbeat_mgr.check_heartbeat(task_id_str):
+                    # Check heartbeat - use TASK type for regular tasks
+                    if not heartbeat_mgr.check_heartbeat(
+                        task_id_str, HeartbeatType.TASK
+                    ):
                         # Get last heartbeat time (may be None if key expired)
-                        last_heartbeat = heartbeat_mgr.get_last_heartbeat(task_id_str)
+                        last_heartbeat = heartbeat_mgr.get_last_heartbeat(
+                            task_id_str, HeartbeatType.TASK
+                        )
 
                         # Check if task has been running long enough to expect heartbeat
                         start_time_str = task_meta.get("start_time", "0")
@@ -372,7 +376,11 @@ class RunningTaskTracker:
     ) -> None:
         """Handle regular task executor death.
 
-        Marks the task as failed via Backend API and cleans up resources.
+        Before marking task as failed, checks container status to determine:
+        1. If container was OOM killed -> mark as OOM failure
+        2. If container exited with error -> mark as crash failure
+        3. If container doesn't exist -> check if task already completed
+        4. If container still running -> likely network issue, skip
 
         Args:
             task_id_str: Task ID as string
@@ -383,11 +391,13 @@ class RunningTaskTracker:
         from executor_manager.clients.task_api_client import TaskApiClient
         from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
         from executor_manager.executors.dispatcher import ExecutorDispatcher
-        from executor_manager.services.heartbeat_manager import \
-            get_heartbeat_manager
+        from executor_manager.executors.docker.utils import \
+            get_container_status
+        from executor_manager.services.heartbeat_manager import (
+            HeartbeatType, get_heartbeat_manager)
 
-        logger.warning(
-            f"[RunningTaskTracker] Handling task death: task_id={task_id_str}, "
+        logger.info(
+            f"[RunningTaskTracker] Checking task status: task_id={task_id_str}, "
             f"subtask_id={subtask_id_str}, executor={executor_name}"
         )
 
@@ -402,13 +412,100 @@ class RunningTaskTracker:
             )
             return
 
-        # Call Backend API to mark task as failed
+        # Step 1: Check container status before deciding action
+        container_status = get_container_status(executor_name)
+        logger.info(
+            f"[RunningTaskTracker] Container status for {executor_name}: {container_status}"
+        )
+
+        # Step 2: Handle based on container status
+        if container_status["exists"] and container_status["status"] == "running":
+            # Container is still running - likely a network issue with heartbeat
+            # Don't mark as failed, just log a warning
+            logger.warning(
+                f"[RunningTaskTracker] Container {executor_name} is still running but "
+                f"heartbeat timed out. Possible network issue, skipping failure marking."
+            )
+            return
+
+        if not container_status["exists"]:
+            # Container doesn't exist - check if task already completed via Backend
+            try:
+                api_client = TaskApiClient()
+                task_status = api_client.get_task_status(task_id, subtask_id)
+
+                if task_status and task_status.get("status") in (
+                    "COMPLETED",
+                    "FAILED",
+                    "CANCELLED",
+                ):
+                    # Task already has a final status, just clean up tracker
+                    logger.info(
+                        f"[RunningTaskTracker] Task {task_id} already has status "
+                        f"'{task_status.get('status')}', cleaning up tracker only"
+                    )
+                    heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
+                    self.remove_running_task(task_id)
+                    return
+
+                # Task is still in running state but container was deleted
+                error_message = (
+                    "Container was removed unexpectedly. "
+                    "Task may have been cancelled or manually terminated."
+                )
+                logger.warning(
+                    f"[RunningTaskTracker] Container {executor_name} not found, "
+                    f"marking task {task_id} as failed"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[RunningTaskTracker] Failed to check task status from Backend: {e}"
+                )
+                error_message = (
+                    "Container disappeared unexpectedly. " "Unable to determine cause."
+                )
+        else:
+            # Container exists but not running (exited/dead/etc)
+            if container_status["oom_killed"]:
+                error_message = (
+                    "Executor was killed due to Out Of Memory (OOM). "
+                    "Please increase memory allocation for this task."
+                )
+                logger.warning(
+                    f"[RunningTaskTracker] Container {executor_name} was OOM killed"
+                )
+            elif container_status["exit_code"] == 137:
+                # Exit code 137 = 128 + 9 (SIGKILL), often indicates OOM
+                error_message = (
+                    "Executor was forcefully terminated (SIGKILL, exit code 137). "
+                    "This is often caused by Out Of Memory. "
+                    "Please check if your task requires more memory."
+                )
+                logger.warning(
+                    f"[RunningTaskTracker] Container {executor_name} exited with code 137 (SIGKILL)"
+                )
+            elif container_status["exit_code"] == 0:
+                # Normal exit - task might have completed but callback failed
+                logger.info(
+                    f"[RunningTaskTracker] Container {executor_name} exited normally (code 0), "
+                    f"cleaning up tracker"
+                )
+                heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
+                self.remove_running_task(task_id)
+                return
+            else:
+                error_message = (
+                    f"Executor crashed unexpectedly (exit code: {container_status['exit_code']}). "
+                    "Please check the task logs for more details."
+                )
+                logger.warning(
+                    f"[RunningTaskTracker] Container {executor_name} exited with code "
+                    f"{container_status['exit_code']}"
+                )
+
+        # Step 3: Mark task as failed via Backend API
         try:
             api_client = TaskApiClient()
-            error_message = (
-                "Executor crashed unexpectedly (possible OOM). "
-                "Please check if your task requires more memory."
-            )
             success, result = api_client.update_task_status_by_fields(
                 task_id=task_id,
                 subtask_id=subtask_id,
@@ -429,19 +526,16 @@ class RunningTaskTracker:
         except Exception as e:
             logger.error(f"[RunningTaskTracker] Error calling Backend API: {e}")
 
-        # Clean up heartbeat key
-        heartbeat_mgr.delete_heartbeat(task_id_str)
-
-        # Remove from running tasks tracker
+        # Step 4: Clean up
+        heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
         self.remove_running_task(task_id)
 
-        # Optionally delete container (controlled by environment variable)
-        # Default: do NOT delete zombie containers (useful for debugging OOM issues)
+        # Step 5: Optionally delete container (for OOM debugging, keep by default)
         delete_zombie_containers = os.getenv(
             "DELETE_ZOMBIE_CONTAINERS", "false"
         ).lower() in ("true", "1", "yes")
 
-        if delete_zombie_containers:
+        if container_status["exists"] and delete_zombie_containers:
             try:
                 executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
                 result = executor.delete_executor(executor_name)
@@ -456,9 +550,9 @@ class RunningTaskTracker:
                     )
             except Exception as e:
                 logger.warning(f"[RunningTaskTracker] Error deleting container: {e}")
-        else:
+        elif container_status["exists"]:
             logger.info(
-                f"[RunningTaskTracker] Zombie container {executor_name} preserved for debugging. "
+                f"[RunningTaskTracker] Container {executor_name} preserved for debugging. "
                 f"Set DELETE_ZOMBIE_CONTAINERS=true to auto-delete."
             )
 
