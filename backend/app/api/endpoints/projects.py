@@ -124,7 +124,7 @@ def delete_project_endpoint(
 ):
     """
     Delete a project (soft delete).
-    Tasks are not deleted, only their project_id is set to NULL.
+    Tasks are not deleted, only their project_id is set to 0 (no project).
     """
     try:
         project_service.delete_project(
