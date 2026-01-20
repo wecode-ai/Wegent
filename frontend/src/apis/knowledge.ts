@@ -19,6 +19,7 @@ import type {
   KnowledgeDocumentUpdate,
   KnowledgeResourceScope,
   TableUrlValidationResponse,
+  WebScrapeResponse,
 } from '@/types/knowledge'
 
 // ============== Knowledge Base APIs ==============
@@ -148,4 +149,67 @@ export async function getAccessibleKnowledge(): Promise<AccessibleKnowledgeRespo
  */
 export async function validateTableUrl(url: string): Promise<TableUrlValidationResponse> {
   return apiClient.post<TableUrlValidationResponse>('/tables/validate-url', { url })
+}
+
+// ============== Web Scraper APIs ==============
+
+/**
+ * Scrape a web page and convert to Markdown
+ * @param url The URL to scrape
+ * @returns Scraped content with title, markdown content, and metadata
+ */
+export async function scrapeWebPage(url: string): Promise<WebScrapeResponse> {
+  return apiClient.post<WebScrapeResponse>('/web-scraper/scrape', { url })
+}
+
+/**
+ * Response for web document creation
+ */
+export interface WebDocumentCreateResponse {
+  success: boolean
+  document?: KnowledgeDocument
+  error_code?: string
+  error_message?: string
+}
+
+/**
+ * Response for web document refresh
+ */
+export interface WebDocumentRefreshResponse {
+  success: boolean
+  document?: KnowledgeDocument
+  error_code?: string
+  error_message?: string
+}
+
+/**
+ * Create a document from a web page in a knowledge base
+ * This endpoint scrapes the web page, saves the content, and creates a document record
+ * @param url The URL to scrape
+ * @param knowledgeBaseId The knowledge base ID to add the document to
+ * @param name Optional document name (uses page title if not provided)
+ * @returns Created document or error
+ */
+export async function createWebDocument(
+  url: string,
+  knowledgeBaseId: number,
+  name?: string
+): Promise<WebDocumentCreateResponse> {
+  return apiClient.post<WebDocumentCreateResponse>('/web-scraper/create-document', {
+    url,
+    knowledge_base_id: knowledgeBaseId,
+    name,
+  })
+}
+
+/**
+ * Refresh a web document by re-scraping its URL
+ * This endpoint re-scrapes the web page, updates the content, and re-indexes the document
+ * @param documentId The document ID to refresh
+ * @returns Refreshed document or error
+ */
+export async function refreshWebDocument(documentId: number): Promise<WebDocumentRefreshResponse> {
+  return apiClient.post<WebDocumentRefreshResponse>('/web-scraper/refresh-document', {
+    document_id: documentId,
+  })
 }

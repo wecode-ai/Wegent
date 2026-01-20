@@ -185,8 +185,8 @@ def sample_execution():
 
 
 @pytest.fixture
-def sample_subagent_task():
-    """Sample SubAgent task data for testing."""
+def sample_sandbox_task():
+    """Sample Sandbox task data for testing."""
     return {
         "task_id": 123,
         "subtask_id": 456,

@@ -18,12 +18,15 @@ import { Tag } from '@/components/ui/tag'
 import { RiRobot2Line } from 'react-icons/ri'
 import { Edit, Plus, Copy } from 'lucide-react'
 import { Bot } from '@/types/api'
+import { UnifiedShell } from '@/apis/shells'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getPromptBadgeStyle } from '@/utils/styles'
+import { getActualShellType } from './index'
 import BotTransfer from './BotTransfer'
 
 export interface LeaderModeEditorProps {
   bots: Bot[]
+  shells: UnifiedShell[]
   selectedBotKeys: React.Key[]
   setSelectedBotKeys: React.Dispatch<React.SetStateAction<React.Key[]>>
   leaderBotId: number | null
@@ -43,6 +46,7 @@ export interface LeaderModeEditorProps {
 
 export default function LeaderModeEditor({
   bots,
+  shells,
   selectedBotKeys,
   setSelectedBotKeys,
   leaderBotId,
@@ -61,6 +65,30 @@ export default function LeaderModeEditor({
   const { t } = useTranslation()
 
   const configuredPromptBadgeStyle = useMemo(() => getPromptBadgeStyle('configured'), [])
+
+  // Build shell map for looking up actual shell types
+  const shellMap = useMemo(() => {
+    const map = new Map<string, UnifiedShell>()
+    shells.forEach(shell => map.set(shell.name, shell))
+    return map
+  }, [shells])
+
+  // Filter member bots based on Leader's shell type
+  // Members must have the same shell type as the Leader
+  const filteredMemberBots = useMemo(() => {
+    if (!leaderBotId) return bots
+
+    const leaderBot = bots.find(bot => bot.id === leaderBotId)
+    if (!leaderBot) return bots
+
+    const leaderShellType = getActualShellType(leaderBot.shell_type, shellMap)
+
+    // Filter bots to only include those with the same shell type as the leader
+    return bots.filter(bot => {
+      const botShellType = getActualShellType(bot.shell_type, shellMap)
+      return botShellType === leaderShellType
+    })
+  }, [bots, leaderBotId, shellMap])
 
   return (
     <div className="rounded-md border border-border bg-base p-4 flex flex-col flex-1 min-h-0">
@@ -186,7 +214,7 @@ export default function LeaderModeEditor({
 
       {/* Bots Transfer */}
       <BotTransfer
-        bots={bots}
+        bots={filteredMemberBots}
         selectedBotKeys={selectedBotKeys}
         setSelectedBotKeys={setSelectedBotKeys}
         leaderBotId={leaderBotId}

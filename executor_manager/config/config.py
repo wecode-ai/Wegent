@@ -61,13 +61,13 @@ EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{}")
 GIT_CACHE_ENABLED = os.getenv("GIT_CACHE_ENABLED", "false")
 GIT_CACHE_AUTO_UPDATE = os.getenv("GIT_CACHE_AUTO_UPDATE", "true")
 
-# SubAgent configuration
-# Default timeout for SubAgent task execution (seconds)
-SUBAGENT_DEFAULT_TIMEOUT = int(os.getenv("SUBAGENT_DEFAULT_TIMEOUT", "600"))
-# Redis cache TTL for SubAgent task state (seconds, 24 hours)
-SUBAGENT_REDIS_TTL = int(os.getenv("SUBAGENT_REDIS_TTL", "86400"))
-# Maximum concurrent SubAgent tasks per user
-SUBAGENT_MAX_CONCURRENT = int(os.getenv("SUBAGENT_MAX_CONCURRENT", "5"))
+# Sandbox configuration
+# Default timeout for Sandbox task execution (seconds)
+SANDBOX_DEFAULT_TIMEOUT = int(os.getenv("SANDBOX_DEFAULT_TIMEOUT", "600"))
+# Redis cache TTL for Sandbox task state (seconds, 24 hours)
+SANDBOX_REDIS_TTL = int(os.getenv("SANDBOX_REDIS_TTL", "86400"))
+# Maximum concurrent Sandbox tasks per user
+SANDBOX_MAX_CONCURRENT = int(os.getenv("SANDBOX_MAX_CONCURRENT", "5"))
 
 # OpenTelemetry configuration is centralized in shared/telemetry/config.py
 # Use: from shared.telemetry.config import get_otel_config

@@ -145,6 +145,8 @@ class KnowledgeService:
         spec_kwargs = {
             "name": data.name,
             "description": data.description or "",
+            "kbType": data.kb_type
+            or "notebook",  # Default to 'notebook' if not provided
             "retrievalConfig": data.retrieval_config,
             "summaryEnabled": data.summary_enabled,
         }
@@ -543,6 +545,9 @@ class KnowledgeService:
 
     # ============== Knowledge Document Operations ==============
 
+    # Maximum number of documents allowed in notebook mode knowledge base
+    NOTEBOOK_MAX_DOCUMENTS = 50
+
     @staticmethod
     def create_document(
         db: Session,
@@ -576,6 +581,17 @@ class KnowledgeService:
             ):
                 raise ValueError(
                     "Only Owner or Maintainer can add documents to this knowledge base"
+                )
+
+        # Check document limit for notebook mode knowledge base
+        kb_spec = kb.json.get("spec", {})
+        kb_type = kb_spec.get("kbType", "notebook")
+        if kb_type == "notebook":
+            current_count = KnowledgeService.get_document_count(db, knowledge_base_id)
+            if current_count >= KnowledgeService.NOTEBOOK_MAX_DOCUMENTS:
+                raise ValueError(
+                    f"Notebook mode knowledge base can have at most {KnowledgeService.NOTEBOOK_MAX_DOCUMENTS} documents. "
+                    f"Current count: {current_count}"
                 )
 
         document = KnowledgeDocument(

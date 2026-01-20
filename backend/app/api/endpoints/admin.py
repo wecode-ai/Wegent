@@ -4,6 +4,7 @@
 
 import asyncio
 import threading
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -274,7 +275,7 @@ async def delete_user(
     current_user: User = Depends(get_admin_user),
 ):
     """
-    Delete a user (soft delete by setting is_active=False)
+    Delete a user (hard delete - permanently removes the user from database)
     """
     # Query user directly to avoid decrypt_user_git_info modifying the object
     user = db.query(User).filter(User.id == user_id).first()
@@ -291,8 +292,8 @@ async def delete_user(
             detail="Cannot delete your own account",
         )
 
-    # Soft delete
-    user.is_active = False
+    # Hard delete - permanently remove the user
+    db.delete(user)
     db.commit()
 
     return None
@@ -1707,3 +1708,168 @@ async def delete_public_retriever(
         db, retriever_id=retriever_id, current_user=current_user
     )
     return None
+
+
+# ==================== Flow Monitor Endpoints ====================
+
+from app.schemas.admin import (
+    FlowMonitorError,
+    FlowMonitorErrorListResponse,
+    FlowMonitorStats,
+)
+
+
+@router.get("/flow-monitor/stats", response_model=FlowMonitorStats)
+async def get_flow_monitor_stats(
+    hours: int = Query(default=24, ge=1, le=720, description="Time range in hours"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get flow execution statistics for admin monitoring.
+
+    Returns aggregate statistics for all users' flow executions within the
+    specified time range. For privacy, only IDs and aggregate data are shown.
+    """
+    from app.models.flow import FlowExecution, FlowResource
+    from app.schemas.flow import FlowExecutionStatus
+
+    # Calculate time threshold
+    threshold = datetime.utcnow() - timedelta(hours=hours)
+
+    # Query all executions within time range
+    base_query = db.query(FlowExecution).filter(FlowExecution.created_at >= threshold)
+
+    # Get counts by status
+    total = base_query.count()
+    completed = base_query.filter(
+        FlowExecution.status == FlowExecutionStatus.COMPLETED.value
+    ).count()
+    failed = base_query.filter(
+        FlowExecution.status == FlowExecutionStatus.FAILED.value
+    ).count()
+    cancelled = base_query.filter(
+        FlowExecution.status == FlowExecutionStatus.CANCELLED.value
+    ).count()
+    running = base_query.filter(
+        FlowExecution.status == FlowExecutionStatus.RUNNING.value
+    ).count()
+    pending = base_query.filter(
+        FlowExecution.status == FlowExecutionStatus.PENDING.value
+    ).count()
+
+    # Count timeout failures (error message contains "timeout" or "timed out")
+    timeout = base_query.filter(
+        FlowExecution.status == FlowExecutionStatus.FAILED.value,
+        FlowExecution.error_message.ilike("%timeout%"),
+    ).count()
+
+    # Calculate rates
+    terminal_count = completed + failed + cancelled
+    success_rate = (completed / terminal_count * 100) if terminal_count > 0 else 0.0
+    failure_rate = (failed / terminal_count * 100) if terminal_count > 0 else 0.0
+    timeout_rate = (timeout / terminal_count * 100) if terminal_count > 0 else 0.0
+
+    # Get flow counts
+    total_flows = db.query(FlowResource).filter(FlowResource.is_active == True).count()
+    active_flows = (
+        db.query(FlowResource)
+        .filter(
+            FlowResource.is_active == True,
+            FlowResource.enabled == True,
+        )
+        .count()
+    )
+
+    return FlowMonitorStats(
+        total_executions=total,
+        completed_count=completed,
+        failed_count=failed,
+        timeout_count=timeout,
+        cancelled_count=cancelled,
+        running_count=running,
+        pending_count=pending,
+        success_rate=round(success_rate, 2),
+        failure_rate=round(failure_rate, 2),
+        timeout_rate=round(timeout_rate, 2),
+        active_flows_count=active_flows,
+        total_flows_count=total_flows,
+    )
+
+
+@router.get("/flow-monitor/errors", response_model=FlowMonitorErrorListResponse)
+async def get_flow_monitor_errors(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    hours: int = Query(default=24, ge=1, le=720, description="Time range in hours"),
+    status_filter: Optional[str] = Query(
+        None,
+        alias="status",
+        description="Filter by status (FAILED, CANCELLED, RUNNING)",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get list of flow execution errors for admin monitoring.
+
+    Returns a paginated list of failed, cancelled, or stuck executions.
+    For privacy, only IDs, status, and error messages are shown - no task content.
+    """
+    from app.models.flow import FlowExecution
+    from app.schemas.flow import FlowExecutionStatus
+
+    # Calculate time threshold
+    threshold = datetime.utcnow() - timedelta(hours=hours)
+
+    # Build query for error/abnormal executions
+    query = db.query(FlowExecution).filter(FlowExecution.created_at >= threshold)
+
+    # Apply status filter
+    if status_filter:
+        query = query.filter(FlowExecution.status == status_filter)
+    else:
+        # Default: show FAILED, CANCELLED, and stuck RUNNING (older than 1 hour)
+        stuck_threshold = datetime.utcnow() - timedelta(hours=1)
+        query = query.filter(
+            (
+                FlowExecution.status.in_(
+                    [
+                        FlowExecutionStatus.FAILED.value,
+                        FlowExecutionStatus.CANCELLED.value,
+                    ]
+                )
+            )
+            | (
+                (FlowExecution.status == FlowExecutionStatus.RUNNING.value)
+                & (FlowExecution.started_at < stuck_threshold)
+            )
+        )
+
+    # Get total count
+    total = query.count()
+
+    # Get paginated results
+    skip = (page - 1) * limit
+    executions = (
+        query.order_by(FlowExecution.created_at.desc()).offset(skip).limit(limit).all()
+    )
+
+    # Convert to response model (privacy-preserving: no prompt or result details)
+    items = [
+        FlowMonitorError(
+            execution_id=e.id,
+            flow_id=e.flow_id,
+            user_id=e.user_id,
+            task_id=e.task_id,
+            status=e.status,
+            error_message=e.error_message,
+            trigger_type=e.trigger_type,
+            created_at=e.created_at,
+            started_at=e.started_at,
+            completed_at=e.completed_at,
+        )
+        for e in executions
+    ]
+
+    return FlowMonitorErrorListResponse(total=total, items=items)

@@ -2,8 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
 import os
+
+import pytest
 from pydantic import ValidationError
 
 from app.core.config import Settings, settings
@@ -123,7 +124,7 @@ class TestSettings:
         s = Settings(
             PROJECT_NAME="Custom Project",
             ACCESS_TOKEN_EXPIRE_MINUTES=60,
-            MAX_RUNNING_TASKS_PER_USER=5
+            MAX_RUNNING_TASKS_PER_USER=5,
         )
 
         assert s.PROJECT_NAME == "Custom Project"

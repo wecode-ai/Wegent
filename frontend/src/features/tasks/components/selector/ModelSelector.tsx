@@ -318,12 +318,6 @@ export default function ModelSelector({
                             <span className="font-medium text-sm text-text-primary">
                               {t('common:task_submit.default_model', '默认模型')}
                             </span>
-                            <Tag
-                              variant="info"
-                              className="text-[10px] flex-shrink-0 whitespace-nowrap"
-                            >
-                              {t('common:models.public', '公共')}
-                            </Tag>
                           </div>
                           <span className="text-xs text-text-muted">
                             {t('common:task_submit.use_bot_model', '使用Bot预设模型')}
@@ -362,12 +356,12 @@ export default function ModelSelector({
                             >
                               {getModelDisplayText(model)}
                             </span>
-                            {model.type === 'public' && (
+                            {model.type === 'user' && (
                               <Tag
                                 variant="info"
                                 className="text-[10px] flex-shrink-0 whitespace-nowrap"
                               >
-                                {t('common:models.public', '公共')}
+                                {t('common:settings.personal', '个人')}
                               </Tag>
                             )}
                           </div>

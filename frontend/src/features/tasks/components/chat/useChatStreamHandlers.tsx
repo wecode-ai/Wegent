@@ -11,7 +11,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { useTraceAction } from '@/hooks/useTraceAction'
-import { parseError } from '@/utils/errorParser'
+import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
 import { taskApis } from '@/apis/tasks'
 import { isChatShell } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
@@ -19,7 +19,6 @@ import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
 import type { Model } from '../selector/ModelSelector'
 import type { Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api'
 import type { ContextItem } from '@/types/context'
-
 export interface UseChatStreamHandlersOptions {
   // Team and model
   selectedTeam: Team | null
@@ -51,7 +50,10 @@ export interface UseChatStreamHandlersOptions {
   isAttachmentReadyToSend: boolean
 
   // Task type
-  taskType: 'chat' | 'code'
+  taskType: 'chat' | 'code' | 'knowledge'
+
+  // Knowledge base ID (for knowledge type tasks)
+  knowledgeBaseId?: number
 
   // UI flags
   shouldHideChatInput: boolean
@@ -62,6 +64,12 @@ export interface UseChatStreamHandlersOptions {
   // Context selection (knowledge bases)
   selectedContexts?: ContextItem[]
   resetContexts?: () => void
+
+  // Callback when a new task is created (used for binding knowledge base)
+  onTaskCreated?: (taskId: number) => void
+
+  // Selected document IDs from DocumentPanel (for notebook mode context injection)
+  selectedDocumentIds?: number[]
 }
 
 export interface ChatStreamHandlers {
@@ -130,10 +138,13 @@ export function useChatStreamHandlers({
   resetAttachment,
   isAttachmentReadyToSend,
   taskType,
+  knowledgeBaseId,
   shouldHideChatInput,
   scrollToBottom,
   selectedContexts = [],
   resetContexts,
+  onTaskCreated,
+  selectedDocumentIds,
 }: UseChatStreamHandlersOptions): ChatStreamHandlers {
   const { toast } = useToast()
   const { t } = useTranslation()
@@ -339,11 +350,12 @@ export function useChatStreamHandlers({
       const parsedError = parseError(error)
       lastFailedMessageRef.current = message
 
+      // Use getErrorDisplayMessage for consistent error display logic
+      const errorMessage = getErrorDisplayMessage(error, (key: string) => t(`chat:${key}`))
+
       toast({
         variant: 'destructive',
-        title: parsedError.retryable
-          ? t('chat:errors.request_failed_retry')
-          : t('chat:errors.model_unsupported'),
+        title: errorMessage,
         action: parsedError.retryable
           ? createRetryButton(() => {
               if (lastFailedMessageRef.current && handleSendMessageRef.current) {
@@ -413,7 +425,10 @@ export function useChatStreamHandlers({
 
         // Convert selected contexts to backend format
         // Each context item contains type and data fields
-        const contextItems = selectedContexts.map(ctx => {
+        const contextItems: Array<{
+          type: 'knowledge_base' | 'table' | 'selected_documents'
+          data: Record<string, unknown>
+        }> = selectedContexts.map(ctx => {
           if (ctx.type === 'knowledge_base') {
             return {
               type: 'knowledge_base' as const,
@@ -434,6 +449,23 @@ export function useChatStreamHandlers({
             },
           }
         })
+
+        // Add selected document IDs as a context for notebook mode
+        // This allows direct content injection of selected documents
+        if (
+          taskType === 'knowledge' &&
+          selectedDocumentIds &&
+          selectedDocumentIds.length > 0 &&
+          knowledgeBaseId
+        ) {
+          contextItems.push({
+            type: 'selected_documents' as const,
+            data: {
+              knowledge_base_id: knowledgeBaseId,
+              document_ids: selectedDocumentIds,
+            },
+          })
+        }
 
         // Build pending contexts for immediate display (SubtaskContextBrief format)
         // This includes attachments, knowledge bases, and tables
@@ -506,6 +538,7 @@ export function useChatStreamHandlers({
               ? selectedBranch?.name || selectedTaskDetail?.branch_name
               : undefined,
             task_type: taskType,
+            knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
             contexts: contextItems.length > 0 ? contextItems : undefined,
           },
           {
@@ -514,7 +547,6 @@ export function useChatStreamHandlers({
             pendingContexts: pendingContexts.length > 0 ? pendingContexts : undefined,
             immediateTaskId: immediateTaskId,
             currentUserId: user?.id,
-            currentUserName: user?.user_name,
             onMessageSent: (
               _localMessageId: string,
               completedTaskId: number,
@@ -522,6 +554,12 @@ export function useChatStreamHandlers({
             ) => {
               if (completedTaskId > 0) {
                 setPendingTaskId(completedTaskId)
+              }
+
+              // Call onTaskCreated callback when a new task is created
+              // This is used for binding knowledge base to the task
+              if (completedTaskId && !selectedTaskDetail?.id && onTaskCreated) {
+                onTaskCreated(completedTaskId)
               }
 
               if (completedTaskId && !selectedTaskDetail?.id) {
@@ -579,14 +617,16 @@ export function useChatStreamHandlers({
       selectedRepo,
       selectedBranch,
       taskType,
+      knowledgeBaseId,
       markTaskAsViewed,
       user?.id,
-      user?.user_name,
       handleSendError,
       scrollToBottom,
       setIsLoading,
       setTaskInputMessage,
       externalApiParams,
+      onTaskCreated,
+      selectedDocumentIds,
     ]
   )
 
@@ -601,7 +641,7 @@ export function useChatStreamHandlers({
       if (!message.subtaskId) {
         toast({
           variant: 'destructive',
-          title: t('chat:errors.request_failed_retry'),
+          title: t('chat:errors.generic_error'),
           description: 'Subtask ID not found',
         })
         return
@@ -610,7 +650,7 @@ export function useChatStreamHandlers({
       if (!selectedTaskDetail?.id) {
         toast({
           variant: 'destructive',
-          title: t('chat:errors.request_failed_retry'),
+          title: t('chat:errors.generic_error'),
           description: 'Task ID not found',
         })
         return
@@ -639,16 +679,22 @@ export function useChatStreamHandlers({
             )
 
             if (result.error) {
+              const errorMessage = getErrorDisplayMessage(result.error, (key: string) =>
+                t(`chat:${key}`)
+              )
               toast({
                 variant: 'destructive',
-                title: t('chat:errors.request_failed_retry'),
+                title: errorMessage,
               })
             }
           } catch (error) {
             console.error('[ChatStreamHandlers] Retry failed:', error)
+            const errorMessage = getErrorDisplayMessage(error as Error, (key: string) =>
+              t(`chat:${key}`)
+            )
             toast({
               variant: 'destructive',
-              title: t('chat:errors.request_failed_retry'),
+              title: errorMessage,
             })
             throw error
           }

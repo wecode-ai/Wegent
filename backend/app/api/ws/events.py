@@ -42,6 +42,9 @@ class ClientEvents:
 class ServerEvents:
     """Server -> Client event names."""
 
+    # Authentication events
+    AUTH_ERROR = "auth:error"  # Token expired or invalid
+
     # Chat streaming events (to task room)
     CHAT_START = "chat:start"
     CHAT_CHUNK = "chat:chunk"
@@ -73,6 +76,9 @@ class ServerEvents:
 
     # Generic Skill Events
     SKILL_REQUEST = "skill:request"  # Server -> Client: skill request
+
+    # Flow events (to user room)
+    FLOW_EXECUTION_UPDATE = "flow:execution_update"
 
 
 # ============================================================
@@ -126,8 +132,11 @@ class ChatSendPayload(BaseModel):
     git_repo_id: Optional[int] = Field(None, description="Git repository ID")
     git_domain: Optional[str] = Field(None, description="Git domain")
     branch_name: Optional[str] = Field(None, description="Git branch name")
-    task_type: Optional[Literal["chat", "code"]] = Field(
-        None, description="Task type: chat or code"
+    task_type: Optional[Literal["chat", "code", "knowledge"]] = Field(
+        None, description="Task type: chat, code, or knowledge"
+    )
+    knowledge_base_id: Optional[int] = Field(
+        None, description="Knowledge base ID for knowledge type tasks"
     )
     preload_skills: Optional[List[str]] = Field(
         None, description="List of skill names to preload into system prompt"
@@ -465,6 +474,32 @@ class CorrectionErrorPayload(BaseModel):
 
 
 # ============================================================
+# Flow Event Payloads
+# ============================================================
+
+
+class FlowExecutionUpdatePayload(BaseModel):
+    """Payload for flow:execution_update event."""
+
+    execution_id: int = Field(..., description="Flow execution ID")
+    flow_id: int = Field(..., description="Flow ID")
+    flow_name: Optional[str] = Field(None, description="Flow name")
+    flow_display_name: Optional[str] = Field(None, description="Flow display name")
+    team_name: Optional[str] = Field(None, description="Team name")
+    status: str = Field(..., description="Execution status")
+    task_id: Optional[int] = Field(None, description="Associated task ID")
+    task_type: Optional[str] = Field(
+        None, description="Task type (execution/collection)"
+    )
+    prompt: Optional[str] = Field(None, description="Prompt used")
+    result_summary: Optional[str] = Field(None, description="Result summary")
+    error_message: Optional[str] = Field(None, description="Error message if failed")
+    trigger_reason: Optional[str] = Field(None, description="Trigger reason")
+    created_at: str = Field(..., description="Creation timestamp")
+    updated_at: str = Field(..., description="Last update timestamp")
+
+
+# ============================================================
 # ACK Responses
 # ============================================================
 
@@ -497,3 +532,17 @@ class GenericAck(BaseModel):
 
     success: bool = True
     error: Optional[str] = None
+
+
+# ============================================================
+# Authentication Error Payloads
+# ============================================================
+
+
+class AuthErrorPayload(BaseModel):
+    """Payload for auth:error event."""
+
+    error: str = Field(..., description="Error message")
+    code: Literal["TOKEN_EXPIRED", "INVALID_TOKEN"] = Field(
+        ..., description="Error code for identifying the type of auth error"
+    )

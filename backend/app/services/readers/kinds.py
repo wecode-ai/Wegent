@@ -49,6 +49,7 @@ PUBLIC_FALLBACK_KINDS: Set[KindType] = {
     KindType.SKILL,
     KindType.GHOST,
     KindType.RETRIEVER,
+    KindType.BOT,  # Public bots (used by public teams)
 }
 
 
@@ -152,6 +153,7 @@ class IKindReader(ABC):
         For namespace == "default":
             1. Query user's own Team
             2. If not found, query shared Teams
+            3. If not found, query public Teams (user_id=0)
 
         For namespace != "default":
             1. Query group Team
@@ -185,6 +187,11 @@ class IKindReader(ABC):
                     )
                     if team:
                         return team
+
+            # If not found, check public Teams (user_id=0)
+            public_team = self.get_public(db, KindType.TEAM, namespace, name)
+            if public_team:
+                return public_team
 
             return None
         else:

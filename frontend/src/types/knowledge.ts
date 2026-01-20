@@ -8,7 +8,7 @@
 
 export type DocumentStatus = 'enabled' | 'disabled'
 
-export type DocumentSourceType = 'file' | 'text' | 'table'
+export type DocumentSourceType = 'file' | 'text' | 'table' | 'web'
 
 export type KnowledgeResourceScope = 'personal' | 'group' | 'all'
 
@@ -62,6 +62,11 @@ export interface SummaryModelRef {
   type: 'public' | 'user' | 'group'
 }
 
+// Knowledge Base Type
+// - notebook: Three-column layout with chat area and document panel (new style)
+// - classic: Document list only without chat functionality (legacy style)
+export type KnowledgeBaseType = 'notebook' | 'classic'
+
 // Knowledge Base types
 export interface KnowledgeBase {
   id: number
@@ -75,6 +80,8 @@ export interface KnowledgeBase {
   summary_enabled: boolean
   summary_model_ref?: SummaryModelRef | null
   summary?: KnowledgeBaseSummary | null
+  /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
+  kb_type?: KnowledgeBaseType
   created_at: string
   updated_at: string
 }
@@ -86,6 +93,8 @@ export interface KnowledgeBaseCreate {
   retrieval_config?: Partial<RetrievalConfig>
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
+  /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
+  kb_type?: KnowledgeBaseType
 }
 
 export interface RetrievalConfigUpdate {
@@ -234,4 +243,30 @@ export interface DocumentDetailResponse {
   content_length?: number
   truncated?: boolean
   summary?: DocumentSummary | null
+}
+
+// Web Scraper types
+export interface WebScrapeRequest {
+  url: string
+}
+
+export interface WebScrapeResponse {
+  title?: string
+  content: string
+  url: string
+  scraped_at: string
+  content_length: number
+  description?: string
+  success: boolean
+  error_code?:
+    | 'INVALID_URL_FORMAT'
+    | 'FETCH_FAILED'
+    | 'FETCH_TIMEOUT'
+    | 'PARSE_FAILED'
+    | 'EMPTY_CONTENT'
+    | 'AUTH_REQUIRED'
+    | 'SSRF_BLOCKED'
+    | 'CONTENT_TOO_LARGE'
+    | 'NOT_HTML'
+  error_message?: string
 }

@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { getToken } from '@/apis/user'
+import { userApis } from '@/apis/user'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Spinner } from '@/components/ui/spinner'
@@ -32,8 +32,9 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       '/shared/task', // Allow public shared task page without authentication
     ]
     if (!allowedPaths.includes(pathname)) {
-      const token = getToken()
-      if (!token) {
+      // Use isAuthenticated() to check both token existence and expiry
+      const isAuth = userApis.isAuthenticated()
+      if (!isAuth) {
         const search = searchParams.toString()
         const redirectTarget = search ? `${pathname}?${search}` : pathname
         router.replace(`${loginPath}?redirect=${encodeURIComponent(redirectTarget)}`)

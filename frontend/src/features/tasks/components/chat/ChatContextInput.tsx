@@ -13,6 +13,8 @@ import { isChatContextEnabled } from '@/lib/runtime-config'
 interface ChatContextInputProps {
   selectedContexts: ContextItem[]
   onContextsChange: (contexts: ContextItem[]) => void
+  /** Knowledge base ID to exclude from the list (used in notebook mode to hide current KB) */
+  excludeKnowledgeBaseId?: number
 }
 
 /**
@@ -26,6 +28,7 @@ interface ChatContextInputProps {
 export default function ChatContextInput({
   selectedContexts,
   onContextsChange,
+  excludeKnowledgeBaseId,
 }: ChatContextInputProps) {
   const [selectorOpen, setSelectorOpen] = useState(false)
 
@@ -49,6 +52,7 @@ export default function ChatContextInput({
       selectedContexts={selectedContexts}
       onSelect={handleSelect}
       onDeselect={handleDeselect}
+      excludeKnowledgeBaseId={excludeKnowledgeBaseId}
     >
       <div>
         <AddContextButton onClick={() => setSelectorOpen(true)} />

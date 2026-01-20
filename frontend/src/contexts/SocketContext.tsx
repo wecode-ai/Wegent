@@ -22,7 +22,7 @@ import React, {
   ReactNode,
 } from 'react'
 import { io, Socket } from 'socket.io-client'
-import { getToken } from '@/apis/user'
+import { getToken, removeToken } from '@/apis/user'
 import {
   ServerEvents,
   ClientSkillEvents,
@@ -45,9 +45,13 @@ import {
   CorrectionChunkPayload,
   CorrectionDonePayload,
   CorrectionErrorPayload,
+  FlowExecutionUpdatePayload,
+  AuthErrorPayload,
 } from '@/types/socket'
 
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config'
+import { paths } from '@/config/paths'
+import { POST_LOGIN_REDIRECT_KEY } from '@/features/login/constants'
 
 const SOCKETIO_PATH = '/socket.io'
 
@@ -107,6 +111,8 @@ interface SocketContextType {
   sendSkillResponse: (payload: SkillResponsePayload) => void
   /** Register correction event handlers */
   registerCorrectionHandlers: (handlers: CorrectionEventHandlers) => () => void
+  /** Register flow event handlers */
+  registerFlowHandlers: (handlers: FlowEventHandlers) => () => void
   /** Register a callback to be called when WebSocket reconnects */
   onReconnect: (callback: ReconnectCallback) => () => void
 }
@@ -144,6 +150,11 @@ export interface CorrectionEventHandlers {
   onCorrectionChunk?: (data: CorrectionChunkPayload) => void
   onCorrectionDone?: (data: CorrectionDonePayload) => void
   onCorrectionError?: (data: CorrectionErrorPayload) => void
+}
+
+/** Flow event handlers for flow execution updates */
+export interface FlowEventHandlers {
+  onFlowExecutionUpdate?: (data: FlowExecutionUpdatePayload) => void
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined)
@@ -227,12 +238,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // Don't clear joinedTasksRef here - we need it for rejoining after reconnect
     })
 
-    newSocket.on('connect_error', (error: Error) => {
-      console.error('[Socket.IO] Connection error:', error)
-      setConnectionError(error)
-      setIsConnected(false)
-    })
-
     newSocket.io.on('reconnect_attempt', (attempt: number) => {
       setReconnectAttempts(attempt)
     })
@@ -272,6 +277,52 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     newSocket.io.on('reconnect_error', (error: Error) => {
       console.error('[Socket.IO] Reconnect error:', error)
       setConnectionError(error)
+    })
+
+    // Handle authentication errors (token expired during session)
+    newSocket.on(ServerEvents.AUTH_ERROR, (data: AuthErrorPayload) => {
+      console.log('[Socket.IO] Auth error received:', data.error, 'code:', data.code)
+
+      // Remove token and redirect to login
+      removeToken()
+      newSocket.disconnect()
+
+      const loginPath = paths.auth.login.getHref()
+      if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
+        // Save current path for redirect after login
+        const currentPath = window.location.pathname + window.location.search
+        sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
+        window.location.href = loginPath
+      }
+    })
+
+    // Handle connect_error for initial connection auth failures
+    newSocket.on('connect_error', (error: Error) => {
+      console.error('[Socket.IO] Connection error:', error)
+      setConnectionError(error)
+      setIsConnected(false)
+
+      // Check if error message indicates auth failure
+      // Use specific auth-related error patterns to avoid false positives
+      const errorMsg = error.message?.toLowerCase() || ''
+      const isAuthError =
+        errorMsg.includes('expired') ||
+        errorMsg.includes('unauthorized') ||
+        errorMsg.includes('jwt') ||
+        errorMsg.includes('authentication')
+
+      if (isAuthError) {
+        console.log('[Socket.IO] Auth error on connect, redirecting to login')
+        removeToken()
+
+        const loginPath = paths.auth.login.getHref()
+        if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
+          // Save current path for redirect after login (consistent with AUTH_ERROR handler)
+          const currentPath = window.location.pathname + window.location.search
+          sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
+          window.location.href = loginPath
+        }
+      }
     })
 
     setSocket(newSocket)
@@ -641,6 +692,30 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   )
 
   /**
+   * Register flow event handlers for flow execution updates
+   * Returns a cleanup function to unregister handlers
+   */
+  const registerFlowHandlers = useCallback(
+    (handlers: FlowEventHandlers): (() => void) => {
+      if (!socket) {
+        return () => {}
+      }
+
+      const { onFlowExecutionUpdate } = handlers
+
+      if (onFlowExecutionUpdate)
+        socket.on(ServerEvents.FLOW_EXECUTION_UPDATE, onFlowExecutionUpdate)
+
+      // Return cleanup function
+      return () => {
+        if (onFlowExecutionUpdate)
+          socket.off(ServerEvents.FLOW_EXECUTION_UPDATE, onFlowExecutionUpdate)
+      }
+    },
+    [socket]
+  )
+
+  /**
    * Register a callback to be called when WebSocket reconnects
    * This is the single source of truth for reconnection events in the app.
    * Returns a cleanup function to unregister the callback.
@@ -722,6 +797,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         registerSkillHandlers,
         sendSkillResponse,
         registerCorrectionHandlers,
+        registerFlowHandlers,
         onReconnect,
       }}
     >

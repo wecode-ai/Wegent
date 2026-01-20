@@ -216,12 +216,24 @@ jobs:
           cache: 'npm'
           cache-dependency-path: ./frontend/package-lock.json
 
+      - name: Cache Next.js build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ./frontend/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('./frontend/package-lock.json') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('./frontend/package-lock.json') }}-
+            ${{ runner.os }}-nextjs-
+
       - name: Install dependencies
         working-directory: ./frontend
         run: npm ci
 
       - name: Run frontend tests
         working-directory: ./frontend
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
         run: npm test -- --coverage --passWithNoTests
 
       - name: Upload coverage to Codecov

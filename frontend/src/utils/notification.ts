@@ -124,16 +124,20 @@ export function notifyTaskCompletion(
   taskId: number,
   taskTitle: string,
   success: boolean,
-  taskType?: 'chat' | 'code'
+  taskType?: 'chat' | 'code' | 'knowledge'
 ): void {
   const title = success ? '✅ Task Completed' : '❌ Task Failed'
   const body = taskTitle.length > 100 ? `${taskTitle.substring(0, 100)}...` : taskTitle
 
   // Build target URL based on task type
-  const targetUrl =
-    taskType === 'code'
-      ? `${window.location.origin}/code?taskId=${taskId}`
-      : `${window.location.origin}/chat?taskId=${taskId}`
+  let targetUrl: string
+  if (taskType === 'code') {
+    targetUrl = `${window.location.origin}/code?taskId=${taskId}`
+  } else if (taskType === 'knowledge') {
+    targetUrl = `${window.location.origin}/knowledge?taskId=${taskId}`
+  } else {
+    targetUrl = `${window.location.origin}/chat?taskId=${taskId}`
+  }
 
   sendNotification(
     title,

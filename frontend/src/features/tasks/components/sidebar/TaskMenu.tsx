@@ -4,19 +4,37 @@
 
 'use client'
 
-import { Menu } from '@headlessui/react'
+import { useState } from 'react'
 import {
   ClipboardDocumentIcon,
   TrashIcon,
   ArrowRightOnRectangleIcon,
+  FolderPlusIcon,
+  FolderIcon,
+  PlusIcon,
+  PencilIcon,
 } from '@heroicons/react/24/outline'
 import { HiOutlineEllipsisVertical } from 'react-icons/hi2'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuPortal,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown'
+import { useProjectContext } from '@/features/projects'
+import { ProjectCreateDialog } from '@/features/projects/components/ProjectCreateDialog'
 
 interface TaskMenuProps {
   taskId: number
   handleCopyTaskId: (taskId: number) => void
   handleDeleteTask: (taskId: number) => void
+  onRename?: () => void
   isGroupChat?: boolean
 }
 
@@ -24,60 +42,113 @@ export default function TaskMenu({
   taskId,
   handleCopyTaskId,
   handleDeleteTask,
+  onRename,
   isGroupChat = false,
 }: TaskMenuProps) {
   const { t } = useTranslation()
+  const { t: tProjects } = useTranslation('projects')
+  const { projects, addTaskToProject } = useProjectContext()
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+
+  const handleMoveToGroup = async (projectId: number) => {
+    await addTaskToProject(projectId, taskId)
+  }
 
   return (
-    <Menu as="div" className="relative">
-      <Menu.Button
-        onClick={e => e.stopPropagation()}
-        className="flex items-center justify-center text-text-muted hover:text-text-primary px-1"
-      >
-        <HiOutlineEllipsisVertical className="h-4 w-4" />
-      </Menu.Button>
-      <Menu.Items
-        className="absolute right-0 top-full mt-1 bg-surface border border-border rounded-lg z-30 min-w-[120px] py-1"
-        style={{ boxShadow: 'var(--shadow-popover)' }}
-      >
-        <Menu.Item>
-          {({ active }) => (
-            <button
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          onClick={e => e.stopPropagation()}
+          className="flex items-center justify-center text-text-muted hover:text-text-primary px-1 outline-none"
+        >
+          <HiOutlineEllipsisVertical className="h-4 w-4" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-[120px]">
+          <DropdownMenuItem
+            onClick={e => {
+              e.stopPropagation()
+              handleCopyTaskId(taskId)
+            }}
+          >
+            <ClipboardDocumentIcon className="h-3.5 w-3.5 mr-2" />
+            {t('common:tasks.copy_task_id')}
+          </DropdownMenuItem>
+
+          {/* Move to Group - only for non-group chats */}
+          {!isGroupChat && (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger onClick={e => e.stopPropagation()}>
+                <FolderPlusIcon className="h-3.5 w-3.5 mr-2" />
+                {tProjects('menu.moveToGroup')}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuPortal>
+                <DropdownMenuSubContent className="min-w-[140px]">
+                  <DropdownMenuItem
+                    onClick={e => {
+                      e.stopPropagation()
+                      setCreateDialogOpen(true)
+                    }}
+                  >
+                    <PlusIcon className="h-3.5 w-3.5 mr-2" />
+                    {tProjects('menu.createGroup')}
+                  </DropdownMenuItem>
+                  {projects.length > 0 && <DropdownMenuSeparator />}
+                  {projects.map(project => (
+                    <DropdownMenuItem
+                      key={project.id}
+                      onClick={e => {
+                        e.stopPropagation()
+                        handleMoveToGroup(project.id)
+                      }}
+                    >
+                      <FolderIcon
+                        className="h-3.5 w-3.5 mr-2"
+                        style={{ color: project.color || 'currentColor' }}
+                      />
+                      <span className="truncate">{project.name}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuPortal>
+            </DropdownMenuSub>
+          )}
+
+          {/* Rename Task */}
+          {onRename && (
+            <DropdownMenuItem
               onClick={e => {
                 e.stopPropagation()
-                handleCopyTaskId(taskId)
+                onRename()
               }}
-              className={`w-full px-3 py-2 text-xs text-left text-text-primary flex items-center ${active ? 'bg-muted' : ''}`}
             >
-              <ClipboardDocumentIcon className="h-3.5 w-3.5 mr-2" />
-              {t('common:tasks.copy_task_id')}
-            </button>
+              <PencilIcon className="h-3.5 w-3.5 mr-2" />
+              {t('common:tasks.rename_task')}
+            </DropdownMenuItem>
           )}
-        </Menu.Item>
-        <Menu.Item>
-          {({ active }) => (
-            <button
-              onClick={e => {
-                e.stopPropagation()
-                handleDeleteTask(taskId)
-              }}
-              className={`w-full px-3 py-2 text-xs text-left text-text-primary flex items-center ${active ? 'bg-muted' : ''}`}
-            >
-              {isGroupChat ? (
-                <>
-                  <ArrowRightOnRectangleIcon className="h-3.5 w-3.5 mr-2" />
-                  {t('common:groupChat.leave')}
-                </>
-              ) : (
-                <>
-                  <TrashIcon className="h-3.5 w-3.5 mr-2" />
-                  {t('common:tasks.delete_task')}
-                </>
-              )}
-            </button>
-          )}
-        </Menu.Item>
-      </Menu.Items>
-    </Menu>
+
+          <DropdownMenuItem
+            onClick={e => {
+              e.stopPropagation()
+              handleDeleteTask(taskId)
+            }}
+          >
+            {isGroupChat ? (
+              <>
+                <ArrowRightOnRectangleIcon className="h-3.5 w-3.5 mr-2" />
+                {t('common:groupChat.leave')}
+              </>
+            ) : (
+              <>
+                <TrashIcon className="h-3.5 w-3.5 mr-2" />
+                {t('common:tasks.delete_task')}
+              </>
+            )}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {/* Create Group Dialog */}
+      <ProjectCreateDialog open={createDialogOpen} onOpenChange={setCreateDialogOpen} />
+    </>
   )
 }
