@@ -100,7 +100,9 @@ Example:
     args_schema: type[BaseModel] = SandboxClaudeInput
 
     # Default command timeout (30 minutes for Claude tasks)
+    # Minimum timeout is 10 minutes (600 seconds)
     default_command_timeout: int = 1800
+    min_command_timeout: int = 600
 
     def _run(
         self,
@@ -138,6 +140,14 @@ Example:
         """
         start_time = time.time()
         effective_timeout = timeout_seconds or self.default_command_timeout
+
+        # Ensure minimum timeout of 10 minutes
+        if effective_timeout < self.min_command_timeout:
+            logger.warning(
+                f"[SandboxClaudeTool] Requested timeout {effective_timeout}s is less than minimum {self.min_command_timeout}s, "
+                f"using minimum timeout instead"
+            )
+            effective_timeout = self.min_command_timeout
 
         logger.info(
             f"[SandboxClaudeTool] Executing Claude command: prompt={prompt[:100]}..., "
