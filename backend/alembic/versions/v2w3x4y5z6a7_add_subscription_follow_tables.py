@@ -5,7 +5,7 @@
 """Add subscription follow tables
 
 Revision ID: v2w3x4y5z6a7
-Revises: p6q7r8s9t0u1
+Revises: u1v2w3x4y5z6
 Create Date: 2025-01-20
 
 """
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "v2w3x4y5z6a7"
-down_revision: Union[str, None] = "p6q7r8s9t0u1"
+down_revision: Union[str, None] = "u1v2w3x4y5z6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
