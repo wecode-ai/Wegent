@@ -180,45 +180,37 @@ async def _create_streaming_response_http(
 
             # Search for relevant memories (with timeout, graceful degradation)
             # Only search if enable_chat_bot=True (wegent_chat_bot tool is enabled)
-            # AND user has enabled memory in preferences
             relevant_memories = []
             if enable_chat_bot:
-                from app.services.memory import get_memory_manager, is_memory_enabled_for_user
+                from app.services.memory import get_memory_manager
 
-                # Check user preference first
-                if not is_memory_enabled_for_user(user):
-                    logger.info(
-                        "[OPENAPI_HTTP] Long-term memory disabled by user preference: user_id=%d",
-                        user.id,
-                    )
-                else:
-                    memory_manager = get_memory_manager()
-                    if memory_manager.is_enabled:
-                        try:
-                            logger.info(
-                                "[OPENAPI_HTTP] Searching for relevant cross-conversation memories: user_id=%d, project_id=%s",
-                                user.id,
-                                setup.task.project_id or "None",
-                            )
-                            relevant_memories = await memory_manager.search_memories(
-                                user_id=str(user.id),
-                                query=input_text,
-                                project_id=(
-                                    str(setup.task.project_id)
-                                    if setup.task.project_id
-                                    else None
-                                ),
-                            )
-                            logger.info(
-                                "[OPENAPI_HTTP] Found %d relevant memories",
-                                len(relevant_memories),
-                            )
-                        except Exception as e:
-                            logger.error(
-                                "[OPENAPI_HTTP] Failed to search memories: %s",
-                                e,
-                                exc_info=True,
-                            )
+                memory_manager = get_memory_manager()
+                if memory_manager.is_enabled:
+                    try:
+                        logger.info(
+                            "[OPENAPI_HTTP] Searching for relevant cross-conversation memories: user_id=%d, project_id=%s",
+                            user.id,
+                            setup.task.project_id or "None",
+                        )
+                        relevant_memories = await memory_manager.search_memories(
+                            user_id=str(user.id),
+                            query=input_text,
+                            project_id=(
+                                str(setup.task.project_id)
+                                if setup.task.project_id
+                                else None
+                            ),
+                        )
+                        logger.info(
+                            "[OPENAPI_HTTP] Found %d relevant memories",
+                            len(relevant_memories),
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "[OPENAPI_HTTP] Failed to search memories: %s",
+                            e,
+                            exc_info=True,
+                        )
 
             # Inject memories into system prompt if any found
             base_system_prompt = setup.system_prompt
@@ -503,45 +495,37 @@ async def _create_sync_response_http(
     try:
         # Search for relevant memories (with timeout, graceful degradation)
         # Only search if enable_chat_bot=True (wegent_chat_bot tool is enabled)
-        # AND user has enabled memory in preferences
         relevant_memories = []
         if enable_chat_bot:
-            from app.services.memory import get_memory_manager, is_memory_enabled_for_user
+            from app.services.memory import get_memory_manager
 
-            # Check user preference first
-            if not is_memory_enabled_for_user(user):
-                logger.info(
-                    "[OPENAPI_HTTP_SYNC] Long-term memory disabled by user preference: user_id=%d",
-                    user.id,
-                )
-            else:
-                memory_manager = get_memory_manager()
-                if memory_manager.is_enabled:
-                    try:
-                        logger.info(
-                            "[OPENAPI_HTTP_SYNC] Searching for relevant cross-conversation memories: user_id=%d, project_id=%s",
-                            user.id,
-                            setup.task.project_id or "None",
-                        )
-                        relevant_memories = await memory_manager.search_memories(
-                            user_id=str(user.id),
-                            query=input_text,
-                            project_id=(
-                                str(setup.task.project_id)
-                                if setup.task.project_id
-                                else None
-                            ),
-                        )
-                        logger.info(
-                            "[OPENAPI_HTTP_SYNC] Found %d relevant memories",
-                            len(relevant_memories),
-                        )
-                    except Exception as e:
-                        logger.error(
-                            "[OPENAPI_HTTP_SYNC] Failed to search memories: %s",
-                            e,
-                            exc_info=True,
-                        )
+            memory_manager = get_memory_manager()
+            if memory_manager.is_enabled:
+                try:
+                    logger.info(
+                        "[OPENAPI_HTTP_SYNC] Searching for relevant cross-conversation memories: user_id=%d, project_id=%s",
+                        user.id,
+                        setup.task.project_id or "None",
+                    )
+                    relevant_memories = await memory_manager.search_memories(
+                        user_id=str(user.id),
+                        query=input_text,
+                        project_id=(
+                            str(setup.task.project_id)
+                            if setup.task.project_id
+                            else None
+                        ),
+                    )
+                    logger.info(
+                        "[OPENAPI_HTTP_SYNC] Found %d relevant memories",
+                        len(relevant_memories),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "[OPENAPI_HTTP_SYNC] Failed to search memories: %s",
+                        e,
+                        exc_info=True,
+                    )
 
         # Inject memories into system prompt if any found
         base_system_prompt = setup.system_prompt

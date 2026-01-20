@@ -299,95 +299,83 @@ def setup_chat_session(
 
     # Store user message in long-term memory (fire-and-forget)
     # Only store if enable_chat_bot=True (wegent_chat_bot tool is enabled)
-    # AND user has enabled memory in preferences
     # This runs in background and doesn't block the main flow
     enable_chat_bot = tool_settings.get("enable_chat_bot", False)
     if enable_chat_bot:
         import asyncio
 
         from app.core.config import settings
-        from app.services.memory import (
-            build_context_messages,
-            get_memory_manager,
-            is_memory_enabled_for_user,
-        )
+        from app.services.memory import build_context_messages, get_memory_manager
 
-        # Check user preference first
-        if not is_memory_enabled_for_user(user):
-            logger.info(
-                "[chat_session] Long-term memory disabled by user preference, skipping memory save: user_id=%d",
-                user.id,
+        memory_manager = get_memory_manager()
+        if memory_manager.is_enabled:
+            task_crd = Task.model_validate(task.json)
+            workspace_id = (
+                f"{task_crd.spec.workspaceRef.namespace}/{task_crd.spec.workspaceRef.name}"
+                if task_crd.spec.workspaceRef
+                else None
             )
-        else:
-            memory_manager = get_memory_manager()
-            if memory_manager.is_enabled:
-                task_crd = Task.model_validate(task.json)
-                workspace_id = (
-                    f"{task_crd.spec.workspaceRef.namespace}/{task_crd.spec.workspaceRef.name}"
-                    if task_crd.spec.workspaceRef
-                    else None
-                )
-                is_group_chat = task_crd.spec.is_group_chat
+            is_group_chat = task_crd.spec.is_group_chat
 
-                # Build context messages using shared utility
-                context_messages = build_context_messages(
-                    db=db,
-                    existing_subtasks=existing_subtasks,
-                    current_message=input_text,
-                    current_user=user,
-                    is_group_chat=is_group_chat,
-                    context_limit=settings.MEMORY_CONTEXT_MESSAGES,
-                )
+            # Build context messages using shared utility
+            context_messages = build_context_messages(
+                db=db,
+                existing_subtasks=existing_subtasks,
+                current_message=input_text,
+                current_user=user,
+                is_group_chat=is_group_chat,
+                context_limit=settings.MEMORY_CONTEXT_MESSAGES,
+            )
 
-                # Create task with proper exception handling
-                def _log_memory_task_exception(task_obj: asyncio.Task) -> None:
-                    """Log exceptions from background memory storage task."""
-                    try:
-                        exc = task_obj.exception()
-                        if exc is not None:
-                            logger.error(
-                                "[setup_chat_session] Memory storage task failed for user %d, task %d, subtask %d: %s",
-                                user.id,
-                                task_id,
-                                user_subtask.id,
-                                exc,
-                                exc_info=exc,
-                            )
-                    except asyncio.CancelledError:
-                        logger.info(
-                            "[setup_chat_session] Memory storage task cancelled for user %d, task %d, subtask %d",
+            # Create task with proper exception handling
+            def _log_memory_task_exception(task_obj: asyncio.Task) -> None:
+                """Log exceptions from background memory storage task."""
+                try:
+                    exc = task_obj.exception()
+                    if exc is not None:
+                        logger.error(
+                            "[setup_chat_session] Memory storage task failed for user %d, task %d, subtask %d: %s",
                             user.id,
                             task_id,
                             user_subtask.id,
+                            exc,
+                            exc_info=exc,
                         )
-
-                # Use get_running_loop with proper error handling
-                try:
-                    loop = asyncio.get_running_loop()
-                    memory_save_task = loop.create_task(
-                        memory_manager.save_user_message_async(
-                            user_id=str(user.id),
-                            team_id=str(team.id),
-                            task_id=str(task_id),
-                            subtask_id=str(user_subtask.id),
-                            messages=context_messages,
-                            workspace_id=workspace_id,
-                            project_id=str(task.project_id) if task.project_id else None,
-                            is_group_chat=is_group_chat,
-                        )
-                    )
-                    memory_save_task.add_done_callback(_log_memory_task_exception)
+                except asyncio.CancelledError:
                     logger.info(
-                        "[setup_chat_session] Started background task to store memory for user %d, task %d, subtask %d (enable_chat_bot=True)",
+                        "[setup_chat_session] Memory storage task cancelled for user %d, task %d, subtask %d",
                         user.id,
                         task_id,
                         user_subtask.id,
                     )
-                except RuntimeError:
-                    # No event loop is running - this is unexpected in FastAPI context
-                    logger.warning(
-                        "[setup_chat_session] Cannot create background task: no event loop running"
+
+            # Use get_running_loop with proper error handling
+            try:
+                loop = asyncio.get_running_loop()
+                memory_save_task = loop.create_task(
+                    memory_manager.save_user_message_async(
+                        user_id=str(user.id),
+                        team_id=str(team.id),
+                        task_id=str(task_id),
+                        subtask_id=str(user_subtask.id),
+                        messages=context_messages,
+                        workspace_id=workspace_id,
+                        project_id=str(task.project_id) if task.project_id else None,
+                        is_group_chat=is_group_chat,
                     )
+                )
+                memory_save_task.add_done_callback(_log_memory_task_exception)
+                logger.info(
+                    "[setup_chat_session] Started background task to store memory for user %d, task %d, subtask %d (enable_chat_bot=True)",
+                    user.id,
+                    task_id,
+                    user_subtask.id,
+                )
+            except RuntimeError:
+                # No event loop is running - this is unexpected in FastAPI context
+                logger.warning(
+                    "[setup_chat_session] Cannot create background task: no event loop running"
+                )
 
     return ChatSessionSetup(
         task=task,
