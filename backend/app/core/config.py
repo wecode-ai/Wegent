@@ -312,6 +312,10 @@ class Settings(BaseSettings):
     # Number of recent messages to include as context when saving memory (default: 3 total)
     # This includes 2 history messages + 1 current message for better memory quality
     MEMORY_CONTEXT_MESSAGES: int = 3
+    # User ID prefix for resource isolation in shared mem0 service
+    # Since mem0 may be shared across multiple systems, this prefix ensures
+    # wegent resources are isolated from other systems' resources
+    MEMORY_USER_ID_PREFIX: str = "wegent_user:"
 
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
