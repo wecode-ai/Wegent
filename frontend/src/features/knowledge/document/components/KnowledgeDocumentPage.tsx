@@ -32,9 +32,13 @@ import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
 import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { listGroups } from '@/apis/groups'
+import { userApis } from '@/apis/user'
+import { teamService } from '@/features/tasks/service/teamService'
+import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
 import { useKnowledgeBases } from '../hooks/useKnowledgeBases'
 import type { Group } from '@/types/group'
-import type { KnowledgeBase, KnowledgeBaseType } from '@/types/knowledge'
+import type { KnowledgeBase, KnowledgeBaseType, SummaryModelRef } from '@/types/knowledge'
+import type { DefaultTeamsResponse, Team } from '@/types/api'
 
 type DocumentTabType = 'personal' | 'group' | 'external'
 
@@ -81,8 +85,64 @@ export function KnowledgeDocumentPage() {
   // Refresh key for group knowledge bases
   const [groupRefreshKey, setGroupRefreshKey] = useState(0)
 
+  // Default teams config and teams list for saving model preference
+  const [defaultTeamsConfig, setDefaultTeamsConfig] = useState<DefaultTeamsResponse | null>(null)
+  const [teams, setTeams] = useState<Team[]>([])
+
   // Personal knowledge bases
   const personalKb = useKnowledgeBases({ scope: 'personal' })
+
+  // Load default teams config and teams list on mount
+  useEffect(() => {
+    const loadDefaultTeamsAndTeams = async () => {
+      try {
+        const [defaultTeamsRes, teamsRes] = await Promise.all([
+          userApis.getDefaultTeams(),
+          teamService.getTeams(),
+        ])
+        setDefaultTeamsConfig(defaultTeamsRes)
+        setTeams(teamsRes.items || [])
+      } catch (error) {
+        console.error('Failed to load default teams config:', error)
+      }
+    }
+    loadDefaultTeamsAndTeams()
+  }, [])
+
+  // Find knowledge mode default team ID
+  const knowledgeDefaultTeamId = useMemo(() => {
+    if (!defaultTeamsConfig?.knowledge || teams.length === 0) return null
+
+    const { name, namespace } = defaultTeamsConfig.knowledge
+    const normalizedNamespace = namespace || 'default'
+
+    // Find team matching name + namespace
+    const matchedTeam = teams.find(team => {
+      const teamNamespace = team.namespace || 'default'
+      return team.name === name && teamNamespace === normalizedNamespace
+    })
+
+    return matchedTeam?.id ?? null
+  }, [defaultTeamsConfig, teams])
+
+  // Helper function to save summary model to knowledge team's preference
+  const saveSummaryModelToPreference = (summaryModelRef: SummaryModelRef | null | undefined) => {
+    if (!knowledgeDefaultTeamId || !summaryModelRef?.name) return
+
+    const preference: ModelPreference = {
+      modelName: summaryModelRef.name,
+      modelType: summaryModelRef.type,
+      forceOverride: true,
+      updatedAt: Date.now(),
+    }
+
+    saveGlobalModelPreference(knowledgeDefaultTeamId, preference)
+    console.log(
+      '[KnowledgeDocumentPage] Saved summary model to preference:',
+      knowledgeDefaultTeamId,
+      preference.modelName
+    )
+  }
 
   // Load user's groups
   useEffect(() => {
@@ -121,6 +181,13 @@ export function KnowledgeDocumentPage() {
       summary_model_ref: data.summary_model_ref,
       kb_type: createKbType,
     })
+
+    // Save summary model to knowledge team's preference for notebook type
+    // This allows the model selector in notebook chat page to pre-select the configured model
+    if (createKbType === 'notebook' && data.summary_enabled && data.summary_model_ref) {
+      saveSummaryModelToPreference(data.summary_model_ref)
+    }
+
     setShowCreateDialog(false)
     // Refresh the appropriate list based on whether it's a group or personal knowledge base
     if (createForGroup) {
@@ -135,6 +202,13 @@ export function KnowledgeDocumentPage() {
   const handleUpdate = async (data: Parameters<typeof personalKb.update>[1]) => {
     if (!editingKb) return
     await personalKb.update(editingKb.id, data)
+
+    // Save summary model to knowledge team's preference for notebook type
+    // This allows the model selector in notebook chat page to pre-select the configured model
+    if (editingKb.kb_type === 'notebook' && data.summary_enabled && data.summary_model_ref) {
+      saveSummaryModelToPreference(data.summary_model_ref)
+    }
+
     // Refresh the appropriate list based on whether it's a group or personal knowledge base
     if (editingKb.namespace !== 'default') {
       // Group knowledge base - trigger refresh via refreshKey
@@ -241,6 +315,7 @@ export function KnowledgeDocumentPage() {
         scope={createForGroup ? 'group' : 'personal'}
         groupName={createForGroup || undefined}
         kbType={createKbType}
+        knowledgeDefaultTeamId={knowledgeDefaultTeamId}
       />
 
       <EditKnowledgeBaseDialog
@@ -249,6 +324,7 @@ export function KnowledgeDocumentPage() {
         knowledgeBase={editingKb}
         onSubmit={handleUpdate}
         loading={personalKb.loading}
+        knowledgeDefaultTeamId={knowledgeDefaultTeamId}
       />
 
       <DeleteKnowledgeBaseDialog
