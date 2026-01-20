@@ -310,10 +310,14 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
                       </button>
                     )}
                   </div>
-                  <div
-                    className={`text-sm prose prose-sm max-w-none dark:prose-invert ${isSummaryExpanded ? '' : 'line-clamp-6'}`}
-                  >
-                    <EnhancedMarkdown source={exec.result_summary} theme={theme} />
+                  <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
+                    {isSummaryExpanded ? (
+                      <EnhancedMarkdown source={exec.result_summary} theme={theme} />
+                    ) : (
+                      <div className="line-clamp-6 overflow-hidden">
+                        <EnhancedMarkdown source={exec.result_summary} theme={theme} />
+                      </div>
+                    )}
                   </div>
                   {/* Action buttons area */}
                   <div className="mt-3 flex items-center gap-3">
