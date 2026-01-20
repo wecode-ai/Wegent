@@ -171,10 +171,12 @@ class SandboxManager:
     This class provides common sandbox operations for all tools that need
     to interact with E2B sandboxes. It handles:
     - Sandbox creation with proper metadata
-    - Sandbox reuse for efficiency
     - Timeout management
     - Error handling
-    - Singleton pattern per task_id to ensure sandbox reuse across tool calls
+    - Singleton pattern per task_id
+
+    Note: Sandboxes are NOT cached/reused to avoid stale reference issues.
+    Each get_or_create_sandbox() call creates a fresh sandbox instance.
 
     Usage:
         manager = SandboxManager.get_instance(
@@ -222,10 +224,6 @@ class SandboxManager:
         self.user_name = user_name
         self.timeout = timeout
         self.bot_config = bot_config or []
-
-        # Sandbox cache - reuse within same manager instance
-        self._sandbox: Any = None
-        self._sandbox_shell_type: Optional[str] = None
 
         # Ensure E2B SDK is patched
         patch_e2b_sdk()
@@ -284,9 +282,11 @@ class SandboxManager:
         workspace_ref: Optional[str] = None,
         task_type: str = "generic",
     ) -> tuple[Any, Optional[str]]:
-        """Get existing sandbox or create a new one using E2B SDK.
+        """Create a fresh sandbox instance using E2B SDK.
 
-        Sandboxes are reused within the same manager instance if shell_type matches.
+        Always creates a new sandbox to avoid issues with destroyed sandbox instances.
+        This ensures sandbox reliability and prevents access errors when sandboxes
+        are unexpectedly terminated.
 
         Args:
             shell_type: Execution environment type (e.g., "ClaudeCode", "Agno")
@@ -296,21 +296,7 @@ class SandboxManager:
         Returns:
             Tuple of (sandbox_instance, error_message or None)
         """
-        # Check if we have an existing sandbox with matching shell_type
-        if self._sandbox and self._sandbox_shell_type == shell_type:
-            try:
-                # Try to extend sandbox timeout to verify it's still alive
-                self._sandbox.set_timeout(self.timeout)
-                logger.info(
-                    f"[SandboxManager] Reusing existing sandbox: {self._sandbox.sandbox_id}"
-                )
-                return self._sandbox, None
-            except Exception as e:
-                logger.warning(f"[SandboxManager] Failed to reuse sandbox: {e}")
-                self._sandbox = None
-                self._sandbox_shell_type = None
-
-        # Create new sandbox using E2B SDK
+        # Always create a fresh sandbox to prevent stale reference issues
         logger.info(
             f"[SandboxManager] Creating sandbox: shell_type={shell_type}, "
             f"user={self.user_name}, task_type={task_type}"
@@ -350,10 +336,6 @@ class SandboxManager:
                 ),
             )
 
-            # Cache sandbox for reuse
-            self._sandbox = sandbox
-            self._sandbox_shell_type = shell_type
-
             logger.info(f"[SandboxManager] Sandbox created: {sandbox.sandbox_id}")
             return sandbox, None
 
@@ -364,27 +346,23 @@ class SandboxManager:
             return None, str(e)
 
     def kill_sandbox(self) -> None:
-        """Kill the cached sandbox if it exists."""
-        if self._sandbox:
-            try:
-                self._sandbox.kill()
-                logger.info(
-                    f"[SandboxManager] Sandbox killed: {self._sandbox.sandbox_id}"
-                )
-            except Exception as e:
-                logger.warning(f"[SandboxManager] Failed to kill sandbox: {e}")
-            finally:
-                self._sandbox = None
-                self._sandbox_shell_type = None
+        """Kill sandbox (no-op since sandboxes are not cached).
+
+        Sandboxes are managed by executor_manager and will be automatically
+        cleaned up based on timeout or task completion.
+        """
+        logger.debug(
+            f"[SandboxManager] kill_sandbox called for task_id={self.task_id} (no-op)"
+        )
 
     @property
     def sandbox_id(self) -> Optional[str]:
-        """Get current sandbox ID if available.
+        """Get current sandbox ID (always None since no caching).
 
         Returns:
-            Sandbox ID or None if no sandbox exists
+            None (sandboxes are not cached)
         """
-        return self._sandbox.sandbox_id if self._sandbox else None
+        return None
 
 
 # Patch E2B SDK at module load time

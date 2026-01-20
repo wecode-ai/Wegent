@@ -73,34 +73,29 @@ class SandboxClaudeTool(BaseSandboxTool):
 
     name: str = "sandbox_claude"
     display_name: str = "执行 Claude 命令"
-    description: str = """Execute a Claude command in an isolated sandbox environment with streaming output.
+    description: str = """Execute a Claude command in an isolated sandbox environment.
 
-Use this tool to delegate tasks to Claude in a containerized environment, such as generating presentations, writing code, or creating documents.
+⚠️ ONLY use when user EXPLICITLY requests Claude by name (e.g., "use Claude to...", "让Claude帮我...").
+DO NOT use for normal sandbox operations - use sandbox_command, sandbox_read_file, etc. instead.
 
 Parameters:
-- prompt (required): The task prompt to send to Claude
-- allowed_tools (optional): Comma-separated list of allowed tools (default: "Edit,Write,MultiEdit,Bash(*),skills,Read,Glob,Grep,LS")
-- append_system_prompt (optional): Additional instructions for Claude
+- prompt (required): Task prompt for Claude
+- allowed_tools (optional): Allowed tools (default: "Edit,Write,MultiEdit,Bash(*),skills,Read,Glob,Grep,LS")
+- append_system_prompt (optional): Additional instructions
 - working_dir (optional): Working directory (default: /home/user)
-- timeout_seconds (optional): Command timeout in seconds
-
-Returns:
-- success: Whether the command executed successfully
-- output: Combined output from Claude execution
-- exit_code: Command exit code
-- execution_time: Time taken to execute
+- timeout_seconds (optional): Timeout in seconds (min: 600, default: 1800)
 
 Example:
 {
-  "prompt": "做一个chatgpt相关的ppt,5页左右，介绍chatgpt发展历史",
-  "allowed_tools": "Edit,Write,MultiEdit,Bash(*),skills,Read,Glob,Grep,LS",
-  "append_system_prompt": "执行任务时：\\n1. 首先检查并读取 .claude/skills/ 目录下的相关技能文件\\n2. 在回复开头明确说明【已加载的 Skill】和【应用的规范】\\n3. 如果没有找到相关 Skill，也请说明"
+  "prompt": "Create a PowerPoint presentation about ChatGPT with around 5 slides, introducing the history of ChatGPT"
 }"""
 
     args_schema: type[BaseModel] = SandboxClaudeInput
 
     # Default command timeout (30 minutes for Claude tasks)
+    # Minimum timeout is 10 minutes (600 seconds)
     default_command_timeout: int = 1800
+    min_command_timeout: int = 600
 
     def _run(
         self,
@@ -138,6 +133,14 @@ Example:
         """
         start_time = time.time()
         effective_timeout = timeout_seconds or self.default_command_timeout
+
+        # Ensure minimum timeout of 10 minutes
+        if effective_timeout < self.min_command_timeout:
+            logger.warning(
+                f"[SandboxClaudeTool] Requested timeout {effective_timeout}s is less than minimum {self.min_command_timeout}s, "
+                f"using minimum timeout instead"
+            )
+            effective_timeout = self.min_command_timeout
 
         logger.info(
             f"[SandboxClaudeTool] Executing Claude command: prompt={prompt[:100]}..., "

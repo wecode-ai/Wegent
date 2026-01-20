@@ -1,5 +1,5 @@
 ---
-description: "Provides isolated sandbox execution environments for safely executing commands, running code, and managing filesystems. Ideal for code testing, file management, and command execution. The sandbox_claude tool is available for advanced use cases but should only be used when explicitly requested by the user."
+description: "Provides isolated sandbox execution environments (AlmaLinux 9.4) for safely executing commands, running code, and managing filesystems. Ideal for code testing, file management, and command execution. The sandbox_claude tool is available for advanced use cases but should only be used when explicitly requested by the user."
 displayName: "沙箱环境"
 version: "2.1.0"
 author: "Wegent Team"
@@ -41,7 +41,7 @@ tools:
 
 # Sandbox Environment
 
-Execute code, commands, and complex tasks securely in isolated Docker containers.
+Execute code, commands, and complex tasks securely in isolated Docker containers running **AlmaLinux 9.4**.
 
 ## Core Capabilities
 
@@ -111,7 +111,7 @@ Run Claude AI to execute complex tasks in the sandbox.
 - `prompt` (required): Task description for Claude
 - `allowed_tools` (optional): List of tools Claude can use
 - `append_system_prompt` (optional): Additional system prompt
-- `timeout` (optional): Timeout in seconds
+- `timeout` (optional): Timeout in seconds (minimum: 600 seconds / 10 minutes, default: 1800 seconds / 30 minutes)
 
 **Features:**
 - ⚡ Real-time streaming output
@@ -229,7 +229,18 @@ Write content to a file.
 }
 ```
 
-### Scenario 2: File Management
+### Scenario 2: Install System Packages (AlmaLinux)
+
+```json
+{
+  "name": "sandbox_command",
+  "arguments": {
+    "command": "dnf install -y gcc make && gcc --version"
+  }
+}
+```
+
+### Scenario 3: File Management
 
 ```json
 // 1. List files
@@ -258,7 +269,7 @@ Write content to a file.
 }
 ```
 
-### Scenario 3: Git Operations
+### Scenario 4: Git Operations
 
 ```json
 {
@@ -269,7 +280,7 @@ Write content to a file.
 }
 ```
 
-### Scenario 4: Using Claude (Only When Explicitly Requested)
+### Scenario 5: Using Claude (Only When Explicitly Requested)
 
 **Example user request**: "Please use Claude to generate a presentation about AI"
 
@@ -288,6 +299,14 @@ Write content to a file.
 
 ## Sandbox Environment
 
+### System Environment
+- **Operating System**: AlmaLinux 9.4 (RHEL 9 compatible)
+- **Architecture**: x86_64
+- **Package Manager**: dnf/yum
+- **Init System**: systemd
+- **Python**: 3.12+ (pre-installed)
+- **Shell**: bash
+
 ### Lifecycle
 - New sandbox created on first tool call
 - Subsequent calls in the same session reuse the sandbox
@@ -299,11 +318,11 @@ Write content to a file.
 - **Read file limit**: 1MB (configurable)
 - **Write file limit**: 10MB (configurable)
 - **Command timeout**: 300 seconds (5 minutes)
-- **Claude timeout**: 1800 seconds (30 minutes)
+- **Claude timeout**: 1800 seconds (30 minutes, minimum: 600 seconds / 10 minutes)
 - **Total task timeout**: 7200 seconds (2 hours)
 
 ### Security Features
-- ✅ Fully isolated Docker containers
+- ✅ Fully isolated Docker containers (AlmaLinux 9.4)
 - ✅ Network access control
 - ✅ Resource constraints
 - ✅ Automatic cleanup
