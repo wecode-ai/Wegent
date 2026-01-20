@@ -163,9 +163,8 @@ export interface AdminPersonalKeyListResponse {
   items: AdminPersonalKey[]
   total: number
 }
-
-// Flow Monitor Types
-export interface FlowMonitorStats {
+// Background Execution Monitor Types
+export interface BackgroundExecutionMonitorStats {
   total_executions: number
   completed_count: number
   failed_count: number
@@ -176,13 +175,13 @@ export interface FlowMonitorStats {
   success_rate: number
   failure_rate: number
   timeout_rate: number
-  active_flows_count: number
-  total_flows_count: number
+  active_subscriptions_count: number
+  total_subscriptions_count: number
 }
 
-export interface FlowMonitorError {
+export interface BackgroundExecutionMonitorError {
   execution_id: number
-  flow_id: number
+  subscription_id: number
   user_id: number
   task_id: number | null
   status: string
@@ -193,9 +192,9 @@ export interface FlowMonitorError {
   completed_at: string | null
 }
 
-export interface FlowMonitorErrorListResponse {
+export interface BackgroundExecutionMonitorErrorListResponse {
   total: number
-  items: FlowMonitorError[]
+  items: BackgroundExecutionMonitorError[]
 }
 
 // Public Retriever Types
@@ -594,24 +593,26 @@ export const adminApis = {
     return apiClient.delete(`/admin/public-retrievers/${retrieverId}`)
   },
 
-  // ==================== Flow Monitor ====================
+  // ==================== Background Execution Monitor ====================
 
   /**
-   * Get flow execution statistics for admin monitoring
+   * Get background execution statistics for admin monitoring
    */
-  async getFlowMonitorStats(hours: number = 24): Promise<FlowMonitorStats> {
-    return apiClient.get(`/admin/flow-monitor/stats?hours=${hours}`)
+  async getBackgroundExecutionMonitorStats(
+    hours: number = 24
+  ): Promise<BackgroundExecutionMonitorStats> {
+    return apiClient.get(`/admin/subscription-monitor/stats?hours=${hours}`)
   },
 
   /**
-   * Get list of flow execution errors for admin monitoring
+   * Get list of background execution errors for admin monitoring
    */
-  async getFlowMonitorErrors(
+  async getBackgroundExecutionMonitorErrors(
     page: number = 1,
     limit: number = 50,
     hours: number = 24,
     status?: string
-  ): Promise<FlowMonitorErrorListResponse> {
+  ): Promise<BackgroundExecutionMonitorErrorListResponse> {
     const params = new URLSearchParams()
     params.append('page', String(page))
     params.append('limit', String(limit))
@@ -619,7 +620,7 @@ export const adminApis = {
     if (status) {
       params.append('status', status)
     }
-    return apiClient.get(`/admin/flow-monitor/errors?${params.toString()}`)
+    return apiClient.get(`/admin/subscription-monitor/errors?${params.toString()}`)
   },
 
   // ==================== Public Team Management ====================

@@ -4,7 +4,7 @@ Celery Beat scheduler backend implementation.
 This module provides a Celery Beat-based scheduler backend that:
 - Uses the existing celery_app.py configuration
 - Supports embedded mode (Worker/Beat as threads) or standalone mode
-- Maintains backward compatibility with existing Flow scheduling
+- Maintains backward compatibility with existing Subscription scheduling
 """
 
 import logging
@@ -23,16 +23,16 @@ class CeleryBeatBackend(SchedulerBackend):
     This backend leverages the existing Celery infrastructure for scheduling:
     - Uses beat_schedule for periodic task configuration
     - Supports embedded mode (threads) or standalone Celery processes
-    - The core scheduling logic remains in check_due_flows task
+    - The core scheduling logic remains in check_due_subscriptions task
 
     Design notes:
     - Celery Beat is designed for static periodic tasks via configuration
-    - Dynamic per-Flow scheduling is handled by check_due_flows querying the database
+    - Dynamic per-Subscription scheduling is handled by check_due_subscriptions querying the database
     - This backend manages the Beat lifecycle and provides a unified interface
     """
 
-    # Core job ID for the check_due_flows periodic task
-    CHECK_DUE_FLOWS_JOB_ID = "check-due-flows"
+    # Core job ID for the check_due_subscriptions periodic task
+    CHECK_DUE_SUBSCRIPTIONS_JOB_ID = "check-due-subscriptions"
 
     def __init__(self):
         """Initialize the Celery Beat backend."""
@@ -85,12 +85,14 @@ class CeleryBeatBackend(SchedulerBackend):
                 "ensure Celery Worker and Beat are running externally"
             )
 
-        # Initialize the core check-due-flows job in our tracking
+        # Initialize the core check-due-subscriptions job in our tracking
         celery_app = self._get_celery_app()
-        schedule = celery_app.conf.beat_schedule.get(self.CHECK_DUE_FLOWS_JOB_ID)
+        schedule = celery_app.conf.beat_schedule.get(
+            self.CHECK_DUE_SUBSCRIPTIONS_JOB_ID
+        )
         if schedule:
-            self._jobs[self.CHECK_DUE_FLOWS_JOB_ID] = ScheduledJob(
-                job_id=self.CHECK_DUE_FLOWS_JOB_ID,
+            self._jobs[self.CHECK_DUE_SUBSCRIPTIONS_JOB_ID] = ScheduledJob(
+                job_id=self.CHECK_DUE_SUBSCRIPTIONS_JOB_ID,
                 name=schedule.get("task", ""),
                 trigger_type="interval",
                 trigger_config={
@@ -142,8 +144,8 @@ class CeleryBeatBackend(SchedulerBackend):
         Schedule a new job in Celery Beat.
 
         Note: Celery Beat is designed for static configuration. Dynamic job
-        scheduling is limited. For per-Flow scheduling, use the database-driven
-        approach via check_due_flows.
+        scheduling is limited. For per-Subscription scheduling, use the database-driven
+        approach via check_due_subscriptions.
 
         Args:
             job_id: Unique job identifier
@@ -343,10 +345,10 @@ class CeleryBeatBackend(SchedulerBackend):
         Returns:
             Celery task ID, or None if job not found
         """
-        if job_id == self.CHECK_DUE_FLOWS_JOB_ID:
-            from app.tasks.flow_tasks import check_due_flows
+        if job_id == self.CHECK_DUE_SUBSCRIPTIONS_JOB_ID:
+            from app.tasks.subscription_tasks import check_due_subscriptions
 
-            result = check_due_flows.apply_async()
+            result = check_due_subscriptions.apply_async()
             logger.info(
                 f"[CeleryBeatBackend] Triggered {job_id} immediately, task_id: {result.id}"
             )

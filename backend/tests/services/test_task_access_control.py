@@ -52,8 +52,10 @@ class TestTaskAccessControl:
         ) as mock_service:
             mock_service.is_member.return_value = True
 
-            # Mock _convert_to_task_dict
-            with patch.object(task_service, "_convert_to_task_dict") as mock_convert:
+            # Mock convert_to_task_dict function from converters module
+            with patch(
+                "app.services.adapters.task_kinds.queries.convert_to_task_dict"
+            ) as mock_convert:
                 mock_convert.return_value = {"id": 123, "user_id": 1}
 
                 # Owner (user_id=1) tries to access task
@@ -78,8 +80,10 @@ class TestTaskAccessControl:
         ) as mock_service:
             mock_service.is_member.return_value = True
 
-            # Mock _convert_to_task_dict
-            with patch.object(task_service, "_convert_to_task_dict") as mock_convert:
+            # Mock convert_to_task_dict function from converters module
+            with patch(
+                "app.services.adapters.task_kinds.queries.convert_to_task_dict"
+            ) as mock_convert:
                 mock_convert.return_value = {"id": 123, "user_id": 1}
 
                 # Member (user_id=2) tries to access task

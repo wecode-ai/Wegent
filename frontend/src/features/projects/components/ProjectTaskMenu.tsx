@@ -86,6 +86,11 @@ export function ProjectTaskMenu({ taskId, projectId, onRename }: ProjectTaskMenu
   const handleDeleteTask = async () => {
     try {
       await taskApis.deleteTask(taskId)
+      // Immediately remove from project's local state (same pattern as removeTaskFromProject)
+      // This ensures the UI updates immediately without waiting for refreshTasks
+      removeTaskFromProject(projectId, taskId).catch(() => {
+        // Ignore error since task is already deleted, just updating local state
+      })
       setSelectedTask(null)
       if (typeof window !== 'undefined') {
         const url = new URL(window.location.href)

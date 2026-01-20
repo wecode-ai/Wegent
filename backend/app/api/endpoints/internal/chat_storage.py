@@ -349,7 +349,9 @@ async def health_check():
 @router.get("/history/{session_id}", response_model=HistoryResponse)
 async def get_chat_history(
     session_id: str,
-    limit: Optional[int] = Query(None, description="Max number of messages to return"),
+    limit: Optional[int] = Query(
+        None, description="Max number of messages to return (most recent N messages)"
+    ),
     before_message_id: Optional[int] = Query(
         None, description="Only return messages before this ID"
     ),
@@ -363,6 +365,8 @@ async def get_chat_history(
 
     Returns messages in chronological order (oldest first).
     For user messages, also loads associated contexts (attachments, knowledge bases).
+
+    When limit is specified, returns the most recent N messages (not the oldest N).
     """
     session_type, task_id = parse_session_id(session_id)
 
@@ -384,22 +388,25 @@ async def get_chat_history(
         # message_id represents the order within the conversation
         query = query.filter(Subtask.message_id < before_message_id)
 
-    # Order by message_id (chronological) instead of id
-    query = query.order_by(Subtask.message_id.asc())
-
+    # When limit is specified, we need to get the most recent N messages
+    # First order by message_id desc to get the latest, then reverse
     if limit:
-        query = query.limit(limit)
-
-    subtasks = query.all()
+        subtasks = query.order_by(Subtask.message_id.desc()).limit(limit).all()
+        # Reverse to get chronological order (oldest first)
+        subtasks = list(reversed(subtasks))
+    else:
+        # No limit - get all messages in chronological order
+        subtasks = query.order_by(Subtask.message_id.asc()).all()
 
     # Convert to message format with full context loading
     messages = [subtask_to_message(st, db, is_group_chat) for st in subtasks]
 
     logger.debug(
-        "get_chat_history: session_id=%s, count=%d, is_group_chat=%s",
+        "get_chat_history: session_id=%s, count=%d, is_group_chat=%s, limit=%s",
         session_id,
         len(messages),
         is_group_chat,
+        limit,
     )
 
     return HistoryResponse(session_id=session_id, messages=messages)

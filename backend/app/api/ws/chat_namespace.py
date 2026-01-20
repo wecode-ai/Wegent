@@ -565,13 +565,13 @@ class ChatNamespace(socketio.AsyncNamespace):
             assistant_subtask = result.assistant_subtask
             user_subtask_for_context = user_subtask
 
-            # Update userInteracted label for Flow tasks
-            # When user sends a message to a Flow-triggered task, mark it as interacted
+            # Update userInteracted label for Subscription tasks
+            # When user sends a message to a Subscription-triggered task, mark it as interacted
             # so it appears in the history conversation list
             task_crd = Task.model_validate(task.json)
             if (
                 task_crd.metadata.labels
-                and task_crd.metadata.labels.get("type") == "flow"
+                and task_crd.metadata.labels.get("type") == "subscription"
             ):
                 if task_crd.metadata.labels.get("userInteracted") != "true":
                     from sqlalchemy.orm.attributes import flag_modified
@@ -582,7 +582,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     db.commit()
                     db.refresh(task)
                     logger.info(
-                        f"[WS] chat:send updated userInteracted=true for Flow task {task.id}"
+                        f"[WS] chat:send updated userInteracted=true for Subscription task {task.id}"
                     )
 
             # Link attachments and create knowledge base contexts for the user subtask

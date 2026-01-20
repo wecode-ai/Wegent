@@ -52,6 +52,8 @@
   "timeout_hint": "AI 完成任务的最大时间限制",
   "default": "默认",
   "enable_subscription": "启用订阅",
+  "preserve_history": "保留对话历史",
+  "preserve_history_hint": "开启后，AI 可以看到之前执行的历史记录，便于追踪变化",
   "enabled_success": "订阅已启用",
   "disabled_success": "订阅已禁用",
   "toggle_failed": "切换状态失败",
@@ -86,6 +88,7 @@
   "validation_display_name_required": "名称不能为空",
   "validation_team_required": "请选择智能体",
   "validation_prompt_required": "Prompt 模板不能为空",
+  "validation_model_required": "所选智能体未配置模型，请选择一个模型",
   "next_execution": "下次执行",
   "executions": "执行次数",
   "yesterday": "昨天",
@@ -116,6 +119,15 @@
   "loading_branches": "加载分支列表中...",
   "no_branches": "暂无可用分支",
   "workspace_hint": "编程类智能体需要选择代码仓库和分支",
+
+  "model_settings": "模型设置",
+  "select_model": "选择模型",
+  "select_model_placeholder": "使用默认模型",
+  "search_model": "搜索模型...",
+  "no_model_found": "未找到模型",
+  "use_default_model": "使用默认模型",
+  "model_hint": "可选：指定执行任务时使用的模型，不选则使用智能体默认模型",
+  "model_required_hint": "所选智能体未配置模型，必须选择一个模型",
 
   "schedule_type": "定时类型",
   "schedule_preset": "常用预设",
@@ -153,6 +165,9 @@
   "preset_weekly_monday_9am": "每周一上午 9 点",
   "preset_monthly_1st_9am": "每月 1 日上午 9 点",
 
+  "tabs": {
+    "all": "全部"
+  },
   "feed": {
     "title": "动态",
     "empty_title": "还没有动态",
@@ -169,6 +184,9 @@
     "retry_count": "重试 {{count}} 次",
     "view_details": "查看详情",
     "view_conversation": "查看对话",
+    "show_prompt": "显示提示词",
+    "collapse": "收起",
+    "expand": "展开",
     "load_more": "加载更多",
     "refresh": "刷新",
     "copy_ids": "复制 ID",
