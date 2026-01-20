@@ -420,10 +420,7 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
         if not value:
             return None
 
-        # Truncate to reasonable length for summary
-        max_length = 500
-        if len(value) > max_length:
-            return value[:max_length] + "..."
+        # Return full content - database column is TEXT type which can store large content
         return value
 
 
