@@ -143,6 +143,8 @@ class HTTPAdapter(ChatInterface):
             "user_message_id": request.user_message_id,  # For history exclusion
             "bot_name": request.bot_name,
             "bot_namespace": request.bot_namespace,
+            # History limit for subscription tasks
+            "history_limit": request.history_limit,
             # Additional fields for HTTP mode
             "skill_names": request.skill_names,
             "skill_configs": request.skill_configs,

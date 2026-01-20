@@ -5,32 +5,36 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Flow context for managing AI Flow state.
+ * Subscription context for managing Subscription state.
  */
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
-import { flowApis } from '@/apis/flow'
-import type { Flow, FlowExecution, FlowExecutionStatus } from '@/types/flow'
+import { subscriptionApis } from '@/apis/subscription'
+import type {
+  Subscription,
+  BackgroundExecution,
+  BackgroundExecutionStatus,
+} from '@/types/subscription'
 import { useSocket } from '@/contexts/SocketContext'
-import type { FlowExecutionUpdatePayload } from '@/types/socket'
+import type { BackgroundExecutionUpdatePayload } from '@/types/socket'
 
-interface FlowContextType {
-  // Flows
-  flows: Flow[]
-  flowsLoading: boolean
-  flowsTotal: number
-  flowsPage: number
-  selectedFlow: Flow | null
-  setSelectedFlow: (flow: Flow | null) => void
-  refreshFlows: () => Promise<void>
-  loadMoreFlows: () => Promise<void>
+interface SubscriptionContextType {
+  // Subscriptions
+  subscriptions: Subscription[]
+  subscriptionsLoading: boolean
+  subscriptionsTotal: number
+  subscriptionsPage: number
+  selectedSubscription: Subscription | null
+  setSelectedSubscription: (subscription: Subscription | null) => void
+  refreshSubscriptions: () => Promise<void>
+  loadMoreSubscriptions: () => Promise<void>
 
   // Executions (Timeline)
-  executions: FlowExecution[]
+  executions: BackgroundExecution[]
   executionsLoading: boolean
   executionsTotal: number
   executionsPage: number
-  selectedExecution: FlowExecution | null
-  setSelectedExecution: (execution: FlowExecution | null) => void
+  selectedExecution: BackgroundExecution | null
+  setSelectedExecution: (execution: BackgroundExecution | null) => void
   refreshExecutions: () => Promise<void>
   loadMoreExecutions: () => Promise<void>
   /** Whether executions are currently refreshing (not initial load) */
@@ -40,86 +44,91 @@ interface FlowContextType {
 
   // Filters
   executionFilter: {
-    flowId?: number
-    status?: FlowExecutionStatus[]
+    subscriptionId?: number
+    status?: BackgroundExecutionStatus[]
     startDate?: string
     endDate?: string
   }
-  setExecutionFilter: (filter: FlowContextType['executionFilter']) => void
+  setExecutionFilter: (filter: SubscriptionContextType['executionFilter']) => void
 
   // Active tab
   activeTab: 'timeline' | 'config'
   setActiveTab: (tab: 'timeline' | 'config') => void
 }
 
-const FlowContext = createContext<FlowContextType | undefined>(undefined)
+const SubscriptionContext = createContext<SubscriptionContextType | undefined>(undefined)
 
-interface FlowProviderProps {
+interface SubscriptionProviderProps {
   children: ReactNode
 }
 
-const FLOWS_PER_PAGE = 20
+const SUBSCRIPTIONS_PER_PAGE = 20
 const EXECUTIONS_PER_PAGE = 50
 
-export function FlowProvider({ children }: FlowProviderProps) {
+export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
   // Socket for real-time updates
-  const { registerFlowHandlers } = useSocket()
+  const { registerBackgroundExecutionHandlers } = useSocket()
 
-  // Flows state
-  const [flows, setFlows] = useState<Flow[]>([])
-  const [flowsLoading, setFlowsLoading] = useState(true)
-  const [flowsTotal, setFlowsTotal] = useState(0)
-  const [flowsPage, setFlowsPage] = useState(1)
-  const [selectedFlow, setSelectedFlow] = useState<Flow | null>(null)
+  // Subscriptions state
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([])
+  const [subscriptionsLoading, setSubscriptionsLoading] = useState(true)
+  const [subscriptionsTotal, setSubscriptionsTotal] = useState(0)
+  const [subscriptionsPage, setSubscriptionsPage] = useState(1)
+  const [selectedSubscription, setSelectedSubscription] = useState<Subscription | null>(null)
 
   // Executions state
-  const [executions, setExecutions] = useState<FlowExecution[]>([])
+  const [executions, setExecutions] = useState<BackgroundExecution[]>([])
   const [executionsLoading, setExecutionsLoading] = useState(true)
   const [executionsRefreshing, setExecutionsRefreshing] = useState(false)
   const [executionsTotal, setExecutionsTotal] = useState(0)
   const [executionsPage, setExecutionsPage] = useState(1)
-  const [selectedExecution, setSelectedExecution] = useState<FlowExecution | null>(null)
+  const [selectedExecution, setSelectedExecution] = useState<BackgroundExecution | null>(null)
 
   // Filter state
-  const [executionFilter, setExecutionFilter] = useState<FlowContextType['executionFilter']>({})
+  const [executionFilter, setExecutionFilter] = useState<
+    SubscriptionContextType['executionFilter']
+  >({})
 
   // Active tab state
   const [activeTab, setActiveTab] = useState<'timeline' | 'config'>('timeline')
 
-  // Fetch flows
-  const refreshFlows = useCallback(async () => {
-    setFlowsLoading(true)
+  // Fetch subscriptions
+  const refreshSubscriptions = useCallback(async () => {
+    setSubscriptionsLoading(true)
     try {
-      const response = await flowApis.getFlows({ page: 1, limit: FLOWS_PER_PAGE })
-      setFlows(response.items)
-      setFlowsTotal(response.total)
-      setFlowsPage(1)
+      const response = await subscriptionApis.getSubscriptions({
+        page: 1,
+        limit: SUBSCRIPTIONS_PER_PAGE,
+      })
+      setSubscriptions(response.items)
+      setSubscriptionsTotal(response.total)
+      setSubscriptionsPage(1)
     } catch (error) {
-      console.error('Failed to fetch flows:', error)
+      console.error('Failed to fetch subscriptions:', error)
     } finally {
-      setFlowsLoading(false)
+      setSubscriptionsLoading(false)
     }
   }, [])
 
-  // Load more flows
-  const loadMoreFlows = useCallback(async () => {
-    if (flows.length >= flowsTotal) return
+  // Load more subscriptions
+  const loadMoreSubscriptions = useCallback(async () => {
+    if (subscriptions.length >= subscriptionsTotal) return
 
-    setFlowsLoading(true)
+    setSubscriptionsLoading(true)
     try {
-      const nextPage = flowsPage + 1
-      const response = await flowApis.getFlows({
+      const nextPage = subscriptionsPage + 1
+      const response = await subscriptionApis.getSubscriptions({
         page: nextPage,
-        limit: FLOWS_PER_PAGE,
+        limit: SUBSCRIPTIONS_PER_PAGE,
       })
-      setFlows(prev => [...prev, ...response.items])
-      setFlowsPage(nextPage)
+      setSubscriptions(prev => [...prev, ...response.items])
+      setSubscriptionsPage(nextPage)
     } catch (error) {
-      console.error('Failed to load more flows:', error)
+      console.error('Failed to load more subscriptions:', error)
     } finally {
-      setFlowsLoading(false)
+      setSubscriptionsLoading(false)
     }
-  }, [flows.length, flowsTotal, flowsPage])
+  }, [subscriptions.length, subscriptionsTotal, subscriptionsPage])
 
   // Fetch executions
   const refreshExecutions = useCallback(async () => {
@@ -130,9 +139,9 @@ export function FlowProvider({ children }: FlowProviderProps) {
       setExecutionsLoading(true)
     }
     try {
-      const response = await flowApis.getExecutions(
+      const response = await subscriptionApis.getExecutions(
         { page: 1, limit: EXECUTIONS_PER_PAGE },
-        executionFilter.flowId,
+        executionFilter.subscriptionId,
         executionFilter.status,
         executionFilter.startDate,
         executionFilter.endDate
@@ -155,9 +164,9 @@ export function FlowProvider({ children }: FlowProviderProps) {
     setExecutionsLoading(true)
     try {
       const nextPage = executionsPage + 1
-      const response = await flowApis.getExecutions(
+      const response = await subscriptionApis.getExecutions(
         { page: nextPage, limit: EXECUTIONS_PER_PAGE },
-        executionFilter.flowId,
+        executionFilter.subscriptionId,
         executionFilter.status,
         executionFilter.startDate,
         executionFilter.endDate
@@ -173,14 +182,14 @@ export function FlowProvider({ children }: FlowProviderProps) {
 
   // Cancel an execution
   const cancelExecution = useCallback(async (executionId: number) => {
-    const updatedExecution = await flowApis.cancelExecution(executionId)
+    const updatedExecution = await subscriptionApis.cancelExecution(executionId)
     // Update local state with the cancelled execution
     setExecutions(prev => prev.map(e => (e.id === executionId ? updatedExecution : e)))
   }, [])
 
   // Initial load
   useEffect(() => {
-    refreshFlows()
+    refreshSubscriptions()
     refreshExecutions()
   }, [])
 
@@ -189,19 +198,19 @@ export function FlowProvider({ children }: FlowProviderProps) {
     refreshExecutions()
   }, [executionFilter, refreshExecutions])
 
-  // Handle WebSocket flow execution updates
-  const handleFlowExecutionUpdate = useCallback((data: FlowExecutionUpdatePayload) => {
+  // Handle WebSocket background execution updates
+  const handleBackgroundExecutionUpdate = useCallback((data: BackgroundExecutionUpdatePayload) => {
     setExecutions(prev => {
       // Check if this execution already exists
       const existingIndex = prev.findIndex(e => e.id === data.execution_id)
       const existingExecution = existingIndex >= 0 ? prev[existingIndex] : null
 
-      const updatedExecution: FlowExecution = {
+      const updatedExecution: BackgroundExecution = {
         id: data.execution_id,
         user_id: existingExecution?.user_id ?? 0,
-        flow_id: data.flow_id,
-        flow_name: data.flow_name,
-        flow_display_name: data.flow_display_name,
+        subscription_id: data.subscription_id,
+        subscription_name: data.subscription_name,
+        subscription_display_name: data.subscription_display_name,
         team_name: data.team_name,
         status: data.status,
         task_id: data.task_id,
@@ -228,25 +237,25 @@ export function FlowProvider({ children }: FlowProviderProps) {
     })
   }, [])
 
-  // Subscribe to WebSocket flow events
+  // Subscribe to WebSocket background execution events
   useEffect(() => {
-    const cleanup = registerFlowHandlers({
-      onFlowExecutionUpdate: handleFlowExecutionUpdate,
+    const cleanup = registerBackgroundExecutionHandlers({
+      onBackgroundExecutionUpdate: handleBackgroundExecutionUpdate,
     })
     return cleanup
-  }, [registerFlowHandlers, handleFlowExecutionUpdate])
+  }, [registerBackgroundExecutionHandlers, handleBackgroundExecutionUpdate])
 
   return (
-    <FlowContext.Provider
+    <SubscriptionContext.Provider
       value={{
-        flows,
-        flowsLoading,
-        flowsTotal,
-        flowsPage,
-        selectedFlow,
-        setSelectedFlow,
-        refreshFlows,
-        loadMoreFlows,
+        subscriptions,
+        subscriptionsLoading,
+        subscriptionsTotal,
+        subscriptionsPage,
+        selectedSubscription,
+        setSelectedSubscription,
+        refreshSubscriptions,
+        loadMoreSubscriptions,
         executions,
         executionsLoading,
         executionsRefreshing,
@@ -264,14 +273,14 @@ export function FlowProvider({ children }: FlowProviderProps) {
       }}
     >
       {children}
-    </FlowContext.Provider>
+    </SubscriptionContext.Provider>
   )
 }
 
-export function useFlowContext() {
-  const context = useContext(FlowContext)
+export function useSubscriptionContext() {
+  const context = useContext(SubscriptionContext)
   if (context === undefined) {
-    throw new Error('useFlowContext must be used within a FlowProvider')
+    throw new Error('useSubscriptionContext must be used within a SubscriptionProvider')
   }
   return context
 }

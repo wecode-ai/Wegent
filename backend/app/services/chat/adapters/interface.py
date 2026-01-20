@@ -47,6 +47,8 @@ class ChatRequest:
     is_group_chat: bool = False
     # User subtask ID for RAG result persistence (different from subtask_id which is AI response's subtask)
     user_subtask_id: Optional[int] = None
+    # History limit for subscription tasks (most recent N messages)
+    history_limit: Optional[int] = None
 
     # Model configuration
     model_config: dict = field(default_factory=dict)
@@ -114,6 +116,7 @@ class ChatRequest:
             "message_id": self.message_id,
             "user_message_id": self.user_message_id,
             "is_group_chat": self.is_group_chat,
+            "history_limit": self.history_limit,
             "model_config": self.model_config,
             "system_prompt": self.system_prompt,
             "contexts": self.contexts,

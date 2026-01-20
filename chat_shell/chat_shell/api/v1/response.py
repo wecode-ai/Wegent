@@ -219,6 +219,7 @@ async def _stream_response(
         is_user_selected_kb = True  # Default to strict mode for backward compatibility
         table_contexts = []
         task_data = None
+        history_limit = None  # For subscription tasks
 
         if request.metadata:
             task_id = getattr(request.metadata, "task_id", 0) or 0
@@ -246,7 +247,7 @@ async def _stream_response(
                 is_user_selected_kb = True  # Ensure it's never None
             table_contexts = getattr(request.metadata, "table_contexts", None) or []
             task_data = getattr(request.metadata, "task_data", None)
-
+            history_limit = getattr(request.metadata, "history_limit", None)
         # Merge skill configs from tools and metadata
         all_skill_configs = skill_configs + skill_configs_from_meta
 
@@ -263,6 +264,7 @@ async def _stream_response(
             message_id=message_id,
             user_message_id=user_message_id,
             is_group_chat=is_group_chat,
+            history_limit=history_limit,  # For subscription tasks
             model_config=model_config,
             system_prompt=request.system or "",
             enable_tools=True,

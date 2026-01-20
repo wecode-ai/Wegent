@@ -46,8 +46,8 @@ class XXLJobBackend(SchedulerBackend):
         Flow execution logic
     """
 
-    # Core job ID for the check_due_flows periodic task
-    CHECK_DUE_FLOWS_JOB_ID = "check-due-flows"
+    # Core job ID for the check_due_subscriptions periodic task
+    CHECK_DUE_SUBSCRIPTIONS_JOB_ID = "check-due-subscriptions"
 
     # XXL-JOB API endpoints
     API_REGISTRY = "/api/registry"
@@ -264,14 +264,14 @@ class XXLJobBackend(SchedulerBackend):
         self._stop_event.clear()
         self._start_heartbeat()
 
-        # Add core check_due_flows job
-        self._add_check_due_flows_job()
+        # Add core check_due_subscriptions job
+        self._add_check_due_subscriptions_job()
 
         self._state = SchedulerState.RUNNING
         logger.info("[XXLJobBackend] Started successfully")
 
-    def _add_check_due_flows_job(self) -> None:
-        """Add the check_due_flows periodic job to XXL-JOB."""
+    def _add_check_due_subscriptions_job(self) -> None:
+        """Add the check_due_subscriptions periodic job to XXL-JOB."""
         from app.core.config import settings
 
         # Build cron expression for the interval
@@ -292,29 +292,29 @@ class XXLJobBackend(SchedulerBackend):
 
         try:
             self.schedule_job(
-                job_id=self.CHECK_DUE_FLOWS_JOB_ID,
-                func=self._check_due_flows_handler,
+                job_id=self.CHECK_DUE_SUBSCRIPTIONS_JOB_ID,
+                func=self._check_due_subscriptions_handler,
                 trigger_type="cron",
                 trigger_config={"expression": cron_expr},
                 replace_existing=True,
             )
         except Exception as e:
             logger.warning(
-                f"[XXLJobBackend] Failed to add check_due_flows job "
+                f"[XXLJobBackend] Failed to add check_due_subscriptions job "
                 f"(may need manual creation in Admin): {e}"
             )
 
     @staticmethod
-    def _check_due_flows_handler():
-        """Handler function for check_due_flows job."""
+    def _check_due_subscriptions_handler():
+        """Handler function for check_due_subscriptions job."""
         try:
-            from app.tasks.flow_tasks import check_due_flows_sync
+            from app.tasks.subscription_tasks import check_due_subscriptions_sync
 
-            check_due_flows_sync()
+            check_due_subscriptions_sync()
         except ImportError:
-            from app.tasks.flow_tasks import check_due_flows
+            from app.tasks.subscription_tasks import check_due_subscriptions
 
-            check_due_flows()
+            check_due_subscriptions()
 
     def stop(self, wait: bool = True) -> None:
         """
@@ -380,7 +380,7 @@ class XXLJobBackend(SchedulerBackend):
         # Create job in XXL-JOB Admin
         job_data = {
             "jobGroup": self._job_group_id or 1,  # Default to group 1
-            "jobDesc": f"Wegent Flow: {job_id}",
+            "jobDesc": f"Wegent Subscription: {job_id}",
             "author": "wegent",
             "scheduleType": "CRON",
             "scheduleConf": cron_expr,

@@ -198,6 +198,12 @@ class Metadata(BaseModel):
     participants: Optional[list[str]] = Field(
         None, description="Group chat participants"
     )
+    # History limit for subscription tasks
+    history_limit: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Max number of history messages to load (most recent N messages). Used by subscription tasks.",
+    )
     # Skill configuration (passed from Backend for HTTP mode)
     skill_names: Optional[list[str]] = Field(
         None, description="Available skill names for dynamic loading"

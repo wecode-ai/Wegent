@@ -115,6 +115,7 @@ async def get_chat_history(
     task_id: int,
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """Get chat history for a task.
 
@@ -126,6 +127,8 @@ async def get_chat_history(
         task_id: Task ID
         is_group_chat: Whether to include username prefix in user messages
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
+        limit: If provided, limit the number of messages returned (most recent N messages).
+            Used by subscription tasks to control history context size.
 
     Returns:
         List of message dictionaries with 'role' and 'content' keys
@@ -133,20 +136,21 @@ async def get_chat_history(
     is_http = _is_http_mode()
     logger.debug(
         "[history] get_chat_history: task_id=%d, is_group_chat=%s, "
-        "exclude_after=%s, is_http_mode=%s",
+        "exclude_after=%s, limit=%s, is_http_mode=%s",
         task_id,
         is_group_chat,
         exclude_after_message_id,
+        limit,
         is_http,
     )
 
     if is_http:
         history = await _load_history_from_remote(
-            task_id, is_group_chat, exclude_after_message_id
+            task_id, is_group_chat, exclude_after_message_id, limit
         )
     else:
         history = await _load_history_from_db(
-            task_id, is_group_chat, exclude_after_message_id
+            task_id, is_group_chat, exclude_after_message_id, limit
         )
 
     logger.debug(
@@ -155,8 +159,8 @@ async def get_chat_history(
         task_id,
     )
 
-    # Only truncate history for group chat
-    if is_group_chat:
+    # Only truncate history for group chat (if no explicit limit was provided)
+    if is_group_chat and limit is None:
         return _truncate_history(history)
     return history
 
@@ -165,17 +169,25 @@ async def _load_history_from_remote(
     task_id: int,
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """Load chat history from Backend via RemoteHistoryStore.
 
     Used in HTTP mode when chat_shell runs as an independent service.
+
+    Args:
+        task_id: Task ID
+        is_group_chat: Whether to include username prefix in user messages
+        exclude_after_message_id: If provided, exclude messages with message_id >= this value.
+        limit: If provided, limit the number of messages returned (most recent N messages).
     """
     logger.debug(
         "[history] _load_history_from_remote: START task_id=%d, is_group_chat=%s, "
-        "exclude_after=%s",
+        "exclude_after=%s, limit=%s",
         task_id,
         is_group_chat,
         exclude_after_message_id,
+        limit,
     )
 
     store = _get_remote_history_store()
@@ -187,16 +199,18 @@ async def _load_history_from_remote(
         before_id = str(exclude_after_message_id) if exclude_after_message_id else None
         logger.debug(
             "[history] Calling remote store.get_history: session_id=%s, "
-            "before_id=%s, is_group_chat=%s",
+            "before_id=%s, is_group_chat=%s, limit=%s",
             session_id,
             before_id,
             is_group_chat,
+            limit,
         )
 
         messages = await store.get_history(
             session_id=session_id,
             before_message_id=before_id,
             is_group_chat=is_group_chat,
+            limit=limit,
         )
 
         logger.debug(
@@ -245,16 +259,24 @@ async def _load_history_from_db(
     task_id: int,
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """Load chat history from database (Package mode).
 
     Uses asyncio.to_thread to run sync database operations.
+
+    Args:
+        task_id: Task ID
+        is_group_chat: Whether to include username prefix in user messages
+        exclude_after_message_id: If provided, exclude messages with message_id >= this value.
+        limit: If provided, limit the number of messages returned (most recent N messages).
     """
     return await asyncio.to_thread(
         _load_history_from_db_sync,
         task_id,
         is_group_chat,
         exclude_after_message_id,
+        limit,
     )
 
 
@@ -262,10 +284,17 @@ def _load_history_from_db_sync(
     task_id: int,
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """Synchronous implementation of chat history retrieval.
 
     In package mode, imports from backend's app.models and app.db.session.
+
+    Args:
+        task_id: Task ID
+        is_group_chat: Whether to include username prefix in user messages
+        exclude_after_message_id: If provided, exclude messages with message_id >= this value.
+        limit: If provided, limit the number of messages returned (most recent N messages).
     """
     # Import backend's models and database session
     # This works in package mode since we're running within the backend process
@@ -290,7 +319,15 @@ def _load_history_from_db_sync(
         if exclude_after_message_id is not None:
             query = query.filter(Subtask.message_id < exclude_after_message_id)
 
-        subtasks = query.order_by(Subtask.message_id.asc()).all()
+        # If limit is specified, we need to get the most recent N messages
+        # First order by message_id desc to get the latest, then reverse
+        if limit is not None and limit > 0:
+            # Get the most recent N messages by ordering desc and limiting
+            subtasks = query.order_by(Subtask.message_id.desc()).limit(limit).all()
+            # Reverse to get chronological order
+            subtasks = list(reversed(subtasks))
+        else:
+            subtasks = query.order_by(Subtask.message_id.asc()).all()
 
         for subtask, sender_username in subtasks:
             msg = _build_history_message(db, subtask, sender_username, is_group_chat)
