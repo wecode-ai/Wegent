@@ -243,7 +243,7 @@ function GeneratedPPTXBadge({ context }: { context: SubtaskContextBrief }) {
   if (slideCount !== undefined && slideCount > 0) {
     subtitleParts.push(`${slideCount} ${t('common:slides', { count: slideCount }) || 'slides'}`)
   }
-  if (fileSize !== undefined && fileSize > 0) {
+  if (fileSize !== undefined && fileSize !== null && fileSize > 0) {
     subtitleParts.push(formatFileSize(fileSize))
   }
 
