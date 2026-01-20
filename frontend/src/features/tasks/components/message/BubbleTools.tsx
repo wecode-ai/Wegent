@@ -180,21 +180,32 @@ const BubbleTools = ({
       {/* Regenerate button - only shown when showRegenerate is true */}
       {showRegenerate &&
         (() => {
-          const defaultButton = (
+          // When renderRegenerateButton is provided, the button is wrapped in a PopoverTrigger
+          // In that case, we should NOT include onClick since PopoverTrigger handles the open state
+          // We also need to avoid nesting Tooltip inside PopoverTrigger (asChild conflicts)
+          const hasPopoverWrapper = !!renderRegenerateButton
+
+          // The raw button without tooltip - used when wrapped in PopoverTrigger
+          const rawButton = (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={hasPopoverWrapper ? undefined : onRegenerateClick}
+              disabled={isRegenerating}
+              className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec disabled:opacity-50"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 text-text-muted ${isRegenerating ? 'animate-spin' : ''}`}
+              />
+            </Button>
+          )
+
+          // Button with tooltip - used when no PopoverTrigger wrapper
+          const defaultButton = hasPopoverWrapper ? (
+            rawButton
+          ) : (
             <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={onRegenerateClick}
-                  disabled={isRegenerating}
-                  className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec disabled:opacity-50"
-                >
-                  <RefreshCw
-                    className={`h-3.5 w-3.5 text-text-muted ${isRegenerating ? 'animate-spin' : ''}`}
-                  />
-                </Button>
-              </TooltipTrigger>
+              <TooltipTrigger asChild>{rawButton}</TooltipTrigger>
               <TooltipContent>
                 {t('chat:regenerate.tooltip') || t('chat:actions.regenerate') || 'Regenerate'}
               </TooltipContent>
