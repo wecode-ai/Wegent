@@ -165,12 +165,18 @@ export function QuickAccessCards({
   // Search state for team list
   const [searchQuery, setSearchQuery] = useState('')
 
-  // Filter teams for dropdown based on search query
+  // Filter teams for dropdown based on search query (excluding default team)
   const dropdownTeams = useMemo(() => {
-    if (!searchQuery.trim()) return filteredTeams
+    // First filter out the default team
+    const teamsWithoutDefault = filteredTeams.filter(team => {
+      if (defaultTeam && team.id === defaultTeam.id) return false
+      return true
+    })
+
+    if (!searchQuery.trim()) return teamsWithoutDefault
     const query = searchQuery.toLowerCase()
-    return filteredTeams.filter(team => team.name.toLowerCase().includes(query))
-  }, [filteredTeams, searchQuery])
+    return teamsWithoutDefault.filter(team => team.name.toLowerCase().includes(query))
+  }, [filteredTeams, searchQuery, defaultTeam])
 
   // Get shared badge style
   const sharedBadgeStyle = useMemo(() => getSharedBadgeStyle(), [])
@@ -306,6 +312,18 @@ export function QuickAccessCards({
     )
   }
 
+  // Helper function to check if a team is a personal team (not public, not group)
+  const isPersonalTeam = (team: DisplayTeam) => {
+    const isPublic = 'user_id' in team && team.user_id === 0
+    const isGroup = team.namespace && team.namespace !== 'default'
+    return !isPublic && !isGroup
+  }
+
+  // Helper function to check if a team is a group team
+  const isGroupTeam = (team: DisplayTeam) => {
+    return team.namespace && team.namespace !== 'default'
+  }
+
   // Render a single team card with optional tooltip
   const renderTeamCard = (team: DisplayTeam) => {
     const isSelected = selectedTeam?.id === team.id
@@ -343,6 +361,18 @@ export function QuickAccessCards({
         >
           {team.name}
         </span>
+
+        {/* Personal or Group badge */}
+        {isPersonalTeam(team) && (
+          <Tag variant="info" className="ml-1 text-[10px] py-0">
+            {t('settings.personal')}
+          </Tag>
+        )}
+        {isGroupTeam(team) && (
+          <Tag variant="default" className="ml-1 text-[10px] py-0">
+            {team.namespace}
+          </Tag>
+        )}
 
         {/* Mode switch indicator */}
         {isClicked && switchingToMode && (
@@ -456,10 +486,10 @@ export function QuickAccessCards({
         {/* More button - use MobileTeamSelector on mobile, dropdown on desktop */}
         {isMobile ? (
           // Mobile: Use iOS-style drawer selector with "更多" text
-          filteredTeams.length > 0 && selectedTeam ? (
+          dropdownTeams.length > 0 && selectedTeam ? (
             <MobileTeamSelector
               selectedTeam={selectedTeam}
-              teams={filteredTeams}
+              teams={dropdownTeams}
               onTeamSelect={onTeamSelect}
               disabled={isLoading || isTeamsLoading || false}
               isLoading={isTeamsLoading}
@@ -536,7 +566,9 @@ export function QuickAccessCards({
                     dropdownTeams.map(team => {
                       const isSelected = selectedTeam?.id === team.id
                       const isSharedTeam = team.share_status === 2 && team.user?.user_name
-                      const isGroupTeam = team.namespace && team.namespace !== 'default'
+                      const isGroupTeamItem = team.namespace && team.namespace !== 'default'
+                      const isPublicTeam = 'user_id' in team && team.user_id === 0
+                      const isPersonalTeamItem = !isPublicTeam && !isGroupTeamItem
 
                       return (
                         <div
@@ -563,8 +595,13 @@ export function QuickAccessCards({
                           <span className="flex-1 text-sm font-medium truncate" title={team.name}>
                             {team.name}
                           </span>
-                          {isGroupTeam && (
+                          {isPersonalTeamItem && (
                             <Tag className="text-xs !m-0 flex-shrink-0" variant="info">
+                              {t('settings.personal')}
+                            </Tag>
+                          )}
+                          {isGroupTeamItem && (
+                            <Tag className="text-xs !m-0 flex-shrink-0" variant="default">
                               {team.namespace}
                             </Tag>
                           )}

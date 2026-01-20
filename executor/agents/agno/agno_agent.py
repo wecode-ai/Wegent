@@ -100,7 +100,9 @@ class AgnoAgent(Agent):
         self._last_content_report_time: float = 0
         self._content_report_interval: float = 0.5  # Report at most every 500ms
         self._last_thinking_report_time: float = 0
-        self._thinking_report_interval: float = 0.3  # Report thinking at most every 300ms
+        self._thinking_report_interval: float = (
+            0.3  # Report thinking at most every 300ms
+        )
 
         # Initialize thinking step manager first
         self.thinking_manager = ThinkingStepManager(
@@ -749,7 +751,9 @@ class AgnoAgent(Agent):
                 )
                 # Throttled report progress - only send if enough time has passed
                 current_time = time.time()
-                time_since_last_thinking = current_time - self._last_thinking_report_time
+                time_since_last_thinking = (
+                    current_time - self._last_thinking_report_time
+                )
                 if time_since_last_thinking >= self._thinking_report_interval:
                     self._last_thinking_report_time = current_time
                     logger.info(
@@ -786,7 +790,9 @@ class AgnoAgent(Agent):
                 )
                 # Throttled report progress - only send if enough time has passed
                 current_time = time.time()
-                time_since_last_thinking = current_time - self._last_thinking_report_time
+                time_since_last_thinking = (
+                    current_time - self._last_thinking_report_time
+                )
                 if time_since_last_thinking >= self._thinking_report_interval:
                     self._last_thinking_report_time = current_time
                     logger.info(
@@ -1331,7 +1337,9 @@ class AgnoAgent(Agent):
                 )
                 # Throttled report progress - only send if enough time has passed
                 current_time = time.time()
-                time_since_last_thinking = current_time - self._last_thinking_report_time
+                time_since_last_thinking = (
+                    current_time - self._last_thinking_report_time
+                )
                 if time_since_last_thinking >= self._thinking_report_interval:
                     self._last_thinking_report_time = current_time
                     logger.info(

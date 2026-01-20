@@ -26,6 +26,7 @@ import {
   UsersRound,
   Ghost,
   Terminal,
+  Activity,
 } from 'lucide-react'
 
 export type AdminTabId =
@@ -39,6 +40,7 @@ export type AdminTabId =
   | 'public-bots'
   | 'api-keys'
   | 'system-config'
+  | 'monitor'
 
 interface AdminTabNavProps {
   activeTab: AdminTabId
@@ -70,6 +72,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'public-bots', label: t('admin:tabs.public_bots'), icon: Bot },
     { id: 'api-keys', label: t('admin:tabs.api_keys'), icon: KeyRound },
     { id: 'system-config', label: t('admin:tabs.system_config'), icon: Settings },
+    { id: 'monitor', label: t('admin:tabs.monitor'), icon: Activity },
   ]
 
   // Update the indicator position when the active tab changes

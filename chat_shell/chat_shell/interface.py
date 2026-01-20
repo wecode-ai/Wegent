@@ -100,6 +100,9 @@ class ChatRequest:
     # Extra tools to add
     extra_tools: list = field(default_factory=list)
 
+    # History limit for subscription tasks
+    history_limit: Optional[int] = None  # Max number of history messages to load
+
 
 @dataclass
 class ChatEvent:

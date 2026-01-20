@@ -163,6 +163,39 @@ export interface AdminPersonalKeyListResponse {
   items: AdminPersonalKey[]
   total: number
 }
+// Background Execution Monitor Types
+export interface BackgroundExecutionMonitorStats {
+  total_executions: number
+  completed_count: number
+  failed_count: number
+  timeout_count: number
+  cancelled_count: number
+  running_count: number
+  pending_count: number
+  success_rate: number
+  failure_rate: number
+  timeout_rate: number
+  active_subscriptions_count: number
+  total_subscriptions_count: number
+}
+
+export interface BackgroundExecutionMonitorError {
+  execution_id: number
+  subscription_id: number
+  user_id: number
+  task_id: number | null
+  status: string
+  error_message: string | null
+  trigger_type: string | null
+  created_at: string
+  started_at: string | null
+  completed_at: string | null
+}
+
+export interface BackgroundExecutionMonitorErrorListResponse {
+  total: number
+  items: BackgroundExecutionMonitorError[]
+}
 
 // Public Retriever Types
 export interface AdminPublicRetriever {
@@ -558,6 +591,36 @@ export const adminApis = {
    */
   async deletePublicRetriever(retrieverId: number): Promise<void> {
     return apiClient.delete(`/admin/public-retrievers/${retrieverId}`)
+  },
+
+  // ==================== Background Execution Monitor ====================
+
+  /**
+   * Get background execution statistics for admin monitoring
+   */
+  async getBackgroundExecutionMonitorStats(
+    hours: number = 24
+  ): Promise<BackgroundExecutionMonitorStats> {
+    return apiClient.get(`/admin/subscription-monitor/stats?hours=${hours}`)
+  },
+
+  /**
+   * Get list of background execution errors for admin monitoring
+   */
+  async getBackgroundExecutionMonitorErrors(
+    page: number = 1,
+    limit: number = 50,
+    hours: number = 24,
+    status?: string
+  ): Promise<BackgroundExecutionMonitorErrorListResponse> {
+    const params = new URLSearchParams()
+    params.append('page', String(page))
+    params.append('limit', String(limit))
+    params.append('hours', String(hours))
+    if (status) {
+      params.append('status', status)
+    }
+    return apiClient.get(`/admin/subscription-monitor/errors?${params.toString()}`)
   },
 
   // ==================== Public Team Management ====================

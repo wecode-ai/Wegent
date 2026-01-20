@@ -142,10 +142,29 @@ class TestSandboxManager:
 
     @pytest.mark.asyncio
     async def test_create_sandbox_invalid_shell_type(
-        self, sandbox_manager_with_mock_redis
+        self, sandbox_manager_with_mock_redis, mock_redis_client, mocker
     ):
         """Test sandbox creation with invalid shell_type fails during container startup."""
         manager = sandbox_manager_with_mock_redis
+        mock_redis_client.hget.return_value = None  # No existing sandbox
+
+        # Mock executor to simulate container creation success but health check failure
+        # This simulates an invalid shell_type where the container starts but executor fails to initialize
+        mock_executor = mocker.MagicMock()
+        mock_executor.submit_executor.return_value = {
+            "status": "success",
+            "executor_name": "test-executor-invalid",
+        }
+        # Container address fails - simulating invalid template
+        mock_executor.get_container_address.return_value = {
+            "status": "error",
+            "error_msg": "Container failed to start",
+        }
+
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+            return_value=mock_executor,
+        )
 
         sandbox, error = await manager.create_sandbox(
             shell_type="InvalidType",
@@ -159,6 +178,7 @@ class TestSandboxManager:
         assert sandbox.shell_type == "InvalidType"
         # Container fails to become ready with invalid shell type
         assert error is not None
+        assert "failed to become ready" in error
 
     @pytest.mark.asyncio
     async def test_create_sandbox_reuses_existing(

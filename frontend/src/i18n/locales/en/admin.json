@@ -11,7 +11,8 @@
     "public_ghosts": "Public Ghosts",
     "public_shells": "Public Shells",
     "api_keys": "API Keys",
-    "system_config": "System Config"
+    "system_config": "System Config",
+    "monitor": "Monitor"
   },
   "stats": {
     "total_users": "Total Users",
@@ -360,6 +361,51 @@
       "load_failed": "Failed to load personal keys",
       "delete_failed": "Failed to delete personal key",
       "toggle_failed": "Failed to toggle personal key status"
+    }
+  },
+  "monitor": {
+    "title": "Flow Execution Monitor",
+    "description": "View flow execution statistics and errors for all users",
+    "time_range": {
+      "1h": "Last 1 hour",
+      "6h": "Last 6 hours",
+      "24h": "Last 24 hours",
+      "3d": "Last 3 days",
+      "7d": "Last 7 days"
+    },
+    "stats": {
+      "total_executions": "Total Executions",
+      "completed": "Completed",
+      "failed": "Failed",
+      "timeout": "Timeout",
+      "running": "Running",
+      "pending": "Pending",
+      "active_flows": "Active Flows",
+      "total_flows": "Total Flows",
+      "enabled_flows": "Enabled scheduled tasks",
+      "all_flows": "All flows"
+    },
+    "error_list": {
+      "title": "Abnormal Executions",
+      "all_status": "All Status",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "running": "Running",
+      "no_errors": "No abnormal executions found",
+      "columns": {
+        "execution_id": "Execution ID",
+        "flow_id": "Flow ID",
+        "user_id": "User ID",
+        "status": "Status",
+        "trigger_type": "Trigger Type",
+        "error_message": "Error Message",
+        "created_at": "Created At"
+      },
+      "pagination": "Showing {{start}}-{{end}} of {{total}}"
+    },
+    "errors": {
+      "load_stats_failed": "Failed to load statistics",
+      "load_errors_failed": "Failed to load error records"
     }
   },
   "public_teams": {
