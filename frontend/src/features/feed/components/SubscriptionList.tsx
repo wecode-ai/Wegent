@@ -290,7 +290,10 @@ export function SubscriptionList({
                         <Play className="mr-2 h-4 w-4" />
                         {t('trigger_now')}
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onEditSubscription(subscription)}>
+                      <DropdownMenuItem
+                        onClick={() => onEditSubscription(subscription)}
+                        disabled={actionLoading === subscription.id}
+                      >
                         <Edit className="mr-2 h-4 w-4" />
                         {t('edit')}
                       </DropdownMenuItem>
