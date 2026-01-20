@@ -32,7 +32,6 @@ from executor_manager.executors.docker.constants import (
     DEFAULT_TIMEZONE,
     DOCKER_SOCKET_PATH,
     GIT_CACHE_MOUNT_PATH,
-    GIT_CACHE_VOLUME,
     WORKSPACE_MOUNT_PATH,
 )
 from executor_manager.executors.docker.utils import (
