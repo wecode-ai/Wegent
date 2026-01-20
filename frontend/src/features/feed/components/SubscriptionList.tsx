@@ -278,7 +278,12 @@ export function SubscriptionList({
                   // Mobile: Dropdown menu
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        aria-label={t('common:actions.more')}
+                      >
                         <MoreHorizontal className="h-4 w-4" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -297,7 +302,10 @@ export function SubscriptionList({
                         <Edit className="mr-2 h-4 w-4" />
                         {t('edit')}
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleCopySubscriptionId(subscription)}>
+                      <DropdownMenuItem
+                        onClick={() => handleCopySubscriptionId(subscription)}
+                        disabled={actionLoading === subscription.id}
+                      >
                         <Hash className="mr-2 h-4 w-4" />
                         {t('copy_subscription_id')}
                       </DropdownMenuItem>
@@ -305,12 +313,18 @@ export function SubscriptionList({
                       {subscription.trigger_type === 'event' && subscription.webhook_url && (
                         <>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => handleCopyWebhookUrl(subscription)}>
+                          <DropdownMenuItem
+                            onClick={() => handleCopyWebhookUrl(subscription)}
+                            disabled={actionLoading === subscription.id}
+                          >
                             <Copy className="mr-2 h-4 w-4" />
                             {t('copy_webhook_url')}
                           </DropdownMenuItem>
                           {subscription.webhook_secret && (
-                            <DropdownMenuItem onClick={() => handleCopyWebhooksecret(subscription)}>
+                            <DropdownMenuItem
+                              onClick={() => handleCopyWebhooksecret(subscription)}
+                              disabled={actionLoading === subscription.id}
+                            >
                               <Key className="mr-2 h-4 w-4" />
                               {t('copy_webhook_secret')}
                             </DropdownMenuItem>
@@ -321,6 +335,7 @@ export function SubscriptionList({
                       <DropdownMenuItem
                         onClick={() => setDeleteConfirmSubscription(subscription)}
                         className="text-destructive"
+                        disabled={actionLoading === subscription.id}
                       >
                         <Trash2 className="mr-2 h-4 w-4" />
                         {t('delete')}
@@ -340,6 +355,7 @@ export function SubscriptionList({
                             className="h-8 w-8"
                             onClick={() => handleTrigger(subscription)}
                             disabled={actionLoading === subscription.id}
+                            aria-label={t('trigger_now')}
                           >
                             <Play className="h-4 w-4" />
                           </Button>
@@ -356,6 +372,7 @@ export function SubscriptionList({
                             className="h-8 w-8"
                             onClick={() => onEditSubscription(subscription)}
                             disabled={actionLoading === subscription.id}
+                            aria-label={t('edit')}
                           >
                             <Edit className="h-4 w-4" />
                           </Button>
@@ -375,6 +392,7 @@ export function SubscriptionList({
                                   size="icon"
                                   className="h-8 w-8"
                                   disabled={actionLoading === subscription.id}
+                                  aria-label={t('common:actions.copy')}
                                 >
                                   <Copy className="h-4 w-4" />
                                 </Button>
@@ -414,6 +432,7 @@ export function SubscriptionList({
                               className="h-8 w-8"
                               onClick={() => handleCopySubscriptionId(subscription)}
                               disabled={actionLoading === subscription.id}
+                              aria-label={t('copy_subscription_id')}
                             >
                               <Copy className="h-4 w-4" />
                             </Button>
@@ -431,6 +450,7 @@ export function SubscriptionList({
                             className="h-8 w-8 hover:text-destructive"
                             onClick={() => setDeleteConfirmSubscription(subscription)}
                             disabled={actionLoading === subscription.id}
+                            aria-label={t('delete')}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
