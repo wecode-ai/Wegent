@@ -160,12 +160,21 @@ class SemanticChunk:
 
     Attributes:
         chunk_type: Type of chunk (api_definition, api_description, api_params,
-                   api_response, api_example)
+                   api_response, api_example, table, code, example, paragraph, list, definition)
         title_path: Heading hierarchy path
         content: Chunk content
         notes: Processing notes or description
         source_blocks: List of source block indices
         metadata: Additional metadata including coverage, atomic flag, etc.
+
+    Metadata keys:
+        - atomic: bool - Whether the chunk cannot be split
+        - coverage: str - "exclusive" (no overlap) or "shared" (allows overlap)
+        - title_strict: bool - Whether title_path must match exactly
+        - overflow_strategy: str - "none", "row_split", "function_split", "item_split", "truncate"
+        - is_split: bool - Whether this chunk was split from a larger chunk
+        - split_index: int - Index if split
+        - split_total: int - Total parts if split
     """
 
     chunk_type: str
@@ -174,6 +183,53 @@ class SemanticChunk:
     notes: str = ""
     source_blocks: List[int] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # === Computed Properties ===
+
+    @property
+    def flat_title(self) -> str:
+        """Flatten title path for UI display: 'Section > Subsection'"""
+        return " > ".join(self.title_path) if self.title_path else ""
+
+    @property
+    def section_path_text(self) -> str:
+        """Section path text for context injection: '[Section/Subsection]'"""
+        return "[" + "/".join(self.title_path) + "]" if self.title_path else ""
+
+    @property
+    def is_atomic(self) -> bool:
+        """Whether the chunk cannot be split."""
+        return self.metadata.get("atomic", False)
+
+    @property
+    def coverage(self) -> str:
+        """Coverage strategy: 'exclusive' (no overlap) or 'shared' (allows overlap)."""
+        return self.metadata.get("coverage", "exclusive")
+
+    @property
+    def overflow_strategy(self) -> str:
+        """Overflow handling strategy: 'none', 'row_split', 'function_split', 'item_split', 'truncate'."""
+        return self.metadata.get("overflow_strategy", "none")
+
+    @property
+    def is_title_strict(self) -> bool:
+        """Whether title_path must match heading_context exactly."""
+        return self.metadata.get("title_strict", False)
+
+    @property
+    def is_split(self) -> bool:
+        """Whether this chunk was split from a larger chunk."""
+        return self.metadata.get("is_split", False)
+
+    @property
+    def split_index(self) -> Optional[int]:
+        """Index of this split part (0-based)."""
+        return self.metadata.get("split_index")
+
+    @property
+    def split_total(self) -> Optional[int]:
+        """Total number of split parts."""
+        return self.metadata.get("split_total")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -184,4 +240,11 @@ class SemanticChunk:
             "notes": self.notes,
             "source_blocks": self.source_blocks,
             "metadata": self.metadata,
+            # Include computed properties for convenience
+            "flat_title": self.flat_title,
+            "section_path_text": self.section_path_text,
+            "is_atomic": self.is_atomic,
+            "coverage": self.coverage,
+            "overflow_strategy": self.overflow_strategy,
+            "is_title_strict": self.is_title_strict,
         }
