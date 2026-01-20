@@ -87,7 +87,7 @@ Parameters:
 
 Example:
 {
-  "prompt": "做一个chatgpt相关的ppt,5页左右，介绍chatgpt发展历史"
+  "prompt": "Create a PowerPoint presentation about ChatGPT with around 5 slides, introducing the history of ChatGPT"
 }"""
 
     args_schema: type[BaseModel] = SandboxClaudeInput
