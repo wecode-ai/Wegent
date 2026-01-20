@@ -277,7 +277,8 @@
     "chars": "字符"
   },
   "upload": {
-    "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传"
+    "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传",
+    "wait_for_upload": "请等待文件上传完成"
   },
   "clarification_toggle": {
     "enable": "启用智能追问模式",

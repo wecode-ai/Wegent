@@ -645,7 +645,7 @@ export function useChatStreamHandlers({
       if (!isAttachmentReadyToSend) {
         toast({
           variant: 'destructive',
-          title: '请等待文件上传完成',
+          title: t('chat:upload.wait_for_upload'),
         })
         return
       }
@@ -665,7 +665,7 @@ export function useChatStreamHandlers({
       if (taskType === 'code' && showRepositorySelector && !effectiveRepo?.git_repo) {
         toast({
           variant: 'destructive',
-          title: 'Please select a repository for code tasks',
+          title: t('common:selector.repository') || 'Please select a repository for code tasks',
         })
         return
       }

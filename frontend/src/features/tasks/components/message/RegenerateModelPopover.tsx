@@ -43,7 +43,7 @@ export function RegenerateModelPopover({
   } = useModelSelection({
     teamId: selectedTeam?.id ?? null,
     taskId: null,
-    selectedTeam: selectedTeam as Parameters<typeof useModelSelection>[0]['selectedTeam'],
+    selectedTeam,
   })
 
   const handleModelSelect = (model: Model) => {

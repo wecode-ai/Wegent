@@ -8,7 +8,7 @@ import React, { useState } from 'react'
 import { Copy, Check, ThumbsUp, ThumbsDown, Pencil, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { FeedbackState } from '@/hooks/useMessageFeedback'
 
 // CopyButton component for copying markdown content
