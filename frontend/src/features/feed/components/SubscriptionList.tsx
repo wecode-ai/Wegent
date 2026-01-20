@@ -43,6 +43,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useSubscriptionContext } from '../contexts/subscriptionContext'
 import { subscriptionApis } from '@/apis/subscription'
 import type { Subscription, SubscriptionTriggerType } from '@/types/subscription'
@@ -66,6 +68,7 @@ export function SubscriptionList({
   onEditSubscription,
 }: SubscriptionListProps) {
   const { t } = useTranslation('feed')
+  const isMobile = useIsMobile()
   const {
     subscriptions,
     subscriptionsLoading,
@@ -270,55 +273,193 @@ export function SubscriptionList({
                   disabled={actionLoading === subscription.id}
                 />
 
-                {/* Actions */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-8 w-8">
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      onClick={() => handleTrigger(subscription)}
-                      disabled={actionLoading === subscription.id}
-                    >
-                      <Play className="mr-2 h-4 w-4" />
-                      {t('trigger_now')}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => onEditSubscription(subscription)}>
-                      <Edit className="mr-2 h-4 w-4" />
-                      {t('edit')}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleCopySubscriptionId(subscription)}>
-                      <Hash className="mr-2 h-4 w-4" />
-                      {t('copy_subscription_id')}
-                    </DropdownMenuItem>
-                    {/* Webhook copy options for event triggers */}
-                    {subscription.trigger_type === 'event' && subscription.webhook_url && (
-                      <>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => handleCopyWebhookUrl(subscription)}>
-                          <Copy className="mr-2 h-4 w-4" />
-                          {t('copy_webhook_url')}
-                        </DropdownMenuItem>
-                        {subscription.webhook_secret && (
-                          <DropdownMenuItem onClick={() => handleCopyWebhooksecret(subscription)}>
-                            <Key className="mr-2 h-4 w-4" />
-                            {t('copy_webhook_secret')}
+                {/* Actions - Desktop: Direct buttons, Mobile: Dropdown menu */}
+                {isMobile ? (
+                  // Mobile: Dropdown menu
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        aria-label={t('common:actions.more')}
+                      >
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onClick={() => handleTrigger(subscription)}
+                        disabled={actionLoading === subscription.id}
+                      >
+                        <Play className="mr-2 h-4 w-4" />
+                        {t('trigger_now')}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => onEditSubscription(subscription)}
+                        disabled={actionLoading === subscription.id}
+                      >
+                        <Edit className="mr-2 h-4 w-4" />
+                        {t('edit')}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => handleCopySubscriptionId(subscription)}
+                        disabled={actionLoading === subscription.id}
+                      >
+                        <Hash className="mr-2 h-4 w-4" />
+                        {t('copy_subscription_id')}
+                      </DropdownMenuItem>
+                      {/* Webhook copy options for event triggers */}
+                      {subscription.trigger_type === 'event' && subscription.webhook_url && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => handleCopyWebhookUrl(subscription)}
+                            disabled={actionLoading === subscription.id}
+                          >
+                            <Copy className="mr-2 h-4 w-4" />
+                            {t('copy_webhook_url')}
                           </DropdownMenuItem>
-                        )}
-                      </>
-                    )}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={() => setDeleteConfirmSubscription(subscription)}
-                      className="text-destructive"
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      {t('delete')}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                          {subscription.webhook_secret && (
+                            <DropdownMenuItem
+                              onClick={() => handleCopyWebhooksecret(subscription)}
+                              disabled={actionLoading === subscription.id}
+                            >
+                              <Key className="mr-2 h-4 w-4" />
+                              {t('copy_webhook_secret')}
+                            </DropdownMenuItem>
+                          )}
+                        </>
+                      )}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => setDeleteConfirmSubscription(subscription)}
+                        className="text-destructive"
+                        disabled={actionLoading === subscription.id}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        {t('delete')}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : (
+                  // Desktop: Direct action buttons
+                  <TooltipProvider delayDuration={300}>
+                    <div className="flex items-center gap-1">
+                      {/* Trigger button */}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => handleTrigger(subscription)}
+                            disabled={actionLoading === subscription.id}
+                            aria-label={t('trigger_now')}
+                          >
+                            <Play className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t('trigger_now')}</TooltipContent>
+                      </Tooltip>
+
+                      {/* Edit button */}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => onEditSubscription(subscription)}
+                            disabled={actionLoading === subscription.id}
+                            aria-label={t('edit')}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t('edit')}</TooltipContent>
+                      </Tooltip>
+
+                      {/* Copy button - Different behavior for event vs non-event types */}
+                      {subscription.trigger_type === 'event' && subscription.webhook_url ? (
+                        // Event type: Show dropdown with copy options
+                        <DropdownMenu>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  disabled={actionLoading === subscription.id}
+                                  aria-label={t('common:actions.copy')}
+                                >
+                                  <Copy className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                            </TooltipTrigger>
+                            <TooltipContent>{t('common:actions.copy')}</TooltipContent>
+                          </Tooltip>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={() => handleCopySubscriptionId(subscription)}
+                            >
+                              <Hash className="mr-2 h-4 w-4" />
+                              {t('copy_subscription_id')}
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => handleCopyWebhookUrl(subscription)}>
+                              <Copy className="mr-2 h-4 w-4" />
+                              {t('copy_webhook_url')}
+                            </DropdownMenuItem>
+                            {subscription.webhook_secret && (
+                              <DropdownMenuItem
+                                onClick={() => handleCopyWebhooksecret(subscription)}
+                              >
+                                <Key className="mr-2 h-4 w-4" />
+                                {t('copy_webhook_secret')}
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ) : (
+                        // Non-event type: Direct copy subscription ID
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => handleCopySubscriptionId(subscription)}
+                              disabled={actionLoading === subscription.id}
+                              aria-label={t('copy_subscription_id')}
+                            >
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{t('copy_subscription_id')}</TooltipContent>
+                        </Tooltip>
+                      )}
+
+                      {/* Delete button */}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 hover:text-destructive"
+                            onClick={() => setDeleteConfirmSubscription(subscription)}
+                            disabled={actionLoading === subscription.id}
+                            aria-label={t('delete')}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t('delete')}</TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </TooltipProvider>
+                )}
               </div>
             ))}
 
