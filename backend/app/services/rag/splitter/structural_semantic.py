@@ -5,15 +5,17 @@
 """
 Enhanced Structural Semantic Splitter for document chunking.
 
-This splitter implements a seven-phase document processing pipeline:
+This splitter implements an eight-phase document processing pipeline:
 
 1. Text Extraction - Extract text, detect and skip non-text content
 2. Structure Recognition - Identify heading/paragraph/code/table/flow/list/qa
 3. Noise Filtering - Remove TOC, headers/footers, duplicates
 4. Structural Chunking - Split by semantic closure
 5. API Structure Detection (Phase 5.5) - Detect API documentation patterns
-6. Token Splitting - Merge small, split large, ensure limits
+6. LLM Chunking Gate - Decide LLM vs rule-based chunking strategy
+6.5. Semantic Chunk Validation - Validate and auto-correct chunks
 7. Content Cleaning - Normalize and clean content by type
+8. Token Splitting - Respect atomic flag and overflow strategies
 
 The pipeline produces semantically coherent chunks optimized for RAG retrieval.
 """
@@ -26,12 +28,19 @@ import tiktoken
 from llama_index.core import Document
 from llama_index.core.schema import BaseNode, TextNode
 
-from .chunkers import APIRuleBasedChunker, StructuralChunker, TokenSplitter
+from .chunkers import (
+    APIRuleBasedChunker,
+    LLMChunkingGate,
+    SemanticTokenSplitter,
+    StructuralChunker,
+    TokenSplitter,
+)
 from .cleaners import ContentCleaner
 from .extractors import ExtractorFactory
 from .filters import NoiseFilter
-from .models import ChunkItem, DocumentChunks, SkippedElementType
+from .models import ChunkItem, DocumentChunks, SemanticChunk, SkippedElementType
 from .recognizers import APIStructureDetector, StructureRecognizer
+from .validators import SemanticChunkValidator
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +57,16 @@ class StructuralSemanticSplitter:
     """
     Enhanced Structural Semantic Document Splitter.
 
-    Seven-phase pipeline:
+    Eight-phase pipeline:
     1. Text Extraction - Extract text, detect and skip non-text content
     2. Structure Recognition - Identify heading/paragraph/code/table/flow/list/qa
     3. Noise Filtering - Remove TOC, headers/footers, duplicates
     4. Structural Chunking - Split by semantic closure
     5. API Structure Detection (Phase 5.5) - Detect API documentation patterns
-    6. Token Splitting - Merge small, split large, ensure limits
+    6. LLM Chunking Gate - Decide LLM vs rule-based chunking strategy
+    6.5. Semantic Chunk Validation - Validate and auto-correct chunks
     7. Content Cleaning - Normalize and clean content by type
+    8. Token Splitting - Respect atomic flag and overflow strategies
     """
 
     def __init__(
@@ -65,6 +76,8 @@ class StructuralSemanticSplitter:
         max_chunk_tokens: int = MAX_CHUNK_TOKENS,
         overlap_tokens: int = OVERLAP_TOKENS,
         enable_api_detection: bool = True,
+        enable_llm_gate: bool = True,
+        enable_validation: bool = True,
     ):
         """
         Initialize structural semantic splitter.
@@ -75,11 +88,15 @@ class StructuralSemanticSplitter:
             max_chunk_tokens: Maximum tokens per chunk (default: 600)
             overlap_tokens: Overlap tokens for forced splits (default: 80)
             enable_api_detection: Whether to enable API structure detection (default: True)
+            enable_llm_gate: Whether to enable LLM chunking gate (default: True)
+            enable_validation: Whether to enable chunk validation (default: True)
         """
         self.min_chunk_tokens = min_chunk_tokens
         self.max_chunk_tokens = max_chunk_tokens
         self.overlap_tokens = overlap_tokens
         self.enable_api_detection = enable_api_detection
+        self.enable_llm_gate = enable_llm_gate
+        self.enable_validation = enable_validation
 
         # Initialize tokenizer
         try:
@@ -98,13 +115,31 @@ class StructuralSemanticSplitter:
         self.structural_chunker = StructuralChunker()
         self.api_detector = APIStructureDetector()
         self.api_chunker = APIRuleBasedChunker()
+
+        # Phase 6: LLM Chunking Gate
+        self.llm_gate = LLMChunkingGate()
+
+        # Phase 6.5: Semantic Chunk Validator
+        self.chunk_validator = SemanticChunkValidator()
+
+        # Phase 7: Content Cleaner
+        self.content_cleaner = ContentCleaner()
+
+        # Phase 8: Semantic Token Splitter (replaces old TokenSplitter)
+        self.semantic_token_splitter = SemanticTokenSplitter(
+            min_tokens=self.min_chunk_tokens,
+            max_tokens=self.max_chunk_tokens,
+            overlap_tokens=self.overlap_tokens,
+            tokenizer=self.tokenizer,
+        )
+
+        # Keep old token splitter for backward compatibility
         self.token_splitter = TokenSplitter(
             min_tokens=self.min_chunk_tokens,
             max_tokens=self.max_chunk_tokens,
             overlap_tokens=self.overlap_tokens,
             tokenizer=self.tokenizer,
         )
-        self.content_cleaner = ContentCleaner()
 
     def count_tokens(self, text: str) -> int:
         """Count tokens in text using tiktoken."""
@@ -173,7 +208,7 @@ class StructuralSemanticSplitter:
                 _, ext = os.path.splitext(filename)
                 file_type = ext.lstrip(".") if ext else "txt"
 
-            # Process through the six-phase pipeline
+            # Process through the eight-phase pipeline
             try:
                 chunk_items, skipped_elements = self._process_document(
                     text=text,
@@ -281,7 +316,7 @@ class StructuralSemanticSplitter:
         start_position: int,
     ) -> Tuple[List[ChunkItem], List[Dict[str, Any]]]:
         """
-        Process a single document through the seven-phase pipeline.
+        Process a single document through the eight-phase pipeline.
 
         Args:
             text: Document text content
@@ -319,7 +354,10 @@ class StructuralSemanticSplitter:
         structural_chunks = self.structural_chunker.chunk(filtered_ir)
 
         # Phase 5.5: API Structure Detection (optional)
+        api_info = None
         api_chunks = []
+        semantic_chunks: List[SemanticChunk] = []
+
         if self.enable_api_detection:
             api_info = self.api_detector.detect(filtered_ir.blocks)
             if api_info.is_api_doc:
@@ -334,6 +372,18 @@ class StructuralSemanticSplitter:
                     heading_context=[],
                 )
                 api_chunks = self.api_chunker.convert_to_chunk_dicts(semantic_chunks)
+
+        # Phase 6: LLM Chunking Gate
+        use_llm_chunking = False
+        gate_reason = "disabled"
+
+        if self.enable_llm_gate and api_info:
+            use_llm_chunking, gate_reason = self.llm_gate.should_use_llm(
+                filtered_ir.blocks, api_info
+            )
+            logger.info(
+                f"[Phase6] LLM Chunking Gate: use_llm={use_llm_chunking}, reason='{gate_reason}'"
+            )
 
         # Combine structural chunks with API chunks
         # API chunks take precedence for API sections, structural for others
@@ -356,11 +406,53 @@ class StructuralSemanticSplitter:
         else:
             combined_chunks = structural_chunks
 
-        # Phase 6: Token Splitting
-        token_split_chunks = self.token_splitter.split(combined_chunks)
+        # Phase 6.5: Semantic Chunk Validation (optional)
+        validated_semantic_chunks = semantic_chunks
+        if self.enable_validation and semantic_chunks:
+            # Get current heading context from doc_ir
+            heading_context = self._extract_heading_context(filtered_ir.blocks)
+
+            validation_result = self.chunk_validator.validate(
+                chunks=semantic_chunks,
+                blocks=filtered_ir.blocks,
+                heading_context=heading_context,
+            )
+
+            if validation_result.fixed_chunks:
+                validated_semantic_chunks = validation_result.fixed_chunks
+                logger.info(
+                    f"[Phase6.5] Validation fixed {len(semantic_chunks)} -> "
+                    f"{len(validated_semantic_chunks)} chunks"
+                )
+
+                # Update combined_chunks with validated semantic chunks
+                validated_chunk_dicts = self.api_chunker.convert_to_chunk_dicts(
+                    validated_semantic_chunks
+                )
+                # Re-combine with structural chunks
+                combined_chunks = validated_chunk_dicts + [
+                    c for c in combined_chunks if c not in api_chunks
+                ]
 
         # Phase 7: Content Cleaning
-        final_chunks = self.content_cleaner.clean(token_split_chunks)
+        cleaned_chunks = self.content_cleaner.clean(combined_chunks)
+
+        # Phase 8: Token Splitting with overflow strategies
+        if validated_semantic_chunks:
+            # Use SemanticTokenSplitter for semantic chunks (respects atomic + overflow)
+            split_semantic_chunks, split_stats = self.semantic_token_splitter.split_if_needed(
+                validated_semantic_chunks
+            )
+            logger.info(
+                f"[Phase8] Semantic token split: {split_stats['total_input']} -> "
+                f"{len(split_semantic_chunks)} chunks, "
+                f"split={split_stats['split_count']}, atomic_kept={split_stats['atomic_kept']}"
+            )
+            # Convert back to chunk dicts
+            final_chunks = self.api_chunker.convert_to_chunk_dicts(split_semantic_chunks)
+        else:
+            # Use regular token splitter for non-semantic chunks
+            final_chunks = self.token_splitter.split(cleaned_chunks)
 
         # Convert to ChunkItem objects
         chunk_items: List[ChunkItem] = []
@@ -395,6 +487,21 @@ class StructuralSemanticSplitter:
             position += len(content)
 
         return chunk_items, skipped_elements
+
+    def _extract_heading_context(self, blocks: List[Any]) -> List[str]:
+        """Extract heading context from blocks."""
+        from .models.ir import BlockType
+
+        heading_context = []
+        for block in blocks:
+            if block.type == BlockType.HEADING:
+                level = block.level or 1
+                text = block.content.strip().lstrip("#").strip()
+                # Adjust heading path based on level
+                while len(heading_context) >= level:
+                    heading_context.pop()
+                heading_context.append(text)
+        return heading_context
 
     def _create_fallback_chunk(
         self,
@@ -464,6 +571,8 @@ class StructuralSemanticSplitter:
             "max_chunk_tokens": self.max_chunk_tokens,
             "overlap_tokens": self.overlap_tokens,
             "enable_api_detection": self.enable_api_detection,
+            "enable_llm_gate": self.enable_llm_gate,
+            "enable_validation": self.enable_validation,
         }
 
 
