@@ -57,6 +57,13 @@ EXECUTOR_CONFIG = os.getenv(
 )
 EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{}")
 
+# Executor network mode configuration
+# - "host": Use host network mode (container shares host network stack)
+# - "bridge": Use bridge network mode (default Docker behavior)
+# - Custom network name: Use a custom Docker network
+# Default: empty string (uses Docker default bridge mode)
+EXECUTOR_NETWORK_MODE = os.getenv("EXECUTOR_NETWORK_MODE", "")
+
 # Sandbox configuration
 # Default timeout for Sandbox task execution (seconds)
 SANDBOX_DEFAULT_TIMEOUT = int(os.getenv("SANDBOX_DEFAULT_TIMEOUT", "600"))

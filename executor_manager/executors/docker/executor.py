@@ -216,8 +216,11 @@ class DockerExecutor(Executor):
         if port_info is None:
             raise ValueError(f"Container {executor_name} has no ports mapped")
 
+        # Get dynamic host address based on container network mode
+        container_host = self._get_container_host(executor_name)
+
         # Send HTTP request to container
-        response = self._send_task_to_container(task, DEFAULT_DOCKER_HOST, port_info)
+        response = self._send_task_to_container(task, container_host, port_info)
 
         # Process response
         if response.json()["status"] == "success":
@@ -632,13 +635,24 @@ class DockerExecutor(Executor):
         # Add workspace mount
         self._add_workspace_mount(cmd)
 
-        # Add network configuration
-        self._add_network_config(cmd)
+        # Add network configuration and get the network mode
+        network_mode = self._add_network_config(cmd)
 
         # Add port mapping
+        # For host network mode, do NOT add -p flag (port mapping is not supported)
+        # The container will directly use host network stack
         port = find_available_port()
         logger.info(f"Assigned port {port} for container {executor_name}")
-        cmd.extend(["-p", f"{port}:{port}", "-e", f"PORT={port}"])
+
+        if network_mode == "host":
+            # Host network mode: only set PORT env var, no port mapping
+            cmd.extend(["-e", f"PORT={port}"])
+            logger.debug(
+                f"Host network mode: skipping port mapping, using PORT={port} env var"
+            )
+        else:
+            # Bridge/custom network mode: add port mapping
+            cmd.extend(["-p", f"{port}:{port}", "-e", f"PORT={port}"])
 
         # Add callback URL
         self._add_callback_url(cmd, task)
@@ -670,11 +684,71 @@ class DockerExecutor(Executor):
         if executor_workspace:
             cmd.extend(["-v", f"{executor_workspace}:{WORKSPACE_MOUNT_PATH}"])
 
-    def _add_network_config(self, cmd: List[str]) -> None:
-        """Add network configuration"""
-        network = os.getenv("NETWORK", "")
-        if network:
-            cmd.extend(["--network", network])
+    def _add_network_config(self, cmd: List[str]) -> str:
+        """Add network configuration and return the network mode used.
+
+        Priority order:
+        1. EXECUTOR_NETWORK_MODE if set (host, bridge, or custom network)
+        2. NETWORK if set (legacy support for custom networks)
+        3. Default: "bridge" (Docker default)
+
+        Returns:
+            str: Network mode ('host', 'bridge', or custom network name)
+        """
+        from executor_manager.config.config import EXECUTOR_NETWORK_MODE
+
+        network_mode = EXECUTOR_NETWORK_MODE or os.getenv("NETWORK", "")
+
+        if network_mode:
+            cmd.extend(["--network", network_mode])
+            logger.info(f"Using network mode: {network_mode}")
+        else:
+            network_mode = "bridge"  # Docker default
+            logger.debug("Using default bridge network mode")
+
+        return network_mode
+
+    def _get_container_host(self, executor_name: str) -> str:
+        """Get the correct host address to access a container based on its network mode.
+
+        Args:
+            executor_name: Container name
+
+        Returns:
+            str: Host address ('localhost' for host mode, DEFAULT_DOCKER_HOST for bridge/custom)
+        """
+        try:
+            result = self.subprocess.run(
+                [
+                    "docker",
+                    "inspect",
+                    "--format",
+                    "{{.HostConfig.NetworkMode}}",
+                    executor_name,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
+            )
+            network_mode = result.stdout.strip()
+
+            if network_mode == "host":
+                logger.debug(
+                    f"Container {executor_name} uses host network, using localhost"
+                )
+                return "localhost"
+            else:
+                logger.debug(
+                    f"Container {executor_name} uses {network_mode} network, using {DEFAULT_DOCKER_HOST}"
+                )
+                return DEFAULT_DOCKER_HOST
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to detect network mode for {executor_name}, using default: {e}"
+            )
+            return DEFAULT_DOCKER_HOST
 
     def _add_callback_url(self, cmd: List[str], task: Dict[str, Any]) -> None:
         """Add callback URL configuration"""
@@ -886,8 +960,13 @@ class DockerExecutor(Executor):
                     "error_msg": f"Could not find port for container {container_name}",
                 }
 
+            # Get dynamic host address based on container network mode
+            container_host = self._get_container_host(container_name)
+
             # Call the executor's cancel API
-            cancel_url = f"http://{DEFAULT_DOCKER_HOST}:{port}/api/tasks/cancel?task_id={task_id}"
+            cancel_url = (
+                f"http://{container_host}:{port}/api/tasks/cancel?task_id={task_id}"
+            )
 
             # Call the executor's cancel API
             logger.info(f"Calling cancel API for task {task_id} at {cancel_url}")
@@ -999,9 +1078,12 @@ class DockerExecutor(Executor):
                     "error_msg": f"Container {executor_name} port not available",
                 }
 
+            # Get dynamic host address based on container network mode
+            container_host = self._get_container_host(executor_name)
+
             return {
                 "status": "success",
-                "base_url": f"http://{DEFAULT_DOCKER_HOST}:{port}",
+                "base_url": f"http://{container_host}:{port}",
             }
         except Exception as e:
             logger.error(f"Error getting container address for {executor_name}: {e}")

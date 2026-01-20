@@ -416,6 +416,9 @@ def get_container_ports(container_name: str) -> dict:
     """
     Get port mappings for a specific container by name.
 
+    For host network mode, retrieves port from container environment variables.
+    For bridge/custom network mode, retrieves port from port mappings.
+
     Args:
         container_name (str): Name of the container
 
@@ -431,7 +434,7 @@ def get_container_ports(container_name: str) -> dict:
                 "ports": [],
             }
 
-        # Get ports information for the specific container
+        # First try to get port mappings (bridge/custom network mode)
         cmd = [
             "docker",
             "ps",
@@ -458,6 +461,35 @@ def get_container_ports(container_name: str) -> dict:
                             "protocol": protocol,
                         }
                     )
+
+        # If no port mappings found, check if container is in host network mode
+        # In host mode, get PORT from environment variables
+        if not ports:
+            env_cmd = [
+                "docker",
+                "inspect",
+                "--format",
+                "{{range .Config.Env}}{{println .}}{{end}}",
+                container_name,
+            ]
+            env_result = subprocess.run(
+                env_cmd, check=True, capture_output=True, text=True
+            )
+
+            for line in env_result.stdout.splitlines():
+                if line.startswith("PORT="):
+                    port_value = int(line.split("=")[1])
+                    ports.append(
+                        {
+                            "host_port": port_value,
+                            "container_port": port_value,
+                            "protocol": "tcp",
+                        }
+                    )
+                    logger.info(
+                        f"Retrieved port from environment variable for host network container: {port_value}"
+                    )
+                    break
 
         logger.info(
             f"Retrieved port mappings for container '{container_name}': {ports}"
