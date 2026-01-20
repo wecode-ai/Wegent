@@ -741,6 +741,18 @@ export default function MessagesArea({
   // Handle regenerate - find the user message before the AI message and resend it with selected model
   const handleRegenerate = useCallback(
     async (aiMessage: Message, selectedModel: Model) => {
+      // 0. Check if currently streaming - prevent regenerate during active streaming
+      if (isStreaming) {
+        toast({
+          variant: 'destructive',
+          title: t('chat:regenerate.failed') || 'Failed to regenerate response',
+          description:
+            t('chat:edit.wait_for_completion') ||
+            'Please wait for the current response to complete',
+        })
+        return
+      }
+
       // 1. Find the index of this AI message by subtaskId
       const aiIndex = messages.findIndex(m => m.subtaskId === aiMessage.subtaskId)
       if (aiIndex < 0) return
@@ -804,6 +816,7 @@ export default function MessagesArea({
       onSendMessageWithModel,
       toast,
       t,
+      isStreaming,
     ]
   )
 

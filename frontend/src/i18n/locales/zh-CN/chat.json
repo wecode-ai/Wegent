@@ -25,7 +25,8 @@
     "confirm_title": "确认编辑",
     "confirm_description": "此编辑操作将清除本条消息及其后的所有消息，对话将从当前位置重新开始。确定要继续吗？",
     "confirm_button": "确认",
-    "confirming": "处理中..."
+    "confirming": "处理中...",
+    "wait_for_completion": "请等待当前回复生成完成"
   },
   "regenerate": {
     "failed": "重新生成失败",

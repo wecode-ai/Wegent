@@ -25,7 +25,8 @@
     "confirm_title": "Confirm Edit",
     "confirm_description": "This edit will clear this message and all subsequent messages. The conversation will restart from this point. Are you sure you want to continue?",
     "confirm_button": "Confirm",
-    "confirming": "Processing..."
+    "confirming": "Processing...",
+    "wait_for_completion": "Please wait for the current response to complete"
   },
   "regenerate": {
     "failed": "Failed to regenerate response",
