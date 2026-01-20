@@ -4,7 +4,8 @@
 
 """Chunkers for document splitting."""
 
+from .api_chunker import APIRuleBasedChunker
 from .structural_chunker import StructuralChunker
 from .token_splitter import TokenSplitter
 
-__all__ = ["StructuralChunker", "TokenSplitter"]
+__all__ = ["APIRuleBasedChunker", "StructuralChunker", "TokenSplitter"]

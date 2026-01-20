@@ -4,6 +4,12 @@
 
 """Data models for the structural semantic splitter pipeline."""
 
+from .api_models import (
+    APIDocumentInfo,
+    APIEndpoint,
+    APISection,
+    SemanticChunk,
+)
 from .ir import (
     BlockType,
     ChunkItem,
@@ -15,6 +21,7 @@ from .ir import (
 )
 
 __all__ = [
+    # IR models
     "BlockType",
     "ChunkItem",
     "DocumentChunks",
@@ -22,4 +29,9 @@ __all__ = [
     "SkippedElement",
     "SkippedElementType",
     "StructureBlock",
+    # API detection models
+    "APIDocumentInfo",
+    "APIEndpoint",
+    "APISection",
+    "SemanticChunk",
 ]

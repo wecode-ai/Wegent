@@ -4,6 +4,7 @@
 
 """Structure recognizers for document analysis."""
 
+from .api_detector import APIStructureDetector
 from .patterns import (
     BLOCKQUOTE_PATTERNS,
     CODE_BLOCK_PATTERNS,
@@ -17,6 +18,7 @@ from .patterns import (
 from .structure_recognizer import StructureRecognizer
 
 __all__ = [
+    "APIStructureDetector",
     "BLOCKQUOTE_PATTERNS",
     "CODE_BLOCK_PATTERNS",
     "DEFINITION_PATTERNS",

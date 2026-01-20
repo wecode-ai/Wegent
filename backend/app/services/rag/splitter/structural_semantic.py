@@ -5,14 +5,15 @@
 """
 Enhanced Structural Semantic Splitter for document chunking.
 
-This splitter implements a six-phase document processing pipeline:
+This splitter implements a seven-phase document processing pipeline:
 
 1. Text Extraction - Extract text, detect and skip non-text content
 2. Structure Recognition - Identify heading/paragraph/code/table/flow/list/qa
 3. Noise Filtering - Remove TOC, headers/footers, duplicates
 4. Structural Chunking - Split by semantic closure
-5. Token Splitting - Merge small, split large, ensure limits
-6. Content Cleaning - Normalize and clean content by type
+5. API Structure Detection (Phase 5.5) - Detect API documentation patterns
+6. Token Splitting - Merge small, split large, ensure limits
+7. Content Cleaning - Normalize and clean content by type
 
 The pipeline produces semantically coherent chunks optimized for RAG retrieval.
 """
@@ -25,12 +26,12 @@ import tiktoken
 from llama_index.core import Document
 from llama_index.core.schema import BaseNode, TextNode
 
-from .chunkers import StructuralChunker, TokenSplitter
+from .chunkers import APIRuleBasedChunker, StructuralChunker, TokenSplitter
 from .cleaners import ContentCleaner
 from .extractors import ExtractorFactory
 from .filters import NoiseFilter
 from .models import ChunkItem, DocumentChunks, SkippedElementType
-from .recognizers import StructureRecognizer
+from .recognizers import APIStructureDetector, StructureRecognizer
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +48,14 @@ class StructuralSemanticSplitter:
     """
     Enhanced Structural Semantic Document Splitter.
 
-    Six-phase pipeline:
+    Seven-phase pipeline:
     1. Text Extraction - Extract text, detect and skip non-text content
     2. Structure Recognition - Identify heading/paragraph/code/table/flow/list/qa
     3. Noise Filtering - Remove TOC, headers/footers, duplicates
     4. Structural Chunking - Split by semantic closure
-    5. Token Splitting - Merge small, split large, ensure limits
-    6. Content Cleaning - Normalize and clean content by type
+    5. API Structure Detection (Phase 5.5) - Detect API documentation patterns
+    6. Token Splitting - Merge small, split large, ensure limits
+    7. Content Cleaning - Normalize and clean content by type
     """
 
     def __init__(
@@ -62,6 +64,7 @@ class StructuralSemanticSplitter:
         min_chunk_tokens: int = MIN_CHUNK_TOKENS,
         max_chunk_tokens: int = MAX_CHUNK_TOKENS,
         overlap_tokens: int = OVERLAP_TOKENS,
+        enable_api_detection: bool = True,
     ):
         """
         Initialize structural semantic splitter.
@@ -71,10 +74,12 @@ class StructuralSemanticSplitter:
             min_chunk_tokens: Minimum tokens per chunk (default: 100)
             max_chunk_tokens: Maximum tokens per chunk (default: 600)
             overlap_tokens: Overlap tokens for forced splits (default: 80)
+            enable_api_detection: Whether to enable API structure detection (default: True)
         """
         self.min_chunk_tokens = min_chunk_tokens
         self.max_chunk_tokens = max_chunk_tokens
         self.overlap_tokens = overlap_tokens
+        self.enable_api_detection = enable_api_detection
 
         # Initialize tokenizer
         try:
@@ -91,6 +96,8 @@ class StructuralSemanticSplitter:
         self.recognizer = StructureRecognizer()
         self.noise_filter = NoiseFilter()
         self.structural_chunker = StructuralChunker()
+        self.api_detector = APIStructureDetector()
+        self.api_chunker = APIRuleBasedChunker()
         self.token_splitter = TokenSplitter(
             min_tokens=self.min_chunk_tokens,
             max_tokens=self.max_chunk_tokens,
@@ -274,7 +281,7 @@ class StructuralSemanticSplitter:
         start_position: int,
     ) -> Tuple[List[ChunkItem], List[Dict[str, Any]]]:
         """
-        Process a single document through the six-phase pipeline.
+        Process a single document through the seven-phase pipeline.
 
         Args:
             text: Document text content
@@ -311,10 +318,48 @@ class StructuralSemanticSplitter:
         # Phase 4: Structural Chunking
         structural_chunks = self.structural_chunker.chunk(filtered_ir)
 
-        # Phase 5: Token Splitting
-        token_split_chunks = self.token_splitter.split(structural_chunks)
+        # Phase 5.5: API Structure Detection (optional)
+        api_chunks = []
+        if self.enable_api_detection:
+            api_info = self.api_detector.detect(filtered_ir.blocks)
+            if api_info.is_api_doc:
+                logger.info(
+                    f"[Phase5.5] Document '{filename}' detected as API doc "
+                    f"with {api_info.total_endpoints} endpoints"
+                )
+                # Generate API-specific chunks
+                semantic_chunks = self.api_chunker.chunk(
+                    blocks=filtered_ir.blocks,
+                    api_info=api_info,
+                    heading_context=[],
+                )
+                api_chunks = self.api_chunker.convert_to_chunk_dicts(semantic_chunks)
 
-        # Phase 6: Content Cleaning
+        # Combine structural chunks with API chunks
+        # API chunks take precedence for API sections, structural for others
+        if api_chunks:
+            # Get block indices covered by API chunks
+            api_covered_blocks = set()
+            for chunk in api_chunks:
+                api_covered_blocks.update(chunk.get("source_blocks", []))
+
+            # Filter structural chunks to only include non-API content
+            filtered_structural = []
+            for chunk in structural_chunks:
+                # Keep chunks that don't overlap with API content
+                chunk_blocks = set(chunk.get("metadata", {}).get("block_indices", []))
+                if not chunk_blocks or not chunk_blocks.intersection(api_covered_blocks):
+                    filtered_structural.append(chunk)
+
+            # Merge: API chunks first, then remaining structural chunks
+            combined_chunks = api_chunks + filtered_structural
+        else:
+            combined_chunks = structural_chunks
+
+        # Phase 6: Token Splitting
+        token_split_chunks = self.token_splitter.split(combined_chunks)
+
+        # Phase 7: Content Cleaning
         final_chunks = self.content_cleaner.clean(token_split_chunks)
 
         # Convert to ChunkItem objects
@@ -418,6 +463,7 @@ class StructuralSemanticSplitter:
             "min_chunk_tokens": self.min_chunk_tokens,
             "max_chunk_tokens": self.max_chunk_tokens,
             "overlap_tokens": self.overlap_tokens,
+            "enable_api_detection": self.enable_api_detection,
         }
 
 
