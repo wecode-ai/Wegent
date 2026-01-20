@@ -10,8 +10,7 @@ import AttachmentPreview from '../input/AttachmentPreview'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
-import { formatFileSize } from '@/lib/utils'
-import { downloadAttachment } from '@/apis/attachments'
+import { downloadAttachment, formatFileSize } from '@/apis/attachments'
 
 /**
  * Base preview component for context items (attachments, knowledge bases, etc.)
