@@ -219,32 +219,41 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   // Remove task from project
   const removeTaskFromProject = useCallback(
     async (projectId: number, taskId: number): Promise<boolean> => {
+      // Optimistic update: Update local state immediately for better UX
+      // This ensures the task disappears from the project list right away
+      setProjects(prev =>
+        prev.map(p => {
+          if (p.id === projectId) {
+            return {
+              ...p,
+              tasks: p.tasks.filter(t => t.task_id !== taskId),
+              task_count: Math.max(0, p.task_count - 1),
+            }
+          }
+          return p
+        })
+      )
+
       try {
         await projectApis.removeTaskFromProject(projectId, taskId)
-        // Update local state
-        setProjects(prev =>
-          prev.map(p => {
-            if (p.id === projectId) {
-              return {
-                ...p,
-                tasks: p.tasks.filter(t => t.task_id !== taskId),
-                task_count: Math.max(0, p.task_count - 1),
-              }
-            }
-            return p
-          })
-        )
         toast({
           title: t('toast.removeTaskSuccess'),
         })
         return true
       } catch (err) {
+        // If API fails (e.g., task already deleted), we still keep the optimistic update
+        // since the task should no longer be associated with the project anyway
         const message = err instanceof Error ? err.message : 'Failed to remove task from project'
-        toast({
-          title: t('toast.removeTaskFailed'),
-          description: message,
-          variant: 'destructive',
-        })
+        // Only show error toast for unexpected errors, not for 404 (task not found)
+        const isNotFoundError =
+          err instanceof Error && (err.message.includes('404') || err.message.includes('not found'))
+        if (!isNotFoundError) {
+          toast({
+            title: t('toast.removeTaskFailed'),
+            description: message,
+            variant: 'destructive',
+          })
+        }
         console.error('[ProjectContext] Failed to remove task from project:', err)
         return false
       }
