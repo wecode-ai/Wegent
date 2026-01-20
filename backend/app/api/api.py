@@ -33,6 +33,7 @@ from app.api.endpoints.adapter import (
     models,
     retrievers,
     shells,
+    subscription_follows,
     subscriptions,
     task_knowledge_bases,
     task_members,
@@ -66,6 +67,19 @@ api_router.include_router(agents.router, prefix="/agents", tags=["public-shell"]
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 api_router.include_router(
     subscriptions.router, prefix="/subscriptions", tags=["subscriptions"]
+)
+# Subscription follow endpoints (follow, unfollow, invitations, discover)
+api_router.include_router(
+    subscription_follows.router, prefix="/subscriptions", tags=["subscription-follows"]
+)
+api_router.include_router(
+    subscription_follows.discover_router, prefix="/subscriptions", tags=["subscription-discover"]
+)
+api_router.include_router(
+    subscription_follows.user_router, prefix="/users/me", tags=["user-subscriptions"]
+)
+api_router.include_router(
+    subscription_follows.invitation_router, prefix="/subscription-invitations", tags=["subscription-invitations"]
 )
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])

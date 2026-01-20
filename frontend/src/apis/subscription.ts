@@ -16,6 +16,12 @@ import type {
   SubscriptionListResponse,
   SubscriptionTriggerType,
   SubscriptionUpdateRequest,
+  DiscoverSubscriptionsListResponse,
+  FollowingSubscriptionsListResponse,
+  InviteUserRequest,
+  InviteNamespaceRequest,
+  SubscriptionFollowersListResponse,
+  SubscriptionInvitationsListResponse,
 } from '@/types/subscription'
 import type { PaginationParams } from '@/types/api'
 
@@ -130,5 +136,147 @@ export const subscriptionApis = {
    */
   async cancelExecution(id: number): Promise<BackgroundExecution> {
     return apiClient.post(`/subscriptions/executions/${id}/cancel`)
+  },
+
+  // ========== Follow/Visibility APIs ==========
+
+  /**
+   * Follow a public subscription
+   */
+  async followSubscription(subscriptionId: number): Promise<{ message: string }> {
+    return apiClient.post(`/subscriptions/${subscriptionId}/follow`)
+  },
+
+  /**
+   * Unfollow a subscription
+   */
+  async unfollowSubscription(subscriptionId: number): Promise<{ message: string }> {
+    return apiClient.delete(`/subscriptions/${subscriptionId}/follow`)
+  },
+
+  /**
+   * Get followers of a subscription (owner only)
+   */
+  async getFollowers(
+    subscriptionId: number,
+    params?: PaginationParams
+  ): Promise<SubscriptionFollowersListResponse> {
+    const queryParams = new URLSearchParams()
+    queryParams.append('page', String(params?.page || 1))
+    queryParams.append('limit', String(params?.limit || 50))
+    return apiClient.get(`/subscriptions/${subscriptionId}/followers?${queryParams.toString()}`)
+  },
+
+  /**
+   * Get followers count for a subscription
+   */
+  async getFollowersCount(subscriptionId: number): Promise<{ count: number }> {
+    return apiClient.get(`/subscriptions/${subscriptionId}/followers/count`)
+  },
+
+  /**
+   * Invite a user to follow a subscription
+   */
+  async inviteUser(subscriptionId: number, data: InviteUserRequest): Promise<{ message: string }> {
+    return apiClient.post(`/subscriptions/${subscriptionId}/invite`, data)
+  },
+
+  /**
+   * Invite a namespace (group) to follow a subscription
+   */
+  async inviteNamespace(
+    subscriptionId: number,
+    data: InviteNamespaceRequest
+  ): Promise<{ message: string }> {
+    return apiClient.post(`/subscriptions/${subscriptionId}/invite-namespace`, data)
+  },
+
+  /**
+   * Revoke a user's invitation
+   */
+  async revokeUserInvitation(
+    subscriptionId: number,
+    userId: number
+  ): Promise<{ message: string }> {
+    return apiClient.delete(`/subscriptions/${subscriptionId}/invite/${userId}`)
+  },
+
+  /**
+   * Revoke a namespace's invitation
+   */
+  async revokeNamespaceInvitation(
+    subscriptionId: number,
+    namespaceId: number
+  ): Promise<{ message: string }> {
+    return apiClient.delete(`/subscriptions/${subscriptionId}/invite-namespace/${namespaceId}`)
+  },
+
+  /**
+   * Get invitations sent for a subscription (owner only)
+   */
+  async getInvitationsSent(
+    subscriptionId: number,
+    params?: PaginationParams
+  ): Promise<SubscriptionInvitationsListResponse> {
+    const queryParams = new URLSearchParams()
+    queryParams.append('page', String(params?.page || 1))
+    queryParams.append('limit', String(params?.limit || 50))
+    return apiClient.get(`/subscriptions/${subscriptionId}/invitations?${queryParams.toString()}`)
+  },
+
+  /**
+   * Get subscriptions the current user follows
+   */
+  async getFollowingSubscriptions(
+    params?: PaginationParams
+  ): Promise<FollowingSubscriptionsListResponse> {
+    const queryParams = new URLSearchParams()
+    queryParams.append('page', String(params?.page || 1))
+    queryParams.append('limit', String(params?.limit || 50))
+    return apiClient.get(`/users/me/following-subscriptions?${queryParams.toString()}`)
+  },
+
+  /**
+   * Get pending invitations for the current user
+   */
+  async getPendingInvitations(
+    params?: PaginationParams
+  ): Promise<SubscriptionInvitationsListResponse> {
+    const queryParams = new URLSearchParams()
+    queryParams.append('page', String(params?.page || 1))
+    queryParams.append('limit', String(params?.limit || 50))
+    return apiClient.get(`/users/me/subscription-invitations?${queryParams.toString()}`)
+  },
+
+  /**
+   * Accept a subscription invitation
+   */
+  async acceptInvitation(invitationId: number): Promise<{ message: string }> {
+    return apiClient.post(`/subscription-invitations/${invitationId}/accept`)
+  },
+
+  /**
+   * Reject a subscription invitation
+   */
+  async rejectInvitation(invitationId: number): Promise<{ message: string }> {
+    return apiClient.post(`/subscription-invitations/${invitationId}/reject`)
+  },
+
+  /**
+   * Discover public subscriptions
+   */
+  async discoverSubscriptions(
+    params?: PaginationParams & { sortBy?: 'popularity' | 'recent'; search?: string }
+  ): Promise<DiscoverSubscriptionsListResponse> {
+    const queryParams = new URLSearchParams()
+    queryParams.append('page', String(params?.page || 1))
+    queryParams.append('limit', String(params?.limit || 50))
+    if (params?.sortBy) {
+      queryParams.append('sort_by', params.sortBy)
+    }
+    if (params?.search) {
+      queryParams.append('search', params.search)
+    }
+    return apiClient.get(`/subscriptions/discover?${queryParams.toString()}`)
   },
 }
