@@ -179,6 +179,11 @@ class DockerExecutor(Executor):
         # to avoid 404 errors when trying to update non-existent task status
         # SubAgent tasks use their own callback mechanism via task_type="subagent"
         if not is_validation_task and not is_subagent_task:
+            # If there's an error, include it in both error_message and result.value
+            # so the frontend can display it properly
+            error_msg = execution_status.get("error_msg", "")
+            result_value = {"value": error_msg} if error_msg else None
+
             self._call_callback(
                 callback,
                 task_id,
@@ -186,6 +191,8 @@ class DockerExecutor(Executor):
                 execution_status["executor_name"],
                 execution_status["progress"],
                 execution_status["callback_status"],
+                error_message=error_msg,
+                result=result_value,
             )
 
         # Return unified result structure
@@ -211,10 +218,12 @@ class DockerExecutor(Executor):
     ) -> None:
         """Execute task in existing container"""
         executor_name = status["executor_name"]
-        port_info = self._get_container_port(executor_name)
+        port_info, error_msg = self._get_container_port(executor_name)
 
         if port_info is None:
-            raise ValueError(f"Container {executor_name} has no ports mapped")
+            raise ValueError(
+                error_msg or f"Container {executor_name} has no ports mapped"
+            )
 
         # Send HTTP request to container
         response = self._send_task_to_container(task, DEFAULT_DOCKER_HOST, port_info)
@@ -224,24 +233,37 @@ class DockerExecutor(Executor):
             status["progress"] = DEFAULT_PROGRESS_COMPLETE
             status["error_msg"] = response.json().get("error_msg", "")
 
-    def _get_container_port(self, executor_name: str) -> Optional[int]:
+    def _get_container_port(
+        self, executor_name: str
+    ) -> tuple[Optional[int], Optional[str]]:
         """Get container port information.
 
         Args:
             executor_name: Container name
 
         Returns:
-            Host port number if available, None otherwise
+            Tuple of (host_port, error_message):
+            - (port, None) if port found successfully
+            - (None, error_message) if failed
         """
         port_result = get_container_ports(executor_name)
         logger.info(f"Container port info: {executor_name}, {port_result}")
 
+        # Check if the request failed (container not found or not owned)
+        if port_result.get("status") == "failed":
+            error_msg = port_result.get(
+                "error_msg", f"Failed to get ports for container {executor_name}"
+            )
+            logger.warning(f"Container port lookup failed: {error_msg}")
+            return None, error_msg
+
         ports = port_result.get("ports", [])
         if not ports:
-            logger.warning(f"Container {executor_name} has no ports mapped")
-            return None
+            error_msg = f"Container {executor_name} exists but has no ports mapped"
+            logger.warning(error_msg)
+            return None, error_msg
 
-        return ports[0].get("host_port")
+        return ports[0].get("host_port"), None
 
     def _send_task_to_container(
         self, task: Dict[str, Any], host: str, port: int
@@ -1056,7 +1078,15 @@ class DockerExecutor(Executor):
             }
 
     def _call_callback(
-        self, callback, task_id, subtask_id, executor_name, progress, status
+        self,
+        callback,
+        task_id,
+        subtask_id,
+        executor_name,
+        progress,
+        status,
+        error_message=None,
+        result=None,
     ):
         """
         Call the provided callback function with task information.
@@ -1068,6 +1098,8 @@ class DockerExecutor(Executor):
             executor_name (str): Name of the executor
             progress (int): Current progress value
             status (str): Current task status
+            error_message (str, optional): Error message if task failed
+            result (dict, optional): Result dict with 'value' key for frontend display
         """
         if not callback:
             return
@@ -1079,6 +1111,8 @@ class DockerExecutor(Executor):
                 executor_name=executor_name,
                 progress=progress,
                 status=status,
+                error_message=error_message,
+                result=result,
             )
         except Exception as e:
             logger.error(f"Error in callback for task {task_id}: {e}")
