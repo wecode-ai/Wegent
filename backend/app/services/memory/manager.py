@@ -342,9 +342,11 @@ class MemoryManager:
 
             # Keep searching until no more memories are found
             while True:
-                # Step 1: Get memories with this task_id (metadata-only retrieval)
-                search_result = await self._client.get_memories(
+                # Step 1: Search memories with this task_id using metadata filter
+                # Note: search_memories requires a query, we use "*" as a wildcard
+                search_result = await self._client.search_memories(
                     user_id=user_id,
+                    query="*",
                     filters={"task_id": task_id},
                     limit=batch_size,
                 )
