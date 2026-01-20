@@ -137,8 +137,8 @@ class TestSandboxScheduler:
 
         await sandbox_scheduler.start()
 
-        # Verify two jobs were added
-        assert mock_scheduler_instance.add_job.call_count == 2
+        # Verify three jobs were added: sandbox_heartbeat_check, task_heartbeat_check, sandbox_gc
+        assert mock_scheduler_instance.add_job.call_count == 3
 
     # ----- stop Tests -----
 
@@ -229,12 +229,14 @@ class TestSandboxScheduler:
         # Get the job functions that were passed to add_job
         add_job_calls = mock_scheduler_instance.add_job.call_args_list
 
-        # First job should be heartbeat check
+        # First job should be sandbox heartbeat check
         heartbeat_job_func = add_job_calls[0][0][0]
         assert heartbeat_job_func == mock_sandbox_manager._check_heartbeats
 
-        # Second job should be GC
-        gc_job_func = add_job_calls[1][0][0]
+        # Second job is task heartbeat check (from RunningTaskTracker), skip verification
+
+        # Third job should be sandbox GC
+        gc_job_func = add_job_calls[2][0][0]
         assert gc_job_func == mock_sandbox_manager._collect_expired_sandboxes
 
     @pytest.mark.asyncio

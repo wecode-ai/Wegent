@@ -161,8 +161,8 @@ class TestDockerExecutor:
         assert result["status"] == "success"
         assert result["executor_name"] == "existing-executor"
 
-    @patch("executor_manager.executors.docker.executor.get_container_ports")
-    def test_submit_executor_existing_container_no_ports(self, mock_ports, executor):
+    @patch("executor_manager.executors.docker.utils.subprocess.run")
+    def test_submit_executor_existing_container_no_ports(self, mock_run, executor):
         """Test submitting executor to existing container with no ports"""
         task = {
             "task_id": 123,
@@ -171,7 +171,13 @@ class TestDockerExecutor:
             "executor_name": "existing-executor",
         }
 
-        mock_ports.return_value = {"status": "success", "ports": []}
+        # Mock subprocess.run calls:
+        # 1. check_container_ownership - container exists
+        # 2. get_container_ports - no ports found (empty output)
+        mock_run.side_effect = [
+            MagicMock(stdout="existing-executor\n", returncode=0),  # ownership check
+            MagicMock(stdout="", returncode=0),  # get ports - empty
+        ]
 
         result = executor.submit_executor(task)
 
@@ -296,6 +302,8 @@ class TestDockerExecutor:
             executor_name="test-executor",
             progress=50,
             status=TaskStatus.RUNNING.value,
+            error_message=None,
+            result=None,
         )
 
     def test_call_callback_none(self, executor):

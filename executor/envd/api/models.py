@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 class InitRequest(BaseModel):
     """Request model for /init endpoint"""
+
     hyperloopIP: Optional[str] = None
     envVars: Optional[Dict[str, str]] = None
     accessToken: Optional[str] = None
@@ -22,6 +23,7 @@ class InitRequest(BaseModel):
 
 class MetricsResponse(BaseModel):
     """Response model for /metrics endpoint"""
+
     ts: int
     cpu_count: int
     cpu_used_pct: float
@@ -33,6 +35,7 @@ class MetricsResponse(BaseModel):
 
 class EntryInfo(BaseModel):
     """File entry information"""
+
     path: str
     name: str
     type: str
@@ -40,5 +43,6 @@ class EntryInfo(BaseModel):
 
 class ErrorResponse(BaseModel):
     """Error response model"""
+
     message: str
     code: int

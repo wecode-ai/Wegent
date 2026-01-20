@@ -25,6 +25,7 @@ logger = setup_logger("process_service")
 
 class ConnectError(Exception):
     """Connect RPC error"""
+
     def __init__(self, code: str, message: str):
         self.code = code
         self.message = message
@@ -39,7 +40,13 @@ class ProcessManager:
         self.tagged_processes: Dict[str, int] = {}  # tag -> pid mapping
         self.pty_fds: Dict[int, int] = {}  # pid -> master fd mapping for PTY processes
 
-    def add_process(self, pid: int, process: subprocess.Popen, tag: Optional[str] = None, pty_fd: Optional[int] = None):
+    def add_process(
+        self,
+        pid: int,
+        process: subprocess.Popen,
+        tag: Optional[str] = None,
+        pty_fd: Optional[int] = None,
+    ):
         """Add a process to the manager"""
         self.processes[pid] = process
         if tag:
@@ -54,7 +61,9 @@ class ProcessManager:
             return self.pty_fds.get(pid)
         return None
 
-    def get_process(self, selector: process_pb2.ProcessSelector) -> Optional[subprocess.Popen]:
+    def get_process(
+        self, selector: process_pb2.ProcessSelector
+    ) -> Optional[subprocess.Popen]:
         """Get a process by selector (pid or tag)"""
         if selector.HasField("pid"):
             return self.processes.get(selector.pid)
@@ -99,9 +108,7 @@ class ProcessServiceHandler:
     def __init__(self):
         self.manager = ProcessManager()
 
-    async def List(
-        self, request: process_pb2.ListRequest
-    ) -> process_pb2.ListResponse:
+    async def List(self, request: process_pb2.ListRequest) -> process_pb2.ListResponse:
         """List all running processes in the system"""
         logger.debug("List request received")
 
@@ -109,11 +116,11 @@ class ProcessServiceHandler:
 
         try:
             # Iterate through all system processes
-            for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'username']):
+            for proc in psutil.process_iter(["pid", "name", "cmdline", "username"]):
                 try:
                     pinfo = proc.info
-                    pid = pinfo['pid']
-                    cmdline = pinfo.get('cmdline') or []
+                    pid = pinfo["pid"]
+                    cmdline = pinfo.get("cmdline") or []
 
                     # Skip kernel processes with no cmdline
                     if not cmdline:
@@ -143,7 +150,11 @@ class ProcessServiceHandler:
 
                     processes.append(info)
 
-                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                except (
+                    psutil.NoSuchProcess,
+                    psutil.AccessDenied,
+                    psutil.ZombieProcess,
+                ):
                     # Skip processes that disappeared or we don't have access to
                     continue
 
@@ -152,11 +163,11 @@ class ProcessServiceHandler:
 
         return process_pb2.ListResponse(processes=processes)
 
-    async def Start(
-        self, request: process_pb2.StartRequest
-    ):
+    async def Start(self, request: process_pb2.StartRequest):
         """Start a new process and stream its output"""
-        logger.info(f"Starting process: {request.process.cmd} {list(request.process.args)}")
+        logger.info(
+            f"Starting process: {request.process.cmd} {list(request.process.args)}"
+        )
 
         try:
             # Prepare environment
@@ -174,6 +185,7 @@ class ProcessServiceHandler:
             if request.HasField("pty"):
                 # PTY mode - use pty
                 import pty
+
                 master, slave = pty.openpty()
 
                 proc = subprocess.Popen(
@@ -189,9 +201,10 @@ class ProcessServiceHandler:
 
                 # Store process with PTY master fd
                 self.manager.add_process(
-                    proc.pid, proc,
+                    proc.pid,
+                    proc,
                     request.tag if request.HasField("tag") else None,
-                    pty_fd=master
+                    pty_fd=master,
                 )
 
                 # Send start event
@@ -219,7 +232,9 @@ class ProcessServiceHandler:
                     while proc.poll() is None:
                         try:
                             # Use select to check if data is available with timeout
-                            ready, _, _ = await loop.run_in_executor(None, select.select, [master], [], [], 0.5)
+                            ready, _, _ = await loop.run_in_executor(
+                                None, select.select, [master], [], [], 0.5
+                            )
                             if ready:
                                 try:
                                     data = os.read(master, 4096)
@@ -227,7 +242,9 @@ class ProcessServiceHandler:
                                         last_data_time = loop.time()
                                         yield process_pb2.StartResponse(
                                             event=process_pb2.ProcessEvent(
-                                                data=process_pb2.ProcessEvent.DataEvent(pty=data)
+                                                data=process_pb2.ProcessEvent.DataEvent(
+                                                    pty=data
+                                                )
                                             )
                                         )
                                 except (OSError, BlockingIOError):
@@ -245,7 +262,10 @@ class ProcessServiceHandler:
                     while process_running:
                         await asyncio.sleep(keepalive_interval)
                         # Only send keepalive if no data was sent recently and process still running
-                        if process_running and loop.time() - last_data_time >= keepalive_interval:
+                        if (
+                            process_running
+                            and loop.time() - last_data_time >= keepalive_interval
+                        ):
                             yield process_pb2.StartResponse(
                                 event=process_pb2.ProcessEvent(
                                     keepalive=process_pb2.ProcessEvent.KeepAlive()
@@ -254,7 +274,9 @@ class ProcessServiceHandler:
 
                 # Merge streams from PTY output and keepalive
                 try:
-                    async for response in self._merge_async_generators([read_pty_output(), send_keepalive()]):
+                    async for response in self._merge_async_generators(
+                        [read_pty_output(), send_keepalive()]
+                    ):
                         yield response
                 except Exception as e:
                     logger.exception(f"Error in PTY stream: {e}")
@@ -312,7 +334,11 @@ class ProcessServiceHandler:
                     while process_running and proc.poll() is None:
                         await asyncio.sleep(keepalive_interval)
                         # Only send keepalive if no data was sent recently and process still running
-                        if process_running and proc.poll() is None and loop.time() - last_data_time >= keepalive_interval:
+                        if (
+                            process_running
+                            and proc.poll() is None
+                            and loop.time() - last_data_time >= keepalive_interval
+                        ):
                             yield process_pb2.StartResponse(
                                 event=process_pb2.ProcessEvent(
                                     keepalive=process_pb2.ProcessEvent.KeepAlive()
@@ -335,7 +361,9 @@ class ProcessServiceHandler:
 
                 # Merge data stream and keepalive
                 try:
-                    async for response in self._merge_async_generators([data_stream(), send_keepalive()]):
+                    async for response in self._merge_async_generators(
+                        [data_stream(), send_keepalive()]
+                    ):
                         yield response
                 except Exception as e:
                     logger.exception(f"Error in stream merge: {e}")
@@ -376,12 +404,10 @@ class ProcessServiceHandler:
             )
         finally:
             # Background cleanup - only remove from manager if process has exited
-            if 'proc' in locals():
+            if "proc" in locals():
                 asyncio.create_task(self._cleanup_finished_process(proc.pid))
 
-    async def Connect(
-        self, request: process_pb2.ConnectRequest
-    ):
+    async def Connect(self, request: process_pb2.ConnectRequest):
         """Connect to an existing process and monitor its status"""
         logger.info(f"Connect request for process selector: {request.process}")
 
@@ -548,7 +574,11 @@ class ProcessServiceHandler:
 
         return process_pb2.UpdateResponse()
 
-    def _handle_input(self, process_selector: process_pb2.ProcessSelector, input_data: process_pb2.ProcessInput):
+    def _handle_input(
+        self,
+        process_selector: process_pb2.ProcessSelector,
+        input_data: process_pb2.ProcessInput,
+    ):
         """Shared helper to handle input for both SendInput and StreamInput"""
         proc = self.manager.get_process(process_selector)
         if not proc:
@@ -600,9 +630,7 @@ class ProcessServiceHandler:
         self._handle_input(request.process, request.input)
         return process_pb2.SendInputResponse()
 
-    async def StreamInput(
-        self, request_iterator
-    ) -> process_pb2.StreamInputResponse:
+    async def StreamInput(self, request_iterator) -> process_pb2.StreamInputResponse:
         """Stream input to a process"""
         logger.info("StreamInput request received")
 
@@ -636,7 +664,9 @@ class ProcessServiceHandler:
         self, request: process_pb2.SendSignalRequest
     ) -> process_pb2.SendSignalResponse:
         """Send a signal to a process"""
-        logger.info(f"SendSignal request for process selector: {request.process}, signal: {request.signal}")
+        logger.info(
+            f"SendSignal request for process selector: {request.process}, signal: {request.signal}"
+        )
 
         # Get process
         proc = self.manager.get_process(request.process)
@@ -684,7 +714,9 @@ class ProcessServiceHandler:
             if not tasks:
                 break
 
-            done, _ = await asyncio.wait(tasks.keys(), return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(
+                tasks.keys(), return_when=asyncio.FIRST_COMPLETED
+            )
 
             for task in done:
                 gen = tasks.pop(task)
@@ -719,7 +751,9 @@ class ProcessServiceHandler:
             if not tasks:
                 break
 
-            done, _ = await asyncio.wait(tasks.keys(), return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(
+                tasks.keys(), return_when=asyncio.FIRST_COMPLETED
+            )
 
             for task in done:
                 gen = tasks.pop(task)
@@ -779,7 +813,9 @@ class ProcessServiceHandler:
             while proc.poll() is None:
                 await asyncio.sleep(1)
                 if loop.time() - start_time > max_wait:
-                    logger.warning(f"Process {pid} did not exit after {max_wait}s, removing from manager anyway")
+                    logger.warning(
+                        f"Process {pid} did not exit after {max_wait}s, removing from manager anyway"
+                    )
                     break
 
             # Close PTY master fd if exists
@@ -796,4 +832,3 @@ class ProcessServiceHandler:
             logger.debug(f"Cleaned up finished process {pid}")
         except Exception as e:
             logger.warning(f"Error cleaning up process {pid}: {e}")
-

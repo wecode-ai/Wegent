@@ -15,6 +15,8 @@ export interface ParsedError {
     | 'llm_unsupported'
     | 'invalid_parameter'
     | 'forbidden'
+    | 'container_oom'
+    | 'container_error'
     | 'generic_error'
   message: string
   originalError?: string
@@ -30,6 +32,40 @@ export interface ParsedError {
 export function parseError(error: Error | string): ParsedError {
   const errorMessage = typeof error === 'string' ? error : error.message
   const lowerMessage = errorMessage.toLowerCase()
+
+  // Check for container OOM (Out of Memory) errors
+  // These errors indicate the executor container was killed due to memory limits
+  if (
+    lowerMessage.includes('out of memory') ||
+    lowerMessage.includes('oom') ||
+    lowerMessage.includes('memory allocation')
+  ) {
+    return {
+      type: 'container_oom',
+      message: errorMessage,
+      originalError: errorMessage,
+      retryable: false, // OOM errors usually need configuration change, not simple retry
+    }
+  }
+
+  // Check for container/executor errors
+  // These errors indicate the executor container crashed or disappeared
+  if (
+    lowerMessage.includes('container') ||
+    lowerMessage.includes('executor') ||
+    lowerMessage.includes('docker') ||
+    lowerMessage.includes('disappeared unexpectedly') ||
+    lowerMessage.includes('no ports mapped') ||
+    lowerMessage.includes('crashed unexpectedly') ||
+    lowerMessage.includes('exit code')
+  ) {
+    return {
+      type: 'container_error',
+      message: errorMessage,
+      originalError: errorMessage,
+      retryable: false, // Container errors usually need a fresh task
+    }
+  }
 
   // Check for forbidden/unauthorized errors
   if (
@@ -160,6 +196,10 @@ export function getUserFriendlyErrorMessage(
     case 'forbidden':
       // Use dedicated translation key for forbidden errors, fallback to generic if not available
       return t('errors.forbidden') || t('errors.generic_error')
+    case 'container_oom':
+      return t('errors.container_oom')
+    case 'container_error':
+      return t('errors.container_error')
     case 'llm_unsupported':
       return t('errors.llm_unsupported')
     case 'llm_error':

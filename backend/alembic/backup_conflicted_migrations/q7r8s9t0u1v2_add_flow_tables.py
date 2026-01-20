@@ -34,7 +34,9 @@ def upgrade():
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("kind", sa.String(50), nullable=False, server_default="Flow"),
         sa.Column("name", sa.String(255), nullable=False),
-        sa.Column("namespace", sa.String(255), nullable=False, server_default="default"),
+        sa.Column(
+            "namespace", sa.String(255), nullable=False, server_default="default"
+        ),
         sa.Column("json", mysql.JSON(), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default="1"),
         sa.Column("enabled", sa.Boolean(), nullable=False, server_default="1"),
@@ -76,7 +78,9 @@ def upgrade():
         ["user_id", "kind", "name", "namespace"],
         unique=True,
     )
-    op.create_index("ix_flows_enabled_next_exec", "flows", ["enabled", "next_execution_time"])
+    op.create_index(
+        "ix_flows_enabled_next_exec", "flows", ["enabled", "next_execution_time"]
+    )
     op.create_index("ix_flows_user_active", "flows", ["user_id", "is_active"])
     op.create_index("ix_flows_webhook_token", "flows", ["webhook_token"], unique=True)
 
@@ -119,9 +123,15 @@ def upgrade():
     op.create_index("ix_flow_exec_task_id", "flow_executions", ["task_id"])
     op.create_index("ix_flow_exec_status", "flow_executions", ["status"])
     op.create_index("ix_flow_exec_created_at", "flow_executions", ["created_at"])
-    op.create_index("ix_flow_exec_user_created", "flow_executions", ["user_id", "created_at"])
-    op.create_index("ix_flow_exec_flow_created", "flow_executions", ["flow_id", "created_at"])
-    op.create_index("ix_flow_exec_user_status", "flow_executions", ["user_id", "status"])
+    op.create_index(
+        "ix_flow_exec_user_created", "flow_executions", ["user_id", "created_at"]
+    )
+    op.create_index(
+        "ix_flow_exec_flow_created", "flow_executions", ["flow_id", "created_at"]
+    )
+    op.create_index(
+        "ix_flow_exec_user_status", "flow_executions", ["user_id", "status"]
+    )
 
 
 def downgrade():
