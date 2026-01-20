@@ -31,7 +31,7 @@ export default function NotificationSettings() {
   const [supported, setSupported] = useState(true)
   const [sendKey, setSendKey] = useState<'enter' | 'cmd_enter'>('enter')
   const [searchKey, setSearchKey] = useState<'cmd_k' | 'cmd_f' | 'disabled'>('cmd_k')
-  const [memoryEnabled, setMemoryEnabled] = useState(true)
+  const [memoryEnabled, setMemoryEnabled] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
@@ -46,7 +46,7 @@ export default function NotificationSettings() {
     if (user) {
       const userSendKey = user.preferences?.send_key || 'enter'
       const userSearchKey = user.preferences?.search_key || 'cmd_k'
-      const userMemoryEnabled = user.preferences?.memory_enabled ?? true
+      const userMemoryEnabled = user.preferences?.memory_enabled ?? false
       setSendKey(userSendKey)
       setSearchKey(userSearchKey)
       setMemoryEnabled(userMemoryEnabled)
@@ -153,7 +153,7 @@ export default function NotificationSettings() {
         title: t('common:memory.save_failed'),
       })
       // Revert to previous value
-      setMemoryEnabled(user?.preferences?.memory_enabled ?? true)
+      setMemoryEnabled(user?.preferences?.memory_enabled ?? false)
     } finally {
       setIsSaving(false)
     }
