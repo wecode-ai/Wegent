@@ -80,6 +80,7 @@ class TestSubtaskContextBriefPPTX:
         mock_context.type_data = {
             "slide_count": 15,
             "preview_images": [301, 302, 303],
+            "pptx_attachment_id": 400,
             "file_size": 100000,
             "file_extension": ".pptx",
             "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -93,6 +94,7 @@ class TestSubtaskContextBriefPPTX:
         assert brief.status == "ready"
         assert brief.slide_count == 15
         assert brief.preview_images == [301, 302, 303]
+        assert brief.pptx_attachment_id == 400
         assert brief.file_size == 100000
         assert brief.file_extension == ".pptx"
 
@@ -118,6 +120,7 @@ class TestSubtaskContextBriefPPTX:
         # PPTX-specific fields should be None for attachment type
         assert brief.slide_count is None
         assert brief.preview_images is None
+        assert brief.pptx_attachment_id is None
 
 
 class TestContextTypeEnum:

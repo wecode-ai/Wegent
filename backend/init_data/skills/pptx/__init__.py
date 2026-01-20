@@ -7,4 +7,4 @@
 from .provider import PPTXToolProvider
 from .pptx_tool import PPTXGenerateTool
 
-__all__ = ["PPTXToolProvider", "PPTXGenerateTool"]
+__all__ = ["PPTXGenerateTool", "PPTXToolProvider"]

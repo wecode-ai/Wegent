@@ -97,6 +97,7 @@ class SubtaskContextBrief(BaseModel):
     # Generated PPTX fields (from type_data)
     slide_count: Optional[int] = None
     preview_images: Optional[List[int]] = None  # List of attachment IDs for preview thumbnails
+    pptx_attachment_id: Optional[int] = None  # ID of the PPTX file attachment
 
     class Config:
         from_attributes = True
@@ -120,6 +121,7 @@ class SubtaskContextBrief(BaseModel):
         # Handle PPTX-specific fields
         slide_count = None
         preview_images = None
+        pptx_attachment_id = None
 
         if context_type_str == ContextType.TABLE.value:
             url = type_data.get("url")
@@ -141,6 +143,7 @@ class SubtaskContextBrief(BaseModel):
             # For generated PPTX, include slide count and preview images
             slide_count = type_data.get("slide_count")
             preview_images = type_data.get("preview_images", [])
+            pptx_attachment_id = type_data.get("pptx_attachment_id")
 
         return cls(
             id=context.id,
@@ -154,6 +157,7 @@ class SubtaskContextBrief(BaseModel):
             source_config=source_config,
             slide_count=slide_count,
             preview_images=preview_images,
+            pptx_attachment_id=pptx_attachment_id,
         )
 
 

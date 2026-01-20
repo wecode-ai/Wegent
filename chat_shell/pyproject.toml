@@ -92,7 +92,6 @@ dev = [
     "isort>=5.12.0",
     "flake8>=6.0.0",
     "mypy>=1.5.0",
-    "python-pptx",
 ]
 
 [tool.black]
