@@ -30,6 +30,8 @@ import {
 import { toast } from 'sonner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
+import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
+import { useTheme } from '@/features/theme/ThemeProvider'
 import { useSubscriptionContext } from '../contexts/subscriptionContext'
 import type { BackgroundExecution, BackgroundExecutionStatus } from '@/types/subscription'
 import { parseUTCDate } from '@/lib/utils'
@@ -78,6 +80,7 @@ const statusConfig: Record<
 
 export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimelineProps) {
   const { t } = useTranslation('feed')
+  const { theme } = useTheme()
   const router = useRouter()
   const {
     executions,
@@ -308,9 +311,9 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
                     )}
                   </div>
                   <div
-                    className={`text-sm text-text-primary whitespace-pre-wrap ${isSummaryExpanded ? '' : 'line-clamp-6'}`}
+                    className={`text-sm prose prose-sm max-w-none dark:prose-invert ${isSummaryExpanded ? '' : 'line-clamp-6'}`}
                   >
-                    {exec.result_summary}
+                    <EnhancedMarkdown source={exec.result_summary} theme={theme} />
                   </div>
                   {/* Action buttons area */}
                   <div className="mt-3 flex items-center gap-3">
