@@ -515,7 +515,6 @@ def build_lite_task_list(
     db: Session,
     tasks: List[TaskResource],
     user_id: int,
-    member_task_ids: set,
 ) -> List[Dict[str, Any]]:
     """
     Build lightweight task list result from task resources.
@@ -526,7 +525,6 @@ def build_lite_task_list(
         db: Database session
         tasks: List of TaskResource objects
         user_id: User ID for looking up related data
-        member_task_ids: Set of task IDs that have members
 
     Returns:
         List of task dictionaries with essential fields

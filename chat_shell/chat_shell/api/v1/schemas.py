@@ -201,6 +201,7 @@ class Metadata(BaseModel):
     # History limit for subscription tasks
     history_limit: Optional[int] = Field(
         None,
+        ge=0,
         description="Max number of history messages to load (most recent N messages). Used by subscription tasks.",
     )
     # Skill configuration (passed from Backend for HTTP mode)

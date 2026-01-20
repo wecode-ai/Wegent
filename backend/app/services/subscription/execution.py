@@ -93,8 +93,8 @@ class BackgroundExecutionManager:
             status=BackgroundExecutionStatus.PENDING.value,
             result_summary="",
             error_message="",
-            started_at=datetime.now(timezone.utc).replace(tzinfo=None),
-            completed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            started_at=None,
+            completed_at=None,
         )
 
         db.add(execution)
@@ -308,7 +308,6 @@ class BackgroundExecutionManager:
             )
             .all()
         )
-        subscription_map = {s.id: s for s in subscriptions}
 
         # Build subscription cache with parsed CRD data
         subscription_cache = {}

@@ -380,7 +380,7 @@ class XXLJobBackend(SchedulerBackend):
         # Create job in XXL-JOB Admin
         job_data = {
             "jobGroup": self._job_group_id or 1,  # Default to group 1
-            "jobDesc": f"Wegent Flow: {job_id}",
+            "jobDesc": f"Wegent Subscription: {job_id}",
             "author": "wegent",
             "scheduleType": "CRON",
             "scheduleConf": cron_expr,

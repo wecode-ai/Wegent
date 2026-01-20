@@ -36,8 +36,8 @@ class SubscriptionTriggerType(str, Enum):
 class SubscriptionEventType(str, Enum):
     """Event trigger sub-type enumeration."""
 
-    WEBHOOK = "webhook"  # Webhook 触发
-    GIT_PUSH = "git_push"  # Git Push 触发
+    WEBHOOK = "webhook"  # Webhook trigger
+    GIT_PUSH = "git_push"  # Git push trigger
 
 
 class BackgroundExecutionStatus(str, Enum):

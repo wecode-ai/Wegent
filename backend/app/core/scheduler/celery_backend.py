@@ -144,8 +144,8 @@ class CeleryBeatBackend(SchedulerBackend):
         Schedule a new job in Celery Beat.
 
         Note: Celery Beat is designed for static configuration. Dynamic job
-        scheduling is limited. For per-Flow scheduling, use the database-driven
-        approach via check_due_flows.
+        scheduling is limited. For per-Subscription scheduling, use the database-driven
+        approach via check_due_subscriptions.
 
         Args:
             job_id: Unique job identifier

@@ -250,8 +250,6 @@ class TaskQueryMixin:
         if not all_group_task_ids:
             return [], 0
 
-        total = len(all_group_task_ids)
-
         # Load full task data for all group chat IDs
         tasks = (
             db.query(TaskResource).filter(TaskResource.id.in_(all_group_task_ids)).all()
@@ -272,7 +270,7 @@ class TaskQueryMixin:
         paginated_tasks = valid_tasks[skip : skip + limit]
 
         # Build lightweight result
-        result = build_lite_task_list(db, paginated_tasks, user_id, member_task_ids)
+        result = build_lite_task_list(db, paginated_tasks, user_id)
 
         return result, len(valid_tasks)
 
@@ -382,7 +380,7 @@ class TaskQueryMixin:
                     break
 
         # Build lightweight result
-        result = build_lite_task_list(db, ordered_tasks, user_id, set())
+        result = build_lite_task_list(db, ordered_tasks, user_id)
 
         # Recalculate total
         total = total_result - len(all_group_task_ids) if total_result else 0

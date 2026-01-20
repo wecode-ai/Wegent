@@ -89,7 +89,6 @@ class TaskOperationsMixin:
 
         db.commit()
         db.refresh(task)
-        db.flush()
 
         return convert_to_task_dict(task, db, user.id)
 
@@ -128,7 +127,7 @@ class TaskOperationsMixin:
 
         if (
             task_crd.metadata.labels
-            and task_crd.metadata.labels["autoDeleteExecutor"] == "true"
+            and task_crd.metadata.labels.get("autoDeleteExecutor") == "true"
         ):
             raise HTTPException(
                 status_code=400,
@@ -726,7 +725,7 @@ class TaskOperationsMixin:
             )
             raise HTTPException(
                 status_code=500, detail=f"Failed to update task status: {str(e)}"
-            )
+            ) from e
 
         if background_task_runner:
             background_task_runner(self._call_executor_cancel, task_id)
@@ -925,7 +924,7 @@ class TaskOperationsMixin:
             db.rollback()
             raise HTTPException(
                 status_code=500, detail=f"Unable to allocate task ID: {str(e)}"
-            )
+            ) from e
 
     def validate_task_id(self, db: Session, task_id: int) -> bool:
         """

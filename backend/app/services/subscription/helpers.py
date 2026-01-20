@@ -208,10 +208,13 @@ def build_trigger_config(
             ),
         )
     elif trigger_type_enum == SubscriptionTriggerType.ONE_TIME:
+        execute_at_str = trigger_config.get("execute_at")
+        if not execute_at_str:
+            raise ValueError("execute_at is required for ONE_TIME trigger type")
         return SubscriptionTriggerConfig(
             type=trigger_type_enum,
             one_time=OneTimeTriggerConfig(
-                execute_at=datetime.fromisoformat(trigger_config.get("execute_at")),
+                execute_at=datetime.fromisoformat(execute_at_str),
             ),
         )
     elif trigger_type_enum == SubscriptionTriggerType.EVENT:

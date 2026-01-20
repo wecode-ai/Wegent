@@ -199,7 +199,6 @@ async def _stream_response(
                 )
 
         # Extract metadata
-        # Extract metadata
         task_id = 0
         subtask_id = 0
         user_subtask_id = None  # User subtask ID for RAG persistence
