@@ -147,16 +147,28 @@ class K8sExecutor(Executor):
         callback_status = TaskStatus.RUNNING.value
 
         if task.get("executor_name"):
-            pod_result = self.get_pods_by_executor_name(task.get("executor_name"))
+            executor_name = task.get("executor_name")
+            pod_result = self.get_pods_by_executor_name(executor_name)
             pod_list = pod_result.get("pods", [])
             logger.info(pod_list)
             if len(pod_list) > 0:
                 ip = pod_list[0].get("ip")
                 response = self._send_task_to_container(task=task, host=ip, port=8080)
-                if response.json()["status"] == TaskStatus.FAILED.value:
+                # Check HTTP status code for success
+                if response.status_code == 200:
+                    # Task sent successfully to existing pod, register for heartbeat monitoring
+                    # This handles re-execution cases where Redis keys were cleaned up after first completion
+                    self.register_task_for_heartbeat(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        executor_name=executor_name,
+                        task_type=task.get("type", "online"),
+                        context=f"existing executor: {executor_name}",
+                    )
+                else:
                     status = "failed"
                     progress = 100
-                    error_msg = response.json().get("error_msg", "")
+                    error_msg = response.json().get("error_msg", "Request failed")
                     callback_status = TaskStatus.FAILED.value
             else:
                 status = "failed"
@@ -202,7 +214,16 @@ class K8sExecutor(Executor):
                     pod_result = self._submit_kubernetes_pod(
                         pod, K8S_NAMESPACE, executor_name, task_id
                     )
-                    if not pod_result or pod_result.get("status") != "success":
+                    if pod_result and pod_result.get("status") == "success":
+                        # Register regular tasks to RunningTaskTracker for heartbeat monitoring
+                        # This enables OOM detection for non-sandbox tasks
+                        self.register_task_for_heartbeat(
+                            task_id=task_id,
+                            subtask_id=subtask_id,
+                            executor_name=executor_name,
+                            task_type=task.get("type", "online"),
+                        )
+                    elif not pod_result or pod_result.get("status") != "success":
                         logger.error(
                             f"Kubernetes pod creation failed for task {task_id}: {pod_result.get('error_msg', '')}"
                         )
@@ -360,6 +381,34 @@ class K8sExecutor(Executor):
         except Exception as e:
             logger.error(f"Error deleting Kubernetes pod '{pod_name}': {e}")
             return {"status": "failed", "error_msg": f"Error: {e}"}
+
+    def get_executor_task_id(self, executor_name: str) -> Optional[str]:
+        """Get task_id from pod label.
+
+        Args:
+            executor_name: Name of the pod
+
+        Returns:
+            task_id string if found, None otherwise
+        """
+        try:
+            core_v1 = self._get_core_v1_api()
+            if core_v1 is None:
+                return None
+
+            pod = core_v1.read_namespaced_pod(
+                name=executor_name, namespace=K8S_NAMESPACE
+            )
+            if pod.metadata and pod.metadata.labels:
+                return pod.metadata.labels.get("aigc.weibo.com/task-id")
+            return None
+        except ApiException as e:
+            if e.status != 404:
+                logger.warning(f"Error getting task_id for pod '{executor_name}': {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Error getting task_id for pod '{executor_name}': {e}")
+            return None
 
     def get_current_task_ids(
         self, label_selector: Optional[str] = None
@@ -549,6 +598,134 @@ class K8sExecutor(Executor):
             "status": "success",
             "base_url": f"http://{pod_ip}:8080",
         }
+
+    def _extract_container_termination_info(
+        self, container_statuses: Optional[list]
+    ) -> tuple[bool, int]:
+        """Extract OOM killed flag and exit code from container statuses.
+
+        Checks both current state and last_state for termination info.
+
+        Args:
+            container_statuses: List of container statuses from pod.status
+
+        Returns:
+            Tuple of (oom_killed, exit_code)
+        """
+        if not container_statuses:
+            return False, 0
+
+        oom_killed = False
+        exit_code = 0
+
+        for container_status in container_statuses:
+            # Check current terminated state
+            if container_status.state and container_status.state.terminated:
+                terminated = container_status.state.terminated
+                exit_code = terminated.exit_code or 0
+                if terminated.reason == "OOMKilled":
+                    oom_killed = True
+
+            # Also check last_state for previous OOM
+            if container_status.last_state and container_status.last_state.terminated:
+                if container_status.last_state.terminated.reason == "OOMKilled":
+                    oom_killed = True
+
+        return oom_killed, exit_code
+
+    def get_container_status(self, executor_name: str) -> Dict[str, Any]:
+        """Get detailed status information for a K8s pod.
+
+        This function retrieves pod state including:
+        - Whether pod exists
+        - Running/Succeeded/Failed/etc status
+        - OOMKilled flag (indicates Out Of Memory kill)
+        - Exit code from container
+
+        Args:
+            executor_name: Name of the pod (executor_name)
+
+        Returns:
+            dict: Pod status with the following fields:
+                - exists (bool): Whether pod exists
+                - status (str): Pod phase (running/succeeded/failed/etc)
+                - oom_killed (bool): Whether container was killed due to OOM
+                - exit_code (int): Container exit code
+                - error_msg (str): Error message if any
+        """
+        try:
+            core_v1 = self._get_core_v1_api()
+            if core_v1 is None:
+                return {
+                    "exists": False,
+                    "status": "error",
+                    "oom_killed": False,
+                    "exit_code": -1,
+                    "error_msg": "Failed to get Kubernetes API client",
+                }
+
+            # Get pod by label selector
+            label_selector = f"aigc.weibo.com/executor=wegent,app={executor_name}"
+            pods = core_v1.list_namespaced_pod(
+                namespace=K8S_NAMESPACE, label_selector=label_selector
+            )
+
+            if not pods.items:
+                return {
+                    "exists": False,
+                    "status": "not_found",
+                    "oom_killed": False,
+                    "exit_code": -1,
+                    "error_msg": None,
+                }
+
+            pod = pods.items[0]
+            pod_phase = pod.status.phase.lower() if pod.status.phase else "unknown"
+
+            # Check container status for OOM and exit code
+            oom_killed, exit_code = self._extract_container_termination_info(
+                pod.status.container_statuses
+            )
+
+            logger.debug(
+                f"Pod status for {executor_name}: phase={pod_phase}, "
+                f"oom_killed={oom_killed}, exit_code={exit_code}"
+            )
+
+            return {
+                "exists": True,
+                "status": pod_phase,
+                "oom_killed": oom_killed,
+                "exit_code": exit_code,
+                "error_msg": None,
+            }
+
+        except ApiException as e:
+            if e.status == 404:
+                return {
+                    "exists": False,
+                    "status": "not_found",
+                    "oom_killed": False,
+                    "exit_code": -1,
+                    "error_msg": None,
+                }
+            logger.error(f"Kubernetes API error getting pod status: {e}")
+            return {
+                "exists": False,
+                "status": "error",
+                "oom_killed": False,
+                "exit_code": -1,
+                "error_msg": str(e),
+            }
+        except Exception as e:
+            logger.error(f"Error getting pod status for '{executor_name}': {e}")
+            return {
+                "exists": False,
+                "status": "error",
+                "oom_killed": False,
+                "exit_code": -1,
+                "error_msg": str(e),
+            }
 
     @staticmethod
     def get_user_max_tasks(user_name: str) -> int:

@@ -72,6 +72,21 @@ def build_pod_configuration(
     sandbox_metadata = task.get("sandbox_metadata", {})
     sandbox_id = sandbox_metadata.get("sandbox_id")
 
+    # Compute heartbeat ID and type for OOM detection
+    # - Sandbox tasks: use sandbox_id as identifier
+    # - Regular tasks: use task_id as identifier
+    # - Validation tasks: skip (short-lived)
+    if task_type == "validation":
+        heartbeat_id = None
+        heartbeat_type = None
+    elif is_sandbox and sandbox_id:
+        heartbeat_id = sandbox_id
+        heartbeat_type = "sandbox"
+    else:
+        # Regular online tasks use task_id
+        heartbeat_id = str(task_id) if task_id else None
+        heartbeat_type = "task" if heartbeat_id else None
+
     # Initialize init_container and additional volume info
     init_container = None
     init_container_volume = None
@@ -127,6 +142,9 @@ def build_pod_configuration(
         # Sandbox/Subagent support for e2b protocol
         "is_sandbox": is_sandbox,
         "sandbox_id": sandbox_id,
+        # Heartbeat monitoring for OOM detection
+        "heartbeat_id": heartbeat_id,
+        "heartbeat_type": heartbeat_type,
         "executor_manager_heartbeat_base_url": os.getenv(
             "EXECUTOR_MANAGER_HEARTBEAT_BASE_URL",
             "http://wegent-executor-manager-web.wb-plat-ide:8080/executor-manager",
