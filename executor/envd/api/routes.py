@@ -10,7 +10,8 @@ import time
 from typing import Optional
 
 import psutil
-from fastapi import FastAPI, File, Header, HTTPException, Query, Response, UploadFile
+from fastapi import (FastAPI, File, Header, HTTPException, Query, Response,
+                     UploadFile)
 from fastapi.responses import FileResponse
 from shared.logger import setup_logger
 
@@ -43,7 +44,7 @@ def register_rest_api(app: FastAPI):
             # Collect system metrics using psutil
             cpu_percent = psutil.cpu_percent(interval=0.1)
             memory = psutil.virtual_memory()
-            disk = psutil.disk_usage('/')
+            disk = psutil.disk_usage("/")
 
             metrics = MetricsResponse(
                 ts=int(time.time()),
@@ -52,7 +53,7 @@ def register_rest_api(app: FastAPI):
                 mem_total=memory.total,
                 mem_used=memory.used,
                 disk_total=disk.total,
-                disk_used=disk.used
+                disk_used=disk.used,
             )
 
             return metrics
@@ -62,8 +63,7 @@ def register_rest_api(app: FastAPI):
 
     @app.post("/init", status_code=204)
     async def init_envd(
-        request: InitRequest,
-        x_access_token: Optional[str] = Header(None)
+        request: InitRequest, x_access_token: Optional[str] = Header(None)
     ):
         """
         Initialize environment variables and metadata
@@ -81,16 +81,13 @@ def register_rest_api(app: FastAPI):
                 access_token=request.accessToken,
                 timestamp=request.timestamp,
                 default_user=request.defaultUser,
-                default_workdir=request.defaultWorkdir
+                default_workdir=request.defaultWorkdir,
             )
 
             # Set response headers as per reference implementation
             return Response(
                 status_code=204,
-                headers={
-                    "Cache-Control": "no-store",
-                    "Content-Type": ""
-                }
+                headers={"Cache-Control": "no-store", "Content-Type": ""},
             )
         except AccessTokenAlreadySetError as e:
             logger.warning(f"Access token conflict: {e}")
@@ -112,7 +109,7 @@ def register_rest_api(app: FastAPI):
         username: Optional[str] = Query(None),
         signature: Optional[str] = Query(None),
         signature_expiration: Optional[int] = Query(None),
-        x_access_token: Optional[str] = Header(None)
+        x_access_token: Optional[str] = Header(None),
     ):
         """Download a file"""
         verify_access_token(x_access_token)
@@ -127,17 +124,21 @@ def register_rest_api(app: FastAPI):
                 raise HTTPException(status_code=404, detail=f"File not found: {path}")
 
             if not file_path.is_file():
-                raise HTTPException(status_code=400, detail=f"Path is not a file: {path}")
+                raise HTTPException(
+                    status_code=400, detail=f"Path is not a file: {path}"
+                )
 
             # Check permissions (basic check)
             if not os.access(file_path, os.R_OK):
-                raise HTTPException(status_code=401, detail=f"Permission denied: {path}")
+                raise HTTPException(
+                    status_code=401, detail=f"Permission denied: {path}"
+                )
 
             # Return file
             return FileResponse(
                 path=str(file_path),
                 media_type="application/octet-stream",
-                filename=file_path.name
+                filename=file_path.name,
             )
 
         except HTTPException:
@@ -153,7 +154,7 @@ def register_rest_api(app: FastAPI):
         username: Optional[str] = Query(None),
         signature: Optional[str] = Query(None),
         signature_expiration: Optional[int] = Query(None),
-        x_access_token: Optional[str] = Header(None)
+        x_access_token: Optional[str] = Header(None),
     ):
         """Upload a file"""
         verify_access_token(x_access_token)
@@ -178,13 +179,7 @@ def register_rest_api(app: FastAPI):
             logger.info(f"Uploaded file to {file_path} ({len(content)} bytes)")
 
             # Return entry info
-            return [
-                EntryInfo(
-                    path=str(file_path),
-                    name=file_path.name,
-                    type="file"
-                )
-            ]
+            return [EntryInfo(path=str(file_path), name=file_path.name, type="file")]
 
         except HTTPException:
             raise

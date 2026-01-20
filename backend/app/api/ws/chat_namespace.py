@@ -1077,7 +1077,8 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
 
             # Reset the failed AI subtask to PENDING status using service module
-            reset_subtask_for_retry(db, failed_ai_subtask)
+            # Also pass task to reset Task status (required for executor_manager to pick up the task)
+            reset_subtask_for_retry(db, failed_ai_subtask, task)
 
             # Trigger AI response using unified trigger
             from app.models.user import User

@@ -136,6 +136,7 @@ envd_enabled = os.getenv("ENVD_ENABLED", "true").lower() == "true"
 if envd_enabled:
     try:
         from executor.envd.server import register_envd_routes
+
         register_envd_routes(app)
         logger.info("envd Connect RPC routes registered to main app")
     except Exception as e:

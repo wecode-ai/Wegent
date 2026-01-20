@@ -312,6 +312,21 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
             logger.warning(
                 f"Failed to update status for task {request.task_id}: {result}"
             )
+
+        # Remove task from RunningTaskTracker when completed or failed
+        # This prevents false-positive heartbeat timeout detection
+        status_lower = request.status.lower() if request.status else ""
+        if status_lower in ("completed", "failed", "cancelled", "success"):
+            try:
+                from executor_manager.services.task_heartbeat_manager import \
+                    get_running_task_tracker
+
+                tracker = get_running_task_tracker()
+                tracker.remove_running_task(request.task_id)
+                logger.debug(f"Removed task {request.task_id} from RunningTaskTracker")
+            except Exception as e:
+                logger.debug(f"Failed to remove task from RunningTaskTracker: {e}")
+
         logger.info(f"Successfully processed callback for task {request.task_id}")
         return {
             "status": "success",
@@ -710,6 +725,29 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
 
         if result["status"] == "success":
             logger.info(f"Successfully cancelled task {request.task_id}")
+
+            # Clean up Redis heartbeat data immediately on cancel
+            try:
+                from executor_manager.services.heartbeat_manager import (
+                    HeartbeatType, get_heartbeat_manager)
+                from executor_manager.services.task_heartbeat_manager import \
+                    get_running_task_tracker
+
+                task_id_str = str(request.task_id)
+                heartbeat_mgr = get_heartbeat_manager()
+                tracker = get_running_task_tracker()
+
+                # Delete heartbeat key
+                heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
+                # Remove from running tasks tracker
+                tracker.remove_running_task(request.task_id)
+
+                logger.debug(
+                    f"Cleaned up heartbeat data for cancelled task {request.task_id}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to clean up heartbeat data: {e}")
+
             return result
         else:
             logger.warning(
@@ -724,6 +762,34 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
     except Exception as e:
         logger.error(f"Error cancelling task {request.task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/tasks/{task_id}/heartbeat")
+async def task_heartbeat(task_id: str, http_request: Request):
+    """
+    Receive heartbeat from executor container for regular (online/offline) tasks.
+
+    This endpoint is called by the executor's HeartbeatService when running
+    regular tasks (not sandbox tasks). It updates the heartbeat timestamp in Redis
+    to indicate that the executor container is still alive.
+
+    Args:
+        task_id: Task ID as string
+        http_request: HTTP request object
+
+    Returns:
+        dict: Heartbeat acknowledgement
+    """
+    from executor_manager.services.heartbeat_manager import (
+        HeartbeatType, get_heartbeat_manager)
+
+    heartbeat_mgr = get_heartbeat_manager()
+    success = heartbeat_mgr.update_heartbeat(task_id, HeartbeatType.TASK)
+
+    if not success:
+        logger.warning(f"[TaskAPI] Failed to update heartbeat for task {task_id}")
+
+    return {"status": "ok", "task_id": task_id}
 
 
 # Mount api_router to app

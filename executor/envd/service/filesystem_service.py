@@ -30,6 +30,7 @@ logger = setup_logger("filesystem_service")
 
 class ConnectError(Exception):
     """Connect RPC error"""
+
     def __init__(self, code: str, message: str):
         self.code = code
         self.message = message
@@ -237,7 +238,9 @@ class FilesystemServiceHandler:
                         if e.code == "not_found":
                             logger.debug(f"Skipping non-existent entry: {item_path}")
                         else:
-                            logger.warning(f"Error getting info for {item_path}: {e.message}")
+                            logger.warning(
+                                f"Error getting info for {item_path}: {e.message}"
+                            )
                     except Exception as e:
                         logger.warning(f"Error getting info for {item_path}: {str(e)}")
 
@@ -279,8 +282,8 @@ class FilesystemServiceHandler:
             permissions = stat.filemode(mode)
 
             # Get owner and group
-            import pwd
             import grp
+            import pwd
 
             try:
                 owner = pwd.getpwuid(stat_info.st_uid).pw_name
@@ -523,11 +526,11 @@ class FilesystemServiceHandler:
                 message=f"Error removing file or directory: {str(e)}",
             )
 
-    async def WatchDir(
-        self, request: filesystem_pb2.WatchDirRequest
-    ):
+    async def WatchDir(self, request: filesystem_pb2.WatchDirRequest):
         """Watch a directory for changes (streaming)"""
-        logger.info(f"WatchDir request for path: {request.path}, recursive: {request.recursive}")
+        logger.info(
+            f"WatchDir request for path: {request.path}, recursive: {request.recursive}"
+        )
 
         # Expand and resolve the path
         path = os.path.abspath(os.path.expanduser(request.path))
@@ -572,7 +575,9 @@ class FilesystemServiceHandler:
         self, request: filesystem_pb2.CreateWatcherRequest
     ) -> filesystem_pb2.CreateWatcherResponse:
         """Create a non-streaming watcher"""
-        logger.info(f"CreateWatcher request for path: {request.path}, recursive: {request.recursive}")
+        logger.info(
+            f"CreateWatcher request for path: {request.path}, recursive: {request.recursive}"
+        )
 
         # Expand and resolve the path
         path = os.path.abspath(os.path.expanduser(request.path))
@@ -615,4 +620,3 @@ class FilesystemServiceHandler:
             )
 
         return filesystem_pb2.RemoveWatcherResponse()
-

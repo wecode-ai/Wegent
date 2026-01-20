@@ -479,5 +479,94 @@ def get_container_ports(container_name: str) -> dict:
         return {"status": "failed", "error_msg": f"Error: {e}", "ports": []}
 
 
+def get_container_status(container_name: str) -> dict:
+    """
+    Get detailed status information for a specific container.
+
+    This function retrieves container state including:
+    - Whether container exists
+    - Running/Exited/etc status
+    - OOMKilled flag (indicates Out Of Memory kill)
+    - Exit code
+
+    Args:
+        container_name (str): Name of the container to check
+
+    Returns:
+        dict: Container status with the following fields:
+            - exists (bool): Whether container exists
+            - status (str): Container status (running/exited/paused/etc)
+            - oom_killed (bool): Whether container was killed due to OOM
+            - exit_code (int): Container exit code (0 = success, 137 = SIGKILL, etc)
+            - error_msg (str): Error message if any
+    """
+    try:
+        # Use docker inspect to get detailed container state
+        cmd = [
+            "docker",
+            "inspect",
+            "--format",
+            "{{.State.Status}}|{{.State.OOMKilled}}|{{.State.ExitCode}}",
+            container_name,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            # Container doesn't exist or other error
+            if "No such object" in result.stderr or "Error: No such" in result.stderr:
+                return {
+                    "exists": False,
+                    "status": "not_found",
+                    "oom_killed": False,
+                    "exit_code": -1,
+                    "error_msg": None,
+                }
+            return {
+                "exists": False,
+                "status": "error",
+                "oom_killed": False,
+                "exit_code": -1,
+                "error_msg": result.stderr.strip(),
+            }
+
+        # Parse the output: status|oom_killed|exit_code
+        output = result.stdout.strip()
+        parts = output.split("|")
+
+        if len(parts) >= 3:
+            status = parts[0]
+            oom_killed = parts[1].lower() == "true"
+            try:
+                exit_code = int(parts[2])
+            except ValueError:
+                exit_code = -1
+
+            return {
+                "exists": True,
+                "status": status,
+                "oom_killed": oom_killed,
+                "exit_code": exit_code,
+                "error_msg": None,
+            }
+        else:
+            return {
+                "exists": True,
+                "status": "unknown",
+                "oom_killed": False,
+                "exit_code": -1,
+                "error_msg": f"Unexpected output format: {output}",
+            }
+
+    except Exception as e:
+        logger.error(f"Error getting container status for '{container_name}': {e}")
+        return {
+            "exists": False,
+            "status": "error",
+            "oom_killed": False,
+            "exit_code": -1,
+            "error_msg": str(e),
+        }
+
+
 if __name__ == "__main__":
     print(get_running_task_details())

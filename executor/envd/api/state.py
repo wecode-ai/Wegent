@@ -16,6 +16,7 @@ logger = setup_logger("envd_api_state")
 
 class AccessTokenAlreadySetError(Exception):
     """Raised when trying to set access token that is already set"""
+
     pass
 
 
@@ -32,9 +33,15 @@ class EnvdStateManager:
         self.default_workdir: Optional[str] = None
         self._lock = threading.Lock()
 
-    def init(self, hyperloop_ip: Optional[str], env_vars: Optional[Dict[str, str]],
-             access_token: Optional[str], timestamp: Optional[str],
-             default_user: Optional[str], default_workdir: Optional[str]) -> None:
+    def init(
+        self,
+        hyperloop_ip: Optional[str],
+        env_vars: Optional[Dict[str, str]],
+        access_token: Optional[str],
+        timestamp: Optional[str],
+        default_user: Optional[str],
+        default_workdir: Optional[str],
+    ) -> None:
         """
         Initialize envd state with thread-safety and timestamp validation
 
@@ -54,20 +61,30 @@ class EnvdStateManager:
             request_time: Optional[datetime] = None
             if timestamp:
                 try:
-                    request_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                    request_time = datetime.fromisoformat(
+                        timestamp.replace("Z", "+00:00")
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to parse timestamp: {e}")
 
             # Check if we should update: no timestamp or newer timestamp
-            should_update = request_time is None or self.last_set_time is None or request_time > self.last_set_time
+            should_update = (
+                request_time is None
+                or self.last_set_time is None
+                or request_time > self.last_set_time
+            )
 
             if not should_update:
-                logger.info(f"Skipping update: request timestamp {request_time} is not newer than last set time {self.last_set_time}")
+                logger.info(
+                    f"Skipping update: request timestamp {request_time} is not newer than last set time {self.last_set_time}"
+                )
                 return
 
             # Check for access token conflict
             if access_token and self.access_token and self.access_token != access_token:
-                logger.warning(f"Access token conflict: attempting to set new token when one already exists")
+                logger.warning(
+                    f"Access token conflict: attempting to set new token when one already exists"
+                )
                 raise AccessTokenAlreadySetError("Access token is already set")
 
             # Update state
@@ -90,7 +107,9 @@ class EnvdStateManager:
             if default_workdir:
                 self.default_workdir = default_workdir
 
-            logger.info(f"envd initialized with {len(self.env_vars)} environment variables (timestamp: {self.last_set_time})")
+            logger.info(
+                f"envd initialized with {len(self.env_vars)} environment variables (timestamp: {self.last_set_time})"
+            )
 
 
 # Global state manager instance
