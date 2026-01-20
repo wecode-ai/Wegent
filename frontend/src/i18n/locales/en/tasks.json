@@ -5,6 +5,17 @@
   "attachment": {
     "characters": "characters"
   },
+  "deleteConfirm": {
+    "title": "Delete Task",
+    "message": "Are you sure you want to delete this task? This action cannot be undone.",
+    "leaveTitle": "Leave Conversation",
+    "leaveMessage": "Are you sure you want to leave this conversation?",
+    "deleteSuccess": "Task deleted successfully",
+    "deleteFailed": "Failed to delete task",
+    "leaveSuccess": "Left conversation successfully",
+    "leaveFailed": "Failed to leave conversation",
+    "leaving": "Leaving..."
+  },
   "workbench": {
     "overview": "Overview",
     "files_changed": "Files Changed",

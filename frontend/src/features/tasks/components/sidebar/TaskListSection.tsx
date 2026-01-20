@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Task, TaskType } from '@/types/api'
 import TaskMenu from './TaskMenu'
+import { DeleteTaskDialog } from './DeleteTaskDialog'
 import { TaskInlineRename } from '@/components/common/TaskInlineRename'
 import {
   CheckCircle2,
@@ -19,6 +20,7 @@ import {
   Users,
   BookOpen,
 } from 'lucide-react'
+import { TrashIcon, ArrowRightOnRectangleIcon } from '@heroicons/react/24/outline'
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
@@ -106,9 +108,10 @@ export default function TaskListSection({
   // This is needed to update the unread dot immediately when a task is clicked
   const _viewStatusVersion = viewStatusVersion
   const [hoveredTaskId, setHoveredTaskId] = useState<number | null>(null)
-  const [_loading, setLoading] = useState(false)
   const [longPressTaskId, setLongPressTaskId] = useState<number | null>(null)
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
+  // Delete task dialog state
+  const [deleteTaskTarget, setDeleteTaskTarget] = useState<Task | null>(null)
   // Local task titles for optimistic update during rename
   const [localTitles, setLocalTitles] = useState<Record<number, string>>({})
   // Click timer ref for distinguishing single-click from double-click
@@ -304,23 +307,26 @@ export default function TaskListSection({
     }
   }
 
-  // Delete task
-  const handleDeleteTask = async (taskId: number) => {
-    setLoading(true)
-    try {
-      await taskApis.deleteTask(taskId)
-      setSelectedTask(null)
-      if (typeof window !== 'undefined') {
-        const url = new URL(window.location.href)
-        url.searchParams.delete('taskId')
-        router.replace(url.pathname + url.search)
-        refreshTasks()
-      }
-    } catch (err) {
-      console.error('Delete failed', err)
-    } finally {
-      setLoading(false)
+  // Delete task - shows confirmation dialog first
+  const handleDeleteTask = async (task: Task) => {
+    setDeleteTaskTarget(task)
+  }
+
+  // Handle successful task deletion
+  const handleDeleteSuccess = () => {
+    setSelectedTask(null)
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('taskId')
+      router.replace(url.pathname + url.search)
+      refreshTasks()
     }
+  }
+
+  // Check if a task can be deleted (terminal status only)
+  const isTaskDeletable = (status: string): boolean => {
+    const deletableStatuses = ['COMPLETED', 'FAILED', 'CANCELLED']
+    return deletableStatuses.includes(status)
   }
 
   // Start inline editing for a task
@@ -621,7 +627,43 @@ export default function TaskListSection({
                         )}
 
                       {editingTaskId !== task.id && (
-                        <div className="flex-shrink-0">
+                        <div className="flex-shrink-0 flex items-center gap-1">
+                          {/* Delete/Leave icon - only shown for deletable tasks */}
+                          {isTaskDeletable(task.status) && (
+                            <div
+                              className={`transition-opacity duration-150 [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto ${
+                                showMenu ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                              }`}
+                              onTouchStart={e => e.stopPropagation()}
+                              onTouchEnd={e => e.stopPropagation()}
+                              onClick={e => {
+                                e.stopPropagation()
+                                handleDeleteTask(task)
+                              }}
+                            >
+                              <TooltipProvider>
+                                <Tooltip delayDuration={0}>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className="flex items-center justify-center h-11 min-w-[44px] text-text-muted hover:text-red-500 transition-colors cursor-pointer"
+                                    >
+                                      {task.is_group_chat ? (
+                                        <ArrowRightOnRectangleIcon className="h-4 w-4" />
+                                      ) : (
+                                        <TrashIcon className="h-4 w-4" />
+                                      )}
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {task.is_group_chat
+                                      ? t('common:groupChat.leave')
+                                      : t('common:tasks.delete_task')}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
+                          )}
                           <div
                             className={`transition-opacity duration-150 [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto ${
                               showMenu ? 'opacity-100' : 'opacity-0 pointer-events-none'
@@ -631,7 +673,7 @@ export default function TaskListSection({
                             onClick={e => e.stopPropagation()}
                           >
                             <TaskMenu
-                              taskId={task.id}
+                              task={task}
                               handleCopyTaskId={handleCopyTaskId}
                               handleDeleteTask={handleDeleteTask}
                               onRename={() => handleStartRename(task.id)}
@@ -654,6 +696,15 @@ export default function TaskListSection({
           )
         })}
       </div>
+
+      {/* Delete Task Confirmation Dialog */}
+      <DeleteTaskDialog
+        isOpen={!!deleteTaskTarget}
+        onClose={() => setDeleteTaskTarget(null)}
+        onSuccess={handleDeleteSuccess}
+        task={deleteTaskTarget}
+        isGroupChat={deleteTaskTarget?.is_group_chat}
+      />
     </div>
   )
 }

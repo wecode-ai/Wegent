@@ -21,6 +21,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.subscription import BackgroundExecution
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -471,6 +472,9 @@ class TaskOperationsMixin:
     def delete_task(self, db: Session, *, task_id: int, user_id: int) -> None:
         """
         Delete user Task and handle running subtasks.
+
+        Only tasks with terminal status (COMPLETED, FAILED, CANCELLED) can be deleted.
+        Tasks with PENDING or RUNNING status cannot be deleted.
         """
         logger.info(f"Deleting task with id: {task_id}")
 
@@ -490,6 +494,18 @@ class TaskOperationsMixin:
             task = self._handle_member_leave(db, task_id, user_id)
             if task is None:
                 return  # User left the group chat
+
+        # Validate task status - only allow deletion of terminal states
+        task_crd = Task.model_validate(task.json)
+        current_status = task_crd.status.status if task_crd.status else "PENDING"
+        deletable_statuses = ["COMPLETED", "FAILED", "CANCELLED"]
+
+        if current_status not in deletable_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete task with status '{current_status}'. "
+                f"Only tasks with status {deletable_statuses} can be deleted.",
+            )
 
         # Get all subtasks for the task
         task_subtasks = db.query(Subtask).filter(Subtask.task_id == task_id).all()
@@ -524,6 +540,18 @@ class TaskOperationsMixin:
                 Subtask.updated_at: datetime.now(),
             }
         )
+
+        # Cleanup BackgroundExecution records pointing to this task
+        # Soft delete by updating status to CANCELLED
+        db.query(BackgroundExecution).filter(
+            BackgroundExecution.task_id == task_id
+        ).update(
+            {
+                BackgroundExecution.status: "CANCELLED",
+                BackgroundExecution.updated_at: datetime.now(),
+            }
+        )
+        logger.info(f"Cleaned up BackgroundExecution records for task {task_id}")
 
         # Update task status to DELETE
         task_crd = Task.model_validate(task.json)

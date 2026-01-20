@@ -5,6 +5,17 @@
   "attachment": {
     "characters": "字符"
   },
+  "deleteConfirm": {
+    "title": "删除任务",
+    "message": "确定要删除此任务吗？此操作无法撤消。",
+    "leaveTitle": "离开对话",
+    "leaveMessage": "确定要离开此对话吗？",
+    "deleteSuccess": "任务删除成功",
+    "deleteFailed": "删除任务失败",
+    "leaveSuccess": "已成功离开对话",
+    "leaveFailed": "离开对话失败",
+    "leaving": "离开中..."
+  },
   "workbench": {
     "overview": "概览",
     "files_changed": "文件变更",

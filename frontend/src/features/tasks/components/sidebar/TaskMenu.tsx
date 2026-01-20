@@ -29,17 +29,18 @@ import {
 } from '@/components/ui/dropdown'
 import { useProjectContext } from '@/features/projects'
 import { ProjectCreateDialog } from '@/features/projects/components/ProjectCreateDialog'
+import type { Task } from '@/types/api'
 
 interface TaskMenuProps {
-  taskId: number
+  task: Task
   handleCopyTaskId: (taskId: number) => void
-  handleDeleteTask: (taskId: number) => void
+  handleDeleteTask: (task: Task) => void
   onRename?: () => void
   isGroupChat?: boolean
 }
 
 export default function TaskMenu({
-  taskId,
+  task,
   handleCopyTaskId,
   handleDeleteTask,
   onRename,
@@ -51,7 +52,7 @@ export default function TaskMenu({
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
 
   const handleMoveToGroup = async (projectId: number) => {
-    await addTaskToProject(projectId, taskId)
+    await addTaskToProject(projectId, task.id)
   }
 
   return (
@@ -67,7 +68,7 @@ export default function TaskMenu({
           <DropdownMenuItem
             onClick={e => {
               e.stopPropagation()
-              handleCopyTaskId(taskId)
+              handleCopyTaskId(task.id)
             }}
           >
             <ClipboardDocumentIcon className="h-3.5 w-3.5 mr-2" />
@@ -129,7 +130,7 @@ export default function TaskMenu({
           <DropdownMenuItem
             onClick={e => {
               e.stopPropagation()
-              handleDeleteTask(taskId)
+              handleDeleteTask(task)
             }}
           >
             {isGroupChat ? (
