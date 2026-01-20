@@ -249,14 +249,18 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
         // Check both ApiError status code and error message for "not found" (case-insensitive)
         const isNotFoundError =
           (err instanceof ApiError && err.status === 404) ||
-          (err instanceof Error && err.message.toLowerCase().includes('not found'))
-        if (!isNotFoundError) {
-          toast({
-            title: t('toast.removeTaskFailed'),
-            description: message,
-            variant: 'destructive',
-          })
+          (err instanceof Error && err.message.toLowerCase().includes('not found')) ||
+          // Also check for status property on plain objects (in case instanceof fails)
+          (typeof err === 'object' && err !== null && 'status' in err && (err as { status: number }).status === 404)
+        if (isNotFoundError) {
+          // Silently ignore "not found" errors - task is already removed from project
+          return true
         }
+        toast({
+          title: t('toast.removeTaskFailed'),
+          description: message,
+          variant: 'destructive',
+        })
         console.error('[ProjectContext] Failed to remove task from project:', err)
         return false
       }
