@@ -418,13 +418,18 @@ async def sandbox_heartbeat(sandbox_id: str, http_request: Request):
     This endpoint is called periodically by the executor's heartbeat service
     to signal that the container is still alive and healthy.
 
+    Response includes Claude Code configuration if the sandbox is configured
+    with ClaudeCode bot, allowing the executor to initialize Claude on-demand.
+
     Args:
         sandbox_id: Unique sandbox identifier (task_id as string)
         http_request: HTTP request object
 
     Returns:
-        dict with status confirmation
+        dict with status confirmation and optional claude_config
     """
+    import json
+
     client_ip = http_request.client.host if http_request.client else "unknown"
     logger.debug(
         f"[SandboxAPI] Heartbeat received: sandbox_id={sandbox_id} from {client_ip}"
@@ -445,4 +450,55 @@ async def sandbox_heartbeat(sandbox_id: str, http_request: Request):
             detail="Failed to update heartbeat",
         )
 
-    return {"status": "ok", "sandbox_id": sandbox_id}
+    # Get sandbox info to check if Claude configuration should be returned
+    manager = get_sandbox_manager()
+    sandbox = await manager.get_sandbox(sandbox_id)
+
+    response = {"status": "ok", "sandbox_id": sandbox_id}
+
+    # If sandbox has ClaudeCode bot configuration, include it in response
+    if sandbox and sandbox.metadata:
+        # bot_config is stored in metadata as JSON string (from E2B SDK)
+        bot_config_str = sandbox.metadata.get("bot_config")
+        if bot_config_str:
+            try:
+                # Deserialize bot_config from JSON string
+                bot_config = (
+                    json.loads(bot_config_str)
+                    if isinstance(bot_config_str, str)
+                    else bot_config_str
+                )
+
+                # Find ClaudeCode bot in configuration
+                claude_bot = None
+                if isinstance(bot_config, list):
+                    for bot in bot_config:
+                        if (
+                            isinstance(bot, dict)
+                            and bot.get("shell_type", "").lower() == "claudecode"
+                        ):
+                            claude_bot = bot
+                            break
+
+                if claude_bot:
+                    # Include Claude configuration in heartbeat response
+                    # This allows executor to initialize Claude on first heartbeat
+                    response["claude_config"] = {
+                        "bot": claude_bot,
+                        "user": {
+                            "id": sandbox.user_id,
+                            "name": sandbox.user_name,
+                        },
+                        "team": sandbox.metadata.get("team", {}),
+                    }
+                    logger.debug(
+                        f"[SandboxAPI] Including Claude config in heartbeat response for {sandbox_id}"
+                    )
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    f"[SandboxAPI] Failed to parse bot_config JSON for sandbox {sandbox_id}: {e}"
+                )
+
+    logger.debug(f"[SandboxAPI] Heartbeat processed for sandbox {sandbox_id}")
+
+    return response

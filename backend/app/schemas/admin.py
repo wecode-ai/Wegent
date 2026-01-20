@@ -265,6 +265,48 @@ class PublicRetrieverListResponse(BaseModel):
     items: List[PublicRetrieverResponse]
 
 
+# Flow Monitor Schemas
+class FlowMonitorStats(BaseModel):
+    """Flow execution statistics for admin monitoring"""
+
+    total_executions: int = Field(..., description="Total number of executions")
+    completed_count: int = Field(..., description="Number of completed executions")
+    failed_count: int = Field(..., description="Number of failed executions")
+    timeout_count: int = Field(..., description="Number of timed out executions")
+    cancelled_count: int = Field(..., description="Number of cancelled executions")
+    running_count: int = Field(
+        ..., description="Number of currently running executions"
+    )
+    pending_count: int = Field(..., description="Number of pending executions")
+    success_rate: float = Field(..., description="Success rate (0-100)")
+    failure_rate: float = Field(..., description="Failure rate (0-100)")
+    timeout_rate: float = Field(..., description="Timeout rate (0-100)")
+    active_flows_count: int = Field(..., description="Number of active flows")
+    total_flows_count: int = Field(..., description="Total number of flows")
+
+
+class FlowMonitorError(BaseModel):
+    """Individual error record for flow monitor (privacy-preserving)"""
+
+    execution_id: int = Field(..., description="Execution ID")
+    flow_id: int = Field(..., description="Flow ID")
+    user_id: int = Field(..., description="User ID")
+    task_id: Optional[int] = Field(None, description="Associated task ID")
+    status: str = Field(..., description="Execution status")
+    error_message: Optional[str] = Field(None, description="Error message")
+    trigger_type: Optional[str] = Field(None, description="Trigger type")
+    created_at: datetime = Field(..., description="Creation time")
+    started_at: Optional[datetime] = Field(None, description="Start time")
+    completed_at: Optional[datetime] = Field(None, description="Completion time")
+
+
+class FlowMonitorErrorListResponse(BaseModel):
+    """Error list response for flow monitor"""
+
+    total: int
+    items: List[FlowMonitorError]
+
+
 # Public Team Management Schemas
 class PublicTeamCreate(BaseModel):
     """Public team creation model"""

@@ -38,6 +38,15 @@ async def lifespan(app: FastAPI):
     """
     Run task at startup if TASK_INFO is available
     """
+    # Ensure /home/user directory exists (for container compatibility)
+    try:
+        home_user_dir = "/home/user"
+        if not os.path.exists(home_user_dir):
+            os.makedirs(home_user_dir, mode=0o777, exist_ok=True)
+            logger.info(f"Created {home_user_dir} directory")
+    except Exception as e:
+        logger.warning(f"Failed to create {home_user_dir} directory: {e}")
+
     # Initialize OpenTelemetry if enabled (configuration from shared/telemetry/config.py)
     otel_config = get_otel_config("wegent-executor")
     if otel_config.enabled:
@@ -121,6 +130,17 @@ app = FastAPI(
     description="API for executing tasks with agents",
     lifespan=lifespan,
 )
+
+# Register envd Connect RPC routes (enabled by default)
+envd_enabled = os.getenv("ENVD_ENABLED", "true").lower() == "true"
+if envd_enabled:
+    try:
+        from executor.envd.server import register_envd_routes
+
+        register_envd_routes(app)
+        logger.info("envd Connect RPC routes registered to main app")
+    except Exception as e:
+        logger.warning(f"Failed to register envd routes: {e}")
 
 
 # Add middleware for request/response logging and OTEL capture

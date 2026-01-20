@@ -120,14 +120,9 @@ export default function TaskInlineEdit({
 
       {/* Error message and character counter */}
       <div className="absolute left-0 right-0 -bottom-5 flex items-center justify-between px-1">
-        {error && (
-          <span className="text-xs text-red-500 truncate mr-2">{error}</span>
-        )}
+        {error && <span className="text-xs text-red-500 truncate mr-2">{error}</span>}
         <span
-          className={cn(
-            'text-xs ml-auto',
-            isNearLimit ? 'text-yellow-600' : 'text-text-muted'
-          )}
+          className={cn('text-xs ml-auto', isNearLimit ? 'text-yellow-600' : 'text-text-muted')}
         >
           {currentLength}/{MAX_TITLE_LENGTH}
         </span>

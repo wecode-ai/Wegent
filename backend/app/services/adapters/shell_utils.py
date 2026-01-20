@@ -430,7 +430,10 @@ def get_shells_by_names_batch(
         if public_shell_filter is not None:
             public_shells = (
                 db.query(Kind)
-                .filter(Kind.is_active == True)
+                .filter(
+                    Kind.kind == "Shell",
+                    Kind.is_active == True,
+                )
                 .filter(public_shell_filter)
                 .all()
             )
