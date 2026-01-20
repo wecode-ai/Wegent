@@ -275,6 +275,8 @@ class K8sExecutor(Executor):
             and executor_name
         ):
             try:
+                # Include result with error message for frontend display
+                result_value = {"value": error_msg} if error_msg else None
                 callback(
                     task_id=task_id,
                     subtask_id=subtask_id,
@@ -283,6 +285,7 @@ class K8sExecutor(Executor):
                     executor_namespace=K8S_NAMESPACE,
                     status=callback_status,
                     error_message=error_msg,
+                    result=result_value,
                 )
             except Exception as e:
                 logger.error(f"Error in callback for task {task_id}: {e}")
