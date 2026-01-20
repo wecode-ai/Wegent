@@ -52,6 +52,25 @@ def get_user_volume_name(user_id: int) -> str:
     return f"{VOLUME_PREFIX}{user_id}"
 
 
+def _validate_volume_prefix(volume_name: str) -> None:
+    """
+    Validate that a volume name starts with the expected cache prefix.
+
+    This prevents accidental operations on non-cache volumes.
+
+    Args:
+        volume_name: Name of the volume to validate
+
+    Raises:
+        ValueError: If volume_name does not start with VOLUME_PREFIX
+    """
+    if not volume_name.startswith(VOLUME_PREFIX):
+        raise ValueError(
+            f"Volume '{volume_name}' does not start with required prefix '{VOLUME_PREFIX}'. "
+            f"This operation only supports git cache volumes."
+        )
+
+
 @trace_sync("volume_exists", "git_cache_volume_manager")
 def volume_exists(volume_name: str) -> bool:
     """
@@ -63,6 +82,12 @@ def volume_exists(volume_name: str) -> bool:
     Returns:
         True if volume exists, False otherwise
     """
+    try:
+        _validate_volume_prefix(volume_name)
+    except ValueError as e:
+        logger.warning(str(e))
+        return False
+
     try:
         result = subprocess.run(
             ["docker", "volume", "inspect", volume_name],
@@ -160,6 +185,12 @@ def get_volume_metadata(volume_name: str) -> Optional[Dict[str, str]]:
         Dictionary of labels or None if volume doesn't exist
     """
     try:
+        _validate_volume_prefix(volume_name)
+    except ValueError as e:
+        logger.warning(str(e))
+        return None
+
+    try:
         result = subprocess.run(
             ["docker", "volume", "inspect", "--format", "json", volume_name],
             capture_output=True,
@@ -196,6 +227,12 @@ def update_volume_last_used(volume_name: str) -> bool:
         True if successful, False otherwise
     """
     try:
+        _validate_volume_prefix(volume_name)
+    except ValueError as e:
+        logger.warning(str(e))
+        return False
+
+    try:
         # Get current timestamp
         last_used = datetime.utcnow().isoformat()
 
@@ -226,6 +263,13 @@ def delete_volume(volume_name: str) -> Tuple[bool, Optional[str]]:
     Returns:
         Tuple (success, error_message)
     """
+    try:
+        _validate_volume_prefix(volume_name)
+    except ValueError as e:
+        error_msg = str(e)
+        logger.warning(error_msg)
+        return False, error_msg
+
     try:
         logger.info(f"Deleting volume: {volume_name}")
         result = subprocess.run(
@@ -315,6 +359,12 @@ def get_volume_size(volume_name: str) -> Optional[int]:
     Returns:
         Size in bytes or None if error
     """
+    try:
+        _validate_volume_prefix(volume_name)
+    except ValueError as e:
+        logger.warning(str(e))
+        return None
+
     try:
         # Run a temporary container to check volume size
         cmd = [
