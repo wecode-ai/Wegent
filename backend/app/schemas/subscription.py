@@ -20,17 +20,17 @@ from app.schemas.kind import ModelRef
 class SubscriptionTaskType(str, Enum):
     """Subscription task type enumeration."""
 
-    EXECUTION = "execution"  
-    COLLECTION = "collection"  
+    EXECUTION = "execution"
+    COLLECTION = "collection"
 
 
 class SubscriptionTriggerType(str, Enum):
     """Subscription trigger type enumeration."""
 
-    CRON = "cron"  
-    INTERVAL = "interval"  
-    ONE_TIME = "one_time"  
-    EVENT = "event"  
+    CRON = "cron"
+    INTERVAL = "interval"
+    ONE_TIME = "one_time"
+    EVENT = "event"
 
 
 class SubscriptionEventType(str, Enum):
@@ -131,10 +131,13 @@ class SubscriptionSpec(BaseModel):
 
     displayName: str = Field(..., description="User-friendly display name")
     taskType: SubscriptionTaskType = Field(
-        SubscriptionTaskType.COLLECTION, description="Task type: 'execution' or 'collection'"
+        SubscriptionTaskType.COLLECTION,
+        description="Task type: 'execution' or 'collection'",
     )
     trigger: SubscriptionTriggerConfig = Field(..., description="Trigger configuration")
-    teamRef: SubscriptionTeamRef = Field(..., description="Reference to the Team (Agent)")
+    teamRef: SubscriptionTeamRef = Field(
+        ..., description="Reference to the Team (Agent)"
+    )
     workspaceRef: Optional[SubscriptionWorkspaceRef] = Field(
         None, description="Reference to the Workspace (optional)"
     )
@@ -233,7 +236,9 @@ class SubscriptionBase(BaseModel):
     name: str = Field(..., description="Subscription unique identifier")
     display_name: str = Field(..., description="Display name")
     description: Optional[str] = Field(None, description="Subscription description")
-    task_type: SubscriptionTaskType = Field(SubscriptionTaskType.COLLECTION, description="Task type")
+    task_type: SubscriptionTaskType = Field(
+        SubscriptionTaskType.COLLECTION, description="Task type"
+    )
     trigger_type: SubscriptionTriggerType = Field(..., description="Trigger type")
     trigger_config: Dict[str, Any] = Field(..., description="Trigger configuration")
     team_id: int = Field(..., description="Team (Agent) ID")

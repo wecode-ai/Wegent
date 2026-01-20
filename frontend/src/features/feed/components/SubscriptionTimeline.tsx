@@ -292,9 +292,20 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
             {exec.task_type === 'collection' && exec.result_summary && (
               <div className="rounded-2xl border border-border bg-surface/50 overflow-hidden">
                 <div className="px-4 py-3">
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-primary mb-2">
-                    <Bot className="h-3.5 w-3.5" />
-                    {exec.team_name || t('feed.unnamed_subscription')}
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-primary">
+                      <Bot className="h-3.5 w-3.5" />
+                      {exec.team_name || t('feed.unnamed_subscription')}
+                    </div>
+                    {exec.task_id && (
+                      <button
+                        onClick={() => handleViewTask(exec)}
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
+                      >
+                        <MessageSquare className="h-3 w-3" />
+                        {t('feed.view_conversation')}
+                      </button>
+                    )}
                   </div>
                   <div
                     className={`text-sm text-text-primary whitespace-pre-wrap ${isSummaryExpanded ? '' : 'line-clamp-6'}`}
@@ -316,15 +327,6 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
                         className="text-xs text-primary hover:text-primary/80 transition-colors"
                       >
                         {t('feed.expand')}
-                      </button>
-                    )}
-                    {exec.task_id && (
-                      <button
-                        onClick={() => handleViewTask(exec)}
-                        className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
-                      >
-                        <MessageSquare className="h-3 w-3" />
-                        {t('feed.view_conversation')}
                       </button>
                     )}
                   </div>

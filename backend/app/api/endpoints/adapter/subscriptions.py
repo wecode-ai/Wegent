@@ -98,7 +98,9 @@ def create_subscription(
 def list_executions(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),
-    subscription_id: Optional[int] = Query(None, description="Filter by subscription ID"),
+    subscription_id: Optional[int] = Query(
+        None, description="Filter by subscription ID"
+    ),
     status: Optional[List[BackgroundExecutionStatus]] = Query(
         None, description="Filter by execution status"
     ),
@@ -152,8 +154,8 @@ def get_stale_executions(
     """
     from datetime import timedelta
 
-    from app.models.subscription import BackgroundExecution
     from app.models.kind import Kind
+    from app.models.subscription import BackgroundExecution
     from app.schemas.subscription import Subscription
 
     # Calculate threshold
@@ -193,10 +195,14 @@ def get_stale_executions(
         }
 
         # Get subscription details
-        subscription = db.query(Kind).filter(
-            Kind.id == exec.subscription_id,
-            Kind.kind == "Subscription",
-        ).first()
+        subscription = (
+            db.query(Kind)
+            .filter(
+                Kind.id == exec.subscription_id,
+                Kind.kind == "Subscription",
+            )
+            .first()
+        )
         if subscription:
             subscription_crd = Subscription.model_validate(subscription.json)
             internal = subscription.json.get("_internal", {})
@@ -234,7 +240,9 @@ def get_execution(
     )
 
 
-@router.post("/executions/{execution_id}/cancel", response_model=BackgroundExecutionInDB)
+@router.post(
+    "/executions/{execution_id}/cancel", response_model=BackgroundExecutionInDB
+)
 def cancel_execution(
     execution_id: int,
     db: Session = Depends(get_db),

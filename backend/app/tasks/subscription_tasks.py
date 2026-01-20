@@ -100,8 +100,8 @@ def _load_subscription_execution_context(
     Returns None if any required entity is not found.
     """
     from app.core.constants import KIND_TEAM
-    from app.models.subscription import BackgroundExecution
     from app.models.kind import Kind
+    from app.models.subscription import BackgroundExecution
     from app.models.task import TaskResource
     from app.models.user import User
     from app.schemas.subscription import Subscription
@@ -125,7 +125,11 @@ def _load_subscription_execution_context(
     trigger_type = internal.get("trigger_type", "unknown")
 
     # Get execution record
-    execution = db.query(BackgroundExecution).filter(BackgroundExecution.id == execution_id).first()
+    execution = (
+        db.query(BackgroundExecution)
+        .filter(BackgroundExecution.id == execution_id)
+        .first()
+    )
     if not execution:
         logger.error(f"[subscription_tasks] Execution {execution_id} not found")
         return None
@@ -138,13 +142,17 @@ def _load_subscription_execution_context(
         .first()
     )
     if not team:
-        logger.error(f"[subscription_tasks] Team {team_id} not found for subscription {subscription.id}")
+        logger.error(
+            f"[subscription_tasks] Team {team_id} not found for subscription {subscription.id}"
+        )
         return None
 
     # Get user
     user = db.query(User).filter(User.id == subscription.user_id).first()
     if not user:
-        logger.error(f"[subscription_tasks] User {subscription.user_id} not found for subscription {subscription.id}")
+        logger.error(
+            f"[subscription_tasks] User {subscription.user_id} not found for subscription {subscription.id}"
+        )
         return None
 
     # Get workspace info
@@ -203,7 +211,9 @@ def _load_workspace_info(db: Session, workspace_id: Optional[int]) -> WorkspaceI
     )
 
 
-def _generate_task_title(subscription_crd: Any, subscription_name: str, prompt: Optional[str]) -> str:
+def _generate_task_title(
+    subscription_crd: Any, subscription_name: str, prompt: Optional[str]
+) -> str:
     """Generate a task title from subscription information."""
     subscription_display_name = subscription_crd.spec.displayName or subscription_name
     task_title = f"[Subscription] {subscription_display_name}"
@@ -265,7 +275,9 @@ async def _create_subscription_task(
     force_override_bot_model = False
     if ctx.subscription_crd.spec.modelRef:
         model_id = ctx.subscription_crd.spec.modelRef.name
-        force_override_bot_model = ctx.subscription_crd.spec.forceOverrideBotModel or False
+        force_override_bot_model = (
+            ctx.subscription_crd.spec.forceOverrideBotModel or False
+        )
 
     # Determine if we should reuse an existing task for history preservation
     reuse_task_id = None
@@ -318,7 +330,9 @@ async def _create_subscription_task(
     )
 
     if not result.task:
-        logger.error(f"[subscription_tasks] Failed to create task for subscription {ctx.subscription.id}")
+        logger.error(
+            f"[subscription_tasks] Failed to create task for subscription {ctx.subscription.id}"
+        )
         return None
 
     # If preserve_history is enabled and we created a new task, bind it to the subscription
@@ -355,9 +369,9 @@ def _add_subscription_labels_to_task(
         supports_direct_chat: Not used anymore. Kept for backward compatibility.
     """
     from app.core.constants import (
+        LABEL_BACKGROUND_EXECUTION_ID,
         LABEL_EXECUTION_ID,
         LABEL_SUBSCRIPTION_ID,
-        LABEL_BACKGROUND_EXECUTION_ID,
     )
     from app.schemas.kind import Task
 
@@ -416,6 +430,15 @@ async def _trigger_chat_shell_response(
     task_room = get_task_room(task.id)
     subscription_emitter = SubscriptionEventEmitter(execution_id=ctx.execution.id)
 
+    # Determine history_limit based on preserve_history setting
+    # If preserve_history is enabled, use the configured history_message_count
+    # Otherwise, pass None to use default behavior (no history limit)
+    history_limit = ctx.history_message_count if ctx.preserve_history else None
+    logger.info(
+        f"[subscription_tasks] History settings: preserve_history={ctx.preserve_history}, "
+        f"history_message_count={ctx.history_message_count}, history_limit={history_limit}"
+    )
+
     # Wrap the AI call with circuit breaker protection
     @with_circuit_breaker_async(ai_service_breaker)
     async def _call_ai_service():
@@ -431,12 +454,15 @@ async def _trigger_chat_shell_response(
             namespace=None,
             user_subtask_id=user_subtask.id if user_subtask else None,
             event_emitter=subscription_emitter,
+            history_limit=history_limit,
         )
 
     try:
         await _call_ai_service()
     except CircuitBreakerOpenError as e:
-        logger.error(f"[subscription_tasks] Circuit breaker open for subscription {ctx.subscription.id}: {e}")
+        logger.error(
+            f"[subscription_tasks] Circuit breaker open for subscription {ctx.subscription.id}: {e}"
+        )
         # Update execution with circuit breaker error
         from app.db.session import get_db_session
         from app.schemas.subscription import BackgroundExecutionStatus
@@ -468,7 +494,9 @@ def _handle_execution_failure(
         status=BackgroundExecutionStatus.FAILED,
         error_message=error_message,
     )
-    SUBSCRIPTION_EXECUTIONS_TOTAL.labels(status="failed", trigger_type=trigger_type).inc()
+    SUBSCRIPTION_EXECUTIONS_TOTAL.labels(
+        status="failed", trigger_type=trigger_type
+    ).inc()
     return {"status": "error", "message": error_message}
 
 
@@ -564,7 +592,9 @@ def check_due_subscriptions(self):
                 total_due = len(due_subscriptions)
 
                 if total_due == 0:
-                    logger.debug("[subscription_tasks] No subscriptions due for execution")
+                    logger.debug(
+                        "[subscription_tasks] No subscriptions due for execution"
+                    )
                     return {
                         "due_subscriptions": 0,
                         "dispatched": 0,
@@ -572,7 +602,9 @@ def check_due_subscriptions(self):
                         "cleaned_running": cleaned_running,
                     }
 
-                logger.info(f"[subscription_tasks] Found {total_due} subscription(s) due for execution")
+                logger.info(
+                    f"[subscription_tasks] Found {total_due} subscription(s) due for execution"
+                )
 
                 # Process in batches to avoid memory issues
                 dispatched = 0
@@ -585,7 +617,7 @@ def check_due_subscriptions(self):
                 LOCK_EXTEND_INTERVAL = 30  # Extend lock every 30 seconds
 
                 while offset < total_due:
-                    batch = due_subscriptions[offset:offset + SUBSCRIPTION_BATCH_SIZE]
+                    batch = due_subscriptions[offset : offset + SUBSCRIPTION_BATCH_SIZE]
 
                     if not batch:
                         break
@@ -604,12 +636,16 @@ def check_due_subscriptions(self):
                                 f"(processed {offset + idx}/{total_due})"
                             )
                         try:
-                            subscription_crd = Subscription.model_validate(subscription.json)
+                            subscription_crd = Subscription.model_validate(
+                                subscription.json
+                            )
                             internal = subscription.json.get("_internal", {})
                             trigger_type = internal.get("trigger_type")
 
                             # Determine trigger reason
-                            trigger_reason = _get_trigger_reason(subscription_crd, trigger_type)
+                            trigger_reason = _get_trigger_reason(
+                                subscription_crd, trigger_type
+                            )
 
                             # Create execution record
                             execution = subscription_service.create_execution(
@@ -666,7 +702,8 @@ def check_due_subscriptions(self):
 
             except Exception as e:
                 logger.error(
-                    f"[subscription_tasks] Error in check_due_subscriptions: {str(e)}", exc_info=True
+                    f"[subscription_tasks] Error in check_due_subscriptions: {str(e)}",
+                    exc_info=True,
                 )
                 raise
 
@@ -688,9 +725,12 @@ def _recover_stale_pending_executions(db: Session) -> int:
     Returns:
         Number of recovered executions
     """
-    from app.models.subscription import BackgroundExecution
     from app.models.kind import Kind
-    from app.schemas.subscription import BackgroundExecutionStatus, BackgroundExecutionInDB
+    from app.models.subscription import BackgroundExecution
+    from app.schemas.subscription import (
+        BackgroundExecutionInDB,
+        BackgroundExecutionStatus,
+    )
     from app.services.subscription import subscription_service
 
     try:
@@ -782,7 +822,9 @@ def _recover_stale_pending_executions(db: Session) -> int:
                     updated_at=execution.updated_at,
                 )
 
-                subscription_service.dispatch_background_execution(subscription, exec_in_db, use_sync=False)
+                subscription_service.dispatch_background_execution(
+                    subscription, exec_in_db, use_sync=False
+                )
                 recovered += 1
 
                 logger.info(
@@ -803,7 +845,8 @@ def _recover_stale_pending_executions(db: Session) -> int:
 
     except Exception as e:
         logger.error(
-            f"[subscription_tasks] Error recovering stale executions: {e}", exc_info=True
+            f"[subscription_tasks] Error recovering stale executions: {e}",
+            exc_info=True,
         )
         return 0
 
@@ -914,11 +957,14 @@ def _update_next_execution_time(
 ) -> None:
     """Update next execution time for a subscription after dispatch."""
     from sqlalchemy.orm.attributes import flag_modified
+
     from app.schemas.subscription import SubscriptionTriggerType
     from app.services.subscription import subscription_service
 
     internal = subscription.json.get("_internal", {})
-    trigger_config = subscription_service.extract_trigger_config(subscription_crd.spec.trigger)
+    trigger_config = subscription_service.extract_trigger_config(
+        subscription_crd.spec.trigger
+    )
 
     if trigger_type == SubscriptionTriggerType.ONE_TIME.value:
         # One-time subscriptions should be disabled after execution
@@ -987,7 +1033,9 @@ def execute_subscription_task(
     with get_db_session() as db:
         try:
             # Load all required entities
-            ctx = _load_subscription_execution_context(db, subscription_id, execution_id)
+            ctx = _load_subscription_execution_context(
+                db, subscription_id, execution_id
+            )
             if not ctx:
                 return {
                     "status": "error",
@@ -1130,9 +1178,13 @@ def _handle_timeout_failure(
             error_message=f"Execution timeout after {effective_timeout}s",
         )
     except Exception as update_error:
-        logger.error(f"[subscription_tasks] Failed to update timeout status: {update_error}")
+        logger.error(
+            f"[subscription_tasks] Failed to update timeout status: {update_error}"
+        )
 
-    SUBSCRIPTION_EXECUTIONS_TOTAL.labels(status="timeout", trigger_type=trigger_type).inc()
+    SUBSCRIPTION_EXECUTIONS_TOTAL.labels(
+        status="timeout", trigger_type=trigger_type
+    ).inc()
 
 
 def _handle_exception_failure(
@@ -1153,9 +1205,13 @@ def _handle_exception_failure(
             error_message=error_message,
         )
     except Exception as update_error:
-        logger.error(f"[subscription_tasks] Failed to update error status: {update_error}")
+        logger.error(
+            f"[subscription_tasks] Failed to update error status: {update_error}"
+        )
 
-    SUBSCRIPTION_EXECUTIONS_TOTAL.labels(status="failed", trigger_type=trigger_type).inc()
+    SUBSCRIPTION_EXECUTIONS_TOTAL.labels(
+        status="failed", trigger_type=trigger_type
+    ).inc()
 
 
 # ========== Sync Functions for Non-Celery Backends ==========
@@ -1225,7 +1281,9 @@ def check_due_subscriptions_sync():
                     continue
 
             if not due_subscriptions:
-                logger.debug("[subscription_tasks] No subscriptions due for execution (sync)")
+                logger.debug(
+                    "[subscription_tasks] No subscriptions due for execution (sync)"
+                )
                 return {
                     "due_subscriptions": 0,
                     "dispatched": 0,
@@ -1257,7 +1315,9 @@ def check_due_subscriptions_sync():
                     )
 
                     # Dispatch execution using unified method (sync mode)
-                    subscription_service.dispatch_background_execution(subscription, execution, use_sync=True)
+                    subscription_service.dispatch_background_execution(
+                        subscription, execution, use_sync=True
+                    )
                     SUBSCRIPTION_QUEUE_SIZE.inc()
                     dispatched += 1
 
@@ -1266,7 +1326,9 @@ def check_due_subscriptions_sync():
                     )
 
                     # Update next execution time
-                    _update_next_execution_time(db, subscription, subscription_crd, trigger_type)
+                    _update_next_execution_time(
+                        db, subscription, subscription_crd, trigger_type
+                    )
 
                 except Exception as e:
                     logger.error(
@@ -1288,7 +1350,8 @@ def check_due_subscriptions_sync():
 
         except Exception as e:
             logger.error(
-                f"[subscription_tasks] Error in check_due_subscriptions_sync: {str(e)}", exc_info=True
+                f"[subscription_tasks] Error in check_due_subscriptions_sync: {str(e)}",
+                exc_info=True,
             )
             raise
 
@@ -1322,7 +1385,9 @@ def execute_subscription_task_sync(
     with get_db_session() as db:
         try:
             # Load all required entities
-            ctx = _load_subscription_execution_context(db, subscription_id, execution_id)
+            ctx = _load_subscription_execution_context(
+                db, subscription_id, execution_id
+            )
             if not ctx:
                 return {
                     "status": "error",
@@ -1461,6 +1526,8 @@ def execute_subscription_task_sync(
                     exception=e,
                 )
             except Exception as dlq_error:
-                logger.warning(f"[subscription_tasks] Failed to add to DLQ: {dlq_error}")
+                logger.warning(
+                    f"[subscription_tasks] Failed to add to DLQ: {dlq_error}"
+                )
 
             return {"status": "error", "message": error_message}
