@@ -188,7 +188,6 @@ Example:
                             "LibreOffice (libreoffice-core, libreoffice-writer, libreoffice-calc, libreoffice-impress)",
                             "Poppler utilities (poppler-utils for pdftoppm)",
                             "Pandoc (for text extraction from documents)",
-                            "qpdf (command line PDF merge/split)",
                             "tesseract (OCR engine for scanned PDFs)",
                             "Chromium browser (for playwright HTML rendering)",
                         ],

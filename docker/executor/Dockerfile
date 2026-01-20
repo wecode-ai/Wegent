@@ -29,7 +29,7 @@ RUN dnf install -y \
     # LibreOffice for document conversion and PDF operations
     libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress \
     # Document and PDF utilities
-    poppler-utils pandoc qpdf tesseract \
+    poppler-utils pandoc tesseract \
     # Chromium dependencies for Playwright browser automation
     atk at-spi2-atk libXcomposite libXdamage libXfixes libXrandr libxkbcommon \
     && dnf clean all \

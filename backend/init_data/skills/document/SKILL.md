@@ -353,9 +353,8 @@ dnf install -y poppler-utils
 # Pandoc for text extraction from documents
 dnf install -y pandoc
 
-# PDF utilities
-dnf install -y qpdf          # Command line PDF merge/split
-dnf install -y tesseract     # OCR engine for scanned PDFs
+# OCR engine for scanned PDFs
+dnf install -y tesseract
 ```
 
 **Claude Marketplace:**
