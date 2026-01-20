@@ -198,19 +198,19 @@ class ExecutorKindsService(
         """Get first subtask for multiple tasks using tasks table.
 
         Note: This method filters out Chat Shell type tasks because they are handled
-        directly by the backend (via WebSocket or Flow Scheduler), not by executor_manager.
+        directly by the backend (via WebSocket or Subscription Scheduler), not by executor_manager.
         Chat Shell tasks are identified by:
         - source='chat_shell' (WebSocket chat)
-        - source='flow' with Chat shell type (Flow Scheduler triggered)
+        - source='subscription' with Chat shell type (Subscription Scheduler triggered)
         """
         # Step 1: First query tasks table to get limit tasks
         # Exclude tasks that should be handled by Chat Shell (not executor_manager)
         # - source='chat_shell': Direct WebSocket chat
-        # - source='flow': Flow Scheduler triggered (Chat Shell type is handled by Flow Scheduler directly)
+        # - source='subscription': Subscription Scheduler triggered (Chat Shell type is handled by Subscription Scheduler directly)
         tasks = None
         # Note: We exclude 'chat_shell' source tasks because they are handled
         # directly by the backend (via WebSocket). However, we DO NOT exclude
-        # 'flow' source tasks because Flow Scheduler can trigger Executor-type tasks
+        # 'subscription' source tasks because Subscription Scheduler can trigger Executor-type tasks
         # that need to be picked up by executor_manager.
         if type == "offline":
             tasks = (
@@ -231,7 +231,7 @@ class ExecutorKindsService(
                 .all()
             )
         else:
-            # Include 'flow' type tasks for executor to pick up (Flow Scheduler triggered Executor-type tasks)
+            # Include 'subscription' type tasks for executor to pick up (Subscription Scheduler triggered Executor-type tasks)
             tasks = (
                 db.query(TaskResource)
                 .filter(
@@ -240,7 +240,7 @@ class ExecutorKindsService(
                     text(
                         "(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL "
                         "    OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online' "
-                        "    OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'flow') "
+                        "    OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'subscription') "
                         "and JSON_EXTRACT(json, '$.status.status') = :status "
                         "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL "
                         "    OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
@@ -1609,8 +1609,8 @@ class ExecutorKindsService(
         # Send notification when task is completed or failed
         self._send_task_completion_notification(db, task_id, task_crd)
 
-        # Update Flow execution status if this is a Flow task
-        self._update_flow_execution_status(db, task_id, task_crd)
+        # Update BackgroundExecution status if this is a Subscription task
+        self._update_background_execution_status(db, task_id, task_crd)
 
         # Send WebSocket event for task status update
         if task_crd.status:
@@ -2398,14 +2398,14 @@ class ExecutorKindsService(
                 f"Failed to schedule webhook notification for task {task_id}: {str(e)}"
             )
 
-    def _update_flow_execution_status(
+    def _update_background_execution_status(
         self, db: Session, task_id: int, task_crd: Task
     ) -> None:
         """
-        Update Flow execution status when a Flow-triggered task completes.
+        Update BackgroundExecution status when a Subscription-triggered task completes.
 
-        This method checks if the task was triggered by a Flow (via flowExecutionId label),
-        and if so, updates the corresponding FlowExecution record in the database.
+        This method checks if the task was triggered by a Subscription (via backgroundExecutionId label),
+        and if so, updates the corresponding BackgroundExecution record in the database.
 
         Args:
             db: Database session
@@ -2420,39 +2420,41 @@ class ExecutorKindsService(
         ]:
             return
 
-        # Check if this task was triggered by a Flow
-        flow_execution_id = None
+        # Check if this task was triggered by a Subscription
+        background_execution_id = None
         if task_crd.metadata and task_crd.metadata.labels:
-            flow_execution_id = task_crd.metadata.labels.get("flowExecutionId")
+            background_execution_id = task_crd.metadata.labels.get(
+                "backgroundExecutionId"
+            )
 
-        if not flow_execution_id:
-            # Not a Flow-triggered task
+        if not background_execution_id:
+            # Not a Subscription-triggered task
             return
 
         try:
             # Convert to int if it's a string
             try:
-                execution_id = int(flow_execution_id)
+                execution_id = int(background_execution_id)
             except (ValueError, TypeError):
                 logger.warning(
-                    f"Invalid flowExecutionId '{flow_execution_id}' for task {task_id}"
+                    f"Invalid backgroundExecutionId '{background_execution_id}' for task {task_id}"
                 )
                 return
 
-            # Use flow_service.update_execution_status for unified status update and WebSocket emission
-            from app.schemas.flow import FlowExecutionStatus
-            from app.services.flow import flow_service
+            # Use subscription_service.update_execution_status for unified status update and WebSocket emission
+            from app.schemas.subscription import BackgroundExecutionStatus
+            from app.services.subscription import subscription_service
 
-            # Map task status to FlowExecutionStatus
+            # Map task status to BackgroundExecutionStatus
             status_map = {
-                "COMPLETED": FlowExecutionStatus.COMPLETED,
-                "FAILED": FlowExecutionStatus.FAILED,
-                "CANCELLED": FlowExecutionStatus.CANCELLED,
+                "COMPLETED": BackgroundExecutionStatus.COMPLETED,
+                "FAILED": BackgroundExecutionStatus.FAILED,
+                "CANCELLED": BackgroundExecutionStatus.CANCELLED,
             }
             new_status = status_map.get(task_crd.status.status)
             if not new_status:
                 logger.warning(
-                    f"Unknown task status '{task_crd.status.status}' for FlowExecution {execution_id}"
+                    f"Unknown task status '{task_crd.status.status}' for BackgroundExecution {execution_id}"
                 )
                 return
 
@@ -2466,8 +2468,8 @@ class ExecutorKindsService(
             elif task_crd.status.status == "CANCELLED":
                 error_message = "Task was cancelled"
 
-            # Call flow_service to update status (this will also emit WebSocket event)
-            success = flow_service.update_execution_status(
+            # Call subscription_service to update status (this will also emit WebSocket event)
+            success = subscription_service.update_execution_status(
                 db=db,
                 execution_id=execution_id,
                 status=new_status,
@@ -2477,17 +2479,17 @@ class ExecutorKindsService(
 
             if success:
                 logger.info(
-                    f"Updated FlowExecution {execution_id} status to {new_status.value} "
-                    f"for task {task_id} via flow_service"
+                    f"Updated BackgroundExecution {execution_id} status to {new_status.value} "
+                    f"for task {task_id} via subscription_service"
                 )
             else:
                 logger.warning(
-                    f"Failed to update FlowExecution {execution_id} status for task {task_id}"
+                    f"Failed to update BackgroundExecution {execution_id} status for task {task_id}"
                 )
 
         except Exception as e:
             logger.error(
-                f"Failed to update Flow execution status for task {task_id}: {str(e)}",
+                f"Failed to update BackgroundExecution status for task {task_id}: {str(e)}",
                 exc_info=True,
             )
 

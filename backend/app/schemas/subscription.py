@@ -3,7 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-AI Flow (智能流) CRD schemas for automated task execution.
+Subscription (订阅) CRD schemas for automated task execution.
+
+Subscription is a CRD resource that defines scheduled or event-triggered
+task executions. It replaces the previous Flow concept.
 """
 from datetime import datetime
 from enum import Enum
@@ -11,32 +14,34 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-
-class FlowTaskType(str, Enum):
-    """Flow task type enumeration."""
-
-    EXECUTION = "execution"  # 执行类任务
-    COLLECTION = "collection"  # 信息采集类任务
+from app.schemas.kind import ModelRef
 
 
-class FlowTriggerType(str, Enum):
-    """Flow trigger type enumeration."""
+class SubscriptionTaskType(str, Enum):
+    """Subscription task type enumeration."""
 
-    CRON = "cron"  # 定时计划
-    INTERVAL = "interval"  # 固定间隔
-    ONE_TIME = "one_time"  # 一次性定时
-    EVENT = "event"  # 事件触发
+    EXECUTION = "execution"  
+    COLLECTION = "collection"  
 
 
-class FlowEventType(str, Enum):
+class SubscriptionTriggerType(str, Enum):
+    """Subscription trigger type enumeration."""
+
+    CRON = "cron"  
+    INTERVAL = "interval"  
+    ONE_TIME = "one_time"  
+    EVENT = "event"  
+
+
+class SubscriptionEventType(str, Enum):
     """Event trigger sub-type enumeration."""
 
     WEBHOOK = "webhook"  # Webhook 触发
     GIT_PUSH = "git_push"  # Git Push 触发
 
 
-class FlowExecutionStatus(str, Enum):
-    """Flow execution status enumeration."""
+class BackgroundExecutionStatus(str, Enum):
+    """Background execution status enumeration."""
 
     PENDING = "PENDING"
     RUNNING = "RUNNING"
@@ -79,7 +84,7 @@ class GitPushEventConfig(BaseModel):
 class EventTriggerConfig(BaseModel):
     """Event trigger configuration."""
 
-    event_type: FlowEventType = Field(
+    event_type: SubscriptionEventType = Field(
         ..., description="Event type: 'webhook' or 'git_push'"
     )
     git_push: Optional[GitPushEventConfig] = Field(
@@ -87,10 +92,10 @@ class EventTriggerConfig(BaseModel):
     )
 
 
-class FlowTriggerConfig(BaseModel):
-    """Flow trigger configuration."""
+class SubscriptionTriggerConfig(BaseModel):
+    """Subscription trigger configuration."""
 
-    type: FlowTriggerType = Field(..., description="Trigger type")
+    type: SubscriptionTriggerType = Field(..., description="Trigger type")
     cron: Optional[CronTriggerConfig] = Field(
         None, description="Cron configuration (when type is 'cron')"
     )
@@ -106,14 +111,14 @@ class FlowTriggerConfig(BaseModel):
 
 
 # Reference schemas
-class FlowTeamRef(BaseModel):
+class SubscriptionTeamRef(BaseModel):
     """Reference to a Team (Agent)."""
 
     name: str
     namespace: str = "default"
 
 
-class FlowWorkspaceRef(BaseModel):
+class SubscriptionWorkspaceRef(BaseModel):
     """Reference to a Workspace (optional)."""
 
     name: str
@@ -121,17 +126,26 @@ class FlowWorkspaceRef(BaseModel):
 
 
 # CRD spec and status
-class FlowSpec(BaseModel):
-    """Flow CRD specification."""
+class SubscriptionSpec(BaseModel):
+    """Subscription CRD specification."""
 
     displayName: str = Field(..., description="User-friendly display name")
-    taskType: FlowTaskType = Field(
-        FlowTaskType.COLLECTION, description="Task type: 'execution' or 'collection'"
+    taskType: SubscriptionTaskType = Field(
+        SubscriptionTaskType.COLLECTION, description="Task type: 'execution' or 'collection'"
     )
-    trigger: FlowTriggerConfig = Field(..., description="Trigger configuration")
-    teamRef: FlowTeamRef = Field(..., description="Reference to the Team (Agent)")
-    workspaceRef: Optional[FlowWorkspaceRef] = Field(
+    trigger: SubscriptionTriggerConfig = Field(..., description="Trigger configuration")
+    teamRef: SubscriptionTeamRef = Field(..., description="Reference to the Team (Agent)")
+    workspaceRef: Optional[SubscriptionWorkspaceRef] = Field(
         None, description="Reference to the Workspace (optional)"
+    )
+    modelRef: Optional[ModelRef] = Field(
+        None,
+        description="Reference to the Model to use for execution. "
+        "If not specified, uses the default model from the Team's Bot configuration.",
+    )
+    forceOverrideBotModel: bool = Field(
+        False,
+        description="Whether to force override the Bot's predefined model with modelRef",
     )
     promptTemplate: str = Field(
         ...,
@@ -144,35 +158,49 @@ class FlowSpec(BaseModel):
         le=3600,
         description="Execution timeout in seconds (60-3600, default: 600)",
     )
-    enabled: bool = Field(True, description="Whether the flow is enabled")
-    description: Optional[str] = Field(None, description="Flow description")
+    enabled: bool = Field(True, description="Whether the subscription is enabled")
+    description: Optional[str] = Field(None, description="Subscription description")
+    # History preservation settings
+    preserveHistory: bool = Field(
+        False,
+        description="Whether to preserve conversation history across executions. "
+        "When enabled, the subscription will reuse the same task for all executions, "
+        "allowing AI to see previous conversation context.",
+    )
+    historyMessageCount: int = Field(
+        10,
+        ge=0,
+        le=50,
+        description="Number of recent messages to include as context (0-50, default: 10). "
+        "Only effective when preserveHistory is enabled.",
+    )
 
 
-class FlowStatus(BaseModel):
-    """Flow CRD status."""
+class SubscriptionStatus(BaseModel):
+    """Subscription CRD status."""
 
     state: str = Field(
-        "Available", description="Flow state: 'Available', 'Unavailable'"
+        "Available", description="Subscription state: 'Available', 'Unavailable'"
     )
     lastExecutionTime: Optional[datetime] = Field(
         None, description="Last execution timestamp"
     )
-    lastExecutionStatus: Optional[FlowExecutionStatus] = Field(
+    lastExecutionStatus: Optional[BackgroundExecutionStatus] = Field(
         None, description="Last execution status"
     )
     nextExecutionTime: Optional[datetime] = Field(
         None, description="Next scheduled execution time"
     )
     webhookUrl: Optional[str] = Field(
-        None, description="Webhook URL (for event-webhook flows)"
+        None, description="Webhook URL (for event-webhook subscriptions)"
     )
     executionCount: int = Field(0, description="Total execution count")
     successCount: int = Field(0, description="Successful execution count")
     failureCount: int = Field(0, description="Failed execution count")
 
 
-class FlowMetadata(BaseModel):
-    """Flow CRD metadata."""
+class SubscriptionMetadata(BaseModel):
+    """Subscription CRD metadata."""
 
     name: str
     namespace: str = "default"
@@ -180,33 +208,33 @@ class FlowMetadata(BaseModel):
     labels: Optional[Dict[str, str]] = None
 
 
-class Flow(BaseModel):
-    """Flow CRD."""
+class Subscription(BaseModel):
+    """Subscription CRD."""
 
     apiVersion: str = "agent.wecode.io/v1"
-    kind: str = "Flow"
-    metadata: FlowMetadata
-    spec: FlowSpec
-    status: Optional[FlowStatus] = None
+    kind: str = "Subscription"
+    metadata: SubscriptionMetadata
+    spec: SubscriptionSpec
+    status: Optional[SubscriptionStatus] = None
 
 
-class FlowList(BaseModel):
-    """Flow list."""
+class SubscriptionList(BaseModel):
+    """Subscription list."""
 
     apiVersion: str = "agent.wecode.io/v1"
-    kind: str = "FlowList"
-    items: List[Flow]
+    kind: str = "SubscriptionList"
+    items: List[Subscription]
 
 
 # API Request/Response schemas
-class FlowBase(BaseModel):
-    """Base Flow model for API."""
+class SubscriptionBase(BaseModel):
+    """Base Subscription model for API."""
 
-    name: str = Field(..., description="Flow unique identifier")
+    name: str = Field(..., description="Subscription unique identifier")
     display_name: str = Field(..., description="Display name")
-    description: Optional[str] = Field(None, description="Flow description")
-    task_type: FlowTaskType = Field(FlowTaskType.COLLECTION, description="Task type")
-    trigger_type: FlowTriggerType = Field(..., description="Trigger type")
+    description: Optional[str] = Field(None, description="Subscription description")
+    task_type: SubscriptionTaskType = Field(SubscriptionTaskType.COLLECTION, description="Task type")
+    trigger_type: SubscriptionTriggerType = Field(..., description="Trigger type")
     trigger_config: Dict[str, Any] = Field(..., description="Trigger configuration")
     team_id: int = Field(..., description="Team (Agent) ID")
     workspace_id: Optional[int] = Field(None, description="Workspace ID (optional)")
@@ -219,27 +247,48 @@ class FlowBase(BaseModel):
         None, description="Git domain (e.g., 'github.com')"
     )
     branch_name: Optional[str] = Field(None, description="Git branch name")
+    # Model reference fields
+    model_ref: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model reference with 'name' and 'namespace' fields. "
+        "If not specified, uses the default model from the Team's Bot configuration.",
+    )
+    force_override_bot_model: bool = Field(
+        False,
+        description="Whether to force override the Bot's predefined model with model_ref",
+    )
     prompt_template: str = Field(..., description="Prompt template")
     retry_count: int = Field(0, ge=0, le=3, description="Retry count (0-3)")
     timeout_seconds: int = Field(
         600, ge=60, le=3600, description="Execution timeout (60-3600s)"
     )
     enabled: bool = Field(True, description="Whether enabled")
+    # History preservation settings
+    preserve_history: bool = Field(
+        False,
+        description="Whether to preserve conversation history across executions",
+    )
+    history_message_count: int = Field(
+        10,
+        ge=0,
+        le=50,
+        description="Number of recent messages to include as context (0-50)",
+    )
 
 
-class FlowCreate(FlowBase):
-    """Flow creation model."""
+class SubscriptionCreate(SubscriptionBase):
+    """Subscription creation model."""
 
     namespace: str = Field("default", description="Namespace")
 
 
-class FlowUpdate(BaseModel):
-    """Flow update model."""
+class SubscriptionUpdate(BaseModel):
+    """Subscription update model."""
 
     display_name: Optional[str] = None
     description: Optional[str] = None
-    task_type: Optional[FlowTaskType] = None
-    trigger_type: Optional[FlowTriggerType] = None
+    task_type: Optional[SubscriptionTaskType] = None
+    trigger_type: Optional[SubscriptionTriggerType] = None
     trigger_config: Optional[Dict[str, Any]] = None
     team_id: Optional[int] = None
     workspace_id: Optional[int] = None
@@ -248,14 +297,20 @@ class FlowUpdate(BaseModel):
     git_repo_id: Optional[int] = None
     git_domain: Optional[str] = None
     branch_name: Optional[str] = None
+    # Model reference fields
+    model_ref: Optional[Dict[str, str]] = None
+    force_override_bot_model: Optional[bool] = None
     prompt_template: Optional[str] = None
     retry_count: Optional[int] = Field(None, ge=0, le=3)
     timeout_seconds: Optional[int] = Field(None, ge=60, le=3600)
     enabled: Optional[bool] = None
+    # History preservation settings
+    preserve_history: Optional[bool] = None
+    history_message_count: Optional[int] = Field(None, ge=0, le=50)
 
 
-class FlowInDB(FlowBase):
-    """Database Flow model."""
+class SubscriptionInDB(SubscriptionBase):
+    """Database Subscription model."""
 
     id: int
     user_id: int
@@ -268,6 +323,8 @@ class FlowInDB(FlowBase):
     execution_count: int = 0
     success_count: int = 0
     failure_count: int = 0
+    # Bound task ID for history preservation
+    bound_task_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 
@@ -275,18 +332,18 @@ class FlowInDB(FlowBase):
         from_attributes = True
 
 
-class FlowListResponse(BaseModel):
-    """Flow list response."""
+class SubscriptionListResponse(BaseModel):
+    """Subscription list response."""
 
     total: int
-    items: List[FlowInDB]
+    items: List[SubscriptionInDB]
 
 
-# Flow Execution schemas
-class FlowExecutionBase(BaseModel):
-    """Base Flow Execution model."""
+# Background Execution schemas
+class BackgroundExecutionBase(BaseModel):
+    """Base Background Execution model."""
 
-    flow_id: int
+    subscription_id: int
     trigger_type: str = Field(..., description="What triggered this execution")
     trigger_reason: Optional[str] = Field(
         None, description="Human-readable trigger reason"
@@ -294,19 +351,19 @@ class FlowExecutionBase(BaseModel):
     prompt: str = Field(..., description="Resolved prompt (with variables substituted)")
 
 
-class FlowExecutionCreate(FlowExecutionBase):
-    """Flow Execution creation model."""
+class BackgroundExecutionCreate(BackgroundExecutionBase):
+    """Background Execution creation model."""
 
     task_id: Optional[int] = Field(None, description="Associated Task ID")
 
 
-class FlowExecutionInDB(FlowExecutionBase):
-    """Database Flow Execution model."""
+class BackgroundExecutionInDB(BackgroundExecutionBase):
+    """Database Background Execution model."""
 
     id: int
     user_id: int
     task_id: Optional[int] = None
-    status: FlowExecutionStatus = FlowExecutionStatus.PENDING
+    status: BackgroundExecutionStatus = BackgroundExecutionStatus.PENDING
     result_summary: Optional[str] = None
     error_message: Optional[str] = None
     retry_attempt: int = 0
@@ -315,8 +372,8 @@ class FlowExecutionInDB(FlowExecutionBase):
     created_at: datetime
     updated_at: datetime
     # Joined fields for display
-    flow_name: Optional[str] = None
-    flow_display_name: Optional[str] = None
+    subscription_name: Optional[str] = None
+    subscription_display_name: Optional[str] = None
     team_name: Optional[str] = None
     task_type: Optional[str] = None
 
@@ -324,40 +381,40 @@ class FlowExecutionInDB(FlowExecutionBase):
         from_attributes = True
 
 
-class FlowExecutionDetail(FlowExecutionInDB):
-    """Detailed Flow Execution with task info."""
+class BackgroundExecutionDetail(BackgroundExecutionInDB):
+    """Detailed Background Execution with task info."""
 
     task_detail: Optional[Dict[str, Any]] = None
 
 
-class FlowExecutionListResponse(BaseModel):
-    """Flow Execution list response (timeline)."""
+class BackgroundExecutionListResponse(BaseModel):
+    """Background Execution list response (timeline)."""
 
     total: int
-    items: List[FlowExecutionInDB]
+    items: List[BackgroundExecutionInDB]
 
 
 # Timeline filter schemas
-class FlowTimelineFilter(BaseModel):
-    """Filter options for flow timeline."""
+class SubscriptionTimelineFilter(BaseModel):
+    """Filter options for subscription timeline."""
 
     time_range: Optional[str] = Field(
         "7d", description="Time range: 'today', '7d', '30d', 'custom'"
     )
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
-    status: Optional[List[FlowExecutionStatus]] = None
-    flow_ids: Optional[List[int]] = None
+    status: Optional[List[BackgroundExecutionStatus]] = None
+    subscription_ids: Optional[List[int]] = None
     team_ids: Optional[List[int]] = None
-    task_types: Optional[List[FlowTaskType]] = None
+    task_types: Optional[List[SubscriptionTaskType]] = None
 
 
-# Flow Trigger Payload for AI Response
-class FlowTriggerPayload(BaseModel):
+# Subscription Trigger Payload for AI Response
+class SubscriptionTriggerPayload(BaseModel):
     """
-    Payload for triggering AI response in Flow tasks.
+    Payload for triggering AI response in Subscription tasks.
 
-    This replaces the inline FlowPayload class in flow_tasks.py to follow
+    This replaces the inline FlowPayload class in subscription_tasks.py to follow
     DRY principles and proper software engineering practices.
     """
 

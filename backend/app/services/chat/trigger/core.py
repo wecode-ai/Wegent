@@ -144,7 +144,7 @@ async def trigger_ai_response(
         user_subtask_id: Optional user subtask ID for unified context processing
             (attachments and knowledge bases are retrieved from this subtask's contexts)
         event_emitter: Optional custom event emitter. If None, uses WebSocketEventEmitter.
-            Pass FlowEventEmitter for Flow tasks to update FlowExecution status.
+            Pass SubscriptionEventEmitter for Subscription tasks to update BackgroundExecution status.
     """
     logger.info(
         "[ai_trigger] Triggering AI response: task_id=%d, "
@@ -207,7 +207,7 @@ async def _trigger_direct_chat(
         user_subtask_id: Optional user subtask ID for unified context processing
             (attachments and knowledge bases are retrieved from this subtask's contexts)
         event_emitter: Optional custom event emitter. If None, uses WebSocketEventEmitter.
-            Pass FlowEventEmitter for Flow tasks to update FlowExecution status.
+            Pass SubscriptionEventEmitter for Subscription tasks to update BackgroundExecution status.
     """
     # Extract data from ORM objects before starting background task
     # This prevents DetachedInstanceError when the session is closed
@@ -653,34 +653,31 @@ async def _stream_with_http_adapter(
 ) -> None:
     """Stream using HTTP adapter to call remote chat_shell service.
 
-        This function:
-        1. Builds a ChatRequest from the parameters
-        2. Uses HTTPAdapter to call chat_shell's /v1/response API
-        3. Processes SSE events and forwards them to WebSocket (via event_emitter)
-        4. Checks Redis cancel flag and disconnects from chat_shell when cancelled
+    This function:
+    1. Builds a ChatRequest from the parameters
+    2. Uses HTTPAdapter to call chat_shell's /v1/response API
+    3. Processes SSE events and forwards them to WebSocket (via event_emitter)
+    4. Checks Redis cancel flag and disconnects from chat_shell when cancelled
 
-        Args:
-            stream_data: StreamTaskData containing all extracted ORM data
-            message: User message
-            model_config: Model configuration
-            system_prompt: System prompt
-            ws_config: WebSocket stream configuration
-            extra_tools: Extra tools (note: tools are not sent via HTTP, handled by chat_shell)
-            skill_names: List of available skill names for dynamic loading
-            skill_configs: List of skill tool configurations
-            knowledge_base_ids: List of knowledge base IDs to search
-            document_ids: List of document IDs to filter retrieval
-            table_contexts: List of table context dicts for DataTableTool
-    <<<<<<< HEAD
-            event_emitter: Optional event emitter for chat events. If None, uses WebSocketEventEmitter.
-                Pass NoOpEventEmitter for background tasks without WebSocket (e.g., Flow Scheduler).
-    =======
-            is_user_selected_kb: Whether KB is explicitly selected by user (strict mode)
-                or inherited from task (relaxed mode). Defaults to True for backward compatibility.
-    >>>>>>> main
-            preload_skills: List of skill names to preload into system prompt
-            user_subtask_id: User subtask ID for RAG result persistence (different from
-                stream_data.subtask_id which is AI response's subtask)
+    Args:
+        stream_data: StreamTaskData containing all extracted ORM data
+        message: User message
+        model_config: Model configuration
+        system_prompt: System prompt
+        ws_config: WebSocket stream configuration
+        extra_tools: Extra tools (note: tools are not sent via HTTP, handled by chat_shell)
+        skill_names: List of available skill names for dynamic loading
+        skill_configs: List of skill tool configurations
+        knowledge_base_ids: List of knowledge base IDs to search
+        document_ids: List of document IDs to filter retrieval
+        table_contexts: List of table context dicts for DataTableTool
+        event_emitter: Optional event emitter for chat events. If None, uses WebSocketEventEmitter.
+            Pass NoOpEventEmitter for background tasks without WebSocket (e.g., Subscription Scheduler).
+        is_user_selected_kb: Whether KB is explicitly selected by user (strict mode)
+            or inherited from task (relaxed mode). Defaults to True for backward compatibility.
+        preload_skills: List of skill names to preload into system prompt
+        user_subtask_id: User subtask ID for RAG result persistence (different from
+            stream_data.subtask_id which is AI response's subtask)
     """
     # Import here to avoid circular imports
     from app.core.config import settings

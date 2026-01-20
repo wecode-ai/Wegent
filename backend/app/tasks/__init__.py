@@ -6,6 +6,9 @@
 Celery tasks module for background job processing.
 """
 
-from app.tasks.flow_tasks import check_due_flows, execute_flow_task
+from app.tasks.subscription_tasks import (
+    check_due_subscriptions,
+    execute_subscription_task,
+)
 
-__all__ = ["check_due_flows", "execute_flow_task"]
+__all__ = ["check_due_subscriptions", "execute_subscription_task"]
