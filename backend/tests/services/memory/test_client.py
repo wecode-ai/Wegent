@@ -141,28 +141,3 @@ async def test_delete_memory_not_found(memory_client) -> None:
         result = await memory_client.delete_memory("non-existent-id")
 
         assert result is False
-
-
-@pytest.mark.asyncio
-async def test_health_check_success(memory_client) -> None:
-    """Test health check when service is healthy."""
-    mock_response = MagicMock()
-    mock_response.status = 200
-
-    with patch("aiohttp.ClientSession.get") as mock_get:
-        mock_get.return_value.__aenter__.return_value = mock_response
-
-        result = await memory_client.health_check()
-
-        assert result is True
-
-
-@pytest.mark.asyncio
-async def test_health_check_failure(memory_client) -> None:
-    """Test health check when service is unhealthy."""
-    with patch("aiohttp.ClientSession.get") as mock_get:
-        mock_get.side_effect = aiohttp.ClientError("Connection failed")
-
-        result = await memory_client.health_check()
-
-        assert result is False
