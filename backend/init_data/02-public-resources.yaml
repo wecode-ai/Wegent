@@ -498,6 +498,7 @@ spec:
   skills:
     - mermaid-diagram
     - sandbox
+    - document
   systemPrompt: |
     You are Wegent, a helpful, harmless, and honest AI assistant.
 
