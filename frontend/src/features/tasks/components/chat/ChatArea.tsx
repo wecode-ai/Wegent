@@ -57,6 +57,15 @@ interface ChatAreaProps {
   knowledgeBaseId?: number
   /** Selected document IDs from DocumentPanel (for notebook mode context injection) */
   selectedDocumentIds?: number[]
+  /**
+   * Initial model reference for auto-selecting model (e.g., from knowledge base summary model).
+   * Used when creating a new task in notebook mode to inherit the summary model.
+   */
+  initialModelRef?: {
+    name: string
+    namespace: string
+    type: 'public' | 'user' | 'group'
+  } | null
 }
 
 /**
@@ -75,6 +84,7 @@ function ChatAreaContent({
   onTaskCreated,
   knowledgeBaseId,
   selectedDocumentIds,
+  initialModelRef,
 }: ChatAreaProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -101,6 +111,7 @@ function ChatAreaContent({
     taskType,
     selectedTeamForNewTask,
     initialKnowledgeBase,
+    initialModelRef,
   })
 
   // Compute subtask info for scroll management
