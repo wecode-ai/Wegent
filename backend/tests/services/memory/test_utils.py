@@ -184,7 +184,12 @@ def test_build_context_messages_basic():
 
 
 def test_build_context_messages_group_chat():
-    """Test building context messages for group chat with sender prefixes."""
+    """Test building context messages for group chat with memory isolation.
+
+    In group chat, only the current user's messages should use role="user".
+    All other messages (other users' and AI) should use role="assistant".
+    This prevents mem0 from attributing other users' messages as current user's memories.
+    """
     # Mock database session
     db = MagicMock()
 
@@ -213,7 +218,7 @@ def test_build_context_messages_group_chat():
             status=SubtaskStatus.COMPLETED,
             prompt="Hi everyone",
             sender_type=SenderType.USER,
-            sender_user_id=2,  # Bob sent this
+            sender_user_id=2,  # Bob sent this (not current user)
         ),
     ]
 
@@ -230,9 +235,11 @@ def test_build_context_messages_group_chat():
     # Should have 3 messages
     assert len(result) == 3
 
-    # Check sender prefixes are added
-    assert result[0] == {"role": "user", "content": "User[bob]: Hi everyone"}
-    assert result[1] == {"role": "assistant", "content": "Hello Bob!"}
+    # Bob's message should be role="assistant" (not current user)
+    # AI response should also be role="assistant"
+    # Only Alice's current message should be role="user"
+    assert result[0] == {"role": "assistant", "content": "User[bob]: Hi everyone"}
+    assert result[1] == {"role": "assistant", "content": "AI: Hello Bob!"}
     assert result[2] == {"role": "user", "content": "User[alice]: How are you all?"}
 
 
@@ -351,3 +358,180 @@ def test_build_context_messages_exceeds_limit():
     assert result[0]["content"] == "Message 9"
     assert result[1]["content"] == "Response 10"
     assert result[2]["content"] == "Latest message"
+
+
+def test_build_context_messages_group_chat_with_current_user_history():
+    """Test group chat where current user has messages in history.
+
+    When the current user (alice) has messages in history, those should use role="user".
+    Other users' messages should still use role="assistant".
+    """
+    db = MagicMock()
+    current_user = User(id=1, user_name="alice")
+    sender_bob = User(id=2, user_name="bob")
+    sender_alice = User(id=1, user_name="alice")
+
+    # Mock db.query to return correct user based on sender_user_id
+    def mock_filter(*args, **kwargs):
+        mock_result = MagicMock()
+        # Return alice for sender_user_id=1, bob for sender_user_id=2
+        if hasattr(args[0], "right") and hasattr(args[0].right, "value"):
+            if args[0].right.value == 1:
+                mock_result.first.return_value = sender_alice
+            else:
+                mock_result.first.return_value = sender_bob
+        else:
+            mock_result.first.return_value = sender_bob
+        return mock_result
+
+    db.query.return_value.filter = mock_filter
+
+    existing_subtasks = [
+        # Most recent first
+        Subtask(
+            id=4,
+            message_id=4,
+            role=SubtaskRole.ASSISTANT,
+            status=SubtaskStatus.COMPLETED,
+            result={"value": "Hi Alice!"},
+            sender_type=SenderType.TEAM,
+            sender_user_id=0,
+        ),
+        Subtask(
+            id=3,
+            message_id=3,
+            role=SubtaskRole.USER,
+            status=SubtaskStatus.COMPLETED,
+            prompt="Hello everyone, I'm Alice",
+            sender_type=SenderType.USER,
+            sender_user_id=1,  # Alice (current user)
+        ),
+        Subtask(
+            id=2,
+            message_id=2,
+            role=SubtaskRole.ASSISTANT,
+            status=SubtaskStatus.COMPLETED,
+            result={"value": "Hi Bob!"},
+            sender_type=SenderType.TEAM,
+            sender_user_id=0,
+        ),
+        Subtask(
+            id=1,
+            message_id=1,
+            role=SubtaskRole.USER,
+            status=SubtaskStatus.COMPLETED,
+            prompt="Hi, I'm Bob",
+            sender_type=SenderType.USER,
+            sender_user_id=2,  # Bob (not current user)
+        ),
+    ]
+
+    result = build_context_messages(
+        db=db,
+        existing_subtasks=existing_subtasks,
+        current_message="How is everyone?",
+        current_user=current_user,
+        is_group_chat=True,
+        context_limit=5,  # Include all history
+    )
+
+    # Should have 5 messages
+    assert len(result) == 5
+
+    # Bob's message -> role="assistant" (not current user)
+    assert result[0]["role"] == "assistant"
+    assert "User[bob]:" in result[0]["content"]
+
+    # AI response to Bob -> role="assistant"
+    assert result[1]["role"] == "assistant"
+    assert result[1]["content"] == "AI: Hi Bob!"
+
+    # Alice's history message -> role="user" (IS current user)
+    assert result[2]["role"] == "user"
+    assert "User[alice]:" in result[2]["content"]
+
+    # AI response to Alice -> role="assistant"
+    assert result[3]["role"] == "assistant"
+    assert result[3]["content"] == "AI: Hi Alice!"
+
+    # Alice's current message -> role="user"
+    assert result[4]["role"] == "user"
+    assert "User[alice]:" in result[4]["content"]
+
+
+def test_build_context_messages_group_chat_only_other_users():
+    """Test group chat where history only contains other users' messages.
+
+    All history messages should use role="assistant".
+    Only the current message should use role="user".
+    """
+    db = MagicMock()
+    current_user = User(id=1, user_name="alice")
+    sender_bob = User(id=2, user_name="bob")
+    sender_charlie = User(id=3, user_name="charlie")
+
+    # Mock db to return appropriate users
+    def mock_filter(*args, **kwargs):
+        mock_result = MagicMock()
+        # Return bob or charlie based on sender_user_id
+        if hasattr(args[0], "right") and hasattr(args[0].right, "value"):
+            if args[0].right.value == 2:
+                mock_result.first.return_value = sender_bob
+            elif args[0].right.value == 3:
+                mock_result.first.return_value = sender_charlie
+        else:
+            mock_result.first.return_value = sender_bob
+        return mock_result
+
+    db.query.return_value.filter = mock_filter
+
+    existing_subtasks = [
+        Subtask(
+            id=3,
+            message_id=3,
+            role=SubtaskRole.ASSISTANT,
+            status=SubtaskStatus.COMPLETED,
+            result={"value": "Hi Charlie!"},
+            sender_type=SenderType.TEAM,
+            sender_user_id=0,
+        ),
+        Subtask(
+            id=2,
+            message_id=2,
+            role=SubtaskRole.USER,
+            status=SubtaskStatus.COMPLETED,
+            prompt="Hey Bob!",
+            sender_type=SenderType.USER,
+            sender_user_id=3,  # Charlie
+        ),
+        Subtask(
+            id=1,
+            message_id=1,
+            role=SubtaskRole.USER,
+            status=SubtaskStatus.COMPLETED,
+            prompt="Hello!",
+            sender_type=SenderType.USER,
+            sender_user_id=2,  # Bob
+        ),
+    ]
+
+    result = build_context_messages(
+        db=db,
+        existing_subtasks=existing_subtasks,
+        current_message="Hi everyone, I'm Alice!",
+        current_user=current_user,
+        is_group_chat=True,
+        context_limit=4,
+    )
+
+    # Should have 4 messages
+    assert len(result) == 4
+
+    # All history messages should be role="assistant" since none are from current user
+    assert result[0]["role"] == "assistant"  # Bob's message
+    assert result[1]["role"] == "assistant"  # Charlie's message
+    assert result[2]["role"] == "assistant"  # AI response
+
+    # Only current message should be role="user"
+    assert result[3]["role"] == "user"
+    assert "User[alice]:" in result[3]["content"]

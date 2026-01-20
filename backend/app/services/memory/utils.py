@@ -164,7 +164,12 @@ def build_context_messages(
     """Build context messages for memory storage.
 
     Collects recent completed messages from history and adds the current message.
-    For group chat, adds sender name prefix to user messages.
+
+    IMPORTANT for group chat memory isolation:
+    In group chat scenarios, only messages from the current user should use role="user".
+    All other messages (from other users AND AI responses) should use role="assistant".
+    This prevents mem0 from incorrectly attributing other users' messages as memories
+    belonging to the current user.
 
     Args:
         db: Database session
@@ -177,18 +182,18 @@ def build_context_messages(
     Returns:
         List of message dicts with role and content, in chronological order
 
-    Example:
+    Example (non-group chat):
         [
             {"role": "user", "content": "Hello"},
             {"role": "assistant", "content": "Hi there!"},
             {"role": "user", "content": "How are you?"}
         ]
 
-        For group chat:
+    Example (group chat - only current user's messages use role="user"):
         [
-            {"role": "user", "content": "User[alice]: Hello"},
-            {"role": "assistant", "content": "Hi Alice!"},
-            {"role": "user", "content": "User[bob]: How are you?"}
+            {"role": "assistant", "content": "User[bob]: Hello everyone"},
+            {"role": "assistant", "content": "AI: Hi Bob!"},
+            {"role": "user", "content": "User[alice]: How are you?"}  # current user
         ]
     """
     # Set span attributes for observability
@@ -212,9 +217,8 @@ def build_context_messages(
 
     for i in range(history_count):
         subtask = completed_subtasks[i]
-        role = "user" if subtask.role == SubtaskRole.USER else "assistant"
 
-        # Extract content based on role
+        # Extract content based on subtask role
         if subtask.role == SubtaskRole.USER:
             content = subtask.prompt or ""
         else:  # ASSISTANT
@@ -226,26 +230,30 @@ def build_context_messages(
         if not content:
             continue
 
-        # For group chat user messages, add sender name prefix if not already present
-        if role == "user" and is_group_chat:
-            # Get sender user_name from user table
-            sender = db.query(User).filter(User.id == subtask.sender_user_id).first()
-            sender_name = (
-                sender.user_name if sender else f"User{subtask.sender_user_id}"
-            )
-            # Add prefix if not already present
-            if not content.startswith(f"User[{sender_name}]:"):
-                content = f"User[{sender_name}]: {content}"
+        # Determine the role for mem0 based on chat type and sender
+        role = _determine_message_role(
+            db=db,
+            subtask=subtask,
+            current_user=current_user,
+            is_group_chat=is_group_chat,
+        )
+
+        # Format content with sender prefix for group chat
+        content = _format_message_content(
+            db=db,
+            subtask=subtask,
+            content=content,
+            is_group_chat=is_group_chat,
+        )
 
         context_messages.append({"role": role, "content": content})
 
     # Reverse to maintain chronological order (oldest to newest)
     context_messages.reverse()
 
-    # Add current user message
+    # Add current user message (always role="user" since it's from current user)
     current_content = current_message
     if is_group_chat:
-        # Add sender name prefix to current message
         sender_name = (
             current_user.user_name if current_user.user_name else str(current_user.id)
         )
@@ -266,3 +274,77 @@ def build_context_messages(
     )
 
     return context_messages
+
+
+def _determine_message_role(
+    db: Session,
+    subtask: Subtask,
+    current_user: User,
+    is_group_chat: bool,
+) -> str:
+    """Determine the role to use for a message in mem0 context.
+
+    For non-group chat: use standard mapping (USER -> "user", ASSISTANT -> "assistant")
+    For group chat: only current user's messages use "user", all others use "assistant"
+
+    This prevents mem0 from attributing other users' messages as memories of current user.
+
+    Args:
+        db: Database session
+        subtask: The subtask containing the message
+        current_user: The current user storing memory
+        is_group_chat: Whether this is a group chat
+
+    Returns:
+        "user" or "assistant" role string for mem0
+    """
+    if not is_group_chat:
+        # Non-group chat: standard role mapping
+        return "user" if subtask.role == SubtaskRole.USER else "assistant"
+
+    # Group chat: only current user's messages should be role="user"
+    # This ensures mem0 only extracts memories from the current user's messages
+    if subtask.role == SubtaskRole.USER and subtask.sender_user_id == current_user.id:
+        return "user"
+
+    # All other messages (other users' messages AND AI responses) use "assistant"
+    return "assistant"
+
+
+def _format_message_content(
+    db: Session,
+    subtask: Subtask,
+    content: str,
+    is_group_chat: bool,
+) -> str:
+    """Format message content with appropriate prefix for group chat.
+
+    For non-group chat: return content as-is
+    For group chat USER messages: add "User[name]: " prefix
+    For group chat ASSISTANT messages: add "AI: " prefix
+
+    Args:
+        db: Database session
+        subtask: The subtask containing the message
+        content: Original message content
+        is_group_chat: Whether this is a group chat
+
+    Returns:
+        Formatted content string
+    """
+    if not is_group_chat:
+        return content
+
+    if subtask.role == SubtaskRole.USER:
+        # Get sender name from database
+        sender = db.query(User).filter(User.id == subtask.sender_user_id).first()
+        sender_name = sender.user_name if sender else f"User{subtask.sender_user_id}"
+        prefix = f"User[{sender_name}]: "
+        if not content.startswith(prefix):
+            return prefix + content
+        return content
+
+    # ASSISTANT messages: add AI prefix for clarity in group chat context
+    if not content.startswith("AI: "):
+        return f"AI: {content}"
+    return content
