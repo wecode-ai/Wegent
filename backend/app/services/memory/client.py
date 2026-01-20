@@ -454,34 +454,3 @@ class LongTermMemoryClient:
         except Exception as e:
             logger.error("Unexpected error getting memories: %s", e, exc_info=True)
             return MemorySearchResponse(results=[])
-
-    @trace_async("mem0.client.health_check")
-    async def health_check(self) -> bool:
-        """Check if mem0 service is healthy.
-
-        Returns:
-            True if service is reachable and healthy, False otherwise
-        """
-        try:
-            session = await self._get_session()
-
-            async with session.get(
-                f"{self.base_url}/health",
-                headers=self._get_headers(),
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-            ) as resp:
-                return resp.status == 200
-
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Memory service health check timed out after %.1fs", self.timeout
-            )
-            return False
-        except aiohttp.ClientError as e:
-            logger.warning(
-                "Memory service health check failed (connection error): %s", e
-            )
-            return False
-        except Exception:
-            logger.exception("Unexpected error during memory service health check")
-            return False
