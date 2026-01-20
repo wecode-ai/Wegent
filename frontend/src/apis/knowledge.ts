@@ -220,7 +220,7 @@ export async function refreshWebDocument(documentId: number): Promise<WebDocumen
 
 /**
  * Get chunks for a document
- * Only available for documents using structural_semantic splitter
+ * Available for all documents that have been indexed with chunk storage
  * @param documentId The document ID
  * @param page Page number (default: 1)
  * @param pageSize Page size (default: 20)
@@ -238,7 +238,7 @@ export async function getDocumentChunks(
 
 /**
  * Delete a specific chunk from a document
- * Only available for documents using structural_semantic splitter
+ * Available for all documents that have been indexed with chunk storage
  * @param documentId The document ID
  * @param chunkIndex The chunk index to delete
  * @returns Delete result with remaining chunk count

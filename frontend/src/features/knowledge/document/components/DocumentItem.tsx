@@ -122,8 +122,12 @@ export function DocumentItem({
   // Check document source type
   const isTable = document.source_type === 'table'
   const isWeb = document.source_type === 'web'
-  // Check if document uses structural_semantic splitter
-  const isStructuralSemantic = document.splitter_config?.type === 'structural_semantic'
+  // Check if document has chunks data (available for all splitter types now)
+  const hasChunks = !!document.chunks && !document.chunks.error &&
+    ((document.chunks.items && document.chunks.items.length > 0) ||
+     (document.chunks.chunks && document.chunks.chunks.length > 0))
+  // Check if document has validation error
+  const hasValidationError = !!document.chunks?.error
   // Check if document has non-text content
   const hasNonTextContent = document.chunks?.has_non_text_content
   // URL for table or web documents
@@ -390,8 +394,8 @@ export function DocumentItem({
       {/* Action buttons */}
       {canManage && (
         <div className="w-20 flex-shrink-0 flex items-center justify-center gap-1">
-          {/* View chunks button - only for structural_semantic splitter */}
-          {isStructuralSemantic && onViewChunks && (
+          {/* View chunks button - available for all documents with chunks data */}
+          {hasChunks && onViewChunks && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -404,6 +408,21 @@ export function DocumentItem({
                 </TooltipTrigger>
                 <TooltipContent>
                   {t('knowledge:document.viewChunks')}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          {/* Validation error indicator */}
+          {hasValidationError && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-error cursor-help">
+                    <AlertCircle className="w-4 h-4" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  {document.chunks?.error?.error_message || t('knowledge:document.indexingFailed')}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

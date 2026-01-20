@@ -8,7 +8,6 @@ Document indexing orchestration.
 
 import logging
 import tempfile
-import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,14 +15,15 @@ from typing import Any, Dict, List, Optional
 
 from llama_index.core import Document, SimpleDirectoryReader
 
-from app.schemas.rag import SplitterConfig
-from app.services.rag.splitter import SemanticSplitter, SentenceSplitter
+from app.schemas.rag import SmartSplitterConfig, SplitterConfig
+from app.services.rag.splitter import SemanticSplitter, SentenceSplitter, SmartSplitter
 from app.services.rag.splitter.factory import create_splitter
-from app.services.rag.splitter.structural_semantic import (
-    DocumentChunks,
-    StructuralSemanticSplitter,
+from app.services.rag.splitter.validators import (
+    format_validation_error,
+    validate_markdown_chunks,
 )
 from app.services.rag.storage.base import BaseStorageBackend
+from app.services.rag.utils.tokenizer import count_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,43 @@ def sanitize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
     return sanitized
 
 
+def _build_chunks_data(
+    nodes: list,
+    splitter_type: str,
+    embedding_model_name: str,
+) -> Dict[str, Any]:
+    """
+    Build chunks data structure for DB storage.
+
+    Args:
+        nodes: List of nodes from splitting
+        splitter_type: Type of splitter used
+        embedding_model_name: Name of embedding model for token counting
+
+    Returns:
+        Dict with chunks data structure
+    """
+    items = []
+    for idx, node in enumerate(nodes):
+        content = node.get_content()
+        token_count = count_tokens(content, embedding_model_name)
+        items.append(
+            {
+                "index": idx,
+                "content": content,
+                "token_count": token_count,
+            }
+        )
+
+    return {
+        "items": items,
+        "total_count": len(items),
+        "splitter_type": splitter_type,
+        "embedding_model": embedding_model_name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 class DocumentIndexer:
     """Orchestrates document indexing process."""
 
@@ -79,6 +116,8 @@ class DocumentIndexer:
         storage_backend: BaseStorageBackend,
         embed_model,
         splitter_config: Optional[SplitterConfig] = None,
+        file_extension: Optional[str] = None,
+        embedding_model_name: str = "",
     ):
         """
         Initialize document indexer.
@@ -87,10 +126,20 @@ class DocumentIndexer:
             storage_backend: Storage backend instance
             embed_model: Embedding model
             splitter_config: Optional splitter configuration. If None, defaults to SemanticSplitter
+            file_extension: File extension for SmartSplitter
+            embedding_model_name: Name of embedding model for token counting
         """
         self.storage_backend = storage_backend
         self.embed_model = embed_model
-        self.splitter = create_splitter(splitter_config, embed_model)
+        self.file_extension = file_extension
+        self.embedding_model_name = embedding_model_name
+        self.splitter_config = splitter_config
+        self.splitter = create_splitter(
+            splitter_config,
+            embed_model,
+            file_extension=file_extension,
+            embedding_model_name=embedding_model_name,
+        )
 
     def index_document(
         self, knowledge_id: str, file_path: str, doc_ref: str, **kwargs
@@ -212,26 +261,48 @@ class DocumentIndexer:
             **kwargs: Additional parameters
 
         Returns:
-            Indexing result dict (includes chunks_data for StructuralSemanticSplitter)
+            Indexing result dict (includes chunks_data for all splitter types)
         """
         # Sanitize document metadata to prevent ES mapping conflicts
         # This removes complex nested structures from PPTX/DOCX metadata
         for doc in documents:
             doc.metadata = sanitize_metadata(doc.metadata)
 
+        # Determine splitter type
+        splitter_type = "semantic"  # default
+        if self.splitter_config:
+            splitter_type = getattr(self.splitter_config, "type", "semantic")
+
         # Split documents into nodes
-        # For StructuralSemanticSplitter, also get chunks data for DB storage
         chunks_data = None
-        if isinstance(self.splitter, StructuralSemanticSplitter):
-            nodes, document_chunks = self.splitter.split_documents_with_chunks(documents)
-            # Convert dataclass to dict for JSON storage
-            chunks_data = asdict(document_chunks)
+
+        if isinstance(self.splitter, SmartSplitter):
+            nodes, smart_chunks = self.splitter.split_documents_with_chunks(documents)
+
+            # Validate Markdown chunks if file is .md
+            if self.file_extension and self.file_extension.lower() in [".md", "md"]:
+                validation_result = validate_markdown_chunks(
+                    nodes, self.embedding_model_name
+                )
+                if not validation_result.is_valid:
+                    # Return error, don't index
+                    return {
+                        "success": False,
+                        "error": format_validation_error(validation_result),
+                    }
+
+            # Convert to dict for DB storage
+            chunks_data = asdict(smart_chunks)
             logger.info(
-                f"StructuralSemanticSplitter created {document_chunks.total_chunks} chunks, "
-                f"has_non_text_content={document_chunks.has_non_text_content}"
+                f"SmartSplitter created {smart_chunks.total_count} chunks "
+                f"for file extension: {self.file_extension}"
             )
         else:
             nodes = self.splitter.split_documents(documents)
+            # Build chunks data for all splitter types
+            chunks_data = _build_chunks_data(
+                nodes, splitter_type, self.embedding_model_name
+            )
 
         # Prepare metadata
         created_at = datetime.now(timezone.utc).isoformat()
@@ -250,6 +321,7 @@ class DocumentIndexer:
         # Add document info to result
         result.update(
             {
+                "success": True,
                 "doc_ref": doc_ref,
                 "knowledge_id": knowledge_id,
                 "source_file": source_file,
@@ -258,7 +330,7 @@ class DocumentIndexer:
             }
         )
 
-        # Add chunks data for DB storage (only for StructuralSemanticSplitter)
+        # Add chunks data for DB storage (for all splitter types)
         if chunks_data is not None:
             result["chunks_data"] = chunks_data
 

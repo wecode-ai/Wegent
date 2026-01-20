@@ -9,14 +9,12 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { SearchableSelect } from '@/components/ui/searchable-select'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useLlmModels } from '../hooks/useLlmModels'
-import type { UnifiedModel } from '@/apis/models'
 import type {
   SplitterConfig,
   SplitterType,
   SentenceSplitterConfig,
   SemanticSplitterConfig,
-  StructuralSemanticSplitterConfig,
+  SmartSplitterConfig,
 } from '@/types/knowledge'
 
 // Re-export SplitterConfig for backward compatibility
@@ -26,24 +24,18 @@ interface SplitterSettingsSectionProps {
   config: Partial<SplitterConfig>
   onChange: (config: Partial<SplitterConfig>) => void
   readOnly?: boolean
-  fileExtension?: string // Used to determine if structural_semantic is available
+  fileExtension?: string // Used to determine if smart splitter is available
 }
 
-// Extensions that support structural semantic splitting
-const STRUCTURAL_SEMANTIC_EXTENSIONS = ['.pdf', '.docx', '.doc', '.md', '.txt']
+// Extensions that support smart splitting
+const SMART_SPLITTER_EXTENSIONS = ['.md', '.txt']
 
-// Check if file extension supports structural semantic splitting
-function isStructuralSemanticSupported(fileExtension?: string): boolean {
-  if (!fileExtension) return true // Allow if no extension (e.g., new upload without file)
+// Check if file extension supports smart splitting
+function isSmartSplitterSupported(fileExtension?: string): boolean {
+  if (!fileExtension) return false // Require extension for smart splitter
   const ext = fileExtension.toLowerCase()
   const normalizedExt = ext.startsWith('.') ? ext : `.${ext}`
-  return STRUCTURAL_SEMANTIC_EXTENSIONS.includes(normalizedExt)
-}
-
-// Helper to get source type label
-const getSourceTypeLabel = (type: string, t: (key: string) => string) => {
-  const typeKey = type as 'user' | 'public' | 'group'
-  return t(`knowledge:document.retrieval.sourceType.${typeKey}`)
+  return SMART_SPLITTER_EXTENSIONS.includes(normalizedExt)
 }
 
 export function SplitterSettingsSection({
@@ -53,17 +45,20 @@ export function SplitterSettingsSection({
   fileExtension,
 }: SplitterSettingsSectionProps) {
   const { t } = useTranslation()
-  const { models: llmModels, loading: loadingModels } = useLlmModels()
   const [overlapError, setOverlapError] = useState('')
 
-  // Check if structural semantic is supported for current file
-  const structuralSemanticAvailable = isStructuralSemanticSupported(fileExtension)
-
-  // Structural semantic requires LLM models to be available
-  const structuralSemanticEnabled = structuralSemanticAvailable && llmModels.length > 0
+  // Check if smart splitter is supported for current file
+  const smartSplitterAvailable = isSmartSplitterSupported(fileExtension)
 
   // Determine the default splitter type based on availability
-  const defaultSplitterType: SplitterType = structuralSemanticEnabled ? 'structural_semantic' : 'semantic'
+  const getDefaultSplitterType = (): SplitterType => {
+    if (smartSplitterAvailable) {
+      return 'smart'
+    }
+    return 'semantic'
+  }
+
+  const defaultSplitterType: SplitterType = getDefaultSplitterType()
   const splitterType = (config.type as SplitterType) || defaultSplitterType
 
   // Sentence splitter config
@@ -78,9 +73,6 @@ export function SplitterSettingsSection({
   const breakpointThreshold =
     config.type === 'semantic' ? (semanticConfig.breakpoint_percentile_threshold ?? 95) : 95
 
-  // Structural semantic splitter config
-  const structuralConfig = config as Partial<StructuralSemanticSplitterConfig>
-
   useEffect(() => {
     if (splitterType === 'sentence' && chunkOverlap >= chunkSize) {
       setOverlapError(t('knowledge:document.splitter.overlapError'))
@@ -91,17 +83,10 @@ export function SplitterSettingsSection({
 
   const handleTypeChange = useCallback(
     (newType: string) => {
-      if (newType === 'structural_semantic') {
-        // Auto-select first LLM model if available
-        const firstModel = llmModels[0]
+      if (newType === 'smart') {
         onChange({
-          type: 'structural_semantic',
-          max_chunk_tokens: 600,
-          overlap_tokens: 80,
-          llm_model_ref: firstModel
-            ? { name: firstModel.name, namespace: firstModel.namespace || 'default' }
-            : { name: '', namespace: 'default' },
-        } as Partial<StructuralSemanticSplitterConfig>)
+          type: 'smart',
+        } as Partial<SmartSplitterConfig>)
       } else if (newType === 'sentence') {
         onChange({
           type: 'sentence',
@@ -117,24 +102,7 @@ export function SplitterSettingsSection({
         })
       }
     },
-    [onChange, llmModels]
-  )
-
-  const handleLlmModelChange = useCallback(
-    (value: string) => {
-      const model = llmModels.find(m => `${m.namespace || 'default'}::${m.name}` === value)
-      if (model) {
-        onChange({
-          ...config,
-          type: 'structural_semantic',
-          llm_model_ref: {
-            name: model.name,
-            namespace: model.namespace || 'default',
-          },
-        } as Partial<StructuralSemanticSplitterConfig>)
-      }
-    },
-    [config, onChange, llmModels]
+    [onChange]
   )
 
   const handleChunkSizeChange = (value: number) => {
@@ -158,27 +126,13 @@ export function SplitterSettingsSection({
   }
 
   // Build splitter type items based on availability
-  // Only show structural_semantic if both file type is supported AND LLM models are available
   const splitterTypeItems = [
-    ...(structuralSemanticEnabled
-      ? [{ value: 'structural_semantic', label: t('knowledge:document.splitter.structuralSemantic') }]
+    ...(smartSplitterAvailable
+      ? [{ value: 'smart', label: t('knowledge:document.splitter.smart') }]
       : []),
     { value: 'semantic', label: t('knowledge:document.splitter.semantic') },
     { value: 'sentence', label: t('knowledge:document.splitter.sentence') },
   ]
-
-  // Format model label with source type
-  const formatModelLabel = (model: UnifiedModel) => {
-    const displayName = model.displayName || model.name
-    const sourceLabel = getSourceTypeLabel(model.type, t)
-    return `[${sourceLabel}] ${displayName}`
-  }
-
-  // Get current LLM model key
-  const currentLlmModelKey =
-    structuralConfig?.llm_model_ref?.name && structuralConfig?.llm_model_ref?.namespace
-      ? `${structuralConfig.llm_model_ref.namespace}::${structuralConfig.llm_model_ref.name}`
-      : ''
 
   return (
     <div className="space-y-4">
@@ -191,45 +145,18 @@ export function SplitterSettingsSection({
           disabled={readOnly}
           items={splitterTypeItems}
         />
-        {/* Show hint for unsupported structural_semantic */}
-        {!structuralSemanticAvailable && (
+        {/* Show hint for smart splitter availability */}
+        {!smartSplitterAvailable && fileExtension && (
           <p className="text-xs text-text-muted">
-            {t('knowledge:document.splitter.structuralSemanticUnsupported')}
+            {t('knowledge:document.splitter.smartUnsupported')}
+          </p>
+        )}
+        {smartSplitterAvailable && splitterType === 'smart' && (
+          <p className="text-xs text-text-muted">
+            {t('knowledge:document.splitter.smartHint')}
           </p>
         )}
       </div>
-
-      {/* Structural Semantic Splitter Settings */}
-      {splitterType === 'structural_semantic' && (
-        <div className="space-y-4">
-          {/* LLM Model Selection */}
-          <div className="space-y-2">
-            <Label>{t('knowledge:document.splitter.llmModel')}</Label>
-            {loadingModels ? (
-              <div className="text-sm text-text-secondary">{t('common:actions.loading')}</div>
-            ) : llmModels.length === 0 ? (
-              <p className="text-sm text-warning">{t('knowledge:document.splitter.noLlmModel')}</p>
-            ) : (
-              <>
-                <SearchableSelect
-                  value={currentLlmModelKey}
-                  onValueChange={handleLlmModelChange}
-                  placeholder={t('knowledge:document.splitter.selectLlmModel')}
-                  searchPlaceholder={t('knowledge:document.retrieval.searchPlaceholder')}
-                  disabled={readOnly}
-                  items={llmModels.map(model => ({
-                    value: `${model.namespace || 'default'}::${model.name}`,
-                    label: formatModelLabel(model),
-                  }))}
-                />
-                <p className="text-xs text-text-muted">
-                  {t('knowledge:document.splitter.llmModelHint')}
-                </p>
-              </>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Sentence Splitter Settings */}
       {splitterType === 'sentence' && (

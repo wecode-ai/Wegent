@@ -149,19 +149,24 @@ class DocumentService:
             model_namespace=embedding_model_namespace,
         )
 
-        # Create indexer with storage backend and splitter config
-        indexer = DocumentIndexer(
-            storage_backend=self.storage_backend,
-            embed_model=embed_model,
-            splitter_config=splitter_config,
-        )
-
+        # Get file extension for SmartSplitter
+        file_extension = None
         if attachment_id is not None:
             # Get original binary data from attachment (supports MySQL and external storage)
             binary_data, filename, file_extension = self._get_attachment_binary(
                 db, attachment_id
             )
 
+        # Create indexer with storage backend and splitter config
+        indexer = DocumentIndexer(
+            storage_backend=self.storage_backend,
+            embed_model=embed_model,
+            splitter_config=splitter_config,
+            file_extension=file_extension,
+            embedding_model_name=embedding_model_name,
+        )
+
+        if attachment_id is not None:
             # Index from binary data directly (indexer handles parsing)
             result = indexer.index_from_binary(
                 knowledge_id=knowledge_id,

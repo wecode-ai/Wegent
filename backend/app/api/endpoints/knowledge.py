@@ -681,13 +681,29 @@ def _index_document_background(
                 .first()
             )
             if doc:
+                # Check for validation errors (e.g., CHUNK_TOO_LONG)
+                if not result.get("success", True):
+                    error = result.get("error", {})
+                    logger.warning(
+                        f"Document indexing failed validation: {error.get('error_code')}"
+                    )
+                    doc.is_active = False
+                    doc.status = DocumentStatus.DISABLED
+                    # Store error info in chunks field for frontend display
+                    doc.chunks = {"error": error}
+                    db.commit()
+                    logger.info(
+                        f"Updated document {document_id} with validation error: {error.get('error_code')}"
+                    )
+                    return
+
                 doc.is_active = True
                 doc.status = DocumentStatus.ENABLED
-                # Save chunks data if available (from StructuralSemanticSplitter)
+                # Save chunks data if available (for all splitter types)
                 if result.get("chunks_data"):
                     doc.chunks = result["chunks_data"]
                     logger.info(
-                        f"Saved {result['chunks_data'].get('total_chunks', 0)} chunks "
+                        f"Saved {result['chunks_data'].get('total_count', 0)} chunks "
                         f"to document {document_id}"
                     )
                 db.commit()
@@ -1352,16 +1368,14 @@ def get_document_chunks(
     """
     Get chunks for a document.
 
-    Only available for documents using structural_semantic splitter.
+    Available for all documents that have been indexed with chunk storage.
     Returns paginated list of chunks with metadata.
     """
     from app.models.knowledge import KnowledgeDocument
 
     # Get document
     document = (
-        db.query(KnowledgeDocument)
-        .filter(KnowledgeDocument.id == document_id)
-        .first()
+        db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
     )
 
     if not document:
@@ -1378,17 +1392,26 @@ def get_document_chunks(
             detail="Not authorized to access this document",
         )
 
-    # Check if document uses structural_semantic splitter
-    splitter_config = document.splitter_config or {}
-    if splitter_config.get("type") != "structural_semantic":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Chunks are only available for documents using structural_semantic splitter",
-        )
-
     # Get chunks data
     chunks_data = document.chunks or {}
-    all_chunks = chunks_data.get("chunks", [])
+
+    # Check for validation error
+    if "error" in chunks_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=chunks_data["error"].get(
+                "error_message", "Document indexing failed"
+            ),
+        )
+
+    # Check if chunks data is available
+    if not chunks_data or "items" not in chunks_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No chunks data available for this document",
+        )
+
+    all_chunks = chunks_data.get("items", [])
     total_chunks = len(all_chunks)
 
     # Paginate
@@ -1396,8 +1419,22 @@ def get_document_chunks(
     end_idx = start_idx + page_size
     paginated_chunks = all_chunks[start_idx:end_idx]
 
+    # Convert to response format (map 'index' to 'chunk_index' for compatibility)
+    formatted_chunks = []
+    for chunk in paginated_chunks:
+        formatted_chunks.append(
+            {
+                "chunk_index": chunk.get("index", chunk.get("chunk_index", 0)),
+                "content": chunk.get("content", ""),
+                "token_count": chunk.get("token_count", 0),
+                "start_position": chunk.get("start_position", 0),
+                "end_position": chunk.get("end_position", 0),
+                "forced_split": chunk.get("forced_split", False),
+            }
+        )
+
     return DocumentChunksResponse(
-        chunks=paginated_chunks,
+        chunks=formatted_chunks,
         total=total_chunks,
         page=page,
         page_size=page_size,
@@ -1418,16 +1455,14 @@ def delete_document_chunk(
     """
     Delete a specific chunk from a document.
 
-    Only available for documents using structural_semantic splitter.
+    Available for all documents that have been indexed with chunk storage.
     Also removes the chunk from vector storage.
     """
     from app.models.knowledge import KnowledgeDocument
 
     # Get document
     document = (
-        db.query(KnowledgeDocument)
-        .filter(KnowledgeDocument.id == document_id)
-        .first()
+        db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
     )
 
     if not document:
@@ -1444,23 +1479,33 @@ def delete_document_chunk(
             detail="Not authorized to modify this document",
         )
 
-    # Check if document uses structural_semantic splitter
-    splitter_config = document.splitter_config or {}
-    if splitter_config.get("type") != "structural_semantic":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Chunk deletion is only available for documents using structural_semantic splitter",
-        )
-
     # Get chunks data
     chunks_data = document.chunks or {}
-    all_chunks = chunks_data.get("chunks", [])
+
+    # Check for validation error
+    if "error" in chunks_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete chunks from a document with indexing errors",
+        )
+
+    # Check if chunks data is available
+    if not chunks_data or ("items" not in chunks_data and "chunks" not in chunks_data):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No chunks data available for this document",
+        )
+
+    # Support both new format (items) and legacy format (chunks)
+    is_new_format = "items" in chunks_data
+    all_chunks = chunks_data.get("items", chunks_data.get("chunks", []))
+    chunk_index_key = "index" if is_new_format else "chunk_index"
 
     # Find and remove chunk
     chunk_found = False
     new_chunks = []
     for chunk in all_chunks:
-        if chunk.get("chunk_index") == chunk_index:
+        if chunk.get(chunk_index_key) == chunk_index:
             chunk_found = True
         else:
             new_chunks.append(chunk)
@@ -1473,11 +1518,15 @@ def delete_document_chunk(
 
     # Re-index remaining chunks
     for idx, chunk in enumerate(new_chunks):
-        chunk["chunk_index"] = idx
+        chunk[chunk_index_key] = idx
 
-    # Update document chunks
-    chunks_data["chunks"] = new_chunks
-    chunks_data["total_chunks"] = len(new_chunks)
+    # Update document chunks based on format
+    if is_new_format:
+        chunks_data["items"] = new_chunks
+        chunks_data["total_count"] = len(new_chunks)
+    else:
+        chunks_data["chunks"] = new_chunks
+        chunks_data["total_chunks"] = len(new_chunks)
     document.chunks = chunks_data
 
     db.commit()

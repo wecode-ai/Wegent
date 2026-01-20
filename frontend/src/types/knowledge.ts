@@ -30,7 +30,7 @@ export interface RetrievalConfig {
 }
 
 // Splitter Config types
-export type SplitterType = 'sentence' | 'semantic' | 'structural_semantic'
+export type SplitterType = 'sentence' | 'semantic' | 'smart'
 
 // Base splitter config
 export interface BaseSplitterConfig {
@@ -52,25 +52,16 @@ export interface SemanticSplitterConfig extends BaseSplitterConfig {
   breakpoint_percentile_threshold?: number // 50-100, default 95
 }
 
-// Model reference for structural semantic splitter
-export interface ModelRef {
-  name: string
-  namespace: string
-}
-
-// Structural semantic splitter config
-export interface StructuralSemanticSplitterConfig extends BaseSplitterConfig {
-  type: 'structural_semantic'
-  max_chunk_tokens?: number // Fixed at 600
-  overlap_tokens?: number // Fixed at 80
-  llm_model_ref: ModelRef
+// Smart splitter config (auto-selects based on file type)
+export interface SmartSplitterConfig extends BaseSplitterConfig {
+  type: 'smart'
 }
 
 // Union type for splitter config
 export type SplitterConfig =
   | SentenceSplitterConfig
   | SemanticSplitterConfig
-  | StructuralSemanticSplitterConfig
+  | SmartSplitterConfig
 
 // Summary Model Reference types
 export interface SummaryModelRef {
@@ -149,14 +140,14 @@ export interface KnowledgeDocument {
   user_id: number
   is_active: boolean
   splitter_config?: SplitterConfig
-  chunks?: DocumentChunks // Only for structural_semantic splitter
+  chunks?: DocumentChunks // Available for all splitter types
   source_type: DocumentSourceType
   source_config: Record<string, unknown>
   created_at: string
   updated_at: string
 }
 
-// Chunk related types (for structural_semantic splitter)
+// Chunk related types (for all splitter types)
 export interface ChunkItem {
   chunk_index: number
   content: string
@@ -166,12 +157,43 @@ export interface ChunkItem {
   forced_split: boolean
 }
 
+// Chunk validation error (for markdown sections that are too long)
+export interface ChunkValidationError {
+  error_code: string
+  error_message: string
+  details?: {
+    max_allowed_tokens: number
+    oversized_chunks: Array<{
+      heading: string | null
+      token_count: number
+      content_preview: string
+    }>
+  }
+}
+
+// New unified chunk item format (from smart splitter)
+export interface UnifiedChunkItem {
+  index: number
+  content: string
+  token_count: number
+}
+
+// Document chunks data (for all splitter types)
 export interface DocumentChunks {
-  chunks: ChunkItem[]
-  total_chunks: number
-  overlap_tokens: number
-  has_non_text_content: boolean
-  skipped_elements: string[]
+  // New format (smart splitter and all splitters going forward)
+  items?: UnifiedChunkItem[]
+  total_count?: number
+  splitter_type?: string
+  embedding_model?: string
+  created_at?: string
+  // Error (when validation fails)
+  error?: ChunkValidationError
+  // Legacy format (for backward compatibility)
+  chunks?: ChunkItem[]
+  total_chunks?: number
+  overlap_tokens?: number
+  has_non_text_content?: boolean
+  skipped_elements?: string[]
 }
 
 export interface DocumentChunksResponse {

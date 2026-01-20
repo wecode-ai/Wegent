@@ -136,6 +136,7 @@
         "noContent": "No content available"
       },
       "viewChunks": "View Chunks",
+      "indexingFailed": "Indexing Failed",
       "hasNonTextContent": "This document contains {{elements}} which were skipped during chunking",
       "chunks": {
         "title": "Chunks - {{name}}",
@@ -268,12 +269,9 @@
       "general": "General",
       "sentence": "Sentence Chunking",
       "semantic": "Semantic Chunking",
-      "structuralSemantic": "Structural Semantic",
-      "structuralSemanticUnsupported": "This file type does not support structural semantic chunking",
-      "llmModel": "LLM Model",
-      "selectLlmModel": "Select LLM model for semantic splitting",
-      "llmModelHint": "This model will be used to determine semantic boundaries when chunks exceed 600 tokens",
-      "noLlmModel": "No LLM model available. Please configure one in Settings.",
+      "smart": "Smart Chunking",
+      "smartUnsupported": "Smart chunking not supported for this file type. Only .md and .txt files are supported",
+      "smartHint": "Auto-selects the best chunking method based on file type: Markdown by sections, TXT by sentences",
       "separator": "Separator",
       "separatorHint": "Character(s) used to split document",
       "chunkSize": "Max Chunk Size",
