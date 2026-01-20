@@ -45,6 +45,7 @@ from app.api.endpoints.internal import (
     rag_router,
     services_router,
     skills_router,
+    subscriptions_router,
     tables_router,
 )
 from app.api.endpoints.kind import k_router
@@ -126,4 +127,7 @@ api_router.include_router(
 )
 api_router.include_router(
     services_router, prefix="/internal", tags=["internal-services"]
+)
+api_router.include_router(
+    subscriptions_router, prefix="/internal", tags=["internal-subscriptions"]
 )

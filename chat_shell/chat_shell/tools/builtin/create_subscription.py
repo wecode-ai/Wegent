@@ -76,7 +76,9 @@ class CreateSubscriptionInput(BaseModel):
     )
 
     # Optional configuration
-    retry_count: int = Field(default=1, ge=0, le=3, description="Retry count on failure")
+    retry_count: int = Field(
+        default=1, ge=0, le=3, description="Retry count on failure"
+    )
     timeout_seconds: int = Field(
         default=600, ge=60, le=3600, description="Execution timeout in seconds"
     )
@@ -430,7 +432,11 @@ class CreateSubscriptionTool(BaseTool):
         retry_count: int,
         timeout_seconds: int,
     ) -> str:
-        """Create subscription via HTTP API (HTTP mode)."""
+        """Create subscription via HTTP API (HTTP mode).
+
+        Uses the internal API endpoint which doesn't require user authentication.
+        The endpoint is at /api/internal/subscriptions and accepts user_id as a query parameter.
+        """
         import httpx
 
         if not self.backend_url:
@@ -466,10 +472,12 @@ class CreateSubscriptionTool(BaseTool):
             }
 
             async with httpx.AsyncClient(timeout=30.0) as client:
+                # Use internal API endpoint with user_id as query parameter
                 response = await client.post(
-                    f"{self.backend_url}/api/subscriptions",
+                    f"{self.backend_url}/api/internal/subscriptions",
                     json=request_body,
-                    headers={"X-User-ID": str(self.user_id)},
+                    params={"user_id": self.user_id},
+                    headers={"X-Service-Name": "chat-shell"},
                 )
 
                 if response.status_code == 200 or response.status_code == 201:
@@ -533,7 +541,9 @@ class CreateSubscriptionTool(BaseTool):
 
         # Build message based on trigger type
         if next_time_str:
-            message = f"订阅任务创建成功！将于 {next_time_str.replace('T', ' ')} 首次执行。"
+            message = (
+                f"订阅任务创建成功！将于 {next_time_str.replace('T', ' ')} 首次执行。"
+            )
         else:
             message = "订阅任务创建成功！"
 

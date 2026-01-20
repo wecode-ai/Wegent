@@ -550,7 +550,6 @@ class ChatContext:
                 search_engine,
                 default_max_results,
             )
-
         # Add DataTableTool if table_contexts provided
         logger.debug(
             "[CHAT_CONTEXT] Checking table_contexts: has_table_contexts=%s, count=%d",
@@ -570,6 +569,38 @@ class ChatContext:
                 "[CHAT_CONTEXT] Added DataTableTool with %d table context(s)",
                 len(self._request.table_contexts),
             )
+
+        # Add CreateSubscriptionTool (always enabled)
+        from chat_shell.tools.builtin import CreateSubscriptionTool
+
+        # Derive backend_url from REMOTE_STORAGE_URL (remove /api/internal suffix)
+        backend_url = None
+        if settings.REMOTE_STORAGE_URL:
+            # REMOTE_STORAGE_URL is like "http://localhost:8000/api/internal"
+            # We need "http://localhost:8000" for the subscription API
+            base_url = settings.REMOTE_STORAGE_URL
+            if base_url.endswith("/api/internal"):
+                backend_url = base_url[: -len("/api/internal")]
+            elif base_url.endswith("/api"):
+                backend_url = base_url[: -len("/api")]
+            else:
+                backend_url = base_url
+
+        create_subscription_tool = CreateSubscriptionTool(
+            user_id=self._request.user_id,
+            team_id=self._request.team_id,
+            team_name=self._request.team_name,
+            team_namespace=self._request.bot_namespace or "default",
+            timezone=self._request.timezone,
+            backend_url=backend_url,
+        )
+        extra_tools.append(create_subscription_tool)
+        logger.debug(
+            "[CHAT_CONTEXT] Added CreateSubscriptionTool: team_id=%d, team_name=%s, backend_url=%s",
+            self._request.team_id,
+            self._request.team_name,
+            backend_url,
+        )
 
         # === External Tools ===
 
