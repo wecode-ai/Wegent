@@ -753,9 +753,20 @@ export default function MessagesArea({
         return
       }
 
+      // 0.5. Validate aiMessage has subtaskId
+      if (!aiMessage.subtaskId) {
+        console.error('AI message has no subtaskId, cannot regenerate')
+        return
+      }
+
       // 1. Find the index of this AI message by subtaskId
-      const aiIndex = messages.findIndex(m => m.subtaskId === aiMessage.subtaskId)
-      if (aiIndex < 0) return
+      const aiIndex = messages.findIndex(
+        m => m.subtaskId !== undefined && m.subtaskId === aiMessage.subtaskId
+      )
+      if (aiIndex < 0) {
+        console.error('AI message not found in messages list')
+        return
+      }
 
       // 2. Find the preceding user message
       const userMessage = messages[aiIndex - 1]
@@ -776,6 +787,10 @@ export default function MessagesArea({
 
       setIsRegenerating(true)
       try {
+        // 4.5. Refresh task detail first to ensure we have latest state from backend
+        // This helps detect any running subtasks that frontend might have missed
+        await refreshSelectedTaskDetail(false)
+
         // 5. Call the edit message API with the SAME content (this will delete the AI response)
         const response = await subtaskApis.editMessage(userSubtaskId, originalUserContent)
 
@@ -798,10 +813,18 @@ export default function MessagesArea({
         }
       } catch (error) {
         console.error('Failed to regenerate:', error)
+        const errorMessage = (error as Error)?.message || 'Unknown error'
+
+        // If backend says AI is generating, refresh task detail to sync frontend state
+        if (errorMessage.includes('AI is generating')) {
+          // Refresh to get latest state from backend
+          await refreshSelectedTaskDetail(false)
+        }
+
         toast({
           variant: 'destructive',
           title: t('chat:regenerate.failed') || 'Failed to regenerate response',
-          description: (error as Error)?.message || 'Unknown error',
+          description: errorMessage,
         })
       } finally {
         setIsRegenerating(false)
