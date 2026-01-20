@@ -114,26 +114,51 @@ def fetch_retry_context(
     return failed_ai_subtask, task, team, user_subtask
 
 
-def reset_subtask_for_retry(db: Session, subtask: Subtask) -> None:
+def reset_subtask_for_retry(
+    db: Session, subtask: Subtask, task: Optional[TaskResource] = None
+) -> None:
     """
     Reset a failed subtask to PENDING status for retry.
+
+    Also updates the Task status to PENDING so that executor_manager can pick it up.
+    This is critical because executor_manager queries tasks based on Task.json.status.status.
 
     Args:
         db: Database session
         subtask: The subtask to reset
+        task: The task to update (optional, but recommended for non-direct-chat retries)
 
     Raises:
         Exception: If database commit fails
     """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    # Reset subtask status
     subtask.status = SubtaskStatus.PENDING
     subtask.progress = 0
     subtask.error_message = ""
     subtask.result = None
     subtask.updated_at = datetime.now()
 
+    # Also reset Task status to PENDING so executor_manager can fetch it
+    # This is critical: executor_manager queries by Task.json.status.status = PENDING
+    if task:
+        task_json = task.json or {}
+        if "status" not in task_json:
+            task_json["status"] = {}
+        task_json["status"]["status"] = "PENDING"
+        task_json["status"]["errorMessage"] = ""
+        task_json["status"]["updatedAt"] = datetime.now().isoformat()
+        task.json = task_json
+        task.updated_at = datetime.now()
+        flag_modified(task, "json")
+        logger.info(f"Reset task status to PENDING: task_id={task.id}")
+
     try:
         db.commit()
         db.refresh(subtask)
+        if task:
+            db.refresh(task)
     except Exception as e:
         logger.error(f"Failed to reset subtask: {e}", exc_info=True)
         db.rollback()

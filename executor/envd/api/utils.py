@@ -22,7 +22,9 @@ def verify_access_token(x_access_token: Optional[str] = Header(None)) -> bool:
     return True
 
 
-def verify_signature(signature: Optional[str], signature_expiration: Optional[int]) -> bool:
+def verify_signature(
+    signature: Optional[str], signature_expiration: Optional[int]
+) -> bool:
     """Stub signature verification - logs but doesn't validate"""
     if signature:
         logger.debug(f"Signature received (not validated): {signature[:10]}...")
@@ -31,7 +33,9 @@ def verify_signature(signature: Optional[str], signature_expiration: Optional[in
     return True
 
 
-def resolve_path(path: Optional[str], username: Optional[str], default_workdir: Optional[str]) -> Path:
+def resolve_path(
+    path: Optional[str], username: Optional[str], default_workdir: Optional[str]
+) -> Path:
     """
     Resolve file path, handling relative paths and user home directories
 
@@ -55,7 +59,11 @@ def resolve_path(path: Optional[str], username: Optional[str], default_workdir: 
     if not p.is_absolute():
         if username:
             # Resolve relative to user's home
-            user_home = Path.home() if username == os.getenv("USER") else Path(f"/home/{username}")
+            user_home = (
+                Path.home()
+                if username == os.getenv("USER")
+                else Path(f"/home/{username}")
+            )
             p = user_home / p
         elif default_workdir:
             p = Path(default_workdir) / p

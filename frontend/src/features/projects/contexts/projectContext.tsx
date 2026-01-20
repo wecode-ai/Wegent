@@ -251,7 +251,10 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
           (err instanceof ApiError && err.status === 404) ||
           (err instanceof Error && err.message.toLowerCase().includes('not found')) ||
           // Also check for status property on plain objects (in case instanceof fails)
-          (typeof err === 'object' && err !== null && 'status' in err && (err as { status: number }).status === 404)
+          (typeof err === 'object' &&
+            err !== null &&
+            'status' in err &&
+            (err as { status: number }).status === 404)
         if (isNotFoundError) {
           // Silently ignore "not found" errors - task is already removed from project
           return true

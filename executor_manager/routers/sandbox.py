@@ -435,11 +435,11 @@ async def sandbox_heartbeat(sandbox_id: str, http_request: Request):
         f"[SandboxAPI] Heartbeat received: sandbox_id={sandbox_id} from {client_ip}"
     )
 
-    from executor_manager.services.heartbeat_manager import \
-        get_heartbeat_manager
+    from executor_manager.services.heartbeat_manager import (
+        HeartbeatType, get_heartbeat_manager)
 
     heartbeat_mgr = get_heartbeat_manager()
-    success = heartbeat_mgr.update_heartbeat(sandbox_id)
+    success = heartbeat_mgr.update_heartbeat(sandbox_id, HeartbeatType.SANDBOX)
 
     if not success:
         logger.warning(
@@ -463,13 +463,20 @@ async def sandbox_heartbeat(sandbox_id: str, http_request: Request):
         if bot_config_str:
             try:
                 # Deserialize bot_config from JSON string
-                bot_config = json.loads(bot_config_str) if isinstance(bot_config_str, str) else bot_config_str
+                bot_config = (
+                    json.loads(bot_config_str)
+                    if isinstance(bot_config_str, str)
+                    else bot_config_str
+                )
 
                 # Find ClaudeCode bot in configuration
                 claude_bot = None
                 if isinstance(bot_config, list):
                     for bot in bot_config:
-                        if isinstance(bot, dict) and bot.get("shell_type", "").lower() == "claudecode":
+                        if (
+                            isinstance(bot, dict)
+                            and bot.get("shell_type", "").lower() == "claudecode"
+                        ):
                             claude_bot = bot
                             break
 
