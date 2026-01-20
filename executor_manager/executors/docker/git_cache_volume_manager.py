@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from shared.logger import setup_logger
+from shared.telemetry.decorators import trace_sync
 
 logger = setup_logger(__name__)
 
@@ -37,6 +38,7 @@ LABEL_CREATED_AT = "wegent.created-at"
 LABEL_LAST_USED = "wegent.last-used"
 
 
+@trace_sync("get_user_volume_name", "git_cache_volume_manager")
 def get_user_volume_name(user_id: int) -> str:
     """
     Get the volume name for a specific user.
@@ -50,6 +52,7 @@ def get_user_volume_name(user_id: int) -> str:
     return f"{VOLUME_PREFIX}{user_id}"
 
 
+@trace_sync("volume_exists", "git_cache_volume_manager")
 def volume_exists(volume_name: str) -> bool:
     """
     Check if a Docker volume exists.
@@ -73,6 +76,7 @@ def volume_exists(volume_name: str) -> bool:
         return False
 
 
+@trace_sync("create_user_volume", "git_cache_volume_manager")
 def create_user_volume(user_id: int) -> Tuple[bool, Optional[str]]:
     """
     Create a Docker volume for a specific user with metadata labels.
@@ -144,6 +148,7 @@ def create_user_volume(user_id: int) -> Tuple[bool, Optional[str]]:
         return False, str(e)
 
 
+@trace_sync("get_volume_metadata", "git_cache_volume_manager")
 def get_volume_metadata(volume_name: str) -> Optional[Dict[str, str]]:
     """
     Get metadata labels from a volume.
@@ -174,6 +179,7 @@ def get_volume_metadata(volume_name: str) -> Optional[Dict[str, str]]:
         return None
 
 
+@trace_sync("update_volume_last_used", "git_cache_volume_manager")
 def update_volume_last_used(volume_name: str) -> bool:
     """
     Update the last-used timestamp for a volume.
@@ -209,6 +215,7 @@ def update_volume_last_used(volume_name: str) -> bool:
         return False
 
 
+@trace_sync("delete_volume", "git_cache_volume_manager")
 def delete_volume(volume_name: str) -> Tuple[bool, Optional[str]]:
     """
     Delete a Docker volume.
@@ -241,6 +248,7 @@ def delete_volume(volume_name: str) -> Tuple[bool, Optional[str]]:
         return False, str(e)
 
 
+@trace_sync("list_user_volumes", "git_cache_volume_manager")
 def list_user_volumes() -> Dict[int, Dict[str, str]]:
     """
     List all git cache user volumes with their metadata.
@@ -296,6 +304,7 @@ def list_user_volumes() -> Dict[int, Dict[str, str]]:
         return {}
 
 
+@trace_sync("get_volume_size", "git_cache_volume_manager")
 def get_volume_size(volume_name: str) -> Optional[int]:
     """
     Get the disk usage of a volume in bytes.
@@ -331,6 +340,7 @@ def get_volume_size(volume_name: str) -> Optional[int]:
         return None
 
 
+@trace_sync("get_all_user_volume_names", "git_cache_volume_manager")
 def get_all_user_volume_names() -> List[str]:
     """
     Get a list of all user volume names.
