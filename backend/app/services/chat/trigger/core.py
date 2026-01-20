@@ -366,14 +366,20 @@ async def _stream_chat_response(
         span_manager.set_model_attributes(chat_config.model_config)
 
         # Search for relevant memories (with timeout, graceful degradation)
-        # WebSocket chat (web) always enables memory by default
+        # WebSocket chat (web) respects user preference for memory
         # This runs before context processing to inject memory context
-        from app.services.memory import get_memory_manager
+        from app.services.memory import get_memory_manager, is_memory_enabled_for_user
 
         memory_manager = get_memory_manager()
         relevant_memories = []
 
-        if memory_manager.is_enabled:
+        # Check user preference first
+        if not is_memory_enabled_for_user(user):
+            logger.info(
+                "[ai_trigger] Long-term memory disabled by user preference: user_id=%d",
+                user.id,
+            )
+        elif memory_manager.is_enabled:
             try:
                 logger.info(
                     "[ai_trigger] Searching for relevant memories: user_id=%d, project_id=%s",
