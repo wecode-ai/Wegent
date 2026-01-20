@@ -77,8 +77,8 @@ class ServerEvents:
     # Generic Skill Events
     SKILL_REQUEST = "skill:request"  # Server -> Client: skill request
 
-    # Flow events (to user room)
-    FLOW_EXECUTION_UPDATE = "flow:execution_update"
+    # Background execution events (to user room)
+    BACKGROUND_EXECUTION_UPDATE = "background:execution_update"
 
 
 # ============================================================
@@ -474,17 +474,19 @@ class CorrectionErrorPayload(BaseModel):
 
 
 # ============================================================
-# Flow Event Payloads
+# Background Execution Event Payloads
 # ============================================================
 
 
-class FlowExecutionUpdatePayload(BaseModel):
-    """Payload for flow:execution_update event."""
+class BackgroundExecutionUpdatePayload(BaseModel):
+    """Payload for background:execution_update event."""
 
-    execution_id: int = Field(..., description="Flow execution ID")
-    flow_id: int = Field(..., description="Flow ID")
-    flow_name: Optional[str] = Field(None, description="Flow name")
-    flow_display_name: Optional[str] = Field(None, description="Flow display name")
+    execution_id: int = Field(..., description="Background execution ID")
+    subscription_id: int = Field(..., description="Subscription ID")
+    subscription_name: Optional[str] = Field(None, description="Subscription name")
+    subscription_display_name: Optional[str] = Field(
+        None, description="Subscription display name"
+    )
     team_name: Optional[str] = Field(None, description="Team name")
     status: str = Field(..., description="Execution status")
     task_id: Optional[int] = Field(None, description="Associated task ID")

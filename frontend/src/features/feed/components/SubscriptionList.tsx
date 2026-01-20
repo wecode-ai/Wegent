@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Flow configuration list component.
+ * Subscription configuration list component.
  */
 import { useCallback, useState } from 'react'
 import {
@@ -43,59 +43,70 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { useFlowContext } from '../contexts/flowContext'
-import { flowApis } from '@/apis/flow'
-import type { Flow, FlowTriggerType } from '@/types/flow'
+import { useSubscriptionContext } from '../contexts/subscriptionContext'
+import { subscriptionApis } from '@/apis/subscription'
+import type { Subscription, SubscriptionTriggerType } from '@/types/subscription'
 import { toast } from 'sonner'
 import { formatUTCDate } from '@/lib/utils'
 
-interface FlowListProps {
-  onCreateFlow: () => void
-  onEditFlow: (flow: Flow) => void
+interface SubscriptionListProps {
+  onCreateSubscription: () => void
+  onEditSubscription: (subscription: Subscription) => void
 }
 
-const triggerTypeIcons: Record<FlowTriggerType, React.ReactNode> = {
+const triggerTypeIcons: Record<SubscriptionTriggerType, React.ReactNode> = {
   cron: <CalendarClock className="h-4 w-4" />,
   interval: <Timer className="h-4 w-4" />,
   one_time: <Clock className="h-4 w-4" />,
   event: <Webhook className="h-4 w-4" />,
 }
 
-export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
+export function SubscriptionList({
+  onCreateSubscription,
+  onEditSubscription,
+}: SubscriptionListProps) {
   const { t } = useTranslation('feed')
-  const { flows, flowsLoading, flowsTotal, refreshFlows, loadMoreFlows, refreshExecutions } =
-    useFlowContext()
+  const {
+    subscriptions,
+    subscriptionsLoading,
+    subscriptionsTotal,
+    refreshSubscriptions,
+    loadMoreSubscriptions,
+    refreshExecutions,
+  } = useSubscriptionContext()
 
-  const [deleteConfirmFlow, setDeleteConfirmFlow] = useState<Flow | null>(null)
+  const [deleteConfirmSubscription, setDeleteConfirmSubscription] = useState<Subscription | null>(
+    null
+  )
   const [actionLoading, setActionLoading] = useState<number | null>(null)
 
   const handleToggle = useCallback(
-    async (flow: Flow, enabled: boolean) => {
-      setActionLoading(flow.id)
+    async (subscription: Subscription, enabled: boolean) => {
+      setActionLoading(subscription.id)
       try {
-        await flowApis.toggleFlow(flow.id, enabled)
-        await refreshFlows()
+        await subscriptionApis.toggleSubscription(subscription.id, enabled)
+        await refreshSubscriptions()
         toast.success(enabled ? t('enabled_success') : t('disabled_success'))
       } catch (error) {
-        console.error('Failed to toggle flow:', error)
+        console.error('Failed to toggle subscription:', error)
         toast.error(t('toggle_failed'))
       } finally {
         setActionLoading(null)
       }
     },
-    [refreshFlows, t]
+    [refreshSubscriptions, t]
   )
 
   const handleTrigger = useCallback(
-    async (flow: Flow) => {
-      setActionLoading(flow.id)
+    async (subscription: Subscription) => {
+      setActionLoading(subscription.id)
       try {
-        await flowApis.triggerFlow(flow.id)
+        await subscriptionApis.triggerSubscription(subscription.id)
         toast.success(t('trigger_success'))
         // Refresh executions to show the new execution in timeline
         refreshExecutions()
       } catch (error) {
-        console.error('Failed to trigger flow:', error)
+        console.error('Failed to trigger subscription:', error)
         toast.error(t('trigger_failed'))
       } finally {
         setActionLoading(null)
@@ -105,29 +116,29 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
   )
 
   const handleDelete = useCallback(async () => {
-    if (!deleteConfirmFlow) return
+    if (!deleteConfirmSubscription) return
 
-    setActionLoading(deleteConfirmFlow.id)
+    setActionLoading(deleteConfirmSubscription.id)
     try {
-      await flowApis.deleteFlow(deleteConfirmFlow.id)
-      await refreshFlows()
+      await subscriptionApis.deleteSubscription(deleteConfirmSubscription.id)
+      await refreshSubscriptions()
       toast.success(t('delete_success'))
     } catch (error) {
-      console.error('Failed to delete flow:', error)
+      console.error('Failed to delete subscription:', error)
       toast.error(t('delete_failed'))
     } finally {
       setActionLoading(null)
-      setDeleteConfirmFlow(null)
+      setDeleteConfirmSubscription(null)
     }
-  }, [deleteConfirmFlow, refreshFlows, t])
+  }, [deleteConfirmSubscription, refreshSubscriptions, t])
 
   const handleCopyWebhookUrl = useCallback(
-    async (flow: Flow) => {
-      if (!flow.webhook_url) return
+    async (subscription: Subscription) => {
+      if (!subscription.webhook_url) return
       try {
         // Construct full URL
         const baseUrl = window.location.origin
-        const fullUrl = `${baseUrl}${flow.webhook_url}`
+        const fullUrl = `${baseUrl}${subscription.webhook_url}`
         await navigator.clipboard.writeText(fullUrl)
         toast.success(t('webhook_url_copied'))
       } catch (error) {
@@ -139,10 +150,10 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
   )
 
   const handleCopyWebhooksecret = useCallback(
-    async (flow: Flow) => {
-      if (!flow.webhook_secret) return
+    async (subscription: Subscription) => {
+      if (!subscription.webhook_secret) return
       try {
-        await navigator.clipboard.writeText(flow.webhook_secret)
+        await navigator.clipboard.writeText(subscription.webhook_secret)
         toast.success(t('webhook_secret_copied'))
       } catch (error) {
         console.error('Failed to copy webhook secret:', error)
@@ -152,13 +163,13 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
     [t]
   )
 
-  const handleCopyFlowId = useCallback(
-    async (flow: Flow) => {
+  const handleCopySubscriptionId = useCallback(
+    async (subscription: Subscription) => {
       try {
-        await navigator.clipboard.writeText(String(flow.id))
+        await navigator.clipboard.writeText(String(subscription.id))
         toast.success(t('subscription_id_copied'))
       } catch (error) {
-        console.error('Failed to copy flow ID:', error)
+        console.error('Failed to copy subscription ID:', error)
         toast.error(t('copy_failed'))
       }
     },
@@ -169,9 +180,9 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
     return formatUTCDate(dateStr)
   }
 
-  const getTriggerLabel = (flow: Flow): string => {
-    const config = flow.trigger_config || {}
-    switch (flow.trigger_type) {
+  const getTriggerLabel = (subscription: Subscription): string => {
+    const config = subscription.trigger_config || {}
+    switch (subscription.trigger_type) {
       case 'cron':
         return String(config.expression || 'Cron')
       case 'interval':
@@ -181,7 +192,7 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
       case 'event':
         return config.event_type === 'webhook' ? 'Webhook' : 'Git Push'
       default:
-        return flow.trigger_type || 'Unknown'
+        return subscription.trigger_type || 'Unknown'
     }
   }
 
@@ -189,53 +200,57 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
     <div className="flex h-full flex-col">
       {/* List */}
       <div className="flex-1 overflow-y-auto">
-        {flowsLoading && flows.length === 0 ? (
+        {subscriptionsLoading && subscriptions.length === 0 ? (
           <div className="flex h-40 items-center justify-center text-text-muted">
             {t('common:actions.loading')}
           </div>
-        ) : flows.length === 0 ? (
+        ) : subscriptions.length === 0 ? (
           <div className="flex h-40 flex-col items-center justify-center gap-2 text-text-muted">
             <p>{t('no_subscriptions')}</p>
-            <Button variant="outline" onClick={onCreateFlow} size="sm">
+            <Button variant="outline" onClick={onCreateSubscription} size="sm">
               <Plus className="mr-1.5 h-4 w-4" />
               {t('create_first_subscription')}
             </Button>
           </div>
         ) : (
           <div className="divide-y divide-border">
-            {flows.map(flow => (
-              <div key={flow.id} className="flex items-center gap-4 px-4 py-3 hover:bg-surface/50">
+            {subscriptions.map(subscription => (
+              <div
+                key={subscription.id}
+                className="flex items-center gap-4 px-4 py-3 hover:bg-surface/50"
+              >
                 {/* Icon and Name */}
                 <div className="flex min-w-0 flex-1 items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface text-text-secondary">
-                    {triggerTypeIcons[flow.trigger_type]}
+                    {triggerTypeIcons[subscription.trigger_type]}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="truncate font-medium">{flow.display_name}</span>
+                      <span className="truncate font-medium">{subscription.display_name}</span>
                       <Badge
-                        variant={flow.task_type === 'execution' ? 'default' : 'secondary'}
+                        variant={subscription.task_type === 'execution' ? 'default' : 'secondary'}
                         className="text-xs"
                       >
-                        {flow.task_type === 'execution'
+                        {subscription.task_type === 'execution'
                           ? t('task_type_execution')
                           : t('task_type_collection')}
                       </Badge>
                     </div>
                     <div className="flex items-center gap-2 text-xs text-text-muted">
-                      <span>{getTriggerLabel(flow)}</span>
-                      {flow.trigger_type !== 'event' && (
+                      <span>{getTriggerLabel(subscription)}</span>
+                      {subscription.trigger_type !== 'event' && (
                         <>
                           <span>·</span>
                           <span>
-                            {t('next_execution')}: {formatNextExecution(flow.next_execution_time)}
+                            {t('next_execution')}:{' '}
+                            {formatNextExecution(subscription.next_execution_time)}
                           </span>
                         </>
                       )}
-                      {flow.trigger_type === 'event' && flow.webhook_url && (
+                      {subscription.trigger_type === 'event' && subscription.webhook_url && (
                         <>
                           <span>·</span>
-                          <span className="truncate max-w-[200px]">{flow.webhook_url}</span>
+                          <span className="truncate max-w-[200px]">{subscription.webhook_url}</span>
                         </>
                       )}
                     </div>
@@ -244,15 +259,15 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
 
                 {/* Stats */}
                 <div className="hidden text-center sm:block">
-                  <div className="text-sm font-medium">{flow.execution_count}</div>
+                  <div className="text-sm font-medium">{subscription.execution_count}</div>
                   <div className="text-xs text-text-muted">{t('executions')}</div>
                 </div>
 
                 {/* Toggle */}
                 <Switch
-                  checked={flow.enabled}
-                  onCheckedChange={enabled => handleToggle(flow, enabled)}
-                  disabled={actionLoading === flow.id}
+                  checked={subscription.enabled}
+                  onCheckedChange={enabled => handleToggle(subscription, enabled)}
+                  disabled={actionLoading === subscription.id}
                 />
 
                 {/* Actions */}
@@ -264,30 +279,30 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem
-                      onClick={() => handleTrigger(flow)}
-                      disabled={actionLoading === flow.id}
+                      onClick={() => handleTrigger(subscription)}
+                      disabled={actionLoading === subscription.id}
                     >
                       <Play className="mr-2 h-4 w-4" />
                       {t('trigger_now')}
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => onEditFlow(flow)}>
+                    <DropdownMenuItem onClick={() => onEditSubscription(subscription)}>
                       <Edit className="mr-2 h-4 w-4" />
                       {t('edit')}
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleCopyFlowId(flow)}>
+                    <DropdownMenuItem onClick={() => handleCopySubscriptionId(subscription)}>
                       <Hash className="mr-2 h-4 w-4" />
                       {t('copy_subscription_id')}
                     </DropdownMenuItem>
                     {/* Webhook copy options for event triggers */}
-                    {flow.trigger_type === 'event' && flow.webhook_url && (
+                    {subscription.trigger_type === 'event' && subscription.webhook_url && (
                       <>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => handleCopyWebhookUrl(flow)}>
+                        <DropdownMenuItem onClick={() => handleCopyWebhookUrl(subscription)}>
                           <Copy className="mr-2 h-4 w-4" />
                           {t('copy_webhook_url')}
                         </DropdownMenuItem>
-                        {flow.webhook_secret && (
-                          <DropdownMenuItem onClick={() => handleCopyWebhooksecret(flow)}>
+                        {subscription.webhook_secret && (
+                          <DropdownMenuItem onClick={() => handleCopyWebhooksecret(subscription)}>
                             <Key className="mr-2 h-4 w-4" />
                             {t('copy_webhook_secret')}
                           </DropdownMenuItem>
@@ -296,7 +311,7 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
                     )}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
-                      onClick={() => setDeleteConfirmFlow(flow)}
+                      onClick={() => setDeleteConfirmSubscription(subscription)}
                       className="text-destructive"
                     >
                       <Trash2 className="mr-2 h-4 w-4" />
@@ -308,10 +323,14 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
             ))}
 
             {/* Load more */}
-            {flows.length < flowsTotal && (
+            {subscriptions.length < subscriptionsTotal && (
               <div className="flex justify-center py-4">
-                <Button variant="ghost" onClick={loadMoreFlows} disabled={flowsLoading}>
-                  {flowsLoading ? t('common:actions.loading') : t('common:tasks.load_more')}
+                <Button
+                  variant="ghost"
+                  onClick={loadMoreSubscriptions}
+                  disabled={subscriptionsLoading}
+                >
+                  {subscriptionsLoading ? t('common:actions.loading') : t('common:tasks.load_more')}
                 </Button>
               </div>
             )}
@@ -321,15 +340,15 @@ export function FlowList({ onCreateFlow, onEditFlow }: FlowListProps) {
 
       {/* Delete Confirmation */}
       <AlertDialog
-        open={!!deleteConfirmFlow}
-        onOpenChange={open => !open && setDeleteConfirmFlow(null)}
+        open={!!deleteConfirmSubscription}
+        onOpenChange={open => !open && setDeleteConfirmSubscription(null)}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t('delete_confirm_title')}</AlertDialogTitle>
             <AlertDialogDescription>
               {t('delete_confirm_message', {
-                name: deleteConfirmFlow?.display_name,
+                name: deleteConfirmSubscription?.display_name,
               })}
             </AlertDialogDescription>
           </AlertDialogHeader>

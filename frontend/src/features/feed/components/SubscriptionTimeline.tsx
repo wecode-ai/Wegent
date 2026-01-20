@@ -5,8 +5,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Flow execution timeline component - Twitter-like social feed style.
- * Displays flow executions as posts similar to social media feeds.
+ * Subscription execution timeline component - Twitter-like social feed style.
+ * Displays background executions as posts similar to social media feeds.
  */
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -30,18 +30,20 @@ import {
 import { toast } from 'sonner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
-import { useFlowContext } from '../contexts/flowContext'
-import type { FlowExecution, FlowExecutionStatus } from '@/types/flow'
+import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
+import { useTheme } from '@/features/theme/ThemeProvider'
+import { useSubscriptionContext } from '../contexts/subscriptionContext'
+import type { BackgroundExecution, BackgroundExecutionStatus } from '@/types/subscription'
 import { parseUTCDate } from '@/lib/utils'
 import { paths } from '@/config/paths'
-import { FlowConversationDialog } from './FlowConversationDialog'
+import { SubscriptionConversationDialog } from './SubscriptionConversationDialog'
 
-interface FlowTimelineProps {
-  onCreateFlow?: () => void
+interface SubscriptionTimelineProps {
+  onCreateSubscription?: () => void
 }
 
 const statusConfig: Record<
-  FlowExecutionStatus,
+  BackgroundExecutionStatus,
   { icon: React.ReactNode; text: string; color: string }
 > = {
   PENDING: {
@@ -76,8 +78,9 @@ const statusConfig: Record<
   },
 }
 
-export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
+export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimelineProps) {
   const { t } = useTranslation('feed')
+  const { theme } = useTheme()
   const router = useRouter()
   const {
     executions,
@@ -87,7 +90,7 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
     loadMoreExecutions,
     refreshExecutions,
     cancelExecution,
-  } = useFlowContext()
+  } = useSubscriptionContext()
 
   // Dialog state for viewing conversation
   const [dialogTaskId, setDialogTaskId] = useState<number | null>(null)
@@ -97,7 +100,7 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
   // Group executions by date for section headers
   const groupedExecutions = useMemo(() => {
     try {
-      const groups: { label: string; items: FlowExecution[] }[] = []
+      const groups: { label: string; items: BackgroundExecution[] }[] = []
       const today = new Date()
       today.setHours(0, 0, 0, 0)
 
@@ -107,7 +110,7 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
       const weekAgo = new Date(today)
       weekAgo.setDate(weekAgo.getDate() - 7)
 
-      const groupMap: Record<string, FlowExecution[]> = {}
+      const groupMap: Record<string, BackgroundExecution[]> = {}
 
       executions.forEach(exec => {
         // Parse as UTC time from backend
@@ -178,16 +181,16 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
     }
   }
 
-  const handleViewTask = (exec: FlowExecution) => {
+  const handleViewTask = (exec: BackgroundExecution) => {
     if (exec.task_id) {
       setDialogTaskId(exec.task_id)
     }
   }
 
-  const handleCopyIds = async (exec: FlowExecution) => {
+  const handleCopyIds = async (exec: BackgroundExecution) => {
     const ids = [
       `Execution ID: ${exec.id}`,
-      `Flow ID: ${exec.flow_id}`,
+      `Subscription ID: ${exec.subscription_id}`,
       exec.task_id ? `Task ID: ${exec.task_id}` : null,
     ]
       .filter(Boolean)
@@ -201,7 +204,7 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
     }
   }
 
-  const handleCancel = async (exec: FlowExecution) => {
+  const handleCancel = async (exec: BackgroundExecution) => {
     if (cancellingId) return // Prevent double-click
     try {
       setCancellingId(exec.id)
@@ -214,9 +217,14 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
     }
   }
 
-  const renderPost = (exec: FlowExecution, isLast: boolean) => {
+  // Track which execution's summary is expanded
+  const [expandedSummaryId, setExpandedSummaryId] = useState<number | null>(null)
+
+  const renderPost = (exec: BackgroundExecution, isLast: boolean) => {
     const status = statusConfig[exec.status]
-    const flowName = exec.flow_display_name || exec.flow_name || t('feed.unnamed_subscription')
+    const subscriptionName =
+      exec.subscription_display_name || exec.subscription_name || t('feed.unnamed_subscription')
+    const isSummaryExpanded = expandedSummaryId === exec.id
 
     return (
       <div key={exec.id} className="relative">
@@ -248,7 +256,9 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
             {/* Header */}
             <div className="flex items-center gap-2">
               <div className="flex items-baseline gap-2 flex-wrap flex-1 min-w-0">
-                <span className="font-semibold text-text-primary text-[15px]">{flowName}</span>
+                <span className="font-semibold text-text-primary text-[15px]">
+                  {subscriptionName}
+                </span>
                 {exec.team_name && (
                   <span className="text-text-muted text-sm">@{exec.team_name}</span>
                 )}
@@ -281,21 +291,47 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
               )}
             </div>
 
-            {/* Main content - the prompt */}
-            <div className="text-[15px] text-text-primary leading-relaxed whitespace-pre-wrap">
-              {exec.prompt}
-            </div>
-
             {/* AI Summary card for collection tasks */}
             {exec.task_type === 'collection' && exec.result_summary && (
-              <div className="mt-3 rounded-2xl border border-border bg-surface/50 overflow-hidden">
+              <div className="rounded-2xl border border-border bg-surface/50 overflow-hidden">
                 <div className="px-4 py-3">
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-primary mb-2">
-                    <Sparkles className="h-3.5 w-3.5" />
-                    {t('feed.ai_summary')}
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-primary">
+                      <Bot className="h-3.5 w-3.5" />
+                      {exec.team_name || t('feed.unnamed_subscription')}
+                    </div>
+                    {exec.task_id && (
+                      <button
+                        onClick={() => handleViewTask(exec)}
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
+                      >
+                        <MessageSquare className="h-3 w-3" />
+                        {t('feed.view_conversation')}
+                      </button>
+                    )}
                   </div>
-                  <div className="text-sm text-text-primary whitespace-pre-wrap line-clamp-6">
-                    {exec.result_summary}
+                  <div
+                    className={`text-sm prose prose-sm max-w-none dark:prose-invert ${isSummaryExpanded ? '' : 'line-clamp-6'}`}
+                  >
+                    <EnhancedMarkdown source={exec.result_summary} theme={theme} />
+                  </div>
+                  {/* Action buttons area */}
+                  <div className="mt-3 flex items-center gap-3">
+                    {isSummaryExpanded ? (
+                      <button
+                        onClick={() => setExpandedSummaryId(null)}
+                        className="text-xs text-primary hover:text-primary/80 transition-colors"
+                      >
+                        {t('feed.collapse')}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setExpandedSummaryId(exec.id)}
+                        className="text-xs text-primary hover:text-primary/80 transition-colors"
+                      >
+                        {t('feed.expand')}
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -331,8 +367,8 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
                   {t('cancel_execution')}
                 </button>
               )}
-              {/* View conversation link */}
-              {exec.task_id && (
+              {/* View conversation link - only show if not already in AI summary card */}
+              {exec.task_id && !(exec.task_type === 'collection' && exec.result_summary) && (
                 <button
                   onClick={() => handleViewTask(exec)}
                   className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 transition-colors"
@@ -375,8 +411,8 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
             <div className="text-center">
               <p className="font-medium text-text-primary text-lg mb-1">{t('feed.empty_title')}</p>
               <p className="text-sm max-w-xs mb-4">{t('feed.empty_hint')}</p>
-              {onCreateFlow && (
-                <Button onClick={onCreateFlow} className="mb-3">
+              {onCreateSubscription && (
+                <Button onClick={onCreateSubscription} className="mb-3">
                   <Plus className="h-4 w-4 mr-1.5" />
                   {t('create_subscription')}
                 </Button>
@@ -448,7 +484,7 @@ export function FlowTimeline({ onCreateFlow }: FlowTimelineProps) {
       )}
 
       {/* Conversation Dialog */}
-      <FlowConversationDialog
+      <SubscriptionConversationDialog
         taskId={dialogTaskId}
         open={dialogTaskId !== null}
         onOpenChange={open => {

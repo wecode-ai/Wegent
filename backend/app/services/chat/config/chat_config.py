@@ -242,10 +242,13 @@ class ChatConfigBuilder:
         )
 
         # Get base model config (extracts from DB and handles env placeholders + decryption)
+        # Use self.user_id instead of self.team.user_id to support:
+        # 1. Flow tasks where Flow owner may have different models than Team owner
+        # 2. User's private models should be accessible based on the current user
         model_config = get_model_config_for_bot(
             self.db,
             bot,
-            self.team.user_id,
+            self.user_id,
             override_model_name=override_model_name,
             force_override=force_override,
         )

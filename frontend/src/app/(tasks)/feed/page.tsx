@@ -13,7 +13,7 @@ import {
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
-import { FlowPage as FlowPageContent } from '@/features/feed/components'
+import { SubscriptionPage as SubscriptionPageContent } from '@/features/feed/components'
 import { Button } from '@/components/ui/button'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
@@ -22,12 +22,12 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 
 /**
- * AI Flow Page with Sidebar
+ * Subscription Page with Sidebar
  *
- * Main page for AI Flow (关注) module with left sidebar.
+ * Main page for Subscription (订阅) module with left sidebar.
  * Allows users to configure automated task triggers and view execution results.
  */
-export default function FlowPage() {
+export default function SubscriptionPage() {
   const { t } = useTranslation()
   const router = useRouter()
 
@@ -105,9 +105,9 @@ export default function FlowPage() {
           <ThemeToggle />
         </TopNavigation>
 
-        {/* Main content area - Flow page content */}
+        {/* Main content area - Subscription page content */}
         <div className="flex-1 overflow-hidden">
-          <FlowPageContent />
+          <SubscriptionPageContent />
         </div>
       </div>
     </div>

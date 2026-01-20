@@ -5,8 +5,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Flow conversation dialog component.
- * Displays a Flow task's conversation in a dialog without navigating away from the Flows page.
+ * Subscription conversation dialog component.
+ * Displays a Subscription task's conversation in a dialog without navigating away from the Subscriptions page.
  */
 import { useEffect, useState, useCallback } from 'react'
 import { Bot, Loader2, MessageSquare, User, AlertCircle, ExternalLink } from 'lucide-react'
@@ -26,7 +26,7 @@ import type { TaskDetail, TaskDetailSubtask } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 
-interface FlowConversationDialogProps {
+interface SubscriptionConversationDialogProps {
   taskId: number | null
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -93,11 +93,11 @@ function ConversationMessage({
   )
 }
 
-export function FlowConversationDialog({
+export function SubscriptionConversationDialog({
   taskId,
   open,
   onOpenChange,
-}: FlowConversationDialogProps) {
+}: SubscriptionConversationDialogProps) {
   const { t } = useTranslation('feed')
   const { theme } = useTheme()
   const router = useRouter()
@@ -116,7 +116,7 @@ export function FlowConversationDialog({
           setTaskDetail(detail)
         })
         .catch((err: Error) => {
-          console.error('[FlowConversationDialog] Failed to load task:', err)
+          console.error('[SubscriptionConversationDialog] Failed to load task:', err)
           setError(err.message || t('common:errors.unknown'))
         })
         .finally(() => {

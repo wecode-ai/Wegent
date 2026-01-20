@@ -45,7 +45,7 @@ import {
   CorrectionChunkPayload,
   CorrectionDonePayload,
   CorrectionErrorPayload,
-  FlowExecutionUpdatePayload,
+  BackgroundExecutionUpdatePayload,
   AuthErrorPayload,
 } from '@/types/socket'
 
@@ -111,8 +111,8 @@ interface SocketContextType {
   sendSkillResponse: (payload: SkillResponsePayload) => void
   /** Register correction event handlers */
   registerCorrectionHandlers: (handlers: CorrectionEventHandlers) => () => void
-  /** Register flow event handlers */
-  registerFlowHandlers: (handlers: FlowEventHandlers) => () => void
+  /** Register background execution event handlers */
+  registerBackgroundExecutionHandlers: (handlers: BackgroundExecutionEventHandlers) => () => void
   /** Register a callback to be called when WebSocket reconnects */
   onReconnect: (callback: ReconnectCallback) => () => void
 }
@@ -152,9 +152,9 @@ export interface CorrectionEventHandlers {
   onCorrectionError?: (data: CorrectionErrorPayload) => void
 }
 
-/** Flow event handlers for flow execution updates */
-export interface FlowEventHandlers {
-  onFlowExecutionUpdate?: (data: FlowExecutionUpdatePayload) => void
+/** Background execution event handlers for subscription execution updates */
+export interface BackgroundExecutionEventHandlers {
+  onBackgroundExecutionUpdate?: (data: BackgroundExecutionUpdatePayload) => void
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined)
@@ -690,26 +690,25 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     },
     [] // No dependencies - use socketRef
   )
-
   /**
-   * Register flow event handlers for flow execution updates
+   * Register background execution event handlers for subscription execution updates
    * Returns a cleanup function to unregister handlers
    */
-  const registerFlowHandlers = useCallback(
-    (handlers: FlowEventHandlers): (() => void) => {
+  const registerBackgroundExecutionHandlers = useCallback(
+    (handlers: BackgroundExecutionEventHandlers): (() => void) => {
       if (!socket) {
         return () => {}
       }
 
-      const { onFlowExecutionUpdate } = handlers
+      const { onBackgroundExecutionUpdate } = handlers
 
-      if (onFlowExecutionUpdate)
-        socket.on(ServerEvents.FLOW_EXECUTION_UPDATE, onFlowExecutionUpdate)
+      if (onBackgroundExecutionUpdate)
+        socket.on(ServerEvents.BACKGROUND_EXECUTION_UPDATE, onBackgroundExecutionUpdate)
 
       // Return cleanup function
       return () => {
-        if (onFlowExecutionUpdate)
-          socket.off(ServerEvents.FLOW_EXECUTION_UPDATE, onFlowExecutionUpdate)
+        if (onBackgroundExecutionUpdate)
+          socket.off(ServerEvents.BACKGROUND_EXECUTION_UPDATE, onBackgroundExecutionUpdate)
       }
     },
     [socket]
@@ -797,7 +796,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         registerSkillHandlers,
         sendSkillResponse,
         registerCorrectionHandlers,
-        registerFlowHandlers,
+        registerBackgroundExecutionHandlers,
         onReconnect,
       }}
     >

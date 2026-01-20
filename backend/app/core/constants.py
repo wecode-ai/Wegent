@@ -33,21 +33,21 @@ def get_task_room(task_id: int) -> str:
 # ========== Kind Names ==========
 
 KIND_TEAM = "Team"
-KIND_FLOW = "Flow"
+KIND_SUBSCRIPTION = "Subscription"
 KIND_WORKSPACE = "Workspace"
 KIND_TASK = "Task"
 
 
-# ========== Flow Execution Labels ==========
+# ========== Background Execution Labels ==========
 
-LABEL_FLOW_ID = "flowId"
+LABEL_SUBSCRIPTION_ID = "subscriptionId"
 LABEL_EXECUTION_ID = "executionId"
-LABEL_FLOW_EXECUTION_ID = "flowExecutionId"
+LABEL_BACKGROUND_EXECUTION_ID = "backgroundExecutionId"
 LABEL_SOURCE = "source"
 
 
 # ========== Trigger Types (string values for database storage) ==========
-# These match FlowTriggerType enum values but are plain strings for use
+# These match SubscriptionTriggerType enum values but are plain strings for use
 # where enum comparison is not appropriate
 
 TRIGGER_TYPE_CRON = "cron"

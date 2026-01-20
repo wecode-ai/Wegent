@@ -56,8 +56,8 @@ export const ServerEvents = {
   TASK_APP_UPDATE: 'task:app_update', // App data updated (to task room)
   UNREAD_COUNT: 'unread:count',
 
-  // Flow events (to user room)
-  FLOW_EXECUTION_UPDATE: 'flow:execution_update',
+  // Background execution events (to user room)
+  BACKGROUND_EXECUTION_UPDATE: 'background:execution_update',
 
   // Generic Skill Events
   SKILL_REQUEST: 'skill:request', // Server -> Client: generic skill request
@@ -326,14 +326,14 @@ export interface UnreadCountPayload {
 }
 
 // ============================================================
-// Flow Event Payloads
+// Background Execution Event Payloads
 // ============================================================
 
-export interface FlowExecutionUpdatePayload {
+export interface BackgroundExecutionUpdatePayload {
   execution_id: number
-  flow_id: number
-  flow_name: string
-  flow_display_name?: string
+  subscription_id: number
+  subscription_name: string
+  subscription_display_name?: string
   team_name?: string
   status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'RETRYING' | 'CANCELLED'
   task_id?: number

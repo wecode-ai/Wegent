@@ -3,20 +3,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * AI Flow (关注) related types.
+ * Subscription (订阅) related types.
+ * Refactored from Flow types to align with CRD architecture.
  */
 
-// Flow task type enumeration
-export type FlowTaskType = 'execution' | 'collection'
+// Subscription task type enumeration
+export type SubscriptionTaskType = 'execution' | 'collection'
 
-// Flow trigger type enumeration
-export type FlowTriggerType = 'cron' | 'interval' | 'one_time' | 'event'
+// Subscription trigger type enumeration
+export type SubscriptionTriggerType = 'cron' | 'interval' | 'one_time' | 'event'
 
 // Event trigger sub-type enumeration
-export type FlowEventType = 'webhook' | 'git_push'
+export type SubscriptionEventType = 'webhook' | 'git_push'
 
-// Flow execution status enumeration
-export type FlowExecutionStatus =
+// Background execution status enumeration
+export type BackgroundExecutionStatus =
   | 'PENDING'
   | 'RUNNING'
   | 'COMPLETED'
@@ -45,33 +46,45 @@ export interface GitPushEventConfig {
 }
 
 export interface EventTriggerConfig {
-  event_type: FlowEventType
+  event_type: SubscriptionEventType
   git_push?: GitPushEventConfig
 }
 
-export type FlowTriggerConfig =
+export type SubscriptionTriggerConfig =
   | CronTriggerConfig
   | IntervalTriggerConfig
   | OneTimeTriggerConfig
   | EventTriggerConfig
 
-// Flow configuration
-export interface Flow {
+// Model reference for Subscription
+export interface SubscriptionModelRef {
+  name: string
+  namespace: string
+}
+
+// Subscription configuration
+export interface Subscription {
   id: number
   user_id: number
   name: string
   namespace: string
   display_name: string
   description?: string
-  task_type: FlowTaskType
-  trigger_type: FlowTriggerType
+  task_type: SubscriptionTaskType
+  trigger_type: SubscriptionTriggerType
   trigger_config: Record<string, unknown>
   team_id: number
   workspace_id?: number
+  // Model reference fields
+  model_ref?: SubscriptionModelRef
+  force_override_bot_model?: boolean
   prompt_template: string
   retry_count: number
   timeout_seconds: number // Execution timeout (60-3600s, default 600)
   enabled: boolean
+  // History preservation settings
+  preserve_history?: boolean // Whether to preserve conversation history across executions
+  bound_task_id?: number // Task ID bound to this subscription for history preservation
   webhook_url?: string
   webhook_secret?: string // HMAC signing secret for webhook verification
   last_execution_time?: string
@@ -84,14 +97,14 @@ export interface Flow {
   updated_at: string
 }
 
-// Flow creation request
-export interface FlowCreateRequest {
+// Subscription creation request
+export interface SubscriptionCreateRequest {
   name: string
   namespace?: string
   display_name: string
   description?: string
-  task_type: FlowTaskType
-  trigger_type: FlowTriggerType
+  task_type: SubscriptionTaskType
+  trigger_type: SubscriptionTriggerType
   trigger_config: Record<string, unknown>
   team_id: number
   workspace_id?: number
@@ -100,18 +113,23 @@ export interface FlowCreateRequest {
   git_repo_id?: number
   git_domain?: string
   branch_name?: string
+  // Model reference fields
+  model_ref?: SubscriptionModelRef
+  force_override_bot_model?: boolean
   prompt_template: string
   retry_count?: number
   timeout_seconds?: number // Execution timeout (60-3600s)
   enabled?: boolean
+  // History preservation settings
+  preserve_history?: boolean // Whether to preserve conversation history across executions
 }
 
-// Flow update request
-export interface FlowUpdateRequest {
+// Subscription update request
+export interface SubscriptionUpdateRequest {
   display_name?: string
   description?: string
-  task_type?: FlowTaskType
-  trigger_type?: FlowTriggerType
+  task_type?: SubscriptionTaskType
+  trigger_type?: SubscriptionTriggerType
   trigger_config?: Record<string, unknown>
   team_id?: number
   workspace_id?: number
@@ -120,28 +138,33 @@ export interface FlowUpdateRequest {
   git_repo_id?: number
   git_domain?: string
   branch_name?: string
+  // Model reference fields
+  model_ref?: SubscriptionModelRef
+  force_override_bot_model?: boolean
   prompt_template?: string
   retry_count?: number
   timeout_seconds?: number // Execution timeout (60-3600s)
   enabled?: boolean
+  // History preservation settings
+  preserve_history?: boolean // Whether to preserve conversation history across executions
 }
 
-// Flow list response
-export interface FlowListResponse {
+// Subscription list response
+export interface SubscriptionListResponse {
   total: number
-  items: Flow[]
+  items: Subscription[]
 }
 
-// Flow execution record
-export interface FlowExecution {
+// Background execution record
+export interface BackgroundExecution {
   id: number
   user_id: number
-  flow_id: number
+  subscription_id: number
   task_id?: number
   trigger_type: string
   trigger_reason?: string
   prompt: string
-  status: FlowExecutionStatus
+  status: BackgroundExecutionStatus
   result_summary?: string
   error_message?: string
   retry_attempt: number
@@ -149,26 +172,26 @@ export interface FlowExecution {
   completed_at?: string
   created_at: string
   updated_at: string
-  // Enriched fields from flow
-  flow_name?: string
-  flow_display_name?: string
+  // Enriched fields from subscription
+  subscription_name?: string
+  subscription_display_name?: string
   team_name?: string
   task_type?: string
 }
 
-// Flow execution list response
-export interface FlowExecutionListResponse {
+// Background execution list response
+export interface BackgroundExecutionListResponse {
   total: number
-  items: FlowExecution[]
+  items: BackgroundExecution[]
 }
 
 // Timeline filter options
-export interface FlowTimelineFilter {
+export interface SubscriptionTimelineFilter {
   time_range?: 'today' | '7d' | '30d' | 'custom'
   start_date?: string
   end_date?: string
-  status?: FlowExecutionStatus[]
-  flow_ids?: number[]
+  status?: BackgroundExecutionStatus[]
+  subscription_ids?: number[]
   team_ids?: number[]
-  task_types?: FlowTaskType[]
+  task_types?: SubscriptionTaskType[]
 }

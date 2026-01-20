@@ -116,6 +116,7 @@ async def trigger_ai_response(
     namespace: Optional["ChatNamespace"] = None,
     user_subtask_id: Optional[int] = None,
     event_emitter: Optional["ChatEventEmitter"] = None,
+    history_limit: Optional[int] = None,
 ) -> None:
     """
     Trigger AI response for a chat message.
@@ -144,7 +145,9 @@ async def trigger_ai_response(
         user_subtask_id: Optional user subtask ID for unified context processing
             (attachments and knowledge bases are retrieved from this subtask's contexts)
         event_emitter: Optional custom event emitter. If None, uses WebSocketEventEmitter.
-            Pass FlowEventEmitter for Flow tasks to update FlowExecution status.
+            Pass SubscriptionEventEmitter for Subscription tasks to update BackgroundExecution status.
+        history_limit: Optional limit on number of history messages to include.
+            Used by Subscription tasks with preserveHistory enabled.
     """
     logger.info(
         "[ai_trigger] Triggering AI response: task_id=%d, "
@@ -168,6 +171,7 @@ async def trigger_ai_response(
             namespace=namespace,
             user_subtask_id=user_subtask_id,
             event_emitter=event_emitter,
+            history_limit=history_limit,
         )
     else:
         # Executor-based (ClaudeCode, Agno, etc.)
@@ -189,6 +193,7 @@ async def _trigger_direct_chat(
     namespace: Optional["ChatNamespace"],
     user_subtask_id: Optional[int] = None,
     event_emitter: Optional["ChatEventEmitter"] = None,
+    history_limit: Optional[int] = None,
 ) -> None:
     """
     Trigger direct chat (Chat Shell) AI response using ChatService.
@@ -207,7 +212,9 @@ async def _trigger_direct_chat(
         user_subtask_id: Optional user subtask ID for unified context processing
             (attachments and knowledge bases are retrieved from this subtask's contexts)
         event_emitter: Optional custom event emitter. If None, uses WebSocketEventEmitter.
-            Pass FlowEventEmitter for Flow tasks to update FlowExecution status.
+            Pass SubscriptionEventEmitter for Subscription tasks to update BackgroundExecution status.
+        history_limit: Optional limit on number of history messages to include.
+            Used by Subscription tasks with preserveHistory enabled.
     """
     # Extract data from ORM objects before starting background task
     # This prevents DetachedInstanceError when the session is closed
@@ -248,6 +255,7 @@ async def _trigger_direct_chat(
             otel_context=otel_context,
             user_subtask_id=user_subtask_id,
             event_emitter=event_emitter,
+            history_limit=history_limit,
         )
         logger.info(
             "[ai_trigger] Flow task mode: stream task completed (subtask_id=%d)",
@@ -267,6 +275,7 @@ async def _trigger_direct_chat(
                 otel_context=otel_context,
                 user_subtask_id=user_subtask_id,
                 event_emitter=event_emitter,
+                history_limit=history_limit,
             )
         )
 
@@ -287,6 +296,7 @@ async def _stream_chat_response(
     otel_context: Optional[Any] = None,
     user_subtask_id: Optional[int] = None,
     event_emitter: Optional["ChatEventEmitter"] = None,
+    history_limit: Optional[int] = None,
 ) -> None:
     """
     Stream chat response using ChatService.
@@ -310,6 +320,8 @@ async def _stream_chat_response(
             (attachments and knowledge bases are retrieved from this subtask's contexts)
         event_emitter: Optional event emitter for chat events. If None, uses WebSocketEventEmitter.
             Pass NoOpEventEmitter for background tasks without WebSocket (e.g., Flow Scheduler).
+        history_limit: Optional limit on number of history messages to include.
+            Used by Subscription tasks with preserveHistory enabled.
     """
     # Import here to avoid circular imports
     from app.services.chat.trigger.emitter import (
@@ -584,6 +596,7 @@ async def _stream_chat_response(
                 is_user_selected_kb=is_user_selected_kb,
                 preload_skills=chat_config.preload_skills,  # Use resolved from ChatConfig
                 user_subtask_id=user_subtask_id,  # Pass user subtask ID for RAG persistence
+                history_limit=history_limit,  # Pass history limit for subscription tasks
             )
         elif streaming_mode == "bridge":
             # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards
@@ -650,37 +663,37 @@ async def _stream_with_http_adapter(
     is_user_selected_kb: bool = True,
     preload_skills: list = None,
     user_subtask_id: Optional[int] = None,
+    history_limit: Optional[int] = None,
 ) -> None:
     """Stream using HTTP adapter to call remote chat_shell service.
 
-        This function:
-        1. Builds a ChatRequest from the parameters
-        2. Uses HTTPAdapter to call chat_shell's /v1/response API
-        3. Processes SSE events and forwards them to WebSocket (via event_emitter)
-        4. Checks Redis cancel flag and disconnects from chat_shell when cancelled
+    This function:
+    1. Builds a ChatRequest from the parameters
+    2. Uses HTTPAdapter to call chat_shell's /v1/response API
+    3. Processes SSE events and forwards them to WebSocket (via event_emitter)
+    4. Checks Redis cancel flag and disconnects from chat_shell when cancelled
 
-        Args:
-            stream_data: StreamTaskData containing all extracted ORM data
-            message: User message
-            model_config: Model configuration
-            system_prompt: System prompt
-            ws_config: WebSocket stream configuration
-            extra_tools: Extra tools (note: tools are not sent via HTTP, handled by chat_shell)
-            skill_names: List of available skill names for dynamic loading
-            skill_configs: List of skill tool configurations
-            knowledge_base_ids: List of knowledge base IDs to search
-            document_ids: List of document IDs to filter retrieval
-            table_contexts: List of table context dicts for DataTableTool
-    <<<<<<< HEAD
-            event_emitter: Optional event emitter for chat events. If None, uses WebSocketEventEmitter.
-                Pass NoOpEventEmitter for background tasks without WebSocket (e.g., Flow Scheduler).
-    =======
-            is_user_selected_kb: Whether KB is explicitly selected by user (strict mode)
-                or inherited from task (relaxed mode). Defaults to True for backward compatibility.
-    >>>>>>> main
-            preload_skills: List of skill names to preload into system prompt
-            user_subtask_id: User subtask ID for RAG result persistence (different from
-                stream_data.subtask_id which is AI response's subtask)
+    Args:
+        stream_data: StreamTaskData containing all extracted ORM data
+        message: User message
+        model_config: Model configuration
+        system_prompt: System prompt
+        ws_config: WebSocket stream configuration
+        extra_tools: Extra tools (note: tools are not sent via HTTP, handled by chat_shell)
+        skill_names: List of available skill names for dynamic loading
+        skill_configs: List of skill tool configurations
+        knowledge_base_ids: List of knowledge base IDs to search
+        document_ids: List of document IDs to filter retrieval
+        table_contexts: List of table context dicts for DataTableTool
+        event_emitter: Optional event emitter for chat events. If None, uses WebSocketEventEmitter.
+            Pass NoOpEventEmitter for background tasks without WebSocket (e.g., Subscription Scheduler).
+        is_user_selected_kb: Whether KB is explicitly selected by user (strict mode)
+            or inherited from task (relaxed mode). Defaults to True for backward compatibility.
+        preload_skills: List of skill names to preload into system prompt
+        user_subtask_id: User subtask ID for RAG result persistence (different from
+            stream_data.subtask_id which is AI response's subtask)
+        history_limit: Optional limit on number of history messages to include.
+            Used by Subscription tasks with preserveHistory enabled.
     """
     # Import here to avoid circular imports
     from app.core.config import settings
@@ -787,6 +800,7 @@ async def _stream_with_http_adapter(
         table_contexts=table_contexts or [],
         task_data=task_data,
         mcp_servers=mcp_servers,
+        history_limit=history_limit,  # Pass history limit for subscription tasks
     )
 
     logger.info(

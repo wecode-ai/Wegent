@@ -529,6 +529,11 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       return
     }
 
+    // Wait for the button to be enabled (canSubmit = true)
+    // This requires: !isLoading && !isStreaming && !isModelSelectionRequired && isAttachmentReadyToSend
+    console.log('Waiting for send button to be enabled...')
+    await expect(sendButton).toBeEnabled({ timeout: 15000 })
+
     await sendButton.click()
 
     // Step 6: Wait for the request to be processed
@@ -652,6 +657,11 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       test.skip()
       return
     }
+
+    // Wait for the button to be enabled (canSubmit = true)
+    // This requires: !isLoading && !isStreaming && !isModelSelectionRequired && isAttachmentReadyToSend
+    console.log('Waiting for send button to be enabled...')
+    await expect(sendButton).toBeEnabled({ timeout: 15000 })
 
     await sendButton.click()
 

@@ -13,15 +13,18 @@ import {
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
-import { FlowList, FlowForm } from '@/features/feed/components'
-import { FlowProvider, useFlowContext } from '@/features/feed/contexts/flowContext'
+import { SubscriptionList, SubscriptionForm } from '@/features/feed/components'
+import {
+  SubscriptionProvider,
+  useSubscriptionContext,
+} from '@/features/feed/contexts/subscriptionContext'
 import { Button } from '@/components/ui/button'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
-import type { Flow } from '@/types/flow'
+import type { Subscription } from '@/types/subscription'
 
 /**
  * Flow Subscriptions Management Page
@@ -31,26 +34,26 @@ import type { Flow } from '@/types/flow'
 function SubscriptionsPageContent() {
   const { t } = useTranslation('feed')
   const router = useRouter()
-  const { refreshFlows, refreshExecutions } = useFlowContext()
+  const { refreshSubscriptions, refreshExecutions } = useSubscriptionContext()
 
   // Form state
   const [formOpen, setFormOpen] = useState(false)
-  const [editingFlow, setEditingFlow] = useState<Flow | null>(null)
+  const [editingSubscription, setEditingSubscription] = useState<Subscription | null>(null)
 
-  const handleCreateFlow = useCallback(() => {
-    setEditingFlow(null)
+  const handleCreateSubscription = useCallback(() => {
+    setEditingSubscription(null)
     setFormOpen(true)
   }, [])
 
-  const handleEditFlow = useCallback((flow: Flow) => {
-    setEditingFlow(flow)
+  const handleEditSubscription = useCallback((subscription: Subscription) => {
+    setEditingSubscription(subscription)
     setFormOpen(true)
   }, [])
 
   const handleFormSuccess = useCallback(() => {
-    refreshFlows()
+    refreshSubscriptions()
     refreshExecutions()
-  }, [refreshFlows, refreshExecutions])
+  }, [refreshSubscriptions, refreshExecutions])
 
   const handleBack = () => {
     router.push('/feed')
@@ -66,21 +69,24 @@ function SubscriptionsPageContent() {
           </Button>
           <h1 className="text-lg font-semibold">{t('my_subscriptions')}</h1>
         </div>
-        <Button onClick={handleCreateFlow} size="sm">
+        <Button onClick={handleCreateSubscription} size="sm">
           {t('create_subscription')}
         </Button>
       </div>
 
-      {/* Flow list */}
+      {/* Subscription list */}
       <div className="flex-1 overflow-hidden">
-        <FlowList onCreateFlow={handleCreateFlow} onEditFlow={handleEditFlow} />
+        <SubscriptionList
+          onCreateSubscription={handleCreateSubscription}
+          onEditSubscription={handleEditSubscription}
+        />
       </div>
 
       {/* Form Dialog */}
-      <FlowForm
+      <SubscriptionForm
         open={formOpen}
         onOpenChange={setFormOpen}
-        flow={editingFlow}
+        subscription={editingSubscription}
         onSuccess={handleFormSuccess}
       />
     </div>
@@ -122,7 +128,7 @@ export default function SubscriptionsPage() {
   }
 
   return (
-    <FlowProvider>
+    <SubscriptionProvider>
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
         {/* Collapsed sidebar floating buttons */}
         {isCollapsed && !isMobile && (
@@ -158,6 +164,6 @@ export default function SubscriptionsPage() {
           </div>
         </div>
       </div>
-    </FlowProvider>
+    </SubscriptionProvider>
   )
 }
