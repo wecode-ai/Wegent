@@ -71,12 +71,6 @@ function isSameOriginRequest(request: NextRequest): boolean {
     }
   }
 
-  // Check for X-Wegent-Internal header (custom header for special cases)
-  const wegentInternal = request.headers.get('x-wegent-internal')
-  if (wegentInternal === 'true') {
-    return true
-  }
-
   return false
 }
 
