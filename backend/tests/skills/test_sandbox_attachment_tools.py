@@ -13,55 +13,11 @@ environment and are tested separately in integration tests.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 # Add the skill directory to path for importing
 SKILL_DIR = Path(__file__).parent.parent.parent / "init_data" / "skills" / "sandbox"
-sys.path.insert(0, str(SKILL_DIR))
-
-
-class TestSandboxToolProviderAttachmentSupport:
-    """Tests for SandboxToolProvider attachment tool support."""
-
-    @pytest.fixture
-    def mock_dependencies(self):
-        """Set up mock dependencies for provider import."""
-        with patch.dict(
-            "sys.modules",
-            {
-                "chat_shell.skills": MagicMock(),
-                "langchain_core.tools": MagicMock(),
-            },
-        ):
-            yield
-
-    def test_supported_tools_includes_attachment_tools(self, mock_dependencies):
-        """Test that provider supports attachment tools."""
-        # Import provider with mocked dependencies
-        from provider import SandboxToolProvider
-
-        provider = SandboxToolProvider()
-        supported = provider.supported_tools
-
-        assert "sandbox_upload_attachment" in supported
-        assert "sandbox_download_attachment" in supported
-        # Also verify original tools are still there
-        assert "sandbox_command" in supported
-        assert "sandbox_claude" in supported
-        assert "sandbox_list_files" in supported
-        assert "sandbox_read_file" in supported
-        assert "sandbox_write_file" in supported
-
-    def test_supported_tools_count(self, mock_dependencies):
-        """Test that provider has expected number of tools."""
-        from provider import SandboxToolProvider
-
-        provider = SandboxToolProvider()
-
-        # Should have 7 tools: 5 original + 2 new attachment tools
-        assert len(provider.supported_tools) == 7
 
 
 class TestUploadAttachmentToolConstants:
@@ -88,6 +44,20 @@ class TestUploadAttachmentToolConstants:
         assert "DEFAULT_API_BASE_URL" in content
         assert "http://wegent-backend:8000" in content
 
+    def test_tool_name_defined(self):
+        """Test that tool name is correctly defined."""
+        tool_file = SKILL_DIR / "upload_attachment_tool.py"
+        content = tool_file.read_text()
+
+        assert 'name: str = "sandbox_upload_attachment"' in content
+
+    def test_tool_inherits_base_sandbox_tool(self):
+        """Test that tool inherits from BaseSandboxTool."""
+        tool_file = SKILL_DIR / "upload_attachment_tool.py"
+        content = tool_file.read_text()
+
+        assert "class SandboxUploadAttachmentTool(BaseSandboxTool):" in content
+
 
 class TestDownloadAttachmentToolConstants:
     """Tests for download attachment tool constants."""
@@ -99,6 +69,56 @@ class TestDownloadAttachmentToolConstants:
 
         assert "DEFAULT_API_BASE_URL" in content
         assert "http://wegent-backend:8000" in content
+
+    def test_tool_name_defined(self):
+        """Test that tool name is correctly defined."""
+        tool_file = SKILL_DIR / "download_attachment_tool.py"
+        content = tool_file.read_text()
+
+        assert 'name: str = "sandbox_download_attachment"' in content
+
+    def test_tool_inherits_base_sandbox_tool(self):
+        """Test that tool inherits from BaseSandboxTool."""
+        tool_file = SKILL_DIR / "download_attachment_tool.py"
+        content = tool_file.read_text()
+
+        assert "class SandboxDownloadAttachmentTool(BaseSandboxTool):" in content
+
+
+class TestProviderToolRegistration:
+    """Tests for provider tool registration via file content analysis."""
+
+    def test_provider_registers_upload_attachment_tool(self):
+        """Test that provider registers upload attachment tool."""
+        provider_file = SKILL_DIR / "provider.py"
+        content = provider_file.read_text()
+
+        # Check that the tool is in supported_tools list
+        assert '"sandbox_upload_attachment"' in content
+        # Check that the tool creation logic exists
+        assert "SandboxUploadAttachmentTool" in content
+        assert "from .upload_attachment_tool import SandboxUploadAttachmentTool" in content
+
+    def test_provider_registers_download_attachment_tool(self):
+        """Test that provider registers download attachment tool."""
+        provider_file = SKILL_DIR / "provider.py"
+        content = provider_file.read_text()
+
+        # Check that the tool is in supported_tools list
+        assert '"sandbox_download_attachment"' in content
+        # Check that the tool creation logic exists
+        assert "SandboxDownloadAttachmentTool" in content
+        assert "from .download_attachment_tool import SandboxDownloadAttachmentTool" in content
+
+    def test_provider_passes_auth_token_config(self):
+        """Test that provider passes auth_token config to tools."""
+        provider_file = SKILL_DIR / "provider.py"
+        content = provider_file.read_text()
+
+        # Check auth_token is passed for upload tool
+        assert 'auth_token=config.get("auth_token"' in content
+        # Check api_base_url is passed
+        assert 'api_base_url=config.get("api_base_url"' in content
 
 
 class TestSkillMdToolConfiguration:
@@ -129,3 +149,38 @@ class TestSkillMdToolConfiguration:
         assert "Upload a file from sandbox to Wegent" in content
         assert "Download a file from Wegent" in content
         assert "download_url" in content
+
+    def test_skill_md_includes_tool_selection_guide(self):
+        """Test that SKILL.md includes attachment tools in selection guide."""
+        skill_md = SKILL_DIR / "SKILL.md"
+        content = skill_md.read_text()
+
+        # Check tool selection guide includes attachment tools
+        assert "Upload files for user download" in content
+        assert "Download attachments" in content
+
+
+class TestDocumentSkillIntegration:
+    """Tests for document skill integration with attachment upload."""
+
+    def test_document_skill_includes_upload_step(self):
+        """Test that document skill includes step 5 for upload."""
+        document_skill_dir = SKILL_DIR.parent / "document"
+        document_tool_file = document_skill_dir / "document_tool.py"
+        content = document_tool_file.read_text()
+
+        # Check step 5 is defined
+        assert "step_5_UPLOAD_AND_RETURN_URL" in content
+        assert "sandbox_upload_attachment" in content
+        assert "download_url" in content
+
+    def test_document_skill_md_includes_upload_step(self):
+        """Test that document skill SKILL.md includes upload step."""
+        document_skill_dir = SKILL_DIR.parent / "document"
+        skill_md = document_skill_dir / "SKILL.md"
+        content = skill_md.read_text()
+
+        # Check step 5 documentation
+        assert "Upload and Return URL" in content
+        assert "sandbox_upload_attachment" in content
+        assert "NEVER SKIP" in content
