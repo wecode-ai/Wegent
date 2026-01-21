@@ -28,6 +28,7 @@ from app.schemas.subscription import (
     BackgroundExecutionStatus,
     Subscription,
     SubscriptionStatus,
+    SubscriptionVisibility,
 )
 from app.services.subscription.helpers import resolve_prompt_template
 from app.services.subscription.state_machine import (
@@ -238,6 +239,59 @@ class BackgroundExecutionManager:
 
         return BackgroundExecutionInDB(**exec_dict)
 
+    def delete_execution(
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        user_id: int,
+    ) -> None:
+        """
+        Delete a background execution record.
+
+        This method allows users to delete an execution record from the timeline.
+        Only executions in terminal states (COMPLETED, FAILED, CANCELLED) can be deleted.
+        Running or pending executions must be cancelled first.
+
+        Args:
+            db: Database session
+            execution_id: ID of the execution to delete
+            user_id: ID of the user requesting deletion
+
+        Raises:
+            HTTPException: If execution not found or cannot be deleted
+        """
+        execution = (
+            db.query(BackgroundExecution)
+            .filter(
+                BackgroundExecution.id == execution_id,
+                BackgroundExecution.user_id == user_id,
+            )
+            .first()
+        )
+
+        if not execution:
+            raise HTTPException(status_code=404, detail="Execution not found")
+
+        current_status = BackgroundExecutionStatus(execution.status)
+
+        # Only allow deletion of executions in terminal states
+        if not is_terminal_state(current_status):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete execution in {current_status.value} state. Please cancel it first.",
+            )
+
+        # Delete the execution record
+        db.delete(execution)
+        db.commit()
+
+        logger.info(
+            f"[Subscription] Execution {execution_id} deleted by user {user_id}: "
+            f"subscription_id={execution.subscription_id}, task_id={execution.task_id}, "
+            f"status={current_status.value}"
+        )
+
     def list_executions(
         self,
         db: Session,
@@ -249,11 +303,14 @@ class BackgroundExecutionManager:
         status: Optional[List[BackgroundExecutionStatus]] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        include_following: bool = True,
     ) -> Tuple[List[BackgroundExecutionInDB], int]:
         """
         List BackgroundExecution records (timeline view).
 
         Optimized to avoid N+1 queries by batch loading related subscriptions and teams.
+        Now includes executions from followed subscriptions.
+        Also allows viewing executions of public subscriptions.
 
         Args:
             db: Database session
@@ -264,16 +321,69 @@ class BackgroundExecutionManager:
             status: Optional filter by status list
             start_date: Optional filter by start date
             end_date: Optional filter by end date
+            include_following: Include executions from followed subscriptions
 
         Returns:
             Tuple of (list of BackgroundExecutionInDB, total count)
         """
-        query = db.query(BackgroundExecution).filter(
-            BackgroundExecution.user_id == user_id
-        )
+        from sqlalchemy import or_
 
+        # Check if querying a specific subscription that is public
+        is_public_subscription = False
         if subscription_id:
-            query = query.filter(BackgroundExecution.subscription_id == subscription_id)
+            subscription = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == subscription_id,
+                    Kind.kind == "Subscription",
+                )
+                .first()
+            )
+            if subscription:
+                subscription_crd = Subscription.model_validate(subscription.json)
+                # Check visibility field - PUBLIC means it's a public subscription
+                is_public_subscription = (
+                    subscription_crd.spec.visibility == SubscriptionVisibility.PUBLIC
+                )
+
+        # If querying a public subscription, allow access without user_id filter
+        if subscription_id and is_public_subscription:
+            query = db.query(BackgroundExecution).filter(
+                BackgroundExecution.subscription_id == subscription_id
+            )
+        else:
+            # Get subscription IDs the user is following
+            followed_subscription_ids = []
+            if include_following and not subscription_id:
+                from app.services.subscription.follow_service import (
+                    subscription_follow_service,
+                )
+
+                followed_subscription_ids = (
+                    subscription_follow_service.get_followed_subscription_ids(
+                        db, user_id=user_id
+                    )
+                )
+
+            # Build query: own subscriptions OR followed subscriptions
+            if followed_subscription_ids:
+                query = db.query(BackgroundExecution).filter(
+                    or_(
+                        BackgroundExecution.user_id == user_id,
+                        BackgroundExecution.subscription_id.in_(
+                            followed_subscription_ids
+                        ),
+                    )
+                )
+            else:
+                query = db.query(BackgroundExecution).filter(
+                    BackgroundExecution.user_id == user_id
+                )
+
+            if subscription_id:
+                query = query.filter(
+                    BackgroundExecution.subscription_id == subscription_id
+                )
 
         if status:
             query = query.filter(

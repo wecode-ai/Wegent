@@ -340,18 +340,21 @@ export function useChatAreaState({
   }, [_teams, isTeamCompatibleWithMode])
 
   // Find default team for current mode from teams list
+  // Returns null if no default team is configured for the mode
   const findDefaultTeamForMode = useCallback(
     (teams: Team[]): Team | null => {
       if (teams.length === 0) return null
-      if (!defaultTeamsConfig) return teams[0] || null
+      if (!defaultTeamsConfig) return null
 
       // Get the default config for current mode
       const modeKey = taskType as keyof DefaultTeamsResponse
       const defaultConfig = defaultTeamsConfig[modeKey]
 
       if (!defaultConfig) {
-        // No default configured, use first team
-        return teams[0] || null
+        // No default configured for this mode, return null
+        // This allows all teams to be shown in QuickAccessCards
+        console.log('[useChatAreaState] No default team configured for mode:', taskType)
+        return null
       }
 
       // Normalize namespace to handle undefined case
@@ -379,12 +382,14 @@ export function useChatAreaState({
         return selectedTeam
       }
 
-      // No match found, use first team
+      // No match found, return null (configured default team doesn't exist in list)
       console.log(
-        '[useChatAreaState] Default team not found in list, using first team for mode:',
-        taskType
+        '[useChatAreaState] Configured default team not found in list for mode:',
+        taskType,
+        defaultConfig.name,
+        normalizedNamespace
       )
-      return teams[0] || null
+      return null
     },
     [defaultTeamsConfig, taskType]
   )

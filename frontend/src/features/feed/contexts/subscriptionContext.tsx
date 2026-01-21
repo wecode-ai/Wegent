@@ -41,6 +41,8 @@ interface SubscriptionContextType {
   executionsRefreshing: boolean
   /** Cancel a running or pending execution */
   cancelExecution: (executionId: number) => Promise<void>
+  /** Delete an execution record (only terminal states) */
+  deleteExecution: (executionId: number) => Promise<void>
 
   // Filters
   executionFilter: {
@@ -187,6 +189,15 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     setExecutions(prev => prev.map(e => (e.id === executionId ? updatedExecution : e)))
   }, [])
 
+  // Delete an execution
+  const deleteExecution = useCallback(async (executionId: number) => {
+    await subscriptionApis.deleteExecution(executionId)
+    // Remove from local state
+    setExecutions(prev => prev.filter(e => e.id !== executionId))
+    // Update total count
+    setExecutionsTotal(prev => Math.max(0, prev - 1))
+  }, [])
+
   // Initial load
   useEffect(() => {
     refreshSubscriptions()
@@ -266,6 +277,7 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
         refreshExecutions,
         loadMoreExecutions,
         cancelExecution,
+        deleteExecution,
         executionFilter,
         setExecutionFilter,
         activeTab,

@@ -24,12 +24,23 @@ import {
   Settings,
   Sparkles,
   StopCircle,
+  Trash2,
   XCircle,
   Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useSubscriptionContext } from '../contexts/subscriptionContext'
@@ -90,12 +101,17 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
     loadMoreExecutions,
     refreshExecutions,
     cancelExecution,
+    deleteExecution,
   } = useSubscriptionContext()
 
   // Dialog state for viewing conversation
   const [dialogTaskId, setDialogTaskId] = useState<number | null>(null)
   // Track which execution is currently being cancelled
   const [cancellingId, setCancellingId] = useState<number | null>(null)
+  // Track which execution is currently being deleted
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  // Track which execution is pending delete confirmation
+  const [pendingDeleteExec, setPendingDeleteExec] = useState<BackgroundExecution | null>(null)
 
   // Group executions by date for section headers
   const groupedExecutions = useMemo(() => {
@@ -217,6 +233,31 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
     }
   }
 
+  // Show delete confirmation dialog
+  const handleDeleteClick = (exec: BackgroundExecution) => {
+    setPendingDeleteExec(exec)
+  }
+
+  // Confirm delete action
+  const handleConfirmDelete = async () => {
+    if (!pendingDeleteExec || deletingId) return
+    try {
+      setDeletingId(pendingDeleteExec.id)
+      await deleteExecution(pendingDeleteExec.id)
+      toast.success(t('feed.delete_success'))
+    } catch {
+      toast.error(t('feed.delete_failed'))
+    } finally {
+      setDeletingId(null)
+      setPendingDeleteExec(null)
+    }
+  }
+
+  // Check if execution can be deleted (only terminal states)
+  const canDelete = (status: BackgroundExecutionStatus) => {
+    return status === 'COMPLETED' || status === 'FAILED' || status === 'CANCELLED'
+  }
+
   // Track which execution's summary is expanded
   const [expandedSummaryId, setExpandedSummaryId] = useState<number | null>(null)
 
@@ -300,15 +341,31 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
                       <Bot className="h-3.5 w-3.5" />
                       {exec.team_name || t('feed.unnamed_subscription')}
                     </div>
-                    {exec.task_id && (
-                      <button
-                        onClick={() => handleViewTask(exec)}
-                        className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
-                      >
-                        <MessageSquare className="h-3 w-3" />
-                        {t('feed.view_conversation')}
-                      </button>
-                    )}
+                    <div className="flex items-center gap-3">
+                      {exec.task_id && (
+                        <button
+                          onClick={() => handleViewTask(exec)}
+                          className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
+                        >
+                          <MessageSquare className="h-3 w-3" />
+                          {t('feed.view_conversation')}
+                        </button>
+                      )}
+                      {canDelete(exec.status) && (
+                        <button
+                          onClick={() => handleDeleteClick(exec)}
+                          disabled={deletingId === exec.id}
+                          className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-red-500 transition-colors disabled:opacity-50"
+                        >
+                          {deletingId === exec.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3 w-3" />
+                          )}
+                          {t('feed.delete_execution')}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
                     {isSummaryExpanded ? (
@@ -382,6 +439,21 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
                   <ChevronRight className="h-3.5 w-3.5" />
                 </button>
               )}
+              {/* Delete button for terminal state executions */}
+              {canDelete(exec.status) && (
+                <button
+                  onClick={() => handleDeleteClick(exec)}
+                  disabled={deletingId === exec.id}
+                  className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-red-500 transition-colors disabled:opacity-50"
+                >
+                  {deletingId === exec.id ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  {t('feed.delete_execution')}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -428,7 +500,7 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
                   className="text-primary hover:underline inline-flex items-center gap-0.5"
                 >
                   <Settings className="h-3 w-3" />
-                  {t('feed.manage_subscriptions')}
+                  {t('feed.manage')}
                 </button>
               </p>
             </div>
@@ -495,6 +567,30 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
           if (!open) setDialogTaskId(null)
         }}
       />
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog
+        open={pendingDeleteExec !== null}
+        onOpenChange={open => {
+          if (!open) setPendingDeleteExec(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('feed.delete_confirm_title')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('feed.delete_confirm_message')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDelete}
+              className="bg-red-500 hover:bg-red-600"
+            >
+              {t('common:actions.delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

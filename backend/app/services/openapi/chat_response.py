@@ -178,11 +178,59 @@ async def _create_streaming_response_http(
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
             await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
 
+            # Search for relevant memories (with timeout, graceful degradation)
+            # Only search if enable_chat_bot=True (wegent_chat_bot tool is enabled)
+            relevant_memories = []
+            if enable_chat_bot:
+                from app.services.memory import get_memory_manager
+
+                memory_manager = get_memory_manager()
+                if memory_manager.is_enabled:
+                    try:
+                        logger.info(
+                            "[OPENAPI_HTTP] Searching for relevant cross-conversation memories: user_id=%d, project_id=%s",
+                            user.id,
+                            setup.task.project_id or "None",
+                        )
+                        relevant_memories = await memory_manager.search_memories(
+                            user_id=str(user.id),
+                            query=input_text,
+                            project_id=(
+                                str(setup.task.project_id)
+                                if setup.task.project_id
+                                else None
+                            ),
+                        )
+                        logger.info(
+                            "[OPENAPI_HTTP] Found %d relevant memories",
+                            len(relevant_memories),
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "[OPENAPI_HTTP] Failed to search memories: %s",
+                            e,
+                            exc_info=True,
+                        )
+
+            # Inject memories into system prompt if any found
+            base_system_prompt = setup.system_prompt
+            if relevant_memories:
+                from app.services.memory import get_memory_manager
+
+                memory_manager = get_memory_manager()
+                base_system_prompt = memory_manager.inject_memories_to_prompt(
+                    base_prompt=setup.system_prompt, memories=relevant_memories
+                )
+                logger.info(
+                    "[OPENAPI_HTTP] Injected %d memories into system prompt",
+                    len(relevant_memories),
+                )
+
             # Build system prompt with optional deep thinking enhancement
             from chat_shell.prompts import append_deep_thinking_prompt
 
             final_system_prompt = append_deep_thinking_prompt(
-                setup.system_prompt, enable_chat_bot
+                base_system_prompt, enable_chat_bot
             )
 
             # Build chat history
@@ -445,11 +493,59 @@ async def _create_sync_response_http(
     accumulated_content = ""
 
     try:
+        # Search for relevant memories (with timeout, graceful degradation)
+        # Only search if enable_chat_bot=True (wegent_chat_bot tool is enabled)
+        relevant_memories = []
+        if enable_chat_bot:
+            from app.services.memory import get_memory_manager
+
+            memory_manager = get_memory_manager()
+            if memory_manager.is_enabled:
+                try:
+                    logger.info(
+                        "[OPENAPI_HTTP_SYNC] Searching for relevant cross-conversation memories: user_id=%d, project_id=%s",
+                        user.id,
+                        setup.task.project_id or "None",
+                    )
+                    relevant_memories = await memory_manager.search_memories(
+                        user_id=str(user.id),
+                        query=input_text,
+                        project_id=(
+                            str(setup.task.project_id)
+                            if setup.task.project_id
+                            else None
+                        ),
+                    )
+                    logger.info(
+                        "[OPENAPI_HTTP_SYNC] Found %d relevant memories",
+                        len(relevant_memories),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "[OPENAPI_HTTP_SYNC] Failed to search memories: %s",
+                        e,
+                        exc_info=True,
+                    )
+
+        # Inject memories into system prompt if any found
+        base_system_prompt = setup.system_prompt
+        if relevant_memories:
+            from app.services.memory import get_memory_manager
+
+            memory_manager = get_memory_manager()
+            base_system_prompt = memory_manager.inject_memories_to_prompt(
+                base_prompt=setup.system_prompt, memories=relevant_memories
+            )
+            logger.info(
+                "[OPENAPI_HTTP_SYNC] Injected %d memories into system prompt",
+                len(relevant_memories),
+            )
+
         # Build system prompt with optional deep thinking enhancement
         from chat_shell.prompts import append_deep_thinking_prompt
 
         final_system_prompt = append_deep_thinking_prompt(
-            setup.system_prompt, enable_chat_bot
+            base_system_prompt, enable_chat_bot
         )
 
         # Build chat history

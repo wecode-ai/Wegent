@@ -35,6 +35,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask
+from app.models.task import TaskResource
 from app.models.user import User
 
 if TYPE_CHECKING:
@@ -55,6 +56,7 @@ class StreamTaskData:
 
     # Task data
     task_id: int
+    project_id: Optional[int]  # Project ID for group conversations
 
     # Team data
     team_id: int
@@ -74,7 +76,7 @@ class StreamTaskData:
     @classmethod
     def from_orm(
         cls,
-        task: Kind,
+        task: "TaskResource",
         team: Kind,
         user: User,
         assistant_subtask: Subtask,
@@ -82,7 +84,7 @@ class StreamTaskData:
         """Extract data from ORM objects.
 
         Args:
-            task: Task Kind object
+            task: Task TaskResource object
             team: Team Kind object
             user: User object
             assistant_subtask: Assistant subtask (contains message_id and parent_id)
@@ -92,6 +94,7 @@ class StreamTaskData:
         """
         return cls(
             task_id=task.id,
+            project_id=task.project_id if task.project_id else None,
             team_id=team.id,
             team_user_id=team.user_id,
             team_name=team.name,
@@ -105,7 +108,7 @@ class StreamTaskData:
 
 
 async def trigger_ai_response(
-    task: Kind,
+    task: TaskResource,
     assistant_subtask: Subtask,
     team: Kind,
     user: User,
@@ -133,7 +136,7 @@ async def trigger_ai_response(
     - AI response is handled by executor_manager (no action needed here)
 
     Args:
-        task: Task Kind object
+        task: Task TaskResource object
         assistant_subtask: Assistant subtask for AI response
         team: Team Kind object
         user: User object
@@ -183,7 +186,7 @@ async def trigger_ai_response(
 
 
 async def _trigger_direct_chat(
-    task: Kind,
+    task: TaskResource,
     assistant_subtask: Subtask,
     team: Kind,
     user: User,
@@ -201,7 +204,7 @@ async def _trigger_direct_chat(
     Emits chat:start event and starts streaming in background task.
 
     Args:
-        task: Task Kind object
+        task: Task TaskResource object
         assistant_subtask: Assistant subtask (contains message_id and parent_id for ordering)
         team: Team Kind object
         user: User object
@@ -419,10 +422,61 @@ async def _stream_chat_response(
         # Add model info to span
         span_manager.set_model_attributes(chat_config.model_config)
 
+        # Search for relevant memories (with timeout, graceful degradation)
+        # WebSocket chat (web) respects user preference for memory
+        # This runs before context processing to inject memory context
+        from app.services.memory import get_memory_manager, is_memory_enabled_for_user
+
+        memory_manager = get_memory_manager()
+        relevant_memories = []
+
+        # Fetch user from database to check memory preference
+        user = db.query(User).filter(User.id == stream_data.user_id).first()
+
+        # Check user preference first
+        if user is None or not is_memory_enabled_for_user(user):
+            logger.info(
+                "[ai_trigger] Long-term memory disabled by user preference: user_id=%d",
+                stream_data.user_id,
+            )
+        elif memory_manager.is_enabled:
+            try:
+                logger.info(
+                    "[ai_trigger] Searching for relevant memories: user_id=%d, project_id=%s",
+                    stream_data.user_id,
+                    stream_data.project_id or "None",
+                )
+                relevant_memories = await memory_manager.search_memories(
+                    user_id=str(stream_data.user_id),
+                    query=message,
+                    project_id=(
+                        str(stream_data.project_id) if stream_data.project_id else None
+                    ),
+                )
+                logger.info(
+                    "[ai_trigger] Found %d relevant memories", len(relevant_memories)
+                )
+            except Exception as e:
+                logger.error(
+                    "[ai_trigger] Failed to search memories: %s", e, exc_info=True
+                )
+
+        # Inject memories into system prompt if any found
+        # This happens before context processing to ensure memories are included
+        base_system_prompt_with_memory = chat_config.system_prompt
+        if relevant_memories:
+            base_system_prompt_with_memory = memory_manager.inject_memories_to_prompt(
+                base_prompt=chat_config.system_prompt, memories=relevant_memories
+            )
+            logger.info(
+                "[ai_trigger] Injected %d memories into system prompt",
+                len(relevant_memories),
+            )
+
         # Unified context processing: process both attachments and knowledge bases
         # from the user subtask's associated contexts
         final_message = message
-        enhanced_system_prompt = chat_config.system_prompt
+        enhanced_system_prompt = base_system_prompt_with_memory
         extra_tools = []
 
         logger.info(
@@ -446,7 +500,7 @@ async def _stream_chat_response(
                 user_subtask_id=user_subtask_id,
                 user_id=stream_data.user_id,
                 message=message,
-                base_system_prompt=chat_config.system_prompt,
+                base_system_prompt=base_system_prompt_with_memory,  # Use prompt with memories
                 task_id=stream_data.task_id,
             )
             logger.info(

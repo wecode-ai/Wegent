@@ -8,7 +8,7 @@
  * Subscription creation/edit form component.
  */
 import { useCallback, useEffect, useState } from 'react'
-import { Copy, Check, Terminal, Brain, ChevronDown } from 'lucide-react'
+import { Copy, Check, Terminal, Brain, ChevronDown, Eye, EyeOff } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -49,10 +49,12 @@ import type {
   SubscriptionTaskType,
   SubscriptionTriggerType,
   SubscriptionUpdateRequest,
+  SubscriptionVisibility,
 } from '@/types/subscription'
 import { toast } from 'sonner'
 import { CronSchedulePicker } from './CronSchedulePicker'
 import { RepositorySelector, BranchSelector } from '@/features/tasks/components/selector'
+import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { cn, parseUTCDate } from '@/lib/utils'
 
 // Model type for selector
@@ -240,6 +242,7 @@ export function SubscriptionForm({
   const [timeoutSeconds, setTimeoutSeconds] = useState(600) // Default 10 minutes
   const [enabled, setEnabled] = useState(true)
   const [preserveHistory, setPreserveHistory] = useState(false) // History preservation
+  const [visibility, setVisibility] = useState<SubscriptionVisibility>('private') // Visibility setting
 
   // Model selection state
   const [selectedModel, setSelectedModel] = useState<SubscriptionModel | null>(null)
@@ -370,6 +373,7 @@ export function SubscriptionForm({
       setTimeoutSeconds(subscription.timeout_seconds || 600)
       setEnabled(subscription.enabled)
       setPreserveHistory(subscription.preserve_history || false)
+      setVisibility(subscription.visibility || 'private')
       // Note: workspace_id restoration will be handled when we have workspace API
       // For now, reset repo selection
       setSelectedRepo(null)
@@ -395,6 +399,7 @@ export function SubscriptionForm({
       setTimeoutSeconds(600)
       setEnabled(true)
       setPreserveHistory(false)
+      setVisibility('private')
       setSelectedRepo(null)
       setSelectedBranch(null)
       setSelectedModel(null)
@@ -461,6 +466,7 @@ export function SubscriptionForm({
           timeout_seconds: timeoutSeconds,
           enabled,
           preserve_history: preserveHistory,
+          visibility,
           // Include git repo info if selected
           ...(selectedRepo && {
             git_repo: selectedRepo.git_repo,
@@ -496,6 +502,7 @@ export function SubscriptionForm({
           timeout_seconds: timeoutSeconds,
           enabled,
           preserve_history: preserveHistory,
+          visibility,
           // Include git repo info if selected
           ...(selectedRepo && {
             git_repo: selectedRepo.git_repo,
@@ -531,6 +538,7 @@ export function SubscriptionForm({
     timeoutSeconds,
     enabled,
     preserveHistory,
+    visibility,
     selectedRepo,
     selectedBranch,
     selectedModel,
@@ -602,36 +610,31 @@ export function SubscriptionForm({
           </div>
         )
       case 'one_time': {
-        // Convert UTC ISO string to local datetime-local format (YYYY-MM-DDTHH:mm)
-        const getLocalDateTimeValue = (isoString: string | undefined): string => {
-          if (!isoString) return ''
+        // Convert UTC ISO string to local Date object
+        const getLocalDate = (isoString: string | undefined): Date | undefined => {
+          if (!isoString) return undefined
           // Use parseUTCDate to correctly parse UTC time from backend
           const date = parseUTCDate(isoString)
-          if (!date || isNaN(date.getTime())) return ''
-          // Format as local time for datetime-local input
-          const year = date.getFullYear()
-          const month = String(date.getMonth() + 1).padStart(2, '0')
-          const day = String(date.getDate()).padStart(2, '0')
-          const hours = String(date.getHours()).padStart(2, '0')
-          const minutes = String(date.getMinutes()).padStart(2, '0')
-          return `${year}-${month}-${day}T${hours}:${minutes}`
+          if (!date || isNaN(date.getTime())) return undefined
+          return date
         }
 
+        const currentDate = getLocalDate(triggerConfig.execute_at as string)
+
         return (
-          <div>
+          <div className="space-y-3">
             <Label>{t('execute_at')}</Label>
-            <Input
-              type="datetime-local"
-              value={getLocalDateTimeValue(triggerConfig.execute_at as string)}
-              onChange={e => {
-                if (e.target.value) {
-                  // Convert local datetime-local value to UTC ISO string
+            <DateTimePicker
+              value={currentDate}
+              onChange={date => {
+                if (date) {
                   setTriggerConfig({
                     ...triggerConfig,
-                    execute_at: new Date(e.target.value).toISOString(),
+                    execute_at: date.toISOString(),
                   })
                 }
               }}
+              placeholder={t('select_datetime')}
             />
           </div>
         )
@@ -944,6 +947,33 @@ export function SubscriptionForm({
                   <p className="text-xs text-text-muted">{t('preserve_history_hint')}</p>
                 </div>
                 <Switch checked={preserveHistory} onCheckedChange={setPreserveHistory} />
+              </div>
+              {/* Visibility */}
+              <div className="space-y-2 pt-2">
+                <Label className="text-sm font-medium">{t('visibility')}</Label>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant={visibility === 'private' ? 'primary' : 'outline'}
+                    size="sm"
+                    onClick={() => setVisibility('private')}
+                    className="flex-1"
+                  >
+                    <EyeOff className="h-4 w-4 mr-1.5" />
+                    {t('visibility_private')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={visibility === 'public' ? 'primary' : 'outline'}
+                    size="sm"
+                    onClick={() => setVisibility('public')}
+                    className="flex-1"
+                  >
+                    <Eye className="h-4 w-4 mr-1.5" />
+                    {t('visibility_public')}
+                  </Button>
+                </div>
+                <p className="text-xs text-text-muted">{t('visibility_hint')}</p>
               </div>
 
               {/* Enabled */}

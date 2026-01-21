@@ -24,6 +24,13 @@ class SubscriptionTaskType(str, Enum):
     COLLECTION = "collection"
 
 
+class SubscriptionVisibility(str, Enum):
+    """Subscription visibility enumeration."""
+
+    PUBLIC = "public"  # Public: visible to all, can be followed
+    PRIVATE = "private"  # Private: only visible to owner and invited users
+
+
 class SubscriptionTriggerType(str, Enum):
     """Subscription trigger type enumeration."""
 
@@ -134,6 +141,10 @@ class SubscriptionSpec(BaseModel):
         SubscriptionTaskType.COLLECTION,
         description="Task type: 'execution' or 'collection'",
     )
+    visibility: SubscriptionVisibility = Field(
+        SubscriptionVisibility.PRIVATE,
+        description="Visibility: 'public' or 'private'. Default is private.",
+    )
     trigger: SubscriptionTriggerConfig = Field(..., description="Trigger configuration")
     teamRef: SubscriptionTeamRef = Field(
         ..., description="Reference to the Team (Agent)"
@@ -239,6 +250,10 @@ class SubscriptionBase(BaseModel):
     task_type: SubscriptionTaskType = Field(
         SubscriptionTaskType.COLLECTION, description="Task type"
     )
+    visibility: SubscriptionVisibility = Field(
+        SubscriptionVisibility.PRIVATE,
+        description="Visibility: 'public' or 'private'. Default is private.",
+    )
     trigger_type: SubscriptionTriggerType = Field(..., description="Trigger type")
     trigger_config: Dict[str, Any] = Field(..., description="Trigger configuration")
     team_id: int = Field(..., description="Team (Agent) ID")
@@ -293,6 +308,7 @@ class SubscriptionUpdate(BaseModel):
     display_name: Optional[str] = None
     description: Optional[str] = None
     task_type: Optional[SubscriptionTaskType] = None
+    visibility: Optional[SubscriptionVisibility] = None
     trigger_type: Optional[SubscriptionTriggerType] = None
     trigger_config: Optional[Dict[str, Any]] = None
     team_id: Optional[int] = None
@@ -330,6 +346,10 @@ class SubscriptionInDB(SubscriptionBase):
     failure_count: int = 0
     # Bound task ID for history preservation
     bound_task_id: Optional[int] = None
+    # Visibility and follow-related fields
+    followers_count: int = Field(0, description="Number of followers")
+    is_following: bool = Field(False, description="Whether current user is following")
+    owner_username: Optional[str] = Field(None, description="Owner's username")
     created_at: datetime
     updated_at: datetime
 
@@ -430,3 +450,139 @@ class SubscriptionTriggerPayload(BaseModel):
     enable_web_search: bool = False
     search_engine: Optional[str] = None
     preload_skills: Optional[List[str]] = None
+
+
+# ========== Subscription Follow/Visibility Schemas ==========
+
+
+class FollowType(str, Enum):
+    """Follow type enumeration."""
+
+    DIRECT = "direct"
+    INVITED = "invited"
+
+
+class InvitationStatus(str, Enum):
+    """Invitation status enumeration."""
+
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
+class SubscriptionFollowBase(BaseModel):
+    """Base schema for subscription follow."""
+
+    subscription_id: int
+    follower_user_id: int
+    follow_type: FollowType = FollowType.DIRECT
+
+
+class SubscriptionFollowInDB(SubscriptionFollowBase):
+    """Subscription follow record in database."""
+
+    id: int
+    invited_by_user_id: Optional[int] = None
+    invitation_status: InvitationStatus = InvitationStatus.PENDING
+    invited_at: Optional[datetime] = None
+    responded_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    # Enriched fields
+    subscription_name: Optional[str] = None
+    subscription_display_name: Optional[str] = None
+    follower_username: Optional[str] = None
+    invited_by_username: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SubscriptionFollowerResponse(BaseModel):
+    """Response for listing followers of a subscription."""
+
+    user_id: int
+    username: str
+    follow_type: FollowType
+    followed_at: datetime
+
+
+class SubscriptionFollowersListResponse(BaseModel):
+    """Response for listing followers with pagination."""
+
+    total: int
+    items: List[SubscriptionFollowerResponse]
+
+
+class FollowingSubscriptionResponse(BaseModel):
+    """Response for subscriptions a user follows."""
+
+    subscription: SubscriptionInDB
+    follow_type: FollowType
+    followed_at: datetime
+
+
+class FollowingSubscriptionsListResponse(BaseModel):
+    """Response for listing followed subscriptions with pagination."""
+
+    total: int
+    items: List[FollowingSubscriptionResponse]
+
+
+class InviteUserRequest(BaseModel):
+    """Request to invite a user to follow a subscription."""
+
+    user_id: Optional[int] = Field(None, description="User ID to invite")
+    email: Optional[str] = Field(
+        None, description="Email to invite (alternative to user_id)"
+    )
+
+
+class InviteNamespaceRequest(BaseModel):
+    """Request to invite a namespace (group) to follow a subscription."""
+
+    namespace_id: int = Field(..., description="Namespace ID to invite")
+
+
+class SubscriptionInvitationResponse(BaseModel):
+    """Response for a subscription invitation."""
+
+    id: int
+    subscription_id: int
+    subscription_name: str
+    subscription_display_name: str
+    invited_by_user_id: int
+    invited_by_username: str
+    invitation_status: InvitationStatus
+    invited_at: datetime
+    owner_username: str
+
+
+class SubscriptionInvitationsListResponse(BaseModel):
+    """Response for listing invitations."""
+
+    total: int
+    items: List[SubscriptionInvitationResponse]
+
+
+class DiscoverSubscriptionResponse(BaseModel):
+    """Response for a subscription in the discover list."""
+
+    id: int
+    name: str
+    display_name: str
+    description: Optional[str] = None
+    task_type: SubscriptionTaskType
+    owner_user_id: int
+    owner_username: str
+    followers_count: int
+    is_following: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class DiscoverSubscriptionsListResponse(BaseModel):
+    """Response for the discover subscriptions list."""
+
+    total: int
+    items: List[DiscoverSubscriptionResponse]
