@@ -74,6 +74,20 @@ class MemoryManager:
         """
         return settings.MEMORY_ENABLED and self._client is not None
 
+    def _get_prefixed_user_id(self, user_id: str) -> str:
+        """Build user ID with configured prefix for resource isolation.
+
+        Since mem0 may be a shared service across multiple systems,
+        this method adds a configurable prefix to isolate wegent's resources.
+
+        Args:
+            user_id: Original user ID from wegent platform
+
+        Returns:
+            Prefixed user ID for mem0 API calls
+        """
+        return f"{settings.MEMORY_USER_ID_PREFIX}{user_id}"
+
     @trace_async("memory.manager.search_memories")
     async def search_memories(
         self,
@@ -112,6 +126,9 @@ class MemoryManager:
             return []
 
         try:
+            # Build prefixed user_id for resource isolation
+            prefixed_user_id = self._get_prefixed_user_id(user_id)
+
             # Use configured timeout if not specified
             search_timeout = (
                 timeout if timeout is not None else settings.MEMORY_TIMEOUT_SECONDS
@@ -121,7 +138,7 @@ class MemoryManager:
             # If no project_id, search all memories
             if project_id is None:
                 result = await self._client.search_memories(
-                    user_id=user_id,
+                    user_id=prefixed_user_id,
                     query=query,
                     filters=None,
                     limit=max_results,
@@ -141,7 +158,7 @@ class MemoryManager:
             # Step 1: Search project-specific memories (higher priority)
             try:
                 project_result = await self._client.search_memories(
-                    user_id=user_id,
+                    user_id=prefixed_user_id,
                     query=query,
                     filters={"project_id": project_id},
                     limit=max_results,
@@ -166,7 +183,7 @@ class MemoryManager:
                     # Search for memories without project_id OR with different project_id
                     # This includes both individual conversations and other projects
                     general_result = await self._client.search_memories(
-                        user_id=user_id,
+                        user_id=prefixed_user_id,
                         query=query,
                         filters=None,  # Search all to get user's general knowledge
                         limit=max_results,  # Get more to filter out project-specific ones
@@ -260,6 +277,9 @@ class MemoryManager:
             return
 
         try:
+            # Build prefixed user_id for resource isolation
+            prefixed_user_id = self._get_prefixed_user_id(user_id)
+
             # Build metadata (created_at is managed by mem0 automatically)
             metadata = MemoryMetadata(
                 task_id=task_id,
@@ -272,7 +292,7 @@ class MemoryManager:
 
             # Call mem0 API with context messages
             result = await self._client.add_memory(
-                user_id=user_id,
+                user_id=prefixed_user_id,
                 messages=messages,
                 metadata=metadata.model_dump(),
             )
@@ -335,6 +355,9 @@ class MemoryManager:
             return 0
 
         try:
+            # Build prefixed user_id for resource isolation
+            prefixed_user_id = self._get_prefixed_user_id(user_id)
+
             total_delete_count = 0
             total_error_count = 0
             consecutive_no_progress = 0
@@ -345,7 +368,7 @@ class MemoryManager:
                 # Step 1: Search memories with this task_id using metadata filter
                 # Note: search_memories requires a query, we use "*" as a wildcard
                 search_result = await self._client.search_memories(
-                    user_id=user_id,
+                    user_id=prefixed_user_id,
                     query="*",
                     filters={"task_id": task_id},
                     limit=batch_size,

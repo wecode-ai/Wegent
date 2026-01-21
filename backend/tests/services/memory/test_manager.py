@@ -21,6 +21,7 @@ def mock_settings():
         mock_settings.MEMORY_API_KEY = "test-key"
         mock_settings.MEMORY_TIMEOUT_SECONDS = 2.0
         mock_settings.MEMORY_MAX_RESULTS = 5
+        mock_settings.MEMORY_USER_ID_PREFIX = "wegent_user:"
         yield mock_settings
 
 
@@ -202,7 +203,8 @@ async def test_save_user_message_async_enabled(memory_manager):
 
     mock_client.add_memory.assert_called_once()
     call_args = mock_client.add_memory.call_args
-    assert call_args[1]["user_id"] == "1"
+    # User ID should be prefixed for resource isolation
+    assert call_args[1]["user_id"] == "wegent_user:1"
     assert call_args[1]["messages"] == [{"role": "user", "content": "Test message"}]
     assert call_args[1]["metadata"]["task_id"] == "123"
 
@@ -254,7 +256,8 @@ async def test_cleanup_task_memories(memory_manager):
     # Verify search_memories was called with correct parameters
     mock_client.search_memories.assert_called()
     call_args = mock_client.search_memories.call_args
-    assert call_args[1]["user_id"] == "1"
+    # User ID should be prefixed for resource isolation
+    assert call_args[1]["user_id"] == "wegent_user:1"
     assert call_args[1]["query"] == "*"
     assert call_args[1]["filters"] == {"task_id": "123"}
 
@@ -305,3 +308,46 @@ def test_inject_memories_to_prompt_empty(memory_manager):
     enhanced_prompt = memory_manager.inject_memories_to_prompt(base_prompt, [])
 
     assert enhanced_prompt == base_prompt  # No change
+
+
+def test_get_prefixed_user_id(memory_manager):
+    """Test user ID prefix generation for resource isolation."""
+    # Should add configured prefix to user ID
+    prefixed_id = memory_manager._get_prefixed_user_id("123")
+    assert prefixed_id == "wegent_user:123"
+
+    # Should work with different user IDs
+    prefixed_id = memory_manager._get_prefixed_user_id("user-abc-456")
+    assert prefixed_id == "wegent_user:user-abc-456"
+
+
+def test_get_prefixed_user_id_custom_prefix():
+    """Test user ID prefix with custom configuration."""
+    with patch("app.services.memory.manager.settings") as mock_settings:
+        mock_settings.MEMORY_ENABLED = True
+        mock_settings.MEMORY_BASE_URL = "http://localhost:8080"
+        mock_settings.MEMORY_API_KEY = "test-key"
+        mock_settings.MEMORY_TIMEOUT_SECONDS = 2.0
+        mock_settings.MEMORY_MAX_RESULTS = 5
+        mock_settings.MEMORY_USER_ID_PREFIX = "custom_prefix:"
+
+        # Reset singleton
+        MemoryManager._instance = None
+        manager = MemoryManager.get_instance()
+
+        prefixed_id = manager._get_prefixed_user_id("456")
+        assert prefixed_id == "custom_prefix:456"
+
+
+@pytest.mark.asyncio
+async def test_search_memories_uses_prefixed_user_id(memory_manager):
+    """Test that search_memories uses prefixed user ID."""
+    mock_client = AsyncMock()
+    mock_client.search_memories.return_value = MemorySearchResponse(results=[])
+    memory_manager._client = mock_client
+
+    await memory_manager.search_memories(user_id="test-user", query="test query")
+
+    # Verify prefixed user ID is used
+    call_args = mock_client.search_memories.call_args
+    assert call_args[1]["user_id"] == "wegent_user:test-user"
