@@ -5,11 +5,12 @@
 'use client'
 
 import React, { ReactNode } from 'react'
-import { Database, Table2 } from 'lucide-react'
+import { Database, Table2, Download, FileDown } from 'lucide-react'
 import AttachmentPreview from '../input/AttachmentPreview'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
+import { downloadArtifact, formatFileSize, getArtifactFileIcon } from '@/apis/artifacts'
 
 /**
  * Base preview component for context items (attachments, knowledge bases, etc.)
@@ -93,6 +94,8 @@ function ContextBadgeItem({
       return <KnowledgeBaseBadge context={context} />
     case 'table':
       return <TableBadge context={context} _onReselect={onReselect} />
+    case 'artifact':
+      return <ArtifactBadge context={context} />
     default:
       return null
   }
@@ -219,6 +222,69 @@ function TableBadge({
         subtitle={subtitle}
         className={isClickable ? 'hover:shadow-md hover:border-blue-500/50 transition-all' : ''}
       />
+    </div>
+  )
+}
+
+/**
+ * Artifact badge - displays sandbox-generated file with download button
+ *
+ * Uses ContextPreviewBase for consistent styling with other context types
+ * Click to download the artifact file
+ */
+function ArtifactBadge({ context }: { context: SubtaskContextBrief }) {
+  const { t } = useTranslation('common')
+  const [isDownloading, setIsDownloading] = React.useState(false)
+
+  // Format file size for subtitle
+  const subtitle = context.file_size ? formatFileSize(context.file_size) : undefined
+
+  // Get file icon based on extension
+  const fileIcon = getArtifactFileIcon(context.file_extension || '')
+
+  // Handle download click
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    if (isDownloading) return
+
+    setIsDownloading(true)
+    try {
+      await downloadArtifact(context.id, context.name)
+    } catch (error) {
+      console.error('Failed to download artifact:', error)
+    } finally {
+      setIsDownloading(false)
+    }
+  }
+
+  return (
+    <div
+      onClick={handleDownload}
+      className="cursor-pointer"
+      role="button"
+      tabIndex={0}
+      title={t('common:actions.download') || 'Download'}
+    >
+      <div
+        className={`flex items-center gap-3 p-3 bg-muted rounded-lg border border-border mb-2 max-w-full hover:shadow-md hover:border-primary/50 transition-all ${isDownloading ? 'opacity-50' : ''}`}
+      >
+        <div className="text-2xl flex-shrink-0">{fileIcon}</div>
+        <div className="flex-1 min-w-0 overflow-hidden">
+          <div className="font-medium text-sm truncate" title={context.name}>
+            {context.name}
+          </div>
+          {subtitle && <div className="text-xs text-text-muted">{subtitle}</div>}
+        </div>
+        <div className="flex-shrink-0 text-primary">
+          {isDownloading ? (
+            <div className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full" />
+          ) : (
+            <FileDown className="h-5 w-5" />
+          )}
+        </div>
+      </div>
     </div>
   )
 }

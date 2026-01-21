@@ -488,6 +488,21 @@ try:
                     f"[{self.__class__.__name__}] Failed to emit tool status: {e}"
                 )
 
+        def _get_auth_token(self) -> str:
+            """Get authentication token for API calls.
+
+            Uses INTERNAL_SERVICE_TOKEN or REMOTE_STORAGE_TOKEN from environment
+            for authenticating API calls (e.g., artifact uploads).
+
+            Returns:
+                JWT token string or empty string if not available
+            """
+            # Try to get token from environment variables
+            token = os.getenv("INTERNAL_SERVICE_TOKEN", "")
+            if not token:
+                token = os.getenv("REMOTE_STORAGE_TOKEN", "")
+            return token
+
 except ImportError:
     # If langchain_core is not available, define a placeholder
     logger.warning(

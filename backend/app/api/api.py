@@ -25,6 +25,7 @@ from app.api.endpoints import (
 )
 from app.api.endpoints.adapter import (
     agents,
+    artifacts,
     attachments,
     bots,
     chat,
@@ -89,6 +90,9 @@ api_router.include_router(
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(
     attachments.router, prefix="/attachments", tags=["attachments"]
+)
+api_router.include_router(
+    artifacts.router, prefix="/artifacts", tags=["artifacts"]
 )
 api_router.include_router(repository.router, prefix="/git", tags=["repository"])
 api_router.include_router(executors.router, prefix="/executors", tags=["executors"])

@@ -270,6 +270,41 @@ Example - Writing HTML file:
                 f"[SandboxWriteFileTool] File written successfully: {file_info.size} bytes"
             )
 
+            # Upload artifact if it's a supported file type
+            try:
+                from .artifact_uploader import ArtifactUploader
+
+                if ArtifactUploader.should_upload_artifact(file_path):
+                    logger.info(
+                        f"[SandboxWriteFileTool] Uploading artifact: {file_path}"
+                    )
+                    uploader = ArtifactUploader(
+                        task_id=self.task_id,
+                        subtask_id=self.subtask_id,
+                        auth_token=self._get_auth_token(),
+                        sandbox_id=sandbox.sandbox_id,
+                    )
+                    upload_result = await uploader.upload_from_sandbox(
+                        sandbox=sandbox,
+                        file_path=file_path,
+                    )
+                    if upload_result.success:
+                        response["artifact_id"] = upload_result.artifact_id
+                        response["artifact_uploaded"] = True
+                        logger.info(
+                            f"[SandboxWriteFileTool] Artifact uploaded: id={upload_result.artifact_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[SandboxWriteFileTool] Artifact upload failed: {upload_result.error}"
+                        )
+                        response["artifact_uploaded"] = False
+                        response["artifact_error"] = upload_result.error
+            except ImportError as e:
+                logger.debug(f"[SandboxWriteFileTool] Artifact uploader not available: {e}")
+            except Exception as e:
+                logger.warning(f"[SandboxWriteFileTool] Artifact upload error: {e}")
+
             # Emit success status
             await self._emit_tool_status(
                 "completed",
