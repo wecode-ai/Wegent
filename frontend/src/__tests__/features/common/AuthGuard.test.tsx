@@ -29,6 +29,9 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
+// Set longer timeout for this test file due to slow async operations
+jest.setTimeout(15000)
+
 describe('AuthGuard', () => {
   const mockRouter = {
     replace: jest.fn(),

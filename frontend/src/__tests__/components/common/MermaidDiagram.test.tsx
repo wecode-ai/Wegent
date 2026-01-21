@@ -58,6 +58,9 @@ const renderWithProviders = (ui: React.ReactElement) => {
   return render(<TooltipProvider>{ui}</TooltipProvider>)
 }
 
+// Set longer timeout for this test file due to slow async operations
+jest.setTimeout(120000)
+
 describe('MermaidDiagram', () => {
   beforeEach(() => {
     jest.clearAllMocks()

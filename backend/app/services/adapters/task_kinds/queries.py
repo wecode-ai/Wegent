@@ -343,16 +343,17 @@ class TaskQueryMixin:
         )
         total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
-        # Get task IDs sorted by created_at
+        # Get task IDs sorted by is_pinned DESC, pinned_at DESC, created_at DESC
+        # This ensures pinned tasks appear first, sorted by pin time
         ids_sql = text(
             """
-            SELECT k.id, k.created_at
+            SELECT k.id, k.created_at, k.is_pinned, k.pinned_at
             FROM tasks k
             WHERE k.kind = 'Task'
             AND k.is_active = true
             AND k.namespace != 'system'
             AND k.user_id = :user_id
-            ORDER BY k.created_at DESC
+            ORDER BY k.is_pinned DESC, k.pinned_at DESC, k.created_at DESC
             LIMIT :limit OFFSET :skip
         """
         )
@@ -971,6 +972,8 @@ class TaskQueryMixin:
                     "git_repo": git_repo,
                     "is_group_chat": is_group_chat,
                     "knowledge_base_id": knowledge_base_id,
+                    "is_pinned": task.is_pinned,
+                    "pinned_at": task.pinned_at,
                 }
             )
 

@@ -15,6 +15,7 @@ import {
   PencilIcon,
 } from '@heroicons/react/24/outline'
 import { HiOutlineEllipsisVertical } from 'react-icons/hi2'
+import { Pin, PinOff } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   DropdownMenu,
@@ -36,6 +37,8 @@ interface TaskMenuProps {
   handleDeleteTask: (taskId: number) => void
   onRename?: () => void
   isGroupChat?: boolean
+  isPinned?: boolean
+  onTogglePin?: () => void
 }
 
 export default function TaskMenu({
@@ -44,6 +47,8 @@ export default function TaskMenu({
   handleDeleteTask,
   onRename,
   isGroupChat = false,
+  isPinned = false,
+  onTogglePin,
 }: TaskMenuProps) {
   const { t } = useTranslation()
   const { t: tProjects } = useTranslation('projects')
@@ -73,6 +78,28 @@ export default function TaskMenu({
             <ClipboardDocumentIcon className="h-3.5 w-3.5 mr-2" />
             {t('common:tasks.copy_task_id')}
           </DropdownMenuItem>
+
+          {/* Pin/Unpin Task - only for non-group chats */}
+          {!isGroupChat && onTogglePin && (
+            <DropdownMenuItem
+              onClick={e => {
+                e.stopPropagation()
+                onTogglePin()
+              }}
+            >
+              {isPinned ? (
+                <>
+                  <PinOff className="h-3.5 w-3.5 mr-2" />
+                  {t('common:tasks.unpin_chat')}
+                </>
+              ) : (
+                <>
+                  <Pin className="h-3.5 w-3.5 mr-2" />
+                  {t('common:tasks.pin_chat')}
+                </>
+              )}
+            </DropdownMenuItem>
+          )}
 
           {/* Move to Group - only for non-group chats */}
           {!isGroupChat && (
