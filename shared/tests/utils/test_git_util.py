@@ -2,15 +2,241 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from shared.utils.git_util import clone_repo_with_token, is_gerrit_url
+from shared.utils.git_util import _clone_with_reference, _clone_without_cache, clone_repo_with_token, is_gerrit_url
+
+
+class TestGitUtilWithCache:
+    """Test cases for git_util module with cache functionality"""
+
+    def setup_method(self):
+        """Setup test environment before each test"""
+        # Clear environment variables before each test
+        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_AUTO_UPDATE"]:
+            if key in os.environ:
+                del os.environ[key]
+
+    @patch("shared.utils.git_util.setup_git_hooks")
+    @patch("shared.utils.git_util._clone_with_reference")
+    @patch("shared.utils.git_util.ensure_cache_repo")
+    @patch("shared.utils.git_util.get_cache_repo_path")
+    @patch("shared.utils.git_util.is_cache_enabled")
+    def test_clone_with_cache_enabled(
+        self,
+        mock_is_cache_enabled,
+        mock_get_cache_path,
+        mock_ensure_cache,
+        mock_clone_with_ref,
+        mock_setup_hooks,
+    ):
+        """Test clone flow when cache is enabled and working"""
+        # Setup mocks
+        mock_is_cache_enabled.return_value = True
+        mock_get_cache_path.return_value = "/git-cache/testuser/github.com/user/repo.git"
+        mock_ensure_cache.return_value = (True, None)
+        mock_clone_with_ref.return_value = (True, None)
+        mock_setup_hooks.return_value = (True, None)
+
+        # Execute
+        project_url = "https://github.com/user/repo.git"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        username = "alice"
+        token = "ghp_test_token"
+
+        success, error = clone_repo_with_token(
+            project_url, branch, project_path, username, token
+        )
+
+        # Verify
+        assert success is True
+        assert error is None
+        mock_is_cache_enabled.assert_called_once()
+        mock_get_cache_path.assert_called_once_with(project_url)  # No username passed
+        mock_ensure_cache.assert_called_once()
+        mock_clone_with_ref.assert_called_once()
+        mock_setup_hooks.assert_called_once_with(project_path)
+
+    @patch("shared.utils.git_util._clone_without_cache")
+    @patch("shared.utils.git_util.ensure_cache_repo")
+    @patch("shared.utils.git_util.get_cache_repo_path")
+    @patch("shared.utils.git_util.is_cache_enabled")
+    def test_clone_with_cache_fallback_on_cache_failure(
+        self, mock_is_cache_enabled, mock_get_cache_path, mock_ensure_cache, mock_clone_without
+    ):
+        """Test fallback to regular clone when cache preparation fails"""
+        # Setup mocks
+        mock_is_cache_enabled.return_value = True
+        mock_get_cache_path.return_value = "/git-cache/testuser/github.com/user/repo.git"
+        mock_ensure_cache.return_value = (False, "Cache preparation failed")
+        mock_clone_without.return_value = (True, None)
+
+        # Execute
+        project_url = "https://github.com/user/repo.git"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        username = "alice"
+        token = "ghp_test_token"
+
+        success, error = clone_repo_with_token(
+            project_url, branch, project_path, username, token
+        )
+
+        # Verify fallback occurred
+        assert success is True
+        assert error is None
+        mock_ensure_cache.assert_called_once()
+        mock_clone_without.assert_called_once()
+
+    @patch("shared.utils.git_util.setup_git_hooks")
+    @patch("shared.utils.git_util._clone_without_cache")
+    @patch("shared.utils.git_util._clone_with_reference")
+    @patch("shared.utils.git_util.ensure_cache_repo")
+    @patch("shared.utils.git_util.get_cache_repo_path")
+    @patch("shared.utils.git_util.is_cache_enabled")
+    def test_clone_with_cache_fallback_on_reference_failure(
+        self,
+        mock_is_cache_enabled,
+        mock_get_cache_path,
+        mock_ensure_cache,
+        mock_clone_with_ref,
+        mock_clone_without,
+        mock_setup_hooks,
+    ):
+        """Test fallback to regular clone when --reference clone fails"""
+        # Setup mocks
+        mock_is_cache_enabled.return_value = True
+        mock_get_cache_path.return_value = "/git-cache/testuser/github.com/user/repo.git"
+        mock_ensure_cache.return_value = (True, None)
+        mock_clone_with_ref.return_value = (False, "Reference clone failed")
+        mock_clone_without.return_value = (True, None)
+        mock_setup_hooks.return_value = (True, None)
+
+        # Execute
+        project_url = "https://github.com/user/repo.git"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        username = "alice"
+        token = "ghp_test_token"
+
+        success, error = clone_repo_with_token(
+            project_url, branch, project_path, username, token
+        )
+
+        # Verify fallback occurred
+        assert success is True
+        assert error is None
+        mock_clone_with_ref.assert_called_once()
+        mock_clone_without.assert_called_once()
+
+    @patch("shared.utils.git_util._clone_without_cache")
+    @patch("shared.utils.git_util.is_cache_enabled")
+    def test_clone_with_cache_disabled(self, mock_is_cache_enabled, mock_clone_without):
+        """Test clone flow when cache is disabled"""
+        # Setup mocks
+        mock_is_cache_enabled.return_value = False
+        mock_clone_without.return_value = (True, None)
+
+        # Execute
+        project_url = "https://github.com/user/repo.git"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        username = "bob"
+        token = "ghp_test_token"
+
+        success, error = clone_repo_with_token(
+            project_url, branch, project_path, username, token
+        )
+
+        # Verify cache was not used
+        assert success is True
+        assert error is None
+        mock_is_cache_enabled.assert_called_once()
+        mock_clone_without.assert_called_once()
+
+    @patch("shared.utils.git_util.subprocess.run")
+    def test_clone_with_reference_command(self, mock_subprocess):
+        """Test that _clone_with_reference uses correct --reference flag"""
+        # Setup mock
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_subprocess.return_value = mock_result
+
+        # Execute
+        project_url = "https://github.com/user/repo.git"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        auth_url = "https://token:ghp_test@github.com/user/repo.git"
+        cache_path = "/git-cache/alice/github.com/user/repo.git"
+
+        success, error = _clone_with_reference(
+            project_url, branch, project_path, auth_url, cache_path
+        )
+
+        # Verify
+        assert success is True
+        assert error is None
+        mock_subprocess.assert_called_once()
+
+        # Get the command
+        call_args = mock_subprocess.call_args
+        cmd = call_args[0][0]
+
+        # Verify --reference flag is present
+        assert "--reference" in cmd
+        assert cache_path in cmd
+
+        # Verify command structure
+        assert cmd[0] == "git"
+        assert cmd[1] == "clone"
+        reference_index = cmd.index("--reference")
+        assert cmd[reference_index + 1] == cache_path
+
+    @patch("shared.utils.git_util.subprocess.run")
+    @patch("shared.utils.git_util.setup_git_hooks")
+    def test_clone_without_cache_command(self, mock_setup_hooks, mock_subprocess):
+        """Test that _clone_without_cache uses standard git clone"""
+        # Setup mocks
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_subprocess.return_value = mock_result
+        mock_setup_hooks.return_value = (True, None)
+
+        # Execute
+        project_url = "https://github.com/user/repo.git"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        auth_url = "https://token:ghp_test@github.com/user/repo.git"
+
+        success, error = _clone_without_cache(
+            project_url, branch, project_path, auth_url, "alice", "ghp_test"
+        )
+
+        # Verify
+        assert success is True
+        assert error is None
+        mock_subprocess.assert_called_once()
+
+        # Get the command
+        call_args = mock_subprocess.call_args
+        cmd = call_args[0][0]
+
+        # Verify --reference flag is NOT present
+        assert "--reference" not in cmd
+
+        # Verify command structure
+        assert cmd[0] == "git"
+        assert cmd[1] == "clone"
+        assert auth_url in cmd
+        assert project_path in cmd
 
 
 class TestGitUtil:
-    """Test cases for git_util module"""
+    """Test cases for git_util module (existing tests)"""
 
     def test_is_gerrit_url_github(self):
         """Test that GitHub URLs are not identified as Gerrit"""
@@ -192,6 +418,30 @@ class TestGitUtil:
         assert success is False
         assert "Clone failed" in error
 
+
+class TestGitUtilCacheEdgeCases:
+    """Test edge cases for git cache functionality"""
+
+    def setup_method(self):
+        """Setup test environment before each test"""
+        for key in ["GIT_CACHE_ENABLED", "GIT_CACHE_AUTO_UPDATE"]:
+            if key in os.environ:
+                del os.environ[key]
+
+    @patch("shared.utils.git_util._clone_without_cache")
+    @patch("shared.utils.git_util.is_cache_enabled")
+    def test_clone_with_timeout_error(self, mock_is_cache_enabled, mock_clone_without):
+        """Test handling of timeout errors"""
+        from subprocess import TimeoutExpired
+
+        mock_is_cache_enabled.return_value = False
+        mock_clone_without.return_value = (False, "Clone timed out")
+
+        project_url = "https://github.com/user/repo.git"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        username = "alice"
+        token = "ghp_test_token"
     @patch("shared.utils.git_util.subprocess.run")
     @patch("shared.utils.git_util.setup_git_hooks")
     def test_clone_repo_with_token_gerrit_at_symbol(
@@ -213,6 +463,60 @@ class TestGitUtil:
             project_url, branch, project_path, username, token
         )
 
+        # Should handle timeout gracefully
+        assert isinstance(success, bool)
+        assert isinstance(error, str)
+
+    @patch("shared.utils.git_util._clone_without_cache")
+    @patch("shared.utils.git_util.ensure_cache_repo")
+    @patch("shared.utils.git_util.get_cache_repo_path")
+    @patch("shared.utils.git_util.is_cache_enabled")
+    def test_clone_with_cache_enabled_user_id_validation(
+        self,
+        mock_is_cache_enabled,
+        mock_get_cache_path,
+        mock_ensure_cache,
+        mock_clone_without,
+    ):
+        """Test that cache uses user_id from environment variable"""
+        mock_is_cache_enabled.return_value = True
+        mock_get_cache_path.return_value = "/git-cache/user_123/github.com/repo.git"
+        mock_ensure_cache.return_value = (True, None)
+        mock_clone_without.return_value = (True, None)
+
+        project_url = "https://github.com/repo.git"
+        git_username = "alice"
+        token = "test_token"
+
+        # Set user_id environment variable (normally set by executor_manager)
+        import os
+        os.environ["GIT_CACHE_USER_ID"] = "123"
+
+        try:
+            success, error = clone_repo_with_token(
+                project_url, "main", "/tmp/repo", git_username, token
+            )
+
+            # Should use user_id, not git username
+            assert success is True
+            mock_get_cache_path.assert_called_once_with(project_url)
+        finally:
+            # Clean up
+            if "GIT_CACHE_USER_ID" in os.environ:
+                del os.environ["GIT_CACHE_USER_ID"]
+
+    @patch("shared.utils.git_util._clone_without_cache")
+    @patch("shared.utils.git_util.is_cache_enabled")
+    def test_clone_without_branch(self, mock_is_cache_enabled, mock_clone_without):
+        """Test clone without specifying branch"""
+        mock_is_cache_enabled.return_value = False
+        mock_clone_without.return_value = (True, None)
+
+        project_url = "https://github.com/user/repo.git"
+        branch = None  # No branch specified
+        project_path = "/tmp/repo"
+        username = "alice"
+        token = "test_token"
         assert success is True
         assert error is None
 
@@ -354,6 +658,22 @@ class TestGitUtil:
             project_url, branch, project_path, username, token
         )
 
+        # Should handle None branch correctly
+        assert success is True
+        mock_clone_without.assert_called_once()
+
+    @patch("shared.utils.git_util._clone_without_cache")
+    @patch("shared.utils.git_util.is_cache_enabled")
+    def test_clone_with_empty_branch(self, mock_is_cache_enabled, mock_clone_without):
+        """Test clone with empty string branch"""
+        mock_is_cache_enabled.return_value = False
+        mock_clone_without.return_value = (True, None)
+
+        project_url = "https://github.com/user/repo.git"
+        branch = ""  # Empty branch
+        project_path = "/tmp/repo"
+        username = "bob"
+        token = "test_token"
         assert success is True
         assert error is None
 
@@ -388,6 +708,9 @@ class TestGitUtil:
             project_url, branch, project_path, username, token
         )
 
+        # Should handle empty branch correctly
+        assert success is True
+        mock_clone_without.assert_called_once()
         assert success is True
         assert error is None
 

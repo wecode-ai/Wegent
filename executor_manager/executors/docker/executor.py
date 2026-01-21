@@ -19,6 +19,30 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import requests
+from executor_manager.config.config import EXECUTOR_ENV
+from executor_manager.executors.base import Executor
+from executor_manager.executors.docker.constants import (
+    CONTAINER_OWNER,
+    DEFAULT_API_ENDPOINT,
+    DEFAULT_DOCKER_HOST,
+    DEFAULT_LOCALE,
+    DEFAULT_PROGRESS_COMPLETE,
+    DEFAULT_PROGRESS_RUNNING,
+    DEFAULT_TASK_ID,
+    DEFAULT_TIMEZONE,
+    DOCKER_SOCKET_PATH,
+    GIT_CACHE_MOUNT_PATH,
+    WORKSPACE_MOUNT_PATH,
+)
+from executor_manager.executors.docker.utils import (
+    build_callback_url,
+    check_container_ownership,
+    delete_container,
+    find_available_port,
+    get_container_ports,
+    get_running_task_details,
+)
+from executor_manager.utils.executor_name import generate_executor_name
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
@@ -204,12 +228,14 @@ class DockerExecutor(Executor):
         task_id = task.get("task_id", DEFAULT_TASK_ID)
         subtask_id = task.get("subtask_id", DEFAULT_TASK_ID)
         user_config = task.get("user") or {}
+        user_id = user_config.get("id")
         user_name = user_config.get("name", "unknown")
         executor_name = task.get("executor_name")
 
         return {
             "task_id": task_id,
             "subtask_id": subtask_id,
+            "user_id": user_id,
             "user_name": user_name,
             "executor_name": executor_name,
         }
@@ -599,7 +625,8 @@ class DockerExecutor(Executor):
 
         task_id = task_info["task_id"]
         subtask_id = task_info["subtask_id"]
-        user_name = task_info["user_name"]
+        user_id = task_info.get("user_id")
+        user_name = task_info.get("user_name", "unknown")
 
         # Convert task to JSON string
         task_str = json.dumps(task)
@@ -678,6 +705,13 @@ class DockerExecutor(Executor):
         # Add workspace mount
         self._add_workspace_mount(cmd)
 
+        # Add git cache mount if enabled (skip for validation tasks)
+        is_validation_task = task.get("type") == "validation"
+        if not is_validation_task:
+            self._add_git_cache_mount(cmd, user_id)
+        else:
+            logger.info("Skipping git cache mount for validation task")
+
         # Add network configuration
         self._add_network_config(cmd)
 
@@ -715,6 +749,91 @@ class DockerExecutor(Executor):
         executor_workspace = os.getenv("EXECUTOR_WORKSPACE", "")  # Fix spelling error
         if executor_workspace:
             cmd.extend(["-v", f"{executor_workspace}:{WORKSPACE_MOUNT_PATH}"])
+
+    def _add_git_cache_mount(self, cmd: List[str], user_id: int = None) -> None:
+        """
+        Add git cache volume mount and environment variables with physical user isolation.
+
+        Creates and mounts a user-specific Docker volume for complete physical isolation.
+        Each user gets their own volume: wegent_git_cache_user_{id}
+
+        Security model: Each container receives its own volume mounted at /git-cache.
+        The volume only contains that user's cache data, providing physical isolation
+        at the container level in addition to application-level path validation.
+
+        Args:
+            cmd: Docker command list to modify
+            user_id: Real user ID for cache isolation (required when cache is enabled)
+
+        Raises:
+            ValueError: If cache is enabled but user_id is not available or volume creation fails
+        """
+        from executor_manager.executors.docker.git_cache_volume_manager import (
+            create_user_volume,
+            get_user_volume_name,
+            update_volume_last_used,
+        )
+
+        git_cache_enabled = os.getenv("GIT_CACHE_ENABLED", "false").lower() == "true"
+
+        if git_cache_enabled:
+            if user_id is None:
+                raise ValueError(
+                    "GIT_CACHE_ENABLED is true but user_id is not available. "
+                    "Cannot enable git cache without user_id for isolation."
+                )
+
+            # Validate user_id
+            try:
+                user_id_int = int(user_id)
+                if user_id_int <= 0:
+                    raise ValueError(f"Invalid user_id: {user_id}. Must be a positive integer.")
+            except (ValueError, TypeError) as e:
+                raise ValueError(f"Invalid user_id for git cache: {e}")
+
+            # Get or create user-specific volume
+            volume_name = get_user_volume_name(user_id_int)
+
+            # Dynamically create volume if it doesn't exist
+            success, error_msg = create_user_volume(user_id_int)
+            if not success:
+                # Volume creation failed - this is a critical error
+                # Per requirements: no fallback, fail fast
+                raise ValueError(
+                    f"Failed to create git cache volume for user {user_id_int}: {error_msg}. "
+                    f"Git cache cannot be enabled without user volume."
+                )
+
+            # Update last-used timestamp
+            update_volume_last_used(volume_name)
+
+            # Mount the user-specific volume at /git-cache
+            # With physical isolation, there's no user subdirectory - the volume root IS the user's cache
+            cmd.extend(["-v", f"{volume_name}:{GIT_CACHE_MOUNT_PATH}"])
+            logger.info(f"Adding user-specific git cache mount: {volume_name}:{GIT_CACHE_MOUNT_PATH}")
+
+            # Pass git cache environment variables to container
+            git_cache_auto_update = os.getenv("GIT_CACHE_AUTO_UPDATE", "true")
+
+            # With physical isolation, the base directory is simply the mount point
+            # No user_{id} subdirectory needed - the volume only contains this user's data
+            user_cache_dir = GIT_CACHE_MOUNT_PATH  # Simply /git-cache
+
+            cmd.extend([
+                "-e", f"GIT_CACHE_ENABLED=true",
+                "-e", f"GIT_CACHE_USER_BASE_DIR={user_cache_dir}",
+                "-e", f"GIT_CACHE_AUTO_UPDATE={git_cache_auto_update}",
+                "-e", f"GIT_CACHE_USER_ID={user_id_int}"  # Pass real user ID for cache isolation
+            ])
+
+            logger.info(
+                f"Git cache enabled for user {user_id_int} with physical isolation: "
+                f"VOLUME={volume_name}, BASE_DIR={user_cache_dir}, AUTO_UPDATE={git_cache_auto_update}"
+            )
+        else:
+            # Explicitly disable cache in container
+            cmd.extend(["-e", "GIT_CACHE_ENABLED=false"])
+            logger.debug("Git cache disabled")
 
     def _add_network_config(self, cmd: List[str]) -> None:
         """Add network configuration"""

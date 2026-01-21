@@ -216,6 +216,13 @@ services:
       - EXECUTOR_PORT_RANGE_MIN=${EXECUTOR_PORT_RANGE_MIN:-10001}
       - EXECUTOR_PORT_RANGE_MAX=${EXECUTOR_PORT_RANGE_MAX:-10100}
       - EXECUTOR_WORKSPACE=${EXECUTOR_WORKSPACE:-${HOME}/wecode-bot}
+      # Git Cache Configuration (uncomment to enable)
+      # - GIT_CACHE_ENABLED=true
+      # - GIT_CACHE_AUTO_UPDATE=true
+      # Git Cache Cleanup Configuration (uncomment to enable)
+      # - GIT_CACHE_CLEANUP_ENABLED=true
+      # - GIT_CACHE_INACTIVE_DAYS=30
+      # - GIT_CACHE_PROTECTED_USERS=1,2,3  # Comma-separated protected user IDs
       # Seccomp Configuration
       # Set to 'true' (default) to enable seccomp (default Docker behavior)
       # Set to 'false' to disable seccomp (add --security-opt seccomp=unconfined)

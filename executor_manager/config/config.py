@@ -57,6 +57,10 @@ EXECUTOR_CONFIG = os.getenv(
 )
 EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{}")
 
+# Git Cache Configuration
+GIT_CACHE_ENABLED = os.getenv("GIT_CACHE_ENABLED", "false")
+GIT_CACHE_AUTO_UPDATE = os.getenv("GIT_CACHE_AUTO_UPDATE", "true")
+
 # Sandbox configuration
 # Default timeout for Sandbox task execution (seconds)
 SANDBOX_DEFAULT_TIMEOUT = int(os.getenv("SANDBOX_DEFAULT_TIMEOUT", "600"))
