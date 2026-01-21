@@ -136,7 +136,6 @@
         "noContent": "暂无内容"
       },
       "viewChunks": "查看分块",
-      "indexingFailed": "索引失败",
       "hasNonTextContent": "此文档包含 {{elements}}，已在分块过程中跳过",
       "chunks": {
         "title": "分块 - {{name}}",

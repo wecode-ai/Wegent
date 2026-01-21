@@ -18,6 +18,12 @@ COPY shared /shared
 COPY backend/pyproject.toml .
 RUN uv pip install --system --no-cache -r pyproject.toml
 
+# Pre-cache tiktoken encoding files to avoid runtime network requests
+# This prevents SSL errors when tiktoken tries to download encodings at runtime
+ENV TIKTOKEN_CACHE_DIR=/app/.tiktoken_cache
+RUN mkdir -p ${TIKTOKEN_CACHE_DIR} && \
+    python -c "import tiktoken; tiktoken.get_encoding('cl100k_base'); tiktoken.get_encoding('gpt2')"
+
 # Copy application code
 COPY backend /app
 # Also copy shared to /app/shared for PYTHONPATH imports

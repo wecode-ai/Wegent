@@ -233,6 +233,10 @@ class KnowledgeDocumentResponse(BaseModel):
     user_id: int
     is_active: bool
     splitter_config: Optional[SplitterConfig] = None
+    chunks: Optional[dict] = Field(
+        None,
+        description="Document chunks data including items, total_count, or error info",
+    )
     source_type: DocumentSourceType = DocumentSourceType.FILE
     source_config: Optional[dict] = None
     doc_ref: Optional[str] = Field(
@@ -406,12 +410,18 @@ class ChunkItemResponse(BaseModel):
 class DocumentChunksResponse(BaseModel):
     """Schema for document chunks response."""
 
-    chunks: list[ChunkItemResponse] = Field(default_factory=list, description="List of chunks")
+    chunks: list[ChunkItemResponse] = Field(
+        default_factory=list, description="List of chunks"
+    )
     total: int = Field(..., description="Total number of chunks")
     page: int = Field(1, description="Current page number")
     page_size: int = Field(20, description="Page size")
-    has_non_text_content: bool = Field(False, description="Whether document has non-text content")
-    skipped_elements: list[str] = Field(default_factory=list, description="List of skipped element types")
+    has_non_text_content: bool = Field(
+        False, description="Whether document has non-text content"
+    )
+    skipped_elements: list[str] = Field(
+        default_factory=list, description="List of skipped element types"
+    )
 
 
 class ChunkDeleteResponse(BaseModel):

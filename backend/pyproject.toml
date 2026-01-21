@@ -71,6 +71,7 @@ dependencies = [
     "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
     "opentelemetry-instrumentation-system-metrics>=0.48b0",
     # Document parsing for file attachments
+    "pypdf>=5.0.0",  # Required by llama-index-readers-file for PDF parsing
     "pypdf2>=3.0.0",
     "python-docx>=1.1.0",
     "python-pptx>=0.6.23",

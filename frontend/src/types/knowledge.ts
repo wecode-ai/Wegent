@@ -58,10 +58,7 @@ export interface SmartSplitterConfig extends BaseSplitterConfig {
 }
 
 // Union type for splitter config
-export type SplitterConfig =
-  | SentenceSplitterConfig
-  | SemanticSplitterConfig
-  | SmartSplitterConfig
+export type SplitterConfig = SentenceSplitterConfig | SemanticSplitterConfig | SmartSplitterConfig
 
 // Summary Model Reference types
 export interface SummaryModelRef {
@@ -157,20 +154,6 @@ export interface ChunkItem {
   forced_split: boolean
 }
 
-// Chunk validation error (for markdown sections that are too long)
-export interface ChunkValidationError {
-  error_code: string
-  error_message: string
-  details?: {
-    max_allowed_tokens: number
-    oversized_chunks: Array<{
-      heading: string | null
-      token_count: number
-      content_preview: string
-    }>
-  }
-}
-
 // New unified chunk item format (from smart splitter)
 export interface UnifiedChunkItem {
   index: number
@@ -186,8 +169,6 @@ export interface DocumentChunks {
   splitter_type?: string
   embedding_model?: string
   created_at?: string
-  // Error (when validation fails)
-  error?: ChunkValidationError
   // Legacy format (for backward compatibility)
   chunks?: ChunkItem[]
   total_chunks?: number

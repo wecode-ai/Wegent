@@ -17,13 +17,6 @@ from app.services.rag.splitter.splitter import (
     SemanticSplitter,
     SentenceSplitter,
 )
-from app.services.rag.splitter.validators import (
-    MARKDOWN_MAX_CHUNK_TOKENS,
-    OversizedChunk,
-    ValidationResult,
-    format_validation_error,
-    validate_markdown_chunks,
-)
 
 __all__ = [
     "DocumentSplitter",
@@ -33,9 +26,4 @@ __all__ = [
     "ChunkItem",
     "SmartChunksData",
     "is_smart_splitter_supported",
-    "MARKDOWN_MAX_CHUNK_TOKENS",
-    "OversizedChunk",
-    "ValidationResult",
-    "format_validation_error",
-    "validate_markdown_chunks",
 ]

@@ -18,10 +18,6 @@ from llama_index.core import Document, SimpleDirectoryReader
 from app.schemas.rag import SmartSplitterConfig, SplitterConfig
 from app.services.rag.splitter import SemanticSplitter, SentenceSplitter, SmartSplitter
 from app.services.rag.splitter.factory import create_splitter
-from app.services.rag.splitter.validators import (
-    format_validation_error,
-    validate_markdown_chunks,
-)
 from app.services.rag.storage.base import BaseStorageBackend
 from app.services.rag.utils.tokenizer import count_tokens
 
@@ -278,18 +274,6 @@ class DocumentIndexer:
 
         if isinstance(self.splitter, SmartSplitter):
             nodes, smart_chunks = self.splitter.split_documents_with_chunks(documents)
-
-            # Validate Markdown chunks if file is .md
-            if self.file_extension and self.file_extension.lower() in [".md", "md"]:
-                validation_result = validate_markdown_chunks(
-                    nodes, self.embedding_model_name
-                )
-                if not validation_result.is_valid:
-                    # Return error, don't index
-                    return {
-                        "success": False,
-                        "error": format_validation_error(validation_result),
-                    }
 
             # Convert to dict for DB storage
             chunks_data = asdict(smart_chunks)

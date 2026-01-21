@@ -24,12 +24,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -123,11 +118,17 @@ export function DocumentItem({
   const isTable = document.source_type === 'table'
   const isWeb = document.source_type === 'web'
   // Check if document has chunks data (available for all splitter types now)
-  const hasChunks = !!document.chunks && !document.chunks.error &&
+  // For indexed documents (is_active=true), show chunks button even if chunks data is not loaded in list
+  // The chunks can be fetched on-demand via the API
+  const hasChunksData =
+    !!document.chunks &&
     ((document.chunks.items && document.chunks.items.length > 0) ||
-     (document.chunks.chunks && document.chunks.chunks.length > 0))
-  // Check if document has validation error
-  const hasValidationError = !!document.chunks?.error
+      (document.chunks.chunks && document.chunks.chunks.length > 0) ||
+      (document.chunks.total_count && document.chunks.total_count > 0) ||
+      (document.chunks.total_chunks && document.chunks.total_chunks > 0))
+  // Show chunks button for active documents (indexed successfully) or documents with chunks data
+  // Table documents don't have chunks (they query data in real-time)
+  const hasChunks = hasChunksData || (document.is_active && !isTable)
   // Check if document has non-text content
   const hasNonTextContent = document.chunks?.has_non_text_content
   // URL for table or web documents
@@ -406,24 +407,7 @@ export function DocumentItem({
                     <FileCode className="w-4 h-4" />
                   </button>
                 </TooltipTrigger>
-                <TooltipContent>
-                  {t('knowledge:document.viewChunks')}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-          {/* Validation error indicator */}
-          {hasValidationError && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="text-error cursor-help">
-                    <AlertCircle className="w-4 h-4" />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  {document.chunks?.error?.error_message || t('knowledge:document.indexingFailed')}
-                </TooltipContent>
+                <TooltipContent>{t('knowledge:document.viewChunks')}</TooltipContent>
               </Tooltip>
             </TooltipProvider>
           )}

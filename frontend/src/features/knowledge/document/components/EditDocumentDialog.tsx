@@ -49,13 +49,18 @@ export function EditDocumentDialog({
   const tableUrl = isTableDocument ? (document.source_config?.url as string) : ''
 
   // Reset form when document changes
+  // Reset form when document changes
   useEffect(() => {
     if (document) {
       setName(document.name)
       // Load existing splitter_config or use defaults
       if (document.splitter_config) {
         const config = document.splitter_config
-        if (config.type === 'semantic') {
+        if (config.type === 'smart') {
+          setSplitterConfig({
+            type: 'smart',
+          })
+        } else if (config.type === 'semantic') {
           setSplitterConfig({
             type: 'semantic',
             buffer_size: config.buffer_size ?? 1,
@@ -82,7 +87,6 @@ export function EditDocumentDialog({
       setShowAdvanced(false) // Reset to collapsed state
     }
   }, [document])
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -174,6 +178,7 @@ export function EditDocumentDialog({
                       config={splitterConfig}
                       onChange={() => {}} // No-op since it's read-only
                       readOnly={true}
+                      fileExtension={document?.file_extension}
                     />
                   </div>
                 )}

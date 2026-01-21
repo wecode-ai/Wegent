@@ -560,6 +560,40 @@ export function DocumentUpload({
     !state.isUploading && state.files.every(f => f.status === 'success' || f.status === 'error')
   const canConfirm = successCount > 0 && allUploadsComplete && !isConfirming
 
+  // Check if all successful files support smart splitter
+  const allFilesSupportSmart = (() => {
+    const successfulFiles = state.files.filter(f => f.status === 'success' && f.attachment)
+    if (successfulFiles.length === 0) return false
+    const smartExtensions = ['.md', '.txt']
+    return successfulFiles.every(f => {
+      const filename = f.attachment?.filename || f.file.name
+      const lastDot = filename.lastIndexOf('.')
+      if (lastDot <= 0) return false
+      const ext = filename.slice(lastDot).toLowerCase()
+      return smartExtensions.includes(ext)
+    })
+  })()
+
+  // Track if user has manually changed splitter type
+  const [userChangedSplitter, setUserChangedSplitter] = useState(false)
+
+  // Auto-select smart splitter when all files support it and uploads complete
+  // Only auto-select once, don't override user's manual selection
+  useEffect(() => {
+    if (allUploadsComplete && successCount > 0 && allFilesSupportSmart && !userChangedSplitter) {
+      // Only auto-select if current type is not already smart
+      if (splitterConfig.type !== 'smart') {
+        setSplitterConfig({ type: 'smart' })
+      }
+    }
+  }, [allUploadsComplete, successCount, allFilesSupportSmart, userChangedSplitter])
+
+  // Wrap setSplitterConfig to track user changes
+  const handleSplitterConfigChange = useCallback((config: Partial<SplitterConfig>) => {
+    setUserChangedSplitter(true)
+    setSplitterConfig(config)
+  }, [])
+
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
@@ -570,6 +604,7 @@ export function DocumentUpload({
         chunk_size: 1024,
         chunk_overlap: 50,
       })
+      setUserChangedSplitter(false)
       setValidationError(null)
     }
   }, [open, reset])
@@ -953,7 +988,8 @@ export function DocumentUpload({
                     <div className="space-y-4 pt-2">
                       <SplitterSettingsSection
                         config={splitterConfig}
-                        onChange={setSplitterConfig}
+                        onChange={handleSplitterConfigChange}
+                        fileExtension={allFilesSupportSmart ? '.md' : undefined}
                       />
                     </div>
                   </AccordionContent>

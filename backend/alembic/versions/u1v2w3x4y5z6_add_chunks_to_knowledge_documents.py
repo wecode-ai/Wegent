@@ -5,7 +5,7 @@
 """add chunks to knowledge_documents
 
 Revision ID: u1v2w3x4y5z6
-Revises: t0u1v2w3x4y5
+Revises: s9t0u1v2w3x4
 Create Date: 2025-01-19 00:00:00.000000
 
 """
@@ -13,11 +13,12 @@ Create Date: 2025-01-19 00:00:00.000000
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "u1v2w3x4y5z6"
-down_revision: Union[str, None] = "t0u1v2w3x4y5"
+down_revision: Union[str, None] = "s9t0u1v2w3x4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

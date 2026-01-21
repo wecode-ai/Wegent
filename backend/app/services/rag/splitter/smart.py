@@ -6,19 +6,19 @@
 Smart Splitter for document chunking.
 
 Automatically selects the best splitter based on file type:
-- .md files: MarkdownNodeParser with metadata preservation
+- .md files: MarkdownNodeParser + SentenceSplitter chain (parse structure first, then split)
 - .txt files: SentenceSplitter with fixed configuration
 """
 
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from llama_index.core import Document
 from llama_index.core.node_parser import MarkdownNodeParser
 from llama_index.core.node_parser import SentenceSplitter as LlamaIndexSentenceSplitter
-from llama_index.core.schema import BaseNode, TextNode
+from llama_index.core.schema import BaseNode
 
 from app.services.rag.utils.tokenizer import count_tokens
 
@@ -29,7 +29,12 @@ SMART_SUPPORTED_EXTENSIONS = {".md", ".txt"}
 
 # TXT splitter configuration (fixed internally)
 TXT_CHUNK_SIZE = 1024
-TXT_CHUNK_OVERLAP = 128
+TXT_CHUNK_OVERLAP = 50
+
+# MD splitter configuration (fixed internally)
+# MarkdownNodeParser parses structure, then SentenceSplitter splits into chunks
+MD_CHUNK_SIZE = 1024
+MD_CHUNK_OVERLAP = 50
 
 
 @dataclass
@@ -59,7 +64,8 @@ class SmartSplitter:
     Smart document splitter.
 
     Automatically selects the best splitter based on file type:
-    - .md files: MarkdownNodeParser with metadata preservation
+    - .md files: MarkdownNodeParser + SentenceSplitter chain
+      (first parse markdown structure, then split into fixed-size chunks)
     - .txt files: SentenceSplitter with fixed chunk_size=1024, chunk_overlap=128
     """
 
@@ -78,13 +84,18 @@ class SmartSplitter:
         if not self.file_extension.startswith("."):
             self.file_extension = f".{self.file_extension}"
 
-        # Create appropriate splitter
+        # Create appropriate splitter(s)
         if self.file_extension == ".md":
-            self.splitter = MarkdownNodeParser(
+            # For markdown: use MarkdownNodeParser first, then SentenceSplitter
+            self.markdown_parser = MarkdownNodeParser(
                 include_metadata=True,
                 include_prev_next_rel=True,
             )
-            self.splitter_subtype = "markdown"
+            self.sentence_splitter = LlamaIndexSentenceSplitter(
+                chunk_size=MD_CHUNK_SIZE,
+                chunk_overlap=MD_CHUNK_OVERLAP,
+            )
+            self.splitter_subtype = "markdown_sentence"
         elif self.file_extension == ".txt":
             self.splitter = LlamaIndexSentenceSplitter(
                 chunk_size=TXT_CHUNK_SIZE,
@@ -101,13 +112,26 @@ class SmartSplitter:
         """
         Split documents into nodes using smart splitting.
 
+        For markdown files: first parse with MarkdownNodeParser to preserve structure,
+        then split with SentenceSplitter to ensure consistent chunk sizes.
+
         Args:
             documents: List of documents to split
 
         Returns:
             List of nodes
         """
-        return self.splitter.get_nodes_from_documents(documents)
+        if self.file_extension == ".md":
+            # Chain: MarkdownNodeParser -> SentenceSplitter
+            markdown_nodes = self.markdown_parser.get_nodes_from_documents(documents)
+            # Apply SentenceSplitter to the markdown nodes
+            chunked_nodes = self.sentence_splitter.get_nodes_from_documents(
+                markdown_nodes
+            )
+            return chunked_nodes
+        else:
+            # For txt files, use single splitter
+            return self.splitter.get_nodes_from_documents(documents)
 
     def split_documents_with_chunks(
         self, documents: List[Document]
@@ -147,11 +171,18 @@ class SmartSplitter:
 
     def get_config(self) -> dict:
         """Get splitter configuration."""
-        return {
+        config = {
             "type": "smart",
             "file_extension": self.file_extension,
             "splitter_subtype": self.splitter_subtype,
         }
+        if self.file_extension == ".md":
+            config["chunk_size"] = MD_CHUNK_SIZE
+            config["chunk_overlap"] = MD_CHUNK_OVERLAP
+        elif self.file_extension == ".txt":
+            config["chunk_size"] = TXT_CHUNK_SIZE
+            config["chunk_overlap"] = TXT_CHUNK_OVERLAP
+        return config
 
 
 def is_smart_splitter_supported(file_extension: str) -> bool:

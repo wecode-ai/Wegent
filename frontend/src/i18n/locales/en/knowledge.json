@@ -136,7 +136,6 @@
         "noContent": "No content available"
       },
       "viewChunks": "View Chunks",
-      "indexingFailed": "Indexing Failed",
       "hasNonTextContent": "This document contains {{elements}} which were skipped during chunking",
       "chunks": {
         "title": "Chunks - {{name}}",
