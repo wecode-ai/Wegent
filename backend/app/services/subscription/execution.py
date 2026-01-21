@@ -428,6 +428,7 @@ class BackgroundExecutionManager:
                 "display_name": subscription_crd.spec.displayName,
                 "task_type": subscription_crd.spec.taskType.value,
                 "team_ref": subscription_crd.spec.teamRef,
+                "owner_user_id": subscription.user_id,  # Track subscription owner
             }
             if subscription_crd.spec.teamRef:
                 team_ref = subscription_crd.spec.teamRef
@@ -463,6 +464,10 @@ class BackgroundExecutionManager:
                 team = team_map.get((team_ref.name, team_ref.namespace))
                 if team:
                     exec_dict["team_name"] = team.name
+
+            # Set can_delete: only subscription owner can delete executions
+            owner_user_id = sub_info.get("owner_user_id")
+            exec_dict["can_delete"] = owner_user_id == user_id
 
             result.append(BackgroundExecutionInDB(**exec_dict))
 
