@@ -431,6 +431,7 @@ def create_app():
         # Add OpenTelemetry span attributes if enabled
         if otel_config.enabled:
             from opentelemetry import trace
+
             from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():
@@ -469,6 +470,7 @@ def create_app():
         # Capture response headers and body if OTEL is enabled
         if otel_config.enabled:
             from opentelemetry import trace
+
             from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():

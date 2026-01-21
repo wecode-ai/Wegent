@@ -4,15 +4,14 @@ import click
 
 from . import __version__
 from .client import VALID_KINDS, WegentClient
-from .config import get_server, get_token
-from .commands.get import get_cmd
 from .commands.apply import apply_cmd
-from .commands.delete import delete_cmd
-from .commands.describe import describe_cmd
 from .commands.config import config_cmd
 from .commands.create import create_cmd
+from .commands.delete import delete_cmd
+from .commands.describe import describe_cmd
+from .commands.get import get_cmd
 from .commands.login import login_cmd, logout_cmd
-
+from .config import get_server, get_token
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 

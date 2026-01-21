@@ -15,11 +15,11 @@ import asyncio
 from typing import Any, Dict, Optional, Tuple
 
 import httpx
-from shared.logger import setup_logger
 
 from executor_manager.common.config import get_config
 from executor_manager.common.singleton import SingletonMeta
 from executor_manager.models.sandbox import Execution, Sandbox
+from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 

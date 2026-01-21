@@ -16,9 +16,6 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from opentelemetry import trace
 from passlib.context import CryptContext
-from shared.telemetry.context import set_user_context
-from shared.telemetry.context.attributes import SpanAttributes
-from shared.telemetry.core import is_telemetry_enabled
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -30,6 +27,9 @@ from app.schemas.user import TokenData
 from app.services.k_batch import apply_default_resources_sync
 from app.services.readers.users import userReader
 from app.services.user import user_service
+from shared.telemetry.context import set_user_context
+from shared.telemetry.context.attributes import SpanAttributes
+from shared.telemetry.core import is_telemetry_enabled
 
 logger = logging.getLogger(__name__)
 

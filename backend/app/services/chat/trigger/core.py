@@ -19,6 +19,12 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from app.core.config import settings
+from app.db.session import SessionLocal
+from app.models.kind import Kind
+from app.models.subtask import Subtask
+from app.models.task import TaskResource
+from app.models.user import User
 from shared.telemetry.context import (
     SpanAttributes,
     SpanManager,
@@ -30,13 +36,6 @@ from shared.telemetry.context import (
     restore_context_vars,
     set_span_attributes,
 )
-
-from app.core.config import settings
-from app.db.session import SessionLocal
-from app.models.kind import Kind
-from app.models.subtask import Subtask
-from app.models.task import TaskResource
-from app.models.user import User
 
 if TYPE_CHECKING:
     from app.api.ws.chat_namespace import ChatNamespace
@@ -353,10 +352,9 @@ async def _stream_chat_response(
     span_manager.create_span()
     span_manager.enter_span()
 
-    from chat_shell.agent import ChatAgent
-
     from app.services.chat.config import ChatConfigBuilder, WebSocketStreamConfig
     from app.services.chat.streaming import WebSocketBridge, WebSocketStreamingHandler
+    from chat_shell.agent import ChatAgent
 
     db = SessionLocal()
 
@@ -1283,6 +1281,11 @@ async def _stream_with_bridge(
         ws_config: WebSocket stream configuration
         namespace: ChatNamespace instance (required for bridge mode)
     """
+    from langchain_core.tools.base import BaseTool
+
+    from app.core.shutdown import shutdown_manager
+    from app.services.chat.streaming import WebSocketBridge
+    from app.services.chat.ws_emitter import get_ws_emitter
     from chat_shell.agent import AgentConfig, ChatAgent
     from chat_shell.history import get_chat_history
     from chat_shell.services.streaming import (
@@ -1294,11 +1297,6 @@ async def _stream_with_bridge(
     from chat_shell.tools import WebSearchTool
     from chat_shell.tools.events import create_tool_event_handler
     from chat_shell.tools.mcp import load_mcp_tools
-    from langchain_core.tools.base import BaseTool
-
-    from app.core.shutdown import shutdown_manager
-    from app.services.chat.streaming import WebSocketBridge
-    from app.services.chat.ws_emitter import get_ws_emitter
 
     subtask_id = ws_config.subtask_id
     task_id = ws_config.task_id

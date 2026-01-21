@@ -13,7 +13,6 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from shared.utils.crypto import decrypt_attachment, encrypt_attachment
 from sqlalchemy.orm import Session
 
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
@@ -29,6 +28,7 @@ from app.services.attachment.parser import (
 )
 from app.services.attachment.storage_backend import StorageError, generate_storage_key
 from app.services.attachment.storage_factory import get_storage_backend
+from shared.utils.crypto import decrypt_attachment, encrypt_attachment
 
 logger = logging.getLogger(__name__)
 

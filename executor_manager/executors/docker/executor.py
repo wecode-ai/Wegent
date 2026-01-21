@@ -19,24 +19,34 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import requests
-from shared.logger import setup_logger
-from shared.status import TaskStatus
-from shared.telemetry.config import get_otel_config
 
 from executor_manager.config.config import EXECUTOR_ENV
 from executor_manager.executors.base import Executor
 from executor_manager.executors.docker.constants import (
-    CONTAINER_OWNER, DEFAULT_API_ENDPOINT, DEFAULT_DOCKER_HOST, DEFAULT_LOCALE,
-    DEFAULT_PROGRESS_COMPLETE, DEFAULT_PROGRESS_RUNNING, DEFAULT_TASK_ID,
-    DEFAULT_TIMEZONE, DOCKER_SOCKET_PATH, WORKSPACE_MOUNT_PATH)
-from executor_manager.executors.docker.utils import (build_callback_url,
-                                                     check_container_ownership,
-                                                     delete_container,
-                                                     find_available_port,
-                                                     get_container_ports,
-                                                     get_container_status,
-                                                     get_running_task_details)
+    CONTAINER_OWNER,
+    DEFAULT_API_ENDPOINT,
+    DEFAULT_DOCKER_HOST,
+    DEFAULT_LOCALE,
+    DEFAULT_PROGRESS_COMPLETE,
+    DEFAULT_PROGRESS_RUNNING,
+    DEFAULT_TASK_ID,
+    DEFAULT_TIMEZONE,
+    DOCKER_SOCKET_PATH,
+    WORKSPACE_MOUNT_PATH,
+)
+from executor_manager.executors.docker.utils import (
+    build_callback_url,
+    check_container_ownership,
+    delete_container,
+    find_available_port,
+    get_container_ports,
+    get_container_status,
+    get_running_task_details,
+)
 from executor_manager.utils.executor_name import generate_executor_name
+from shared.logger import setup_logger
+from shared.status import TaskStatus
+from shared.telemetry.config import get_otel_config
 
 logger = setup_logger(__name__)
 
@@ -291,7 +301,9 @@ class DockerExecutor(Executor):
         headers = {}
         try:
             from shared.telemetry.context import (
-                get_request_id, inject_trace_context_to_headers)
+                get_request_id,
+                inject_trace_context_to_headers,
+            )
 
             # Inject W3C Trace Context headers for distributed tracing
             headers = inject_trace_context_to_headers(headers)
@@ -968,7 +980,9 @@ class DockerExecutor(Executor):
                 headers = {}
                 try:
                     from shared.telemetry.context import (
-                        get_request_id, inject_trace_context_to_headers)
+                        get_request_id,
+                        inject_trace_context_to_headers,
+                    )
 
                     # Inject W3C Trace Context headers for distributed tracing
                     headers = inject_trace_context_to_headers(headers)
@@ -1204,7 +1218,6 @@ class DockerExecutor(Executor):
         Returns:
             task_id string if found, None otherwise
         """
-        from executor_manager.executors.docker.utils import \
-            get_container_task_id
+        from executor_manager.executors.docker.utils import get_container_task_id
 
         return get_container_task_id(executor_name)

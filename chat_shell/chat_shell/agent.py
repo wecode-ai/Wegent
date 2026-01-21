@@ -21,13 +21,13 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from langchain_core.tools.base import BaseTool
+
+from chat_shell.core.config import settings
 from shared.telemetry.decorators import (
     add_span_event,
     trace_async_generator,
     trace_sync,
 )
-
-from chat_shell.core.config import settings
 
 from .agents import LangGraphAgentBuilder
 from .compression import MessageCompressor

@@ -10,15 +10,6 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import HTTPException
-from shared.telemetry.context import (
-    SpanAttributes,
-    set_task_context,
-    set_user_context,
-)
-
-# Import telemetry utilities
-from shared.telemetry.core import get_tracer, is_telemetry_enabled
-from shared.utils.crypto import decrypt_api_key
 from sqlalchemy import and_, func, text
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.attributes import flag_modified
@@ -33,6 +24,15 @@ from app.schemas.subtask import SubtaskExecutorUpdate
 from app.services.base import BaseService
 from app.services.context import context_service
 from app.services.webhook_notification import Notification, webhook_notification_service
+from shared.telemetry.context import (
+    SpanAttributes,
+    set_task_context,
+    set_user_context,
+)
+
+# Import telemetry utilities
+from shared.telemetry.core import get_tracer, is_telemetry_enabled
+from shared.utils.crypto import decrypt_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -1259,6 +1259,7 @@ class ExecutorKindsService(
 
         try:
             from opentelemetry import trace
+
             from shared.telemetry.context import get_trace_context_for_propagation
 
             tracer = get_tracer("backend.dispatch")
