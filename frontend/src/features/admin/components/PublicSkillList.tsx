@@ -320,7 +320,7 @@ const PublicSkillList: React.FC = () => {
                     <div className="flex flex-col justify-center min-w-0 flex-1">
                       <div className="flex items-center space-x-2 min-w-0 flex-wrap gap-1">
                         <h3 className="text-base font-medium text-text-primary truncate">
-                          {skill.name}
+                          {skill.displayName || skill.name}
                         </h3>
                         {skill.version && <Tag variant="info">v{skill.version}</Tag>}
                         {skill.tags?.map(tag => (
@@ -418,7 +418,7 @@ const PublicSkillList: React.FC = () => {
             </DialogTitle>
             <DialogDescription>
               {isEditMode
-                ? `Update the ZIP package for skill "${selectedSkill?.name}"`
+                ? `Update the ZIP package for skill "${selectedSkill?.displayName || selectedSkill?.name}"`
                 : 'Upload a new public skill ZIP package'}
               <div className="mt-2 text-xs text-text-muted">
                 <strong>Expected structure:</strong>
@@ -573,7 +573,8 @@ const PublicSkillList: React.FC = () => {
         <DialogContent className="sm:max-w-[700px] max-h-[80vh] bg-surface">
           <DialogHeader>
             <DialogTitle>
-              {selectedSkill?.name} - {t('public_skills.skill_content')}
+              {selectedSkill?.displayName || selectedSkill?.name} -{' '}
+              {t('public_skills.skill_content')}
             </DialogTitle>
             <DialogDescription>{t('public_skills.view_content_description')}</DialogDescription>
           </DialogHeader>
