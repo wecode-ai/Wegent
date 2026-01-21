@@ -282,6 +282,13 @@ class TaskOperationsMixin:
                         else {}
                     ),
                     **(
+                        {
+                            "forceOverrideBotModelType": obj_in.force_override_bot_model_type
+                        }
+                        if obj_in.force_override_bot_model_type
+                        else {}
+                    ),
+                    **(
                         {"api_key_name": obj_in.api_key_name}
                         if obj_in.api_key_name
                         else {}
