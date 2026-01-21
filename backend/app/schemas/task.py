@@ -116,6 +116,8 @@ class TaskInDB(TaskBase):
     updated_at: datetime
     completed_at: Optional[datetime] = None
     is_group_chat: bool = False  # Whether this is a group chat task
+    is_pinned: bool = False  # Whether this task is pinned to top
+    pinned_at: Optional[datetime] = None  # Time when the task was pinned
 
     class Config:
         from_attributes = True
@@ -178,6 +180,8 @@ class TaskLite(BaseModel):
     knowledge_base_id: Optional[int] = (
         None  # Knowledge base ID for knowledge type tasks
     )
+    is_pinned: bool = False  # Whether this task is pinned to top
+    pinned_at: Optional[datetime] = None  # Time when the task was pinned
 
     class Config:
         from_attributes = True

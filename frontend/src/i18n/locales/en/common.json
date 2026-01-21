@@ -419,7 +419,12 @@
     "access_denied_title": "Access Denied",
     "access_denied_description": "You don't have permission to access this task. Please contact the task owner to invite you via the \"Invite Members\" feature.",
     "access_denied_go_home": "Go to Chat",
-    "total_count": "{{count}} items total"
+    "total_count": "{{count}} items total",
+    "pin_chat": "Pin Chat",
+    "unpin_chat": "Unpin Chat",
+    "pin_limit_reached": "Pin limit reached (max 5)",
+    "pin_success": "Chat pinned",
+    "unpin_success": "Chat unpinned"
   },
   "settings": {
     "title": "Settings",

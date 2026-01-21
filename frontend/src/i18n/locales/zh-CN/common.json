@@ -419,7 +419,12 @@
     "access_denied_title": "无访问权限",
     "access_denied_description": "您没有权限访问此任务。请联系任务创建者，通过「邀请成员」功能邀请您加入。",
     "access_denied_go_home": "返回聊天页",
-    "total_count": "共 {{count}} 条记录"
+    "total_count": "共 {{count}} 条记录",
+    "pin_chat": "置顶聊天",
+    "unpin_chat": "取消置顶",
+    "pin_limit_reached": "已达到置顶上限（最多5个）",
+    "pin_success": "对话已置顶",
+    "unpin_success": "已取消置顶"
   },
   "settings": {
     "title": "设置",

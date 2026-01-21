@@ -18,6 +18,7 @@ import {
   MessageSquare,
   Users,
   BookOpen,
+  Pin,
 } from 'lucide-react'
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
@@ -29,6 +30,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useDraggable } from '@dnd-kit/core'
 import { cn } from '@/lib/utils'
 import { useProjectContext } from '@/features/projects'
+import { toast } from 'sonner'
 
 interface TaskListSectionProps {
   tasks: Task[]
@@ -347,6 +349,31 @@ export default function TaskListSection({
     setEditingTaskId(null)
   }, [])
 
+  // Toggle pin status for a task
+  const handleTogglePin = useCallback(
+    async (task: Task) => {
+      try {
+        if (task.is_pinned) {
+          await taskApis.unpinTask(task.id)
+          toast.success(t('common:tasks.unpin_success'))
+        } else {
+          await taskApis.pinTask(task.id)
+          toast.success(t('common:tasks.pin_success'))
+        }
+        refreshTasks()
+      } catch (error) {
+        // Check if it's a pin limit error
+        const errorMessage = (error as Error)?.message || ''
+        if (errorMessage.includes('Pin limit reached') || errorMessage.includes('max')) {
+          toast.error(t('common:tasks.pin_limit_reached'))
+        } else {
+          toast.error(errorMessage || 'Failed to update pin status')
+        }
+      }
+    },
+    [refreshTasks, t]
+  )
+
   if (tasks.length === 0) return null
 
   const getStatusIcon = (status: string) => {
@@ -414,7 +441,12 @@ export default function TaskListSection({
   // Determine whether to show status icon in expanded mode
   // Terminal states only show icon when unread, non-terminal states always show
   // Group chat tasks show icon when there are unread messages
+  // Pinned tasks show pin icon instead of status icon
   const shouldShowStatusIcon = (task: Task): boolean => {
+    // For pinned tasks, always show the icon area (will show pin icon)
+    if (task.is_pinned) {
+      return true
+    }
     // For group chat tasks, show icon when there are unread messages
     if (task.is_group_chat) {
       return isTaskUnread(task)
@@ -425,6 +457,15 @@ export default function TaskListSection({
       return unread
     }
     return true
+  }
+
+  // Get the appropriate icon to display for a task
+  // Pinned tasks show pin icon, others show status icon
+  const getDisplayIcon = (task: Task) => {
+    if (task.is_pinned) {
+      return <Pin className="w-4 h-4 text-primary" />
+    }
+    return getStatusIcon(task.status)
   }
 
   const getTaskTypeIcon = (task: Task) => {
@@ -501,7 +542,11 @@ export default function TaskListSection({
                     >
                       <div className="relative flex items-center justify-center">
                         <div className="w-4 h-4 flex items-center justify-center">
-                          {getStatusIcon(task.status)}
+                          {task.is_pinned ? (
+                            <Pin className="w-4 h-4 text-primary" />
+                          ) : (
+                            getStatusIcon(task.status)
+                          )}
                         </div>
                         {isTaskUnread(task) && (
                           <span
@@ -610,7 +655,7 @@ export default function TaskListSection({
                         editingTaskId !== task.id && (
                           <div className="flex-shrink-0 relative">
                             <div className="w-4 h-4 flex items-center justify-center">
-                              {shouldShowStatusIcon(task) && getStatusIcon(task.status)}
+                              {shouldShowStatusIcon(task) && getDisplayIcon(task)}
                             </div>
                             {isTaskUnread(task) && (
                               <span
@@ -636,6 +681,8 @@ export default function TaskListSection({
                               handleDeleteTask={handleDeleteTask}
                               onRename={() => handleStartRename(task.id)}
                               isGroupChat={task.is_group_chat}
+                              isPinned={task.is_pinned}
+                              onTogglePin={() => handleTogglePin(task)}
                             />
                           </div>
                         </div>

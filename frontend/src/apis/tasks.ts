@@ -433,4 +433,20 @@ export const taskApis = {
   getPipelineStageInfo: async (taskId: number): Promise<PipelineStageInfo> => {
     return apiClient.get(`/tasks/${taskId}/pipeline-stage-info`)
   },
+
+  /**
+   * Pin a task to the top of the task list
+   * @param taskId - Task ID to pin
+   */
+  pinTask: async (taskId: number): Promise<Task> => {
+    return apiClient.post(`/tasks/${taskId}/pin`, {})
+  },
+
+  /**
+   * Unpin a task from the top of the task list
+   * @param taskId - Task ID to unpin
+   */
+  unpinTask: async (taskId: number): Promise<Task> => {
+    return apiClient.delete(`/tasks/${taskId}/pin`)
+  },
 }
