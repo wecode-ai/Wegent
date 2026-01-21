@@ -231,6 +231,25 @@ Example:
                         "❌ DO NOT assume you know the correct approach without reading",
                     ],
                 },
+                "step_5_UPLOAD_AND_RETURN_URL": {
+                    "description": "Upload the generated document and return download URL to user",
+                    "mandatory": True,
+                    "tool": "sandbox_upload_attachment",
+                    "arguments_template": {
+                        "file_path": "/home/user/documents/{generated_file_path}",
+                    },
+                    "expected_outcome": "success=true and download_url field contains the URL",
+                    "user_presentation": {
+                        "format": "Provide the download link to user in a clickable format",
+                        "example": "文档已生成完成！\n\n📄 **{filename}**\n\n[点击下载]({download_url})",
+                    },
+                    "critical_importance": (
+                        "⚠️ THIS STEP IS MANDATORY ⚠️\n"
+                        "After generating the document, you MUST upload it and return the download URL to the user.\n"
+                        "DO NOT just tell the user the file path - they cannot access sandbox filesystem directly.\n"
+                        "The user needs a clickable download link to retrieve the generated document."
+                    ),
+                },
             },
             "critical_reminder": {
                 "importance": "HIGHEST PRIORITY",
@@ -240,6 +259,7 @@ Example:
                     "3. Your existing knowledge may be OUTDATED - trust Anthropic's documentation",
                     "4. Generate documents ONLY after completing step 3",
                     "5. Follow the EXACT patterns from the loaded skill documentation",
+                    "6. Step 5 (upload and return URL) is MANDATORY - users cannot access sandbox files directly",
                 ],
             },
             "message": (
@@ -260,7 +280,13 @@ Example:
                 f"   → Most common dependencies are already pre-installed (python-pptx, openpyxl, pandas, python-docx, reportlab, pandoc, docx, LibreOffice, Chromium, etc.)\n"
                 f"   → Only install additional dependencies if explicitly required\n"
                 f"   → Generate the document following the loaded instructions\n\n"
+                f"5️⃣ STEP 5: ⚠️ UPLOAD AND RETURN URL ⚠️ (MANDATORY)\n"
+                f"   → Call: sandbox_upload_attachment(file_path='{{generated_file_path}}')\n"
+                f"   → Get the 'download_url' from response\n"
+                f"   → Present the download link to user in a clickable format\n"
+                f"   → Example: '文档已生成！[点击下载]({{download_url}})'\n\n"
                 f"⚠️ DO NOT generate {document_type.upper()} files before completing step 3!\n"
+                f"⚠️ DO NOT skip step 5 - users cannot access sandbox files directly!\n"
                 f"⚠️ Your existing knowledge may be OUTDATED - trust the loaded documentation!"
             ),
         }
