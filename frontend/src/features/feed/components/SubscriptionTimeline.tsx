@@ -42,6 +42,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
+import { SmartImage } from '@/components/common/SmartUrlRenderer'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useSubscriptionContext } from '../contexts/subscriptionContext'
 import type { BackgroundExecution, BackgroundExecutionStatus } from '@/types/subscription'
@@ -373,10 +374,28 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
                   </div>
                   <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
                     {isSummaryExpanded ? (
-                      <EnhancedMarkdown source={exec.result_summary} theme={theme} />
+                      <EnhancedMarkdown
+                        source={exec.result_summary}
+                        theme={theme}
+                        components={{
+                          img: ({ src, alt }) => {
+                            if (!src || typeof src !== 'string') return null
+                            return <SmartImage src={src} alt={alt} />
+                          },
+                        }}
+                      />
                     ) : (
                       <div className="line-clamp-6 overflow-hidden">
-                        <EnhancedMarkdown source={exec.result_summary} theme={theme} />
+                        <EnhancedMarkdown
+                          source={exec.result_summary}
+                          theme={theme}
+                          components={{
+                            img: ({ src, alt }) => {
+                              if (!src || typeof src !== 'string') return null
+                              return <SmartImage src={src} alt={alt} />
+                            },
+                          }}
+                        />
                       </div>
                     )}
                   </div>
