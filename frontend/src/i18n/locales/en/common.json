@@ -579,6 +579,12 @@
     "done": "Done",
     "restart_tour": "Restart Onboarding Tour"
   },
+  "time": {
+    "just_now": "Just now",
+    "minutes_ago": "{{count}}m ago",
+    "hours_ago": "{{count}}h ago",
+    "days_ago": "{{count}}d ago"
+  },
   "common": {
     "back": "Back",
     "cancel": "Cancel",
