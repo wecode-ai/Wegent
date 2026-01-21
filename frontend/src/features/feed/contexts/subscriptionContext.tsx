@@ -208,13 +208,15 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     setExecutionsTotal(prev => Math.max(0, prev - 1))
   }, [])
 
-  // Initial load
+  // Initial load - only load subscriptions here
+  // executions are loaded by the dependency-based useEffect below
   useEffect(() => {
     refreshSubscriptions()
-    refreshExecutions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Refresh executions when filter or showSilentExecutions changes
+  // This also handles the initial load
   useEffect(() => {
     refreshExecutions()
   }, [executionFilter, showSilentExecutions, refreshExecutions])

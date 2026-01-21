@@ -627,6 +627,7 @@ class BackgroundExecutionManager:
             update_values["started_at"] = now_utc
         elif status in (
             BackgroundExecutionStatus.COMPLETED,
+            BackgroundExecutionStatus.COMPLETED_SILENT,
             BackgroundExecutionStatus.FAILED,
         ):
             update_values["completed_at"] = now_utc

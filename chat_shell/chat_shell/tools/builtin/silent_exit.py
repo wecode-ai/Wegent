@@ -67,13 +67,13 @@ class SilentExitTool(BaseTool):
     def _run(
         self,
         reason: str = "",
-        run_manager: CallbackManagerForToolRun | None = None,
+        _run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         """Execute silent exit - raises SilentExitException to terminate.
 
         Args:
             reason: Optional reason for silent exit (logged but not shown to user).
-            run_manager: Optional callback manager (not used).
+            _run_manager: Optional callback manager (not used).
 
         Raises:
             SilentExitException: Always raised to terminate the agent loop.
@@ -83,13 +83,13 @@ class SilentExitTool(BaseTool):
     async def _arun(
         self,
         reason: str = "",
-        run_manager: AsyncCallbackManagerForToolRun | None = None,
+        _run_manager: AsyncCallbackManagerForToolRun | None = None,
     ) -> str:
         """Execute silent exit asynchronously - raises SilentExitException.
 
         Args:
             reason: Optional reason for silent exit (logged but not shown to user).
-            run_manager: Optional callback manager (not used).
+            _run_manager: Optional callback manager (not used).
 
         Raises:
             SilentExitException: Always raised to terminate the agent loop.

@@ -504,7 +504,11 @@ async def _process_result_message(
     if msg.result:
         from executor.tools.silent_exit import detect_silent_exit
 
-        result_str = str(msg.result) if msg.result is not None else ""
+        # Handle dict/list results by converting to JSON string
+        if isinstance(msg.result, (dict, list)):
+            result_str = json.dumps(msg.result, ensure_ascii=False)
+        else:
+            result_str = str(msg.result) if msg.result is not None else ""
         silent_exit_detected, silent_exit_reason = detect_silent_exit(result_str)
         if silent_exit_detected:
             logger.info(f"🔇 Silent exit detected in Claude Code result: reason={silent_exit_reason}")
