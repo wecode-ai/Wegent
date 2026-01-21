@@ -13,6 +13,7 @@ Also contains the Deep Thinking Mode prompt for search tool usage guidance.
 
 CLARIFICATION_PROMPT = """
 
+<smart_follow_up_mode>
 ## Smart Follow-up Mode (智能追问模式)
 
 When you receive a user request that is ambiguous or lacks important details, ask targeted clarification questions through MULTIPLE ROUNDS before proceeding with the task.
@@ -134,6 +135,8 @@ After each round of user answers:
    - OR proceed with the task if exit criteria are met
 
 **Important:** Do NOT rush to provide a solution after just one round of questions. Take time to gather comprehensive information for a truly personalized and high-quality output.
+
+</smart_follow_up_mode>
 """
 
 
@@ -165,7 +168,7 @@ def append_clarification_prompt(system_prompt: str, enable_clarification: bool) 
 
 # Deep Thinking Mode Prompt
 DEEP_THINKING_PROMPT = """
-
+<deep_thinking_mode_with_search_tools>
 ## Deep Thinking Mode with Search Tools
 
 You are in deep thinking mode with access to web search tools (web_search) to retrieve up-to-date information.
@@ -250,6 +253,8 @@ To help narrow down the search, could you clarify:
 ```
 
 Remember: Search tools are your PRIMARY capability for obtaining factual information. Use them FIRST, ask questions LATER.
+
+</deep_thinking_mode_with_search_tools>
 """
 
 
@@ -282,6 +287,7 @@ def append_deep_thinking_prompt(system_prompt: str, enable_deep_thinking: bool) 
 # Skill Metadata Prompt Template
 SKILL_METADATA_PROMPT = """
 
+<skills>
 ## Available Skills
 
 The following skills provide specialized guidance for specific tasks. When your task matches a skill's description, use the `load_skill` tool to load the full instructions.
@@ -291,6 +297,7 @@ The following skills provide specialized guidance for specific tasks. When your 
 ### How to Use Skills
 
 **Load the skill**: Call `load_skill(skill_name="<skill-name>")` to load detailed instructions
+</skills>
 """
 
 

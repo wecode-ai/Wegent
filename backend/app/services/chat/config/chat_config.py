@@ -154,6 +154,11 @@ class ChatConfigBuilder:
 
         # Get base system prompt (without enhancements - those are handled by chat_shell)
         system_prompt = self._get_base_system_prompt(bot, team_member_prompt)
+        system_prompt = f"""
+<base_prompt>
+{system_prompt}
+</base_prompt>
+"""
 
         # Get agent config
         bot_spec = bot.json.get("spec", {}) if bot.json else {}
