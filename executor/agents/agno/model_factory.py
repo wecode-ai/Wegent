@@ -7,12 +7,14 @@
 # -*- coding: utf-8 -*-
 
 import os
-from typing import Dict, Any, Union
-from agno.models.openai import OpenAIChat
+from typing import Any, Dict, Union
+
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
+from agno.models.openai import OpenAIChat
 from google.genai import Client
 from google.genai.types import HttpOptions
+
 from shared.logger import setup_logger
 
 logger = setup_logger("agno_model_factory")
@@ -22,9 +24,11 @@ class ModelFactory:
     """
     Factory class for creating AI model instances
     """
-    
+
     @staticmethod
-    def create_model(agent_config: Dict[str, Any], default_headers: Dict[str, Any]) -> Union[Claude, OpenAIChat, Gemini]:
+    def create_model(
+        agent_config: Dict[str, Any], default_headers: Dict[str, Any]
+    ) -> Union[Claude, OpenAIChat, Gemini]:
         """
         Create a model instance based on configuration
 
@@ -48,11 +52,15 @@ class ModelFactory:
             return ModelFactory._create_gemini_model(env, default_headers)
         else:
             # Default to Claude
-            logger.warning(f"Unknown model config: {model_config}, defaulting to Claude")
+            logger.warning(
+                f"Unknown model config: {model_config}, defaulting to Claude"
+            )
             return ModelFactory._create_claude_model(env, default_headers)
-    
+
     @staticmethod
-    def _create_claude_model(env: Dict[str, Any], default_headers: Dict[str, Any]) -> Claude:
+    def _create_claude_model(
+        env: Dict[str, Any], default_headers: Dict[str, Any]
+    ) -> Claude:
         """
         Create a Claude model instance
 
@@ -68,14 +76,19 @@ class ModelFactory:
             os.environ["ANTHROPIC_BASE_URL"] = base_url
 
         return Claude(
-            id=env.get("model_id", os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")),
+            id=env.get(
+                "model_id",
+                os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
+            ),
             api_key=env.get("api_key", os.environ.get("ANTHROPIC_API_KEY")),
             default_headers=default_headers,
-            max_tokens=32768
+            max_tokens=32768,
         )
-    
+
     @staticmethod
-    def _create_openai_model(env: Dict[str, Any], default_headers: Dict[str, Any]) -> OpenAIChat:
+    def _create_openai_model(
+        env: Dict[str, Any], default_headers: Dict[str, Any]
+    ) -> OpenAIChat:
         """
         Create an OpenAI model instance
 
@@ -98,11 +111,13 @@ class ModelFactory:
                 "assistant": "assistant",
                 "tool": "tool",
                 "model": "assistant",
-            }
+            },
         )
 
     @staticmethod
-    def _create_gemini_model(env: Dict[str, Any], default_headers: Dict[str, Any]) -> Gemini:
+    def _create_gemini_model(
+        env: Dict[str, Any], default_headers: Dict[str, Any]
+    ) -> Gemini:
         """
         Create a Gemini model instance
 
@@ -115,7 +130,9 @@ class ModelFactory:
         """
         api_key = env.get("api_key", os.environ.get("GOOGLE_API_KEY"))
         base_url = env.get("base_url", "")
-        model_id = env.get("model_id", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"))
+        model_id = env.get(
+            "model_id", os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        )
 
         # If custom base_url is provided, create a custom client
         if base_url:
@@ -137,7 +154,9 @@ class ModelFactory:
                 base_url_stripped = base_url_stripped.replace("/v1", "")
                 api_version = "v1"
 
-            logger.info(f"Creating Gemini model with custom base_url: {base_url_stripped}, api_version: {api_version}")
+            logger.info(
+                f"Creating Gemini model with custom base_url: {base_url_stripped}, api_version: {api_version}"
+            )
 
             http_options = HttpOptions(
                 base_url=base_url_stripped,
@@ -162,24 +181,24 @@ class ModelFactory:
     def get_model_config(agent_config: Dict[str, Any]) -> str:
         """
         Get the model configuration string
-        
+
         Args:
             agent_config: Agent configuration dictionary
-            
+
         Returns:
             Model configuration string
         """
         env = agent_config.get("env", {})
         return env.get("model", "claude")
-    
+
     @staticmethod
     def is_valid_model_config(model_config: str) -> bool:
         """
         Validate model configuration
-        
+
         Args:
             model_config: Model configuration string
-            
+
         Returns:
             True if valid, False otherwise
         """

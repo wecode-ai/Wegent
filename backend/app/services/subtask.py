@@ -7,13 +7,13 @@ from datetime import datetime
 from typing import List, Optional, Tuple
 
 from fastapi import HTTPException
-from shared.models.db.enums import ContextType
-from shared.models.db.subtask_context import SubtaskContext
 from sqlalchemy.orm import Session, load_only, subqueryload, undefer
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.schemas.subtask import SubtaskCreate, SubtaskUpdate
 from app.services.base import BaseService
+from shared.models.db.enums import ContextType
+from shared.models.db.subtask_context import SubtaskContext
 
 logger = logging.getLogger(__name__)
 

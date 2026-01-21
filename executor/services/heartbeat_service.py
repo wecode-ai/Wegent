@@ -17,6 +17,7 @@ import time
 from typing import Optional
 
 import requests
+
 from shared.logger import setup_logger
 
 logger = setup_logger("heartbeat_service")
@@ -282,10 +283,8 @@ class HeartbeatService:
             )
 
             # Import here to avoid circular dependencies
+            from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
             from shared.status import TaskStatus
-
-            from executor.agents.claude_code.claude_code_agent import \
-                ClaudeCodeAgent
 
             # Create minimal task data for initialization
             init_task_data = {

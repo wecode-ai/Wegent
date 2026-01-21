@@ -13,9 +13,9 @@ from typing import Optional
 
 import redis
 import redis.asyncio as aioredis
-from shared.logger import setup_logger
 
 from executor_manager.common.config import RedisConfig, get_config
+from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 

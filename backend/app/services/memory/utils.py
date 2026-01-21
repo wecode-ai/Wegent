@@ -8,16 +8,16 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from shared.telemetry.decorators import (
-    add_span_event,
-    set_span_attribute,
-    trace_sync,
-)
 from sqlalchemy.orm import Session
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.services.memory.schemas import MemorySearchResult
+from shared.telemetry.decorators import (
+    add_span_event,
+    set_span_attribute,
+    trace_sync,
+)
 
 logger = logging.getLogger(__name__)
 

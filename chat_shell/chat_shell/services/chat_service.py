@@ -14,8 +14,6 @@ This service handles:
 import logging
 from typing import AsyncIterator
 
-from shared.telemetry.decorators import add_span_event, trace_async_generator
-
 from chat_shell.core.config import settings
 from chat_shell.interface import ChatEvent, ChatEventType, ChatInterface, ChatRequest
 from chat_shell.services.context import ChatContext
@@ -27,6 +25,7 @@ from chat_shell.services.streaming.core import (
 )
 from chat_shell.services.streaming.emitters import SSEEmitter
 from chat_shell.tools.events import create_tool_event_handler
+from shared.telemetry.decorators import add_span_event, trace_async_generator
 
 logger = logging.getLogger(__name__)
 

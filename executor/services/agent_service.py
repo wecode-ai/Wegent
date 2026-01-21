@@ -12,14 +12,13 @@ import time
 from dataclasses import dataclass
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
-from shared.logger import setup_logger
-from shared.status import TaskStatus
-
 from executor.agents import Agent, AgentFactory
 from executor.agents.agno.agno_agent import AgnoAgent
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.callback.callback_handler import send_status_callback
 from executor.tasks.task_state_manager import TaskStateManager
+from shared.logger import setup_logger
+from shared.status import TaskStatus
 
 logger = setup_logger("agent_service")
 

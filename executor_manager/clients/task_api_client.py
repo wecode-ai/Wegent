@@ -14,18 +14,23 @@ import json
 import time
 
 import requests
-from shared.logger import setup_logger
-from shared.utils.http_util import build_payload
 
-from executor_manager.config.config import (API_MAX_RETRIES, API_RETRY_BACKOFF,
-                                            API_RETRY_DELAY, API_TIMEOUT,
-                                            CALLBACK_TASK_API_URL,
-                                            FETCH_TASK_API_BASE_URL,
-                                            OFFLINE_TASK_FETCH_LIMIT,
-                                            TASK_FETCH_LIMIT,
-                                            TASK_FETCH_STATUS)
+from executor_manager.config.config import (
+    API_MAX_RETRIES,
+    API_RETRY_BACKOFF,
+    API_RETRY_DELAY,
+    API_TIMEOUT,
+    CALLBACK_TASK_API_URL,
+    FETCH_TASK_API_BASE_URL,
+    OFFLINE_TASK_FETCH_LIMIT,
+    TASK_FETCH_LIMIT,
+    TASK_FETCH_STATUS,
+)
+
 # Import the shared logger
 from executor_manager.executors.dispatcher import ExecutorDispatcher
+from shared.logger import setup_logger
+from shared.utils.http_util import build_payload
 
 logger = setup_logger(__name__)
 

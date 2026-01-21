@@ -20,9 +20,9 @@ from enum import Enum
 from typing import Optional
 
 import redis
-from shared.logger import setup_logger
 
 from executor_manager.common.redis_factory import RedisClientFactory
+from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 

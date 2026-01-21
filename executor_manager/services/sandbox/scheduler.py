@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+
 from shared.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -71,8 +72,9 @@ class SandboxScheduler:
 
         # Add heartbeat check job for regular tasks (OOM detection)
         # Uses RunningTaskTracker instead of SandboxManager for better separation of concerns
-        from executor_manager.services.task_heartbeat_manager import \
-            get_running_task_tracker
+        from executor_manager.services.task_heartbeat_manager import (
+            get_running_task_tracker,
+        )
 
         task_tracker = get_running_task_tracker()
         self._scheduler.add_job(

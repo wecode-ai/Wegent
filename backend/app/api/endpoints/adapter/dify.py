@@ -7,13 +7,13 @@ from typing import Any, Dict
 import requests
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from shared.logger import setup_logger
-from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
+from shared.logger import setup_logger
+from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
 logger = setup_logger("dify_api")
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Header, HTTPException
+
 from shared.logger import setup_logger
 
 logger = setup_logger("envd_api_utils")

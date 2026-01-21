@@ -11,9 +11,9 @@ operations across multiple service replicas, such as GC tasks.
 from typing import Optional
 
 import redis
-from shared.logger import setup_logger
 
 from executor_manager.common.redis_factory import RedisClientFactory
+from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 

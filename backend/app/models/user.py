@@ -9,8 +9,9 @@ Re-exported from shared package for backward compatibility.
 The User model is extended here with Backend-specific relationships.
 """
 
-from shared.models.db import User
 from sqlalchemy.orm import relationship
+
+from shared.models.db import User
 
 # Add Backend-specific relationships to User model
 # Note: This modifies the shared User class to add relationships

@@ -14,9 +14,6 @@ import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
-from shared.models.db.enums import SubtaskRole
-from shared.models.db.subtask import Subtask
-from shared.models.db.subtask_context import SubtaskContext
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
@@ -32,6 +29,9 @@ from app.schemas.knowledge_qa_history import (
     QAHistoryResponse,
     RetrievalConfigInfo,
 )
+from shared.models.db.enums import SubtaskRole
+from shared.models.db.subtask import Subtask
+from shared.models.db.subtask_context import SubtaskContext
 
 logger = logging.getLogger(__name__)
 

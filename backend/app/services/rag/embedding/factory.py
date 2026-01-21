@@ -9,11 +9,11 @@ Embedding model factory.
 import logging
 from typing import Any, Dict
 
-from shared.utils.crypto import decrypt_api_key
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.services.rag.embedding.custom import CustomEmbedding
+from shared.utils.crypto import decrypt_api_key
 
 logger = logging.getLogger(__name__)
 
