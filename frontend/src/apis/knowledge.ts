@@ -9,6 +9,7 @@
 import { apiClient } from './client'
 import type {
   AccessibleKnowledgeResponse,
+  ChunkContextResponse,
   ChunkDeleteResponse,
   DocumentChunksResponse,
   KnowledgeBase,
@@ -249,5 +250,24 @@ export async function deleteDocumentChunk(
 ): Promise<ChunkDeleteResponse> {
   return apiClient.delete<ChunkDeleteResponse>(
     `/knowledge-documents/${documentId}/chunks/${chunkIndex}`
+  )
+}
+
+/**
+ * Get chunk context for a specific chunk
+ * Returns the current chunk along with surrounding chunks for context
+ * Useful for displaying citation sources with their surrounding text
+ * @param documentId The document ID (knowledge_documents.id)
+ * @param chunkIndex The chunk index (0-based, corresponds to chunks.items[].index)
+ * @param contextSize Number of chunks to include before and after (default: 1, max: 3)
+ * @returns ChunkContextResponse with previous_chunks, current_chunk, next_chunks
+ */
+export async function getChunkContext(
+  documentId: number,
+  chunkIndex: number,
+  contextSize: number = 1
+): Promise<ChunkContextResponse> {
+  return apiClient.get<ChunkContextResponse>(
+    `/knowledge-documents/${documentId}/chunks/${chunkIndex}/context?context_size=${contextSize}`
   )
 }

@@ -213,11 +213,20 @@ class ChatStartPayload(BaseModel):
 
 
 class SourceReference(BaseModel):
-    """Reference to a knowledge base source document."""
+    """Reference to a knowledge base source document with chunk location info."""
 
     index: int = Field(..., description="Source index number (e.g., 1, 2, 3)")
     title: str = Field(..., description="Document title/filename")
     kb_id: int = Field(..., description="Knowledge base ID")
+    document_id: Optional[int] = Field(
+        None, description="Document ID (knowledge_documents.id)"
+    )
+    chunk_index: Optional[int] = Field(
+        None, description="Chunk index (corresponds to chunks.items[].index)"
+    )
+    content_preview: Optional[str] = Field(
+        None, description="Chunk content preview (first 100 characters)"
+    )
 
 
 class ChatChunkPayload(BaseModel):

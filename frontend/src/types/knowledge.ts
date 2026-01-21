@@ -325,3 +325,14 @@ export interface WebScrapeResponse {
     | 'NOT_HTML'
   error_message?: string
 }
+
+// Chunk Context types (for citation references)
+export interface ChunkContextResponse {
+  previous_chunks: ChunkItem[]
+  current_chunk: ChunkItem
+  next_chunks: ChunkItem[]
+  document_name: string
+  document_id: number
+  kb_id: number
+  total_chunks: number
+}

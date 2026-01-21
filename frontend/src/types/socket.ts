@@ -151,6 +151,12 @@ export interface SourceReference {
   title: string
   /** Knowledge base ID */
   kb_id: number
+  /** Document ID (knowledge_documents.id) */
+  document_id?: number
+  /** Chunk index (corresponds to chunks.items[].index) */
+  chunk_index?: number
+  /** Chunk content preview (first 100 characters) */
+  content_preview?: string
 }
 
 export interface ChatStartPayload {

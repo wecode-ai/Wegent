@@ -403,6 +403,8 @@ class KnowledgeBaseTool(BaseTool):
                             "source": chunk.get("title", "Unknown"),
                             "score": None,  # null for direct injection (not RAG similarity)
                             "knowledge_base_id": kb_id,
+                            "document_id": chunk.get("document_id"),
+                            "chunk_index": chunk.get("chunk_index"),
                         }
                         processed_chunks.append(processed_chunk)
 
@@ -469,6 +471,8 @@ class KnowledgeBaseTool(BaseTool):
                             "source": chunk.get("title", "Unknown"),
                             "score": None,  # null for direct injection (not RAG similarity)
                             "knowledge_base_id": kb_id,
+                            "document_id": chunk.get("document_id"),
+                            "chunk_index": chunk.get("chunk_index"),
                         }
                         processed_chunks.append(processed_chunk)
 
@@ -524,7 +528,7 @@ class KnowledgeBaseTool(BaseTool):
                         f"[KnowledgeBaseTool] Retrieved {len(records)} chunks from KB {kb_id}"
                     )
 
-                    # Process records into chunks
+                    # Process records into chunks with document_id and chunk_index
                     chunks = []
                     for record in records:
                         chunk = {
@@ -532,6 +536,8 @@ class KnowledgeBaseTool(BaseTool):
                             "source": record.get("title", "Unknown"),
                             "score": record.get("score", 0.0),
                             "knowledge_base_id": kb_id,
+                            "document_id": record.get("document_id"),
+                            "chunk_index": record.get("chunk_index"),
                         }
                         chunks.append(chunk)
 
@@ -606,7 +612,7 @@ class KnowledgeBaseTool(BaseTool):
                         f"[KnowledgeBaseTool] HTTP retrieved {len(records)} chunks from KB {kb_id}"
                     )
 
-                    # Process records into chunks
+                    # Process records into chunks with document_id and chunk_index
                     chunks = []
                     for record in records:
                         chunk = {
@@ -614,6 +620,8 @@ class KnowledgeBaseTool(BaseTool):
                             "source": record.get("title", "Unknown"),
                             "score": record.get("score", 0.0),
                             "knowledge_base_id": kb_id,
+                            "document_id": record.get("document_id"),
+                            "chunk_index": record.get("chunk_index"),
                         }
                         chunks.append(chunk)
 
@@ -705,26 +713,39 @@ class KnowledgeBaseTool(BaseTool):
         # Extract chunks used for persistence
         chunks_used = injection_result.get("chunks_used", [])
 
-        # Build source references from chunks_used
+        # Build source references from chunks_used with chunk-level granularity
+        # Each unique (kb_id, document_id, chunk_index) gets its own reference
         source_references = []
-        seen_sources: dict[tuple[int, str], int] = {}
+        seen_chunks: set[tuple[int, int, int]] = set()  # (kb_id, doc_id, chunk_idx)
         source_index = 1
 
         for chunk in chunks_used:
             kb_id = chunk.get("knowledge_base_id")
+            document_id = chunk.get("document_id")
+            chunk_index = chunk.get("chunk_index")
             source_file = chunk.get("source", "Unknown")
-            source_key = (kb_id, source_file)
+            content = chunk.get("content", "")
 
-            if source_key not in seen_sources:
-                seen_sources[source_key] = source_index
-                source_references.append(
-                    {
-                        "index": source_index,
-                        "title": source_file,
-                        "kb_id": kb_id,
-                    }
-                )
-                source_index += 1
+            # Use chunk-level deduplication
+            chunk_key = (kb_id, document_id, chunk_index)
+            if chunk_key in seen_chunks:
+                continue
+            seen_chunks.add(chunk_key)
+
+            # Generate content preview (first 100 characters)
+            content_preview = content[:100] + ("..." if len(content) > 100 else "")
+
+            source_references.append(
+                {
+                    "index": source_index,
+                    "title": source_file,
+                    "kb_id": kb_id,
+                    "document_id": document_id,
+                    "chunk_index": chunk_index,
+                    "content_preview": content_preview,
+                }
+            )
+            source_index += 1
 
         # Persist RAG results if user_subtask_id is available
         if self.user_subtask_id and chunks_used:
@@ -767,31 +788,48 @@ class KnowledgeBaseTool(BaseTool):
         all_chunks = []
         source_references = []
         source_index = 1
-        seen_sources: dict[tuple[int, str], int] = {}
+        # Use chunk-level deduplication: (kb_id, document_id, chunk_index)
+        seen_chunks: set[tuple[int, int, int]] = set()
 
         for kb_id, chunks in kb_chunks.items():
             for chunk in chunks:
+                document_id = chunk.get("document_id")
+                chunk_index = chunk.get("chunk_index")
                 source_file = chunk.get("source", "Unknown")
-                source_key = (kb_id, source_file)
+                content = chunk.get("content", "")
 
-                if source_key not in seen_sources:
-                    seen_sources[source_key] = source_index
-                    source_references.append(
-                        {
-                            "index": source_index,
-                            "title": source_file,
-                            "kb_id": kb_id,
-                        }
-                    )
-                    source_index += 1
+                # Use chunk-level deduplication
+                chunk_key = (kb_id, document_id, chunk_index)
+                if chunk_key in seen_chunks:
+                    continue
+                seen_chunks.add(chunk_key)
+
+                # Generate content preview
+                content_preview = content[:100] + ("..." if len(content) > 100 else "")
+
+                # Add source reference for each unique chunk
+                current_source_index = source_index
+                source_references.append(
+                    {
+                        "index": current_source_index,
+                        "title": source_file,
+                        "kb_id": kb_id,
+                        "document_id": document_id,
+                        "chunk_index": chunk_index,
+                        "content_preview": content_preview,
+                    }
+                )
+                source_index += 1
 
                 all_chunks.append(
                     {
-                        "content": chunk["content"],
+                        "content": content,
                         "source": source_file,
-                        "source_index": seen_sources[source_key],
+                        "source_index": current_source_index,
                         "score": chunk["score"],
                         "knowledge_base_id": kb_id,
+                        "document_id": document_id,
+                        "chunk_index": chunk_index,
                     }
                 )
 
@@ -801,13 +839,31 @@ class KnowledgeBaseTool(BaseTool):
         # Limit total results
         all_chunks = all_chunks[:max_results]
 
+        # Rebuild source_references to only include references used in final chunks
+        # and renumber them sequentially
+        used_source_indices = set(c.get("source_index") for c in all_chunks)
+        final_source_references = [
+            s for s in source_references if s.get("index") in used_source_indices
+        ]
+
+        # Renumber source references and update chunk source_index
+        old_to_new_index = {}
+        for new_idx, source_ref in enumerate(final_source_references, start=1):
+            old_to_new_index[source_ref["index"]] = new_idx
+            source_ref["index"] = new_idx
+
+        for chunk in all_chunks:
+            old_idx = chunk.get("source_index")
+            if old_idx in old_to_new_index:
+                chunk["source_index"] = old_to_new_index[old_idx]
+
         logger.info(
-            f"[KnowledgeBaseTool] RAG fallback: returning {len(all_chunks)} results with {len(source_references)} unique sources for query: {query}"
+            f"[KnowledgeBaseTool] RAG fallback: returning {len(all_chunks)} results with {len(final_source_references)} unique sources for query: {query}"
         )
 
         # Persist RAG results if user_subtask_id is available
         if self.user_subtask_id and all_chunks:
-            await self._persist_rag_results(all_chunks, source_references, query)
+            await self._persist_rag_results(all_chunks, final_source_references, query)
 
         return json.dumps(
             {
@@ -815,7 +871,7 @@ class KnowledgeBaseTool(BaseTool):
                 "mode": "rag_retrieval",
                 "results": all_chunks,
                 "count": len(all_chunks),
-                "sources": source_references,
+                "sources": final_source_references,
                 "strategy_stats": self.injection_strategy.get_injection_statistics(),
             },
             ensure_ascii=False,

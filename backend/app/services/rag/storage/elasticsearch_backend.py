@@ -311,12 +311,25 @@ class ElasticsearchBackend(BaseStorageBackend):
                 normalized_score = score
 
             if normalized_score >= score_threshold:
+                # Extract document_id from doc_ref if available
+                # doc_ref is stored as string document ID (e.g., "123")
+                doc_ref = node.metadata.get("doc_ref", "")
+                document_id = None
+                if doc_ref:
+                    try:
+                        document_id = int(doc_ref)
+                    except (ValueError, TypeError):
+                        pass
+
                 results.append(
                     {
                         "content": node.text,
                         "score": float(normalized_score),
                         "title": node.metadata.get("source_file", ""),
                         "metadata": node.metadata,
+                        # Add document_id and chunk_index for citation references
+                        "document_id": document_id,
+                        "chunk_index": node.metadata.get("chunk_index"),
                     }
                 )
 
@@ -645,13 +658,25 @@ class ElasticsearchBackend(BaseStorageBackend):
                 # to handle potential serialized node payloads.
                 raw_content = source.get("content", "")
 
+                # Extract document_id from doc_ref
+                doc_ref = metadata.get("doc_ref", "")
+                document_id = None
+                if doc_ref:
+                    try:
+                        document_id = int(doc_ref)
+                    except (ValueError, TypeError):
+                        pass
+
                 chunks.append(
                     {
                         "content": self.extract_chunk_text(raw_content),
                         "title": metadata.get("source_file", ""),
                         "chunk_id": metadata.get("chunk_index", 0),
-                        "doc_ref": metadata.get("doc_ref", ""),
+                        "doc_ref": doc_ref,
                         "metadata": metadata,
+                        # Add document_id and chunk_index for citation references
+                        "document_id": document_id,
+                        "chunk_index": metadata.get("chunk_index", 0),
                     }
                 )
 

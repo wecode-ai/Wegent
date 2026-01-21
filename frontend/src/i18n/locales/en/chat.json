@@ -477,5 +477,19 @@
     "proceeding_to_stage": "Proceeding to stage: {{stage}}",
     "pipeline_completed": "Pipeline completed",
     "no_task_id": "No task ID available"
+  },
+  "sourceReferences": "Sources",
+  "citation": {
+    "viewDetail": "View Details",
+    "viewOriginal": "View Original Document",
+    "sourceList": "Source References",
+    "chunkContext": "Context",
+    "currentChunk": "Current Reference",
+    "previousChunk": "Previous",
+    "nextChunk": "Next",
+    "selectSource": "Select a source to view details",
+    "supplementInfo": "Supplementary Info",
+    "noPreview": "No preview available",
+    "close": "Close"
   }
 }

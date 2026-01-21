@@ -477,5 +477,19 @@
     "proceeding_to_stage": "正在进入阶段: {{stage}}",
     "pipeline_completed": "流水线已完成",
     "no_task_id": "没有可用的任务 ID"
+  },
+  "sourceReferences": "资料来源",
+  "citation": {
+    "viewDetail": "查看详情",
+    "viewOriginal": "查看原文档",
+    "sourceList": "引用来源详情",
+    "chunkContext": "上下文",
+    "currentChunk": "当前引用",
+    "previousChunk": "上文",
+    "nextChunk": "下文",
+    "selectSource": "请选择一个来源查看详情",
+    "supplementInfo": "补充信息",
+    "noPreview": "暂无预览",
+    "close": "关闭"
   }
 }

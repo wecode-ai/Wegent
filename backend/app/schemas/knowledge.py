@@ -431,3 +431,22 @@ class ChunkDeleteResponse(BaseModel):
     chunk_index: int = Field(..., description="Deleted chunk index")
     status: str = Field(..., description="Operation status")
     remaining_chunks: int = Field(..., description="Number of remaining chunks")
+
+
+# ============== Chunk Context Schemas ==============
+
+
+class ChunkContextResponse(BaseModel):
+    """Schema for chunk context response (current chunk with surrounding context)."""
+
+    previous_chunks: list[ChunkItemResponse] = Field(
+        default_factory=list, description="Previous chunks for context"
+    )
+    current_chunk: ChunkItemResponse = Field(..., description="Current chunk")
+    next_chunks: list[ChunkItemResponse] = Field(
+        default_factory=list, description="Next chunks for context"
+    )
+    document_name: str = Field(..., description="Document name")
+    document_id: int = Field(..., description="Document ID")
+    kb_id: int = Field(..., description="Knowledge base ID")
+    total_chunks: int = Field(..., description="Total number of chunks in document")

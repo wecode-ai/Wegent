@@ -27,7 +27,9 @@ from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
     BatchDocumentIds,
     BatchOperationResult,
+    ChunkContextResponse,
     ChunkDeleteResponse,
+    ChunkItemResponse,
     DocumentChunksResponse,
     DocumentDetailResponse,
     DocumentSourceType,
@@ -1688,3 +1690,127 @@ def _delete_chunk_from_vector_storage(
         logger.info(
             f"Background task completed: chunk deletion for document {document_id}"
         )
+
+
+@document_router.get(
+    "/{document_id}/chunks/{chunk_index}/context", response_model=ChunkContextResponse
+)
+def get_chunk_context(
+    document_id: int,
+    chunk_index: int,
+    context_size: int = Query(
+        default=1, ge=0, le=3, description="Number of chunks before and after"
+    ),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get a specific chunk with its surrounding context (previous and next chunks).
+
+    This endpoint retrieves the chunk at the specified index along with
+    adjacent chunks for context. Useful for displaying citation sources
+    with their surrounding text.
+
+    Args:
+        document_id: Document ID (knowledge_documents.id)
+        chunk_index: Chunk index (0-based, corresponds to chunks.items[].index)
+        context_size: Number of chunks to include before and after (default: 1)
+
+    Returns:
+        ChunkContextResponse with previous_chunks, current_chunk, next_chunks
+    """
+    from app.models.knowledge import KnowledgeDocument
+
+    # Get document
+    document = (
+        db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
+    )
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    # Check KB access permission
+    kb = KnowledgeService.get_knowledge_base(db, document.kind_id, current_user.id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access this document",
+        )
+
+    # Get chunks data
+    chunks_data = document.chunks or {}
+
+    # Check for validation error
+    if "error" in chunks_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=chunks_data["error"].get(
+                "error_message", "Document indexing failed"
+            ),
+        )
+
+    # Check if chunks data is available
+    if not chunks_data or "items" not in chunks_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No chunks data available for this document",
+        )
+
+    items = chunks_data.get("items", [])
+    total_count = chunks_data.get("total_count", len(items))
+
+    # Find chunk by index
+    # Note: chunks may have been deleted, so we need to find by index field
+    current_chunk_data = None
+    current_position = -1
+    for i, item in enumerate(items):
+        item_index = item.get("index", item.get("chunk_index", i))
+        if item_index == chunk_index:
+            current_chunk_data = item
+            current_position = i
+            break
+
+    if current_chunk_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Chunk index {chunk_index} not found in document",
+        )
+
+    # Helper function to convert chunk item to response format
+    def to_chunk_response(item: dict, fallback_index: int) -> ChunkItemResponse:
+        return ChunkItemResponse(
+            chunk_index=item.get("index", item.get("chunk_index", fallback_index)),
+            content=item.get("content", ""),
+            token_count=item.get("token_count", 0),
+            start_position=item.get("start_position", 0),
+            end_position=item.get("end_position", 0),
+            forced_split=item.get("forced_split", False),
+        )
+
+    # Get previous chunks
+    start_idx = max(0, current_position - context_size)
+    previous_chunks = [
+        to_chunk_response(items[i], i) for i in range(start_idx, current_position)
+    ]
+
+    # Get current chunk
+    current_chunk = to_chunk_response(current_chunk_data, current_position)
+
+    # Get next chunks
+    end_idx = min(len(items), current_position + context_size + 1)
+    next_chunks = [
+        to_chunk_response(items[i], i) for i in range(current_position + 1, end_idx)
+    ]
+
+    return ChunkContextResponse(
+        previous_chunks=previous_chunks,
+        current_chunk=current_chunk,
+        next_chunks=next_chunks,
+        document_name=document.name,
+        document_id=document.id,
+        kb_id=document.kind_id,
+        total_chunks=total_count,
+    )
