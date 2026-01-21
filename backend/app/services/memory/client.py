@@ -351,4 +351,3 @@ class LongTermMemoryClient:
                 "Unexpected error getting memory %s: %s", memory_id, e, exc_info=True
             )
             return None
-
