@@ -223,15 +223,22 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
 
   // Handle WebSocket background execution updates
   const handleBackgroundExecutionUpdate = useCallback((data: BackgroundExecutionUpdatePayload) => {
-    // If it's a silent execution and we're not showing silent executions, skip it
-    if (data.is_silent && !showSilentExecutions) {
-      return
-    }
-
     setExecutions(prev => {
       // Check if this execution already exists
       const existingIndex = prev.findIndex(e => e.id === data.execution_id)
       const existingExecution = existingIndex >= 0 ? prev[existingIndex] : null
+
+      // If it's a silent execution and we're not showing silent executions,
+      // remove it from the list if it exists (handles status transition to silent)
+      if (data.is_silent && !showSilentExecutions) {
+        if (existingIndex >= 0) {
+          const newList = [...prev]
+          newList.splice(existingIndex, 1)
+          return newList
+        }
+        // Not showing silent executions and it's not in the list, skip
+        return prev
+      }
 
       const updatedExecution: BackgroundExecution = {
         id: data.execution_id,

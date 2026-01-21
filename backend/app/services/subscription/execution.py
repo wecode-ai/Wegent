@@ -393,7 +393,10 @@ class BackgroundExecutionManager:
             )
 
         # Exclude silent executions unless explicitly requested
-        if not include_silent:
+        # Skip exclusion if COMPLETED_SILENT is explicitly included in status filter
+        if not include_silent and (
+            not status or BackgroundExecutionStatus.COMPLETED_SILENT not in status
+        ):
             query = query.filter(
                 BackgroundExecution.status != BackgroundExecutionStatus.COMPLETED_SILENT.value
             )
@@ -664,6 +667,10 @@ class BackgroundExecutionManager:
         db.refresh(execution)
 
         # Update subscription statistics (only for terminal states to avoid double counting)
+        # Note: COMPLETED_SILENT is intentionally excluded from stats updates because:
+        # - Silent executions are designed for routine monitoring tasks
+        # - They are hidden from the timeline by default
+        # - Including them would pollute subscription metrics with routine checks
         if status in (
             BackgroundExecutionStatus.COMPLETED,
             BackgroundExecutionStatus.FAILED,
