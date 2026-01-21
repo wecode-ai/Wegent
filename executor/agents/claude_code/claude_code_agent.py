@@ -194,6 +194,10 @@ class ClaudeCodeAgent(Agent):
         # Set initial task state to RUNNING
         self.task_state_manager.set_state(self.task_id, TaskState.RUNNING)
 
+        # Silent exit tracking for subscription tasks
+        self.is_silent_exit: bool = False
+        self.silent_exit_reason: str = ""
+
     def _set_git_env_variables(self, task_data: Dict[str, Any]) -> None:
         """
         Extract git-related fields from task_data and set them as environment variables
@@ -664,6 +668,19 @@ class ClaudeCodeAgent(Agent):
                 mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
                 logger.info(f"Detected MCP servers configuration: {mcp_servers}")
                 bot_config["mcp_servers"] = mcp_servers
+
+            # Add silent_exit MCP server for subscription tasks
+            if task_data.get("is_subscription"):
+                silent_exit_mcp = {
+                    "silent-exit": {
+                        "command": "python",
+                        "args": ["-m", "executor.mcp_servers.silent_exit.server"],
+                    }
+                }
+                if "mcp_servers" not in bot_config:
+                    bot_config["mcp_servers"] = {}
+                bot_config["mcp_servers"].update(silent_exit_mcp)
+                logger.info("Added silent_exit MCP server for subscription task")
 
             for key in valid_options:
                 if key in bot_config and bot_config[key] is not None:

@@ -321,15 +321,28 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
         result: Optional[Dict[str, Any]] = None,
         message_id: Optional[int] = None,
     ) -> None:
-        """Emit chat:done event and update BackgroundExecution status to COMPLETED."""
+        """Emit chat:done event and update BackgroundExecution status.
+
+        If result contains silent_exit=True, status is set to COMPLETED_SILENT.
+        Otherwise, status is set to COMPLETED.
+        """
         logger.info(
             f"[SubscriptionEmitter] chat:done task={task_id} subtask={subtask_id} "
             f"execution_id={self.execution_id}"
         )
 
-        # Update BackgroundExecution status to COMPLETED
+        # Check if this is a silent exit
+        is_silent_exit = result.get("silent_exit", False) if result else False
+        status = "COMPLETED_SILENT" if is_silent_exit else "COMPLETED"
+
+        if is_silent_exit:
+            logger.info(
+                f"[SubscriptionEmitter] Silent exit detected for execution {self.execution_id}"
+            )
+
+        # Update BackgroundExecution status
         await self._update_execution_status(
-            status="COMPLETED",
+            status=status,
             result_summary=self._extract_result_summary(result),
         )
 

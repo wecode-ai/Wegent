@@ -304,6 +304,7 @@ class BackgroundExecutionManager:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         include_following: bool = True,
+        include_silent: bool = False,
     ) -> Tuple[List[BackgroundExecutionInDB], int]:
         """
         List BackgroundExecution records (timeline view).
@@ -322,6 +323,7 @@ class BackgroundExecutionManager:
             start_date: Optional filter by start date
             end_date: Optional filter by end date
             include_following: Include executions from followed subscriptions
+            include_silent: Include COMPLETED_SILENT executions (default False)
 
         Returns:
             Tuple of (list of BackgroundExecutionInDB, total count)
@@ -388,6 +390,12 @@ class BackgroundExecutionManager:
         if status:
             query = query.filter(
                 BackgroundExecution.status.in_([s.value for s in status])
+            )
+
+        # Exclude silent executions unless explicitly requested
+        if not include_silent:
+            query = query.filter(
+                BackgroundExecution.status != BackgroundExecutionStatus.COMPLETED_SILENT.value
             )
 
         if start_date:

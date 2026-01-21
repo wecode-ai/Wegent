@@ -474,7 +474,7 @@ async def _process_result_message(
         str: "RETRY" if retry was initiated
     """
 
-    # 构建详细的结果信息，符合目标格式
+    # Construct detailed result info, matching target format
     result_details = {
         "type": "result",
         "subtype": msg.subtype,
@@ -497,6 +497,17 @@ async def _process_result_message(
     logger.info(
         f"Result message received: subtype={msg.subtype}, is_error={msg.is_error}, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}"
     )
+
+    # Check for silent exit marker in result
+    silent_exit_detected = False
+    silent_exit_reason = ""
+    if msg.result:
+        from executor.tools.silent_exit import detect_silent_exit
+
+        result_str = str(msg.result) if msg.result is not None else ""
+        silent_exit_detected, silent_exit_reason = detect_silent_exit(result_str)
+        if silent_exit_detected:
+            logger.info(f"🔇 Silent exit detected in Claude Code result: reason={silent_exit_reason}")
 
     # If it's a successful result message, send the result back via callback
     if msg.subtype == "success" and not msg.is_error:
@@ -523,6 +534,15 @@ async def _process_result_message(
                 else:
                     result_dict = {"value": msg.result}
                     result_value = msg.result
+
+                # Add silent_exit flag if detected
+                if silent_exit_detected:
+                    result_dict["silent_exit"] = True
+                    if silent_exit_reason:
+                        result_dict["silent_exit_reason"] = silent_exit_reason
+                    logger.info(
+                        f"🔇 Adding silent_exit flag to result: reason={silent_exit_reason}"
+                    )
 
                 # Update workbench status to completed
                 state_manager.update_workbench_status("completed")

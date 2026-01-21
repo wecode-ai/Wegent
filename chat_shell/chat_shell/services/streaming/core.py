@@ -77,6 +77,10 @@ class StreamingState:
     stream_start_time: Optional[float] = None
     first_token_received: bool = False
 
+    # Silent exit state
+    is_silent_exit: bool = False
+    silent_exit_reason: str = ""
+
     def append_content(self, token: str) -> None:
         """Append token to accumulated response."""
         self.full_response += token
@@ -133,6 +137,11 @@ class StreamingState:
             result["sources"] = self.sources
         if self.reasoning_content:
             result["reasoning_content"] = self.reasoning_content
+        # Include silent exit flag if set
+        if self.is_silent_exit:
+            result["silent_exit"] = True
+            if self.silent_exit_reason:
+                result["silent_exit_reason"] = self.silent_exit_reason
         return result
 
     def _slim_thinking_data(self, thinking: list) -> list:

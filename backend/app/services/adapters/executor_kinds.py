@@ -1129,6 +1129,9 @@ class ExecutorKindsService(
                 or "online"
             )
 
+            # Check if this is a subscription task for silent exit support
+            is_subscription = type == "subscription"
+
             # Generate auth token for skills download
             # Use user's JWT token or generate a temporary one
             auth_token = None
@@ -1193,6 +1196,7 @@ class ExecutorKindsService(
                     "subtask_next_id": next_subtask.id if next_subtask else None,
                     "task_id": subtask.task_id,
                     "type": type,
+                    "is_subscription": is_subscription,  # For silent exit tool injection
                     "executor_name": subtask.executor_name,
                     "executor_namespace": subtask.executor_namespace,
                     "subtask_title": subtask.title,

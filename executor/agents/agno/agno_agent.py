@@ -136,6 +136,10 @@ class AgnoAgent(Agent):
         # Initialize resource manager for resource cleanup
         self.resource_manager = ResourceManager()
 
+        # Silent exit tracking for subscription tasks
+        self.is_silent_exit: bool = False
+        self.silent_exit_reason: str = ""
+
     def add_thinking_step(
         self,
         title: str,
@@ -539,15 +543,28 @@ class AgnoAgent(Agent):
                 if self.accumulated_reasoning_content
                 else None
             )
+
+            # Build execution result
+            exec_result = ExecutionResult(
+                value=result_content,
+                thinking=self.thinking_manager.get_thinking_steps(),
+                reasoning_content=reasoning_content,
+            ).dict()
+
+            # Add silent_exit flag if silent exit was detected
+            if self.is_silent_exit:
+                exec_result["silent_exit"] = True
+                if self.silent_exit_reason:
+                    exec_result["silent_exit_reason"] = self.silent_exit_reason
+                logger.info(
+                    f"🔇 Adding silent_exit flag to result: reason={self.silent_exit_reason}"
+                )
+
             self.report_progress(
                 100,
                 TaskStatus.COMPLETED.value,
                 f"${{thinking.execution_completed}} {execution_type}",
-                result=ExecutionResult(
-                    value=result_content,
-                    thinking=self.thinking_manager.get_thinking_steps(),
-                    reasoning_content=reasoning_content,
-                ).dict(),
+                result=exec_result,
             )
             return TaskStatus.COMPLETED
         else:
@@ -672,6 +689,16 @@ class AgnoAgent(Agent):
             tool_result = run_response_event.tool.result
             logger.info(f"✅ AGENT TOOL COMPLETED: {tool_name}")
             logger.info(f"   Result: {tool_result[:100] if tool_result else 'None'}...")
+
+            # Check for silent exit marker in tool result
+            if tool_result:
+                from executor.tools.silent_exit import detect_silent_exit
+
+                is_silent, reason = detect_silent_exit(tool_result)
+                if is_silent:
+                    logger.info(f"🔇 Silent exit detected: reason={reason}")
+                    self.is_silent_exit = True
+                    self.silent_exit_reason = reason
 
             # Build tool result details in target format
             tool_result_details = {
@@ -1196,6 +1223,16 @@ class AgnoAgent(Agent):
             tool_name = run_response_event.tool.tool_name
             tool_result = run_response_event.tool.result
             logger.info(f"\n✅ TEAM TOOL COMPLETED: {tool_name}")
+
+            # Check for silent exit marker in tool result
+            if tool_result:
+                from executor.tools.silent_exit import detect_silent_exit
+
+                is_silent, reason = detect_silent_exit(tool_result)
+                if is_silent:
+                    logger.info(f"🔇 Silent exit detected in team: reason={reason}")
+                    self.is_silent_exit = True
+                    self.silent_exit_reason = reason
 
             # Build team tool result details in target format
             team_tool_result_details = {

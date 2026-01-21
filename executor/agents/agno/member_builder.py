@@ -60,6 +60,20 @@ class MemberBuilder:
             mcp_tools = await self.mcp_manager.setup_mcp_tools(member_config, task_data)
             agent_config = member_config.get("agent_config", {})
 
+            # Prepare tools list
+            all_tools = []
+            if mcp_tools:
+                all_tools.extend(mcp_tools)
+
+            # Add SilentExitTool for subscription tasks
+            if task_data.get("is_subscription"):
+                from executor.tools.silent_exit import SilentExitTool as AgnoSilentExitTool
+
+                all_tools.append(AgnoSilentExitTool())
+                logger.info(
+                    f"Added SilentExitTool for subscription task (member: {member_config.get('name', 'Unnamed')})"
+                )
+
             # Prepare data sources for placeholder replacement
             data_sources = {
                 "agent_config": agent_config,
@@ -87,7 +101,7 @@ class MemberBuilder:
                 role=member_description,
                 add_name_to_context=True,
                 add_datetime_to_context=True,
-                tools=mcp_tools if mcp_tools else [],
+                tools=all_tools if all_tools else [],
                 description=member_description,
                 db=self.db,
                 add_history_to_context=True,
@@ -122,6 +136,18 @@ class MemberBuilder:
             mcp_tools = await self.mcp_manager.setup_mcp_tools(options, task_data)
             agent_config = options.get("agent_config", {})
 
+            # Prepare tools list
+            all_tools = []
+            if mcp_tools:
+                all_tools.extend(mcp_tools)
+
+            # Add SilentExitTool for subscription tasks
+            if task_data.get("is_subscription"):
+                from executor.tools.silent_exit import SilentExitTool as AgnoSilentExitTool
+
+                all_tools.append(AgnoSilentExitTool())
+                logger.info("Added SilentExitTool for subscription task (default member)")
+
             # Prepare data sources for placeholder replacement
             data_sources = {
                 "agent_config": agent_config,
@@ -141,7 +167,7 @@ class MemberBuilder:
             member = AgnoSdkAgent(
                 name="DefaultAgent",
                 model=ModelFactory.create_model(agent_config, default_headers),
-                tools=mcp_tools if mcp_tools else [],
+                tools=all_tools if all_tools else [],
                 description="Default team member",
                 add_name_to_context=True,
                 add_datetime_to_context=True,

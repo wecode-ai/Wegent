@@ -103,6 +103,9 @@ class ChatRequest:
     # History limit for subscription tasks
     history_limit: Optional[int] = None  # Max number of history messages to load
 
+    # Subscription task flag - when True, SilentExitTool will be added
+    is_subscription: bool = False
+
 
 @dataclass
 class ChatEvent:

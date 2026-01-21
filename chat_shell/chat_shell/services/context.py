@@ -571,6 +571,15 @@ class ChatContext:
                 len(self._request.table_contexts),
             )
 
+        # Add SilentExitTool for subscription tasks
+        if self._request.is_subscription:
+            from chat_shell.tools.builtin import SilentExitTool
+
+            extra_tools.append(SilentExitTool())
+            logger.info(
+                "[CHAT_CONTEXT] Added SilentExitTool for subscription task",
+            )
+
         # === External Tools ===
 
         # Add KB tools
