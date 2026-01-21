@@ -361,6 +361,25 @@ class Settings(BaseSettings):
     # Enable/disable automatic summary generation after document indexing
     SUMMARY_ENABLED: bool = True
 
+    # Long-term memory configuration (mem0)
+    # Enable/disable long-term memory feature
+    MEMORY_ENABLED: bool = False
+    # mem0 service base URL
+    MEMORY_BASE_URL: str = "http://localhost:8080"
+    # Optional API key for mem0 service authentication
+    MEMORY_API_KEY: str = ""
+    # Search timeout in seconds (to avoid blocking chat flow)
+    MEMORY_TIMEOUT_SECONDS: float = 2.0
+    # Maximum number of memories to inject into system prompt
+    MEMORY_MAX_RESULTS: int = 5
+    # Number of recent messages to include as context when saving memory (default: 3 total)
+    # This includes 2 history messages + 1 current message for better memory quality
+    MEMORY_CONTEXT_MESSAGES: int = 3
+    # User ID prefix for resource isolation in shared mem0 service
+    # Since mem0 may be shared across multiple systems, this prefix ensures
+    # wegent resources are isolated from other systems' resources
+    MEMORY_USER_ID_PREFIX: str = "wegent_user:"
+
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there

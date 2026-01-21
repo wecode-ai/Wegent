@@ -552,6 +552,12 @@
     "save_success": "Search shortcut key saved",
     "save_failed": "Failed to save search shortcut key"
   },
+  "memory": {
+    "title": "Long-term Memory",
+    "description": "Enable AI to remember context from your previous conversations across different tasks",
+    "save_success": "Memory preference saved",
+    "save_failed": "Failed to save memory preference"
+  },
   "guide": {
     "title": "Welcome",
     "description": "Before you can start using the app, please complete the setup below first!",
