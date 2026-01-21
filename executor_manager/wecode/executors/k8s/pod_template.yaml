@@ -97,14 +97,21 @@ spec:
         - name: USE_BASE_IMAGE
           value: "true"
         {% endif %}
-        {% if is_sandbox and sandbox_id %}
-        # Sandbox/Subagent support for e2b protocol
-        - name: SANDBOX_ID
-          value: "{{ sandbox_id }}"
+        {% if heartbeat_id and heartbeat_type %}
+        # Heartbeat monitoring for OOM detection (sandbox + regular tasks)
+        - name: HEARTBEAT_ID
+          value: "{{ heartbeat_id }}"
+        - name: HEARTBEAT_TYPE
+          value: "{{ heartbeat_type }}"
         - name: HEARTBEAT_ENABLED
           value: "true"
         - name: EXECUTOR_MANAGER_HEARTBEAT_BASE_URL
           value: "{{ executor_manager_heartbeat_base_url }}"
+        {% endif %}
+        {% if is_sandbox and sandbox_id %}
+        # Sandbox ID for e2b protocol (backward compatibility)
+        - name: SANDBOX_ID
+          value: "{{ sandbox_id }}"
         {% endif %}
         {% if otel_enabled %}
         # OpenTelemetry configuration environment variables
