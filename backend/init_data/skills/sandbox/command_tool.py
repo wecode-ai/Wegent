@@ -174,16 +174,11 @@ Example:
                 f"[SandboxCommandTool] Running command in sandbox {sandbox.sandbox_id}"
             )
 
-            # Execute command using sandbox.commands API
-            # Run in thread pool since E2B SDK may be sync
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: sandbox.commands.run(
-                    cmd=command,
-                    cwd=working_dir,
-                    timeout=effective_timeout,
-                ),
+            # Execute command using sandbox.commands API with async
+            result = await sandbox.commands.run(
+                cmd=command,
+                cwd=working_dir,
+                timeout=effective_timeout,
             )
 
             execution_time = time.time() - start_time

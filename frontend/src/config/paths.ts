@@ -38,6 +38,12 @@ export const paths = {
   feedSubscriptions: {
     getHref: () => '/feed/subscriptions',
   },
+  feedSubscriptionDetail: {
+    getHref: (id: number | string) => `/feed/subscriptions/${id}`,
+  },
+  feedInvitations: {
+    getHref: () => '/feed/invitations',
+  },
   settings: {
     root: {
       getHref: () => '/settings',

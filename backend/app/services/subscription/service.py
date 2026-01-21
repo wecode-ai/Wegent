@@ -333,6 +333,28 @@ class SubscriptionService:
         if "task_type" in update_data:
             subscription_crd.spec.taskType = update_data["task_type"]
 
+        # Update visibility if changed (handle side effects)
+        if "visibility" in update_data:
+            from app.schemas.subscription import SubscriptionVisibility
+            from app.services.subscription.follow_service import (
+                subscription_follow_service,
+            )
+
+            old_visibility = getattr(
+                subscription_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
+            )
+            new_visibility = update_data["visibility"]
+            subscription_crd.spec.visibility = new_visibility
+
+            # Handle visibility change side effects
+            if old_visibility != new_visibility:
+                subscription_follow_service.handle_visibility_change(
+                    db,
+                    subscription_id=subscription_id,
+                    old_visibility=old_visibility,
+                    new_visibility=new_visibility,
+                )
+
         if "prompt_template" in update_data:
             subscription_crd.spec.promptTemplate = update_data["prompt_template"]
 
@@ -704,8 +726,12 @@ class SubscriptionService:
         """Calculate next execution time."""
         return calculate_next_execution_time(trigger_type, trigger_config)
 
-    def _convert_to_subscription_in_db(self, subscription: Kind) -> SubscriptionInDB:
+    def _convert_to_subscription_in_db(
+        self, subscription: Kind, current_user_id: Optional[int] = None
+    ) -> SubscriptionInDB:
         """Convert Kind to SubscriptionInDB."""
+        from app.schemas.subscription import SubscriptionVisibility
+
         subscription_crd = Subscription.model_validate(subscription.json)
         internal = subscription.json.get("_internal", {})
 
@@ -743,6 +769,11 @@ class SubscriptionService:
             except (ValueError, TypeError):
                 pass
 
+        # Get visibility with default
+        visibility = getattr(
+            subscription_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
+        )
+
         return SubscriptionInDB(
             id=subscription.id,
             user_id=subscription.user_id,
@@ -751,6 +782,7 @@ class SubscriptionService:
             display_name=subscription_crd.spec.displayName,
             description=subscription_crd.spec.description,
             task_type=subscription_crd.spec.taskType,
+            visibility=visibility,
             trigger_type=SubscriptionTriggerType(internal.get("trigger_type", "cron")),
             trigger_config=extract_trigger_config(subscription_crd.spec.trigger),
             team_id=internal.get("team_id", 0),
@@ -773,6 +805,10 @@ class SubscriptionService:
             execution_count=internal.get("execution_count", 0),
             success_count=internal.get("success_count", 0),
             failure_count=internal.get("failure_count", 0),
+            # Follow-related fields - default values, can be populated by follow_service
+            followers_count=0,
+            is_following=False,
+            owner_username=None,
             created_at=subscription.created_at,
             updated_at=subscription.updated_at,
         )

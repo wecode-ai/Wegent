@@ -180,21 +180,36 @@ Read file contents.
 #### `sandbox_write_file`
 Write content to a file.
 
+⚠️ **IMPORTANT**: Both `file_path` AND `content` are **REQUIRED** parameters. You must always provide the content to write.
+
 **Parameters:**
-- `file_path` (required): File path to write
-- `content` (required): Content to write
+- `file_path` (REQUIRED): File path to write
+- `content` (REQUIRED): Content to write (MUST be provided, cannot be omitted)
+- `format` (optional): Content format - 'text' (default) or 'bytes' (base64-encoded)
+- `create_dirs` (optional): Auto-create parent directories (default: True)
 
 **Features:**
 - Automatically creates parent directories
 - Maximum file size: 10MB (configurable)
 
-**Example:**
+**Example - Text file:**
 ```json
 {
   "name": "sandbox_write_file",
   "arguments": {
     "file_path": "/home/user/output.txt",
     "content": "Hello, Sandbox!"
+  }
+}
+```
+
+**Example - HTML file:**
+```json
+{
+  "name": "sandbox_write_file",
+  "arguments": {
+    "file_path": "/home/user/index.html",
+    "content": "<!DOCTYPE html><html><head><title>Test</title></head><body><h1>Hello</h1></body></html>"
   }
 }
 ```

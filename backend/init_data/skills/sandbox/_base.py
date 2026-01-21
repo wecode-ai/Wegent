@@ -303,10 +303,10 @@ class SandboxManager:
         )
 
         try:
-            # Import E2B SDK (patched at this point)
+            # Import E2B SDK async version (patched at this point)
             import json
 
-            from e2b_code_interpreter import Sandbox
+            from e2b_code_interpreter import AsyncSandbox
 
             # Prepare metadata with bot_config if available
             # Note: E2B SDK metadata type is Dict[str, str], so we need to serialize complex values
@@ -325,15 +325,11 @@ class SandboxManager:
             if self.bot_config:
                 metadata["bot_config"] = json.dumps(self.bot_config, ensure_ascii=False)
 
-            # Run sandbox creation in thread pool since E2B SDK is sync
-            loop = asyncio.get_event_loop()
-            sandbox = await loop.run_in_executor(
-                None,
-                lambda: Sandbox.create(
-                    template=shell_type,
-                    timeout=self.timeout,
-                    metadata=metadata,
-                ),
+            # Use native async API - no need for run_in_executor
+            sandbox = await AsyncSandbox.create(
+                template=shell_type,
+                timeout=self.timeout,
+                metadata=metadata,
             )
 
             logger.info(f"[SandboxManager] Sandbox created: {sandbox.sandbox_id}")

@@ -159,11 +159,7 @@ Example:
 
             # First, check if file exists and get its info
             try:
-                loop = asyncio.get_event_loop()
-                file_info = await loop.run_in_executor(
-                    None,
-                    lambda: sandbox.files.get_info(file_path),
-                )
+                file_info = await sandbox.files.get_info(file_path)
             except Exception as e:
                 logger.warning(f"[SandboxReadFileTool] File not found: {file_path}")
                 error_msg = f"File not found: {file_path}"
@@ -200,20 +196,13 @@ Example:
                 await self._emit_tool_status("failed", error_msg)
                 return result
 
-            # Read file with specified format
-            loop = asyncio.get_event_loop()
+            # Read file with specified format using native async API
             if format == "bytes":
-                content = await loop.run_in_executor(
-                    None,
-                    lambda: sandbox.files.read(file_path, format="bytes"),
-                )
+                content = await sandbox.files.read(file_path, format="bytes")
                 # Convert bytes to base64 for JSON serialization
                 content_str = base64.b64encode(content).decode("ascii")
             else:
-                content = await loop.run_in_executor(
-                    None,
-                    lambda: sandbox.files.read(file_path, format="text"),
-                )
+                content = await sandbox.files.read(file_path, format="text")
                 content_str = content
 
             response = {

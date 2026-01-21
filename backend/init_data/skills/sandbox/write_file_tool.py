@@ -29,7 +29,7 @@ class SandboxWriteFileInput(BaseModel):
     )
     content: str = Field(
         ...,
-        description="Content to write to the file (text or base64-encoded bytes)",
+        description="REQUIRED: Content to write to the file (text or base64-encoded bytes). This parameter is mandatory and cannot be omitted.",
     )
     format: Optional[str] = Field(
         default="text",
@@ -71,9 +71,11 @@ class SandboxWriteFileTool(BaseSandboxTool):
 
 Use this tool to create or overwrite files in the sandbox filesystem.
 
+⚠️ IMPORTANT: Both file_path AND content are REQUIRED parameters. You MUST provide content to write.
+
 Parameters:
-- file_path (required): Path to the file (absolute or relative to /home/user)
-- content (required): Content to write (text or base64-encoded bytes)
+- file_path (REQUIRED): Path to the file (absolute or relative to /home/user)
+- content (REQUIRED): Content to write (text or base64-encoded bytes). MUST be provided, cannot be empty.
 - format (optional): Content format - 'text' (default) or 'bytes' (base64-encoded)
 - create_dirs (optional): Create parent directories if needed (default: True)
 
@@ -83,11 +85,17 @@ Returns:
 - size: Number of bytes written
 - format: Format used for writing
 
-Example:
+Example - Writing text file:
 {
   "file_path": "/home/user/output.txt",
   "content": "Hello, World!",
   "format": "text"
+}
+
+Example - Writing HTML file:
+{
+  "file_path": "/home/user/index.html",
+  "content": "<!DOCTYPE html><html><body><h1>Title</h1></body></html>"
 }"""
 
     args_schema: type[BaseModel] = SandboxWriteFileInput
@@ -126,6 +134,22 @@ Example:
         Returns:
             JSON string with write result and metadata
         """
+        # Validate required parameters
+        if not content:
+            error_msg = (
+                "Missing required parameter 'content'. "
+                "You MUST provide content to write to the file. "
+                "The 'content' parameter cannot be empty or omitted."
+            )
+            logger.error(f"[SandboxWriteFileTool] {error_msg}")
+            result = self._format_error(
+                error_message=error_msg,
+                path=file_path,
+                size=0,
+            )
+            await self._emit_tool_status("failed", error_msg)
+            return result
+
         logger.info(
             f"[SandboxWriteFileTool] Writing file: {file_path}, format={format}, "
             f"content_len={len(content)}"
@@ -214,11 +238,7 @@ Example:
                 parent_dir = os.path.dirname(file_path)
                 if parent_dir and parent_dir != "/":
                     try:
-                        loop = asyncio.get_event_loop()
-                        await loop.run_in_executor(
-                            None,
-                            lambda: sandbox.files.make_dir(parent_dir),
-                        )
+                        await sandbox.files.make_dir(parent_dir)
                         logger.info(
                             f"[SandboxWriteFileTool] Created directory: {parent_dir}"
                         )
@@ -228,24 +248,14 @@ Example:
                             f"[SandboxWriteFileTool] Directory creation skipped: {e}"
                         )
 
-            # Write file
-            loop = asyncio.get_event_loop()
+            # Write file using native async API
             if format == "bytes":
-                await loop.run_in_executor(
-                    None,
-                    lambda: sandbox.files.write(file_path, content_bytes),
-                )
+                await sandbox.files.write(file_path, content_bytes)
             else:
-                await loop.run_in_executor(
-                    None,
-                    lambda: sandbox.files.write(file_path, content),
-                )
+                await sandbox.files.write(file_path, content)
 
             # Get file info to confirm write
-            file_info = await loop.run_in_executor(
-                None,
-                lambda: sandbox.files.get_info(file_path),
-            )
+            file_info = await sandbox.files.get_info(file_path)
 
             response = {
                 "success": True,

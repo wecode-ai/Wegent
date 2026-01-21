@@ -212,7 +212,9 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
               {/* Skill header */}
               <div className="flex items-start justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <h3 className="font-medium text-text-primary">{skill.name}</h3>
+                  <h3 className="font-medium text-text-primary">
+                    {skill.displayName || skill.name}
+                  </h3>
                   {skill.is_public && (
                     <Badge variant="secondary" className="text-xs">
                       <Globe className="w-3 h-3 mr-1" />

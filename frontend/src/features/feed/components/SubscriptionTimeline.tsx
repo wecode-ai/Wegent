@@ -500,7 +500,7 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
                   className="text-primary hover:underline inline-flex items-center gap-0.5"
                 >
                   <Settings className="h-3 w-3" />
-                  {t('feed.manage_subscriptions')}
+                  {t('feed.manage')}
                 </button>
               </p>
             </div>

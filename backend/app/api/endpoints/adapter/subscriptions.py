@@ -24,6 +24,7 @@ from app.schemas.subscription import (
     BackgroundExecutionInDB,
     BackgroundExecutionListResponse,
     BackgroundExecutionStatus,
+    DiscoverSubscriptionsListResponse,
     SubscriptionCreate,
     SubscriptionInDB,
     SubscriptionListResponse,
@@ -31,6 +32,7 @@ from app.schemas.subscription import (
     SubscriptionUpdate,
 )
 from app.services.subscription import subscription_service
+from app.services.subscription.follow_service import subscription_follow_service
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +89,36 @@ def create_subscription(
         db=db,
         subscription_in=subscription_in,
         user_id=current_user.id,
+    )
+
+
+# ========== Discover Endpoint ==========
+# NOTE: This static route MUST be defined before /{subscription_id} dynamic routes
+
+
+@router.get("/discover", response_model=DiscoverSubscriptionsListResponse)
+def discover_subscriptions(
+    sort_by: str = Query("popularity", description="Sort by: 'popularity' or 'recent'"),
+    search: Optional[str] = Query(None, description="Search query"),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Discover public subscriptions.
+
+    Returns a list of public subscriptions that can be followed.
+    Can be sorted by popularity (follower count) or recency.
+    """
+    skip = (page - 1) * limit
+    return subscription_follow_service.discover_subscriptions(
+        db=db,
+        user_id=current_user.id,
+        sort_by=sort_by,
+        search=search,
+        skip=skip,
+        limit=limit,
     )
 
 

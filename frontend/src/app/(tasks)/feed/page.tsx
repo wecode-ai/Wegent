@@ -100,7 +100,7 @@ export default function SubscriptionPage() {
             onClick={handleGoToSubscriptions}
           >
             <Settings className="h-4 w-4" />
-            {t('feed:feed.manage_subscriptions')}
+            {t('feed:feed.manage')}
           </Button>
           <ThemeToggle />
         </TopNavigation>
