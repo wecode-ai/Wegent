@@ -22,7 +22,8 @@ import { createApiClient, ApiClient } from '../../utils/api-client'
 import { ADMIN_USER } from '../../config/test-users'
 
 // Test resource names (unique per test run)
-const TEST_PREFIX = `e2e-chat-img-${Date.now()}`
+// Use combination of timestamp and random string to avoid collisions in parallel runs
+const TEST_PREFIX = `e2e-chat-img-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`
 const TEST_MODEL_NAME = `${TEST_PREFIX}-model`
 const TEST_BOT_NAME = `${TEST_PREFIX}-bot`
 const TEST_TEAM_NAME = `${TEST_PREFIX}-team`
@@ -195,15 +196,29 @@ test.describe('Chat Image Upload UI Tests', () => {
 
   /**
    * Helper function to select the test team in the chat UI
-   * Flow: Click "More/更多" button -> Search for team -> Click on team in dropdown
+   * Flow: Look for team in QuickAccessCards -> Click on team card
+   *
+   * Note: After creating a team via API, the frontend may not have the latest team list.
+   * This function will retry with page reload if the team is not found initially.
    */
-  async function selectTestTeam(page: Page): Promise<boolean> {
+  async function selectTestTeam(page: Page, retryWithReload = true): Promise<boolean> {
     try {
-      // Wait for page to be ready
-      await page.waitForLoadState('networkidle')
-      await page.waitForTimeout(1000)
+      // Wait for page to be ready - use domcontentloaded instead of networkidle
+      // because networkidle can timeout due to continuous polling/websocket connections
+      await page.waitForLoadState('domcontentloaded')
+      await page.waitForTimeout(2000)
 
-      // Step 1: Look for the "More" or "更多" button in QuickAccessCards
+      // Strategy 1: Look for team card directly in QuickAccessCards
+      // The team card has a specific structure with the team name
+      const teamCardButton = page.locator(`button:has-text("${TEST_TEAM_NAME}")`).first()
+      if (await teamCardButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+        console.log('Found team card button directly, clicking...')
+        await teamCardButton.click()
+        await page.waitForTimeout(1000)
+        return true
+      }
+
+      // Strategy 2: Look for the "More" or "更多" button in QuickAccessCards
       // Support both English and Chinese locales
       const moreButton = page.locator('button:has-text("More"), button:has-text("更多")').first()
 
@@ -212,7 +227,7 @@ test.describe('Chat Image Upload UI Tests', () => {
         await moreButton.click()
         await page.waitForTimeout(500)
 
-        // Step 2: Wait for dropdown to appear and find search input
+        // Wait for dropdown to appear and find search input
         // Support multiple placeholder patterns
         const searchInput = page
           .locator(
@@ -225,41 +240,108 @@ test.describe('Chat Image Upload UI Tests', () => {
           await searchInput.fill(TEST_TEAM_NAME)
           await page.waitForTimeout(500)
 
-          // Step 3: Click on the team in the dropdown list
+          // Click on the team in the dropdown list
           // Look for the team item in the dropdown (it's a div with specific structure)
-          const teamItem = page.locator(`.max-h-\\[240px\\] >> text="${TEST_TEAM_NAME}"`).first()
+          const teamItem = page.locator(`[role="option"]:has-text("${TEST_TEAM_NAME}")`).first()
 
           if (await teamItem.isVisible({ timeout: 3000 }).catch(() => false)) {
             console.log('Found team in dropdown, clicking...')
             await teamItem.click()
-            await page.waitForTimeout(500)
+            await page.waitForTimeout(1000)
             return true
           }
 
-          // Alternative: Try more generic selector
-          const teamItemAlt = page.locator(`div:has-text("${TEST_TEAM_NAME}")`).last()
+          // Alternative: Try more generic selector for dropdown item
+          const teamItemAlt = page.locator(`.max-h-\\[240px\\] >> text="${TEST_TEAM_NAME}"`).first()
           if (await teamItemAlt.isVisible({ timeout: 2000 }).catch(() => false)) {
             console.log('Found team item (alt), clicking...')
             await teamItemAlt.click()
-            await page.waitForTimeout(500)
+            await page.waitForTimeout(1000)
             return true
           }
         }
       }
 
-      // Alternative: Try clicking directly on team card if visible in QuickAccessCards
-      const teamCard = page.locator(`div:has-text("${TEST_TEAM_NAME}")`).first()
-      if (await teamCard.isVisible({ timeout: 2000 }).catch(() => false)) {
-        console.log('Found team card directly, clicking...')
-        await teamCard.click()
-        await page.waitForTimeout(500)
+      // Strategy 3: Try clicking directly on any element containing the team name
+      const teamElement = page.locator(`text="${TEST_TEAM_NAME}"`).first()
+      if (await teamElement.isVisible({ timeout: 2000 }).catch(() => false)) {
+        console.log('Found team element by text, clicking...')
+        await teamElement.click()
+        await page.waitForTimeout(1000)
         return true
+      }
+
+      // If team not found and retry is enabled, reload the page to refresh team list
+      if (retryWithReload) {
+        console.log('Team not found, reloading page to refresh team list...')
+        await page.reload()
+        await page.waitForLoadState('domcontentloaded')
+        await page.waitForTimeout(2000)
+        // Retry without reload to avoid infinite loop
+        return selectTestTeam(page, false)
       }
 
       console.warn(`Could not find or select team: ${TEST_TEAM_NAME}`)
       return false
     } catch (error) {
       console.error('Error selecting team:', error)
+      return false
+    }
+  }
+
+  /**
+   * Helper function to select the test model in the model selector
+   * This is needed when the team requires model selection (isModelSelectionRequired=true)
+   */
+  async function selectTestModel(page: Page): Promise<boolean> {
+    try {
+      // Look for model selector button - it shows "Please select a model" or "请选择模型" when required
+      const modelSelectorButton = page
+        .locator(
+          'button:has-text("Please select a model"), button:has-text("请选择模型"), button[role="combobox"]:has(svg.lucide-brain)'
+        )
+        .first()
+
+      if (await modelSelectorButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+        const buttonText = await modelSelectorButton.textContent()
+        console.log('Model selector button text:', buttonText)
+
+        // Check if model selection is required
+        if (buttonText?.includes('Please select') || buttonText?.includes('请选择模型')) {
+          console.log('Model selection required, clicking selector...')
+          await modelSelectorButton.click()
+          await page.waitForTimeout(500)
+
+          // Look for our test model in the dropdown
+          const modelOption = page.locator(`[role="option"]:has-text("${TEST_MODEL_NAME}")`).first()
+          if (await modelOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+            console.log('Found test model, selecting...')
+            await modelOption.click()
+            await page.waitForTimeout(500)
+            return true
+          }
+
+          // Try to select any available model
+          const anyModelOption = page.locator('[role="option"]').first()
+          if (await anyModelOption.isVisible({ timeout: 2000 }).catch(() => false)) {
+            console.log('Selecting first available model...')
+            await anyModelOption.click()
+            await page.waitForTimeout(500)
+            return true
+          }
+
+          console.warn('No model options available in dropdown')
+          // Press Escape to close dropdown
+          await page.keyboard.press('Escape')
+          return false
+        }
+      }
+
+      // Model selection not required or already selected
+      console.log('Model selection not required or already selected')
+      return true
+    } catch (error) {
+      console.error('Error selecting model:', error)
       return false
     }
   }
@@ -427,11 +509,19 @@ test.describe('Chat Image Upload UI Tests', () => {
       const teamSelected = await selectTestTeam(page)
       if (!teamSelected) {
         console.warn('Could not select test team')
+        await page.screenshot({ path: 'test-results/e2e-team-selection-failed.png' })
         test.skip()
         return
       }
+      // Wait for team selection to take effect
+      await page.waitForTimeout(2000)
 
-      await page.waitForTimeout(1000)
+      // Select model if required (Chat Shell teams may need explicit model selection)
+      const modelSelected = await selectTestModel(page)
+      if (!modelSelected) {
+        console.warn('Could not select model, test may fail')
+        await page.screenshot({ path: 'test-results/e2e-model-selection-failed.png' })
+      }
 
       // Find file input
       const fileInput = page.locator('input[type="file"]').first()
@@ -439,6 +529,7 @@ test.describe('Chat Image Upload UI Tests', () => {
 
       if (!hasFileInput) {
         console.warn('No file input found, Chat Shell may not be properly configured')
+        await page.screenshot({ path: 'test-results/e2e-no-file-input.png' })
         test.skip()
         return
       }
@@ -447,48 +538,56 @@ test.describe('Chat Image Upload UI Tests', () => {
       console.log('Uploading image to backend...')
       await fileInput.setInputFiles(testImagePath)
 
-      // Wait for upload to complete - the attachment needs to be ready before sending
-      // isAttachmentReadyToSend must be true for canSubmit to be true
+      // Wait for upload to complete by checking for attachment preview
+      // The attachment preview appears when upload is successful
+      // The InputBadgeDisplay component renders attachments with specific structure:
+      // - A container div with "rounded-lg border" classes
+      // - Contains an image thumbnail (for images) or file icon
+      // - Contains filename and file size text
       console.log('Waiting for image upload to complete...')
-      await page.waitForTimeout(3000)
 
-      // Select model if required (Chat Shell teams may need explicit model selection)
-      // The model selector shows a Brain icon and may show "请选择模型" when required
-      console.log('Checking if model selection is required...')
-      const modelSelectorButton = page.locator('button[role="combobox"]').first()
-      if (await modelSelectorButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-        // Check if model selection is required (button shows error state or "请选择模型")
-        const buttonText = await modelSelectorButton.textContent()
-        if (
-          buttonText?.includes('请选择模型') ||
-          buttonText?.includes('model_required') ||
-          buttonText?.includes('Select')
-        ) {
-          console.log('Model selection required, selecting test model...')
-          await modelSelectorButton.click()
-          await page.waitForTimeout(500)
+      // Use multiple selectors to detect attachment preview:
+      // 1. Look for the badge-scroll container that appears when attachments exist
+      // 2. Look for the rounded-lg border container with image thumbnail
+      // 3. Look for any img element inside the input area (image preview)
+      const attachmentPreview = page
+        .locator(
+          '.badge-scroll, ' +
+            'div.rounded-lg.border:has(img), ' +
+            '[class*="rounded-lg"][class*="border"]:has(img), ' +
+            'div:has(> div.rounded.overflow-hidden > img)'
+        )
+        .first()
 
-          // Look for our test model in the dropdown
-          const modelOption = page.locator(`[role="option"]:has-text("${TEST_MODEL_NAME}")`).first()
-          if (await modelOption.isVisible({ timeout: 3000 }).catch(() => false)) {
-            await modelOption.click()
-            console.log('Selected test model')
-          } else {
-            // Try to select any available model
-            const anyModelOption = page.locator('[role="option"]').first()
-            if (await anyModelOption.isVisible({ timeout: 2000 }).catch(() => false)) {
-              await anyModelOption.click()
-              console.log('Selected first available model')
-            }
-          }
-          await page.waitForTimeout(500)
+      // Wait up to 10 seconds for attachment preview to appear
+      const uploadComplete = await attachmentPreview
+        .isVisible({ timeout: 10000 })
+        .catch(() => false)
+
+      if (!uploadComplete) {
+        console.warn('Attachment preview not visible, checking for upload progress...')
+        // Check if upload is still in progress (Loader2 spinner)
+        const uploadingIndicator = page.locator('.animate-spin, [class*="Loader"]').first()
+        const isUploading = await uploadingIndicator.isVisible({ timeout: 2000 }).catch(() => false)
+        if (isUploading) {
+          console.log('Upload still in progress, waiting longer...')
+          await page.waitForTimeout(5000)
         }
+        // Take screenshot for debugging
+        await page.screenshot({ path: 'test-results/e2e-upload-failed.png' })
+        // Continue anyway - the upload might have succeeded but preview is not visible
+      } else {
+        console.log('Attachment preview visible, upload successful')
       }
+
+      // Additional wait for state to propagate
+      await page.waitForTimeout(1000)
 
       // Find message input (ChatInput uses contentEditable div, not textarea)
       const messageInput = page.locator('[data-testid="message-input"]').first()
       if (!(await messageInput.isVisible({ timeout: 5000 }).catch(() => false))) {
         console.warn('Message input not visible')
+        await page.screenshot({ path: 'test-results/e2e-no-message-input.png' })
         test.skip()
         return
       }
@@ -512,8 +611,40 @@ test.describe('Chat Image Upload UI Tests', () => {
       // Find and click send button (has data-tour="send-button" attribute)
       const sendButton = page.locator('[data-tour="send-button"]').first()
 
-      // Wait for the button to be visible and click it
+      // Wait for the button to be visible
       await sendButton.waitFor({ state: 'visible', timeout: 5000 })
+
+      // Check button state before waiting
+      const isDisabled = await sendButton.isDisabled()
+      console.log('Send button disabled:', isDisabled)
+
+      // If button is disabled, take a screenshot for debugging
+      if (isDisabled) {
+        await page.screenshot({ path: 'test-results/e2e-send-button-disabled.png' })
+        // Log more debug info
+        const buttonClasses = await sendButton.getAttribute('class')
+        console.log('Send button classes:', buttonClasses)
+      }
+
+      // Wait for the button to be enabled (canSubmit = true)
+      // This requires: !isLoading && !isStreaming && !isModelSelectionRequired && isAttachmentReadyToSend
+      console.log('Waiting for send button to be enabled...')
+
+      // Use a try-catch to handle timeout and provide better error message
+      try {
+        await expect(sendButton).toBeEnabled({ timeout: 15000 })
+      } catch {
+        // Take screenshot on failure
+        await page.screenshot({ path: 'test-results/e2e-send-button-timeout.png' })
+        // Log the current state for debugging
+        console.error('Send button did not become enabled within timeout')
+        console.error(
+          'Possible causes: isLoading=true, isStreaming=true, isModelSelectionRequired=true, or isAttachmentReadyToSend=false'
+        )
+        throw new Error(
+          'Send button remained disabled. Check if attachment upload completed and model is selected.'
+        )
+      }
 
       console.log('Sending message to backend...')
       await sendButton.click()

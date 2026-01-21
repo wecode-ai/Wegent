@@ -106,7 +106,7 @@ ATTACHMENT_STORAGE_BACKEND=mysql
 
 # Executor Manager 配置
 EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
-EXECUTOR_WORKSPCE=/path/to/workspace
+EXECUTOR_WORKSPACE=/path/to/workspace
 ```
 
 ### 步骤 3: 启动服务

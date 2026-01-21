@@ -158,10 +158,17 @@ class SkillToolRegistry:
         tools: list[BaseTool] = []
         tool_declarations = skill_config.get("tools", [])
 
+        # Get skill-level config (shared by all tools)
+        skill_level_config = skill_config.get("config", {})
+
         for tool_decl in tool_declarations:
             tool_name = tool_decl.get("name")
             provider_name = tool_decl.get("provider")
-            tool_config = tool_decl.get("config", {})
+            tool_specific_config = tool_decl.get("config", {})
+
+            # Merge skill-level config with tool-specific config
+            # Tool-specific config takes precedence over skill-level config
+            tool_config = {**skill_level_config, **tool_specific_config}
 
             if not tool_name or not provider_name:
                 logger.warning(

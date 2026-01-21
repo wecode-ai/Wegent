@@ -45,6 +45,7 @@ import {
   CorrectionChunkPayload,
   CorrectionDonePayload,
   CorrectionErrorPayload,
+  BackgroundExecutionUpdatePayload,
   AuthErrorPayload,
 } from '@/types/socket'
 
@@ -110,6 +111,8 @@ interface SocketContextType {
   sendSkillResponse: (payload: SkillResponsePayload) => void
   /** Register correction event handlers */
   registerCorrectionHandlers: (handlers: CorrectionEventHandlers) => () => void
+  /** Register background execution event handlers */
+  registerBackgroundExecutionHandlers: (handlers: BackgroundExecutionEventHandlers) => () => void
   /** Register a callback to be called when WebSocket reconnects */
   onReconnect: (callback: ReconnectCallback) => () => void
 }
@@ -147,6 +150,11 @@ export interface CorrectionEventHandlers {
   onCorrectionChunk?: (data: CorrectionChunkPayload) => void
   onCorrectionDone?: (data: CorrectionDonePayload) => void
   onCorrectionError?: (data: CorrectionErrorPayload) => void
+}
+
+/** Background execution event handlers for subscription execution updates */
+export interface BackgroundExecutionEventHandlers {
+  onBackgroundExecutionUpdate?: (data: BackgroundExecutionUpdatePayload) => void
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined)
@@ -682,6 +690,29 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     },
     [] // No dependencies - use socketRef
   )
+  /**
+   * Register background execution event handlers for subscription execution updates
+   * Returns a cleanup function to unregister handlers
+   */
+  const registerBackgroundExecutionHandlers = useCallback(
+    (handlers: BackgroundExecutionEventHandlers): (() => void) => {
+      if (!socket) {
+        return () => {}
+      }
+
+      const { onBackgroundExecutionUpdate } = handlers
+
+      if (onBackgroundExecutionUpdate)
+        socket.on(ServerEvents.BACKGROUND_EXECUTION_UPDATE, onBackgroundExecutionUpdate)
+
+      // Return cleanup function
+      return () => {
+        if (onBackgroundExecutionUpdate)
+          socket.off(ServerEvents.BACKGROUND_EXECUTION_UPDATE, onBackgroundExecutionUpdate)
+      }
+    },
+    [socket]
+  )
 
   /**
    * Register a callback to be called when WebSocket reconnects
@@ -765,6 +796,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         registerSkillHandlers,
         sendSkillResponse,
         registerCorrectionHandlers,
+        registerBackgroundExecutionHandlers,
         onReconnect,
       }}
     >

@@ -265,6 +265,58 @@ class PublicRetrieverListResponse(BaseModel):
     items: List[PublicRetrieverResponse]
 
 
+# Subscription Monitor Schemas (formerly Flow Monitor)
+class SubscriptionMonitorStats(BaseModel):
+    """Subscription execution statistics for admin monitoring"""
+
+    total_executions: int = Field(..., description="Total number of executions")
+    completed_count: int = Field(..., description="Number of completed executions")
+    failed_count: int = Field(..., description="Number of failed executions")
+    timeout_count: int = Field(..., description="Number of timed out executions")
+    cancelled_count: int = Field(..., description="Number of cancelled executions")
+    running_count: int = Field(
+        ..., description="Number of currently running executions"
+    )
+    pending_count: int = Field(..., description="Number of pending executions")
+    success_rate: float = Field(..., description="Success rate (0-100)")
+    failure_rate: float = Field(..., description="Failure rate (0-100)")
+    timeout_rate: float = Field(..., description="Timeout rate (0-100)")
+    active_subscriptions_count: int = Field(
+        ..., description="Number of active subscriptions"
+    )
+    total_subscriptions_count: int = Field(
+        ..., description="Total number of subscriptions"
+    )
+
+
+class SubscriptionMonitorError(BaseModel):
+    """Individual error record for subscription monitor (privacy-preserving)"""
+
+    execution_id: int = Field(..., description="Execution ID")
+    subscription_id: int = Field(..., description="Subscription ID")
+    user_id: int = Field(..., description="User ID")
+    task_id: Optional[int] = Field(None, description="Associated task ID")
+    status: str = Field(..., description="Execution status")
+    error_message: Optional[str] = Field(None, description="Error message")
+    trigger_type: Optional[str] = Field(None, description="Trigger type")
+    created_at: datetime = Field(..., description="Creation time")
+    started_at: Optional[datetime] = Field(None, description="Start time")
+    completed_at: Optional[datetime] = Field(None, description="Completion time")
+
+
+class SubscriptionMonitorErrorListResponse(BaseModel):
+    """Error list response for subscription monitor"""
+
+    total: int
+    items: List[SubscriptionMonitorError]
+
+
+# Backward compatibility aliases
+FlowMonitorStats = SubscriptionMonitorStats
+FlowMonitorError = SubscriptionMonitorError
+FlowMonitorErrorListResponse = SubscriptionMonitorErrorListResponse
+
+
 # Public Team Management Schemas
 class PublicTeamCreate(BaseModel):
     """Public team creation model"""

@@ -6,12 +6,16 @@
 Embedding model factory.
 """
 
+import logging
 from typing import Any, Dict
 
+from shared.utils.crypto import decrypt_api_key
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.services.rag.embedding.custom import CustomEmbedding
+
+logger = logging.getLogger(__name__)
 
 
 def create_embedding_model_from_crd(
@@ -107,6 +111,17 @@ def create_embedding_model_from_crd(
     base_url = env.get("base_url")
     model_id = env.get("model_id")
     custom_headers = env.get("custom_headers", {})
+
+    # Decrypt API key if present (handles both encrypted and plain keys)
+    if api_key:
+        try:
+            api_key = decrypt_api_key(api_key)
+        except Exception as e:
+            # Log error but continue - decryption may fail if key is not encrypted
+            # The decrypt_api_key function should handle backward compatibility
+            logger.warning(
+                f"Failed to decrypt API key for embedding_model '{model_name}': {str(e)}. Using as-is."
+            )
 
     # Build embedding config based on protocol
     if protocol == "openai":

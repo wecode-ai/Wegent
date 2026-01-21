@@ -442,12 +442,10 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Import existing helpers from service layer
             from app.api.endpoints.adapter.chat import StreamChatRequest
-            from app.schemas.task import TaskCreate
-            from app.services.adapters.task_kinds import task_kinds_service
             from app.services.chat.config import should_use_direct_chat
             from app.services.chat.storage import (
                 TaskCreationParams,
-                create_task_and_subtasks,
+                create_chat_task,
             )
             from app.services.chat.trigger import should_trigger_ai_response
 
@@ -523,130 +521,70 @@ class ChatNamespace(socketio.AsyncNamespace):
                 db=db,
             )
 
-            # Create task and subtasks
-            # Use different methods based on supports_direct_chat:
-            # - If supports_direct_chat is True: use create_task_and_subtasks (async, for Chat Shell)
-            # - If supports_direct_chat is False: use task_kinds_service.create_task_or_append (sync, for other shells)
-            if supports_direct_chat:
-                # Use create_task_and_subtasks for direct chat (Chat Shell)
-                logger.info(
-                    f"[WS] chat:send calling create_task_and_subtasks (supports_direct_chat=True)..."
-                )
+            # Create task and subtasks using unified function
+            # Automatically handles Chat Shell vs Executor path based on team configuration
+            logger.info(
+                f"[WS] chat:send calling create_chat_task (supports_direct_chat={supports_direct_chat})..."
+            )
 
-                # Build TaskCreationParams from request
-                params = TaskCreationParams(
-                    message=payload.message,
-                    title=payload.title,
-                    model_id=payload.force_override_bot_model,
-                    force_override_bot_model=payload.force_override_bot_model
-                    is not None,
-                    is_group_chat=payload.is_group_chat,
-                    git_url=payload.git_url,
-                    git_repo=payload.git_repo,
-                    git_repo_id=payload.git_repo_id,
-                    git_domain=payload.git_domain,
-                    branch_name=payload.branch_name,
-                    task_type=payload.task_type,
-                    knowledge_base_id=payload.knowledge_base_id,
-                )
+            # Build TaskCreationParams from request
+            params = TaskCreationParams(
+                message=payload.message,
+                title=payload.title,
+                model_id=payload.force_override_bot_model,
+                force_override_bot_model=payload.force_override_bot_model is not None,
+                force_override_bot_model_type=payload.force_override_bot_model_type,
+                is_group_chat=payload.is_group_chat,
+                git_url=payload.git_url,
+                git_repo=payload.git_repo,
+                git_repo_id=payload.git_repo_id,
+                git_domain=payload.git_domain,
+                branch_name=payload.branch_name,
+                task_type=payload.task_type,
+                knowledge_base_id=payload.knowledge_base_id,
+            )
 
-                result = await create_task_and_subtasks(
-                    db,
-                    user,
-                    team,
-                    payload.message,  # Original message for storage
-                    params,
-                    payload.task_id,
-                    should_trigger_ai=should_trigger_ai,
-                    rag_prompt=rag_prompt,  # RAG prompt for AI inference
-                )
-                logger.info(
-                    f"[WS] chat:send create_task_and_subtasks returned: ai_triggered={result.ai_triggered}, task_id={result.task.id if result.task else None}"
-                )
+            result = await create_chat_task(
+                db=db,
+                user=user,
+                team=team,
+                message=payload.message,
+                params=params,
+                task_id=payload.task_id,
+                should_trigger_ai=should_trigger_ai,
+                rag_prompt=rag_prompt,
+                source="web",
+            )
+            logger.info(
+                f"[WS] chat:send create_chat_task returned: ai_triggered={result.ai_triggered}, "
+                f"task_id={result.task.id if result.task else None}"
+            )
 
-                # Extract task and subtasks from result for unified handling below
-                task = result.task
-                user_subtask = result.user_subtask
-                assistant_subtask = result.assistant_subtask
-                user_subtask_for_context = user_subtask
+            # Extract task and subtasks from result
+            task = result.task
+            user_subtask = result.user_subtask
+            assistant_subtask = result.assistant_subtask
+            user_subtask_for_context = user_subtask
 
-            else:
-                # Use task_kinds_service.create_task_or_append for non-direct chat
-                logger.info(
-                    f"[WS] chat:send calling task_kinds_service.create_task_or_append (supports_direct_chat=False)..."
-                )
+            # Update userInteracted label for Subscription tasks
+            # When user sends a message to a Subscription-triggered task, mark it as interacted
+            # so it appears in the history conversation list
+            task_crd = Task.model_validate(task.json)
+            if (
+                task_crd.metadata.labels
+                and task_crd.metadata.labels.get("type") == "subscription"
+            ):
+                if task_crd.metadata.labels.get("userInteracted") != "true":
+                    from sqlalchemy.orm.attributes import flag_modified
 
-                # Use provided task_type, or auto-detect based on git_url presence
-                task_type = payload.task_type or ("code" if payload.git_url else "chat")
-
-                # Build TaskCreate object
-                task_create = TaskCreate(
-                    title=payload.title,
-                    team_id=payload.team_id,
-                    git_url=payload.git_url or "",
-                    git_repo=payload.git_repo or "",
-                    git_repo_id=payload.git_repo_id or 0,
-                    git_domain=payload.git_domain or "",
-                    branch_name=payload.branch_name or "",
-                    prompt=payload.message,
-                    type="online",
-                    task_type=task_type,
-                    auto_delete_executor="false",
-                    source="web",
-                    model_id=payload.force_override_bot_model,
-                    force_override_bot_model=payload.force_override_bot_model
-                    is not None,
-                )
-
-                # Call create_task_or_append (synchronous method)
-                task_dict = task_kinds_service.create_task_or_append(
-                    db=db,
-                    obj_in=task_create,
-                    user=user,
-                    task_id=payload.task_id,
-                )
-
-                # Get the task TaskResource object from database
-                task = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.id == task_dict["id"],
-                        TaskResource.kind == "Task",
-                        TaskResource.is_active == True,
+                    task_crd.metadata.labels["userInteracted"] = "true"
+                    task.json = task_crd.model_dump(mode="json")
+                    flag_modified(task, "json")
+                    db.commit()
+                    db.refresh(task)
+                    logger.info(
+                        f"[WS] chat:send updated userInteracted=true for Subscription task {task.id}"
                     )
-                    .first()
-                )
-
-                logger.info(
-                    f"[WS] chat:send task_kinds_service.create_task_or_append returned: task_id={task_dict.get('id')}"
-                )
-
-                # Query the created subtasks from database
-                # Get the latest USER subtask for this task
-                user_subtask = (
-                    db.query(Subtask)
-                    .filter(
-                        Subtask.task_id == task_dict["id"],
-                        Subtask.role == SubtaskRole.USER,
-                    )
-                    .order_by(Subtask.id.desc())
-                    .first()
-                )
-
-                # Get the latest ASSISTANT subtask for this task (if should_trigger_ai)
-                assistant_subtask = None
-                if should_trigger_ai:
-                    assistant_subtask = (
-                        db.query(Subtask)
-                        .filter(
-                            Subtask.task_id == task_dict["id"],
-                            Subtask.role == SubtaskRole.ASSISTANT,
-                        )
-                        .order_by(Subtask.id.desc())
-                        .first()
-                    )
-
-                user_subtask_for_context = user_subtask
 
             # Link attachments and create knowledge base contexts for the user subtask
             # This handles both pre-uploaded attachments and knowledge bases selected at send time
@@ -1140,7 +1078,8 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
 
             # Reset the failed AI subtask to PENDING status using service module
-            reset_subtask_for_retry(db, failed_ai_subtask)
+            # Also pass task to reset Task status (required for executor_manager to pick up the task)
+            reset_subtask_for_retry(db, failed_ai_subtask, task)
 
             # Trigger AI response using unified trigger
             from app.models.user import User

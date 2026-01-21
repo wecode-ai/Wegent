@@ -71,23 +71,55 @@ echo -e "${YELLOW}Downloading docker-compose.yml...${NC}"
 curl -fsSL "$COMPOSE_URL" -o docker-compose.yml
 
 # Detect server IP for WebSocket configuration
+# Cross-platform compatible (macOS and Linux)
 detect_server_ip() {
     local ip=""
-    # Try to get IP from common physical interfaces first
-    # eth0, ens*, enp* are common physical interface names
-    for iface in eth0 ens33 ens160 enp0s3 enp0s8 ens192 em1; do
-        ip=$(ip -4 addr show "$iface" 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -1)
+    
+    # Detect OS type
+    local os_type
+    os_type=$(uname -s)
+    
+    if [ "$os_type" = "Darwin" ]; then
+        # macOS: use ipconfig or ifconfig
+        # Try to get IP from en0 (usually the primary interface on Mac)
+        for iface in en0 en1 en2 en3; do
+            ip=$(ipconfig getifaddr "$iface" 2>/dev/null)
+            if [ -n "$ip" ] && [ "$ip" != "127.0.0.1" ]; then
+                echo "$ip"
+                return
+            fi
+        done
+        # Fallback: use ifconfig to find first non-loopback IPv4
+        ip=$(ifconfig 2>/dev/null | awk '/inet / && !/127.0.0.1/ {print $2; exit}')
         if [ -n "$ip" ]; then
             echo "$ip"
             return
         fi
-    done
-    # Fallback: get first non-docker, non-loopback IP
-    ip=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^172\.\(1[6-9]\|2[0-9]\|3[0-1]\)\.' | grep -v '^127\.' | head -1)
-    if [ -z "$ip" ]; then
+    else
+        # Linux: use ip command or hostname -I
+        # Try to get IP from common physical interfaces first
+        for iface in eth0 ens33 ens160 enp0s3 enp0s8 ens192 em1; do
+            ip=$(ip -4 addr show "$iface" 2>/dev/null | awk '/inet / {split($2, a, "/"); print a[1]}' | head -1)
+            if [ -n "$ip" ]; then
+                echo "$ip"
+                return
+            fi
+        done
+        # Fallback: get first non-docker, non-loopback IP using hostname -I
+        ip=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^172\.\(1[6-9]\|2[0-9]\|3[0-1]\)\.' | grep -v '^127\.' | head -1)
+        if [ -n "$ip" ]; then
+            echo "$ip"
+            return
+        fi
+        # Last resort: use ip route
         ip=$(ip route get 1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
+        if [ -n "$ip" ]; then
+            echo "$ip"
+            return
+        fi
     fi
-    echo "$ip"
+    
+    echo ""
 }
 
 # Configure WebSocket URL

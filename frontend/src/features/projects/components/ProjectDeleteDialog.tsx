@@ -54,9 +54,7 @@ export function ProjectDeleteDialog({ open, onOpenChange, project }: ProjectDele
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={isDeleting}>
-            {t('delete.cancel')}
-          </AlertDialogCancel>
+          <AlertDialogCancel disabled={isDeleting}>{t('delete.cancel')}</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
             disabled={isDeleting}

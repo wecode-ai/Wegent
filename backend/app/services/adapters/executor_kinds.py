@@ -195,9 +195,23 @@ class ExecutorKindsService(
     def _get_first_subtasks_for_tasks(
         self, db: Session, status: str, limit: int, type: str
     ) -> List[Subtask]:
-        """Get first subtask for multiple tasks using tasks table"""
+        """Get first subtask for multiple tasks using tasks table.
+
+        Note: This method filters out Chat Shell type tasks because they are handled
+        directly by the backend (via WebSocket or Subscription Scheduler), not by executor_manager.
+        Chat Shell tasks are identified by:
+        - source='chat_shell' (WebSocket chat)
+        - source='subscription' with Chat shell type (Subscription Scheduler triggered)
+        """
         # Step 1: First query tasks table to get limit tasks
+        # Exclude tasks that should be handled by Chat Shell (not executor_manager)
+        # - source='chat_shell': Direct WebSocket chat
+        # - source='subscription': Subscription Scheduler triggered (Chat Shell type is handled by Subscription Scheduler directly)
         tasks = None
+        # Note: We exclude 'chat_shell' source tasks because they are handled
+        # directly by the backend (via WebSocket). However, we DO NOT exclude
+        # 'subscription' source tasks because Subscription Scheduler can trigger Executor-type tasks
+        # that need to be picked up by executor_manager.
         if type == "offline":
             tasks = (
                 db.query(TaskResource)
@@ -207,7 +221,8 @@ class ExecutorKindsService(
                     text(
                         "JSON_EXTRACT(json, '$.metadata.labels.type') = 'offline' "
                         "and JSON_EXTRACT(json, '$.status.status') = :status "
-                        "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
+                        "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL "
+                        "    OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
                     ),
                 )
                 .params(status=status)
@@ -216,15 +231,19 @@ class ExecutorKindsService(
                 .all()
             )
         else:
+            # Include 'subscription' type tasks for executor to pick up (Subscription Scheduler triggered Executor-type tasks)
             tasks = (
                 db.query(TaskResource)
                 .filter(
                     TaskResource.kind == "Task",
                     TaskResource.is_active.is_(True),
                     text(
-                        "(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online') "
+                        "(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL "
+                        "    OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online' "
+                        "    OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'subscription') "
                         "and JSON_EXTRACT(json, '$.status.status') = :status "
-                        "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
+                        "and (JSON_EXTRACT(json, '$.metadata.labels.source') IS NULL "
+                        "    OR JSON_EXTRACT(json, '$.metadata.labels.source') != 'chat_shell')"
                     ),
                 )
                 .params(status=status)
@@ -637,7 +656,7 @@ class ExecutorKindsService(
         model_name: str,
         bind_model_type: Optional[str],
         bind_model_namespace: str,
-        bot_user_id: int,
+        model_user_id: int,
     ) -> Optional[Kind]:
         """
         Resolve model by bind_model_type.
@@ -647,7 +666,7 @@ class ExecutorKindsService(
             model_name: Model name to resolve
             bind_model_type: Model type ('public', 'user', 'group', or None)
             bind_model_namespace: Model namespace
-            bot_user_id: Bot's user_id for personal resource lookup
+            model_user_id: User ID for model lookup (chat user for force_override, bot user otherwise)
 
         Returns:
             Model Kind object or None
@@ -678,11 +697,13 @@ class ExecutorKindsService(
                 .first()
             )
         elif bind_model_type == "user":
-            # User's private model - query with bot's user_id
+            # User's private model - query with the provided user_id
+            # When force_override is true, this is the chat user's ID
+            # Otherwise, this is the bot's user_id
             return (
                 db.query(Kind)
                 .filter(
-                    Kind.user_id == bot_user_id,
+                    Kind.user_id == model_user_id,
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == bind_model_namespace,
@@ -696,7 +717,7 @@ class ExecutorKindsService(
             model_kind = (
                 db.query(Kind)
                 .filter(
-                    Kind.user_id == bot_user_id,
+                    Kind.user_id == model_user_id,
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == "default",
@@ -725,6 +746,7 @@ class ExecutorKindsService(
         agent_config: Dict[str, Any],
         task_crd: Task,
         bot_user_id: int,
+        chat_user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Resolve model configuration with support for bind_model and task-level override.
@@ -733,7 +755,8 @@ class ExecutorKindsService(
             db: Database session
             agent_config: Current agent configuration
             task_crd: Task CRD for task-level model info
-            bot_user_id: Bot's user_id for model lookup
+            bot_user_id: Bot's user_id for model lookup (used when not force_override)
+            chat_user_id: Chat user's ID for model lookup (used when force_override is true)
 
         Returns:
             Resolved agent configuration
@@ -776,17 +799,31 @@ class ExecutorKindsService(
 
             # 3. Query kinds table for Model CRD and replace config
             if model_name_to_use:
-                bind_model_type = agent_config.get("bind_model_type")
-                bind_model_namespace = agent_config.get(
-                    "bind_model_namespace", "default"
-                )
+                # When force_override is true, get model type from task labels
+                # This is the type specified by the user when sending the message
+                if force_override and task_model_name:
+                    bind_model_type = task_crd.metadata.labels.get(
+                        "forceOverrideBotModelType"
+                    )
+                    bind_model_namespace = "default"
+                    # Use chat_user_id for force_override (the user who sent the message)
+                    model_user_id = (
+                        chat_user_id if chat_user_id is not None else bot_user_id
+                    )
+                else:
+                    bind_model_type = agent_config.get("bind_model_type")
+                    bind_model_namespace = agent_config.get(
+                        "bind_model_namespace", "default"
+                    )
+                    # Use bot_user_id for normal model lookup
+                    model_user_id = bot_user_id
 
                 model_kind = self._resolve_model_by_type(
                     db,
                     model_name_to_use,
                     bind_model_type,
                     bind_model_namespace,
-                    bot_user_id,
+                    model_user_id,
                 )
 
                 if model_kind and model_kind.json:
@@ -1067,8 +1104,9 @@ class ExecutorKindsService(
                     bot_prompt += f"\n{team_member_info.prompt}"
 
                 # Resolve model config using helper method
+                # Pass subtask.user_id as chat_user_id for force_override model lookup
                 agent_config_data = self._resolve_model_config(
-                    db, agent_config, task_crd, bot.user_id
+                    db, agent_config, task_crd, bot.user_id, subtask.user_id
                 )
 
                 bots.append(
@@ -1309,6 +1347,7 @@ class ExecutorKindsService(
             # keep the previous content in the update to prevent data loss
             # This happens when executor temporarily clears value between thinking steps
             # NOTE: Only apply this fix during RUNNING status, not COMPLETED
+            # When COMPLETED, we should always use the final result from executor
             if not new_content and previous_content:
                 # Keep previous content by updating the result dict
                 if subtask_update.result and isinstance(subtask_update.result, dict):
@@ -1351,6 +1390,22 @@ class ExecutorKindsService(
             exclude={"subtask_title", "task_title"}, exclude_unset=True
         )
         for field, value in update_data.items():
+            if field == "result" and value is not None:
+                # Preserve existing thinking when task fails without new thinking data
+                # This handles OOM/crash scenarios where executor sends error without thinking
+                existing_result = subtask.result or {}
+                new_has_thinking = isinstance(value, dict) and value.get("thinking")
+                existing_has_thinking = isinstance(
+                    existing_result, dict
+                ) and existing_result.get("thinking")
+
+                if (
+                    subtask_update.status == SubtaskStatus.FAILED
+                    and not new_has_thinking
+                    and existing_has_thinking
+                ):
+                    value["thinking"] = existing_result["thinking"]
+
             setattr(subtask, field, value)
 
         # Set completion time
@@ -1588,6 +1643,9 @@ class ExecutorKindsService(
 
         # Send notification when task is completed or failed
         self._send_task_completion_notification(db, task_id, task_crd)
+
+        # Update BackgroundExecution status if this is a Subscription task
+        self._update_background_execution_status(db, task_id, task_crd)
 
         # Send WebSocket event for task status update
         if task_crd.status:
@@ -2373,6 +2431,101 @@ class ExecutorKindsService(
         except Exception as e:
             logger.error(
                 f"Failed to schedule webhook notification for task {task_id}: {str(e)}"
+            )
+
+    def _update_background_execution_status(
+        self, db: Session, task_id: int, task_crd: Task
+    ) -> None:
+        """
+        Update BackgroundExecution status when a Subscription-triggered task completes.
+
+        This method checks if the task was triggered by a Subscription (via backgroundExecutionId label),
+        and if so, updates the corresponding BackgroundExecution record in the database.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            task_crd: Task CRD object
+        """
+        # Only update when task is in a final state
+        if not task_crd.status or task_crd.status.status not in [
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED",
+        ]:
+            return
+
+        # Check if this task was triggered by a Subscription
+        background_execution_id = None
+        if task_crd.metadata and task_crd.metadata.labels:
+            background_execution_id = task_crd.metadata.labels.get(
+                "backgroundExecutionId"
+            )
+
+        if not background_execution_id:
+            # Not a Subscription-triggered task
+            return
+
+        try:
+            # Convert to int if it's a string
+            try:
+                execution_id = int(background_execution_id)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Invalid backgroundExecutionId '{background_execution_id}' for task {task_id}"
+                )
+                return
+
+            # Use subscription_service.update_execution_status for unified status update and WebSocket emission
+            from app.schemas.subscription import BackgroundExecutionStatus
+            from app.services.subscription import subscription_service
+
+            # Map task status to BackgroundExecutionStatus
+            status_map = {
+                "COMPLETED": BackgroundExecutionStatus.COMPLETED,
+                "FAILED": BackgroundExecutionStatus.FAILED,
+                "CANCELLED": BackgroundExecutionStatus.CANCELLED,
+            }
+            new_status = status_map.get(task_crd.status.status)
+            if not new_status:
+                logger.warning(
+                    f"Unknown task status '{task_crd.status.status}' for BackgroundExecution {execution_id}"
+                )
+                return
+
+            # Prepare result_summary and error_message
+            result_summary = None
+            error_message = None
+            if task_crd.status.status == "COMPLETED":
+                result_summary = "Task completed successfully"
+            elif task_crd.status.status == "FAILED":
+                error_message = task_crd.status.errorMessage or "Task failed"
+            elif task_crd.status.status == "CANCELLED":
+                error_message = "Task was cancelled"
+
+            # Call subscription_service to update status (this will also emit WebSocket event)
+            success = subscription_service.update_execution_status(
+                db=db,
+                execution_id=execution_id,
+                status=new_status,
+                result_summary=result_summary,
+                error_message=error_message,
+            )
+
+            if success:
+                logger.info(
+                    f"Updated BackgroundExecution {execution_id} status to {new_status.value} "
+                    f"for task {task_id} via subscription_service"
+                )
+            else:
+                logger.warning(
+                    f"Failed to update BackgroundExecution {execution_id} status for task {task_id}"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Failed to update BackgroundExecution status for task {task_id}: {str(e)}",
+                exc_info=True,
             )
 
     def delete_executor_task_sync(

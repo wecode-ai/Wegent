@@ -25,7 +25,8 @@ const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://local
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 
 // Test resource names (unique per test run)
-const TEST_PREFIX = `e2e-browser-image-${Date.now()}`
+// Use combination of timestamp and random string to avoid collisions in parallel runs
+const TEST_PREFIX = `e2e-browser-img-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`
 const TEST_MODEL_NAME = `${TEST_PREFIX}-model`
 const TEST_BOT_NAME = `${TEST_PREFIX}-bot`
 const TEST_TEAM_NAME = `${TEST_PREFIX}-team`
@@ -265,7 +266,16 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       await page.screenshot({ path: 'test-results/chat-page-initial.png' })
       console.log('Saved initial page screenshot')
 
-      // Strategy 1: Look for QuickAccessCards "More" button and search for team
+      // Strategy 1: Look for team card directly in QuickAccessCards
+      const teamCardButton = page.locator(`button:has-text("${TEST_TEAM_NAME}")`).first()
+      if (await teamCardButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+        console.log('Found team card button directly, clicking...')
+        await teamCardButton.click()
+        await page.waitForTimeout(1000)
+        return true
+      }
+
+      // Strategy 2: Look for QuickAccessCards "More" button and search for team
       const moreButton = page.locator(
         '[data-tour="quick-access-cards"] button:has-text("更多"), [data-tour="quick-access-cards"] button:has-text("More")'
       )
@@ -285,7 +295,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
         }
 
         // Click on the team in the dropdown
-        const teamOption = page.locator(`text=${TEST_TEAM_NAME}`).first()
+        const teamOption = page.locator(`[role="option"]:has-text("${TEST_TEAM_NAME}")`).first()
         if (await teamOption.isVisible({ timeout: 3000 }).catch(() => false)) {
           await teamOption.click()
           await page.waitForTimeout(1000)
@@ -294,7 +304,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
         }
       }
 
-      // Strategy 2: Look for team selector with data-tour attribute (when a task is selected)
+      // Strategy 3: Look for team selector with data-tour attribute (when a task is selected)
       const teamSelector = page.locator('[data-tour="team-selector"]')
       if (await teamSelector.isVisible({ timeout: 3000 }).catch(() => false)) {
         console.log('Found team selector with data-tour attribute')
@@ -302,7 +312,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
         await page.waitForTimeout(1000)
 
         // Look for the test team option in the dropdown
-        const teamOption = page.locator(`text=${TEST_TEAM_NAME}`).first()
+        const teamOption = page.locator(`[role="option"]:has-text("${TEST_TEAM_NAME}")`).first()
         if (await teamOption.isVisible({ timeout: 3000 }).catch(() => false)) {
           await teamOption.click()
           await page.waitForTimeout(500)
@@ -311,25 +321,8 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
         }
       }
 
-      // Strategy 3: Look for SearchableSelect trigger button
-      const selectTrigger = page.locator('button[role="combobox"]').first()
-      if (await selectTrigger.isVisible({ timeout: 3000 }).catch(() => false)) {
-        console.log('Found combobox trigger')
-        await selectTrigger.click()
-        await page.waitForTimeout(1000)
-
-        // Look for the test team in the dropdown
-        const teamOption = page.locator(`text=${TEST_TEAM_NAME}`).first()
-        if (await teamOption.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await teamOption.click()
-          await page.waitForTimeout(500)
-          console.log(`Selected team from combobox: ${TEST_TEAM_NAME}`)
-          return true
-        }
-      }
-
       // Strategy 4: Direct click on team card if visible
-      const teamCard = page.locator(`text=${TEST_TEAM_NAME}`).first()
+      const teamCard = page.locator(`text="${TEST_TEAM_NAME}"`).first()
       if (await teamCard.isVisible({ timeout: 3000 }).catch(() => false)) {
         await teamCard.click()
         await page.waitForTimeout(1000)
@@ -344,6 +337,63 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
     } catch (error) {
       console.error('Error selecting team:', error)
       await page.screenshot({ path: 'test-results/chat-page-error.png' }).catch(() => {})
+      return false
+    }
+  }
+
+  /**
+   * Helper function to select the test model in the model selector
+   * This is needed when the team requires model selection (isModelSelectionRequired=true)
+   */
+  async function selectTestModel(page: Page): Promise<boolean> {
+    try {
+      // Look for model selector button - it shows "Please select a model" or "请选择模型" when required
+      const modelSelectorButton = page
+        .locator(
+          'button:has-text("Please select a model"), button:has-text("请选择模型"), button[role="combobox"]:has(svg.lucide-brain)'
+        )
+        .first()
+
+      if (await modelSelectorButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+        const buttonText = await modelSelectorButton.textContent()
+        console.log('Model selector button text:', buttonText)
+
+        // Check if model selection is required
+        if (buttonText?.includes('Please select') || buttonText?.includes('请选择模型')) {
+          console.log('Model selection required, clicking selector...')
+          await modelSelectorButton.click()
+          await page.waitForTimeout(500)
+
+          // Look for our test model in the dropdown
+          const modelOption = page.locator(`[role="option"]:has-text("${TEST_MODEL_NAME}")`).first()
+          if (await modelOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+            console.log('Found test model, selecting...')
+            await modelOption.click()
+            await page.waitForTimeout(500)
+            return true
+          }
+
+          // Try to select any available model
+          const anyModelOption = page.locator('[role="option"]').first()
+          if (await anyModelOption.isVisible({ timeout: 2000 }).catch(() => false)) {
+            console.log('Selecting first available model...')
+            await anyModelOption.click()
+            await page.waitForTimeout(500)
+            return true
+          }
+
+          console.warn('No model options available in dropdown')
+          // Press Escape to close dropdown
+          await page.keyboard.press('Escape')
+          return false
+        }
+      }
+
+      // Model selection not required or already selected
+      console.log('Model selection not required or already selected')
+      return true
+    } catch (error) {
+      console.error('Error selecting model:', error)
       return false
     }
   }
@@ -465,7 +515,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
     // Step 1: Navigate to chat page
     console.log('Navigating to chat page...')
     await page.goto('/chat')
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('domcontentloaded')
     await page.waitForTimeout(3000)
 
     // Step 2: Try to select the test team
@@ -479,6 +529,14 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
 
     // Wait for team selection to take effect
     await page.waitForTimeout(2000)
+
+    // Step 2.5: Select model if required
+    console.log('Checking if model selection is required...')
+    const modelSelected = await selectTestModel(page)
+    if (!modelSelected) {
+      console.warn('Could not select model, test may fail')
+      await page.screenshot({ path: 'test-results/chat-model-selection-failed.png' })
+    }
 
     // Step 3: Upload image using helper function
     console.log('Uploading image...')
@@ -528,6 +586,11 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       test.skip()
       return
     }
+
+    // Wait for the button to be enabled (canSubmit = true)
+    // This requires: !isLoading && !isStreaming && !isModelSelectionRequired && isAttachmentReadyToSend
+    console.log('Waiting for send button to be enabled...')
+    await expect(sendButton).toBeEnabled({ timeout: 15000 })
 
     await sendButton.click()
 
@@ -607,7 +670,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
 
     // Navigate to chat page
     await page.goto('/chat')
-    await page.waitForLoadState('networkidle')
+    await page.waitForLoadState('domcontentloaded')
     await page.waitForTimeout(3000)
 
     // Try to select test team
@@ -618,6 +681,12 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
 
     // Wait for team selection
     await page.waitForTimeout(2000)
+
+    // Select model if required
+    const modelSelected = await selectTestModel(page)
+    if (!modelSelected) {
+      console.warn('Could not select model, test may fail')
+    }
 
     // Upload image using helper function
     const fileUploaded = await uploadFile(page, testImagePath)
@@ -652,6 +721,11 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       test.skip()
       return
     }
+
+    // Wait for the button to be enabled (canSubmit = true)
+    // This requires: !isLoading && !isStreaming && !isModelSelectionRequired && isAttachmentReadyToSend
+    console.log('Waiting for send button to be enabled...')
+    await expect(sendButton).toBeEnabled({ timeout: 15000 })
 
     await sendButton.click()
 

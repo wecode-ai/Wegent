@@ -29,6 +29,15 @@ class MockExecutor(Executor):
     def get_container_address(self, executor_name):
         return {"status": "success", "base_url": "http://localhost:10001"}
 
+    def get_container_status(self, executor_name):
+        return {
+            "exists": True,
+            "status": "running",
+            "oom_killed": False,
+            "exit_code": 0,
+            "error_msg": None,
+        }
+
 
 class TestExecutorDispatcher:
     """Test cases for ExecutorDispatcher"""
