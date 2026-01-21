@@ -552,6 +552,12 @@
     "save_success": "搜索快捷键已保存",
     "save_failed": "保存搜索快捷键失败"
   },
+  "memory": {
+    "title": "长期记忆",
+    "description": "让AI记住您在不同任务中的对话历史和上下文信息",
+    "save_success": "记忆偏好设置已保存",
+    "save_failed": "保存记忆偏好设置失败"
+  },
   "guide": {
     "title": "欢迎",
     "description": "在开始使用此应用之前，请先完成下面的设置！",
