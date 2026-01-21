@@ -8,7 +8,7 @@
  * Subscription creation/edit form component.
  */
 import { useCallback, useEffect, useState } from 'react'
-import { Copy, Check, Terminal, Brain, ChevronDown } from 'lucide-react'
+import { Copy, Check, Terminal, Brain, ChevronDown, Eye, EyeOff } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -49,6 +49,7 @@ import type {
   SubscriptionTaskType,
   SubscriptionTriggerType,
   SubscriptionUpdateRequest,
+  SubscriptionVisibility,
 } from '@/types/subscription'
 import { toast } from 'sonner'
 import { CronSchedulePicker } from './CronSchedulePicker'
@@ -240,6 +241,7 @@ export function SubscriptionForm({
   const [timeoutSeconds, setTimeoutSeconds] = useState(600) // Default 10 minutes
   const [enabled, setEnabled] = useState(true)
   const [preserveHistory, setPreserveHistory] = useState(false) // History preservation
+  const [visibility, setVisibility] = useState<SubscriptionVisibility>('private') // Visibility setting
 
   // Model selection state
   const [selectedModel, setSelectedModel] = useState<SubscriptionModel | null>(null)
@@ -370,6 +372,7 @@ export function SubscriptionForm({
       setTimeoutSeconds(subscription.timeout_seconds || 600)
       setEnabled(subscription.enabled)
       setPreserveHistory(subscription.preserve_history || false)
+      setVisibility(subscription.visibility || 'private')
       // Note: workspace_id restoration will be handled when we have workspace API
       // For now, reset repo selection
       setSelectedRepo(null)
@@ -395,6 +398,7 @@ export function SubscriptionForm({
       setTimeoutSeconds(600)
       setEnabled(true)
       setPreserveHistory(false)
+      setVisibility('private')
       setSelectedRepo(null)
       setSelectedBranch(null)
       setSelectedModel(null)
@@ -461,6 +465,7 @@ export function SubscriptionForm({
           timeout_seconds: timeoutSeconds,
           enabled,
           preserve_history: preserveHistory,
+          visibility,
           // Include git repo info if selected
           ...(selectedRepo && {
             git_repo: selectedRepo.git_repo,
@@ -496,6 +501,7 @@ export function SubscriptionForm({
           timeout_seconds: timeoutSeconds,
           enabled,
           preserve_history: preserveHistory,
+          visibility,
           // Include git repo info if selected
           ...(selectedRepo && {
             git_repo: selectedRepo.git_repo,
@@ -531,6 +537,7 @@ export function SubscriptionForm({
     timeoutSeconds,
     enabled,
     preserveHistory,
+    visibility,
     selectedRepo,
     selectedBranch,
     selectedModel,
@@ -944,6 +951,33 @@ export function SubscriptionForm({
                   <p className="text-xs text-text-muted">{t('preserve_history_hint')}</p>
                 </div>
                 <Switch checked={preserveHistory} onCheckedChange={setPreserveHistory} />
+              </div>
+              {/* Visibility */}
+              <div className="space-y-2 pt-2">
+                <Label className="text-sm font-medium">{t('visibility')}</Label>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant={visibility === 'private' ? 'primary' : 'outline'}
+                    size="sm"
+                    onClick={() => setVisibility('private')}
+                    className="flex-1"
+                  >
+                    <EyeOff className="h-4 w-4 mr-1.5" />
+                    {t('visibility_private')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={visibility === 'public' ? 'primary' : 'outline'}
+                    size="sm"
+                    onClick={() => setVisibility('public')}
+                    className="flex-1"
+                  >
+                    <Eye className="h-4 w-4 mr-1.5" />
+                    {t('visibility_public')}
+                  </Button>
+                </div>
+                <p className="text-xs text-text-muted">{t('visibility_hint')}</p>
               </div>
 
               {/* Enabled */}

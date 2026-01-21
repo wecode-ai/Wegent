@@ -91,6 +91,10 @@
   "validation_model_required": "所选智能体未配置模型，请选择一个模型",
   "next_execution": "下次执行",
   "executions": "执行次数",
+  "view_history": "查看历史",
+  "recent_executions": "最近执行记录",
+  "trigger_reason": "触发原因",
+  "load_history_failed": "加载执行历史失败",
   "yesterday": "昨天",
   "duration": "耗时",
   "result_summary": "结果摘要",
@@ -210,6 +214,9 @@
   "owner": "创建者",
   "view_subscription": "查看订阅",
   "subscription_detail": "订阅详情",
+  "view_conversation": "查看对话",
+  "show_more_history": "展开更多",
+  "latest_execution": "最近执行",
 
   "tabs": {
     "all": "全部"

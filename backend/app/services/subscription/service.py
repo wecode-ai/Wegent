@@ -336,7 +336,9 @@ class SubscriptionService:
         # Update visibility if changed (handle side effects)
         if "visibility" in update_data:
             from app.schemas.subscription import SubscriptionVisibility
-            from app.services.subscription.follow_service import subscription_follow_service
+            from app.services.subscription.follow_service import (
+                subscription_follow_service,
+            )
 
             old_visibility = getattr(
                 subscription_crd.spec, "visibility", SubscriptionVisibility.PRIVATE

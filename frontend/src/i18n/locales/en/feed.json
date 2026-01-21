@@ -91,6 +91,10 @@
   "validation_model_required": "The selected agent has no model configured. Please select a model",
   "next_execution": "Next run",
   "executions": "Runs",
+  "view_history": "View History",
+  "recent_executions": "Recent Executions",
+  "trigger_reason": "Trigger Reason",
+  "load_history_failed": "Failed to load execution history",
   "yesterday": "Yesterday",
   "duration": "Duration",
   "result_summary": "Result Summary",
@@ -210,6 +214,9 @@
   "owner": "Owner",
   "view_subscription": "View Subscription",
   "subscription_detail": "Subscription Details",
+  "view_conversation": "View Conversation",
+  "show_more_history": "Show More",
+  "latest_execution": "Latest Execution",
 
   "tabs": {
     "all": "All"

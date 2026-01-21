@@ -117,7 +117,5 @@ class SubscriptionShareNamespace(Base):
 
     __table_args__ = (
         # Unique constraint: a subscription can only be shared to a namespace once
-        Index(
-            "ix_sub_share_ns_unique", "subscription_id", "namespace_id", unique=True
-        ),
+        Index("ix_sub_share_ns_unique", "subscription_id", "namespace_id", unique=True),
     )

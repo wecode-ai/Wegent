@@ -533,7 +533,9 @@ class InviteUserRequest(BaseModel):
     """Request to invite a user to follow a subscription."""
 
     user_id: Optional[int] = Field(None, description="User ID to invite")
-    email: Optional[str] = Field(None, description="Email to invite (alternative to user_id)")
+    email: Optional[str] = Field(
+        None, description="Email to invite (alternative to user_id)"
+    )
 
 
 class InviteNamespaceRequest(BaseModel):
@@ -584,4 +586,3 @@ class DiscoverSubscriptionsListResponse(BaseModel):
 
     total: int
     items: List[DiscoverSubscriptionResponse]
-

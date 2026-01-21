@@ -76,7 +76,9 @@ def unfollow_subscription(
     )
 
 
-@router.get("/{subscription_id}/followers", response_model=SubscriptionFollowersListResponse)
+@router.get(
+    "/{subscription_id}/followers", response_model=SubscriptionFollowersListResponse
+)
 def get_followers(
     subscription_id: int,
     page: int = Query(1, ge=1, description="Page number"),
@@ -205,7 +207,9 @@ def revoke_namespace_invitation(
     )
 
 
-@router.get("/{subscription_id}/invitations", response_model=SubscriptionInvitationsListResponse)
+@router.get(
+    "/{subscription_id}/invitations", response_model=SubscriptionInvitationsListResponse
+)
 def get_invitations_sent(
     subscription_id: int,
     page: int = Query(1, ge=1, description="Page number"),
@@ -235,7 +239,9 @@ def get_invitations_sent(
 user_router = APIRouter()
 
 
-@user_router.get("/following-subscriptions", response_model=FollowingSubscriptionsListResponse)
+@user_router.get(
+    "/following-subscriptions", response_model=FollowingSubscriptionsListResponse
+)
 def get_following_subscriptions(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),
@@ -254,7 +260,9 @@ def get_following_subscriptions(
     )
 
 
-@user_router.get("/subscription-invitations", response_model=SubscriptionInvitationsListResponse)
+@user_router.get(
+    "/subscription-invitations", response_model=SubscriptionInvitationsListResponse
+)
 def get_pending_invitations(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),

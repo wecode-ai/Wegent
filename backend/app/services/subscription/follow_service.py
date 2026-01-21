@@ -32,8 +32,10 @@ from app.schemas.subscription import (
     DiscoverSubscriptionsListResponse,
     FollowingSubscriptionResponse,
     FollowingSubscriptionsListResponse,
-    FollowType as SchemaFollowType,
-    InvitationStatus as SchemaInvitationStatus,
+)
+from app.schemas.subscription import FollowType as SchemaFollowType
+from app.schemas.subscription import InvitationStatus as SchemaInvitationStatus
+from app.schemas.subscription import (
     Subscription,
     SubscriptionFollowerResponse,
     SubscriptionFollowersListResponse,
@@ -249,7 +251,7 @@ class SubscriptionFollowService:
                 items.append(
                     SubscriptionFollowerResponse(
                         user_id=user.id,
-                        username=user.username,
+                        username=user.user_name,
                         follow_type=SchemaFollowType(follow.follow_type),
                         followed_at=follow.created_at,
                     )
@@ -441,7 +443,8 @@ class SubscriptionFollowService:
         if existing:
             if existing.invitation_status == InvitationStatus.ACCEPTED.value:
                 raise HTTPException(
-                    status_code=400, detail="User is already following this subscription"
+                    status_code=400,
+                    detail="User is already following this subscription",
                 )
             elif existing.invitation_status == InvitationStatus.PENDING.value:
                 raise HTTPException(
@@ -804,10 +807,10 @@ class SubscriptionFollowService:
                     subscription_name=subscription.name,
                     subscription_display_name=subscription_crd.spec.displayName,
                     invited_by_user_id=follow.invited_by_user_id or owner_user_id,
-                    invited_by_username=inviter.username if inviter else "",
+                    invited_by_username=inviter.user_name if inviter else "",
                     invitation_status=SchemaInvitationStatus(follow.invitation_status),
                     invited_at=follow.invited_at or follow.created_at,
-                    owner_username=owner.username if owner else "",
+                    owner_username=owner.user_name if owner else "",
                 )
             )
 
@@ -874,10 +877,10 @@ class SubscriptionFollowService:
                     subscription_name=subscription.name,
                     subscription_display_name=subscription_crd.spec.displayName,
                     invited_by_user_id=follow.invited_by_user_id or 0,
-                    invited_by_username=inviter.username if inviter else "",
+                    invited_by_username=inviter.user_name if inviter else "",
                     invitation_status=SchemaInvitationStatus(follow.invitation_status),
                     invited_at=follow.invited_at or follow.created_at,
-                    owner_username=owner.username if owner else "",
+                    owner_username=owner.user_name if owner else "",
                 )
             )
 
@@ -1026,12 +1029,9 @@ class SubscriptionFollowService:
                 # Apply search filter
                 if search:
                     search_lower = search.lower()
-                    if (
-                        search_lower not in sub_crd.spec.displayName.lower()
-                        and (
-                            not sub_crd.spec.description
-                            or search_lower not in sub_crd.spec.description.lower()
-                        )
+                    if search_lower not in sub_crd.spec.displayName.lower() and (
+                        not sub_crd.spec.description
+                        or search_lower not in sub_crd.spec.description.lower()
                     ):
                         continue
                 public_subscriptions.append(sub)
@@ -1040,23 +1040,29 @@ class SubscriptionFollowService:
         subscription_data = []
         for sub in public_subscriptions:
             followers_count = self.get_followers_count(db, subscription_id=sub.id)
-            is_following_sub = self.is_following(db, subscription_id=sub.id, user_id=user_id)
+            is_following_sub = self.is_following(
+                db, subscription_id=sub.id, user_id=user_id
+            )
             owner = db.query(User).filter(User.id == sub.user_id).first()
             sub_crd = Subscription.model_validate(sub.json)
 
-            subscription_data.append({
-                "subscription": sub,
-                "crd": sub_crd,
-                "followers_count": followers_count,
-                "is_following": is_following_sub,
-                "owner_username": owner.username if owner else "",
-            })
+            subscription_data.append(
+                {
+                    "subscription": sub,
+                    "crd": sub_crd,
+                    "followers_count": followers_count,
+                    "is_following": is_following_sub,
+                    "owner_username": owner.user_name if owner else "",
+                }
+            )
 
         # Sort
         if sort_by == "popularity":
             subscription_data.sort(key=lambda x: x["followers_count"], reverse=True)
         else:  # recent
-            subscription_data.sort(key=lambda x: x["subscription"].updated_at, reverse=True)
+            subscription_data.sort(
+                key=lambda x: x["subscription"].updated_at, reverse=True
+            )
 
         # Paginate
         total = len(subscription_data)
@@ -1195,7 +1201,7 @@ class SubscriptionFollowService:
 
         # Get owner username
         owner = db.query(User).filter(User.id == subscription.user_id).first()
-        owner_username = owner.username if owner else None
+        owner_username = owner.user_name if owner else None
 
         # Get visibility with default
         visibility = getattr(
