@@ -155,15 +155,18 @@ class TestSandboxManager:
             "status": "success",
             "executor_name": "test-executor-invalid",
         }
-        # Container address fails - simulating invalid template
-        mock_executor.get_container_address.return_value = {
-            "status": "error",
-            "error_msg": "Container failed to start",
-        }
 
         mocker.patch(
             "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
             return_value=mock_executor,
+        )
+
+        # Mock _wait_for_container_ready to return None immediately (simulating readiness failure)
+        # This avoids the 30-second wait from max_retries=30 with interval=1s
+        mocker.patch.object(
+            manager,
+            "_wait_for_container_ready",
+            return_value=None,
         )
 
         sandbox, error = await manager.create_sandbox(

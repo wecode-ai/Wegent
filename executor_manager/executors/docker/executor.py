@@ -34,6 +34,7 @@ from executor_manager.executors.docker.utils import (build_callback_url,
                                                      delete_container,
                                                      find_available_port,
                                                      get_container_ports,
+                                                     get_container_status,
                                                      get_running_task_details)
 from executor_manager.utils.executor_name import generate_executor_name
 
@@ -179,6 +180,11 @@ class DockerExecutor(Executor):
         # to avoid 404 errors when trying to update non-existent task status
         # Sandbox tasks use their own callback mechanism via task_type="sandbox"
         if not is_validation_task and not is_sandbox_task:
+            # If there's an error, include it in both error_message and result.value
+            # so the frontend can display it properly
+            error_msg = execution_status.get("error_msg", "")
+            result_value = {"value": error_msg} if error_msg else None
+
             self._call_callback(
                 callback,
                 task_id,
@@ -186,6 +192,8 @@ class DockerExecutor(Executor):
                 execution_status["executor_name"],
                 execution_status["progress"],
                 execution_status["callback_status"],
+                error_message=error_msg,
+                result=result_value,
             )
 
         # Return unified result structure
@@ -211,37 +219,66 @@ class DockerExecutor(Executor):
     ) -> None:
         """Execute task in existing container"""
         executor_name = status["executor_name"]
-        port_info = self._get_container_port(executor_name)
+        port_info, error_msg = self._get_container_port(executor_name)
 
         if port_info is None:
-            raise ValueError(f"Container {executor_name} has no ports mapped")
+            raise ValueError(
+                error_msg or f"Container {executor_name} has no ports mapped"
+            )
 
         # Send HTTP request to container
         response = self._send_task_to_container(task, DEFAULT_DOCKER_HOST, port_info)
 
-        # Process response
-        if response.json()["status"] == "success":
+        # Process response - check HTTP status code for success
+        if response.status_code == 200:
             status["progress"] = DEFAULT_PROGRESS_COMPLETE
             status["error_msg"] = response.json().get("error_msg", "")
 
-    def _get_container_port(self, executor_name: str) -> Optional[int]:
+            # Task sent successfully to existing container, register for heartbeat monitoring
+            # This handles re-execution cases where Redis keys were cleaned up after first completion
+            task_id = task.get("task_id")
+            subtask_id = task.get("subtask_id")
+            task_type = task.get("type", "online")
+
+            self.register_task_for_heartbeat(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                executor_name=executor_name,
+                task_type=task_type,
+                context=f"existing container: {executor_name}",
+            )
+
+    def _get_container_port(
+        self, executor_name: str
+    ) -> tuple[Optional[int], Optional[str]]:
         """Get container port information.
 
         Args:
             executor_name: Container name
 
         Returns:
-            Host port number if available, None otherwise
+            Tuple of (host_port, error_message):
+            - (port, None) if port found successfully
+            - (None, error_message) if failed
         """
         port_result = get_container_ports(executor_name)
         logger.info(f"Container port info: {executor_name}, {port_result}")
 
+        # Check if the request failed (container not found or not owned)
+        if port_result.get("status") == "failed":
+            error_msg = port_result.get(
+                "error_msg", f"Failed to get ports for container {executor_name}"
+            )
+            logger.warning(f"Container port lookup failed: {error_msg}")
+            return None, error_msg
+
         ports = port_result.get("ports", [])
         if not ports:
-            logger.warning(f"Container {executor_name} has no ports mapped")
-            return None
+            error_msg = f"Container {executor_name} exists but has no ports mapped"
+            logger.warning(error_msg)
+            return None, error_msg
 
-        return ports[0].get("host_port")
+        return ports[0].get("host_port"), None
 
     def _send_task_to_container(
         self, task: Dict[str, Any], host: str, port: int
@@ -305,6 +342,15 @@ class DockerExecutor(Executor):
             container_id = result.stdout.strip()
             logger.info(
                 f"Started Docker container {executor_name} with ID {container_id}"
+            )
+
+            # Register regular tasks to RunningTaskTracker for heartbeat monitoring
+            # This enables OOM detection for non-sandbox tasks
+            self.register_task_for_heartbeat(
+                task_id=task_id,
+                subtask_id=task_info["subtask_id"],
+                executor_name=executor_name,
+                task_type=task.get("type", "online"),
             )
 
             # For validation tasks, report starting_container stage
@@ -643,8 +689,8 @@ class DockerExecutor(Executor):
         # Add callback URL
         self._add_callback_url(cmd, task)
 
-        # Add sandbox-specific environment variables for heartbeat service
-        self._add_sandbox_env_vars(cmd, task)
+        # Add heartbeat environment variables for OOM detection
+        self._add_heartbeat_env_vars(cmd, task)
 
         # Add OpenTelemetry trace context for distributed tracing
         self._add_trace_context(cmd)
@@ -682,42 +728,64 @@ class DockerExecutor(Executor):
         if callback_url:
             cmd.extend(["-e", f"CALLBACK_URL={callback_url}"])
 
-    def _add_sandbox_env_vars(self, cmd: List[str], task: Dict[str, Any]) -> None:
-        """Add sandbox-specific environment variables for heartbeat service.
+    def _add_heartbeat_env_vars(self, cmd: List[str], task: Dict[str, Any]) -> None:
+        """Add environment variables for heartbeat service.
 
-        For sandbox type tasks, this adds:
-        - SANDBOX_ID: Used by heartbeat service to identify the sandbox
-        - HEARTBEAT_ENABLED: Enable heartbeat service for sandbox containers
-        - EXECUTOR_MANAGER_HEARTBEAT_BASE_URL: Used by heartbeat service for heartbeat endpoint
+        This enables heartbeat monitoring for both sandbox and regular tasks
+        to detect executor crashes (OOM, etc.).
+
+        For sandbox tasks: uses sandbox_id as identifier, HEARTBEAT_TYPE=sandbox
+        For regular tasks: uses task_id as identifier, HEARTBEAT_TYPE=task
+
+        Environment variables added:
+        - HEARTBEAT_ID: Identifier for heartbeat service (sandbox_id or task_id)
+        - HEARTBEAT_TYPE: Type of heartbeat (sandbox or task)
+        - HEARTBEAT_ENABLED: Enable heartbeat service
+        - EXECUTOR_MANAGER_HEARTBEAT_BASE_URL: Heartbeat endpoint base URL
 
         Args:
             cmd: Docker command list to extend
-            task: Task dictionary containing sandbox_metadata
+            task: Task dictionary containing task info and sandbox_metadata
         """
-        is_sandbox = task.get("type") == "sandbox"
-        if not is_sandbox:
+        # Skip validation tasks - they are short-lived and don't need heartbeat
+        task_type = task.get("type", "online")
+        if task_type == "validation":
             return
 
-        # Get sandbox_id from metadata
-        sandbox_metadata = task.get("sandbox_metadata", {})
-        sandbox_id = sandbox_metadata.get("sandbox_id")
+        is_sandbox = task_type == "sandbox"
 
-        if sandbox_id:
-            cmd.extend(["-e", f"SANDBOX_ID={sandbox_id}"])
-            cmd.extend(["-e", "HEARTBEAT_ENABLED=true"])
+        # Determine heartbeat ID and type
+        if is_sandbox:
+            sandbox_metadata = task.get("sandbox_metadata", {})
+            heartbeat_id = sandbox_metadata.get("sandbox_id")
+            heartbeat_type = "sandbox"
+        else:
+            # For regular tasks, use task_id
+            heartbeat_id = str(task.get("task_id", ""))
+            heartbeat_type = "task"
 
-            # Build heartbeat base URL from callback URL
-            callback_url = build_callback_url(task)
-            if callback_url and "/callback" in callback_url:
-                # Convert callback URL to base URL for heartbeat service
-                # From: http://host:port/executor-manager/callback
-                # To:   http://host:port/executor-manager
-                base_url = callback_url.replace("/callback", "")
-                cmd.extend(["-e", f"EXECUTOR_MANAGER_HEARTBEAT_BASE_URL={base_url}"])
+        if not heartbeat_id:
+            logger.debug("No heartbeat_id available, skipping heartbeat env vars")
+            return
 
-            logger.info(
-                f"Added sandbox env vars: SANDBOX_ID={sandbox_id}, HEARTBEAT_ENABLED=true"
-            )
+        # Add heartbeat environment variables
+        cmd.extend(["-e", f"HEARTBEAT_ID={heartbeat_id}"])
+        cmd.extend(["-e", f"HEARTBEAT_TYPE={heartbeat_type}"])
+        cmd.extend(["-e", "HEARTBEAT_ENABLED=true"])
+
+        # Build heartbeat base URL from callback URL
+        callback_url = build_callback_url(task)
+        if callback_url and "/callback" in callback_url:
+            # Convert callback URL to base URL for heartbeat service
+            # From: http://host:port/executor-manager/callback
+            # To:   http://host:port/executor-manager
+            base_url = callback_url.replace("/callback", "")
+            cmd.extend(["-e", f"EXECUTOR_MANAGER_HEARTBEAT_BASE_URL={base_url}"])
+
+        logger.info(
+            f"Added heartbeat env vars for {heartbeat_type} task: "
+            f"HEARTBEAT_ID={heartbeat_id}, HEARTBEAT_TYPE={heartbeat_type}"
+        )
 
     def _add_trace_context(self, cmd: List[str]) -> None:
         """
@@ -1011,7 +1079,15 @@ class DockerExecutor(Executor):
             }
 
     def _call_callback(
-        self, callback, task_id, subtask_id, executor_name, progress, status
+        self,
+        callback,
+        task_id,
+        subtask_id,
+        executor_name,
+        progress,
+        status,
+        error_message=None,
+        result=None,
     ):
         """
         Call the provided callback function with task information.
@@ -1023,6 +1099,8 @@ class DockerExecutor(Executor):
             executor_name (str): Name of the executor
             progress (int): Current progress value
             status (str): Current task status
+            error_message (str, optional): Error message if task failed
+            result (dict, optional): Result dict with 'value' key for frontend display
         """
         if not callback:
             return
@@ -1034,6 +1112,8 @@ class DockerExecutor(Executor):
                 executor_name=executor_name,
                 progress=progress,
                 status=status,
+                error_message=error_message,
+                result=result,
             )
         except Exception as e:
             logger.error(f"Error in callback for task {task_id}: {e}")
@@ -1091,3 +1171,36 @@ class DockerExecutor(Executor):
                     )
         except Exception as e:
             logger.error(f"Error reporting validation stage: {e}")
+
+    def get_container_status(self, executor_name: str) -> Dict[str, Any]:
+        """Get detailed status information for a Docker container.
+
+        This is a wrapper around the utils.get_container_status function
+        to implement the Executor interface.
+
+        Args:
+            executor_name: Name of the container to check
+
+        Returns:
+            Dict with the following fields:
+                - exists (bool): Whether container exists
+                - status (str): Container status (running/exited/paused/etc)
+                - oom_killed (bool): Whether container was killed due to OOM
+                - exit_code (int): Container exit code (0 = success, 137 = SIGKILL, etc)
+                - error_msg (str): Error message if any
+        """
+        return get_container_status(executor_name)
+
+    def get_executor_task_id(self, executor_name: str) -> Optional[str]:
+        """Get task_id from container label.
+
+        Args:
+            executor_name: Name of the container
+
+        Returns:
+            task_id string if found, None otherwise
+        """
+        from executor_manager.executors.docker.utils import \
+            get_container_task_id
+
+        return get_container_task_id(executor_name)

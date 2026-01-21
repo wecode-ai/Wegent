@@ -108,10 +108,10 @@ echo ""
 
 # Check each module for changes and run tests
 # Check each module for changes and run tests
-# Backend (use parallel testing with -n auto for faster execution)
+# Backend (use parallel testing with -n 4 for faster execution)
 BACKEND_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^backend/.*\.py$" || true)
 if [ -n "$BACKEND_CHANGES" ]; then
-    run_module_tests "backend" "uv run pytest tests/ -x -q --tb=short -n auto 2>/dev/null || true" "$PROJECT_ROOT/backend"
+    run_module_tests "backend" "uv run pytest tests/ -x -q --tb=short -n 4 2>/dev/null || true" "$PROJECT_ROOT/backend"
 fi
 
 # Frontend
