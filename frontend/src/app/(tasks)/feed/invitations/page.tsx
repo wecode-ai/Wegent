@@ -4,16 +4,16 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Settings } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
-import { SubscriptionPage as SubscriptionPageContent } from '@/features/feed/components'
+import { SubscriptionInvitations } from '@/features/feed/components'
 import { Button } from '@/components/ui/button'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
@@ -22,12 +22,43 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 
 /**
- * Subscription Page with Sidebar
+ * Flow Invitations Page
  *
- * Main page for Subscription (订阅) module with left sidebar.
- * Allows users to configure automated task triggers and view execution results.
+ * Page for viewing and managing subscription invitations.
  */
-export default function SubscriptionPage() {
+function InvitationsPageContent() {
+  const { t } = useTranslation('feed')
+  const router = useRouter()
+
+  const handleBack = () => {
+    router.push('/feed')
+  }
+
+  const handleInvitationHandled = useCallback(() => {
+    // Optionally refresh or navigate after handling invitation
+  }, [])
+
+  return (
+    <div className="flex h-full flex-col bg-base">
+      {/* Back button header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" className="h-9 w-9" onClick={handleBack}>
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <h1 className="text-lg font-semibold">{t('invitations')}</h1>
+        </div>
+      </div>
+
+      {/* Invitations list */}
+      <div className="flex-1 overflow-auto p-4">
+        <SubscriptionInvitations onInvitationHandled={handleInvitationHandled} />
+      </div>
+    </div>
+  )
+}
+
+export default function InvitationsPage() {
   const { t } = useTranslation()
   const router = useRouter()
 
@@ -61,11 +92,6 @@ export default function SubscriptionPage() {
     router.push('/chat')
   }
 
-  // Handle go to subscriptions settings
-  const handleGoToSubscriptions = () => {
-    router.push('/feed/subscriptions')
-  }
-
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* Collapsed sidebar floating buttons */}
@@ -93,21 +119,12 @@ export default function SubscriptionPage() {
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
         >
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-9 gap-1.5"
-            onClick={handleGoToSubscriptions}
-          >
-            <Settings className="h-4 w-4" />
-            {t('feed:feed.manage')}
-          </Button>
           <ThemeToggle />
         </TopNavigation>
 
-        {/* Main content area - Subscription page content */}
+        {/* Main content area - Invitations page content */}
         <div className="flex-1 overflow-hidden">
-          <SubscriptionPageContent />
+          <InvitationsPageContent />
         </div>
       </div>
     </div>

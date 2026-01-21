@@ -579,6 +579,12 @@
     "done": "完成",
     "restart_tour": "重新查看新手引导"
   },
+  "time": {
+    "just_now": "刚刚",
+    "minutes_ago": "{{count}} 分钟前",
+    "hours_ago": "{{count}} 小时前",
+    "days_ago": "{{count}} 天前"
+  },
   "common": {
     "back": "返回",
     "cancel": "取消",
