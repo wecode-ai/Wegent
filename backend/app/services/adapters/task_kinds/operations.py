@@ -988,9 +988,9 @@ class TaskOperationsMixin:
                             exc,
                             exc_info=exc,
                         )
-            except Exception as e:
-                logger.error(
-                    "[delete_task] Error checking cleanup task status: %s", e
+            except Exception:
+                logger.exception(
+                    "[delete_task] Error checking cleanup task status"
                 )
 
         # Try to get the running event loop
