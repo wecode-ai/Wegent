@@ -28,7 +28,7 @@ interface SplitterSettingsSectionProps {
 }
 
 // Extensions that support smart splitting
-const SMART_SPLITTER_EXTENSIONS = ['.md', '.txt']
+const SMART_SPLITTER_EXTENSIONS = ['.md', '.txt', '.pdf', '.docx', '.doc']
 
 // Check if file extension supports smart splitting
 function isSmartSplitterSupported(fileExtension?: string): boolean {

@@ -564,7 +564,7 @@ export function DocumentUpload({
   const allFilesSupportSmart = (() => {
     const successfulFiles = state.files.filter(f => f.status === 'success' && f.attachment)
     if (successfulFiles.length === 0) return false
-    const smartExtensions = ['.md', '.txt']
+    const smartExtensions = ['.md', '.txt', '.pdf', '.docx', '.doc']
     return successfulFiles.every(f => {
       const filename = f.attachment?.filename || f.file.name
       const lastDot = filename.lastIndexOf('.')

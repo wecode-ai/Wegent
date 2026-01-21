@@ -7,7 +7,9 @@ Smart Splitter for document chunking.
 
 Automatically selects the best splitter based on file type:
 - .md files: MarkdownNodeParser + SentenceSplitter chain (parse structure first, then split)
-- .txt files: SentenceSplitter with fixed configuration
+- .txt files: TokenTextSplitter with fixed configuration
+- .pdf files: RecursiveCharacterTextSplitter from LangChain
+- .docx/.doc files: RecursiveCharacterTextSplitter from LangChain
 """
 
 import logging
@@ -15,26 +17,40 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import List, Tuple
 
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from llama_index.core import Document
-from llama_index.core.node_parser import MarkdownNodeParser
+from llama_index.core.node_parser import (
+    MarkdownNodeParser,
+)
 from llama_index.core.node_parser import SentenceSplitter as LlamaIndexSentenceSplitter
-from llama_index.core.schema import BaseNode
+from llama_index.core.node_parser import (
+    TokenTextSplitter as LlamaIndexTokenTextSplitter,
+)
+from llama_index.core.schema import BaseNode, TextNode
 
 from app.services.rag.utils.tokenizer import count_tokens
 
 logger = logging.getLogger(__name__)
 
 # Supported file extensions for smart splitting
-SMART_SUPPORTED_EXTENSIONS = {".md", ".txt"}
+SMART_SUPPORTED_EXTENSIONS = {".md", ".txt", ".pdf", ".docx", ".doc"}
 
 # TXT splitter configuration (fixed internally)
 TXT_CHUNK_SIZE = 1024
-TXT_CHUNK_OVERLAP = 50
+TXT_CHUNK_OVERLAP = 20
 
 # MD splitter configuration (fixed internally)
 # MarkdownNodeParser parses structure, then SentenceSplitter splits into chunks
 MD_CHUNK_SIZE = 1024
 MD_CHUNK_OVERLAP = 50
+
+# PDF splitter configuration (fixed internally)
+PDF_CHUNK_SIZE = 1024
+PDF_CHUNK_OVERLAP = 20
+
+# DOCX splitter configuration (fixed internally)
+DOCX_CHUNK_SIZE = 1024
+DOCX_CHUNK_OVERLAP = 20
 
 
 @dataclass
@@ -66,7 +82,9 @@ class SmartSplitter:
     Automatically selects the best splitter based on file type:
     - .md files: MarkdownNodeParser + SentenceSplitter chain
       (first parse markdown structure, then split into fixed-size chunks)
-    - .txt files: SentenceSplitter with fixed chunk_size=1024, chunk_overlap=128
+    - .txt files: TokenTextSplitter with fixed chunk_size=1024, chunk_overlap=20
+    - .pdf files: RecursiveCharacterTextSplitter with chunk_size=1024, chunk_overlap=20
+    - .docx/.doc files: RecursiveCharacterTextSplitter with chunk_size=1024, chunk_overlap=20
     """
 
     def __init__(self, file_extension: str, embedding_model_name: str = ""):
@@ -74,7 +92,7 @@ class SmartSplitter:
         Initialize smart splitter.
 
         Args:
-            file_extension: File extension (e.g., '.md', '.txt')
+            file_extension: File extension (e.g., '.md', '.txt', '.pdf', '.docx')
             embedding_model_name: Name of embedding model for token counting
         """
         self.file_extension = file_extension.lower()
@@ -97,11 +115,26 @@ class SmartSplitter:
             )
             self.splitter_subtype = "markdown_sentence"
         elif self.file_extension == ".txt":
-            self.splitter = LlamaIndexSentenceSplitter(
+            # For TXT: use TokenTextSplitter
+            self.splitter = LlamaIndexTokenTextSplitter(
                 chunk_size=TXT_CHUNK_SIZE,
                 chunk_overlap=TXT_CHUNK_OVERLAP,
             )
-            self.splitter_subtype = "sentence"
+            self.splitter_subtype = "token"
+        elif self.file_extension == ".pdf":
+            # For PDF: use LangChain RecursiveCharacterTextSplitter
+            self.langchain_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=PDF_CHUNK_SIZE,
+                chunk_overlap=PDF_CHUNK_OVERLAP,
+            )
+            self.splitter_subtype = "recursive_character"
+        elif self.file_extension in {".docx", ".doc"}:
+            # For DOCX/DOC: use LangChain RecursiveCharacterTextSplitter
+            self.langchain_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=DOCX_CHUNK_SIZE,
+                chunk_overlap=DOCX_CHUNK_OVERLAP,
+            )
+            self.splitter_subtype = "recursive_character"
         else:
             raise ValueError(
                 f"Smart splitter not supported for file extension: {self.file_extension}. "
@@ -114,6 +147,8 @@ class SmartSplitter:
 
         For markdown files: first parse with MarkdownNodeParser to preserve structure,
         then split with SentenceSplitter to ensure consistent chunk sizes.
+        For PDF/DOCX files: use LangChain RecursiveCharacterTextSplitter and convert
+        results to LlamaIndex TextNode format.
 
         Args:
             documents: List of documents to split
@@ -129,9 +164,48 @@ class SmartSplitter:
                 markdown_nodes
             )
             return chunked_nodes
-        else:
-            # For txt files, use single splitter
+        elif self.file_extension == ".txt":
+            # For txt files, use TokenTextSplitter
             return self.splitter.get_nodes_from_documents(documents)
+        elif self.file_extension in {".pdf", ".docx", ".doc"}:
+            # For PDF/DOCX files, use LangChain splitter and convert to TextNodes
+            return self._split_with_langchain(documents)
+        else:
+            raise ValueError(f"Unsupported file extension: {self.file_extension}")
+
+    def _split_with_langchain(self, documents: List[Document]) -> List[BaseNode]:
+        """
+        Split documents using LangChain RecursiveCharacterTextSplitter.
+
+        Extracts text content from LlamaIndex Documents, splits with LangChain,
+        and converts results back to LlamaIndex TextNode format.
+
+        Args:
+            documents: List of LlamaIndex Document objects
+
+        Returns:
+            List of LlamaIndex TextNode objects
+        """
+        nodes = []
+        for doc in documents:
+            # Get text content from LlamaIndex Document
+            text_content = doc.get_content()
+            if not text_content.strip():
+                continue
+
+            # Split using LangChain splitter
+            chunks = self.langchain_splitter.split_text(text_content)
+
+            # Convert to LlamaIndex TextNodes
+            for chunk in chunks:
+                if chunk.strip():
+                    node = TextNode(
+                        text=chunk,
+                        metadata=doc.metadata.copy() if doc.metadata else {},
+                    )
+                    nodes.append(node)
+
+        return nodes
 
     def split_documents_with_chunks(
         self, documents: List[Document]
@@ -182,6 +256,12 @@ class SmartSplitter:
         elif self.file_extension == ".txt":
             config["chunk_size"] = TXT_CHUNK_SIZE
             config["chunk_overlap"] = TXT_CHUNK_OVERLAP
+        elif self.file_extension == ".pdf":
+            config["chunk_size"] = PDF_CHUNK_SIZE
+            config["chunk_overlap"] = PDF_CHUNK_OVERLAP
+        elif self.file_extension in {".docx", ".doc"}:
+            config["chunk_size"] = DOCX_CHUNK_SIZE
+            config["chunk_overlap"] = DOCX_CHUNK_OVERLAP
         return config
 
 
