@@ -6,9 +6,9 @@ import subprocess
 from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
-from shared.status import TaskStatus
 
 from executor_manager.executors.docker.executor import DockerExecutor
+from shared.status import TaskStatus
 
 
 class TestDockerExecutor:

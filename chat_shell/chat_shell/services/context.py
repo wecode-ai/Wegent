@@ -17,12 +17,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from shared.telemetry.decorators import add_span_event, trace_async
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chat_shell.core.config import settings
 from chat_shell.core.database import get_db_context
 from chat_shell.interface import ChatRequest
+from shared.telemetry.decorators import add_span_event, trace_async
 
 logger = logging.getLogger(__name__)
 

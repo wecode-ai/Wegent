@@ -8,7 +8,6 @@ Implementation of specific Kind services
 import logging
 from typing import Any, Dict
 
-from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundException
@@ -18,6 +17,7 @@ from app.models.task import TaskResource
 from app.schemas.kind import Bot, Model, Retriever, Task, Team
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.kind_base import KindBaseService, TaskResourceBaseService
+from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
 
 logger = logging.getLogger(__name__)
 

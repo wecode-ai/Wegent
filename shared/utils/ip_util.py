@@ -4,6 +4,7 @@
 
 import re
 import socket
+
 from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -39,7 +40,5 @@ def get_host_ip() -> str:
         s.close()
         return ip
     except Exception as e:
-        logger.warning(
-            f"Failed to get host IP: {e}, falling back to localhost"
-        )
+        logger.warning(f"Failed to get host IP: {e}, falling back to localhost")
         return "localhost"

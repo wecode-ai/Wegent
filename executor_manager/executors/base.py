@@ -106,8 +106,9 @@ class Executor(abc.ABC):
             return False
 
         try:
-            from executor_manager.services.task_heartbeat_manager import \
-                get_running_task_tracker
+            from executor_manager.services.task_heartbeat_manager import (
+                get_running_task_tracker,
+            )
 
             tracker = get_running_task_tracker()
             tracker.add_running_task(

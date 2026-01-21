@@ -10,8 +10,6 @@ from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
-from shared.models.db.enums import SubtaskRole
-from shared.models.db.subtask_context import SubtaskContext
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -30,6 +28,8 @@ from app.services.knowledge.knowledge_base_qa_service import (
     KnowledgeBaseQAService,
     knowledge_base_qa_service,
 )
+from shared.models.db.enums import SubtaskRole
+from shared.models.db.subtask_context import SubtaskContext
 
 
 class TestKnowledgeBaseQAServiceValidation:

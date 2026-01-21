@@ -9,14 +9,17 @@
 import json
 import os
 import re
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 from shared.logger import setup_logger
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = setup_logger("agno_config_utils")
 
 
-def resolve_value_from_source(data_sources: Dict[str, Dict[str, Any]], source_spec: str) -> str:
+def resolve_value_from_source(
+    data_sources: Dict[str, Dict[str, Any]], source_spec: str
+) -> str:
     """
     Resolve value from specified data source using flexible notation
 
@@ -29,9 +32,9 @@ def resolve_value_from_source(data_sources: Dict[str, Dict[str, Any]], source_sp
     """
     try:
         # Parse source specification
-        if '.' in source_spec:
+        if "." in source_spec:
             # Format: "source_name.path"
-            parts = source_spec.split('.', 1)
+            parts = source_spec.split(".", 1)
             source_name = parts[0]
             path = parts[1]
         else:
@@ -46,13 +49,15 @@ def resolve_value_from_source(data_sources: Dict[str, Dict[str, Any]], source_sp
         data = data_sources[source_name]
 
         # Navigate the path
-        keys = path.split('.')
+        keys = path.split(".")
         current = data
 
         for key in keys:
             if isinstance(current, dict) and key in current:
                 current = current[key]
-            elif isinstance(current, list) and key.isdigit() and int(key) < len(current):
+            elif (
+                isinstance(current, list) and key.isdigit() and int(key) < len(current)
+            ):
                 current = current[int(key)]
             else:
                 return ""
@@ -62,7 +67,9 @@ def resolve_value_from_source(data_sources: Dict[str, Dict[str, Any]], source_sp
         return ""
 
 
-def replace_placeholders_with_sources(template: str, data_sources: Dict[str, Dict[str, Any]]) -> str:
+def replace_placeholders_with_sources(
+    template: str, data_sources: Dict[str, Dict[str, Any]]
+) -> str:
     """
     Replace placeholders in template with values from multiple data sources
 
@@ -74,7 +81,7 @@ def replace_placeholders_with_sources(template: str, data_sources: Dict[str, Dic
         The template with placeholders replaced with actual values
     """
     # Find all placeholders in format ${source_spec}
-    pattern = r'\$\{([^}]+)\}'
+    pattern = r"\$\{([^}]+)\}"
 
     logger.info(f"data_sources:{data_sources}, template:{template}")
 
@@ -90,24 +97,24 @@ class ConfigManager:
     """
     Manages configuration parsing and processing for Agno Agent
     """
-    
+
     def __init__(self, executor_env=None):
         """
         Initialize the configuration manager
-        
+
         Args:
             executor_env: The executor environment configuration
         """
         self.executor_env = self._parse_executor_env(executor_env)
         self.default_headers = self._parse_default_headers()
-    
+
     def _parse_executor_env(self, executor_env) -> Dict[str, Any]:
         """
         Parse EXECUTOR_ENV which might be a JSON string or dict-like
-        
+
         Args:
             executor_env: The executor environment configuration
-            
+
         Returns:
             Parsed executor environment as dictionary
         """
@@ -119,26 +126,30 @@ class ConfigManager:
                 env_raw = json.dumps(executor_env)
             return json.loads(env_raw) if env_raw else {}
         except Exception as e:
-            logger.warning(f"Failed to parse EXECUTOR_ENV; using empty dict. Error: {e}")
+            logger.warning(
+                f"Failed to parse EXECUTOR_ENV; using empty dict. Error: {e}"
+            )
             return {}
-    
+
     def _parse_default_headers(self) -> Dict[str, Any]:
         """
         Parse DEFAULT_HEADERS from executor environment or OS environment
-        
+
         Returns:
             Parsed default headers as dictionary
         """
         default_headers = {}
-        self._default_headers_raw_str = None  # keep raw string for placeholder replacement later
-        
+        self._default_headers_raw_str = (
+            None  # keep raw string for placeholder replacement later
+        )
+
         try:
             dh = None
             logger.info(f"EXECUTOR_ENV: {self.executor_env}")
-            
+
             if isinstance(self.executor_env, dict):
                 dh = self.executor_env.get("DEFAULT_HEADERS")
-            
+
             if not dh:
                 dh = os.environ.get("DEFAULT_HEADERS")
 
@@ -155,18 +166,22 @@ class ConfigManager:
                         # if it isn't JSON, we'll keep raw for later placeholder expansion
                         default_headers = {}
         except Exception as e:
-            logger.warning(f"Failed to load DEFAULT_HEADERS; using empty headers. Error: {e}")
+            logger.warning(
+                f"Failed to load DEFAULT_HEADERS; using empty headers. Error: {e}"
+            )
             default_headers = {}
-        
+
         return default_headers
-    
-    def build_default_headers_with_placeholders(self, data_sources: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+
+    def build_default_headers_with_placeholders(
+        self, data_sources: Dict[str, Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """
         Build default headers with placeholder replacement
-        
+
         Args:
             data_sources: Dictionary containing all available data sources
-            
+
         Returns:
             Default headers with placeholders replaced
         """
@@ -182,11 +197,13 @@ class ConfigManager:
             default_headers = replaced
             logger.info(f"default_headers:{default_headers}")
         except Exception as e:
-            logger.warning(f"Failed to build default headers; proceeding without. Error: {e}")
+            logger.warning(
+                f"Failed to build default headers; proceeding without. Error: {e}"
+            )
             default_headers = {}
-        
+
         return default_headers
-    
+
     def extract_agno_options(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Extract Agno options from task data
@@ -230,7 +247,8 @@ class ConfigManager:
                 for tmp_bot in bot_config:
                     tmp_bot_options = {}
                     logger.info(
-                        f"Found bot array with {len(bot_config)} bots, using bot: {tmp_bot.get('name', 'unnamed')}")
+                        f"Found bot array with {len(bot_config)} bots, using bot: {tmp_bot.get('name', 'unnamed')}"
+                    )
                     # Extract all non-None parameters from the first bot
                     for key in valid_options:
                         if key in tmp_bot and tmp_bot[key] is not None:

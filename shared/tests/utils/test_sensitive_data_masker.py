@@ -2,14 +2,19 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
 import os
 import sys
 
-# Add shared directory to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+import pytest
 
-from utils.sensitive_data_masker import SensitiveDataMasker, mask_sensitive_data, mask_string
+# Add shared directory to path for imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
+from utils.sensitive_data_masker import (
+    SensitiveDataMasker,
+    mask_sensitive_data,
+    mask_string,
+)
 
 
 @pytest.fixture
@@ -29,7 +34,10 @@ class TestSensitiveDataMasker:
         masked = masker.mask_string(text)
 
         # Should mask the token value
-        assert "EXAMPLE1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789012345678" not in masked
+        assert (
+            "EXAMPLE1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789012345678"
+            not in masked
+        )
         # Should show masked value with asterisks
         assert "****" in masked
 
@@ -39,7 +47,10 @@ class TestSensitiveDataMasker:
         text = "ANTHROPIC_API_KEY=sk-ant-api03-FAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKE1234567890"
         masked = masker.mask_string(text)
 
-        assert "sk-ant-api03-FAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKE1234567890" not in masked
+        assert (
+            "sk-ant-api03-FAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKEKEYFAKE1234567890"
+            not in masked
+        )
         assert "ANTHROPIC_API_KEY" in masked
         assert "****" in masked
 
@@ -49,16 +60,16 @@ class TestSensitiveDataMasker:
             "github_token": "github_pat_FAKETOKEN1234567890ABCDEF",
             "api_key": "sk-TESTKEY1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
             "normal_field": "safe_value",
-            "nested": {
-                "data": "value"
-            }
+            "nested": {"data": "value"},
         }
 
         masked = masker.mask_dict(data)
 
         # Sensitive values should be masked
         assert "github_pat_FAKETOKEN1234567890ABCDEF" not in str(masked)
-        assert "sk-TESTKEY1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890" not in str(masked)
+        assert "sk-TESTKEY1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890" not in str(
+            masked
+        )
 
         # Non-sensitive values should remain
         assert masked["normal_field"] == "safe_value"
@@ -101,20 +112,22 @@ class TestSensitiveDataMasker:
             "src/main/java/com/example/MyClass.java",
             "/usr/local/bin/some-executable-file",
             "/home/user/Documents/my-project/file.txt",
-            "C:\\Users\\Admin\\Desktop\\project\\src\\main.py"
+            "C:\\Users\\Admin\\Desktop\\project\\src\\main.py",
         ]
 
         for path in test_cases:
             masked = masker.mask_string(path)
             # Path should remain unchanged (no asterisks added)
-            assert path == masked, f"File path '{path}' was incorrectly masked to '{masked}'"
+            assert (
+                path == masked
+            ), f"File path '{path}' was incorrectly masked to '{masked}'"
 
     def test_no_false_positive_on_urls(self, masker):
         """Test that URLs without credentials are not masked"""
         test_cases = [
             "https://github.com/wecode-ai/Wegent.git",
             "http://example.com/api/v1/users",
-            "https://api.example.com/endpoint?param=value"
+            "https://api.example.com/endpoint?param=value",
         ]
 
         for url in test_cases:

@@ -6,14 +6,14 @@
 
 # -*- coding: utf-8 -*-
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
-from shared.logger import setup_logger
+from executor.agents.agno.agno_agent import AgnoAgent
 from executor.agents.base import Agent
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
-from executor.agents.agno.agno_agent import AgnoAgent
 from executor.agents.dify.dify_agent import DifyAgent
 from executor.agents.image_validator.image_validator_agent import ImageValidatorAgent
+from shared.logger import setup_logger
 
 logger = setup_logger("agent_factory")
 
@@ -66,7 +66,7 @@ class AgentFactory:
             True if the agent is an external API type, False otherwise
         """
         agent_class = cls._agents.get(agent_type.lower())
-        if agent_class and hasattr(agent_class, 'AGENT_TYPE'):
+        if agent_class and hasattr(agent_class, "AGENT_TYPE"):
             return agent_class.AGENT_TYPE == "external_api"
         return False
 
@@ -83,7 +83,7 @@ class AgentFactory:
         """
         agent_class = cls._agents.get(agent_type.lower())
         if agent_class:
-            if hasattr(agent_class, 'AGENT_TYPE'):
+            if hasattr(agent_class, "AGENT_TYPE"):
                 return agent_class.AGENT_TYPE
             return "local_engine"  # Default for older agents without AGENT_TYPE
         return None

@@ -13,6 +13,8 @@ from typing import Any, Callable, Optional
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+
+from app.core.config import settings
 from shared.telemetry.context import (
     SpanNames,
     set_request_context,
@@ -20,8 +22,6 @@ from shared.telemetry.context import (
     set_websocket_context,
 )
 from shared.telemetry.core import is_telemetry_enabled
-
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 

@@ -1,13 +1,13 @@
 """Tests for wegent output formatting."""
 
-import pytest
 from datetime import datetime, timedelta
 
+import pytest
 from wegent.output import (
-    format_table,
-    format_resource_list,
     format_age,
     format_describe,
+    format_resource_list,
+    format_table,
 )
 
 

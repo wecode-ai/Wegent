@@ -107,14 +107,13 @@ class TestContextServiceStorage:
         """Test retrieving and decrypting encrypted binary data"""
         import sys
 
-        from shared.utils.crypto import encrypt_attachment
-
         from app.models.subtask_context import (
             ContextStatus,
             ContextType,
             SubtaskContext,
         )
         from app.services.context.context_service import context_service as cs_instance
+        from shared.utils.crypto import encrypt_attachment
 
         # Get the actual module (not the singleton instance) for patching
         cs_module = sys.modules["app.services.context.context_service"]

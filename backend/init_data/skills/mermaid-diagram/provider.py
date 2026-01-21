@@ -13,8 +13,9 @@ making it suitable for HTTP mode deployment where backend modules are not availa
 
 from typing import Any, Optional
 
-from chat_shell.skills import SkillToolContext, SkillToolProvider
 from langchain_core.tools import BaseTool
+
+from chat_shell.skills import SkillToolContext, SkillToolProvider
 
 
 class MermaidToolProvider(SkillToolProvider):

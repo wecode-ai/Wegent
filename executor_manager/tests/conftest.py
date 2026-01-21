@@ -316,8 +316,7 @@ def reset_all_singletons_and_mock_redis(mocker, mock_redis_client):
         pass
 
     try:
-        from executor_manager.services.heartbeat_manager import \
-            HeartbeatManager
+        from executor_manager.services.heartbeat_manager import HeartbeatManager
 
         HeartbeatManager._instance = None
     except ImportError:
@@ -348,8 +347,7 @@ def reset_all_singletons_and_mock_redis(mocker, mock_redis_client):
         pass
 
     try:
-        from executor_manager.services.heartbeat_manager import \
-            HeartbeatManager
+        from executor_manager.services.heartbeat_manager import HeartbeatManager
 
         HeartbeatManager._instance = None
     except ImportError:
@@ -372,8 +370,7 @@ def reset_service_singletons():
     except ImportError:
         pass
     try:
-        from executor_manager.services.heartbeat_manager import \
-            HeartbeatManager
+        from executor_manager.services.heartbeat_manager import HeartbeatManager
 
         HeartbeatManager._instance = None
     except ImportError:

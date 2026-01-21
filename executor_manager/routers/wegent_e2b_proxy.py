@@ -23,10 +23,10 @@ import time
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from shared.logger import setup_logger
 
 from executor_manager.common.config import ROUTE_PREFIX, get_config
 from executor_manager.services.sandbox import get_sandbox_manager
+from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 

@@ -21,19 +21,22 @@ Note: sandbox_id is derived from task_id internally (sandbox_id = str(task_id))
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from shared.logger import setup_logger
 
 from executor_manager.models.sandbox import SandboxStatus
-from executor_manager.schemas.sandbox import (CreateSandboxRequest,
-                                              CreateSandboxResponse,
-                                              ExecuteRequest, ExecuteResponse,
-                                              ExecutionStatusResponse,
-                                              KeepAliveRequest,
-                                              KeepAliveResponse,
-                                              ListExecutionsResponse,
-                                              SandboxStatusResponse,
-                                              TerminateSandboxResponse)
+from executor_manager.schemas.sandbox import (
+    CreateSandboxRequest,
+    CreateSandboxResponse,
+    ExecuteRequest,
+    ExecuteResponse,
+    ExecutionStatusResponse,
+    KeepAliveRequest,
+    KeepAliveResponse,
+    ListExecutionsResponse,
+    SandboxStatusResponse,
+    TerminateSandboxResponse,
+)
 from executor_manager.services.sandbox import get_sandbox_manager
+from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 
@@ -436,7 +439,9 @@ async def sandbox_heartbeat(sandbox_id: str, http_request: Request):
     )
 
     from executor_manager.services.heartbeat_manager import (
-        HeartbeatType, get_heartbeat_manager)
+        HeartbeatType,
+        get_heartbeat_manager,
+    )
 
     heartbeat_mgr = get_heartbeat_manager()
     success = heartbeat_mgr.update_heartbeat(sandbox_id, HeartbeatType.SANDBOX)
