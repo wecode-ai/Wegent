@@ -10,7 +10,6 @@
  *
  * Environment Variables:
  * - RUNTIME_INTERNAL_API_URL: Primary URL for server-side proxy to backend
- * - RUNTIME_API_PROXY_INTERNAL_ONLY: Set to 'true' to only allow frontend page requests
  */
 
 /**
@@ -27,21 +26,4 @@ export function getInternalApiUrl(): string {
     process.env.NEXT_PUBLIC_API_URL ||
     'http://localhost:8000'
   )
-}
-
-/**
- * Check if API proxy is in internal-only mode.
- * When enabled, the /api/* proxy only allows requests from the frontend application
- * (same-origin requests with proper headers), blocking direct browser access.
- *
- * This is useful when you want to:
- * - Hide the backend API from direct external access
- * - But still allow frontend pages to use the proxy to reach internal backend
- *
- * Set RUNTIME_API_PROXY_INTERNAL_ONLY=true to enable this mode.
- *
- * @returns true if proxy is internal-only, false otherwise
- */
-export function isApiProxyInternalOnly(): boolean {
-  return process.env.RUNTIME_API_PROXY_INTERNAL_ONLY === 'true'
 }

@@ -12,18 +12,19 @@
  *
  * This replaces the rewrites() in next.config.js for runtime flexibility.
  *
- * Security Note:
- * - Set RUNTIME_API_PROXY_INTERNAL_ONLY=true to only allow requests from frontend pages
- *   (blocks direct browser access to /api/* while allowing frontend JS to use the proxy)
+ * Security:
+ * - Only allows same-origin requests from frontend pages
+ * - Returns 404 for direct browser URL access to /api/* endpoints
+ * - Whitelisted paths (OIDC callbacks, webhooks) bypass same-origin check
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getInternalApiUrl, isApiProxyInternalOnly } from '@/lib/server-config'
+import { getInternalApiUrl } from '@/lib/server-config'
 
 /**
- * Paths that should be allowed even in internal-only mode.
- * These are typically OAuth/OIDC callbacks that come from external identity providers,
- * or webhooks that need to be triggered by external systems.
+ * Paths that bypass same-origin check and allow external access.
+ * These are typically OAuth/OIDC callbacks from external identity providers,
+ * or webhooks triggered by external systems.
  */
 const ALLOWED_EXTERNAL_PATHS = [
   '/api/auth/oidc/callback', // OIDC callback from identity provider
@@ -40,13 +41,15 @@ function isAllowedExternalPath(pathname: string): boolean {
 }
 
 /**
- * Check if the request is from the frontend application (not direct browser access)
- * This is determined by checking:
+ * Check if the request is a same-origin request from the frontend application.
+ * Returns true for fetch() from frontend pages, false for direct browser URL access.
+ *
+ * Detection methods:
  * 1. sec-fetch-site header (should be 'same-origin' for modern browsers)
- * 2. Referer header (should be from the same origin)
- * 3. X-Wegent-Internal header (custom header set by frontend)
+ * 2. Referer header (should be from the same host)
+ * 3. X-Wegent-Internal header (custom header for special cases)
  */
-function isInternalRequest(request: NextRequest): boolean {
+function isSameOriginRequest(request: NextRequest): boolean {
   // Check sec-fetch-site header (modern browsers)
   const secFetchSite = request.headers.get('sec-fetch-site')
   if (secFetchSite === 'same-origin') {
@@ -68,7 +71,7 @@ function isInternalRequest(request: NextRequest): boolean {
     }
   }
 
-  // Check for X-Wegent-Internal header (custom header set by frontend)
+  // Check for X-Wegent-Internal header (custom header for special cases)
   const wegentInternal = request.headers.get('x-wegent-internal')
   if (wegentInternal === 'true') {
     return true
@@ -87,13 +90,9 @@ async function proxyRequest(
   const { path } = await params
   const targetPath = `/api/${path.join('/')}`
 
-  // Check if proxy is internal-only mode (block direct browser access)
-  // But allow certain paths like OIDC callbacks that come from external sources
-  if (
-    isApiProxyInternalOnly() &&
-    !isInternalRequest(request) &&
-    !isAllowedExternalPath(targetPath)
-  ) {
+  // Security: Only allow same-origin requests or whitelisted paths
+  // Non-same-origin requests to non-whitelisted paths return 404
+  if (!isSameOriginRequest(request) && !isAllowedExternalPath(targetPath)) {
     return NextResponse.json({ error: 'Not Found' }, { status: 404 })
   }
 
