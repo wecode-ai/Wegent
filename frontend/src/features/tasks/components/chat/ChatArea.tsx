@@ -417,9 +417,10 @@ function ChatAreaContent({
   )
 
   // Callback for child components to send messages with a specific model (for regeneration)
+  // Accepts optional existingContexts to preserve attachments/knowledge bases from the original message
   const handleSendMessageWithModelFromChild = useCallback(
-    async (content: string, model: Model) => {
-      await streamHandlers.handleSendMessageWithModel(content, model)
+    async (content: string, model: Model, existingContexts?: SubtaskContextBrief[]) => {
+      await streamHandlers.handleSendMessageWithModel(content, model, existingContexts)
     },
     [streamHandlers]
   )

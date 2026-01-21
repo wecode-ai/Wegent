@@ -149,7 +149,11 @@ interface MessagesAreaProps {
   onContentChange?: () => void
   onSendMessage?: (content: string) => void
   /** Callback for sending message with a specific model override (used for regenerate) */
-  onSendMessageWithModel?: (content: string, model: Model) => void
+  onSendMessageWithModel?: (
+    content: string,
+    model: Model,
+    existingContexts?: import('@/types/api').SubtaskContextBrief[]
+  ) => void
   isGroupChat?: boolean
   onRetry?: (message: Message) => void
   // Correction mode props
@@ -782,8 +786,10 @@ export default function MessagesArea({
         return
       }
 
-      // 4. Save original content for potential recovery
+      // 4. Save original content and contexts for potential recovery
       const originalUserContent = userMessage.content
+      // Extract contexts from the original user message (attachments, knowledge bases, tables)
+      const originalContexts = userMessage.contexts || []
 
       setIsRegenerating(true)
       try {
@@ -804,8 +810,9 @@ export default function MessagesArea({
           await refreshSelectedTaskDetail(true)
 
           // 8. Resend the same user message with the selected model to trigger new AI response
+          // Pass the original contexts (attachments, knowledge bases, etc.) to preserve them
           if (onSendMessageWithModel) {
-            onSendMessageWithModel(originalUserContent, selectedModel)
+            onSendMessageWithModel(originalUserContent, selectedModel, originalContexts)
           } else if (onSendMessage) {
             // Fallback to regular send if model override is not supported
             onSendMessage(originalUserContent)

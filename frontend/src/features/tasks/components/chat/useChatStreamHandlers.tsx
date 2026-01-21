@@ -17,7 +17,7 @@ import { isChatShell } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
 import type { Model } from '../selector/ModelSelector'
-import type { Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api'
+import type { Team, GitRepoInfo, GitBranch, Attachment, SubtaskContextBrief } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 export interface UseChatStreamHandlersOptions {
   // Team and model
@@ -89,8 +89,17 @@ export interface ChatStreamHandlers {
 
   // Actions
   handleSendMessage: (overrideMessage?: string) => Promise<void>
-  /** Send a message with a temporary model override (used for regeneration) */
-  handleSendMessageWithModel: (overrideMessage: string, modelOverride: Model) => Promise<void>
+  /**
+   * Send a message with a temporary model override (used for regeneration).
+   * @param overrideMessage - The message content to send
+   * @param modelOverride - The model to use for this single request
+   * @param existingContexts - Optional existing contexts from original message (attachments, knowledge bases, tables)
+   */
+  handleSendMessageWithModel: (
+    overrideMessage: string,
+    modelOverride: Model,
+    existingContexts?: SubtaskContextBrief[]
+  ) => Promise<void>
   handleRetry: (message: {
     content: string
     type: string
@@ -636,9 +645,16 @@ export function useChatStreamHandlers({
    * Send a message with a temporary model override.
    * This is used for regeneration where user selects a specific model for that single regeneration.
    * The model override only affects this single call and does not change the session's model preference.
+   * @param overrideMessage - The message content to send
+   * @param modelOverride - The model to use for this single request
+   * @param existingContexts - Optional existing contexts from original message (for regeneration)
    */
   const handleSendMessageWithModel = useCallback(
-    async (overrideMessage: string, modelOverride: Model) => {
+    async (
+      overrideMessage: string,
+      modelOverride: Model,
+      existingContexts?: SubtaskContextBrief[]
+    ) => {
       const message = overrideMessage.trim()
       if (!message && !shouldHideChatInput) return
 
@@ -675,8 +691,7 @@ export function useChatStreamHandlers({
       // Set local pending state immediately
       setLocalPendingMessage(message)
       setTaskInputMessage('')
-      // Note: Don't reset attachments for regeneration since we're resending the same message
-      resetContexts?.()
+      // Note: Don't reset attachments/contexts for regeneration since we're reusing existing ones
 
       // Use the override model instead of the selected model
       const modelId = modelOverride.name === DEFAULT_MODEL_NAME ? undefined : modelOverride.name
@@ -691,7 +706,42 @@ export function useChatStreamHandlers({
       try {
         const immediateTaskId = selectedTaskDetail?.id || -Date.now()
 
-        // Build pending contexts for immediate display (empty for regeneration)
+        // Extract attachment IDs from existing contexts (for regeneration)
+        const attachmentIds =
+          existingContexts?.filter(ctx => ctx.context_type === 'attachment').map(ctx => ctx.id) ||
+          []
+
+        // Build context items for backend from existing contexts (knowledge bases, tables)
+        const contextItems: Array<{
+          type: 'knowledge_base' | 'table' | 'selected_documents'
+          data: Record<string, unknown>
+        }> = []
+
+        if (existingContexts) {
+          for (const ctx of existingContexts) {
+            if (ctx.context_type === 'knowledge_base') {
+              contextItems.push({
+                type: 'knowledge_base' as const,
+                data: {
+                  knowledge_id: ctx.id,
+                  name: ctx.name,
+                  document_count: ctx.document_count,
+                },
+              })
+            } else if (ctx.context_type === 'table') {
+              contextItems.push({
+                type: 'table' as const,
+                data: {
+                  document_id: ctx.id,
+                  name: ctx.name,
+                  source_config: ctx.source_config,
+                },
+              })
+            }
+          }
+        }
+
+        // Build pending contexts for immediate display from existing contexts
         const pendingContexts: Array<{
           id: number
           context_type: 'attachment' | 'knowledge_base' | 'table'
@@ -704,7 +754,18 @@ export function useChatStreamHandlers({
           source_config?: {
             url?: string
           }
-        }> = []
+        }> =
+          existingContexts?.map(ctx => ({
+            id: ctx.id,
+            context_type: ctx.context_type,
+            name: ctx.name,
+            status: 'ready' as const,
+            file_extension: ctx.file_extension ?? undefined,
+            file_size: ctx.file_size ?? undefined,
+            mime_type: ctx.mime_type ?? undefined,
+            document_count: ctx.document_count ?? undefined,
+            source_config: ctx.source_config ?? undefined,
+          })) || []
 
         const tempTaskId = await contextSendMessage(
           {
@@ -713,7 +774,7 @@ export function useChatStreamHandlers({
             task_id: selectedTaskDetail?.id,
             model_id: modelId,
             force_override_bot_model: true, // Always force override when using model override
-            attachment_ids: [],
+            attachment_ids: attachmentIds,
             enable_deep_thinking: enableDeepThinking,
             enable_clarification: enableClarification,
             is_group_chat: selectedTaskDetail?.is_group_chat || false,
@@ -726,10 +787,11 @@ export function useChatStreamHandlers({
               : undefined,
             task_type: taskType,
             knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
+            contexts: contextItems.length > 0 ? contextItems : undefined,
           },
           {
             pendingUserMessage: message,
-            pendingAttachments: [],
+            pendingAttachments: [], // Attachments are already part of pendingContexts
             pendingContexts: pendingContexts.length > 0 ? pendingContexts : undefined,
             immediateTaskId: immediateTaskId,
             currentUserId: user?.id,
@@ -784,7 +846,6 @@ export function useChatStreamHandlers({
       isAttachmentReadyToSend,
       toast,
       selectedTeam,
-      resetContexts,
       selectedTaskDetail,
       contextSendMessage,
       enableDeepThinking,
@@ -805,6 +866,7 @@ export function useChatStreamHandlers({
       setTaskInputMessage,
       externalApiParams,
       onTaskCreated,
+      t,
     ]
   )
 
