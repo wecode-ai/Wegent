@@ -627,6 +627,7 @@ const MessageBubble = memo(
               dislike: t('chat:messages.dislike') || 'Dislike',
             }}
             showRegenerate={
+              Boolean(onRegenerate) &&
               !isGroupChat &&
               isLastAiMessage &&
               (msg.subtaskStatus === 'COMPLETED' || msg.status === 'completed') &&

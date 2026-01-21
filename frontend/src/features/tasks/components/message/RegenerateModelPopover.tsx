@@ -86,6 +86,7 @@ export function RegenerateModelPopover({
 
                 return (
                   <button
+                    type="button"
                     key={`${model.name}:${model.type || ''}`}
                     onClick={() => handleModelSelect(model)}
                     className={cn(
