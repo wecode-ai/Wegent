@@ -82,8 +82,6 @@ class DocumentToolProvider(SkillToolProvider):
             f"task_id={context.task_id}, user_id={context.user_id}, user_name={context.user_name}"
         )
 
-        config = tool_config or {}
-
         if tool_name == "load_document_skill":
             from .document_tool import LoadDocumentSkillTool
 

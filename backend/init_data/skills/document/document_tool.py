@@ -14,7 +14,10 @@ import json
 import logging
 from typing import Any, ClassVar, Optional
 
-from langchain_core.callbacks import AsyncCallbackManagerForToolRun
+from langchain_core.callbacks import (
+    AsyncCallbackManagerForToolRun,
+    CallbackManagerForToolRun,
+)
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
@@ -96,7 +99,7 @@ Example:
     def _run(
         self,
         document_type: str,
-        run_manager: Optional[AsyncCallbackManagerForToolRun] = None,
+        run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Synchronous run - not implemented."""
         raise NotImplementedError("LoadDocumentSkillTool only supports async execution")

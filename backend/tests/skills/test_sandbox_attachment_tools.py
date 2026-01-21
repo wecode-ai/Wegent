@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-# Add the skill directory to path for importing
+# Skill directory used for file-based assertions
 SKILL_DIR = Path(__file__).parent.parent.parent / "init_data" / "skills" / "sandbox"
 
 
