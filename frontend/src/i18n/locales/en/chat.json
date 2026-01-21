@@ -25,7 +25,14 @@
     "confirm_title": "Confirm Edit",
     "confirm_description": "This edit will clear this message and all subsequent messages. The conversation will restart from this point. Are you sure you want to continue?",
     "confirm_button": "Confirm",
-    "confirming": "Processing..."
+    "confirming": "Processing...",
+    "wait_for_completion": "Please wait for the current response to complete"
+  },
+  "regenerate": {
+    "failed": "Failed to regenerate response",
+    "tooltip": "Regenerate response",
+    "select_model": "Select Model",
+    "select_model_desc": "Choose a model for regeneration"
   },
   "quote": {
     "ask_wegent": "Ask Wegent",
@@ -273,7 +280,8 @@
     "chars": "chars"
   },
   "upload": {
-    "tooltip": "Supported file types: PDF, Word, PPT, Excel, TXT, Markdown, Images(JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nSupports multiple file uploads"
+    "tooltip": "Supported file types: PDF, Word, PPT, Excel, TXT, Markdown, Images(JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nSupports multiple file uploads",
+    "wait_for_upload": "Please wait for file upload to complete"
   },
   "clarification_toggle": {
     "enable": "Enable smart follow-up mode",

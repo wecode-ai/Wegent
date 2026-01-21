@@ -11,10 +11,68 @@
  * variables when the container starts.
  *
  * This replaces the rewrites() in next.config.js for runtime flexibility.
+ *
+ * Security:
+ * - Only allows same-origin requests from frontend pages
+ * - Returns 404 for direct browser URL access to /api/* endpoints
+ * - Whitelisted paths (OIDC callbacks, webhooks) bypass same-origin check
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getInternalApiUrl } from '@/lib/server-config'
+
+/**
+ * Paths that bypass same-origin check and allow external access.
+ * These are typically OAuth/OIDC callbacks from external identity providers,
+ * or webhooks triggered by external systems.
+ */
+const ALLOWED_EXTERNAL_PATHS = [
+  '/api/auth/oidc/callback', // OIDC callback from identity provider
+  '/api/auth/oidc/cli-callback', // CLI OIDC callback
+  '/api/auth/oauth/callback', // OAuth callback
+  '/api/flows/webhook/', // Flow webhook triggers from external systems
+]
+
+/**
+ * Check if the request path is in the allowed external paths list
+ */
+function isAllowedExternalPath(pathname: string): boolean {
+  return ALLOWED_EXTERNAL_PATHS.some(allowedPath => pathname.startsWith(allowedPath))
+}
+
+/**
+ * Check if the request is a same-origin request from the frontend application.
+ * Returns true for fetch() from frontend pages, false for direct browser URL access.
+ *
+ * Detection methods:
+ * 1. sec-fetch-site header (should be 'same-origin' for modern browsers)
+ * 2. Referer header (should be from the same host)
+ * 3. X-Wegent-Internal header (custom header for special cases)
+ */
+function isSameOriginRequest(request: NextRequest): boolean {
+  // Check sec-fetch-site header (modern browsers)
+  const secFetchSite = request.headers.get('sec-fetch-site')
+  if (secFetchSite === 'same-origin') {
+    return true
+  }
+
+  // Check Referer header
+  const referer = request.headers.get('referer')
+  if (referer) {
+    try {
+      const refererUrl = new URL(referer)
+      const requestHost = request.headers.get('host') || ''
+      // Check if referer is from the same host
+      if (refererUrl.host === requestHost) {
+        return true
+      }
+    } catch {
+      // Invalid referer URL
+    }
+  }
+
+  return false
+}
 
 /**
  * Proxy handler for all HTTP methods
@@ -24,8 +82,15 @@ async function proxyRequest(
   { params }: { params: Promise<{ path: string[] }> }
 ): Promise<Response> {
   const { path } = await params
-  const backendUrl = getInternalApiUrl()
   const targetPath = `/api/${path.join('/')}`
+
+  // Security: Only allow same-origin requests or whitelisted paths
+  // Non-same-origin requests to non-whitelisted paths return 404
+  if (!isSameOriginRequest(request) && !isAllowedExternalPath(targetPath)) {
+    return NextResponse.json({ error: 'Not Found' }, { status: 404 })
+  }
+
+  const backendUrl = getInternalApiUrl()
   const targetUrl = new URL(targetPath, backendUrl)
 
   // Preserve query parameters

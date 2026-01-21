@@ -14,6 +14,7 @@ class UserPreferences(BaseModel):
 
     send_key: Literal["enter", "cmd_enter"] = "enter"
     search_key: Literal["cmd_k", "cmd_f", "disabled"] = "cmd_k"
+    memory_enabled: bool = False
 
 
 class Token(BaseModel):

@@ -25,7 +25,14 @@
     "confirm_title": "确认编辑",
     "confirm_description": "此编辑操作将清除本条消息及其后的所有消息，对话将从当前位置重新开始。确定要继续吗？",
     "confirm_button": "确认",
-    "confirming": "处理中..."
+    "confirming": "处理中...",
+    "wait_for_completion": "请等待当前回复生成完成"
+  },
+  "regenerate": {
+    "failed": "重新生成失败",
+    "tooltip": "重新生成回复",
+    "select_model": "选择模型",
+    "select_model_desc": "选择用于重新生成的模型"
   },
   "quote": {
     "ask_wegent": "询问 Wegent",
@@ -273,7 +280,8 @@
     "chars": "字符"
   },
   "upload": {
-    "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传"
+    "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传",
+    "wait_for_upload": "请等待文件上传完成"
   },
   "clarification_toggle": {
     "enable": "启用智能追问模式",

@@ -28,6 +28,7 @@ from app.schemas.subscription import (
     BackgroundExecutionStatus,
     Subscription,
     SubscriptionStatus,
+    SubscriptionVisibility,
 )
 from app.services.subscription.helpers import resolve_prompt_template
 from app.services.subscription.state_machine import (
@@ -302,11 +303,14 @@ class BackgroundExecutionManager:
         status: Optional[List[BackgroundExecutionStatus]] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        include_following: bool = True,
     ) -> Tuple[List[BackgroundExecutionInDB], int]:
         """
         List BackgroundExecution records (timeline view).
 
         Optimized to avoid N+1 queries by batch loading related subscriptions and teams.
+        Now includes executions from followed subscriptions.
+        Also allows viewing executions of public subscriptions.
 
         Args:
             db: Database session
@@ -317,16 +321,69 @@ class BackgroundExecutionManager:
             status: Optional filter by status list
             start_date: Optional filter by start date
             end_date: Optional filter by end date
+            include_following: Include executions from followed subscriptions
 
         Returns:
             Tuple of (list of BackgroundExecutionInDB, total count)
         """
-        query = db.query(BackgroundExecution).filter(
-            BackgroundExecution.user_id == user_id
-        )
+        from sqlalchemy import or_
 
+        # Check if querying a specific subscription that is public
+        is_public_subscription = False
         if subscription_id:
-            query = query.filter(BackgroundExecution.subscription_id == subscription_id)
+            subscription = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == subscription_id,
+                    Kind.kind == "Subscription",
+                )
+                .first()
+            )
+            if subscription:
+                subscription_crd = Subscription.model_validate(subscription.json)
+                # Check visibility field - PUBLIC means it's a public subscription
+                is_public_subscription = (
+                    subscription_crd.spec.visibility == SubscriptionVisibility.PUBLIC
+                )
+
+        # If querying a public subscription, allow access without user_id filter
+        if subscription_id and is_public_subscription:
+            query = db.query(BackgroundExecution).filter(
+                BackgroundExecution.subscription_id == subscription_id
+            )
+        else:
+            # Get subscription IDs the user is following
+            followed_subscription_ids = []
+            if include_following and not subscription_id:
+                from app.services.subscription.follow_service import (
+                    subscription_follow_service,
+                )
+
+                followed_subscription_ids = (
+                    subscription_follow_service.get_followed_subscription_ids(
+                        db, user_id=user_id
+                    )
+                )
+
+            # Build query: own subscriptions OR followed subscriptions
+            if followed_subscription_ids:
+                query = db.query(BackgroundExecution).filter(
+                    or_(
+                        BackgroundExecution.user_id == user_id,
+                        BackgroundExecution.subscription_id.in_(
+                            followed_subscription_ids
+                        ),
+                    )
+                )
+            else:
+                query = db.query(BackgroundExecution).filter(
+                    BackgroundExecution.user_id == user_id
+                )
+
+            if subscription_id:
+                query = query.filter(
+                    BackgroundExecution.subscription_id == subscription_id
+                )
 
         if status:
             query = query.filter(
