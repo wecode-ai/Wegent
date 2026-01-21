@@ -60,12 +60,14 @@ class SubscriptionFollow(Base):
     follow_type = Column(String(20), nullable=False, default=FollowType.DIRECT.value)
 
     # Invitation fields (only used when follow_type='invited')
-    invited_by_user_id = Column(Integer, nullable=True)  # Who sent the invitation
+    # For direct follows, invited_by_user_id should be 0
+    invited_by_user_id = Column(Integer, nullable=False, default=0)
     invitation_status = Column(
-        String(20), default=InvitationStatus.PENDING.value
+        String(20), nullable=False, default=InvitationStatus.PENDING.value
     )  # pending, accepted, rejected
-    invited_at = Column(DateTime, nullable=True)
-    responded_at = Column(DateTime, nullable=True)  # When user accepted/rejected
+    # For direct follows, invited_at and responded_at use created_at as default
+    invited_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    responded_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

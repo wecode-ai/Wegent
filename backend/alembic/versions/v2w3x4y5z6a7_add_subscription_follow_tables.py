@@ -12,6 +12,7 @@ Create Date: 2025-01-20
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -28,11 +29,11 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("subscription_id", sa.Integer(), nullable=False),
         sa.Column("follower_user_id", sa.Integer(), nullable=False),
-        sa.Column("follow_type", sa.String(20), nullable=False, server_default="direct"),
-        sa.Column("invited_by_user_id", sa.Integer(), nullable=True),
-        sa.Column("invitation_status", sa.String(20), server_default="pending"),
-        sa.Column("invited_at", sa.DateTime(), nullable=True),
-        sa.Column("responded_at", sa.DateTime(), nullable=True),
+        sa.Column("follow_type", sa.String(20), nullable=False),
+        sa.Column("invited_by_user_id", sa.Integer(), nullable=False),
+        sa.Column("invitation_status", sa.String(20), nullable=False),
+        sa.Column("invited_at", sa.DateTime(), nullable=False),
+        sa.Column("responded_at", sa.DateTime(), nullable=False),
         sa.Column(
             "created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()
         ),

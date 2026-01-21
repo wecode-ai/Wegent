@@ -122,13 +122,17 @@ class SubscriptionFollowService:
             )
 
         # Create follow record
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         follow = SubscriptionFollow(
             subscription_id=subscription_id,
             follower_user_id=user_id,
             follow_type=FollowType.DIRECT.value,
+            invited_by_user_id=0,  # No inviter for direct follows
             invitation_status=InvitationStatus.ACCEPTED.value,  # Direct follows are auto-accepted
-            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            invited_at=now,  # Use current time as default
+            responded_at=now,  # Use current time as default
+            created_at=now,
+            updated_at=now,
         )
         db.add(follow)
         db.commit()
@@ -451,22 +455,27 @@ class SubscriptionFollowService:
                     status_code=400, detail="User already has a pending invitation"
                 )
             # If rejected, update to pending again
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             existing.invitation_status = InvitationStatus.PENDING.value
-            existing.invited_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            existing.responded_at = None
-            existing.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            existing.invited_at = now
+            existing.responded_at = (
+                now  # Reset to current time (will be updated when user responds)
+            )
+            existing.updated_at = now
             db.commit()
         else:
             # Create invitation
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             follow = SubscriptionFollow(
                 subscription_id=subscription_id,
                 follower_user_id=target_user.id,
                 follow_type=FollowType.INVITED.value,
                 invited_by_user_id=owner_user_id,
                 invitation_status=InvitationStatus.PENDING.value,
-                invited_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                invited_at=now,
+                responded_at=now,  # Default value, will be updated when user responds
+                created_at=now,
+                updated_at=now,
             )
             db.add(follow)
             db.commit()
@@ -566,15 +575,17 @@ class SubscriptionFollowService:
             )
 
             if not existing:
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
                 follow = SubscriptionFollow(
                     subscription_id=subscription_id,
                     follower_user_id=member.user_id,
                     follow_type=FollowType.INVITED.value,
                     invited_by_user_id=owner_user_id,
                     invitation_status=InvitationStatus.PENDING.value,
-                    invited_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                    created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                    updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                    invited_at=now,
+                    responded_at=now,  # Default value, will be updated when user responds
+                    created_at=now,
+                    updated_at=now,
                 )
                 db.add(follow)
                 invited_count += 1
