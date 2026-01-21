@@ -533,6 +533,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 title=payload.title,
                 model_id=payload.force_override_bot_model,
                 force_override_bot_model=payload.force_override_bot_model is not None,
+                force_override_bot_model_type=payload.force_override_bot_model_type,
                 is_group_chat=payload.is_group_chat,
                 git_url=payload.git_url,
                 git_repo=payload.git_repo,
