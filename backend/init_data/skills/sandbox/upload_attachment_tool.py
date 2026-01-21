@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 # Default API base URL for attachment uploads
-DEFAULT_API_BASE_URL = "http://wegent-backend:8000"
+DEFAULT_API_BASE_URL = "http://backend:8000"
 
 # Maximum file size for uploads (100 MB)
 MAX_UPLOAD_SIZE = 100 * 1024 * 1024
@@ -205,7 +205,9 @@ After successful upload, you can provide the download_url to the user:
             # Check file size
             if file_info.size > self.max_upload_size:
                 max_size_mb = self.max_upload_size / (1024 * 1024)
-                error_msg = f"File too large: {file_info.size} bytes (max: {max_size_mb} MB)"
+                error_msg = (
+                    f"File too large: {file_info.size} bytes (max: {max_size_mb} MB)"
+                )
                 result = self._format_error(
                     error_message=error_msg,
                     attachment_id=None,
@@ -218,7 +220,7 @@ After successful upload, you can provide the download_url to the user:
 
             # Get API base URL and auth token
             api_base_url = self.api_base_url or os.getenv(
-                "TASK_API_DOMAIN", DEFAULT_API_BASE_URL
+                "BACKEND_API_URL", DEFAULT_API_BASE_URL
             )
             api_base_url = api_base_url.rstrip("/")
 
@@ -241,7 +243,7 @@ After successful upload, you can provide the download_url to the user:
 
             # Build curl command
             curl_cmd = (
-                f'curl -s -X POST '
+                f"curl -s -X POST "
                 f'-H "Authorization: Bearer {auth_token}" '
                 f'-F "file=@{file_path}" '
                 f'"{upload_url}"'
@@ -300,9 +302,7 @@ After successful upload, you can provide the download_url to the user:
                     error_msg = error_detail.get("message", str(error_detail))
                 else:
                     error_msg = str(error_detail)
-                logger.error(
-                    f"[SandboxUploadAttachmentTool] API error: {error_msg}"
-                )
+                logger.error(f"[SandboxUploadAttachmentTool] API error: {error_msg}")
                 result = self._format_error(
                     error_message=f"Upload API error: {error_msg}",
                     attachment_id=None,

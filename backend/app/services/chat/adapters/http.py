@@ -154,6 +154,8 @@ class HTTPAdapter(ChatInterface):
             "is_user_selected_kb": request.is_user_selected_kb,
             "table_contexts": request.table_contexts,
             "task_data": request.task_data,
+            # Authentication
+            "auth_token": request.auth_token,
         }
 
         payload = {

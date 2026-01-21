@@ -120,6 +120,7 @@ async def trigger_ai_response(
     user_subtask_id: Optional[int] = None,
     event_emitter: Optional["ChatEventEmitter"] = None,
     history_limit: Optional[int] = None,
+    auth_token: str = "",
 ) -> None:
     """
     Trigger AI response for a chat message.
@@ -151,6 +152,7 @@ async def trigger_ai_response(
             Pass SubscriptionEventEmitter for Subscription tasks to update BackgroundExecution status.
         history_limit: Optional limit on number of history messages to include.
             Used by Subscription tasks with preserveHistory enabled.
+        auth_token: JWT token from user's request for downstream API authentication
     """
     logger.info(
         "[ai_trigger] Triggering AI response: task_id=%d, "
@@ -175,6 +177,7 @@ async def trigger_ai_response(
             user_subtask_id=user_subtask_id,
             event_emitter=event_emitter,
             history_limit=history_limit,
+            auth_token=auth_token,
         )
     else:
         # Executor-based (ClaudeCode, Agno, etc.)
@@ -197,6 +200,7 @@ async def _trigger_direct_chat(
     user_subtask_id: Optional[int] = None,
     event_emitter: Optional["ChatEventEmitter"] = None,
     history_limit: Optional[int] = None,
+    auth_token: str = "",
 ) -> None:
     """
     Trigger direct chat (Chat Shell) AI response using ChatService.
@@ -218,6 +222,7 @@ async def _trigger_direct_chat(
             Pass SubscriptionEventEmitter for Subscription tasks to update BackgroundExecution status.
         history_limit: Optional limit on number of history messages to include.
             Used by Subscription tasks with preserveHistory enabled.
+        auth_token: JWT token from user's request for downstream API authentication
     """
     # Extract data from ORM objects before starting background task
     # This prevents DetachedInstanceError when the session is closed
@@ -259,6 +264,7 @@ async def _trigger_direct_chat(
             user_subtask_id=user_subtask_id,
             event_emitter=event_emitter,
             history_limit=history_limit,
+            auth_token=auth_token,
         )
         logger.info(
             "[ai_trigger] Flow task mode: stream task completed (subtask_id=%d)",
@@ -279,6 +285,7 @@ async def _trigger_direct_chat(
                 user_subtask_id=user_subtask_id,
                 event_emitter=event_emitter,
                 history_limit=history_limit,
+                auth_token=auth_token,
             )
         )
 
@@ -300,6 +307,7 @@ async def _stream_chat_response(
     user_subtask_id: Optional[int] = None,
     event_emitter: Optional["ChatEventEmitter"] = None,
     history_limit: Optional[int] = None,
+    auth_token: str = "",
 ) -> None:
     """
     Stream chat response using ChatService.
@@ -651,6 +659,7 @@ async def _stream_chat_response(
                 preload_skills=chat_config.preload_skills,  # Use resolved from ChatConfig
                 user_subtask_id=user_subtask_id,  # Pass user subtask ID for RAG persistence
                 history_limit=history_limit,  # Pass history limit for subscription tasks
+                auth_token=auth_token,  # Pass auth token from WebSocket session
             )
         elif streaming_mode == "bridge":
             # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards
@@ -718,6 +727,7 @@ async def _stream_with_http_adapter(
     preload_skills: list = None,
     user_subtask_id: Optional[int] = None,
     history_limit: Optional[int] = None,
+    auth_token: str = "",
 ) -> None:
     """Stream using HTTP adapter to call remote chat_shell service.
 
@@ -748,6 +758,7 @@ async def _stream_with_http_adapter(
             stream_data.subtask_id which is AI response's subtask)
         history_limit: Optional limit on number of history messages to include.
             Used by Subscription tasks with preserveHistory enabled.
+        auth_token: JWT token from user's request for downstream API authentication
     """
     # Import here to avoid circular imports
     from app.core.config import settings
@@ -855,6 +866,7 @@ async def _stream_with_http_adapter(
         task_data=task_data,
         mcp_servers=mcp_servers,
         history_limit=history_limit,  # Pass history limit for subscription tasks
+        auth_token=auth_token,  # JWT token for API authentication
     )
 
     logger.info(

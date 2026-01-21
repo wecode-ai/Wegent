@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 # Default API base URL for attachment downloads
-DEFAULT_API_BASE_URL = "http://wegent-backend:8000"
+DEFAULT_API_BASE_URL = "http://backend:8000"
 
 
 class SandboxDownloadAttachmentInput(BaseModel):
@@ -198,7 +198,7 @@ Example:
 
             # Get API base URL and auth token
             api_base_url = self.api_base_url or os.getenv(
-                "TASK_API_DOMAIN", DEFAULT_API_BASE_URL
+                "BACKEND_API_URL", DEFAULT_API_BASE_URL
             )
             api_base_url = api_base_url.rstrip("/")
 
@@ -228,7 +228,7 @@ Example:
 
             # Build curl command to download file
             curl_cmd = (
-                f'curl -s -f -L '
+                f"curl -s -f -L "
                 f'-H "Authorization: Bearer {auth_token}" '
                 f'-o "{save_path}" '
                 f'"{download_url}"'
