@@ -14,12 +14,12 @@ import os
 import re
 from typing import Any, Dict, Optional
 
-from shared.utils.crypto import decrypt_api_key
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Model
+from shared.utils.crypto import decrypt_api_key
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,6 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
-from shared.utils.crypto import decrypt_git_token, encrypt_git_token, is_token_encrypted
 from sqlalchemy.orm import Session
 
 from app.core import security
@@ -19,6 +18,7 @@ from app.schemas.user import UserCreate, UserUpdate
 from app.services.base import BaseService
 from app.services.k_batch import apply_default_resources_async
 from app.services.readers.users import userReader
+from shared.utils.crypto import decrypt_git_token, encrypt_git_token, is_token_encrypted
 
 
 class UserService(BaseService[User, UserUpdate, UserUpdate]):

@@ -20,8 +20,7 @@ class TestSandboxManager:
         """Reset singleton instances before each test."""
         from executor_manager.common.redis_factory import RedisClientFactory
         from executor_manager.common.singleton import SingletonMeta
-        from executor_manager.services.heartbeat_manager import \
-            HeartbeatManager
+        from executor_manager.services.heartbeat_manager import HeartbeatManager
 
         # Reset SingletonMeta instances
         SingletonMeta.reset_all_instances()

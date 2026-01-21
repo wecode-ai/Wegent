@@ -2,24 +2,25 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
 import os
 import sys
 
+import pytest
+
 # Add shared directory to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from utils.crypto import (
-    encrypt_git_token,
-    decrypt_git_token,
-    is_token_encrypted,
-    encrypt_api_key,
     decrypt_api_key,
-    is_api_key_encrypted,
-    mask_api_key,
-    encrypt_sensitive_data,
+    decrypt_git_token,
     decrypt_sensitive_data,
-    is_data_encrypted
+    encrypt_api_key,
+    encrypt_git_token,
+    encrypt_sensitive_data,
+    is_api_key_encrypted,
+    is_data_encrypted,
+    is_token_encrypted,
+    mask_api_key,
 )
 
 
@@ -181,6 +182,7 @@ class TestGitTokenEncryption:
 
         # Reset the global key cache
         import utils.crypto as crypto_module
+
         crypto_module._aes_key = None
         crypto_module._aes_iv = None
 

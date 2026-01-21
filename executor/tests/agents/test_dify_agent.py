@@ -2,9 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
 import json
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
+
 from executor.agents.dify.dify_agent import DifyAgent
 from shared.status import TaskStatus
 
@@ -20,8 +22,10 @@ class TestDifyAgent:
         - requests.post: CallbackClient.send_callback() makes POST to callback URL
         Without these mocks, tests would make real HTTP requests causing long timeouts.
         """
-        with patch('executor.agents.dify.dify_agent.requests.get') as mock_get, \
-             patch('executor.callback.callback_client.requests.post') as mock_post:
+        with (
+            patch("executor.agents.dify.dify_agent.requests.get") as mock_get,
+            patch("executor.callback.callback_client.requests.post") as mock_post,
+        ):
             # Mock GET response for _get_app_mode()
             mock_get_response = MagicMock()
             mock_get_response.status_code = 200
@@ -31,7 +35,7 @@ class TestDifyAgent:
             # Mock POST response for callback
             mock_post_response = MagicMock()
             mock_post_response.status_code = 200
-            mock_post_response.content = b'{}'
+            mock_post_response.content = b"{}"
             mock_post_response.json.return_value = {}
             mock_post.return_value = mock_post_response
 
@@ -46,25 +50,24 @@ class TestDifyAgent:
             "task_title": "Test Task",
             "subtask_title": "Test Subtask",
             "prompt": "Hello Dify",
-            "bot_prompt": json.dumps({
-                "difyAppId": "app-test-123",
-                "params": {
-                    "customer_name": "John Doe",
-                    "language": "en-US"
+            "bot_prompt": json.dumps(
+                {
+                    "difyAppId": "app-test-123",
+                    "params": {"customer_name": "John Doe", "language": "en-US"},
                 }
-            }),
-            "bot": [{
-                "agent_config": {
-                    "env": {
-                        "DIFY_API_KEY": "app-test-api-key",
-                        "DIFY_BASE_URL": "https://api.dify.ai",
-                        "DIFY_APP_ID": "app-default-123"
+            ),
+            "bot": [
+                {
+                    "agent_config": {
+                        "env": {
+                            "DIFY_API_KEY": "app-test-api-key",
+                            "DIFY_BASE_URL": "https://api.dify.ai",
+                            "DIFY_APP_ID": "app-default-123",
+                        }
                     }
                 }
-            }],
-            "user": {
-                "user_name": "testuser"
-            }
+            ],
+            "user": {"user_name": "testuser"},
         }
 
     def test_init(self, task_data):
@@ -151,7 +154,7 @@ class TestDifyAgent:
         # DIFY_APP_ID is no longer required since each API key corresponds to one app
         assert result is True
 
-    @patch('executor.agents.dify.dify_agent.requests.post')
+    @patch("executor.agents.dify.dify_agent.requests.post")
     def test_call_dify_api_success(self, mock_post, task_data):
         """Test successful Dify API call"""
         # Mock streaming response
@@ -160,7 +163,7 @@ class TestDifyAgent:
         mock_response.iter_lines.return_value = [
             b'data: {"event": "message", "answer": "Hello", "conversation_id": "conv-123"}',
             b'data: {"event": "message", "answer": " World"}',
-            b'data: {"event": "message_end"}'
+            b'data: {"event": "message_end"}',
         ]
         mock_post.return_value = mock_response
 
@@ -171,7 +174,7 @@ class TestDifyAgent:
         assert result["conversation_id"] == "conv-123"
         assert mock_post.called
 
-    @patch('executor.agents.dify.dify_agent.requests.post')
+    @patch("executor.agents.dify.dify_agent.requests.post")
     def test_call_dify_api_error_response(self, mock_post, task_data):
         """Test Dify API call with error response"""
         # Mock error response
@@ -189,7 +192,7 @@ class TestDifyAgent:
 
         assert "Dify API error" in str(exc_info.value)
 
-    @patch('executor.agents.dify.dify_agent.requests.post')
+    @patch("executor.agents.dify.dify_agent.requests.post")
     def test_call_dify_api_http_error(self, mock_post, task_data):
         """Test Dify API call with HTTP error"""
         # Mock HTTP error
@@ -203,14 +206,14 @@ class TestDifyAgent:
         with pytest.raises(Exception):
             agent._call_dify_api("Test query")
 
-    @patch.object(DifyAgent, '_call_dify_api')
-    @patch.object(DifyAgent, '_validate_config')
+    @patch.object(DifyAgent, "_call_dify_api")
+    @patch.object(DifyAgent, "_validate_config")
     def test_execute_success(self, mock_validate, mock_call_api, task_data):
         """Test successful execution"""
         mock_validate.return_value = True
         mock_call_api.return_value = {
             "answer": "This is the answer from Dify",
-            "conversation_id": "conv-123"
+            "conversation_id": "conv-123",
         }
 
         agent = DifyAgent(task_data)
@@ -220,7 +223,7 @@ class TestDifyAgent:
         assert mock_validate.called
         assert mock_call_api.called
 
-    @patch.object(DifyAgent, '_validate_config')
+    @patch.object(DifyAgent, "_validate_config")
     def test_execute_invalid_config(self, mock_validate, task_data):
         """Test execution with invalid config"""
         mock_validate.return_value = False
@@ -230,23 +233,20 @@ class TestDifyAgent:
 
         assert result == TaskStatus.FAILED
 
-    @patch.object(DifyAgent, '_call_dify_api')
-    @patch.object(DifyAgent, '_validate_config')
+    @patch.object(DifyAgent, "_call_dify_api")
+    @patch.object(DifyAgent, "_validate_config")
     def test_execute_no_answer(self, mock_validate, mock_call_api, task_data):
         """Test execution with no answer from API"""
         mock_validate.return_value = True
-        mock_call_api.return_value = {
-            "answer": "",
-            "conversation_id": "conv-123"
-        }
+        mock_call_api.return_value = {"answer": "", "conversation_id": "conv-123"}
 
         agent = DifyAgent(task_data)
         result = agent.execute()
 
         assert result == TaskStatus.FAILED
 
-    @patch.object(DifyAgent, '_call_dify_api')
-    @patch.object(DifyAgent, '_validate_config')
+    @patch.object(DifyAgent, "_call_dify_api")
+    @patch.object(DifyAgent, "_validate_config")
     def test_execute_api_exception(self, mock_validate, mock_call_api, task_data):
         """Test execution with API exception"""
         mock_validate.return_value = True

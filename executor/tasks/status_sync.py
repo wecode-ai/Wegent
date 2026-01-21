@@ -13,38 +13,35 @@ Status Synchronizer - Ensures task status is correctly synchronized to backend o
 import asyncio
 from typing import Optional
 
-from shared.logger import setup_logger
 from executor.callback.callback_client import CallbackClient
+from shared.logger import setup_logger
 
 logger = setup_logger("status_sync")
 
 
 class StatusSynchronizer:
     """Ensures task status is correctly synchronized to backend on cancellation"""
-    
+
     def __init__(self, callback_client: Optional[CallbackClient] = None):
         """
         Initialize status synchronizer
-        
+
         Args:
             callback_client: Callback client, creates new one if not provided
         """
         self.callback_client = callback_client or CallbackClient()
-    
+
     async def sync_cancel_status(
-        self, 
-        task_id: int, 
-        subtask_id: int,
-        executor_name: Optional[str] = None
+        self, task_id: int, subtask_id: int, executor_name: Optional[str] = None
     ) -> bool:
         """
         Synchronize cancel status to backend (async version)
-        
+
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
             executor_name: Executor name
-            
+
         Returns:
             Whether synchronization was successful
         """
@@ -56,34 +53,31 @@ class StatusSynchronizer:
                 progress=100,
                 status="CANCELLED",
                 executor_name=executor_name,
-                error_message="Task was cancelled by user"
+                error_message="Task was cancelled by user",
             )
-            
+
             if success:
                 logger.info(f"Successfully synced cancel status for task {task_id}")
             else:
                 logger.warning(f"Failed to sync cancel status for task {task_id}")
-            
+
             return success
-            
+
         except Exception as e:
             logger.exception(f"Error syncing cancel status for task {task_id}: {e}")
             return False
-    
+
     def sync_cancel_status_sync(
-        self, 
-        task_id: int, 
-        subtask_id: int,
-        executor_name: Optional[str] = None
+        self, task_id: int, subtask_id: int, executor_name: Optional[str] = None
     ) -> bool:
         """
         Synchronize cancel status to backend (sync version)
-        
+
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
             executor_name: Executor name
-            
+
         Returns:
             Whether synchronization was successful
         """
@@ -103,7 +97,7 @@ class StatusSynchronizer:
             return asyncio.run(
                 self.sync_cancel_status(task_id, subtask_id, executor_name)
             )
-    
+
     async def sync_status(
         self,
         task_id: int,
@@ -111,11 +105,11 @@ class StatusSynchronizer:
         progress: int,
         status: str,
         executor_name: Optional[str] = None,
-        error_message: Optional[str] = None
+        error_message: Optional[str] = None,
     ) -> bool:
         """
         Synchronize any status to backend (async version)
-        
+
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
@@ -123,7 +117,7 @@ class StatusSynchronizer:
             status: Status
             executor_name: Executor name
             error_message: Error message
-            
+
         Returns:
             Whether synchronization was successful
         """
@@ -134,16 +128,18 @@ class StatusSynchronizer:
                 progress=progress,
                 status=status,
                 executor_name=executor_name,
-                error_message=error_message
+                error_message=error_message,
             )
-            
+
             if success:
-                logger.debug(f"Successfully synced status '{status}' for task {task_id}")
+                logger.debug(
+                    f"Successfully synced status '{status}' for task {task_id}"
+                )
             else:
                 logger.warning(f"Failed to sync status '{status}' for task {task_id}")
-            
+
             return success
-            
+
         except Exception as e:
             logger.exception(f"Error syncing status for task {task_id}: {e}")
             return False

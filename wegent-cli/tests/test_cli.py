@@ -1,9 +1,9 @@
 """Tests for wegent CLI commands."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 from click.testing import CliRunner
-from unittest.mock import patch, MagicMock
-
 from wegent.cli import cli
 
 
@@ -18,14 +18,25 @@ def mock_client():
     """Create mock client that is properly injected."""
     mock = MagicMock()
     # Properly mock normalize_kind to return valid kinds
-    valid_kinds = ['ghost', 'model', 'shell', 'bot', 'team', 'workspace', 'task', 'skill']
+    valid_kinds = [
+        "ghost",
+        "model",
+        "shell",
+        "bot",
+        "team",
+        "workspace",
+        "task",
+        "skill",
+    ]
+
     def normalize(k):
         k = k.lower()
-        if k.endswith('s') and k[:-1] in valid_kinds:
+        if k.endswith("s") and k[:-1] in valid_kinds:
             return k[:-1]
         if k in valid_kinds:
             return k
         raise ValueError(f"Invalid kind: {k}")
+
     mock.normalize_kind.side_effect = normalize
     mock.list_resources.return_value = []
     with patch("wegent.cli.WegentClient", return_value=mock):

@@ -12,11 +12,11 @@ import asyncio
 from typing import Optional
 
 import httpx
-from shared.logger import setup_logger
 
 from executor_manager.common.config import get_config
 from executor_manager.common.singleton import SingletonMeta
 from executor_manager.executors.docker.utils import get_container_ports
+from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 

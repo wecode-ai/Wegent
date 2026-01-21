@@ -115,8 +115,10 @@ class WegentClient:
         # Filter by name if provided
         if name_filter and items:
             items = [
-                item for item in items
-                if name_filter.lower() in item.get("metadata", {}).get("name", "").lower()
+                item
+                for item in items
+                if name_filter.lower()
+                in item.get("metadata", {}).get("name", "").lower()
             ]
         return items
 
@@ -126,7 +128,9 @@ class WegentClient:
         path = KIND_TO_PATH[kind]
         return self._request("GET", f"/v1/namespaces/{namespace}/{path}/{name}")
 
-    def create_resource(self, namespace: str, resource: Dict[str, Any]) -> Dict[str, Any]:
+    def create_resource(
+        self, namespace: str, resource: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Create a resource."""
         kind = resource.get("kind", "").lower()
         kind = self.normalize_kind(kind)

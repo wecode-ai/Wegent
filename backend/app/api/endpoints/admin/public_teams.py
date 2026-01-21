@@ -7,7 +7,6 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from shared.telemetry.decorators import trace_async
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -20,6 +19,7 @@ from app.schemas.admin import (
     PublicTeamResponse,
     PublicTeamUpdate,
 )
+from shared.telemetry.decorators import trace_async
 
 router = APIRouter()
 

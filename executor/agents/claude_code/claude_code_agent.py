@@ -20,23 +20,24 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+
+from executor.agents.agno.thinking_step_manager import ThinkingStepManager
+from executor.agents.base import Agent
+from executor.agents.claude_code.progress_state_manager import ProgressStateManager
+from executor.agents.claude_code.response_processor import process_response
+from executor.config import config
+from executor.tasks.resource_manager import ResourceManager
+from executor.tasks.task_state_manager import TaskState, TaskStateManager
+from executor.utils.mcp_utils import (
+    extract_mcp_servers_config,
+    replace_mcp_server_variables,
+)
 from shared.logger import setup_logger
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
 from shared.utils.crypto import decrypt_git_token, is_token_encrypted
 from shared.utils.sensitive_data_masker import mask_sensitive_data
-
-from executor.agents.agno.thinking_step_manager import ThinkingStepManager
-from executor.agents.base import Agent
-from executor.agents.claude_code.progress_state_manager import \
-    ProgressStateManager
-from executor.agents.claude_code.response_processor import process_response
-from executor.config import config
-from executor.tasks.resource_manager import ResourceManager
-from executor.tasks.task_state_manager import TaskState, TaskStateManager
-from executor.utils.mcp_utils import (extract_mcp_servers_config,
-                                      replace_mcp_server_variables)
 
 logger = setup_logger("claude_code_agent")
 
@@ -782,8 +783,10 @@ class ClaudeCodeAgent(Agent):
                 # Copy ContextVars before creating new event loop
                 # ContextVars don't automatically propagate to new event loops
                 try:
-                    from shared.telemetry.context import (copy_context_vars,
-                                                          restore_context_vars)
+                    from shared.telemetry.context import (
+                        copy_context_vars,
+                        restore_context_vars,
+                    )
 
                     saved_context = copy_context_vars()
                 except ImportError:
@@ -1196,7 +1199,9 @@ class ClaudeCodeAgent(Agent):
                     # Copy ContextVars before creating new event loop
                     try:
                         from shared.telemetry.context import (
-                            copy_context_vars, restore_context_vars)
+                            copy_context_vars,
+                            restore_context_vars,
+                        )
 
                         saved_context = copy_context_vars()
                     except ImportError:
@@ -1394,10 +1399,10 @@ class ClaudeCodeAgent(Agent):
             workspace = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
 
             # Import and use attachment downloader
-            from executor.services.attachment_downloader import \
-                AttachmentDownloader
-            from executor.services.attachment_prompt_processor import \
-                AttachmentPromptProcessor
+            from executor.services.attachment_downloader import AttachmentDownloader
+            from executor.services.attachment_prompt_processor import (
+                AttachmentPromptProcessor,
+            )
 
             downloader = AttachmentDownloader(
                 workspace=workspace,

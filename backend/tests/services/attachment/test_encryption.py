@@ -10,6 +10,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from shared.utils.crypto import (
     decrypt_attachment,
     encrypt_attachment,

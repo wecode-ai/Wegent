@@ -8,8 +8,7 @@ Skill binary storage model for Claude Code Skills ZIP packages.
 
 from datetime import datetime
 
-from sqlalchemy import (Column, DateTime, ForeignKey, Integer, LargeBinary,
-                        String)
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String
 
 from .base import Base
 
