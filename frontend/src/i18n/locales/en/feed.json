@@ -235,6 +235,11 @@
     "copy_ids": "Copy IDs",
     "ids_copied": "IDs copied to clipboard",
     "no_messages": "No messages yet",
-    "open_in_chat": "Open in Chat"
+    "open_in_chat": "Open in Chat",
+    "delete_execution": "Delete",
+    "delete_success": "Execution deleted",
+    "delete_failed": "Failed to delete execution",
+    "delete_confirm_title": "Delete Execution",
+    "delete_confirm_message": "Are you sure you want to delete this execution? This action cannot be undone."
   }
 }

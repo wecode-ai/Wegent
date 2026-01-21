@@ -235,6 +235,11 @@
     "copy_ids": "复制 ID",
     "ids_copied": "ID 已复制到剪贴板",
     "no_messages": "暂无消息",
-    "open_in_chat": "在对话中打开"
+    "open_in_chat": "在对话中打开",
+    "delete_execution": "删除",
+    "delete_success": "执行记录已删除",
+    "delete_failed": "删除执行记录失败",
+    "delete_confirm_title": "删除执行记录",
+    "delete_confirm_message": "确定要删除这条执行记录吗？此操作无法撤销。"
   }
 }
