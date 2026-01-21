@@ -34,6 +34,7 @@ from executor_manager.executors.docker.utils import (build_callback_url,
                                                      delete_container,
                                                      find_available_port,
                                                      get_container_ports,
+                                                     get_container_status,
                                                      get_running_task_details)
 from executor_manager.utils.executor_name import generate_executor_name
 
@@ -228,10 +229,24 @@ class DockerExecutor(Executor):
         # Send HTTP request to container
         response = self._send_task_to_container(task, DEFAULT_DOCKER_HOST, port_info)
 
-        # Process response
-        if response.json()["status"] == "success":
+        # Process response - check HTTP status code for success
+        if response.status_code == 200:
             status["progress"] = DEFAULT_PROGRESS_COMPLETE
             status["error_msg"] = response.json().get("error_msg", "")
+
+            # Task sent successfully to existing container, register for heartbeat monitoring
+            # This handles re-execution cases where Redis keys were cleaned up after first completion
+            task_id = task.get("task_id")
+            subtask_id = task.get("subtask_id")
+            task_type = task.get("type", "online")
+
+            self.register_task_for_heartbeat(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                executor_name=executor_name,
+                task_type=task_type,
+                context=f"existing container: {executor_name}",
+            )
 
     def _get_container_port(
         self, executor_name: str
@@ -331,26 +346,12 @@ class DockerExecutor(Executor):
 
             # Register regular tasks to RunningTaskTracker for heartbeat monitoring
             # This enables OOM detection for non-sandbox tasks
-            is_sandbox_task = task.get("type") == "sandbox"
-            if not is_validation_task and not is_sandbox_task:
-                try:
-                    from executor_manager.services.task_heartbeat_manager import \
-                        get_running_task_tracker
-
-                    tracker = get_running_task_tracker()
-                    tracker.add_running_task(
-                        task_id=task_id,
-                        subtask_id=task_info["subtask_id"],
-                        executor_name=executor_name,
-                        task_type=task.get("type", "online"),
-                    )
-                    logger.debug(
-                        f"Registered task {task_id} to RunningTaskTracker for heartbeat monitoring"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to register task to RunningTaskTracker: {e}"
-                    )
+            self.register_task_for_heartbeat(
+                task_id=task_id,
+                subtask_id=task_info["subtask_id"],
+                executor_name=executor_name,
+                task_type=task.get("type", "online"),
+            )
 
             # For validation tasks, report starting_container stage
             if is_validation_task:
@@ -1170,3 +1171,36 @@ class DockerExecutor(Executor):
                     )
         except Exception as e:
             logger.error(f"Error reporting validation stage: {e}")
+
+    def get_container_status(self, executor_name: str) -> Dict[str, Any]:
+        """Get detailed status information for a Docker container.
+
+        This is a wrapper around the utils.get_container_status function
+        to implement the Executor interface.
+
+        Args:
+            executor_name: Name of the container to check
+
+        Returns:
+            Dict with the following fields:
+                - exists (bool): Whether container exists
+                - status (str): Container status (running/exited/paused/etc)
+                - oom_killed (bool): Whether container was killed due to OOM
+                - exit_code (int): Container exit code (0 = success, 137 = SIGKILL, etc)
+                - error_msg (str): Error message if any
+        """
+        return get_container_status(executor_name)
+
+    def get_executor_task_id(self, executor_name: str) -> Optional[str]:
+        """Get task_id from container label.
+
+        Args:
+            executor_name: Name of the container
+
+        Returns:
+            task_id string if found, None otherwise
+        """
+        from executor_manager.executors.docker.utils import \
+            get_container_task_id
+
+        return get_container_task_id(executor_name)

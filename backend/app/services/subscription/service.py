@@ -701,6 +701,10 @@ class SubscriptionService:
         """Cancel an execution."""
         return self.execution_manager.cancel_execution(db, **kwargs)
 
+    def delete_execution(self, db: Session, **kwargs) -> None:
+        """Delete an execution."""
+        return self.execution_manager.delete_execution(db, **kwargs)
+
     def list_executions(self, db: Session, **kwargs):
         """List executions."""
         return self.execution_manager.list_executions(db, **kwargs)

@@ -194,10 +194,7 @@ export const subscriptionApis = {
   /**
    * Revoke a user's invitation
    */
-  async revokeUserInvitation(
-    subscriptionId: number,
-    userId: number
-  ): Promise<{ message: string }> {
+  async revokeUserInvitation(subscriptionId: number, userId: number): Promise<{ message: string }> {
     return apiClient.delete(`/subscriptions/${subscriptionId}/invite/${userId}`)
   },
 
@@ -278,5 +275,13 @@ export const subscriptionApis = {
       queryParams.append('search', params.search)
     }
     return apiClient.get(`/subscriptions/discover?${queryParams.toString()}`)
+  },
+
+  /**
+   * Delete an execution record
+   * Only executions in terminal states (COMPLETED, FAILED, CANCELLED) can be deleted
+   */
+  async deleteExecution(id: number): Promise<void> {
+    await apiClient.delete(`/subscriptions/executions/${id}`)
   },
 }

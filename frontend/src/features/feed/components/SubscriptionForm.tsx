@@ -54,6 +54,7 @@ import type {
 import { toast } from 'sonner'
 import { CronSchedulePicker } from './CronSchedulePicker'
 import { RepositorySelector, BranchSelector } from '@/features/tasks/components/selector'
+import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { cn, parseUTCDate } from '@/lib/utils'
 
 // Model type for selector
@@ -609,36 +610,31 @@ export function SubscriptionForm({
           </div>
         )
       case 'one_time': {
-        // Convert UTC ISO string to local datetime-local format (YYYY-MM-DDTHH:mm)
-        const getLocalDateTimeValue = (isoString: string | undefined): string => {
-          if (!isoString) return ''
+        // Convert UTC ISO string to local Date object
+        const getLocalDate = (isoString: string | undefined): Date | undefined => {
+          if (!isoString) return undefined
           // Use parseUTCDate to correctly parse UTC time from backend
           const date = parseUTCDate(isoString)
-          if (!date || isNaN(date.getTime())) return ''
-          // Format as local time for datetime-local input
-          const year = date.getFullYear()
-          const month = String(date.getMonth() + 1).padStart(2, '0')
-          const day = String(date.getDate()).padStart(2, '0')
-          const hours = String(date.getHours()).padStart(2, '0')
-          const minutes = String(date.getMinutes()).padStart(2, '0')
-          return `${year}-${month}-${day}T${hours}:${minutes}`
+          if (!date || isNaN(date.getTime())) return undefined
+          return date
         }
 
+        const currentDate = getLocalDate(triggerConfig.execute_at as string)
+
         return (
-          <div>
+          <div className="space-y-3">
             <Label>{t('execute_at')}</Label>
-            <Input
-              type="datetime-local"
-              value={getLocalDateTimeValue(triggerConfig.execute_at as string)}
-              onChange={e => {
-                if (e.target.value) {
-                  // Convert local datetime-local value to UTC ISO string
+            <DateTimePicker
+              value={currentDate}
+              onChange={date => {
+                if (date) {
                   setTriggerConfig({
                     ...triggerConfig,
-                    execute_at: new Date(e.target.value).toISOString(),
+                    execute_at: date.toISOString(),
                   })
                 }
               }}
+              placeholder={t('select_datetime')}
             />
           </div>
         )

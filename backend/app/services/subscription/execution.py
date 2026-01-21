@@ -239,6 +239,59 @@ class BackgroundExecutionManager:
 
         return BackgroundExecutionInDB(**exec_dict)
 
+    def delete_execution(
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        user_id: int,
+    ) -> None:
+        """
+        Delete a background execution record.
+
+        This method allows users to delete an execution record from the timeline.
+        Only executions in terminal states (COMPLETED, FAILED, CANCELLED) can be deleted.
+        Running or pending executions must be cancelled first.
+
+        Args:
+            db: Database session
+            execution_id: ID of the execution to delete
+            user_id: ID of the user requesting deletion
+
+        Raises:
+            HTTPException: If execution not found or cannot be deleted
+        """
+        execution = (
+            db.query(BackgroundExecution)
+            .filter(
+                BackgroundExecution.id == execution_id,
+                BackgroundExecution.user_id == user_id,
+            )
+            .first()
+        )
+
+        if not execution:
+            raise HTTPException(status_code=404, detail="Execution not found")
+
+        current_status = BackgroundExecutionStatus(execution.status)
+
+        # Only allow deletion of executions in terminal states
+        if not is_terminal_state(current_status):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete execution in {current_status.value} state. Please cancel it first.",
+            )
+
+        # Delete the execution record
+        db.delete(execution)
+        db.commit()
+
+        logger.info(
+            f"[Subscription] Execution {execution_id} deleted by user {user_id}: "
+            f"subscription_id={execution.subscription_id}, task_id={execution.task_id}, "
+            f"status={current_status.value}"
+        )
+
     def list_executions(
         self,
         db: Session,
