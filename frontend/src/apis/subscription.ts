@@ -131,4 +131,12 @@ export const subscriptionApis = {
   async cancelExecution(id: number): Promise<BackgroundExecution> {
     return apiClient.post(`/subscriptions/executions/${id}/cancel`)
   },
+
+  /**
+   * Delete an execution record
+   * Only executions in terminal states (COMPLETED, FAILED, CANCELLED) can be deleted
+   */
+  async deleteExecution(id: number): Promise<void> {
+    await apiClient.delete(`/subscriptions/executions/${id}`)
+  },
 }
