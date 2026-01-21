@@ -149,7 +149,10 @@ export interface BubbleToolsProps {
   /** Whether regenerate is in progress */
   isRegenerating?: boolean
   /** Optional render prop for custom regenerate button with popover */
-  renderRegenerateButton?: (defaultButton: React.ReactNode) => React.ReactNode
+  renderRegenerateButton?: (
+    defaultButton: React.ReactNode,
+    tooltipText: string
+  ) => React.ReactNode
 }
 
 // Bubble toolbar: supports copy button, feedback buttons, and extensible tool buttons
@@ -199,18 +202,19 @@ const BubbleTools = ({
             </Button>
           )
 
-          // Always wrap the button (with or without popover) in a Tooltip
-          // When using PopoverTrigger, the Tooltip wraps the entire Popover component
-          const buttonWithPopover = renderRegenerateButton
-            ? renderRegenerateButton(rawButton)
-            : rawButton
+          const tooltipText =
+            t('chat:regenerate.tooltip') || t('chat:actions.regenerate') || 'Regenerate'
+
+          // When using renderRegenerateButton (with Popover), tooltip is handled inside the Popover component
+          // When not using renderRegenerateButton, wrap button with Tooltip here
+          if (renderRegenerateButton) {
+            return renderRegenerateButton(rawButton, tooltipText)
+          }
 
           return (
             <Tooltip>
-              <TooltipTrigger asChild>{buttonWithPopover}</TooltipTrigger>
-              <TooltipContent>
-                {t('chat:regenerate.tooltip') || t('chat:actions.regenerate') || 'Regenerate'}
-              </TooltipContent>
+              <TooltipTrigger asChild>{rawButton}</TooltipTrigger>
+              <TooltipContent>{tooltipText}</TooltipContent>
             </Tooltip>
           )
         })()}
