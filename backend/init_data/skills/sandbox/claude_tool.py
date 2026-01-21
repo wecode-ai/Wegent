@@ -215,18 +215,12 @@ Example:
                 f"[SandboxClaudeTool] Running Claude command in sandbox {sandbox.sandbox_id}"
             )
 
-            # Execute command using sandbox.commands API
-            # Run synchronous command in executor without callbacks to avoid event loop issues
-            loop = asyncio.get_event_loop()
-
+            # Execute command using sandbox.commands API with async
             # Start the command without streaming callbacks
-            process = await loop.run_in_executor(
-                None,
-                lambda: sandbox.commands.run(
-                    cmd=command,
-                    cwd=working_dir,
-                    timeout=effective_timeout,
-                ),
+            process = await sandbox.commands.run(
+                cmd=command,
+                cwd=working_dir,
+                timeout=effective_timeout,
             )
 
             execution_time = time.time() - start_time

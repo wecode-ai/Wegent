@@ -31,6 +31,7 @@ export default function NotificationSettings() {
   const [supported, setSupported] = useState(true)
   const [sendKey, setSendKey] = useState<'enter' | 'cmd_enter'>('enter')
   const [searchKey, setSearchKey] = useState<'cmd_k' | 'cmd_f' | 'disabled'>('cmd_k')
+  const [memoryEnabled, setMemoryEnabled] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
@@ -45,8 +46,10 @@ export default function NotificationSettings() {
     if (user) {
       const userSendKey = user.preferences?.send_key || 'enter'
       const userSearchKey = user.preferences?.search_key || 'cmd_k'
+      const userMemoryEnabled = user.preferences?.memory_enabled ?? false
       setSendKey(userSendKey)
       setSearchKey(userSearchKey)
+      setMemoryEnabled(userMemoryEnabled)
     }
   }, [user])
 
@@ -124,6 +127,33 @@ export default function NotificationSettings() {
       })
       // Revert to previous value
       setSearchKey(user?.preferences?.search_key || 'cmd_k')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleMemoryToggle = async (checked: boolean) => {
+    setMemoryEnabled(checked)
+    setIsSaving(true)
+    try {
+      const preferences: UserPreferences = {
+        send_key: user?.preferences?.send_key || 'enter',
+        search_key: user?.preferences?.search_key || 'cmd_k',
+        memory_enabled: checked,
+      }
+      await userApis.updateUser({ preferences })
+      await refresh()
+      toast({
+        title: t('common:memory.save_success'),
+      })
+    } catch (error) {
+      console.error('Failed to save memory preference:', error)
+      toast({
+        variant: 'destructive',
+        title: t('common:memory.save_failed'),
+      })
+      // Revert to previous value
+      setMemoryEnabled(user?.preferences?.memory_enabled ?? false)
     } finally {
       setIsSaving(false)
     }
@@ -223,6 +253,15 @@ export default function NotificationSettings() {
             </Label>
           </div>
         </RadioGroup>
+      </div>
+
+      {/* Long-term Memory Setting */}
+      <div className="flex items-center justify-between p-4 bg-base border border-border rounded-lg">
+        <div className="flex-1">
+          <h3 className="text-sm font-medium text-text-primary">{t('common:memory.title')}</h3>
+          <p className="text-xs text-text-muted mt-1">{t('common:memory.description')}</p>
+        </div>
+        <Switch checked={memoryEnabled} onCheckedChange={handleMemoryToggle} disabled={isSaving} />
       </div>
 
       {/* Restart Onboarding Button */}

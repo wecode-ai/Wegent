@@ -10,6 +10,9 @@
 // Subscription task type enumeration
 export type SubscriptionTaskType = 'execution' | 'collection'
 
+// Subscription visibility enumeration
+export type SubscriptionVisibility = 'public' | 'private'
+
 // Subscription trigger type enumeration
 export type SubscriptionTriggerType = 'cron' | 'interval' | 'one_time' | 'event'
 
@@ -71,6 +74,7 @@ export interface Subscription {
   display_name: string
   description?: string
   task_type: SubscriptionTaskType
+  visibility: SubscriptionVisibility
   trigger_type: SubscriptionTriggerType
   trigger_config: Record<string, unknown>
   team_id: number
@@ -93,6 +97,10 @@ export interface Subscription {
   execution_count: number
   success_count: number
   failure_count: number
+  // Visibility and follow-related fields
+  followers_count: number
+  is_following: boolean
+  owner_username?: string
   created_at: string
   updated_at: string
 }
@@ -104,6 +112,7 @@ export interface SubscriptionCreateRequest {
   display_name: string
   description?: string
   task_type: SubscriptionTaskType
+  visibility?: SubscriptionVisibility
   trigger_type: SubscriptionTriggerType
   trigger_config: Record<string, unknown>
   team_id: number
@@ -129,6 +138,7 @@ export interface SubscriptionUpdateRequest {
   display_name?: string
   description?: string
   task_type?: SubscriptionTaskType
+  visibility?: SubscriptionVisibility
   trigger_type?: SubscriptionTriggerType
   trigger_config?: Record<string, unknown>
   team_id?: number
@@ -194,4 +204,90 @@ export interface SubscriptionTimelineFilter {
   subscription_ids?: number[]
   team_ids?: number[]
   task_types?: SubscriptionTaskType[]
+}
+
+// ========== Subscription Follow/Visibility Types ==========
+
+// Follow type enumeration
+export type FollowType = 'direct' | 'invited'
+
+// Invitation status enumeration
+export type InvitationStatus = 'pending' | 'accepted' | 'rejected'
+
+// Follower response
+export interface SubscriptionFollowerResponse {
+  user_id: number
+  username: string
+  follow_type: FollowType
+  followed_at: string
+}
+
+// Followers list response
+export interface SubscriptionFollowersListResponse {
+  total: number
+  items: SubscriptionFollowerResponse[]
+}
+
+// Following subscription response
+export interface FollowingSubscriptionResponse {
+  subscription: Subscription
+  follow_type: FollowType
+  followed_at: string
+}
+
+// Following subscriptions list response
+export interface FollowingSubscriptionsListResponse {
+  total: number
+  items: FollowingSubscriptionResponse[]
+}
+
+// Invite user request
+export interface InviteUserRequest {
+  user_id?: number
+  email?: string
+}
+
+// Invite namespace request
+export interface InviteNamespaceRequest {
+  namespace_id: number
+}
+
+// Subscription invitation response
+export interface SubscriptionInvitationResponse {
+  id: number
+  subscription_id: number
+  subscription_name: string
+  subscription_display_name: string
+  invited_by_user_id: number
+  invited_by_username: string
+  invitation_status: InvitationStatus
+  invited_at: string
+  owner_username: string
+}
+
+// Invitations list response
+export interface SubscriptionInvitationsListResponse {
+  total: number
+  items: SubscriptionInvitationResponse[]
+}
+
+// Discover subscription response
+export interface DiscoverSubscriptionResponse {
+  id: number
+  name: string
+  display_name: string
+  description?: string
+  task_type: SubscriptionTaskType
+  owner_user_id: number
+  owner_username: string
+  followers_count: number
+  is_following: boolean
+  created_at: string
+  updated_at: string
+}
+
+// Discover subscriptions list response
+export interface DiscoverSubscriptionsListResponse {
+  total: number
+  items: DiscoverSubscriptionResponse[]
 }

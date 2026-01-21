@@ -5,10 +5,10 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Copy, Check, ThumbsUp, ThumbsDown, Pencil } from 'lucide-react'
+import { Copy, Check, ThumbsUp, ThumbsDown, Pencil, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { FeedbackState } from '@/hooks/useMessageFeedback'
 
 // CopyButton component for copying markdown content
@@ -142,6 +142,17 @@ export interface BubbleToolsProps {
     like: string
     dislike: string
   }
+  /** Handler for regenerate button click (opens model selection popover) */
+  onRegenerateClick?: () => void
+  /** Whether regenerate button should be shown */
+  showRegenerate?: boolean
+  /** Whether regenerate is in progress */
+  isRegenerating?: boolean
+  /** Optional render prop for custom regenerate button with popover */
+  renderRegenerateButton?: (
+    defaultButton: React.ReactNode,
+    tooltipText: string
+  ) => React.ReactNode
 }
 
 // Bubble toolbar: supports copy button, feedback buttons, and extensible tool buttons
@@ -153,6 +164,10 @@ const BubbleTools = ({
   onLike,
   onDislike,
   feedbackLabels,
+  onRegenerateClick,
+  showRegenerate,
+  isRegenerating,
+  renderRegenerateButton,
 }: BubbleToolsProps) => {
   const { t } = useTranslation()
 
@@ -165,6 +180,44 @@ const BubbleTools = ({
         tooltip={t('chat:actions.copy') || 'Copy'}
         className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
       />
+      {/* Regenerate button - only shown when showRegenerate is true */}
+      {showRegenerate &&
+        (() => {
+          // When renderRegenerateButton is provided, the button is wrapped in a PopoverTrigger
+          // In that case, we should NOT include onClick since PopoverTrigger handles the open state
+          const hasPopoverWrapper = !!renderRegenerateButton
+
+          // The raw button - onClick is only set when there's no popover wrapper
+          const rawButton = (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={hasPopoverWrapper ? undefined : onRegenerateClick}
+              disabled={isRegenerating}
+              className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec disabled:opacity-50"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 text-text-muted ${isRegenerating ? 'animate-spin' : ''}`}
+              />
+            </Button>
+          )
+
+          const tooltipText =
+            t('chat:regenerate.tooltip') || t('chat:actions.regenerate') || 'Regenerate'
+
+          // When using renderRegenerateButton (with Popover), tooltip is handled inside the Popover component
+          // When not using renderRegenerateButton, wrap button with Tooltip here
+          if (renderRegenerateButton) {
+            return renderRegenerateButton(rawButton, tooltipText)
+          }
+
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>{rawButton}</TooltipTrigger>
+              <TooltipContent>{tooltipText}</TooltipContent>
+            </Tooltip>
+          )
+        })()}
       {/* Feedback buttons: like and dislike */}
       <Tooltip>
         <TooltipTrigger asChild>

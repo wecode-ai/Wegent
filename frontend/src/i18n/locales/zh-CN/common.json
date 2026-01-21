@@ -552,6 +552,12 @@
     "save_success": "搜索快捷键已保存",
     "save_failed": "保存搜索快捷键失败"
   },
+  "memory": {
+    "title": "长期记忆",
+    "description": "让AI记住您在不同任务中的对话历史和上下文信息",
+    "save_success": "记忆偏好设置已保存",
+    "save_failed": "保存记忆偏好设置失败"
+  },
   "guide": {
     "title": "欢迎",
     "description": "在开始使用此应用之前，请先完成下面的设置！",
@@ -578,6 +584,12 @@
     "skip": "跳过",
     "done": "完成",
     "restart_tour": "重新查看新手引导"
+  },
+  "time": {
+    "just_now": "刚刚",
+    "minutes_ago": "{{count}} 分钟前",
+    "hours_ago": "{{count}} 小时前",
+    "days_ago": "{{count}} 天前"
   },
   "common": {
     "back": "返回",

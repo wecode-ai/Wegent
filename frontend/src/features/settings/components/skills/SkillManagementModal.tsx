@@ -191,7 +191,7 @@ export default function SkillManagementModal({
                             <PackageIcon className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
                             <div className="min-w-0 flex-1">
                               <h3 className="text-base font-medium text-text-primary truncate">
-                                {skill.name}
+                                {skill.displayName || skill.name}
                               </h3>
                               <p className="text-sm text-text-secondary mt-1 line-clamp-2">
                                 {skill.description}
