@@ -264,6 +264,26 @@ def cancel_execution(
     )
 
 
+@router.delete("/executions/{execution_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_execution(
+    execution_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Delete a background execution record.
+
+    This endpoint allows users to delete an execution record from the timeline.
+    Only executions in terminal states (COMPLETED, FAILED, CANCELLED) can be deleted.
+    Running or pending executions must be cancelled first.
+    """
+    subscription_service.delete_execution(
+        db=db,
+        execution_id=execution_id,
+        user_id=current_user.id,
+    )
+
+
 # ========== Webhook Trigger Endpoint ==========
 
 

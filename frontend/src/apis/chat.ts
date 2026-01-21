@@ -10,9 +10,10 @@
  */
 
 import { getToken } from './user'
+import { getApiBaseUrl } from '@/lib/runtime-config'
 
-// API base URL - uses Next.js API Route
-const API_BASE_URL = '/api'
+// Use dynamic API base URL from runtime config
+const getApiUrl = () => getApiBaseUrl()
 
 /**
  * Response from check direct chat API
@@ -31,7 +32,7 @@ export interface CheckDirectChatResponse {
 export async function checkDirectChat(teamId: number): Promise<CheckDirectChatResponse> {
   const token = getToken()
 
-  const response = await fetch(`${API_BASE_URL}/chat/check-direct-chat/${teamId}`, {
+  const response = await fetch(`${getApiUrl()}/chat/check-direct-chat/${teamId}`, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -88,7 +89,7 @@ export interface CancelChatResponse {
 export async function cancelChat(request: CancelChatRequest): Promise<CancelChatResponse> {
   const token = getToken()
 
-  const response = await fetch(`${API_BASE_URL}/chat/cancel`, {
+  const response = await fetch(`${getApiUrl()}/chat/cancel`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -143,7 +144,7 @@ export interface StreamingContentResponse {
 export async function getStreamingContent(subtaskId: number): Promise<StreamingContentResponse> {
   const token = getToken()
 
-  const response = await fetch(`${API_BASE_URL}/chat/streaming-content/${subtaskId}`, {
+  const response = await fetch(`${getApiUrl()}/chat/streaming-content/${subtaskId}`, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
@@ -222,7 +223,7 @@ export async function resumeStreamWithOffset(
   const fetchStream = async () => {
     try {
       const response = await fetch(
-        `${API_BASE_URL}/chat/resume-stream/${subtaskId}?offset=${offset}`,
+        `${getApiUrl()}/chat/resume-stream/${subtaskId}?offset=${offset}`,
         {
           method: 'GET',
           headers: {
@@ -313,7 +314,7 @@ export interface SearchEnginesResponse {
 export async function getSearchEngines(): Promise<SearchEnginesResponse> {
   const token = getToken()
 
-  const response = await fetch(`${API_BASE_URL}/chat/search-engines`, {
+  const response = await fetch(`${getApiUrl()}/chat/search-engines`, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',

@@ -280,7 +280,7 @@ class SandboxManager:
         self,
         shell_type: str,
         workspace_ref: Optional[str] = None,
-        task_type: str = "generic",
+        task_type: str = "sandbox",
     ) -> tuple[Any, Optional[str]]:
         """Create a fresh sandbox instance using E2B SDK.
 

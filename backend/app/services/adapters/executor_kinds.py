@@ -656,7 +656,7 @@ class ExecutorKindsService(
         model_name: str,
         bind_model_type: Optional[str],
         bind_model_namespace: str,
-        bot_user_id: int,
+        model_user_id: int,
     ) -> Optional[Kind]:
         """
         Resolve model by bind_model_type.
@@ -666,7 +666,7 @@ class ExecutorKindsService(
             model_name: Model name to resolve
             bind_model_type: Model type ('public', 'user', 'group', or None)
             bind_model_namespace: Model namespace
-            bot_user_id: Bot's user_id for personal resource lookup
+            model_user_id: User ID for model lookup (chat user for force_override, bot user otherwise)
 
         Returns:
             Model Kind object or None
@@ -697,11 +697,13 @@ class ExecutorKindsService(
                 .first()
             )
         elif bind_model_type == "user":
-            # User's private model - query with bot's user_id
+            # User's private model - query with the provided user_id
+            # When force_override is true, this is the chat user's ID
+            # Otherwise, this is the bot's user_id
             return (
                 db.query(Kind)
                 .filter(
-                    Kind.user_id == bot_user_id,
+                    Kind.user_id == model_user_id,
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == bind_model_namespace,
@@ -715,7 +717,7 @@ class ExecutorKindsService(
             model_kind = (
                 db.query(Kind)
                 .filter(
-                    Kind.user_id == bot_user_id,
+                    Kind.user_id == model_user_id,
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == "default",
@@ -744,6 +746,7 @@ class ExecutorKindsService(
         agent_config: Dict[str, Any],
         task_crd: Task,
         bot_user_id: int,
+        chat_user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Resolve model configuration with support for bind_model and task-level override.
@@ -752,7 +755,8 @@ class ExecutorKindsService(
             db: Database session
             agent_config: Current agent configuration
             task_crd: Task CRD for task-level model info
-            bot_user_id: Bot's user_id for model lookup
+            bot_user_id: Bot's user_id for model lookup (used when not force_override)
+            chat_user_id: Chat user's ID for model lookup (used when force_override is true)
 
         Returns:
             Resolved agent configuration
@@ -795,17 +799,31 @@ class ExecutorKindsService(
 
             # 3. Query kinds table for Model CRD and replace config
             if model_name_to_use:
-                bind_model_type = agent_config.get("bind_model_type")
-                bind_model_namespace = agent_config.get(
-                    "bind_model_namespace", "default"
-                )
+                # When force_override is true, get model type from task labels
+                # This is the type specified by the user when sending the message
+                if force_override and task_model_name:
+                    bind_model_type = task_crd.metadata.labels.get(
+                        "forceOverrideBotModelType"
+                    )
+                    bind_model_namespace = "default"
+                    # Use chat_user_id for force_override (the user who sent the message)
+                    model_user_id = (
+                        chat_user_id if chat_user_id is not None else bot_user_id
+                    )
+                else:
+                    bind_model_type = agent_config.get("bind_model_type")
+                    bind_model_namespace = agent_config.get(
+                        "bind_model_namespace", "default"
+                    )
+                    # Use bot_user_id for normal model lookup
+                    model_user_id = bot_user_id
 
                 model_kind = self._resolve_model_by_type(
                     db,
                     model_name_to_use,
                     bind_model_type,
                     bind_model_namespace,
-                    bot_user_id,
+                    model_user_id,
                 )
 
                 if model_kind and model_kind.json:
@@ -1086,8 +1104,9 @@ class ExecutorKindsService(
                     bot_prompt += f"\n{team_member_info.prompt}"
 
                 # Resolve model config using helper method
+                # Pass subtask.user_id as chat_user_id for force_override model lookup
                 agent_config_data = self._resolve_model_config(
-                    db, agent_config, task_crd, bot.user_id
+                    db, agent_config, task_crd, bot.user_id, subtask.user_id
                 )
 
                 bots.append(

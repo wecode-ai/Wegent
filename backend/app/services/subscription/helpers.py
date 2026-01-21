@@ -211,10 +211,13 @@ def build_trigger_config(
         execute_at_str = trigger_config.get("execute_at")
         if not execute_at_str:
             raise ValueError("execute_at is required for ONE_TIME trigger type")
+        # Handle ISO format with 'Z' suffix (JavaScript's toISOString() format)
+        # Python's fromisoformat() doesn't support 'Z', need to replace with '+00:00'
+        execute_at_normalized = execute_at_str.replace("Z", "+00:00")
         return SubscriptionTriggerConfig(
             type=trigger_type_enum,
             one_time=OneTimeTriggerConfig(
-                execute_at=datetime.fromisoformat(execute_at_str),
+                execute_at=datetime.fromisoformat(execute_at_normalized),
             ),
         )
     elif trigger_type_enum == SubscriptionTriggerType.EVENT:
