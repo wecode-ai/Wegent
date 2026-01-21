@@ -18,6 +18,7 @@ import {
   pointerWithin,
   rectIntersection,
   CollisionDetection,
+  Collision,
 } from '@dnd-kit/core'
 import { Task } from '@/types/api'
 import { useProjectContext } from './projectContext'
@@ -69,7 +70,8 @@ export function TaskDndProvider({ children }: TaskDndProviderProps) {
     if (pointerCollisions.length > 0) {
       // Find project collisions first
       const projectCollision = pointerCollisions.find(
-        collision => collision.data?.droppableContainer?.data?.current?.type === 'project'
+        (collision: Collision) =>
+          collision.data?.droppableContainer?.data?.current?.type === 'project'
       )
       if (projectCollision) {
         return [projectCollision]
@@ -77,7 +79,8 @@ export function TaskDndProvider({ children }: TaskDndProviderProps) {
 
       // If no project collision, check for history
       const historyCollision = pointerCollisions.find(
-        collision => collision.data?.droppableContainer?.data?.current?.type === 'history'
+        (collision: Collision) =>
+          collision.data?.droppableContainer?.data?.current?.type === 'history'
       )
       if (historyCollision) {
         return [historyCollision]
