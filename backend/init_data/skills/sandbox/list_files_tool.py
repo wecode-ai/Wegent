@@ -163,13 +163,8 @@ Example:
                 f"[SandboxListFilesTool] Listing files in sandbox {sandbox.sandbox_id}"
             )
 
-            # Use native filesystem.list() API
-            # Run in thread pool since E2B SDK may be sync
-            loop = asyncio.get_event_loop()
-            entries = await loop.run_in_executor(
-                None,
-                lambda: sandbox.files.list(path=path, depth=depth),
-            )
+            # Use native filesystem.list() API with async
+            entries = await sandbox.files.list(path=path, depth=depth)
 
             # Convert entries to JSON-serializable format
             entries_data = []
