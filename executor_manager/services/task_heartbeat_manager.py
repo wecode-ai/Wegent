@@ -124,9 +124,13 @@ class RunningTaskTracker:
                     "start_time": str(start_time),
                 },
             )
-            # Set TTL for metadata (auto-cleanup for stale entries)
-            # Default to 24 hours to support long-running tasks
-            ttl = int(os.getenv("RUNNING_TASK_TTL", "86400"))
+            # Set a long TTL (7 days) as safety net to prevent data leakage
+            # if cleanup mechanisms fail. Normal cleanup happens via:
+            # 1. Task completes (callback received) -> remove_running_task()
+            # 2. Heartbeat timeout detected -> _handle_task_dead()
+            # 3. Task cancelled -> remove_running_task()
+            # 4. Executor deleted -> remove_running_task()
+            ttl = int(os.getenv("RUNNING_TASK_META_TTL", "604800"))  # 7 days default
             self._sync_client.expire(meta_key, ttl)
 
             logger.info(
@@ -162,8 +166,9 @@ class RunningTaskTracker:
             meta_key = RUNNING_TASK_META_KEY.format(task_id=task_id)
             self._sync_client.delete(meta_key)
 
-            logger.debug(
-                f"[RunningTaskTracker] Removed running task: task_id={task_id}"
+            logger.info(
+                f"[RunningTaskTracker] Removed running task: task_id={task_id}, "
+                f"deleted keys: {RUNNING_TASKS_ZSET} (zrem), {meta_key} (delete)"
             )
             return True
         except Exception as e:
@@ -215,26 +220,6 @@ class RunningTaskTracker:
         except Exception as e:
             logger.error(f"[RunningTaskTracker] Failed to get task metadata: {e}")
             return None
-
-    def get_running_tasks_with_metadata(self) -> List[Dict[str, Any]]:
-        """Get all running tasks with their metadata.
-
-        Returns:
-            List of task metadata dicts
-        """
-        task_ids = self.get_running_task_ids()
-        tasks = []
-
-        for task_id_str in task_ids:
-            try:
-                task_id = int(task_id_str)
-                metadata = self.get_task_metadata(task_id)
-                if metadata:
-                    tasks.append(metadata)
-            except ValueError:
-                continue
-
-        return tasks
 
     def get_stale_tasks(self, max_age_seconds: int = None) -> List[Dict[str, Any]]:
         """Get tasks that have been running longer than max_age_seconds.
@@ -288,12 +273,13 @@ class RunningTaskTracker:
     # =========================================================================
 
     async def check_heartbeats(self) -> None:
-        """Check heartbeat status for all running regular tasks.
+        """Check heartbeat status for running tasks that have passed grace period.
 
         If a task has not received a heartbeat within timeout,
         mark it as failed via Backend API callback.
 
         Uses distributed lock to prevent concurrent execution in multi-replica deployments.
+        Only checks tasks older than grace_period to avoid false positives during startup.
         """
         from executor_manager.common.distributed_lock import \
             get_distributed_lock
@@ -314,11 +300,13 @@ class RunningTaskTracker:
             # Grace period from environment, default 30s (container startup time)
             grace_period = int(os.getenv("HEARTBEAT_GRACE_PERIOD", "30"))
 
-            running_tasks = self.get_running_tasks_with_metadata()
-            if not running_tasks:
+            # Only get tasks started before (now - grace_period)
+            # This filters out newly created tasks that haven't had time to send heartbeat
+            eligible_tasks = self.get_stale_tasks(max_age_seconds=grace_period)
+            if not eligible_tasks:
                 return
 
-            for task_meta in running_tasks:
+            for task_meta in eligible_tasks:
                 try:
                     task_id_str = task_meta.get("task_id", "")
                     if not task_id_str:
@@ -333,31 +321,27 @@ class RunningTaskTracker:
                             task_id_str, HeartbeatType.TASK
                         )
 
-                        # Check if task has been running long enough to expect heartbeat
+                        # Task is old enough and missing heartbeat - means dead
+                        executor_name = task_meta.get("executor_name", "")
+                        subtask_id_str = task_meta.get("subtask_id", "0")
                         start_time_str = task_meta.get("start_time", "0")
                         try:
                             start_time = float(start_time_str)
                         except ValueError:
                             start_time = 0
-
                         task_age = time.time() - start_time
 
-                        if task_age > grace_period:
-                            # Task is old enough - missing heartbeat means dead
-                            executor_name = task_meta.get("executor_name", "")
-                            subtask_id_str = task_meta.get("subtask_id", "0")
-
-                            logger.warning(
-                                f"[RunningTaskTracker] Heartbeat timeout for task {task_id_str}, "
-                                f"age={task_age:.1f}s, last_heartbeat={last_heartbeat}, "
-                                f"executor={executor_name}"
-                            )
-                            await self._handle_task_dead(
-                                task_id_str=task_id_str,
-                                subtask_id_str=subtask_id_str,
-                                executor_name=executor_name,
-                                last_heartbeat=last_heartbeat or start_time,
-                            )
+                        logger.warning(
+                            f"[RunningTaskTracker] Heartbeat timeout for task {task_id_str}, "
+                            f"age={task_age:.1f}s, last_heartbeat={last_heartbeat}, "
+                            f"executor={executor_name}"
+                        )
+                        await self._handle_task_dead(
+                            task_id_str=task_id_str,
+                            subtask_id_str=subtask_id_str,
+                            executor_name=executor_name,
+                            last_heartbeat=last_heartbeat or start_time,
+                        )
 
                 except Exception as e:
                     logger.debug(
@@ -391,8 +375,6 @@ class RunningTaskTracker:
         from executor_manager.clients.task_api_client import TaskApiClient
         from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
         from executor_manager.executors.dispatcher import ExecutorDispatcher
-        from executor_manager.executors.docker.utils import \
-            get_container_status
         from executor_manager.services.heartbeat_manager import (
             HeartbeatType, get_heartbeat_manager)
 
@@ -412,10 +394,22 @@ class RunningTaskTracker:
             )
             return
 
-        # Step 1: Check container status before deciding action
-        container_status = get_container_status(executor_name)
+        # Step 1: Check container/pod status via ExecutorDispatcher
+        try:
+            executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+            container_status = executor.get_container_status(executor_name)
+        except Exception as e:
+            logger.warning(f"[RunningTaskTracker] Failed to get container status: {e}")
+            container_status = {
+                "exists": False,
+                "status": "error",
+                "oom_killed": False,
+                "exit_code": -1,
+                "error_msg": str(e),
+            }
+
         logger.info(
-            f"[RunningTaskTracker] Container status for {executor_name}: {container_status}"
+            f"[RunningTaskTracker] Container/Pod status for {executor_name}: {container_status}"
         )
 
         # Step 2: Handle based on container status
@@ -442,7 +436,7 @@ class RunningTaskTracker:
                     # Task already has a final status, just clean up tracker
                     logger.info(
                         f"[RunningTaskTracker] Task {task_id} already has status "
-                        f"'{task_status.get('status')}', cleaning up tracker only"
+                        f"'{task_status.get('status')}', cleaning up tracker only (source: _handle_task_dead/already_final)"
                     )
                     heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
                     self.remove_running_task(task_id)
@@ -488,7 +482,7 @@ class RunningTaskTracker:
                 # Normal exit - task might have completed but callback failed
                 logger.info(
                     f"[RunningTaskTracker] Container {executor_name} exited normally (code 0), "
-                    f"cleaning up tracker"
+                    f"cleaning up tracker (source: _handle_task_dead/exit_code_0)"
                 )
                 heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
                 self.remove_running_task(task_id)
@@ -527,6 +521,10 @@ class RunningTaskTracker:
             logger.error(f"[RunningTaskTracker] Error calling Backend API: {e}")
 
         # Step 4: Clean up
+        logger.info(
+            f"[RunningTaskTracker] Cleaning up task {task_id} after marking as failed "
+            f"(source: _handle_task_dead/marked_failed)"
+        )
         heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
         self.remove_running_task(task_id)
 
