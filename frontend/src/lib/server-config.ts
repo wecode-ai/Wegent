@@ -10,6 +10,8 @@
  *
  * Environment Variables:
  * - RUNTIME_INTERNAL_API_URL: Primary URL for server-side proxy to backend
+ * - RUNTIME_API_URL: Fallback URL (also used by runtime-config for browser)
+ * - NEXT_PUBLIC_API_URL: Build-time fallback
  */
 
 /**
