@@ -8,6 +8,7 @@
  * User-friendly cron schedule picker component with Google Calendar style.
  * Provides toggle button groups, weekday multi-select, time quick select,
  * and execution time preview.
+ * Supports multi-select for hours and minutes.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -31,8 +32,8 @@ type FrequencyType = 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom'
 
 interface ScheduleState {
   frequency: FrequencyType
-  hour: number
-  minute: number
+  hours: number[] // Changed from hour: number to support multi-select
+  minutes: number[] // Changed from minute: number to support multi-select
   weekdays: number[]
   monthDay: number
   hourlyInterval: number
@@ -63,13 +64,24 @@ const WEEKDAYS = [
 ]
 
 /**
+ * Parse comma-separated values or single value to number array
+ */
+function parseMultiValues(value: string): number[] {
+  if (value === '*') return []
+  return value
+    .split(',')
+    .map(v => parseInt(v.trim()))
+    .filter(v => !isNaN(v))
+}
+
+/**
  * Parse cron expression to schedule state
  */
 function parseCronExpression(expression: string): ScheduleState {
   const defaultState: ScheduleState = {
     frequency: 'daily',
-    hour: 9,
-    minute: 0,
+    hours: [9],
+    minutes: [0],
     weekdays: [1], // Monday
     monthDay: 1,
     hourlyInterval: 2,
@@ -83,9 +95,9 @@ function parseCronExpression(expression: string): ScheduleState {
 
   const [minute, hour, dayOfMonth, , dayOfWeek] = parts
 
-  // Parse minute
-  const parsedMinute = parseInt(minute)
-  const minuteValue = isNaN(parsedMinute) ? 0 : parsedMinute
+  // Parse minutes (support multi-value like "0,15,30")
+  const minuteValues = parseMultiValues(minute)
+  const parsedMinutes = minuteValues.length > 0 ? minuteValues : [0]
 
   // Hourly pattern: "M */N * * *" or "M * * * *"
   if (hour === '*' || hour.startsWith('*/')) {
@@ -95,14 +107,14 @@ function parseCronExpression(expression: string): ScheduleState {
         ...defaultState,
         frequency: 'hourly',
         hourlyInterval: interval,
-        minute: minuteValue,
+        minutes: parsedMinutes,
       }
     }
   }
 
-  // Parse hour for other patterns
-  const parsedHour = parseInt(hour)
-  const hourValue = isNaN(parsedHour) ? 9 : parsedHour
+  // Parse hours (support multi-value like "9,12,18")
+  const hourValues = parseMultiValues(hour)
+  const parsedHours = hourValues.length > 0 ? hourValues : [9]
 
   // Weekly pattern: "M H * * D" or "M H * * D,D,D"
   if (dayOfMonth === '*' && dayOfWeek !== '*' && !dayOfWeek.includes('-')) {
@@ -114,8 +126,8 @@ function parseCronExpression(expression: string): ScheduleState {
       return {
         ...defaultState,
         frequency: 'weekly',
-        hour: hourValue,
-        minute: minuteValue,
+        hours: parsedHours,
+        minutes: parsedMinutes,
         weekdays: weekdayValues,
       }
     }
@@ -132,8 +144,8 @@ function parseCronExpression(expression: string): ScheduleState {
       return {
         ...defaultState,
         frequency: 'weekly',
-        hour: hourValue,
-        minute: minuteValue,
+        hours: parsedHours,
+        minutes: parsedMinutes,
         weekdays: weekdayValues,
       }
     }
@@ -146,8 +158,8 @@ function parseCronExpression(expression: string): ScheduleState {
       return {
         ...defaultState,
         frequency: 'monthly',
-        hour: hourValue,
-        minute: minuteValue,
+        hours: parsedHours,
+        minutes: parsedMinutes,
         monthDay: -1, // -1 represents last day
       }
     }
@@ -156,8 +168,8 @@ function parseCronExpression(expression: string): ScheduleState {
       return {
         ...defaultState,
         frequency: 'monthly',
-        hour: hourValue,
-        minute: minuteValue,
+        hours: parsedHours,
+        minutes: parsedMinutes,
         monthDay: parsedDay,
       }
     }
@@ -168,8 +180,8 @@ function parseCronExpression(expression: string): ScheduleState {
     return {
       ...defaultState,
       frequency: 'daily',
-      hour: hourValue,
-      minute: minuteValue,
+      hours: parsedHours,
+      minutes: parsedMinutes,
     }
   }
 
@@ -181,23 +193,28 @@ function parseCronExpression(expression: string): ScheduleState {
  * Generate cron expression from schedule state
  */
 function generateCronExpression(state: ScheduleState): string {
+  // Format minutes as comma-separated string
+  const minuteStr = state.minutes.length > 0 ? state.minutes.sort((a, b) => a - b).join(',') : '0'
+  // Format hours as comma-separated string
+  const hourStr = state.hours.length > 0 ? state.hours.sort((a, b) => a - b).join(',') : '9'
+
   switch (state.frequency) {
     case 'hourly':
       if (state.hourlyInterval === 1) {
-        return `${state.minute} * * * *`
+        return `${minuteStr} * * * *`
       }
-      return `${state.minute} */${state.hourlyInterval} * * *`
+      return `${minuteStr} */${state.hourlyInterval} * * *`
 
     case 'daily':
-      return `${state.minute} ${state.hour} * * *`
+      return `${minuteStr} ${hourStr} * * *`
 
     case 'weekly': {
       const weekdayStr = state.weekdays.sort((a, b) => a - b).join(',')
-      return `${state.minute} ${state.hour} * * ${weekdayStr || '1'}`
+      return `${minuteStr} ${hourStr} * * ${weekdayStr || '1'}`
     }
 
     case 'monthly':
-      return `${state.minute} ${state.hour} ${state.monthDay === -1 ? 'L' : state.monthDay} * *`
+      return `${minuteStr} ${hourStr} ${state.monthDay === -1 ? 'L' : state.monthDay} * *`
 
     case 'custom':
       return state.customExpression
@@ -266,7 +283,7 @@ export function CronSchedulePicker({
   const { t } = useTranslation('feed')
   const [schedule, setSchedule] = useState<ScheduleState>(() => parseCronExpression(value))
   const [showAllHours, setShowAllHours] = useState(false)
-  const [showCustomMinute, setShowCustomMinute] = useState(false)
+  const [showAllMinutes, setShowAllMinutes] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [customExpressionError, setCustomExpressionError] = useState<string | null>(null)
 
@@ -302,6 +319,50 @@ export function CronSchedulePicker({
         newSchedule.customExpression = generateCronExpression(schedule)
       }
       updateSchedule(newSchedule)
+    },
+    [schedule, updateSchedule]
+  )
+
+  // Handle hour toggle (multi-select)
+  const handleHourToggle = useCallback(
+    (hour: number) => {
+      const currentHours = schedule.hours
+      let newHours: number[]
+
+      if (currentHours.includes(hour)) {
+        // Remove hour, but keep at least one
+        newHours = currentHours.filter(h => h !== hour)
+        if (newHours.length === 0) {
+          newHours = [hour]
+        }
+      } else {
+        // Add hour
+        newHours = [...currentHours, hour]
+      }
+
+      updateSchedule({ ...schedule, hours: newHours })
+    },
+    [schedule, updateSchedule]
+  )
+
+  // Handle minute toggle (multi-select)
+  const handleMinuteToggle = useCallback(
+    (minute: number) => {
+      const currentMinutes = schedule.minutes
+      let newMinutes: number[]
+
+      if (currentMinutes.includes(minute)) {
+        // Remove minute, but keep at least one
+        newMinutes = currentMinutes.filter(m => m !== minute)
+        if (newMinutes.length === 0) {
+          newMinutes = [minute]
+        }
+      } else {
+        // Add minute
+        newMinutes = [...currentMinutes, minute]
+      }
+
+      updateSchedule({ ...schedule, minutes: newMinutes })
     },
     [schedule, updateSchedule]
   )
@@ -351,9 +412,6 @@ export function CronSchedulePicker({
 
   // Current cron expression
   const currentExpression = useMemo(() => generateCronExpression(schedule), [schedule])
-
-  // Check if current minute is a common value
-  const isCommonMinute = COMMON_MINUTES.includes(schedule.minute)
 
   return (
     <div className={cn('space-y-4', className)}>
@@ -407,19 +465,33 @@ export function CronSchedulePicker({
           </div>
 
           <div className="space-y-2">
-            <Label className="text-sm font-medium">{t('at_minute_label')}</Label>
+            <Label className="text-sm font-medium">
+              {t('at_minute_label')}
+              <span className="ml-2 text-xs text-text-muted font-normal">
+                ({t('multi_select_hint')})
+              </span>
+            </Label>
             <div className="flex flex-wrap gap-2">
               {COMMON_MINUTES.map(minute => (
                 <Toggle
                   key={minute}
-                  pressed={schedule.minute === minute}
-                  onPressedChange={() => updateSchedule({ ...schedule, minute })}
+                  pressed={schedule.minutes.includes(minute)}
+                  onPressedChange={() => handleMinuteToggle(minute)}
                   className="min-w-[44px]"
                 >
                   {String(minute).padStart(2, '0')}
                 </Toggle>
               ))}
             </div>
+            {schedule.minutes.length > 0 && (
+              <p className="text-xs text-text-muted">
+                {t('selected_minutes')}:{' '}
+                {schedule.minutes
+                  .sort((a, b) => a - b)
+                  .map(m => String(m).padStart(2, '0'))
+                  .join(', ')}
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -427,15 +499,20 @@ export function CronSchedulePicker({
       {/* Daily Configuration */}
       {schedule.frequency === 'daily' && (
         <div className="space-y-3">
-          {/* Hour Selection */}
+          {/* Hour Selection (Multi-select) */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium">{t('execute_hour')}</Label>
+            <Label className="text-sm font-medium">
+              {t('execute_hour')}
+              <span className="ml-2 text-xs text-text-muted font-normal">
+                ({t('multi_select_hint')})
+              </span>
+            </Label>
             <div className="flex flex-wrap gap-2">
               {COMMON_HOURS.map(hour => (
                 <Toggle
                   key={hour}
-                  pressed={schedule.hour === hour}
-                  onPressedChange={() => updateSchedule({ ...schedule, hour })}
+                  pressed={schedule.hours.includes(hour)}
+                  onPressedChange={() => handleHourToggle(hour)}
                   className="min-w-[44px]"
                 >
                   {String(hour).padStart(2, '0')}
@@ -454,8 +531,8 @@ export function CronSchedulePicker({
                 {Array.from({ length: 24 }, (_, i) => i).map(hour => (
                   <Toggle
                     key={hour}
-                    pressed={schedule.hour === hour}
-                    onPressedChange={() => updateSchedule({ ...schedule, hour })}
+                    pressed={schedule.hours.includes(hour)}
+                    onPressedChange={() => handleHourToggle(hour)}
                     size="sm"
                     className="w-10 h-8"
                   >
@@ -464,48 +541,67 @@ export function CronSchedulePicker({
                 ))}
               </div>
             )}
+            {schedule.hours.length > 0 && (
+              <p className="text-xs text-text-muted">
+                {t('selected_hours')}:{' '}
+                {schedule.hours
+                  .sort((a, b) => a - b)
+                  .map(h => String(h).padStart(2, '0'))
+                  .join(', ')}
+              </p>
+            )}
           </div>
 
-          {/* Minute Selection */}
+          {/* Minute Selection (Multi-select) */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium">{t('execute_minute')}</Label>
+            <Label className="text-sm font-medium">
+              {t('execute_minute')}
+              <span className="ml-2 text-xs text-text-muted font-normal">
+                ({t('multi_select_hint')})
+              </span>
+            </Label>
             <div className="flex flex-wrap gap-2">
               {COMMON_MINUTES.map(minute => (
                 <Toggle
                   key={minute}
-                  pressed={schedule.minute === minute && !showCustomMinute}
-                  onPressedChange={() => {
-                    setShowCustomMinute(false)
-                    updateSchedule({ ...schedule, minute })
-                  }}
+                  pressed={schedule.minutes.includes(minute)}
+                  onPressedChange={() => handleMinuteToggle(minute)}
                   className="min-w-[44px]"
                 >
                   {String(minute).padStart(2, '0')}
                 </Toggle>
               ))}
               <Toggle
-                pressed={showCustomMinute || !isCommonMinute}
-                onPressedChange={() => setShowCustomMinute(true)}
-                className="min-w-[70px]"
+                pressed={showAllMinutes}
+                onPressedChange={setShowAllMinutes}
+                className="min-w-[60px]"
               >
-                {t('custom_minute')}
+                {t('more_minutes')}
               </Toggle>
             </div>
-            {(showCustomMinute || !isCommonMinute) && (
-              <Input
-                type="number"
-                min={0}
-                max={59}
-                value={schedule.minute}
-                onChange={e => {
-                  const val = parseInt(e.target.value)
-                  if (!isNaN(val) && val >= 0 && val <= 59) {
-                    updateSchedule({ ...schedule, minute: val })
-                  }
-                }}
-                className="w-24"
-                placeholder="0-59"
-              />
+            {showAllMinutes && (
+              <div className="flex flex-wrap gap-1 p-3 bg-surface rounded-md border border-border">
+                {Array.from({ length: 60 }, (_, i) => i).map(minute => (
+                  <Toggle
+                    key={minute}
+                    pressed={schedule.minutes.includes(minute)}
+                    onPressedChange={() => handleMinuteToggle(minute)}
+                    size="sm"
+                    className="w-10 h-8"
+                  >
+                    {String(minute).padStart(2, '0')}
+                  </Toggle>
+                ))}
+              </div>
+            )}
+            {schedule.minutes.length > 0 && (
+              <p className="text-xs text-text-muted">
+                {t('selected_minutes')}:{' '}
+                {schedule.minutes
+                  .sort((a, b) => a - b)
+                  .map(m => String(m).padStart(2, '0'))
+                  .join(', ')}
+              </p>
             )}
           </div>
         </div>
@@ -532,36 +628,112 @@ export function CronSchedulePicker({
             </div>
           </div>
 
-          {/* Time Selection */}
+          {/* Time Selection (Multi-select) */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium">{t('execute_time')}</Label>
-            <div className="flex items-center gap-2">
-              <div className="flex flex-wrap gap-2">
-                {COMMON_HOURS.map(hour => (
+            <Label className="text-sm font-medium">
+              {t('execute_time')}
+              <span className="ml-2 text-xs text-text-muted font-normal">
+                ({t('multi_select_hint')})
+              </span>
+            </Label>
+            <div className="flex flex-col gap-3">
+              {/* Hours */}
+              <div className="space-y-1">
+                <span className="text-xs text-text-muted">{t('execute_hour')}</span>
+                <div className="flex flex-wrap gap-2">
+                  {COMMON_HOURS.map(hour => (
+                    <Toggle
+                      key={hour}
+                      pressed={schedule.hours.includes(hour)}
+                      onPressedChange={() => handleHourToggle(hour)}
+                      size="sm"
+                      className="min-w-[40px]"
+                    >
+                      {String(hour).padStart(2, '0')}
+                    </Toggle>
+                  ))}
                   <Toggle
-                    key={hour}
-                    pressed={schedule.hour === hour}
-                    onPressedChange={() => updateSchedule({ ...schedule, hour })}
+                    pressed={showAllHours}
+                    onPressedChange={setShowAllHours}
                     size="sm"
-                    className="min-w-[40px]"
+                    className="min-w-[50px]"
                   >
-                    {String(hour).padStart(2, '0')}
+                    {t('more_hours')}
                   </Toggle>
-                ))}
+                </div>
+                {showAllHours && (
+                  <div className="flex flex-wrap gap-1 p-3 bg-surface rounded-md border border-border">
+                    {Array.from({ length: 24 }, (_, i) => i).map(hour => (
+                      <Toggle
+                        key={hour}
+                        pressed={schedule.hours.includes(hour)}
+                        onPressedChange={() => handleHourToggle(hour)}
+                        size="sm"
+                        className="w-10 h-8"
+                      >
+                        {String(hour).padStart(2, '0')}
+                      </Toggle>
+                    ))}
+                  </div>
+                )}
+                {schedule.hours.length > 0 && (
+                  <p className="text-xs text-text-muted">
+                    {t('selected_hours')}:{' '}
+                    {schedule.hours
+                      .sort((a, b) => a - b)
+                      .map(h => String(h).padStart(2, '0'))
+                      .join(', ')}
+                  </p>
+                )}
               </div>
-              <span className="text-text-secondary">:</span>
-              <div className="flex gap-1">
-                {COMMON_MINUTES.map(minute => (
+              {/* Minutes */}
+              <div className="space-y-1">
+                <span className="text-xs text-text-muted">{t('execute_minute')}</span>
+                <div className="flex flex-wrap gap-2">
+                  {COMMON_MINUTES.map(minute => (
+                    <Toggle
+                      key={minute}
+                      pressed={schedule.minutes.includes(minute)}
+                      onPressedChange={() => handleMinuteToggle(minute)}
+                      size="sm"
+                      className="min-w-[40px]"
+                    >
+                      {String(minute).padStart(2, '0')}
+                    </Toggle>
+                  ))}
                   <Toggle
-                    key={minute}
-                    pressed={schedule.minute === minute}
-                    onPressedChange={() => updateSchedule({ ...schedule, minute })}
+                    pressed={showAllMinutes}
+                    onPressedChange={setShowAllMinutes}
                     size="sm"
-                    className="min-w-[40px]"
+                    className="min-w-[50px]"
                   >
-                    {String(minute).padStart(2, '0')}
+                    {t('more_minutes')}
                   </Toggle>
-                ))}
+                </div>
+                {showAllMinutes && (
+                  <div className="flex flex-wrap gap-1 p-3 bg-surface rounded-md border border-border">
+                    {Array.from({ length: 60 }, (_, i) => i).map(minute => (
+                      <Toggle
+                        key={minute}
+                        pressed={schedule.minutes.includes(minute)}
+                        onPressedChange={() => handleMinuteToggle(minute)}
+                        size="sm"
+                        className="w-10 h-8"
+                      >
+                        {String(minute).padStart(2, '0')}
+                      </Toggle>
+                    ))}
+                  </div>
+                )}
+                {schedule.minutes.length > 0 && (
+                  <p className="text-xs text-text-muted">
+                    {t('selected_minutes')}:{' '}
+                    {schedule.minutes
+                      .sort((a, b) => a - b)
+                      .map(m => String(m).padStart(2, '0'))
+                      .join(', ')}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -611,36 +783,112 @@ export function CronSchedulePicker({
             )}
           </div>
 
-          {/* Time Selection */}
+          {/* Time Selection (Multi-select) */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium">{t('execute_time')}</Label>
-            <div className="flex items-center gap-2">
-              <div className="flex flex-wrap gap-2">
-                {COMMON_HOURS.map(hour => (
+            <Label className="text-sm font-medium">
+              {t('execute_time')}
+              <span className="ml-2 text-xs text-text-muted font-normal">
+                ({t('multi_select_hint')})
+              </span>
+            </Label>
+            <div className="flex flex-col gap-3">
+              {/* Hours */}
+              <div className="space-y-1">
+                <span className="text-xs text-text-muted">{t('execute_hour')}</span>
+                <div className="flex flex-wrap gap-2">
+                  {COMMON_HOURS.map(hour => (
+                    <Toggle
+                      key={hour}
+                      pressed={schedule.hours.includes(hour)}
+                      onPressedChange={() => handleHourToggle(hour)}
+                      size="sm"
+                      className="min-w-[40px]"
+                    >
+                      {String(hour).padStart(2, '0')}
+                    </Toggle>
+                  ))}
                   <Toggle
-                    key={hour}
-                    pressed={schedule.hour === hour}
-                    onPressedChange={() => updateSchedule({ ...schedule, hour })}
+                    pressed={showAllHours}
+                    onPressedChange={setShowAllHours}
                     size="sm"
-                    className="min-w-[40px]"
+                    className="min-w-[50px]"
                   >
-                    {String(hour).padStart(2, '0')}
+                    {t('more_hours')}
                   </Toggle>
-                ))}
+                </div>
+                {showAllHours && (
+                  <div className="flex flex-wrap gap-1 p-3 bg-surface rounded-md border border-border">
+                    {Array.from({ length: 24 }, (_, i) => i).map(hour => (
+                      <Toggle
+                        key={hour}
+                        pressed={schedule.hours.includes(hour)}
+                        onPressedChange={() => handleHourToggle(hour)}
+                        size="sm"
+                        className="w-10 h-8"
+                      >
+                        {String(hour).padStart(2, '0')}
+                      </Toggle>
+                    ))}
+                  </div>
+                )}
+                {schedule.hours.length > 0 && (
+                  <p className="text-xs text-text-muted">
+                    {t('selected_hours')}:{' '}
+                    {schedule.hours
+                      .sort((a, b) => a - b)
+                      .map(h => String(h).padStart(2, '0'))
+                      .join(', ')}
+                  </p>
+                )}
               </div>
-              <span className="text-text-secondary">:</span>
-              <div className="flex gap-1">
-                {COMMON_MINUTES.map(minute => (
+              {/* Minutes */}
+              <div className="space-y-1">
+                <span className="text-xs text-text-muted">{t('execute_minute')}</span>
+                <div className="flex flex-wrap gap-2">
+                  {COMMON_MINUTES.map(minute => (
+                    <Toggle
+                      key={minute}
+                      pressed={schedule.minutes.includes(minute)}
+                      onPressedChange={() => handleMinuteToggle(minute)}
+                      size="sm"
+                      className="min-w-[40px]"
+                    >
+                      {String(minute).padStart(2, '0')}
+                    </Toggle>
+                  ))}
                   <Toggle
-                    key={minute}
-                    pressed={schedule.minute === minute}
-                    onPressedChange={() => updateSchedule({ ...schedule, minute })}
+                    pressed={showAllMinutes}
+                    onPressedChange={setShowAllMinutes}
                     size="sm"
-                    className="min-w-[40px]"
+                    className="min-w-[50px]"
                   >
-                    {String(minute).padStart(2, '0')}
+                    {t('more_minutes')}
                   </Toggle>
-                ))}
+                </div>
+                {showAllMinutes && (
+                  <div className="flex flex-wrap gap-1 p-3 bg-surface rounded-md border border-border">
+                    {Array.from({ length: 60 }, (_, i) => i).map(minute => (
+                      <Toggle
+                        key={minute}
+                        pressed={schedule.minutes.includes(minute)}
+                        onPressedChange={() => handleMinuteToggle(minute)}
+                        size="sm"
+                        className="w-10 h-8"
+                      >
+                        {String(minute).padStart(2, '0')}
+                      </Toggle>
+                    ))}
+                  </div>
+                )}
+                {schedule.minutes.length > 0 && (
+                  <p className="text-xs text-text-muted">
+                    {t('selected_minutes')}:{' '}
+                    {schedule.minutes
+                      .sort((a, b) => a - b)
+                      .map(m => String(m).padStart(2, '0'))
+                      .join(', ')}
+                  </p>
+                )}
               </div>
             </div>
           </div>
