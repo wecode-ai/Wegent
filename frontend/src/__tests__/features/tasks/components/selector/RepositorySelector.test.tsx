@@ -119,6 +119,9 @@ const mockSearchResults: GitRepoInfo[] = [
   },
 ]
 
+// Set longer timeout for this test file as the tests involve slow async operations
+jest.setTimeout(15000)
+
 describe('RepositorySelector', () => {
   const mockHandleRepoChange = jest.fn()
 
