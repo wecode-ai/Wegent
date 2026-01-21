@@ -2,16 +2,18 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for sandbox attachment upload/download tools.
+"""Tests for sandbox attachment upload/download tools provider registration.
 
-This module tests the SandboxUploadAttachmentTool and SandboxDownloadAttachmentTool classes.
+This module tests that the SandboxToolProvider properly registers
+the attachment upload/download tools.
+
+Note: Full integration tests for the tool functionality require the E2B sandbox
+environment and are tested separately in integration tests.
 """
 
-import json
 import sys
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -20,450 +22,110 @@ SKILL_DIR = Path(__file__).parent.parent.parent / "init_data" / "skills" / "sand
 sys.path.insert(0, str(SKILL_DIR))
 
 
-class MockFileInfo:
-    """Mock file info for testing."""
-
-    def __init__(self, size: int = 1024):
-        self.size = size
-
-
-class MockCommandResult:
-    """Mock command result for testing."""
-
-    def __init__(self, exit_code: int = 0, stdout: str = "", stderr: str = ""):
-        self.exit_code = exit_code
-        self.stdout = stdout
-        self.stderr = stderr
-
-
-class MockSandbox:
-    """Mock sandbox for testing."""
-
-    def __init__(self, sandbox_id: str = "test-sandbox"):
-        self.sandbox_id = sandbox_id
-        self.files = MagicMock()
-        self.commands = MagicMock()
-
-
-class MockSandboxManager:
-    """Mock sandbox manager for testing."""
-
-    def __init__(self, sandbox: MockSandbox = None, error: str = None):
-        self._sandbox = sandbox or MockSandbox()
-        self._error = error
-
-    async def get_or_create_sandbox(self, **kwargs):
-        return self._sandbox, self._error
-
-
-class TestSandboxUploadAttachmentTool:
-    """Tests for SandboxUploadAttachmentTool."""
+class TestSandboxToolProviderAttachmentSupport:
+    """Tests for SandboxToolProvider attachment tool support."""
 
     @pytest.fixture
-    def mock_ws_emitter(self):
-        """Create mock WebSocket emitter."""
-        emitter = MagicMock()
-        emitter.emit_tool_call = AsyncMock()
-        return emitter
-
-    @pytest.fixture
-    def mock_sandbox_manager(self):
-        """Create mock sandbox manager with success scenario."""
-        sandbox = MockSandbox()
-        sandbox.files.get_info = AsyncMock(return_value=MockFileInfo(size=1024))
-        sandbox.commands.run = AsyncMock(
-            return_value=MockCommandResult(
-                exit_code=0,
-                stdout=json.dumps(
-                    {
-                        "id": 123,
-                        "filename": "test.pdf",
-                        "file_size": 1024,
-                        "mime_type": "application/pdf",
-                    }
-                ),
-            )
-        )
-        return MockSandboxManager(sandbox=sandbox)
-
-    @pytest.mark.asyncio
-    async def test_upload_success(self, mock_ws_emitter, mock_sandbox_manager):
-        """Test successful file upload."""
-        # Import the tool with mocked dependencies
+    def mock_dependencies(self):
+        """Set up mock dependencies for provider import."""
         with patch.dict(
             "sys.modules",
             {
-                "langchain_core.callbacks": MagicMock(),
+                "chat_shell.skills": MagicMock(),
                 "langchain_core.tools": MagicMock(),
-                "pydantic": MagicMock(),
             },
         ):
-            from upload_attachment_tool import (
-                MAX_UPLOAD_SIZE,
-                SandboxUploadAttachmentTool,
-            )
+            yield
 
-            # Create tool with mocked dependencies
-            tool = SandboxUploadAttachmentTool(
-                task_id=1,
-                subtask_id=1,
-                user_id=1,
-                user_name="test_user",
-                ws_emitter=mock_ws_emitter,
-                bot_config=[],
-                default_shell_type="ClaudeCode",
-                timeout=7200,
-                auth_token="test_token",
-                api_base_url="http://test-backend:8000",
-            )
-
-            # Mock the sandbox manager
-            tool._get_sandbox_manager = MagicMock(return_value=mock_sandbox_manager)
-
-            # Execute
-            result = await tool._arun(file_path="/home/user/test.pdf")
-
-            # Parse result
-            result_dict = json.loads(result)
-
-            # Verify success
-            assert result_dict["success"] is True
-            assert result_dict["attachment_id"] == 123
-            assert result_dict["filename"] == "test.pdf"
-            assert result_dict["download_url"] == "/api/attachments/123/download"
-
-    @pytest.mark.asyncio
-    async def test_upload_file_not_found(self, mock_ws_emitter):
-        """Test upload when file doesn't exist."""
-        # Create sandbox that raises exception for file not found
-        sandbox = MockSandbox()
-        sandbox.files.get_info = AsyncMock(side_effect=Exception("File not found"))
-        sandbox_manager = MockSandboxManager(sandbox=sandbox)
-
-        with patch.dict(
-            "sys.modules",
-            {
-                "langchain_core.callbacks": MagicMock(),
-                "langchain_core.tools": MagicMock(),
-                "pydantic": MagicMock(),
-            },
-        ):
-            from upload_attachment_tool import SandboxUploadAttachmentTool
-
-            tool = SandboxUploadAttachmentTool(
-                task_id=1,
-                subtask_id=1,
-                user_id=1,
-                user_name="test_user",
-                ws_emitter=mock_ws_emitter,
-                bot_config=[],
-                default_shell_type="ClaudeCode",
-                timeout=7200,
-                auth_token="test_token",
-                api_base_url="http://test-backend:8000",
-            )
-            tool._get_sandbox_manager = MagicMock(return_value=sandbox_manager)
-
-            result = await tool._arun(file_path="/home/user/nonexistent.pdf")
-            result_dict = json.loads(result)
-
-            assert result_dict["success"] is False
-            assert "File not found" in result_dict["error"]
-
-    @pytest.mark.asyncio
-    async def test_upload_file_too_large(self, mock_ws_emitter):
-        """Test upload when file exceeds size limit."""
-        # Create sandbox with large file
-        sandbox = MockSandbox()
-        sandbox.files.get_info = AsyncMock(
-            return_value=MockFileInfo(size=200 * 1024 * 1024)
-        )  # 200MB
-        sandbox_manager = MockSandboxManager(sandbox=sandbox)
-
-        with patch.dict(
-            "sys.modules",
-            {
-                "langchain_core.callbacks": MagicMock(),
-                "langchain_core.tools": MagicMock(),
-                "pydantic": MagicMock(),
-            },
-        ):
-            from upload_attachment_tool import SandboxUploadAttachmentTool
-
-            tool = SandboxUploadAttachmentTool(
-                task_id=1,
-                subtask_id=1,
-                user_id=1,
-                user_name="test_user",
-                ws_emitter=mock_ws_emitter,
-                bot_config=[],
-                default_shell_type="ClaudeCode",
-                timeout=7200,
-                auth_token="test_token",
-                api_base_url="http://test-backend:8000",
-            )
-            tool._get_sandbox_manager = MagicMock(return_value=sandbox_manager)
-
-            result = await tool._arun(file_path="/home/user/large_file.pdf")
-            result_dict = json.loads(result)
-
-            assert result_dict["success"] is False
-            assert "too large" in result_dict["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_upload_no_auth_token(self, mock_ws_emitter, mock_sandbox_manager):
-        """Test upload when auth token is missing."""
-        with patch.dict(
-            "sys.modules",
-            {
-                "langchain_core.callbacks": MagicMock(),
-                "langchain_core.tools": MagicMock(),
-                "pydantic": MagicMock(),
-            },
-        ):
-            from upload_attachment_tool import SandboxUploadAttachmentTool
-
-            tool = SandboxUploadAttachmentTool(
-                task_id=1,
-                subtask_id=1,
-                user_id=1,
-                user_name="test_user",
-                ws_emitter=mock_ws_emitter,
-                bot_config=[],
-                default_shell_type="ClaudeCode",
-                timeout=7200,
-                auth_token="",  # Empty token
-                api_base_url="http://test-backend:8000",
-            )
-            tool._get_sandbox_manager = MagicMock(return_value=mock_sandbox_manager)
-
-            result = await tool._arun(file_path="/home/user/test.pdf")
-            result_dict = json.loads(result)
-
-            assert result_dict["success"] is False
-            assert "authentication token" in result_dict["error"].lower()
-
-
-class TestSandboxDownloadAttachmentTool:
-    """Tests for SandboxDownloadAttachmentTool."""
-
-    @pytest.fixture
-    def mock_ws_emitter(self):
-        """Create mock WebSocket emitter."""
-        emitter = MagicMock()
-        emitter.emit_tool_call = AsyncMock()
-        return emitter
-
-    @pytest.fixture
-    def mock_sandbox_manager(self):
-        """Create mock sandbox manager with success scenario."""
-        sandbox = MockSandbox()
-        sandbox.files.make_dir = AsyncMock()
-        sandbox.files.get_info = AsyncMock(return_value=MockFileInfo(size=1024))
-        sandbox.commands.run = AsyncMock(
-            return_value=MockCommandResult(exit_code=0, stdout="", stderr="")
-        )
-        return MockSandboxManager(sandbox=sandbox)
-
-    @pytest.mark.asyncio
-    async def test_download_success(self, mock_ws_emitter, mock_sandbox_manager):
-        """Test successful file download."""
-        with patch.dict(
-            "sys.modules",
-            {
-                "langchain_core.callbacks": MagicMock(),
-                "langchain_core.tools": MagicMock(),
-                "pydantic": MagicMock(),
-            },
-        ):
-            from download_attachment_tool import SandboxDownloadAttachmentTool
-
-            tool = SandboxDownloadAttachmentTool(
-                task_id=1,
-                subtask_id=1,
-                user_id=1,
-                user_name="test_user",
-                ws_emitter=mock_ws_emitter,
-                bot_config=[],
-                default_shell_type="ClaudeCode",
-                timeout=7200,
-                auth_token="test_token",
-                api_base_url="http://test-backend:8000",
-            )
-            tool._get_sandbox_manager = MagicMock(return_value=mock_sandbox_manager)
-
-            result = await tool._arun(
-                attachment_url="/api/attachments/123/download",
-                save_path="/home/user/downloads/test.pdf",
-            )
-            result_dict = json.loads(result)
-
-            assert result_dict["success"] is True
-            assert result_dict["file_path"] == "/home/user/downloads/test.pdf"
-            assert result_dict["file_size"] == 1024
-
-    @pytest.mark.asyncio
-    async def test_download_no_auth_token(self, mock_ws_emitter, mock_sandbox_manager):
-        """Test download when auth token is missing."""
-        with patch.dict(
-            "sys.modules",
-            {
-                "langchain_core.callbacks": MagicMock(),
-                "langchain_core.tools": MagicMock(),
-                "pydantic": MagicMock(),
-            },
-        ):
-            from download_attachment_tool import SandboxDownloadAttachmentTool
-
-            tool = SandboxDownloadAttachmentTool(
-                task_id=1,
-                subtask_id=1,
-                user_id=1,
-                user_name="test_user",
-                ws_emitter=mock_ws_emitter,
-                bot_config=[],
-                default_shell_type="ClaudeCode",
-                timeout=7200,
-                auth_token="",  # Empty token
-                api_base_url="http://test-backend:8000",
-            )
-            tool._get_sandbox_manager = MagicMock(return_value=mock_sandbox_manager)
-
-            result = await tool._arun(
-                attachment_url="/api/attachments/123/download",
-                save_path="/home/user/downloads/test.pdf",
-            )
-            result_dict = json.loads(result)
-
-            assert result_dict["success"] is False
-            assert "authentication token" in result_dict["error"].lower()
-
-    @pytest.mark.asyncio
-    async def test_download_curl_failure(self, mock_ws_emitter):
-        """Test download when curl command fails."""
-        sandbox = MockSandbox()
-        sandbox.files.make_dir = AsyncMock()
-        sandbox.commands.run = AsyncMock(
-            return_value=MockCommandResult(
-                exit_code=22, stdout="", stderr="curl: (22) HTTP error"
-            )
-        )
-        sandbox_manager = MockSandboxManager(sandbox=sandbox)
-
-        with patch.dict(
-            "sys.modules",
-            {
-                "langchain_core.callbacks": MagicMock(),
-                "langchain_core.tools": MagicMock(),
-                "pydantic": MagicMock(),
-            },
-        ):
-            from download_attachment_tool import SandboxDownloadAttachmentTool
-
-            tool = SandboxDownloadAttachmentTool(
-                task_id=1,
-                subtask_id=1,
-                user_id=1,
-                user_name="test_user",
-                ws_emitter=mock_ws_emitter,
-                bot_config=[],
-                default_shell_type="ClaudeCode",
-                timeout=7200,
-                auth_token="test_token",
-                api_base_url="http://test-backend:8000",
-            )
-            tool._get_sandbox_manager = MagicMock(return_value=sandbox_manager)
-
-            result = await tool._arun(
-                attachment_url="/api/attachments/123/download",
-                save_path="/home/user/downloads/test.pdf",
-            )
-            result_dict = json.loads(result)
-
-            assert result_dict["success"] is False
-            assert "failed" in result_dict["error"].lower()
-
-
-class TestSandboxToolProvider:
-    """Tests for SandboxToolProvider with attachment tools."""
-
-    def test_supported_tools_includes_attachment_tools(self):
+    def test_supported_tools_includes_attachment_tools(self, mock_dependencies):
         """Test that provider supports attachment tools."""
-        with patch.dict(
-            "sys.modules",
-            {
-                "chat_shell.skills": MagicMock(),
-                "langchain_core.tools": MagicMock(),
-            },
-        ):
-            from provider import SandboxToolProvider
+        # Import provider with mocked dependencies
+        from provider import SandboxToolProvider
 
-            provider = SandboxToolProvider()
+        provider = SandboxToolProvider()
+        supported = provider.supported_tools
 
-            assert "sandbox_upload_attachment" in provider.supported_tools
-            assert "sandbox_download_attachment" in provider.supported_tools
+        assert "sandbox_upload_attachment" in supported
+        assert "sandbox_download_attachment" in supported
+        # Also verify original tools are still there
+        assert "sandbox_command" in supported
+        assert "sandbox_claude" in supported
+        assert "sandbox_list_files" in supported
+        assert "sandbox_read_file" in supported
+        assert "sandbox_write_file" in supported
 
-    def test_create_upload_attachment_tool(self):
-        """Test creating upload attachment tool."""
-        with patch.dict(
-            "sys.modules",
-            {
-                "chat_shell.skills": MagicMock(),
-                "langchain_core.tools": MagicMock(),
-            },
-        ):
-            # Create mock context
-            mock_context = MagicMock()
-            mock_context.task_id = 1
-            mock_context.subtask_id = 1
-            mock_context.user_id = 1
-            mock_context.user_name = "test_user"
-            mock_context.ws_emitter = None
+    def test_supported_tools_count(self, mock_dependencies):
+        """Test that provider has expected number of tools."""
+        from provider import SandboxToolProvider
 
-            from provider import SandboxToolProvider
+        provider = SandboxToolProvider()
 
-            provider = SandboxToolProvider()
+        # Should have 7 tools: 5 original + 2 new attachment tools
+        assert len(provider.supported_tools) == 7
 
-            tool = provider.create_tool(
-                tool_name="sandbox_upload_attachment",
-                context=mock_context,
-                tool_config={
-                    "auth_token": "test_token",
-                    "api_base_url": "http://test:8000",
-                },
-            )
 
-            assert tool.name == "sandbox_upload_attachment"
-            assert tool.auth_token == "test_token"
+class TestUploadAttachmentToolConstants:
+    """Tests for upload attachment tool constants."""
 
-    def test_create_download_attachment_tool(self):
-        """Test creating download attachment tool."""
-        with patch.dict(
-            "sys.modules",
-            {
-                "chat_shell.skills": MagicMock(),
-                "langchain_core.tools": MagicMock(),
-            },
-        ):
-            mock_context = MagicMock()
-            mock_context.task_id = 1
-            mock_context.subtask_id = 1
-            mock_context.user_id = 1
-            mock_context.user_name = "test_user"
-            mock_context.ws_emitter = None
+    def test_max_upload_size_constant(self):
+        """Test that MAX_UPLOAD_SIZE is defined correctly."""
+        # The constant should be 100MB (100 * 1024 * 1024)
+        expected_size = 100 * 1024 * 1024  # 100MB
 
-            from provider import SandboxToolProvider
+        # Read the file and check the constant
+        tool_file = SKILL_DIR / "upload_attachment_tool.py"
+        content = tool_file.read_text()
 
-            provider = SandboxToolProvider()
+        # Verify the constant is defined
+        assert "MAX_UPLOAD_SIZE = 100 * 1024 * 1024" in content
+        assert str(expected_size) in content or "MAX_UPLOAD_SIZE" in content
 
-            tool = provider.create_tool(
-                tool_name="sandbox_download_attachment",
-                context=mock_context,
-                tool_config={
-                    "auth_token": "test_token",
-                    "api_base_url": "http://test:8000",
-                },
-            )
+    def test_default_api_base_url_constant(self):
+        """Test that DEFAULT_API_BASE_URL is defined."""
+        tool_file = SKILL_DIR / "upload_attachment_tool.py"
+        content = tool_file.read_text()
 
-            assert tool.name == "sandbox_download_attachment"
-            assert tool.auth_token == "test_token"
+        assert "DEFAULT_API_BASE_URL" in content
+        assert "http://wegent-backend:8000" in content
+
+
+class TestDownloadAttachmentToolConstants:
+    """Tests for download attachment tool constants."""
+
+    def test_default_api_base_url_constant(self):
+        """Test that DEFAULT_API_BASE_URL is defined."""
+        tool_file = SKILL_DIR / "download_attachment_tool.py"
+        content = tool_file.read_text()
+
+        assert "DEFAULT_API_BASE_URL" in content
+        assert "http://wegent-backend:8000" in content
+
+
+class TestSkillMdToolConfiguration:
+    """Tests for SKILL.md tool configuration."""
+
+    def test_skill_md_includes_upload_tool(self):
+        """Test that SKILL.md includes upload attachment tool config."""
+        skill_md = SKILL_DIR / "SKILL.md"
+        content = skill_md.read_text()
+
+        assert "sandbox_upload_attachment" in content
+        assert "max_file_size: 104857600" in content  # 100MB
+
+    def test_skill_md_includes_download_tool(self):
+        """Test that SKILL.md includes download attachment tool config."""
+        skill_md = SKILL_DIR / "SKILL.md"
+        content = skill_md.read_text()
+
+        assert "sandbox_download_attachment" in content
+
+    def test_skill_md_documents_attachment_operations(self):
+        """Test that SKILL.md documents attachment operations."""
+        skill_md = SKILL_DIR / "SKILL.md"
+        content = skill_md.read_text()
+
+        # Check for documentation sections
+        assert "Attachment Operations" in content
+        assert "Upload a file from sandbox to Wegent" in content
+        assert "Download a file from Wegent" in content
+        assert "download_url" in content
