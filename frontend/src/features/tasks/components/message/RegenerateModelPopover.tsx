@@ -6,6 +6,7 @@
 
 import React from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useModelSelection, type Model } from '../../hooks/useModelSelection'
 import type { Team } from '@/types/api'
@@ -19,6 +20,8 @@ export interface RegenerateModelPopoverProps {
   onSelectModel: (model: Model) => void
   isLoading?: boolean
   trigger: React.ReactNode
+  /** Tooltip text for the trigger button */
+  tooltipText?: string
 }
 
 /**
@@ -32,6 +35,7 @@ export function RegenerateModelPopover({
   onSelectModel,
   isLoading = false,
   trigger,
+  tooltipText,
 }: RegenerateModelPopoverProps) {
   const { t } = useTranslation('chat')
 
@@ -53,9 +57,22 @@ export function RegenerateModelPopover({
 
   const loading = isLoading || isModelsLoading
 
+  // Wrap trigger with Tooltip inside Popover to avoid asChild conflicts
+  // The Tooltip wraps the PopoverTrigger so hover events work correctly
+  const triggerWithTooltip = tooltipText ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      </TooltipTrigger>
+      <TooltipContent>{tooltipText}</TooltipContent>
+    </Tooltip>
+  ) : (
+    <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+  )
+
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      {triggerWithTooltip}
       <PopoverContent
         side="top"
         align="start"
@@ -86,6 +103,7 @@ export function RegenerateModelPopover({
 
                 return (
                   <button
+                    type="button"
                     key={`${model.name}:${model.type || ''}`}
                     onClick={() => handleModelSelect(model)}
                     className={cn(

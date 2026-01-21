@@ -149,7 +149,10 @@ export interface BubbleToolsProps {
   /** Whether regenerate is in progress */
   isRegenerating?: boolean
   /** Optional render prop for custom regenerate button with popover */
-  renderRegenerateButton?: (defaultButton: React.ReactNode) => React.ReactNode
+  renderRegenerateButton?: (
+    defaultButton: React.ReactNode,
+    tooltipText: string
+  ) => React.ReactNode
 }
 
 // Bubble toolbar: supports copy button, feedback buttons, and extensible tool buttons
@@ -182,10 +185,9 @@ const BubbleTools = ({
         (() => {
           // When renderRegenerateButton is provided, the button is wrapped in a PopoverTrigger
           // In that case, we should NOT include onClick since PopoverTrigger handles the open state
-          // We also need to avoid nesting Tooltip inside PopoverTrigger (asChild conflicts)
           const hasPopoverWrapper = !!renderRegenerateButton
 
-          // The raw button without tooltip - used when wrapped in PopoverTrigger
+          // The raw button - onClick is only set when there's no popover wrapper
           const rawButton = (
             <Button
               variant="ghost"
@@ -200,20 +202,21 @@ const BubbleTools = ({
             </Button>
           )
 
-          // Button with tooltip - used when no PopoverTrigger wrapper
-          const defaultButton = hasPopoverWrapper ? (
-            rawButton
-          ) : (
+          const tooltipText =
+            t('chat:regenerate.tooltip') || t('chat:actions.regenerate') || 'Regenerate'
+
+          // When using renderRegenerateButton (with Popover), tooltip is handled inside the Popover component
+          // When not using renderRegenerateButton, wrap button with Tooltip here
+          if (renderRegenerateButton) {
+            return renderRegenerateButton(rawButton, tooltipText)
+          }
+
+          return (
             <Tooltip>
               <TooltipTrigger asChild>{rawButton}</TooltipTrigger>
-              <TooltipContent>
-                {t('chat:regenerate.tooltip') || t('chat:actions.regenerate') || 'Regenerate'}
-              </TooltipContent>
+              <TooltipContent>{tooltipText}</TooltipContent>
             </Tooltip>
           )
-
-          // Use custom render function if provided (for popover wrapping)
-          return renderRegenerateButton ? renderRegenerateButton(defaultButton) : defaultButton
         })()}
       {/* Feedback buttons: like and dislike */}
       <Tooltip>

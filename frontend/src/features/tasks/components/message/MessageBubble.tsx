@@ -627,6 +627,7 @@ const MessageBubble = memo(
               dislike: t('chat:messages.dislike') || 'Dislike',
             }}
             showRegenerate={
+              Boolean(onRegenerate) &&
               !isGroupChat &&
               isLastAiMessage &&
               (msg.subtaskStatus === 'COMPLETED' || msg.status === 'completed') &&
@@ -635,7 +636,7 @@ const MessageBubble = memo(
             }
             onRegenerateClick={() => setIsRegeneratePopoverOpen(true)}
             isRegenerating={isRegenerating}
-            renderRegenerateButton={defaultButton => (
+            renderRegenerateButton={(defaultButton, tooltipText) => (
               <RegenerateModelPopover
                 open={isRegeneratePopoverOpen}
                 onOpenChange={setIsRegeneratePopoverOpen}
@@ -645,6 +646,7 @@ const MessageBubble = memo(
                 }}
                 isLoading={isRegenerating}
                 trigger={defaultButton}
+                tooltipText={tooltipText}
               />
             )}
           />
