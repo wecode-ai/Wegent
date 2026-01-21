@@ -29,6 +29,7 @@ This skill guides you through the process of loading Anthropic's official docume
 2. **Install if Needed**: Install marketplace using `claude plugin marketplace add anthropics/skills`
 3. **Read Skill Documentation**: Use `sandbox_read_file` to read the official skill instructions
 4. **Follow Instructions**: Generate documents according to the loaded skill documentation
+5. **Upload and Return URL**: Upload generated documents and provide download URLs to users
 
 **⚠️ CRITICAL: This tool provides MANDATORY instructions that you MUST follow IN ORDER.**
 
@@ -82,8 +83,10 @@ Get mandatory step-by-step instructions for loading a specific document skill.
 2. **Step 2**: If marketplace doesn't exist, execute `sandbox_command` to install it
 3. **Step 3**: ⚠️ **NEVER SKIP THIS** - Execute `sandbox_read_file` to read the skill documentation
 4. **Step 4**: Only AFTER reading, follow the loaded skill instructions to generate documents
+5. **Step 5**: ⚠️ **NEVER SKIP THIS** - Upload the generated document using `sandbox_upload_attachment` and return the download URL to the user
 
 **DO NOT** generate documents based on your existing knowledge without loading the skill first.
+**DO NOT** just tell the user the file path - they cannot access sandbox files directly.
 
 **Example Usage:**
 
@@ -123,6 +126,11 @@ Get mandatory step-by-step instructions for loading a specific document skill.
     },
     "step_4_FOLLOW_SKILL_INSTRUCTIONS": {
       "description": "Follow the instructions from step 3"
+    },
+    "step_5_UPLOAD_AND_RETURN_URL": {
+      "description": "Upload document and return download URL to user",
+      "tool": "sandbox_upload_attachment",
+      "critical_importance": "⚠️ THIS STEP IS MANDATORY - users cannot access sandbox files directly ⚠️"
     }
   },
   "message": "🔴 MANDATORY INSTRUCTIONS FOR PPTX GENERATION 🔴..."
@@ -157,6 +165,20 @@ Get mandatory step-by-step instructions for loading a specific document skill.
    - Execute script: `sandbox_command` with `python /home/user/generate_ppt.py`
    - Verify output: `sandbox_list_files` to check generated files
 
+6. **Execute Step 5** - ⚠️ **MANDATORY** - Upload and return download URL
+   ```json
+   {"name": "sandbox_upload_attachment", "arguments": {"file_path": "/home/user/documents/ai_trends.pptx"}}
+   ```
+
+   Then present the download link to user:
+   ```
+   文档已生成完成！
+
+   📄 **ai_trends.pptx**
+
+   [点击下载](/api/attachments/123/download)
+   ```
+
 ## How It Works
 
 The `load_document_skill` tool operates as an **instruction provider**, NOT an executor:
@@ -168,6 +190,7 @@ The `load_document_skill` tool operates as an **instruction provider**, NOT an e
    - Step 2: How to install marketplace (if needed)
    - Step 3: How to read the official skill documentation
    - Step 4: Guidelines for following the loaded instructions
+   - Step 5: How to upload and return download URL to user
 
 3. **You Execute**: You must execute each step using sandbox tools
 
@@ -195,18 +218,21 @@ After reading the skill file in Step 3, you'll receive:
 
 1. **Always Call load_document_skill First**: Get instructions before attempting any document generation
 2. **Never Skip Step 3**: Always read the official skill documentation - your knowledge may be outdated
-3. **Follow Steps In Order**: Execute step 1 → step 2 (if needed) → step 3 → step 4
-4. **Install Dependencies in Sandbox**: Use `sandbox_command` to install required Python packages
-5. **Test Incrementally**: Start with simple documents, then add complexity
-6. **Save to User Directory**: Use `/home/user/documents/` or subdirectories for output files
-7. **Trust Official Documentation**: Anthropic's skills contain the latest library usage patterns
+3. **Never Skip Step 5**: Always upload documents and provide download URLs - users cannot access sandbox files
+4. **Follow Steps In Order**: Execute step 1 → step 2 (if needed) → step 3 → step 4 → step 5
+5. **Install Dependencies in Sandbox**: Use `sandbox_command` to install required Python packages
+6. **Test Incrementally**: Start with simple documents, then add complexity
+7. **Save to User Directory**: Use `/home/user/documents/` or subdirectories for output files
+8. **Trust Official Documentation**: Anthropic's skills contain the latest library usage patterns
 
 ## Key Reminders
 
 ⚠️ **CRITICAL RULES:**
 - DO NOT skip reading skill documentation (Step 3)
+- DO NOT skip uploading and returning download URL (Step 5)
 - DO NOT generate documents based solely on your existing knowledge
 - DO NOT assume you know the correct approach without reading the instructions
+- DO NOT just tell the user the file path - they cannot access sandbox files directly
 - Your knowledge about python-pptx/openpyxl/python-docx may be OUTDATED
 - ALWAYS follow the mandatory workflow
 
@@ -274,6 +300,13 @@ After reading the skill file in Step 3, you'll receive:
 
 // Verify output
 {"name": "sandbox_list_files", "arguments": {"path": "/home/user/documents"}}
+
+// Step 5: Upload document and return download URL
+{"name": "sandbox_upload_attachment", "arguments": {"file_path": "/home/user/documents/ai_trends.pptx"}}
+// Then present download link to user:
+// 文档已生成完成！
+// 📄 **ai_trends.pptx**
+// [点击下载](/api/attachments/123/download)
 ```
 
 ### Example 2: Generate Excel Spreadsheet
@@ -289,6 +322,9 @@ After reading the skill file in Step 3, you'll receive:
 // Step 4: Install and generate based on loaded instructions
 {"name": "sandbox_command", "arguments": {"command": "pip install openpyxl"}}
 // ... create script and execute ...
+
+// Step 5: Upload and return download URL
+{"name": "sandbox_upload_attachment", "arguments": {"file_path": "/home/user/documents/financial_report.xlsx"}}
 ```
 
 ### Example 3: Generate Word Document
@@ -304,6 +340,9 @@ After reading the skill file in Step 3, you'll receive:
 // Step 4: Install and generate based on loaded instructions
 {"name": "sandbox_command", "arguments": {"command": "pip install python-docx"}}
 // ... create script and execute ...
+
+// Step 5: Upload and return download URL
+{"name": "sandbox_upload_attachment", "arguments": {"file_path": "/home/user/documents/api_docs.docx"}}
 ```
 
 ### Example 4: Generate PDF Document
@@ -319,13 +358,16 @@ After reading the skill file in Step 3, you'll receive:
 // Step 4: Install and generate based on loaded instructions
 {"name": "sandbox_command", "arguments": {"command": "pip install reportlab"}}
 // ... create script and execute ...
+
+// Step 5: Upload and return download URL
+{"name": "sandbox_upload_attachment", "arguments": {"file_path": "/home/user/documents/research_report.pdf"}}
 ```
 
 ## Integration with Other Skills
 
 This skill has a hard dependency on:
 
-- **Sandbox Skill**: Required for all operations - provides `sandbox_list_files`, `sandbox_command`, `sandbox_read_file`, and `sandbox_write_file` tools
+- **Sandbox Skill**: Required for all operations - provides `sandbox_list_files`, `sandbox_command`, `sandbox_read_file`, `sandbox_write_file`, and `sandbox_upload_attachment` tools
 
 The sandbox skill is automatically loaded before this skill due to the `dependencies` declaration.
 
@@ -415,5 +457,8 @@ This skill follows the **instruction-only pattern**:
 3. Execute `sandbox_command` to install marketplace (if needed)
 4. **⚠️ NEVER SKIP**: Execute `sandbox_read_file` to read skill documentation
 5. Follow the loaded instructions to generate documents
+6. **⚠️ NEVER SKIP**: Execute `sandbox_upload_attachment` to upload document and return download URL
 
-**Remember**: Always read the official skill documentation before generating documents. Your existing knowledge may be outdated.
+**Remember**:
+- Always read the official skill documentation before generating documents. Your existing knowledge may be outdated.
+- Always upload documents and provide download URLs. Users cannot access sandbox files directly.
