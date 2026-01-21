@@ -30,8 +30,7 @@ GRACEFUL_SHUTDOWN_TIMEOUT = int(os.environ.get("GRACEFUL_SHUTDOWN_TIMEOUT", "10"
 # Files are merged in the order specified in this list
 # Non-existent files are silently skipped
 CUSTOM_INSTRUCTION_FILES = os.getenv(
-    "CUSTOM_INSTRUCTION_FILES",
-    ".cursorrules,.windsurfrules"
+    "CUSTOM_INSTRUCTION_FILES", ".cursorrules,.windsurfrules"
 ).split(",")
 
 # OpenTelemetry configuration is centralized in shared/telemetry/config.py

@@ -1,4 +1,3 @@
-
 # SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
@@ -9,7 +8,9 @@ import re
 
 def generate_executor_name(task_id, subtask_id, user_name):
     user_name = _sanitize_k8s_name(user_name)
-    digest = hashlib.sha1(f"{user_name}-{task_id}-{subtask_id}".encode()).hexdigest()[:15]
+    digest = hashlib.sha1(f"{user_name}-{task_id}-{subtask_id}".encode()).hexdigest()[
+        :15
+    ]
     return f"wegent-task-{user_name}-{digest}"
 
 

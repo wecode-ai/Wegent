@@ -24,9 +24,9 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import redis
-from shared.logger import setup_logger
 
 from executor_manager.common.redis_factory import RedisClientFactory
+from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 
@@ -281,10 +281,11 @@ class RunningTaskTracker:
         Uses distributed lock to prevent concurrent execution in multi-replica deployments.
         Only checks tasks older than grace_period to avoid false positives during startup.
         """
-        from executor_manager.common.distributed_lock import \
-            get_distributed_lock
+        from executor_manager.common.distributed_lock import get_distributed_lock
         from executor_manager.services.heartbeat_manager import (
-            HeartbeatType, get_heartbeat_manager)
+            HeartbeatType,
+            get_heartbeat_manager,
+        )
 
         # Acquire distributed lock to prevent concurrent execution across multiple replicas
         lock = get_distributed_lock()
@@ -376,7 +377,9 @@ class RunningTaskTracker:
         from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
         from executor_manager.executors.dispatcher import ExecutorDispatcher
         from executor_manager.services.heartbeat_manager import (
-            HeartbeatType, get_heartbeat_manager)
+            HeartbeatType,
+            get_heartbeat_manager,
+        )
 
         logger.info(
             f"[RunningTaskTracker] Checking task status: task_id={task_id_str}, "

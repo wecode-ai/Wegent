@@ -10,9 +10,9 @@ import time
 from typing import Optional
 
 import psutil
-from fastapi import (FastAPI, File, Header, HTTPException, Query, Response,
-                     UploadFile)
+from fastapi import FastAPI, File, Header, HTTPException, Query, Response, UploadFile
 from fastapi.responses import FileResponse
+
 from shared.logger import setup_logger
 
 from .models import EntryInfo, InitRequest, MetricsResponse

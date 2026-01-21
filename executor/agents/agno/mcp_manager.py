@@ -3,11 +3,17 @@ import json
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.tools.mcp import (MCPTools, SSEClientParams, StdioServerParameters,
-                            StreamableHTTPClientParams)
+from agno.tools.mcp import (
+    MCPTools,
+    SSEClientParams,
+    StdioServerParameters,
+    StreamableHTTPClientParams,
+)
 
-from executor.utils.mcp_utils import (extract_mcp_servers_config,
-                                      replace_mcp_server_variables)
+from executor.utils.mcp_utils import (
+    extract_mcp_servers_config,
+    replace_mcp_server_variables,
+)
 from shared.logger import setup_logger
 
 # SPDX-FileCopyrightText: 2025 Weibo, Inc.

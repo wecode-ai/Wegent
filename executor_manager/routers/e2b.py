@@ -25,10 +25,10 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from shared.logger import setup_logger
 
 from executor_manager.models.sandbox import SandboxStatus
 from executor_manager.services.sandbox import get_sandbox_manager
+from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 

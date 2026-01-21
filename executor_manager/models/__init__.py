@@ -4,8 +4,12 @@
 
 """Models package for executor_manager."""
 
-from executor_manager.models.sandbox import (Execution, ExecutionStatus,
-                                             Sandbox, SandboxStatus)
+from executor_manager.models.sandbox import (
+    Execution,
+    ExecutionStatus,
+    Sandbox,
+    SandboxStatus,
+)
 
 __all__ = [
     "Sandbox",

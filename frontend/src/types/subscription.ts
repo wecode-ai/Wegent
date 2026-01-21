@@ -187,6 +187,8 @@ export interface BackgroundExecution {
   subscription_display_name?: string
   team_name?: string
   task_type?: string
+  // Permission field - indicates if current user can delete this execution
+  can_delete?: boolean
 }
 
 // Background execution list response

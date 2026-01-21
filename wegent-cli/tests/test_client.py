@@ -1,9 +1,9 @@
 """Tests for wegent client module."""
 
-import pytest
-from unittest.mock import patch, Mock
+from unittest.mock import Mock, patch
 
-from wegent.client import WegentClient, APIError, KIND_ALIASES, VALID_KINDS
+import pytest
+from wegent.client import KIND_ALIASES, VALID_KINDS, APIError, WegentClient
 
 
 class TestWegentClient:
@@ -92,6 +92,7 @@ class TestWegentClient:
     def test_connection_error(self, mock_request):
         """Test connection error handling."""
         import requests
+
         mock_request.side_effect = requests.exceptions.ConnectionError()
 
         client = WegentClient(server="http://test:8000")

@@ -18,8 +18,9 @@ This provider is dynamically loaded from the skill directory at runtime.
 
 from typing import Any, Optional
 
-from chat_shell.skills import SkillToolContext, SkillToolProvider
 from langchain_core.tools import BaseTool
+
+from chat_shell.skills import SkillToolContext, SkillToolProvider
 
 
 class SandboxToolProvider(SkillToolProvider):

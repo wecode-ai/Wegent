@@ -11,6 +11,7 @@ from functools import wraps
 from typing import Callable, Optional, Type
 
 from pydantic import ValidationError
+
 from shared.telemetry.context import set_task_context
 
 logger = logging.getLogger(__name__)
