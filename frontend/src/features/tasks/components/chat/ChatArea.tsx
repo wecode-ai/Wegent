@@ -19,6 +19,7 @@ import { useChatStreamHandlers } from './useChatStreamHandlers'
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
 import type { Team, SubtaskContextBrief } from '@/types/api'
+import type { Model } from '../../hooks/useModelSelection'
 import type { ContextItem } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
@@ -416,6 +417,15 @@ function ChatAreaContent({
     [chatState, streamHandlers]
   )
 
+  // Callback for child components to send messages with a specific model (for regeneration)
+  // Accepts optional existingContexts to preserve attachments/knowledge bases from the original message
+  const handleSendMessageWithModelFromChild = useCallback(
+    async (content: string, model: Model, existingContexts?: SubtaskContextBrief[]) => {
+      await streamHandlers.handleSendMessageWithModel(content, model, existingContexts)
+    },
+    [streamHandlers]
+  )
+
   // Callback for re-selecting a context from a message badge
   const handleContextReselect = useCallback(
     (context: SubtaskContextBrief) => {
@@ -626,6 +636,7 @@ function ChatAreaContent({
               onContentChange={handleMessagesContentChange}
               onShareButtonRender={onShareButtonRender}
               onSendMessage={handleSendMessageFromChild}
+              onSendMessageWithModel={handleSendMessageWithModelFromChild}
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
               onRetry={streamHandlers.handleRetry}
               enableCorrectionMode={chatState.enableCorrectionMode}

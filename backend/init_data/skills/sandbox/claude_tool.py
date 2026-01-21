@@ -194,7 +194,6 @@ Example:
             sandbox, error = await sandbox_manager.get_or_create_sandbox(
                 shell_type=self.default_shell_type,
                 workspace_ref=None,
-                task_type="claude_command",
             )
 
             if error:

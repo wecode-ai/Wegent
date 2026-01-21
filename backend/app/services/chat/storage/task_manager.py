@@ -44,6 +44,9 @@ class TaskCreationParams:
     title: Optional[str] = None
     model_id: Optional[str] = None
     force_override_bot_model: bool = False
+    force_override_bot_model_type: Optional[str] = (
+        None  # Model type: 'public', 'user', 'group'
+    )
     is_group_chat: bool = False
     git_url: Optional[str] = None
     git_repo: Optional[str] = None
@@ -310,6 +313,11 @@ def create_new_task(
                 **(
                     {"forceOverrideBotModel": "true"}
                     if params.force_override_bot_model
+                    else {}
+                ),
+                **(
+                    {"forceOverrideBotModelType": params.force_override_bot_model_type}
+                    if params.force_override_bot_model_type
                     else {}
                 ),
             },
@@ -780,6 +788,7 @@ async def create_chat_task(
             source=source,
             model_id=params.model_id,
             force_override_bot_model=params.force_override_bot_model,
+            force_override_bot_model_type=params.force_override_bot_model_type,
         )
 
         # Call create_task_or_append (synchronous method)

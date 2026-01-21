@@ -40,8 +40,10 @@ import BubbleTools, { CopyButton, EditButton } from './BubbleTools'
 import InlineMessageEdit from './InlineMessageEdit'
 import { SourceReferences } from '../chat/SourceReferences'
 import CollapsibleMessage from './CollapsibleMessage'
+import RegenerateModelPopover from './RegenerateModelPopover'
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api'
 import type { SourceReference } from '@/types/socket'
+import type { Model } from '../../hooks/useModelSelection'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { useMessageFeedback } from '@/hooks/useMessageFeedback'
 import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartUrlRenderer'
@@ -160,6 +162,12 @@ export interface MessageBubbleProps {
   onEditSave?: (content: string) => Promise<void>
   /** Callback when user cancels editing */
   onEditCancel?: () => void
+  /** Whether this is the last AI message */
+  isLastAiMessage?: boolean
+  /** Handler for regenerate action - receives the message and selected model */
+  onRegenerate?: (msg: Message, model: Model) => void
+  /** Whether regenerate is in progress */
+  isRegenerating?: boolean
 }
 
 // Component for rendering a paragraph with hover action button
@@ -279,9 +287,15 @@ const MessageBubble = memo(
     onEdit,
     onEditSave,
     onEditCancel,
+    isLastAiMessage,
+    onRegenerate,
+    isRegenerating,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
+
+    // State for regenerate model popover
+    const [isRegeneratePopoverOpen, setIsRegeneratePopoverOpen] = useState(false)
 
     // Use feedback hook for managing like/dislike state with localStorage persistence
     const { feedback, handleLike, handleDislike } = useMessageFeedback({
@@ -612,6 +626,29 @@ const MessageBubble = memo(
               like: t('chat:messages.like') || 'Like',
               dislike: t('chat:messages.dislike') || 'Dislike',
             }}
+            showRegenerate={
+              Boolean(onRegenerate) &&
+              !isGroupChat &&
+              isLastAiMessage &&
+              (msg.subtaskStatus === 'COMPLETED' || msg.status === 'completed') &&
+              msg.subtaskStatus !== 'RUNNING' &&
+              msg.status !== 'streaming'
+            }
+            onRegenerateClick={() => setIsRegeneratePopoverOpen(true)}
+            isRegenerating={isRegenerating}
+            renderRegenerateButton={(defaultButton, tooltipText) => (
+              <RegenerateModelPopover
+                open={isRegeneratePopoverOpen}
+                onOpenChange={setIsRegeneratePopoverOpen}
+                selectedTeam={selectedTeam ?? null}
+                onSelectModel={model => {
+                  onRegenerate?.(msg, model)
+                }}
+                isLoading={isRegenerating}
+                trigger={defaultButton}
+                tooltipText={tooltipText}
+              />
+            )}
           />
         </>
       )
@@ -1591,7 +1628,9 @@ const MessageBubble = memo(
       prevProps.msg.status === nextProps.msg.status &&
       prevProps.msg.error === nextProps.msg.error &&
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&
-      prevProps.isEditing === nextProps.isEditing
+      prevProps.isEditing === nextProps.isEditing &&
+      prevProps.isLastAiMessage === nextProps.isLastAiMessage &&
+      prevProps.isRegenerating === nextProps.isRegenerating
 
     return shouldSkipRender
   }
