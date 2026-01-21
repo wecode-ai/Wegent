@@ -133,7 +133,10 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
       return
     }
     try {
-      await downloadSkill(skill.id, skill.name)
+      // For group scope, use the selectedGroup as namespace
+      // For personal scope, use the skill's namespace (usually 'default')
+      const namespace = scope === 'group' && selectedGroup ? selectedGroup : skill.namespace
+      await downloadSkill(skill.id, skill.name, namespace)
       toast.success(t('skills.download_success'))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('skills.download_failed'))
