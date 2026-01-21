@@ -110,14 +110,14 @@ class TestProviderToolRegistration:
         assert "SandboxDownloadAttachmentTool" in content
         assert "from .download_attachment_tool import SandboxDownloadAttachmentTool" in content
 
-    def test_provider_passes_auth_token_config(self):
-        """Test that provider passes auth_token config to tools."""
+    def test_provider_passes_auth_token_from_context(self):
+        """Test that provider passes auth_token from context to tools."""
         provider_file = SKILL_DIR / "provider.py"
         content = provider_file.read_text()
 
-        # Check auth_token is passed for upload tool
-        assert 'auth_token=config.get("auth_token"' in content
-        # Check api_base_url is passed
+        # Check auth_token is passed from context for upload tool
+        assert "auth_token=context.auth_token" in content
+        # Check api_base_url is still passed from config
         assert 'api_base_url=config.get("api_base_url"' in content
 
 

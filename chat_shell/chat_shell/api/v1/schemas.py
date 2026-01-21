@@ -232,6 +232,11 @@ class Metadata(BaseModel):
     )
     # Task data for MCP tools
     task_data: Optional[dict] = Field(None, description="Task data for MCP tools")
+    # Authentication
+    auth_token: Optional[str] = Field(
+        None,
+        description="JWT token for API authentication (e.g., attachment upload/download)",
+    )
 
 
 class AttachmentConfig(BaseModel):
