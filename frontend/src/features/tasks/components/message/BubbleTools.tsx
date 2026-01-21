@@ -182,10 +182,9 @@ const BubbleTools = ({
         (() => {
           // When renderRegenerateButton is provided, the button is wrapped in a PopoverTrigger
           // In that case, we should NOT include onClick since PopoverTrigger handles the open state
-          // We also need to avoid nesting Tooltip inside PopoverTrigger (asChild conflicts)
           const hasPopoverWrapper = !!renderRegenerateButton
 
-          // The raw button without tooltip - used when wrapped in PopoverTrigger
+          // The raw button - onClick is only set when there's no popover wrapper
           const rawButton = (
             <Button
               variant="ghost"
@@ -200,20 +199,20 @@ const BubbleTools = ({
             </Button>
           )
 
-          // Button with tooltip - used when no PopoverTrigger wrapper
-          const defaultButton = hasPopoverWrapper ? (
-            rawButton
-          ) : (
+          // Always wrap the button (with or without popover) in a Tooltip
+          // When using PopoverTrigger, the Tooltip wraps the entire Popover component
+          const buttonWithPopover = renderRegenerateButton
+            ? renderRegenerateButton(rawButton)
+            : rawButton
+
+          return (
             <Tooltip>
-              <TooltipTrigger asChild>{rawButton}</TooltipTrigger>
+              <TooltipTrigger asChild>{buttonWithPopover}</TooltipTrigger>
               <TooltipContent>
                 {t('chat:regenerate.tooltip') || t('chat:actions.regenerate') || 'Regenerate'}
               </TooltipContent>
             </Tooltip>
           )
-
-          // Use custom render function if provided (for popover wrapping)
-          return renderRegenerateButton ? renderRegenerateButton(defaultButton) : defaultButton
         })()}
       {/* Feedback buttons: like and dislike */}
       <Tooltip>
