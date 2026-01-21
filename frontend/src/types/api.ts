@@ -14,6 +14,7 @@ export interface UserPreferences {
   send_key: 'enter' | 'cmd_enter'
   search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
   quick_access?: QuickAccessConfig
+  memory_enabled?: boolean
 }
 
 // User Types
@@ -139,7 +140,7 @@ export interface Team {
   agent_type?: string // agno, claude, dify, etc.
   is_mix_team?: boolean // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
   recommended_mode?: 'chat' | 'code' | 'both' // Recommended usage mode (for QuickAccess)
-  bind_mode?: ('chat' | 'code')[] // Allowed modes for this team
+  bind_mode?: ('chat' | 'code' | 'knowledge')[] // Allowed modes for this team
   icon?: string // Icon ID from preset icon library
   user?: {
     user_name: string
@@ -172,7 +173,7 @@ export type TaskStatus =
   | 'CANCELLING'
   | 'DELETE'
   | 'PENDING_CONFIRMATION' // Pipeline stage completed, waiting for user confirmation
-export type TaskType = 'chat' | 'code'
+export type TaskType = 'chat' | 'code' | 'knowledge'
 
 // Git commit statistics
 interface CommitStats {
@@ -238,6 +239,13 @@ export interface OpenLinks {
   target_branch: string | null
 }
 
+/** App preview information (set by expose_service tool when service starts) */
+export interface TaskApp {
+  address: string
+  name: string
+  previewUrl: string
+}
+
 export interface TaskDetail {
   id: number
   title: string
@@ -264,6 +272,7 @@ export interface TaskDetail {
   is_group_chat?: boolean // Whether this task is a group chat
   is_group_owner?: boolean // Whether current user is the group owner
   member_count?: number // Number of active members in the group
+  app?: TaskApp | null // App preview information (set by expose_service tool)
 }
 
 /** Correction data stored in subtask.result.correction */
@@ -355,6 +364,7 @@ export interface Task {
   updated_at: string
   completed_at: string
   is_group_chat?: boolean // Whether this task is a group chat
+  knowledge_base_id?: number // Knowledge base ID for knowledge type tasks
 }
 
 /** GitHub repository new structure */
@@ -562,6 +572,18 @@ export interface WelcomeConfigResponse {
   tips: ChatTipItem[]
 }
 
+// Default Teams Configuration Types
+export interface DefaultTeamConfig {
+  name: string
+  namespace: string
+}
+
+export interface DefaultTeamsResponse {
+  chat: DefaultTeamConfig | null
+  code: DefaultTeamConfig | null
+  knowledge: DefaultTeamConfig | null
+}
+
 export interface SystemConfigResponse {
   version: number
   teams: number[]
@@ -583,3 +605,38 @@ export type {
   KnowledgeBase,
   KnowledgeBaseListResponse as KnowledgeBasesResponse,
 } from './knowledge'
+
+// Project Types
+/** Task within a project */
+export interface ProjectTask {
+  task_id: number
+  task_title: string
+  task_status: TaskStatus
+  is_group_chat: boolean
+  project_id: number
+}
+
+/** Project for organizing tasks */
+export interface Project {
+  id: number
+  user_id: number
+  name: string
+  description: string
+  color: string | null
+  sort_order: number
+  is_expanded: boolean
+  task_count: number
+  created_at: string
+  updated_at: string
+}
+
+/** Project with its tasks */
+export interface ProjectWithTasks extends Project {
+  tasks: ProjectTask[]
+}
+
+/** Project list response */
+export interface ProjectListResponse {
+  total: number
+  items: ProjectWithTasks[]
+}

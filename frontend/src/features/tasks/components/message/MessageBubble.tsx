@@ -29,7 +29,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import MarkdownEditor from '@uiw/react-markdown-editor'
-import MarkdownWithMermaid from '@/components/common/MarkdownWithMermaid'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { ThinkingDisplay, ReasoningDisplay } from './thinking'
 import ClarificationForm from '../clarification/ClarificationForm'
 import FinalPromptMessage from './FinalPromptMessage'
@@ -40,12 +40,15 @@ import BubbleTools, { CopyButton, EditButton } from './BubbleTools'
 import InlineMessageEdit from './InlineMessageEdit'
 import { SourceReferences } from '../chat/SourceReferences'
 import CollapsibleMessage from './CollapsibleMessage'
+import RegenerateModelPopover from './RegenerateModelPopover'
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api'
 import type { SourceReference } from '@/types/socket'
+import type { Model } from '../../hooks/useModelSelection'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { useMessageFeedback } from '@/hooks/useMessageFeedback'
 import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartUrlRenderer'
 import { formatDateTime } from '@/utils/dateTime'
+import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
 export interface Message {
   type: 'user' | 'ai'
   content: string
@@ -159,6 +162,12 @@ export interface MessageBubbleProps {
   onEditSave?: (content: string) => Promise<void>
   /** Callback when user cancels editing */
   onEditCancel?: () => void
+  /** Whether this is the last AI message */
+  isLastAiMessage?: boolean
+  /** Handler for regenerate action - receives the message and selected model */
+  onRegenerate?: (msg: Message, model: Model) => void
+  /** Whether regenerate is in progress */
+  isRegenerating?: boolean
 }
 
 // Component for rendering a paragraph with hover action button
@@ -278,9 +287,15 @@ const MessageBubble = memo(
     onEdit,
     onEditSave,
     onEditCancel,
+    isLastAiMessage,
+    onRegenerate,
+    isRegenerating,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
+
+    // State for regenerate model popover
+    const [isRegeneratePopoverOpen, setIsRegeneratePopoverOpen] = useState(false)
 
     // Use feedback hook for managing like/dislike state with localStorage persistence
     const { feedback, handleLike, handleDislike } = useMessageFeedback({
@@ -499,7 +514,7 @@ const MessageBubble = memo(
       const shouldEnableCollapse = !isStreaming && msg.subtaskStatus !== 'RUNNING' && isGroupChat
 
       const markdownContent = (
-        <MarkdownWithMermaid
+        <EnhancedMarkdown
           source={normalizedResult}
           theme={theme}
           components={
@@ -611,6 +626,29 @@ const MessageBubble = memo(
               like: t('chat:messages.like') || 'Like',
               dislike: t('chat:messages.dislike') || 'Dislike',
             }}
+            showRegenerate={
+              Boolean(onRegenerate) &&
+              !isGroupChat &&
+              isLastAiMessage &&
+              (msg.subtaskStatus === 'COMPLETED' || msg.status === 'completed') &&
+              msg.subtaskStatus !== 'RUNNING' &&
+              msg.status !== 'streaming'
+            }
+            onRegenerateClick={() => setIsRegeneratePopoverOpen(true)}
+            isRegenerating={isRegenerating}
+            renderRegenerateButton={(defaultButton, tooltipText) => (
+              <RegenerateModelPopover
+                open={isRegeneratePopoverOpen}
+                onOpenChange={setIsRegeneratePopoverOpen}
+                selectedTeam={selectedTeam ?? null}
+                onSelectModel={model => {
+                  onRegenerate?.(msg, model)
+                }}
+                isLoading={isRegenerating}
+                trigger={defaultButton}
+                tooltipText={tooltipText}
+              />
+            )}
           />
         </>
       )
@@ -1296,7 +1334,7 @@ const MessageBubble = memo(
         <div className="space-y-2">
           {contentToRender ? (
             <>
-              <MarkdownWithMermaid
+              <EnhancedMarkdown
                 source={contentToRender}
                 theme={theme}
                 components={{
@@ -1457,54 +1495,69 @@ const MessageBubble = memo(
 
             {/* Show error message and retry button for failed messages */}
             {!isUserTypeMessage && msg.status === 'error' && msg.error && (
-              <div className="mt-4 space-y-3">
+              <div className="mt-4">
                 {/* Error message with details */}
                 <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800">
                   <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
-                    {/* Generic error message */}
+                    {/* Error message based on error type */}
                     <p className="text-sm text-red-800 dark:text-red-200">
-                      {onRetry
-                        ? t('chat:errors.request_failed_retry')
-                        : t('chat:errors.model_unsupported')}
+                      {getErrorDisplayMessage(msg.error, (key: string) => t(`chat:${key}`))}
                     </p>
-                    {/* Detailed error message from backend */}
-                    <p className="mt-1 text-xs text-red-600 dark:text-red-300 break-all">
-                      {msg.error}
-                    </p>
+                    {/* Detailed error message from backend - only show if different from main message */}
+                    {(() => {
+                      const parsedError = parseError(msg.error)
+                      // Don't show duplicate message for generic errors
+                      if (parsedError.type !== 'generic_error') {
+                        return (
+                          <p className="mt-1 text-xs text-red-600 dark:text-red-300 break-all">
+                            {msg.error}
+                          </p>
+                        )
+                      }
+                      return null
+                    })()}
                   </div>
-                  {/* Copy error button */}
-                  <CopyButton
-                    content={msg.error}
-                    className="h-7 w-7 flex-shrink-0 !rounded-md bg-red-100 dark:bg-red-900/30 hover:!bg-red-200 dark:hover:!bg-red-900/50"
-                    tooltip={t('chat:errors.copy_error') || 'Copy error'}
-                    onCopySuccess={() =>
-                      trace.event('error-copy', {
-                        'error.message': msg.error?.substring(0, 100),
-                        ...(msg.subtaskId && { 'subtask.id': msg.subtaskId }),
-                      })
-                    }
-                  />
+                  {/* Action buttons: Retry and Copy */}
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {/* Only show retry button for retryable errors */}
+                    {/* Container errors (OOM, container crash) are not retryable - user should start new task */}
+                    {onRetry &&
+                      (() => {
+                        const parsedError = parseError(msg.error)
+                        const isRetryable =
+                          parsedError.type !== 'container_oom' &&
+                          parsedError.type !== 'container_error'
+                        if (!isRetryable) return null
+                        return (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => onRetry(msg)}
+                                className="h-7 w-7 !rounded-md bg-red-100 dark:bg-red-900/30 hover:!bg-red-200 dark:hover:!bg-red-900/50"
+                              >
+                                <RefreshCw className="h-4 w-4 text-red-600 dark:text-red-400" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>{t('actions.retry') || '重试'}</TooltipContent>
+                          </Tooltip>
+                        )
+                      })()}
+                    <CopyButton
+                      content={msg.error}
+                      className="h-7 w-7 flex-shrink-0 !rounded-md bg-red-100 dark:bg-red-900/30 hover:!bg-red-200 dark:hover:!bg-red-900/50"
+                      tooltip={t('chat:errors.copy_error') || 'Copy error'}
+                      onCopySuccess={() =>
+                        trace.event('error-copy', {
+                          'error.message': msg.error?.substring(0, 100),
+                          ...(msg.subtaskId && { 'subtask.id': msg.subtaskId }),
+                        })
+                      }
+                    />
+                  </div>
                 </div>
-
-                {/* Retry button - positioned like BubbleTools for consistency */}
-                {onRetry && (
-                  <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => onRetry(msg)}
-                          className="h-8 w-8 hover:bg-muted"
-                        >
-                          <RefreshCw className="h-4 w-4 text-text-muted" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>{t('actions.retry') || '重试'}</TooltipContent>
-                    </Tooltip>
-                  </div>
-                )}
               </div>
             )}
 
@@ -1575,7 +1628,9 @@ const MessageBubble = memo(
       prevProps.msg.status === nextProps.msg.status &&
       prevProps.msg.error === nextProps.msg.error &&
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&
-      prevProps.isEditing === nextProps.isEditing
+      prevProps.isEditing === nextProps.isEditing &&
+      prevProps.isLastAiMessage === nextProps.isLastAiMessage &&
+      prevProps.isRegenerating === nextProps.isRegenerating
 
     return shouldSkipRender
   }

@@ -163,6 +163,39 @@ export interface AdminPersonalKeyListResponse {
   items: AdminPersonalKey[]
   total: number
 }
+// Background Execution Monitor Types
+export interface BackgroundExecutionMonitorStats {
+  total_executions: number
+  completed_count: number
+  failed_count: number
+  timeout_count: number
+  cancelled_count: number
+  running_count: number
+  pending_count: number
+  success_rate: number
+  failure_rate: number
+  timeout_rate: number
+  active_subscriptions_count: number
+  total_subscriptions_count: number
+}
+
+export interface BackgroundExecutionMonitorError {
+  execution_id: number
+  subscription_id: number
+  user_id: number
+  task_id: number | null
+  status: string
+  error_message: string | null
+  trigger_type: string | null
+  created_at: string
+  started_at: string | null
+  completed_at: string | null
+}
+
+export interface BackgroundExecutionMonitorErrorListResponse {
+  total: number
+  items: BackgroundExecutionMonitorError[]
+}
 
 // Public Retriever Types
 export interface AdminPublicRetriever {
@@ -181,6 +214,132 @@ export interface AdminPublicRetriever {
 export interface AdminPublicRetrieverListResponse {
   total: number
   items: AdminPublicRetriever[]
+}
+
+// Public Team Types
+export interface AdminPublicTeam {
+  id: number
+  name: string
+  namespace: string
+  display_name: string | null
+  description: string | null
+  json: Record<string, unknown>
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface AdminPublicTeamListResponse {
+  total: number
+  items: AdminPublicTeam[]
+}
+
+export interface AdminPublicTeamCreate {
+  name: string
+  namespace?: string
+  json: Record<string, unknown>
+}
+
+export interface AdminPublicTeamUpdate {
+  name?: string
+  namespace?: string
+  json?: Record<string, unknown>
+  is_active?: boolean
+}
+
+// Public Bot Types
+export interface AdminPublicBot {
+  id: number
+  name: string
+  namespace: string
+  display_name: string | null
+  json: Record<string, unknown>
+  is_active: boolean
+  created_at: string
+  updated_at: string
+  ghost_name: string | null
+  shell_name: string | null
+  model_name: string | null
+}
+
+export interface AdminPublicBotListResponse {
+  total: number
+  items: AdminPublicBot[]
+}
+
+export interface AdminPublicBotCreate {
+  name: string
+  namespace?: string
+  json: Record<string, unknown>
+}
+
+export interface AdminPublicBotUpdate {
+  name?: string
+  namespace?: string
+  json?: Record<string, unknown>
+  is_active?: boolean
+}
+
+// Public Ghost Types
+export interface AdminPublicGhost {
+  id: number
+  name: string
+  namespace: string
+  display_name: string | null
+  description: string | null
+  json: Record<string, unknown>
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface AdminPublicGhostListResponse {
+  total: number
+  items: AdminPublicGhost[]
+}
+
+export interface AdminPublicGhostCreate {
+  name: string
+  namespace?: string
+  json: Record<string, unknown>
+}
+
+export interface AdminPublicGhostUpdate {
+  name?: string
+  namespace?: string
+  json?: Record<string, unknown>
+  is_active?: boolean
+}
+
+// Public Shell Types
+export interface AdminPublicShell {
+  id: number
+  name: string
+  namespace: string
+  display_name: string | null
+  shell_type: string | null
+  json: Record<string, unknown>
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface AdminPublicShellListResponse {
+  total: number
+  items: AdminPublicShell[]
+}
+
+export interface AdminPublicShellCreate {
+  name: string
+  namespace?: string
+  json: Record<string, unknown>
+}
+
+export interface AdminPublicShellUpdate {
+  name?: string
+  namespace?: string
+  json?: Record<string, unknown>
+  is_active?: boolean
 }
 
 // Admin API Services
@@ -432,5 +591,170 @@ export const adminApis = {
    */
   async deletePublicRetriever(retrieverId: number): Promise<void> {
     return apiClient.delete(`/admin/public-retrievers/${retrieverId}`)
+  },
+
+  // ==================== Background Execution Monitor ====================
+
+  /**
+   * Get background execution statistics for admin monitoring
+   */
+  async getBackgroundExecutionMonitorStats(
+    hours: number = 24
+  ): Promise<BackgroundExecutionMonitorStats> {
+    return apiClient.get(`/admin/subscription-monitor/stats?hours=${hours}`)
+  },
+
+  /**
+   * Get list of background execution errors for admin monitoring
+   */
+  async getBackgroundExecutionMonitorErrors(
+    page: number = 1,
+    limit: number = 50,
+    hours: number = 24,
+    status?: string
+  ): Promise<BackgroundExecutionMonitorErrorListResponse> {
+    const params = new URLSearchParams()
+    params.append('page', String(page))
+    params.append('limit', String(limit))
+    params.append('hours', String(hours))
+    if (status) {
+      params.append('status', status)
+    }
+    return apiClient.get(`/admin/subscription-monitor/errors?${params.toString()}`)
+  },
+
+  // ==================== Public Team Management ====================
+
+  /**
+   * Get list of all public teams with pagination
+   */
+  async getPublicTeams(page: number = 1, limit: number = 20): Promise<AdminPublicTeamListResponse> {
+    return apiClient.get(`/admin/public-teams?page=${page}&limit=${limit}`)
+  },
+
+  /**
+   * Create a new public team
+   */
+  async createPublicTeam(teamData: AdminPublicTeamCreate): Promise<AdminPublicTeam> {
+    return apiClient.post('/admin/public-teams', teamData)
+  },
+
+  /**
+   * Update a public team
+   */
+  async updatePublicTeam(
+    teamId: number,
+    teamData: AdminPublicTeamUpdate
+  ): Promise<AdminPublicTeam> {
+    return apiClient.put(`/admin/public-teams/${teamId}`, teamData)
+  },
+
+  /**
+   * Delete a public team
+   */
+  async deletePublicTeam(teamId: number): Promise<void> {
+    return apiClient.delete(`/admin/public-teams/${teamId}`)
+  },
+
+  // ==================== Public Bot Management ====================
+
+  /**
+   * Get list of all public bots with pagination
+   */
+  async getPublicBots(page: number = 1, limit: number = 20): Promise<AdminPublicBotListResponse> {
+    return apiClient.get(`/admin/public-bots?page=${page}&limit=${limit}`)
+  },
+
+  /**
+   * Create a new public bot
+   */
+  async createPublicBot(botData: AdminPublicBotCreate): Promise<AdminPublicBot> {
+    return apiClient.post('/admin/public-bots', botData)
+  },
+
+  /**
+   * Update a public bot
+   */
+  async updatePublicBot(botId: number, botData: AdminPublicBotUpdate): Promise<AdminPublicBot> {
+    return apiClient.put(`/admin/public-bots/${botId}`, botData)
+  },
+
+  /**
+   * Delete a public bot
+   */
+  async deletePublicBot(botId: number): Promise<void> {
+    return apiClient.delete(`/admin/public-bots/${botId}`)
+  },
+
+  // ==================== Public Ghost Management ====================
+
+  /**
+   * Get list of all public ghosts with pagination
+   */
+  async getPublicGhosts(
+    page: number = 1,
+    limit: number = 20
+  ): Promise<AdminPublicGhostListResponse> {
+    return apiClient.get(`/admin/public-ghosts?page=${page}&limit=${limit}`)
+  },
+
+  /**
+   * Create a new public ghost
+   */
+  async createPublicGhost(ghostData: AdminPublicGhostCreate): Promise<AdminPublicGhost> {
+    return apiClient.post('/admin/public-ghosts', ghostData)
+  },
+
+  /**
+   * Update a public ghost
+   */
+  async updatePublicGhost(
+    ghostId: number,
+    ghostData: AdminPublicGhostUpdate
+  ): Promise<AdminPublicGhost> {
+    return apiClient.put(`/admin/public-ghosts/${ghostId}`, ghostData)
+  },
+
+  /**
+   * Delete a public ghost
+   */
+  async deletePublicGhost(ghostId: number): Promise<void> {
+    return apiClient.delete(`/admin/public-ghosts/${ghostId}`)
+  },
+
+  // ==================== Public Shell Management ====================
+
+  /**
+   * Get list of all public shells with pagination
+   */
+  async getPublicShells(
+    page: number = 1,
+    limit: number = 20
+  ): Promise<AdminPublicShellListResponse> {
+    return apiClient.get(`/admin/public-shells?page=${page}&limit=${limit}`)
+  },
+
+  /**
+   * Create a new public shell
+   */
+  async createPublicShell(shellData: AdminPublicShellCreate): Promise<AdminPublicShell> {
+    return apiClient.post('/admin/public-shells', shellData)
+  },
+
+  /**
+   * Update a public shell
+   */
+  async updatePublicShell(
+    shellId: number,
+    shellData: AdminPublicShellUpdate
+  ): Promise<AdminPublicShell> {
+    return apiClient.put(`/admin/public-shells/${shellId}`, shellData)
+  },
+
+  /**
+   * Delete a public shell
+   */
+  async deletePublicShell(shellId: number): Promise<void> {
+    return apiClient.delete(`/admin/public-shells/${shellId}`)
   },
 }

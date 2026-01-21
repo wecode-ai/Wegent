@@ -211,7 +211,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         group_name: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Get user's Team list (only active teams) including shared teams.
+        Get user's Team list (only active teams) including shared teams and public teams.
         Uses database union query for better performance and pagination.
 
         Scope behavior:
@@ -298,6 +298,27 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         )
                     )
                     queries.append(shared_teams_query)
+
+                    # Query for public teams (user_id=0)
+                    public_teams_query = db.query(
+                        Kind.id.label("team_id"),
+                        Kind.user_id.label("team_user_id"),
+                        Kind.name.label("team_name"),
+                        Kind.namespace.label("team_namespace"),
+                        Kind.json.label("team_json"),
+                        Kind.created_at.label("team_created_at"),
+                        Kind.updated_at.label("team_updated_at"),
+                        literal_column("0").label(
+                            "share_status"
+                        ),  # 0 for public teams (system-owned)
+                        literal_column("0").label("context_user_id"),
+                    ).filter(
+                        Kind.user_id == 0,
+                        Kind.kind == "Team",
+                        Kind.namespace == "default",
+                        Kind.is_active == True,
+                    )
+                    queries.append(public_teams_query)
             else:
                 # Query for group teams
                 group_teams_query = db.query(
@@ -1338,6 +1359,17 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Get bind_mode from spec (directly, not from workflow)
         bind_mode = team_crd.spec.bind_mode
 
+        # Derive recommended_mode from bind_mode
+        # 'both' if both modes, 'code' if only code, 'chat' otherwise
+        recommended_mode = "chat"  # default
+        if bind_mode:
+            has_code = "code" in bind_mode
+            has_chat = "chat" in bind_mode
+            if has_code and has_chat:
+                recommended_mode = "both"
+            elif has_code:
+                recommended_mode = "code"
+
         # Get description from spec
         description = team_crd.spec.description
 
@@ -1359,6 +1391,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "bots": bots,
             "workflow": workflow,
             "bind_mode": bind_mode,
+            "recommended_mode": recommended_mode,  # Add recommended_mode field
             "is_mix_team": is_mix_team,
             "is_active": team.is_active,
             "created_at": team.created_at,
@@ -1520,6 +1553,17 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Get bind_mode from spec (directly, not from workflow)
         bind_mode = team_crd.spec.bind_mode
 
+        # Derive recommended_mode from bind_mode
+        # 'both' if both modes, 'code' if only code, 'chat' otherwise
+        recommended_mode = "chat"  # default
+        if bind_mode:
+            has_code = "code" in bind_mode
+            has_chat = "chat" in bind_mode
+            if has_code and has_chat:
+                recommended_mode = "both"
+            elif has_code:
+                recommended_mode = "code"
+
         # Get description from spec
         description = team_crd.spec.description
 
@@ -1535,6 +1579,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "bots": bots,
             "workflow": workflow,
             "bind_mode": bind_mode,
+            "recommended_mode": recommended_mode,  # Add recommended_mode field
             "is_mix_team": is_mix_team,
             "is_active": team.is_active,
             "created_at": team.created_at,

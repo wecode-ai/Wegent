@@ -5,17 +5,41 @@
 FROM almalinux:9.4
 
 RUN dnf upgrade -y \
- && dnf install -y epel-release curl-minimal gcc make git wget gnupg python3.12 python3.12-devel python3.12-pip which \
+ && dnf install -y epel-release curl-minimal vim gcc make git wget gnupg python3.12 python3.12-devel python3.12-pip which file file-libs \
+    nspr nss nss-util atk at-spi2-atk cups-libs libxcb libxkbcommon at-spi2-core \
+    libX11 libXcomposite libXdamage libXext libXfixes libXrandr mesa-libgbm cairo pango alsa-lib libdrm \
  && curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - \
  && dnf install -y nodejs gh tar gzip\
  && ln -sf /usr/bin/python3.12 /usr/bin/python \
  && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
  && ln -sf /usr/bin/pip3.12 /usr/bin/pip3 \
  && ln -sf /usr/bin/pip3.12 /usr/bin/pip \
- && npm install -g @anthropic-ai/claude-code@2.0.25 \
+ && npm install -g @anthropic-ai/claude-code@latest \
+ && npm cache clean --force \
  && dnf clean all \
  && yum clean all \
- && rm -rf /var/cache/yum/* /var/cache/dnf/*
+ && rm -rf /var/cache/yum/* /var/cache/dnf/* /root/.npm /tmp/*
+
+# Install uv (Python package manager)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Install Playwright Python package and Chromium browser for crawl4ai web scraping
+# System dependencies are already installed in the main RUN command above
+RUN pip install playwright \
+    && playwright install chromium
+
+# Install SQLite 3.50.4 (required by executor)
+RUN wget https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz && \
+    tar -xvf sqlite-autoconf-3500400.tar.gz && \
+    cd sqlite-autoconf-3500400 && \
+    ./configure --prefix=/usr/local && \
+    make -j$(nproc) && \
+    make install && \
+    cd .. && \
+    rm -rf sqlite-autoconf-3500400 sqlite-autoconf-3500400.tar.gz && \
+    cp -f /usr/local/lib/libsqlite3.so.3.50.4 /usr/lib64/libsqlite3.so.0.8.6
+ENV PATH="/usr/local/bin:${PATH}"
 
 # claude code mode: bypassPermissions
 ENV IS_SANDBOX=1

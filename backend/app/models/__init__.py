@@ -13,9 +13,14 @@ from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
+from app.models.project import Project
 from app.models.shared_task import SharedTask
 from app.models.shared_team import SharedTeam
 from app.models.skill_binary import SkillBinary
+from app.models.subscription_follow import (
+    SubscriptionFollow,
+    SubscriptionShareNamespace,
+)
 from app.models.subtask import Subtask
 from app.models.subtask_context import SubtaskContext
 from app.models.system_config import SystemConfig
@@ -42,4 +47,7 @@ __all__ = [
     "APIKey",
     "TaskMember",
     "KnowledgeDocument",
+    "Project",
+    "SubscriptionFollow",
+    "SubscriptionShareNamespace",
 ]

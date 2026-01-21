@@ -14,7 +14,11 @@
 
 <div align="center">
 
-<img src="./docs/assets/images/example.gif" width="75%" alt="演示"/>
+<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
+
+<img src="https://github.com/user-attachments/assets/2b210d33-2569-4bc9-acac-e163de4e12a5" width="100%" alt="Knowledge Demo"/>
+
+<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
 
 [快速开始](#-快速开始) · [文档](docs/zh/README.md) · [开发指南](docs/zh/guides/developer/setup.md)
 
@@ -24,7 +28,7 @@
 
 ## ✨ 核心模式
 
-| 💬 对话模式 | 💻 编码模式 | 📚 知识模式 *(实验性)* |
+| 💬 对话模式 | 💻 编码模式 | 📚 知识模式 |
 |:------------|:------------|:-----------------------|
 | **LLM**: 支持Claude / OpenAI / Gemini 等主流模型<br>**多模态**: 支持图片 / PPT / Word / PDF / Excel 文件自动解析<br>**联网搜索**: 支持对接各类搜索引擎<br>**深度调研**: 支持深度调研模式，可自动搜索、整理、生成调研报告<br>**纠错模式**: 由多个AI自动检测并修正回答中的错误<br>**追问模式**: AI 主动追问澄清需求，确保理解准确<br>**扩展能力**: 支持 Skill 技能包 / MCP 工具 / 自定义工具 | **多平台集成**: 支持GitHub / GitLab / Gitea / Gitee / Gerrit平台<br>**自动化AI工作流**: 分支 → 编码 → 提交 → PR 流程自动化<br>**需求澄清**: AI 主动追问，确保理解准确<br>**Wiki 生成**: 自动生成代码库文档 | **RAG 检索**: 向量 / 关键词 / 混合检索<br>**存储后端**: Elasticsearch / Qdrant<br>**文档解析**: PDF / Markdown / DOCX / 代码文件<br>**Wiki**: 代码库文档自动生成 |
 
@@ -138,21 +142,6 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/moqimoqidea">
-            <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
-            <br />
-            <sub><b>Moqimoqidea</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/2561056571">
-            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
-            <br />
-            <sub><b>Xuemin</b></sub>
-        </a>
-    </td></tr>
-<tr>
-    <td align="center">
         <a href="https://github.com/joyway1978">
             <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
             <br />
@@ -160,10 +149,18 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/FicoHu">
-            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
+        <a href="https://github.com/moqimoqidea">
+            <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
             <br />
-            <sub><b>FicoHu</b></sub>
+            <sub><b>Moqimoqidea</b></sub>
+        </a>
+    </td></tr>
+<tr>
+    <td align="center">
+        <a href="https://github.com/2561056571">
+            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+            <br />
+            <sub><b>Xuemin</b></sub>
         </a>
     </td>
     <td align="center">
@@ -174,10 +171,17 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/FicoHu">
+            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
+            <br />
+            <sub><b>FicoHu</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/icycrystal4">
             <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
             <br />
-            <sub><b>icycrystal4</b></sub>
+            <sub><b>Icycrystal4</b></sub>
         </a>
     </td>
     <td align="center">
@@ -188,12 +192,27 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/yixiangxx">
+            <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+            <br />
+            <sub><b>Yi Xiang</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/parabala">
+            <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
+            <br />
+            <sub><b>Parabala</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/fengkuizhi">
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
             <br />
             <sub><b>Fengkuizhi</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/jolestar">
             <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
@@ -202,13 +221,26 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/DeadLion">
+            <img src="https://avatars.githubusercontent.com/u/2594907?v=4" width="80;" alt="DeadLion"/>
+            <br />
+            <sub><b>Jasper Zhong</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/andrewzq777">
             <img src="https://avatars.githubusercontent.com/u/223815624?v=4" width="80;" alt="andrewzq777"/>
             <br />
             <sub><b>Andrewzq777</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
+    <td align="center">
+        <a href="https://github.com/fingki">
+            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
+            <br />
+            <sub><b>Fingki</b></sub>
+        </a>
+    </td>
     <td align="center">
         <a href="https://github.com/graindt">
             <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
@@ -217,10 +249,10 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/parabala">
-            <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
+        <a href="https://github.com/salt-hai">
+            <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>
             <br />
-            <sub><b>parabala</b></sub>
+            <sub><b>salt-hai</b></sub>
         </a>
     </td></tr>
 </table>

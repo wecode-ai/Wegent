@@ -22,7 +22,7 @@ import React, {
   ReactNode,
 } from 'react'
 import { io, Socket } from 'socket.io-client'
-import { getToken } from '@/apis/user'
+import { getToken, removeToken } from '@/apis/user'
 import {
   ServerEvents,
   ClientSkillEvents,
@@ -37,6 +37,7 @@ import {
   TaskCreatedPayload,
   TaskStatusPayload,
   TaskInvitedPayload,
+  TaskAppUpdatePayload,
   SkillRequestPayload,
   SkillResponsePayload,
   CorrectionStartPayload,
@@ -44,9 +45,13 @@ import {
   CorrectionChunkPayload,
   CorrectionDonePayload,
   CorrectionErrorPayload,
+  BackgroundExecutionUpdatePayload,
+  AuthErrorPayload,
 } from '@/types/socket'
 
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config'
+import { paths } from '@/config/paths'
+import { POST_LOGIN_REDIRECT_KEY } from '@/features/login/constants'
 
 const SOCKETIO_PATH = '/socket.io'
 
@@ -106,6 +111,8 @@ interface SocketContextType {
   sendSkillResponse: (payload: SkillResponsePayload) => void
   /** Register correction event handlers */
   registerCorrectionHandlers: (handlers: CorrectionEventHandlers) => () => void
+  /** Register background execution event handlers */
+  registerBackgroundExecutionHandlers: (handlers: BackgroundExecutionEventHandlers) => () => void
   /** Register a callback to be called when WebSocket reconnects */
   onReconnect: (callback: ReconnectCallback) => () => void
 }
@@ -126,6 +133,8 @@ export interface TaskEventHandlers {
   onTaskCreated?: (data: TaskCreatedPayload) => void
   onTaskInvited?: (data: TaskInvitedPayload) => void
   onTaskStatus?: (data: TaskStatusPayload) => void
+  /** Handler for task:app_update event (app preview data updated, sent to task room) */
+  onTaskAppUpdate?: (data: TaskAppUpdatePayload) => void
 }
 
 /** Skill event handlers for generic skill requests */
@@ -141,6 +150,11 @@ export interface CorrectionEventHandlers {
   onCorrectionChunk?: (data: CorrectionChunkPayload) => void
   onCorrectionDone?: (data: CorrectionDonePayload) => void
   onCorrectionError?: (data: CorrectionErrorPayload) => void
+}
+
+/** Background execution event handlers for subscription execution updates */
+export interface BackgroundExecutionEventHandlers {
+  onBackgroundExecutionUpdate?: (data: BackgroundExecutionUpdatePayload) => void
 }
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined)
@@ -224,12 +238,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // Don't clear joinedTasksRef here - we need it for rejoining after reconnect
     })
 
-    newSocket.on('connect_error', (error: Error) => {
-      console.error('[Socket.IO] Connection error:', error)
-      setConnectionError(error)
-      setIsConnected(false)
-    })
-
     newSocket.io.on('reconnect_attempt', (attempt: number) => {
       setReconnectAttempts(attempt)
     })
@@ -269,6 +277,52 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     newSocket.io.on('reconnect_error', (error: Error) => {
       console.error('[Socket.IO] Reconnect error:', error)
       setConnectionError(error)
+    })
+
+    // Handle authentication errors (token expired during session)
+    newSocket.on(ServerEvents.AUTH_ERROR, (data: AuthErrorPayload) => {
+      console.log('[Socket.IO] Auth error received:', data.error, 'code:', data.code)
+
+      // Remove token and redirect to login
+      removeToken()
+      newSocket.disconnect()
+
+      const loginPath = paths.auth.login.getHref()
+      if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
+        // Save current path for redirect after login
+        const currentPath = window.location.pathname + window.location.search
+        sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
+        window.location.href = loginPath
+      }
+    })
+
+    // Handle connect_error for initial connection auth failures
+    newSocket.on('connect_error', (error: Error) => {
+      console.error('[Socket.IO] Connection error:', error)
+      setConnectionError(error)
+      setIsConnected(false)
+
+      // Check if error message indicates auth failure
+      // Use specific auth-related error patterns to avoid false positives
+      const errorMsg = error.message?.toLowerCase() || ''
+      const isAuthError =
+        errorMsg.includes('expired') ||
+        errorMsg.includes('unauthorized') ||
+        errorMsg.includes('jwt') ||
+        errorMsg.includes('authentication')
+
+      if (isAuthError) {
+        console.log('[Socket.IO] Auth error on connect, redirecting to login')
+        removeToken()
+
+        const loginPath = paths.auth.login.getHref()
+        if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
+          // Save current path for redirect after login (consistent with AUTH_ERROR handler)
+          const currentPath = window.location.pathname + window.location.search
+          sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
+          window.location.href = loginPath
+        }
+      }
     })
 
     setSocket(newSocket)
@@ -544,17 +598,19 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         return () => {}
       }
 
-      const { onTaskCreated, onTaskInvited, onTaskStatus } = handlers
+      const { onTaskCreated, onTaskInvited, onTaskStatus, onTaskAppUpdate } = handlers
 
       if (onTaskCreated) socket.on(ServerEvents.TASK_CREATED, onTaskCreated)
       if (onTaskInvited) socket.on(ServerEvents.TASK_INVITED, onTaskInvited)
       if (onTaskStatus) socket.on(ServerEvents.TASK_STATUS, onTaskStatus)
+      if (onTaskAppUpdate) socket.on(ServerEvents.TASK_APP_UPDATE, onTaskAppUpdate)
 
       // Return cleanup function
       return () => {
         if (onTaskCreated) socket.off(ServerEvents.TASK_CREATED, onTaskCreated)
         if (onTaskInvited) socket.off(ServerEvents.TASK_INVITED, onTaskInvited)
         if (onTaskStatus) socket.off(ServerEvents.TASK_STATUS, onTaskStatus)
+        if (onTaskAppUpdate) socket.off(ServerEvents.TASK_APP_UPDATE, onTaskAppUpdate)
       }
     },
     [socket]
@@ -633,6 +689,29 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       currentSocket.emit(ClientSkillEvents.SKILL_RESPONSE, payload)
     },
     [] // No dependencies - use socketRef
+  )
+  /**
+   * Register background execution event handlers for subscription execution updates
+   * Returns a cleanup function to unregister handlers
+   */
+  const registerBackgroundExecutionHandlers = useCallback(
+    (handlers: BackgroundExecutionEventHandlers): (() => void) => {
+      if (!socket) {
+        return () => {}
+      }
+
+      const { onBackgroundExecutionUpdate } = handlers
+
+      if (onBackgroundExecutionUpdate)
+        socket.on(ServerEvents.BACKGROUND_EXECUTION_UPDATE, onBackgroundExecutionUpdate)
+
+      // Return cleanup function
+      return () => {
+        if (onBackgroundExecutionUpdate)
+          socket.off(ServerEvents.BACKGROUND_EXECUTION_UPDATE, onBackgroundExecutionUpdate)
+      }
+    },
+    [socket]
   )
 
   /**
@@ -717,6 +796,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         registerSkillHandlers,
         sendSkillResponse,
         registerCorrectionHandlers,
+        registerBackgroundExecutionHandlers,
         onReconnect,
       }}
     >

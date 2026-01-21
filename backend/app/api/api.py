@@ -11,6 +11,7 @@ from app.api.endpoints import (
     knowledge,
     oidc,
     openapi_responses,
+    projects,
     quota,
     rag,
     repository,
@@ -18,6 +19,7 @@ from app.api.endpoints import (
     tables,
     users,
     utils,
+    web_scraper,
     wiki,
     wizard,
 )
@@ -31,6 +33,8 @@ from app.api.endpoints.adapter import (
     models,
     retrievers,
     shells,
+    subscription_follows,
+    subscriptions,
     task_knowledge_bases,
     task_members,
     tasks,
@@ -40,6 +44,7 @@ from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
     chat_storage_router,
     rag_router,
+    services_router,
     skills_router,
     tables_router,
 )
@@ -53,12 +58,28 @@ api_router.include_router(oidc.router, prefix="/auth/oidc", tags=["auth", "oidc"
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
+api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(bots.router, prefix="/bots", tags=["bots"])
 api_router.include_router(models.router, prefix="/models", tags=["public-models"])
 api_router.include_router(shells.router, prefix="/shells", tags=["shells"])
 api_router.include_router(agents.router, prefix="/agents", tags=["public-shell"])
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
+api_router.include_router(
+    subscriptions.router, prefix="/subscriptions", tags=["subscriptions"]
+)
+# Subscription follow endpoints (follow, unfollow, invitations)
+api_router.include_router(
+    subscription_follows.router, prefix="/subscriptions", tags=["subscription-follows"]
+)
+api_router.include_router(
+    subscription_follows.user_router, prefix="/users/me", tags=["user-subscriptions"]
+)
+api_router.include_router(
+    subscription_follows.invitation_router,
+    prefix="/subscription-invitations",
+    tags=["subscription-invitations"],
+)
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])
 api_router.include_router(task_members.router, prefix="/tasks", tags=["task-members"])
@@ -93,9 +114,17 @@ api_router.include_router(
     prefix="/v1/knowledge-base/qa-history",
     tags=["knowledge-qa-history"],
 )
+api_router.include_router(
+    knowledge.summary_router,
+    prefix="/knowledge-bases",
+    tags=["knowledge-summary"],
+)
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
+api_router.include_router(
+    web_scraper.router, prefix="/web-scraper", tags=["web-scraper"]
+)
 api_router.include_router(k_router)
 
 # Internal API endpoints (for service-to-service communication)
@@ -107,4 +136,7 @@ api_router.include_router(skills_router, prefix="/internal", tags=["internal-ski
 api_router.include_router(tables_router, prefix="/internal", tags=["internal-tables"])
 api_router.include_router(
     internal_bots_router, prefix="/internal", tags=["internal-bots"]
+)
+api_router.include_router(
+    services_router, prefix="/internal", tags=["internal-services"]
 )

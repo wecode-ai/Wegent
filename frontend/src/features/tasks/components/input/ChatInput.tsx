@@ -18,7 +18,7 @@ interface ChatInputProps {
   handleSendMessage: () => void
   isLoading: boolean
   disabled?: boolean
-  taskType?: 'chat' | 'code'
+  taskType?: 'chat' | 'code' | 'knowledge'
   autoFocus?: boolean
   // Controls whether the message can be submitted (e.g., model selection required)
   canSubmit?: boolean
@@ -30,6 +30,8 @@ interface ChatInputProps {
   team?: Team | null
   // Callback when file(s) are pasted (e.g., images from clipboard)
   onPasteFile?: (files: File | File[]) => void
+  // Whether there are no available teams (shows disabled state with special placeholder)
+  hasNoTeams?: boolean
 }
 
 export default function ChatInput({
@@ -45,6 +47,7 @@ export default function ChatInput({
   isGroupChat = false,
   team = null,
   onPasteFile,
+  hasNoTeams = false,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation()
 
@@ -52,7 +55,11 @@ export default function ChatInput({
   const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en'
 
   // Use tip text as placeholder if available, otherwise use default
+  // If hasNoTeams is true, show the special placeholder
   const placeholder = useMemo(() => {
+    if (hasNoTeams) {
+      return t('chat:input.no_team_placeholder')
+    }
     if (tipText) {
       return tipText[currentLang] || tipText.en || t('chat:placeholder.input')
     }
@@ -61,7 +68,11 @@ export default function ChatInput({
       return t('chat:groupChat.mentionToTrigger', { teamName: team.name })
     }
     return t('chat:placeholder.input')
-  }, [tipText, currentLang, t, isGroupChat, team?.name])
+  }, [tipText, currentLang, t, isGroupChat, team?.name, hasNoTeams])
+
+  // Combine disabled and hasNoTeams for input disabled state
+  const isInputDisabled = disabled || hasNoTeams
+
   const [isComposing, setIsComposing] = useState(false)
   // Track if composition just ended (for Safari where compositionend fires before keydown)
   const compositionJustEndedRef = useRef(false)
@@ -168,14 +179,14 @@ export default function ChatInput({
 
   // Auto focus the input when autoFocus is true and not disabled
   useEffect(() => {
-    if (autoFocus && !disabled && editableRef.current) {
+    if (autoFocus && !isInputDisabled && editableRef.current) {
       // Use setTimeout to ensure the DOM is fully rendered
       const timer = setTimeout(() => {
         editableRef.current?.focus()
       }, 100)
       return () => clearTimeout(timer)
     }
-  }, [autoFocus, disabled])
+  }, [autoFocus, isInputDisabled])
 
   // Get user's send key preference (default to 'enter')
   const sendKey = user?.preferences?.send_key || 'enter'
@@ -202,7 +213,12 @@ export default function ChatInput({
     // 2. nativeEvent.isComposing - native browser flag (more reliable in some browsers)
     // 3. compositionJustEndedRef - handles Safari where compositionend fires before keydown
     //    This prevents the Enter key that confirms IME selection from also sending the message
-    if (disabled || isComposing || e.nativeEvent.isComposing || compositionJustEndedRef.current)
+    if (
+      isInputDisabled ||
+      isComposing ||
+      e.nativeEvent.isComposing ||
+      compositionJustEndedRef.current
+    )
       return
 
     // On mobile, Enter always creates new line (no easy Shift+Enter on mobile keyboards)
@@ -242,7 +258,7 @@ export default function ChatInput({
 
   const handleInput = useCallback(
     (e: React.FormEvent<HTMLDivElement>) => {
-      if (disabled) return
+      if (isInputDisabled) return
       const text = getTextWithNewlines(e.currentTarget)
       setMessage(text)
       setShowPlaceholder(!text)
@@ -284,7 +300,7 @@ export default function ChatInput({
         }
       }
     },
-    [disabled, setMessage, getTextWithNewlines, isGroupChat, team, showMentionMenu]
+    [isInputDisabled, setMessage, getTextWithNewlines, isGroupChat, team, showMentionMenu]
   )
 
   // Handle mention selection
@@ -331,7 +347,7 @@ export default function ChatInput({
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLDivElement>) => {
-      if (disabled) return
+      if (isInputDisabled) return
 
       const clipboardData = e.clipboardData
 
@@ -443,7 +459,7 @@ export default function ChatInput({
         setShowPlaceholder(!newText)
       }
     },
-    [disabled, setMessage, getTextWithNewlines, onPasteFile]
+    [isInputDisabled, setMessage, getTextWithNewlines, onPasteFile]
   )
 
   const handleFocus = useCallback(() => {
@@ -478,63 +494,63 @@ export default function ChatInput({
   }, [sendKey, t])
 
   return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div className="w-full relative" data-tour="task-input">
-            {/* Placeholder - shown when empty */}
-            {showPlaceholder && (
-              <div
-                className="absolute pointer-events-none text-text-muted text-base leading-[26px]"
-                style={{
-                  top: '0.25rem',
-                  left: badge ? `${badgeWidth}px` : '0',
-                }}
-              >
-                {placeholder}
-              </div>
-            )}
+    <div className="w-full relative" data-tour="task-input">
+      {/* Placeholder - shown when empty */}
+      {showPlaceholder && (
+        <div
+          className="absolute pointer-events-none text-text-muted text-base leading-[26px]"
+          style={{
+            top: '0.25rem',
+            left: badge ? `${badgeWidth}px` : '0',
+          }}
+        >
+          {placeholder}
+        </div>
+      )}
 
-            {/* Mention autocomplete menu */}
-            {showMentionMenu && isGroupChat && team && (
-              <MentionAutocomplete
-                team={team}
-                query={mentionQuery}
-                onSelect={handleMentionSelect}
-                onClose={() => {
-                  setShowMentionMenu(false)
-                  setMentionQuery('')
-                }}
-                position={mentionMenuPosition}
-              />
-            )}
+      {/* Mention autocomplete menu */}
+      {showMentionMenu && isGroupChat && team && (
+        <MentionAutocomplete
+          team={team}
+          query={mentionQuery}
+          onSelect={handleMentionSelect}
+          onClose={() => {
+            setShowMentionMenu(false)
+            setMentionQuery('')
+          }}
+          position={mentionMenuPosition}
+        />
+      )}
 
-            {/* Scrollable container that includes both badge and editable content */}
-            <div
-              className="w-full custom-scrollbar"
-              style={{
-                minHeight,
-                maxHeight,
-                overflowY: 'auto',
-              }}
+      {/* Scrollable container that includes both badge and editable content */}
+      <div
+        className="w-full custom-scrollbar"
+        style={{
+          minHeight,
+          maxHeight,
+          overflowY: 'auto',
+        }}
+      >
+        {/* Inner content wrapper with badge and text */}
+        <div className="relative">
+          {/* Badge - positioned absolutely so it doesn't affect text flow */}
+          {badge && (
+            <span
+              ref={badgeRef}
+              className="absolute left-0 top-0.5 pointer-events-auto z-10"
+              style={{ userSelect: 'none' }}
             >
-              {/* Inner content wrapper with badge and text */}
-              <div className="relative">
-                {/* Badge - positioned absolutely so it doesn't affect text flow */}
-                {badge && (
-                  <span
-                    ref={badgeRef}
-                    className="absolute left-0 top-0.5 pointer-events-auto z-10"
-                    style={{ userSelect: 'none' }}
-                  >
-                    {badge}
-                  </span>
-                )}
+              {badge}
+            </span>
+          )}
 
-                {/* Editable content area */}
+          {/* Editable content area - wrapped in Tooltip for send shortcut hint */}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
                 <div
                   ref={editableRef}
-                  contentEditable={!disabled}
+                  contentEditable={!isInputDisabled}
                   onInput={handleInput}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
@@ -542,7 +558,7 @@ export default function ChatInput({
                   onCompositionEnd={handleCompositionEnd}
                   onFocus={handleFocus}
                   data-testid="message-input"
-                  className={`w-full pt-1 pb-2 bg-transparent text-text-primary text-base leading-[26px] focus:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`w-full pt-1 pb-2 bg-transparent text-text-primary text-base leading-[26px] focus:outline-none ${isInputDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                   style={{
                     minHeight,
                     whiteSpace: 'pre-wrap',
@@ -555,14 +571,14 @@ export default function ChatInput({
                   }}
                   suppressContentEditableWarning
                 />
-              </div>
-            </div>
-          </div>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="text-xs">
-          <p>{tooltipText}</p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">
+                <p>{tooltipText}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
+      </div>
+    </div>
   )
 }

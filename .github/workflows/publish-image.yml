@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Custom version to release (e.g. 1.2.3). If empty, auto-increment from docker-compose.yml'
+        description: 'Custom version to release (e.g. 1.2.3). If empty, auto-increment from latest git tag'
         type: string
         required: false
 
@@ -45,7 +45,7 @@ jobs:
           ref: ${{ env.GIT_REF }}
           fetch-depth: 0
 
-      - name: Get version from docker-compose (and bump patch)
+      - name: Get version from git tags (and bump patch)
         id: get_version
         shell: bash
         env:
@@ -60,24 +60,18 @@ jobs:
             exit 0
           fi
 
-          if [ ! -f docker-compose.yml ]; then
-            echo "Error: docker-compose.yml not found"
-            exit 1
+          # Get the latest version tag (format: vX.X.X)
+          LATEST_TAG=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1 || true)
+
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No existing version tags found, starting from v0.0.1"
+            echo "version=0.0.1" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-          LINE=$(grep -E 'ghcr.io/wecode-ai/wegent-backend:[0-9]+\.[0-9]+\.[0-9]+' docker-compose.yml | head -1 || true)
-          if [ -z "$LINE" ]; then
-            echo "Error: Could not find backend image line in docker-compose.yml"
-            exit 1
-          fi
-
-          VERSION=$(echo "$LINE" | sed -E 's/.*ghcr.io\/wecode-ai\/wegent-backend:([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
-          if [ -z "$VERSION" ]; then
-            echo "Error: Could not extract version from docker-compose.yml"
-            exit 1
-          fi
-
-          echo "Current version: $VERSION"
+          # Remove 'v' prefix
+          VERSION="${LATEST_TAG#v}"
+          echo "Current version: $VERSION (from tag $LATEST_TAG)"
 
           IFS='.' read -ra VERSION_PARTS <<< "$VERSION"
           if [ ${#VERSION_PARTS[@]} -ne 3 ]; then
@@ -253,8 +247,10 @@ jobs:
           tags: |
             ${{ env.IMAGE_PREFIX }}/wegent-web:${{ needs.prepare-release.outputs.new_version }}
             ${{ env.IMAGE_PREFIX }}/wegent-web:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+          build-args: |
+            NEXT_TELEMETRY_DISABLED=1
 
   build-chat-shell:
     needs: prepare-release

@@ -13,6 +13,14 @@ from app.schemas.team import TeamInDB
 from app.schemas.user import UserInDB
 
 
+class TaskApp(BaseModel):
+    """App preview information (set by expose_service tool when service starts)"""
+
+    name: str
+    address: str
+    previewUrl: str
+
+
 class TaskStatus(str, Enum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
@@ -63,6 +71,9 @@ class TaskCreate(BaseModel):
     # Model selection fields
     model_id: Optional[str] = None  # Model name (not database ID)
     force_override_bot_model: Optional[bool] = False
+    force_override_bot_model_type: Optional[str] = (
+        None  # Model type: 'public', 'user', 'group'
+    )
     # API key name field
     api_key_name: Optional[str] = None  # API key name used for this request
 
@@ -135,6 +146,9 @@ class TaskDetail(BaseModel):
     is_group_chat: bool = False  # Whether this is a group chat task
     is_group_owner: bool = False  # Whether current user is the owner (for group chats)
     member_count: Optional[int] = None  # Number of members (for group chats)
+    app: Optional[TaskApp] = (
+        None  # App preview information (set by expose_service tool)
+    )
 
     class Config:
         from_attributes = True
@@ -161,6 +175,9 @@ class TaskLite(BaseModel):
     team_id: Optional[int] = None
     git_repo: Optional[str] = None
     is_group_chat: bool = False  # Whether this is a group chat task
+    knowledge_base_id: Optional[int] = (
+        None  # Knowledge base ID for knowledge type tasks
+    )
 
     class Config:
         from_attributes = True

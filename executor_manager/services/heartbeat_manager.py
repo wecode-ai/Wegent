@@ -7,11 +7,16 @@
 This module handles executor heartbeat management:
 - Storing heartbeat timestamps in Redis
 - Checking heartbeat timeout to detect executor crashes
+
+Supports two types of heartbeat keys:
+- sandbox:heartbeat:{id} - For sandbox (long-lived) tasks
+- task:heartbeat:{id} - For regular (online/offline) tasks
 """
 
 import os
 import threading
 import time
+from enum import Enum
 from typing import Optional
 
 import redis
@@ -21,8 +26,17 @@ from executor_manager.common.redis_factory import RedisClientFactory
 
 logger = setup_logger(__name__)
 
-# Redis key pattern
-SANDBOX_HEARTBEAT_KEY = "sandbox:heartbeat:{sandbox_id}"  # Key for heartbeat timestamp
+
+class HeartbeatType(Enum):
+    """Type of heartbeat key to use."""
+
+    SANDBOX = "sandbox"  # For sandbox tasks (long-lived)
+    TASK = "task"  # For regular tasks (online/offline)
+
+
+# Redis key patterns
+SANDBOX_HEARTBEAT_KEY = "sandbox:heartbeat:{id}"
+TASK_HEARTBEAT_KEY = "task:heartbeat:{id}"
 
 # Heartbeat configuration
 # Key TTL should be slightly longer than heartbeat interval to avoid false positives
@@ -34,6 +48,22 @@ HEARTBEAT_TIMEOUT = int(
 )  # Seconds before marking dead
 
 
+def _get_heartbeat_key(heartbeat_id: str, heartbeat_type: HeartbeatType) -> str:
+    """Get the Redis key for a heartbeat.
+
+    Args:
+        heartbeat_id: The ID (sandbox_id or task_id)
+        heartbeat_type: Type of heartbeat (SANDBOX or TASK)
+
+    Returns:
+        The Redis key string
+    """
+    if heartbeat_type == HeartbeatType.SANDBOX:
+        return SANDBOX_HEARTBEAT_KEY.format(id=heartbeat_id)
+    else:
+        return TASK_HEARTBEAT_KEY.format(id=heartbeat_id)
+
+
 class HeartbeatManager:
     """Manager for executor heartbeat operations.
 
@@ -42,6 +72,8 @@ class HeartbeatManager:
     - Checking heartbeat timeout
     - Getting last heartbeat time
     - Deleting heartbeat keys
+
+    Supports both sandbox and regular task heartbeats with different key prefixes.
     """
 
     _instance: Optional["HeartbeatManager"] = None
@@ -75,11 +107,16 @@ class HeartbeatManager:
         else:
             logger.error("[HeartbeatManager] Failed to connect to Redis via factory")
 
-    def update_heartbeat(self, sandbox_id: str) -> bool:
-        """Update heartbeat timestamp for a sandbox.
+    def update_heartbeat(
+        self,
+        heartbeat_id: str,
+        heartbeat_type: HeartbeatType = HeartbeatType.SANDBOX,
+    ) -> bool:
+        """Update heartbeat timestamp.
 
         Args:
-            sandbox_id: Sandbox ID
+            heartbeat_id: ID for heartbeat (sandbox_id or task_id)
+            heartbeat_type: Type of heartbeat (SANDBOX or TASK)
 
         Returns:
             True if updated successfully
@@ -88,25 +125,30 @@ class HeartbeatManager:
             return False
 
         try:
-            key = SANDBOX_HEARTBEAT_KEY.format(sandbox_id=sandbox_id)
+            key = _get_heartbeat_key(heartbeat_id, heartbeat_type)
             timestamp = time.time()
 
             # Set heartbeat timestamp with TTL
             self._sync_client.setex(key, HEARTBEAT_KEY_TTL, str(timestamp))
 
             logger.debug(
-                f"[HeartbeatManager] Heartbeat updated: sandbox_id={sandbox_id}"
+                f"[HeartbeatManager] Heartbeat updated: type={heartbeat_type.value}, id={heartbeat_id}"
             )
             return True
         except Exception as e:
             logger.error(f"[HeartbeatManager] Failed to update heartbeat: {e}")
             return False
 
-    def check_heartbeat(self, sandbox_id: str) -> bool:
+    def check_heartbeat(
+        self,
+        heartbeat_id: str,
+        heartbeat_type: HeartbeatType = HeartbeatType.SANDBOX,
+    ) -> bool:
         """Check if executor heartbeat is within timeout threshold.
 
         Args:
-            sandbox_id: Sandbox ID
+            heartbeat_id: ID for heartbeat (sandbox_id or task_id)
+            heartbeat_type: Type of heartbeat (SANDBOX or TASK)
 
         Returns:
             True if heartbeat is recent (executor alive), False otherwise
@@ -115,7 +157,7 @@ class HeartbeatManager:
             return False
 
         try:
-            key = SANDBOX_HEARTBEAT_KEY.format(sandbox_id=sandbox_id)
+            key = _get_heartbeat_key(heartbeat_id, heartbeat_type)
             timestamp_str = self._sync_client.get(key)
 
             if timestamp_str is None:
@@ -128,8 +170,8 @@ class HeartbeatManager:
             is_alive = elapsed < HEARTBEAT_TIMEOUT
             if not is_alive:
                 logger.warning(
-                    f"[HeartbeatManager] Heartbeat timeout: sandbox_id={sandbox_id}, "
-                    f"elapsed={elapsed:.1f}s > timeout={HEARTBEAT_TIMEOUT}s"
+                    f"[HeartbeatManager] Heartbeat timeout: type={heartbeat_type.value}, "
+                    f"id={heartbeat_id}, elapsed={elapsed:.1f}s > timeout={HEARTBEAT_TIMEOUT}s"
                 )
 
             return is_alive
@@ -137,11 +179,16 @@ class HeartbeatManager:
             logger.error(f"[HeartbeatManager] Failed to check heartbeat: {e}")
             return False
 
-    def get_last_heartbeat(self, sandbox_id: str) -> Optional[float]:
-        """Get the last heartbeat timestamp for a sandbox.
+    def get_last_heartbeat(
+        self,
+        heartbeat_id: str,
+        heartbeat_type: HeartbeatType = HeartbeatType.SANDBOX,
+    ) -> Optional[float]:
+        """Get the last heartbeat timestamp.
 
         Args:
-            sandbox_id: Sandbox ID
+            heartbeat_id: ID for heartbeat (sandbox_id or task_id)
+            heartbeat_type: Type of heartbeat (SANDBOX or TASK)
 
         Returns:
             Last heartbeat timestamp, or None if not found
@@ -150,7 +197,7 @@ class HeartbeatManager:
             return None
 
         try:
-            key = SANDBOX_HEARTBEAT_KEY.format(sandbox_id=sandbox_id)
+            key = _get_heartbeat_key(heartbeat_id, heartbeat_type)
             timestamp_str = self._sync_client.get(key)
 
             if timestamp_str is None:
@@ -161,11 +208,16 @@ class HeartbeatManager:
             logger.error(f"[HeartbeatManager] Failed to get last heartbeat: {e}")
             return None
 
-    def delete_heartbeat(self, sandbox_id: str) -> bool:
-        """Delete heartbeat key for a sandbox.
+    def delete_heartbeat(
+        self,
+        heartbeat_id: str,
+        heartbeat_type: HeartbeatType = HeartbeatType.SANDBOX,
+    ) -> bool:
+        """Delete heartbeat key.
 
         Args:
-            sandbox_id: Sandbox ID
+            heartbeat_id: ID for heartbeat (sandbox_id or task_id)
+            heartbeat_type: Type of heartbeat (SANDBOX or TASK)
 
         Returns:
             True if deleted successfully
@@ -174,7 +226,7 @@ class HeartbeatManager:
             return False
 
         try:
-            key = SANDBOX_HEARTBEAT_KEY.format(sandbox_id=sandbox_id)
+            key = _get_heartbeat_key(heartbeat_id, heartbeat_type)
             self._sync_client.delete(key)
             return True
         except Exception as e:

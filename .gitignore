@@ -59,6 +59,12 @@ htmlcov/
 *.db
 *.sqlite3
 
+# Celery Beat schedule files
+celerybeat-schedule
+celerybeat-schedule.db
+celerybeat-schedule-shm
+celerybeat-schedule-wal
+
 # Frontend
 node_modules/
 npm-debug.log*
@@ -80,3 +86,4 @@ coverage/
 # claude
 .claude/settings.local.json
 .history
+.wegentrc

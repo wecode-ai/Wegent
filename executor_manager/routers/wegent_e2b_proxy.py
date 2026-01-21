@@ -12,7 +12,7 @@ Private protocol:     E2B_DOMAIN/executor-manager/e2b/proxy/<sandboxID>/<port>/<
 
 This allows deployments without wildcard DNS and certificates.
 
-For subagent tasks (metadata.task_type == "subagent"), requests are forwarded
+For sandbox tasks (metadata.task_type == "sandbox"), requests are forwarded
 to the existing executor task dispatch endpoint (/api/tasks/execute).
 """
 
@@ -106,7 +106,7 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
 
     URL format: {ROUTE_PREFIX}/e2b/proxy/<sandboxID>/<port>/<path>
 
-    For subagent tasks (metadata.task_type == "subagent"), requests to /execute
+    For sandbox tasks (metadata.task_type == "sandbox"), requests to /execute
     are transformed and forwarded to the executor's task dispatch endpoint.
 
     Examples:
@@ -130,22 +130,22 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
         # Get sandbox info including metadata
         base_url, sandbox = await _get_sandbox_info(sandbox_id)
 
-        # Check if this is a subagent task
+        # Check if this is a sandbox task
         task_type = sandbox.metadata.get("task_type")
-        is_subagent = task_type == "subagent"
+        is_sandbox = task_type == "sandbox"
 
         logger.info(
-            f"[SandboxProxy] Sandbox metadata: task_type={task_type}, is_subagent={is_subagent}"
+            f"[SandboxProxy] Sandbox metadata: task_type={task_type}, is_sandbox={is_sandbox}"
         )
 
         # Read request body
         body = await request.body()
 
-        # For subagent tasks, transform the request for executor's task dispatch endpoint
-        if is_subagent and path == "execute" and request.method == "POST":
-            return await _proxy_subagent_execute(base_url, sandbox, body, request)
+        # For sandbox tasks, transform the request for executor's task dispatch endpoint
+        if is_sandbox and path == "execute" and request.method == "POST":
+            return await _proxy_sandbox_execute(base_url, sandbox, body, request)
 
-        # Regular proxy for non-subagent tasks or non-execute paths
+        # Regular proxy for non-sandbox tasks or non-execute paths
         target_url = f"{base_url}/{path}"
 
         # Get query string
@@ -236,12 +236,12 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
         )
 
 
-async def _proxy_subagent_execute(
+async def _proxy_sandbox_execute(
     base_url: str, sandbox, body: bytes, _request: Request
 ):
-    """Proxy execute request for subagent tasks with polling mode.
+    """Proxy execute request for sandbox tasks with polling mode.
 
-    For subagent tasks, instead of waiting for execution to complete,
+    For sandbox tasks, instead of waiting for execution to complete,
     we immediately return a task_url for the client to query results.
     This maintains service decoupling and allows independent deployment.
 
@@ -253,7 +253,7 @@ async def _proxy_subagent_execute(
         "env_vars": {...}
     }
 
-    For subagent tasks, the "code" field should be a JSON string containing:
+    For sandbox tasks, the "code" field should be a JSON string containing:
     {
         "task_prompt": "任务描述",
         "subtask_id": 456,
@@ -274,19 +274,19 @@ async def _proxy_subagent_execute(
     try:
         # Parse E2B execute request
         e2b_request = json.loads(body) if body else {}
-        logger.info(f"[SandboxProxy] SubAgent execute request: {e2b_request}")
+        logger.info(f"[SandboxProxy] Sandbox execute request: {e2b_request}")
 
-        # Get the "code" field which should be a JSON string for subagent tasks
+        # Get the "code" field which should be a JSON string for sandbox tasks
         code_field = e2b_request.get("code", "")
 
-        # Try to parse "code" as JSON to extract subagent parameters
+        # Try to parse "code" as JSON to extract sandbox parameters
         try:
-            subagent_params = json.loads(code_field)
-            task_prompt = subagent_params.get("task_prompt", code_field)
-            subtask_id = subagent_params.get("subtask_id")
-            workspace_ref = subagent_params.get("workspace_ref")
-            timeout = subagent_params.get("timeout", 600)
-            bot_config = subagent_params.get("bot_config")
+            sandbox_params = json.loads(code_field)
+            task_prompt = sandbox_params.get("task_prompt", code_field)
+            subtask_id = sandbox_params.get("subtask_id")
+            workspace_ref = sandbox_params.get("workspace_ref")
+            timeout = sandbox_params.get("timeout", 600)
+            bot_config = sandbox_params.get("bot_config")
         except (json.JSONDecodeError, TypeError):
             # If "code" is not JSON, treat it as plain task_prompt
             task_prompt = code_field
@@ -324,7 +324,7 @@ async def _proxy_subagent_execute(
                 "subtask_id": subtask_id,
                 "workspace_ref": workspace_ref,
                 "bot_config": bot_config,
-                "task_type": "subagent",
+                "task_type": "sandbox",
             },
         )
         logger.info(
@@ -376,7 +376,7 @@ async def _proxy_subagent_execute(
         logger.error(f"[SandboxProxy] Failed to parse execute request: {e}")
         return _error_response("invalid_request", f"Invalid JSON: {str(e)}")
     except Exception as e:
-        logger.error(f"[SandboxProxy] SubAgent proxy error: {e}")
+        logger.error(f"[SandboxProxy] Sandbox proxy error: {e}")
         return _error_response("proxy_error", str(e))
 
 

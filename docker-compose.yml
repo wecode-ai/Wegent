@@ -10,18 +10,18 @@ services:
     command:
       - --sort_buffer_size=16M
     environment:
-      MYSQL_ROOT_PASSWORD: 123456
-      MYSQL_DATABASE: task_manager
-      MYSQL_USER: task_user
-      MYSQL_PASSWORD: task_password
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-task_manager}
+      MYSQL_USER: ${MYSQL_USER:-task_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-task_password}
     ports:
-      - "3306:3306"
+      - "${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     networks:
       - wegent-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p123456"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-123456}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -32,7 +32,7 @@ services:
     container_name: wegent-redis
     restart: always
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     networks:
@@ -53,9 +53,9 @@ services:
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
-      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      - "ES_JAVA_OPTS=${ES_JAVA_OPTS:--Xms1g -Xmx1g}"
     ports:
-      - "9200:9200"
+      - "${ES_PORT:-9200}:9200"
     volumes:
       - es_data:/usr/share/elasticsearch/data
     networks:
@@ -71,35 +71,36 @@ services:
     # build:
       # dockerfile: docker/backend/Dockerfile
     image: ghcr.io/wecode-ai/wegent-backend:latest
+    pull_policy: always
     container_name: wegent-backend
     restart: always
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     # volumes:
       # To customize init data, uncomment the following line to override the built-in data:
       # - ./custom_init_data:/app/init_data:ro
     environment:
-      ENVIRONMENT: development
-      DB_AUTO_MIGRATE: "True"
-      DATABASE_URL: mysql+pymysql://task_user:task_password@mysql:3306/task_manager
-      EXECUTOR_CANCEL_TASK_URL: http://executor_manager:8001/executor-manager/tasks/cancel
-      EXECUTOR_DELETE_TASK_URL: http://executor_manager:8001/executor-manager/executor/delete
-      EXECUTOR_MANAGER_URL: http://executor_manager:8001
-      SECRET_KEY: your-secret-key-here
-      ALGORITHM: HS256
-      ACCESS_TOKEN_EXPIRE_MINUTES: 10080
-      REDIS_URL: redis://redis:6379/0
-      APPEND_CHAT_TASK_EXPIRE_HOURS: 2
-      APPEND_CODE_TASK_EXPIRE_HOURS: 2
-      CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS: 2
-      CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS: 2
-      INIT_DATA_DIR: /app/init_data
-      INIT_DATA_ENABLED: "True"
-      MAX_UPLOAD_FILE_SIZE_MB: 50
-      MAX_EXTRACTED_TEXT_LENGTH: 1000000
+      ENVIRONMENT: ${BACKEND_ENVIRONMENT:-development}
+      DB_AUTO_MIGRATE: "${DB_AUTO_MIGRATE:-True}"
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER:-task_user}:${MYSQL_PASSWORD:-task_password}@mysql:3306/${MYSQL_DATABASE:-task_manager}
+      EXECUTOR_CANCEL_TASK_URL: ${EXECUTOR_CANCEL_TASK_URL:-http://executor_manager:8001/executor-manager/tasks/cancel}
+      EXECUTOR_DELETE_TASK_URL: ${EXECUTOR_DELETE_TASK_URL:-http://executor_manager:8001/executor-manager/executor/delete}
+      EXECUTOR_MANAGER_URL: ${EXECUTOR_MANAGER_URL:-http://executor_manager:8001}
+      SECRET_KEY: ${BACKEND_SECRET_KEY:-your-secret-key-here}
+      ALGORITHM: ${BACKEND_ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${BACKEND_ACCESS_TOKEN_EXPIRE_MINUTES:-10080}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      APPEND_CHAT_TASK_EXPIRE_HOURS: ${BACKEND_APPEND_CHAT_TASK_EXPIRE_HOURS:-2}
+      APPEND_CODE_TASK_EXPIRE_HOURS: ${BACKEND_APPEND_CODE_TASK_EXPIRE_HOURS:-2}
+      CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS: ${BACKEND_CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS:-2}
+      CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS: ${BACKEND_CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS:-2}
+      INIT_DATA_DIR: ${BACKEND_INIT_DATA_DIR:-/app/init_data}
+      INIT_DATA_ENABLED: "${BACKEND_INIT_DATA_ENABLED:-True}"
+      MAX_UPLOAD_FILE_SIZE_MB: ${BACKEND_MAX_UPLOAD_FILE_SIZE_MB:-50}
+      MAX_EXTRACTED_TEXT_LENGTH: ${BACKEND_MAX_EXTRACTED_TEXT_LENGTH:-1000000}
       # Chat Shell Configuration (uncomment to use HTTP mode)
-      CHAT_SHELL_MODE: http
-      CHAT_SHELL_URL: http://chat_shell:8100
+      CHAT_SHELL_MODE: ${CHAT_SHELL_MODE:-http}
+      CHAT_SHELL_URL: ${CHAT_SHELL_URL:-http://chat_shell:8100}
       # CHAT_SHELL_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
       # INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
       # OpenTelemetry Configuration (uncomment to enable)
@@ -119,15 +120,16 @@ services:
     # build:
     #   dockerfile: docker/frontend/Dockerfile
     image: ghcr.io/wecode-ai/wegent-web:latest
+    pull_policy: always
     container_name: wegent-frontend
     restart: always
     ports:
       - "${WEGENT_FRONTEND_PORT:-3000}:3000"
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=${NODE_ENV:-production}
       # API Configuration
-      - RUNTIME_INTERNAL_API_URL=http://backend:8000
-      - RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000
+      - RUNTIME_INTERNAL_API_URL=${RUNTIME_INTERNAL_API_URL:-http://backend:8000}
+      - RUNTIME_SOCKET_DIRECT_URL=${WEGENT_SOCKET_URL:-http://localhost:8000}
       # Feature Flags
       # - RUNTIME_ENABLE_CHAT_CONTEXT=false
       # - RUNTIME_LOGIN_MODE=all
@@ -150,17 +152,18 @@ services:
 
   chat_shell:
     image: ghcr.io/wecode-ai/wegent-chat-shell:latest
+    pull_policy: always
     container_name: wegent-chat-shell
     restart: always
     ports:
-      - "8100:8100"
+      - "${CHAT_SHELL_PORT:-8100}:8100"
     environment:
-      - PORT=8100
-      - HOST=0.0.0.0
-      - CHAT_SHELL_MODE=http
-      - CHAT_SHELL_STORAGE_TYPE=remote
-      - CHAT_SHELL_REMOTE_STORAGE_URL=http://backend:8000/api/internal
-      - EXECUTOR_MANAGER_URL=http://executor_manager:8001
+      - PORT=${CHAT_SHELL_PORT:-8100}
+      - HOST=${CHAT_SHELL_HOST:-0.0.0.0}
+      - CHAT_SHELL_MODE=${CHAT_SHELL_MODE:-http}
+      - CHAT_SHELL_STORAGE_TYPE=${CHAT_SHELL_STORAGE_TYPE:-remote}
+      - CHAT_SHELL_REMOTE_STORAGE_URL=${CHAT_SHELL_REMOTE_STORAGE_URL:-http://backend:8000/api/internal}
+      - EXECUTOR_MANAGER_URL=${EXECUTOR_MANAGER_URL:-http://executor_manager:8001}
       # - CHAT_SHELL_REMOTE_STORAGE_TOKEN=${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
       # OpenTelemetry Configuration (uncomment to enable)
       # - OTEL_ENABLED=true
@@ -181,25 +184,43 @@ services:
     # build:
     #   dockerfile: docker/executor_manager/Dockerfile
     image: ghcr.io/wecode-ai/wegent-executor-manager:latest
+    pull_policy: always
     extra_hosts:
       - "host.docker.internal:host-gateway"
     container_name: wegent-executor-manager
     restart: always
+    entrypoint:
+      - sh
+      - -c
+      - |
+        echo "=== Pulling executor image: $${EXECUTOR_IMAGE} ===" >&2
+        if docker pull $${EXECUTOR_IMAGE} 2>&1; then
+          echo "=== Successfully pulled executor image ===" >&2
+        else
+          echo "=== Failed to pull executor image, will use cached version ===" >&2
+        fi
+        echo "=== Starting executor manager ===" >&2
+        exec uvicorn main:app --host 0.0.0.0 --port $${PORT:-8001}
     ports:
-      - "8001:8001"
+      - "${EXECUTOR_MANAGER_PORT:-8001}:8001"
     environment:
-      - TZ=Asia/Shanghai
-      - TASK_API_DOMAIN=http://backend:8000
-      - EXECUTOR_MANAGER_EXTERNAL_URL=http://executor_manager:8001
-      - REDIS_URL=redis://redis:6379/0
-      - MAX_CONCURRENT_TASKS=30
-      - PORT=8001
-      - CALLBACK_HOST=http://executor_manager:8001
-      - NETWORK=wegent-network
-      - EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:1.1.1
-      - EXECUTOR_PORT_RANGE_MIN=10001
-      - EXECUTOR_PORT_RANGE_MAX=10100
-      - EXECUTOR_WORKSPCE=${HOME}/wecode-bot
+      - TZ=${TZ:-Asia/Shanghai}
+      - TASK_API_DOMAIN=${TASK_API_DOMAIN:-http://backend:8000}
+      - EXECUTOR_MANAGER_EXTERNAL_URL=${EXECUTOR_MANAGER_EXTERNAL_URL:-http://executor_manager:8001}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - MAX_CONCURRENT_TASKS=${EXECUTOR_MAX_CONCURRENT_TASKS:-30}
+      - PORT=${EXECUTOR_MANAGER_PORT:-8001}
+      - CALLBACK_HOST=${EXECUTOR_CALLBACK_HOST:-http://executor_manager:8001}
+      - NETWORK=${EXECUTOR_NETWORK:-wegent-network}
+      - EXECUTOR_IMAGE=${EXECUTOR_IMAGE:-ghcr.io/wecode-ai/wegent-executor:latest}
+      - EXECUTOR_PORT_RANGE_MIN=${EXECUTOR_PORT_RANGE_MIN:-10001}
+      - EXECUTOR_PORT_RANGE_MAX=${EXECUTOR_PORT_RANGE_MAX:-10100}
+      - EXECUTOR_WORKSPACE=${EXECUTOR_WORKSPACE:-${HOME}/wecode-bot}
+      # Seccomp Configuration
+      # Set to 'true' (default) to enable seccomp (default Docker behavior)
+      # Set to 'false' to disable seccomp (add --security-opt seccomp=unconfined)
+      # Leave empty to auto-detect based on kernel version
+      - ENABLE_SECCOMP=${ENABLE_SECCOMP:-true}
       # OpenTelemetry Configuration (uncomment to enable)
       # - OTEL_ENABLED=true
       # - OTEL_SERVICE_NAME=wegent-executor-manager

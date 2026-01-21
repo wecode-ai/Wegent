@@ -71,6 +71,10 @@ export interface TextSegment {
   code?: boolean
   link?: string
   strikethrough?: boolean
+  /** Whether this segment is a math formula */
+  math?: boolean
+  /** Whether this is a block-level (display) math formula */
+  mathDisplay?: boolean
 }
 
 /**
@@ -91,6 +95,7 @@ export type LineType =
   | 'tableRow'
   | 'paragraph'
   | 'empty'
+  | 'mathBlock'
 
 /**
  * Parsed line structure
@@ -102,6 +107,7 @@ export interface ParsedLine {
   listNumber?: number // For ordered lists
   tableCells?: string[] // For table rows
   tableAlignments?: ('left' | 'center' | 'right')[] // For table separator
+  mathContent?: string // For math blocks (raw LaTeX content)
 }
 
 /**

@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   ArrowLeft,
   Upload,
@@ -12,15 +12,20 @@ import {
   Search,
   ChevronUp,
   ChevronDown,
-  FolderOpen,
+  BookOpen,
   Trash2,
   Target,
   FileUp,
   RefreshCw,
+  Info,
+  CheckSquare,
+  Square,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { DocumentDetailDialog } from './DocumentDetailDialog'
 import { DocumentItem } from './DocumentItem'
 import { DocumentUpload, type TableDocument } from './DocumentUpload'
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
@@ -34,12 +39,22 @@ interface DocumentListProps {
   knowledgeBase: KnowledgeBase
   onBack?: () => void
   canManage?: boolean
+  /** Compact mode for sidebar display - uses card layout instead of table */
+  compact?: boolean
+  /** Callback when document selection changes (for notebook mode context injection) */
+  onSelectionChange?: (documentIds: number[]) => void
 }
 
 type SortField = 'name' | 'size' | 'date'
 type SortOrder = 'asc' | 'desc'
 
-export function DocumentList({ knowledgeBase, onBack, canManage = true }: DocumentListProps) {
+export function DocumentList({
+  knowledgeBase,
+  onBack,
+  canManage = true,
+  compact = false,
+  onSelectionChange,
+}: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
     knowledgeBaseId: knowledgeBase.id,
@@ -51,6 +66,7 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
 
   const [showUpload, setShowUpload] = useState(false)
   const [showRetrievalTest, setShowRetrievalTest] = useState(false)
+  const [viewingDoc, setViewingDoc] = useState<KnowledgeDocument | null>(null)
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -58,6 +74,28 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [batchLoading, setBatchLoading] = useState(false)
+  const [showSearchPopover, setShowSearchPopover] = useState(false)
+  // Track if initial selection has been done
+  const [initialSelectionDone, setInitialSelectionDone] = useState(false)
+  // Track which document is being refreshed
+  const [refreshingDocId, setRefreshingDocId] = useState<number | null>(null)
+
+  // Default select all documents when documents load (for notebook mode)
+  useEffect(() => {
+    if (onSelectionChange && documents.length > 0 && !initialSelectionDone) {
+      const allIds = new Set(documents.map(doc => doc.id))
+      setSelectedIds(allIds)
+      onSelectionChange(Array.from(allIds))
+      setInitialSelectionDone(true)
+    }
+  }, [documents, onSelectionChange, initialSelectionDone])
+
+  // Notify parent when selection changes (after initial selection)
+  useEffect(() => {
+    if (onSelectionChange && initialSelectionDone) {
+      onSelectionChange(Array.from(selectedIds))
+    }
+  }, [selectedIds, onSelectionChange, initialSelectionDone])
 
   const filteredAndSortedDocuments = useMemo(() => {
     let result = [...documents]
@@ -110,13 +148,16 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
     attachments: { attachment: { id: number; filename: string }; file: File }[],
     splitterConfig?: Partial<SplitterConfig>
   ) => {
+    // Track newly created document IDs for auto-selection
+    const newDocumentIds: number[] = []
+
     // Create documents sequentially to ensure all are created
     for (const { attachment, file } of attachments) {
       // Use attachment.filename (which may have been renamed) instead of file.name
       const documentName = attachment.filename || file.name
       const extension = documentName.split('.').pop() || ''
       try {
-        await create({
+        const created = await create({
           attachment_id: attachment.id,
           name: documentName,
           file_extension: extension,
@@ -124,10 +165,24 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
           splitter_config: splitterConfig,
           source_type: 'file',
         })
+        // Collect newly created document ID
+        if (created?.id) {
+          newDocumentIds.push(created.id)
+        }
       } catch {
         // Continue with next file even if one fails
       }
     }
+
+    // Auto-select newly uploaded documents (for notebook mode context injection)
+    if (onSelectionChange && newDocumentIds.length > 0) {
+      setSelectedIds(prev => {
+        const newSet = new Set(prev)
+        newDocumentIds.forEach(id => newSet.add(id))
+        return newSet
+      })
+    }
+
     setShowUpload(false)
   }
 
@@ -139,6 +194,33 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
       source_type: 'table',
       source_config: data.source_config,
     })
+    setShowUpload(false)
+  }
+
+  const handleWebAdd = async (url: string, name?: string) => {
+    // Import the API function
+    const { createWebDocument } = await import('@/apis/knowledge')
+
+    // Call backend API to scrape and create document
+    const result = await createWebDocument(url, knowledgeBase.id, name)
+
+    if (!result.success) {
+      throw new Error(result.error_message || 'Failed to create web document')
+    }
+
+    // Refresh document list to show the new document with correct data
+    // This ensures the document has the correct source_type from the backend
+    await refresh()
+
+    // Auto-select newly created document (for notebook mode context injection)
+    if (onSelectionChange && result.document?.id) {
+      setSelectedIds(prev => {
+        const newSet = new Set(prev)
+        newSet.add(result.document!.id)
+        return newSet
+      })
+    }
+
     setShowUpload(false)
   }
 
@@ -192,6 +274,30 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
     }
   }
 
+  // Handle web document re-fetch
+  const handleRefreshWebDocument = async (doc: KnowledgeDocument) => {
+    if (doc.source_type !== 'web') return
+
+    setRefreshingDocId(doc.id)
+    try {
+      const { refreshWebDocument } = await import('@/apis/knowledge')
+      const result = await refreshWebDocument(doc.id)
+
+      if (!result.success) {
+        throw new Error(result.error_message || t('document.upload.web.refetchFailed'))
+      }
+
+      // Refresh document list to show updated data
+      await refresh()
+    } catch {
+      // Error will be shown via toast in the API layer
+    } finally {
+      setRefreshingDocId(null)
+    }
+  }
+
+  const longSummary = knowledgeBase.summary?.long_summary
+
   return (
     <div className="space-y-4">
       {/* Header - Wegent style */}
@@ -204,41 +310,117 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
             <ArrowLeft className="w-5 h-5" />
           </button>
         )}
-        <FolderOpen className="w-5 h-5 text-primary flex-shrink-0" />
+        <BookOpen className="w-5 h-5 text-primary flex-shrink-0" />
         <div className="flex-1 min-w-0">
-          <h2 className="text-base font-medium text-text-primary truncate">{knowledgeBase.name}</h2>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-base font-medium text-text-primary truncate">
+              {knowledgeBase.name}
+            </h2>
+            {/* Summary tooltip - next to title */}
+            {longSummary && (
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <button className="flex-shrink-0 p-0.5 rounded text-text-muted hover:text-primary hover:bg-surface transition-colors">
+                      <Info className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" align="start" className="max-w-md">
+                    <p className="text-sm leading-relaxed">{longSummary}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
           {knowledgeBase.description && (
             <p className="text-xs text-text-muted truncate">{knowledgeBase.description}</p>
           )}
         </div>
       </div>
 
-      {/* Search bar */}
+      {/* Search bar and action buttons */}
       <div className="flex items-center gap-3 flex-wrap">
-        {/* Search by name */}
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-          <input
-            type="text"
-            className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-            placeholder={t('document.document.search')}
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-          />
-        </div>
+        {/* Search - inline for normal mode, popover for compact mode */}
+        {compact ? (
+          <div className="relative">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowSearchPopover(!showSearchPopover)}
+              className={searchQuery ? 'border-primary' : ''}
+            >
+              <Search className="w-4 h-4" />
+              {searchQuery && (
+                <span className="ml-1 max-w-[60px] truncate text-xs">{searchQuery}</span>
+              )}
+            </Button>
+            {showSearchPopover && (
+              <div className="absolute top-full left-0 mt-1 z-50 bg-base border border-border rounded-md shadow-lg p-2 min-w-[240px]">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+                  <input
+                    type="text"
+                    autoFocus
+                    className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder={t('document.document.search')}
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Escape') {
+                        setShowSearchPopover(false)
+                      }
+                    }}
+                    onBlur={() => {
+                      // Delay to allow click events to fire
+                      setTimeout(() => setShowSearchPopover(false), 150)
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+            <input
+              type="text"
+              className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+              placeholder={t('document.document.search')}
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+            />
+          </div>
+        )}
         {/* Spacer to push buttons to the right */}
         <div className="flex-1" />
 
-        {/* Refresh button */}
-        <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-        </Button>
+        {/* Refresh list button */}
+        <TooltipProvider>
+          <Tooltip delayDuration={200}>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('common:actions.refresh')}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
         {/* Retrieval test button */}
-        <Button variant="outline" size="sm" onClick={() => setShowRetrievalTest(true)}>
-          <Target className="w-4 h-4 mr-1" />
-          {t('document.retrievalTest.button')}
-        </Button>
+        <TooltipProvider>
+          <Tooltip delayDuration={200}>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="sm" onClick={() => setShowRetrievalTest(true)}>
+                <Target className="w-4 h-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('document.retrievalTest.button')}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
         {/* Upload button */}
         {canManage && (
@@ -263,9 +445,11 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
         </div>
       ) : filteredAndSortedDocuments.length > 0 ? (
         <>
-          {/* Batch action bar - shown when items are selected */}
-          {canManage && selectedIds.size > 0 && (
-            <div className="flex items-center gap-3 px-4 py-2.5 bg-primary/5 border border-primary/20 rounded-lg">
+          {/* Batch action bar - shown when items are selected (not in notebook mode where selection is for context injection) */}
+          {canManage && selectedIds.size > 0 && !onSelectionChange && (
+            <div
+              className={`flex items-center gap-3 ${compact ? 'px-2 py-2' : 'px-4 py-2.5'} bg-primary/5 border border-primary/20 rounded-lg`}
+            >
               <span className="text-sm text-text-primary">
                 {t('document.document.batch.selected', { count: selectedIds.size })}
               </span>
@@ -277,75 +461,121 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
                 disabled={batchLoading}
               >
                 <Trash2 className="w-4 h-4 mr-1" />
-                {t('document.document.batch.delete')}
+                {compact ? '' : t('document.document.batch.delete')}
               </Button>
             </div>
           )}
-          <div className="border border-border rounded-lg overflow-hidden">
-            {/* Table header */}
-            <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium">
-              {/* Checkbox for select all */}
-              {canManage && (
-                <div className="flex-shrink-0">
-                  <Checkbox
-                    checked={isAllSelected}
-                    onCheckedChange={handleSelectAll}
-                    className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                    {...(isPartialSelected ? { 'data-state': 'indeterminate' } : {})}
-                  />
+
+          {/* Compact mode: Card layout */}
+          {compact ? (
+            <div className="space-y-2">
+              {/* Select all control bar for notebook mode */}
+              {onSelectionChange && filteredAndSortedDocuments.length > 0 && (
+                <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-muted">
+                  <button
+                    onClick={() => handleSelectAll(!isAllSelected)}
+                    className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
+                  >
+                    {isAllSelected ? (
+                      <CheckSquare className="w-3.5 h-3.5 text-primary" />
+                    ) : (
+                      <Square className="w-3.5 h-3.5" />
+                    )}
+                    <span>{t('document.document.batch.selectAll')}</span>
+                  </button>
+                  <span className="text-text-muted">
+                    ({selectedIds.size}/{filteredAndSortedDocuments.length})
+                  </span>
                 </div>
               )}
-              {/* Icon placeholder */}
-              <div className="w-8 flex-shrink-0" />
-              <div
-                className="flex-1 min-w-[120px] cursor-pointer hover:text-text-primary select-none"
-                onClick={() => handleSort('name')}
-              >
-                {t('document.document.columns.name')}
-                <SortIcon field="name" />
-              </div>
-              {/* Spacer to match DocumentItem middle area */}
-              <div className="w-48 flex-shrink-0" />
-              <div className="w-20 flex-shrink-0 text-center">
-                {t('document.document.columns.type')}
-              </div>
-              <div
-                className="w-20 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                onClick={() => handleSort('size')}
-              >
-                {t('document.document.columns.size')}
-                <SortIcon field="size" />
-              </div>
-              <div
-                className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                onClick={() => handleSort('date')}
-              >
-                {t('document.document.columns.date')}
-                <SortIcon field="date" />
-              </div>
-              <div className="w-24 flex-shrink-0 text-center">
-                {t('document.document.columns.indexStatus')}
-              </div>
-              {canManage && (
-                <div className="w-16 flex-shrink-0 text-center">
-                  {t('document.document.columns.actions')}
-                </div>
-              )}
+              {filteredAndSortedDocuments.map(doc => (
+                <DocumentItem
+                  key={doc.id}
+                  document={doc}
+                  onViewDetail={setViewingDoc}
+                  onEdit={setEditingDoc}
+                  onDelete={setDeletingDoc}
+                  onRefresh={handleRefreshWebDocument}
+                  isRefreshing={refreshingDocId === doc.id}
+                  canManage={canManage}
+                  showBorder={false}
+                  selected={selectedIds.has(doc.id)}
+                  onSelect={handleSelectDoc}
+                  compact={true}
+                />
+              ))}
             </div>
-            {/* Document rows */}
-            {filteredAndSortedDocuments.map((doc, index) => (
-              <DocumentItem
-                key={doc.id}
-                document={doc}
-                onEdit={setEditingDoc}
-                onDelete={setDeletingDoc}
-                canManage={canManage}
-                showBorder={index < filteredAndSortedDocuments.length - 1}
-                selected={selectedIds.has(doc.id)}
-                onSelect={handleSelectDoc}
-              />
-            ))}
-          </div>
+          ) : (
+            /* Normal mode: Table layout */
+            <div className="border border-border rounded-lg overflow-hidden">
+              {/* Table header */}
+              <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium">
+                {/* Checkbox for select all */}
+                {canManage && (
+                  <div className="flex-shrink-0">
+                    <Checkbox
+                      checked={isAllSelected}
+                      onCheckedChange={handleSelectAll}
+                      className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                      {...(isPartialSelected ? { 'data-state': 'indeterminate' } : {})}
+                    />
+                  </div>
+                )}
+                {/* Icon placeholder */}
+                <div className="w-8 flex-shrink-0" />
+                <div
+                  className="flex-1 min-w-[120px] cursor-pointer hover:text-text-primary select-none"
+                  onClick={() => handleSort('name')}
+                >
+                  {t('document.document.columns.name')}
+                  <SortIcon field="name" />
+                </div>
+                {/* Spacer to match DocumentItem middle area */}
+                <div className="w-48 flex-shrink-0" />
+                <div className="w-20 flex-shrink-0 text-center">
+                  {t('document.document.columns.type')}
+                </div>
+                <div
+                  className="w-20 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
+                  onClick={() => handleSort('size')}
+                >
+                  {t('document.document.columns.size')}
+                  <SortIcon field="size" />
+                </div>
+                <div
+                  className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
+                  onClick={() => handleSort('date')}
+                >
+                  {t('document.document.columns.date')}
+                  <SortIcon field="date" />
+                </div>
+                <div className="w-24 flex-shrink-0 text-center">
+                  {t('document.document.columns.indexStatus')}
+                </div>
+                {canManage && (
+                  <div className="w-16 flex-shrink-0 text-center">
+                    {t('document.document.columns.actions')}
+                  </div>
+                )}
+              </div>
+              {/* Document rows */}
+              {filteredAndSortedDocuments.map((doc, index) => (
+                <DocumentItem
+                  key={doc.id}
+                  document={doc}
+                  onViewDetail={setViewingDoc}
+                  onEdit={setEditingDoc}
+                  onDelete={setDeletingDoc}
+                  onRefresh={handleRefreshWebDocument}
+                  isRefreshing={refreshingDocId === doc.id}
+                  canManage={canManage}
+                  showBorder={index < filteredAndSortedDocuments.length - 1}
+                  selected={selectedIds.has(doc.id)}
+                  onSelect={handleSelectDoc}
+                />
+              ))}
+            </div>
+          )}
         </>
       ) : searchQuery ? (
         <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
@@ -365,11 +595,21 @@ export function DocumentList({ knowledgeBase, onBack, canManage = true }: Docume
       )}
 
       {/* Dialogs */}
+      <DocumentDetailDialog
+        open={!!viewingDoc}
+        onOpenChange={open => !open && setViewingDoc(null)}
+        document={viewingDoc}
+        knowledgeBaseId={knowledgeBase.id}
+      />
+
       <DocumentUpload
         open={showUpload}
         onOpenChange={setShowUpload}
         onUploadComplete={handleUploadComplete}
         onTableAdd={handleTableAdd}
+        onWebAdd={handleWebAdd}
+        kbType={knowledgeBase.kb_type}
+        currentDocumentCount={documents.length}
       />
 
       <EditDocumentDialog

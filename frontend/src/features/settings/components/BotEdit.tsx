@@ -713,8 +713,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   }, [validateBot, getBotData, editingBotId, setBots, toast, t])
 
   // Expose methods via ref
-  useImperativeHandle(
-    ref,
+  // Use a stable object reference to avoid infinite loops with React 19 and Radix UI
+  const refMethods = useMemo(
     () => ({
       getBotData,
       validateBot,
@@ -722,6 +722,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     }),
     [getBotData, validateBot, saveBot]
   )
+
+  useImperativeHandle(ref, () => refMethods, [refMethods])
 
   // Save logic
   const handleSave = async () => {

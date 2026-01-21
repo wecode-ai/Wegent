@@ -11,6 +11,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
 import { Switch } from '@/components/ui/switch'
+import { Tag } from '@/components/ui/tag'
 import { Drawer, DrawerContent, DrawerTrigger } from '@/components/ui/drawer'
 import { useModelSelection } from '@/features/tasks/hooks/useModelSelection'
 import type { Team } from '@/types/api'
@@ -231,8 +232,18 @@ export default function MobileModelSelector({
                     )}
                   >
                     <div className="flex-1 min-w-0">
-                      <div className="text-[15px] text-text-primary truncate">
-                        {getModelDisplayText(model)}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[15px] text-text-primary truncate">
+                          {getModelDisplayText(model)}
+                        </span>
+                        {model.type === 'user' && (
+                          <Tag
+                            variant="info"
+                            className="text-[10px] flex-shrink-0 whitespace-nowrap"
+                          >
+                            {t('common:settings.personal', '个人')}
+                          </Tag>
+                        )}
                       </div>
                       {model.modelId && (
                         <div className="text-[13px] text-[#8e8e93] mt-0.5 truncate">

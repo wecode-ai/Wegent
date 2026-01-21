@@ -16,7 +16,219 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m'
+
+# Configuration file path (use .env file, same as docker-compose)
+CONFIG_FILE="$SCRIPT_DIR/.env"
+
+# Load configuration from .env file
+load_config() {
+    if [ -f "$CONFIG_FILE" ]; then
+        echo -e "${BLUE}Loading configuration from .env...${NC}"
+        # Read config file line by line, skip comments and empty lines
+        while IFS='=' read -r key value || [ -n "$key" ]; do
+            # Skip empty lines and comments
+            [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+            # Remove leading/trailing whitespace
+            key=$(echo "$key" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            value=$(echo "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            # Remove quotes from value if present
+            value=$(echo "$value" | sed 's/^["'"'"']//;s/["'"'"']$//')
+            # Export the variable
+            if [ -n "$key" ] && [ -n "$value" ]; then
+                export "$key=$value"
+                echo -e "  ${GREEN}✓${NC} Loaded: $key"
+            fi
+        done < "$CONFIG_FILE"
+        echo ""
+    fi
+}
+
+# Save configuration to .env file
+# Only saves start.sh specific variables, preserves existing content
+save_config() {
+    local temp_file=$(mktemp)
+    
+    # If .env exists, copy it but remove the variables we're going to update
+    if [ -f "$CONFIG_FILE" ]; then
+        grep -v "^BACKEND_PORT=" "$CONFIG_FILE" | \
+        grep -v "^CHAT_SHELL_PORT=" | \
+        grep -v "^EXECUTOR_MANAGER_PORT=" | \
+        grep -v "^WEGENT_FRONTEND_PORT=" | \
+        grep -v "^EXECUTOR_IMAGE=" | \
+        grep -v "^WEGENT_SOCKET_URL=" > "$temp_file" || true
+    fi
+    
+    # Check if the start.sh section header exists
+    if ! grep -q "# START.SH CONFIGURATION" "$temp_file" 2>/dev/null; then
+        # Add header if .env is empty or doesn't have our section
+        if [ ! -s "$temp_file" ]; then
+            cat > "$temp_file" << 'EOF'
+# Wegent Configuration
+# This file is used by both docker-compose and start.sh
+# Copy from .env.example and customize as needed
+
+EOF
+        fi
+        
+        cat >> "$temp_file" << EOF
+# =============================================================================
+# START.SH CONFIGURATION (Local Development)
+# =============================================================================
+
+# Service Ports
+BACKEND_PORT=$BACKEND_PORT
+CHAT_SHELL_PORT=$CHAT_SHELL_PORT
+EXECUTOR_MANAGER_PORT=$EXECUTOR_MANAGER_PORT
+WEGENT_FRONTEND_PORT=$WEGENT_FRONTEND_PORT
+
+# Executor Docker image
+EXECUTOR_IMAGE=$EXECUTOR_IMAGE
+
+# Socket URL (for WebSocket connections, should be accessible from browser)
+# For remote access, use your machine's IP address instead of localhost
+WEGENT_SOCKET_URL=$WEGENT_SOCKET_URL
+EOF
+    else
+        # Update existing values
+        echo "" >> "$temp_file"
+        echo "BACKEND_PORT=$BACKEND_PORT" >> "$temp_file"
+        echo "CHAT_SHELL_PORT=$CHAT_SHELL_PORT" >> "$temp_file"
+        echo "EXECUTOR_MANAGER_PORT=$EXECUTOR_MANAGER_PORT" >> "$temp_file"
+        echo "WEGENT_FRONTEND_PORT=$WEGENT_FRONTEND_PORT" >> "$temp_file"
+        echo "EXECUTOR_IMAGE=$EXECUTOR_IMAGE" >> "$temp_file"
+        echo "WEGENT_SOCKET_URL=$WEGENT_SOCKET_URL" >> "$temp_file"
+    fi
+    
+    mv "$temp_file" "$CONFIG_FILE"
+    echo -e "${GREEN}✓ Configuration saved to .env${NC}"
+}
+
+# Interactive configuration initialization
+# Args:
+#   $1 - "standalone" (default): exit after completion, show full messages
+#        "embedded": don't exit, used when called from start_services
+init_config() {
+    local mode="${1:-standalone}"
+    
+    echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║       Wegent Configuration Initialization Wizard       ║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    # Check if config file already exists (only in standalone mode)
+    if [ "$mode" = "standalone" ] && [ -f "$CONFIG_FILE" ]; then
+        echo -e "${YELLOW}⚠️  Configuration file .env already exists.${NC}"
+        echo -e "Current configuration:"
+        echo ""
+        cat "$CONFIG_FILE" | grep -v "^#" | grep -v "^$" | while read line; do
+            echo -e "  ${CYAN}$line${NC}"
+        done
+        echo ""
+        read -p "Do you want to overwrite it? [y/N]: " overwrite
+        if [[ ! "$overwrite" =~ ^[Yy]$ ]]; then
+            echo -e "${YELLOW}Configuration initialization cancelled.${NC}"
+            exit 0
+        fi
+        echo ""
+    fi
+
+    echo -e "${GREEN}Please configure the following settings:${NC}"
+    echo -e "${YELLOW}(Press Enter to use default value)${NC}"
+    echo ""
+
+    # Get local IP for default socket URL
+    local local_ip=$(get_local_ip)
+
+    # === Service Ports ===
+    echo -e "${BLUE}━━━ Service Ports ━━━${NC}"
+    echo ""
+
+    # Backend Port
+    echo -e "${CYAN}1. Backend Port${NC}"
+    echo -e "   The port for Backend API service."
+    read -p "   Backend Port [$DEFAULT_BACKEND_PORT]: " input_backend_port
+    BACKEND_PORT=${input_backend_port:-$DEFAULT_BACKEND_PORT}
+    echo ""
+
+    # Chat Shell Port
+    echo -e "${CYAN}2. Chat Shell Port${NC}"
+    echo -e "   The port for Chat Shell service."
+    read -p "   Chat Shell Port [$DEFAULT_CHAT_SHELL_PORT]: " input_chat_shell_port
+    CHAT_SHELL_PORT=${input_chat_shell_port:-$DEFAULT_CHAT_SHELL_PORT}
+    echo ""
+
+    # Executor Manager Port
+    echo -e "${CYAN}3. Executor Manager Port${NC}"
+    echo -e "   The port for Executor Manager service."
+    read -p "   Executor Manager Port [$DEFAULT_EXECUTOR_MANAGER_PORT]: " input_executor_manager_port
+    EXECUTOR_MANAGER_PORT=${input_executor_manager_port:-$DEFAULT_EXECUTOR_MANAGER_PORT}
+    echo ""
+
+    # Frontend Port
+    echo -e "${CYAN}4. Frontend Port${NC}"
+    echo -e "   The port where the web UI will be accessible."
+    read -p "   Frontend Port [$DEFAULT_WEGENT_FRONTEND_PORT]: " input_frontend_port
+    WEGENT_FRONTEND_PORT=${input_frontend_port:-$DEFAULT_WEGENT_FRONTEND_PORT}
+    echo ""
+
+    # === Other Settings ===
+    echo -e "${BLUE}━━━ Other Settings ━━━${NC}"
+    echo ""
+
+    # Executor Image
+    echo -e "${CYAN}5. Executor Docker Image${NC}"
+    echo -e "   The Docker image used for task execution."
+    read -p "   Executor Image [$DEFAULT_EXECUTOR_IMAGE]: " input_image
+    EXECUTOR_IMAGE=${input_image:-$DEFAULT_EXECUTOR_IMAGE}
+    echo ""
+
+    # Socket URL
+    echo -e "${CYAN}6. Socket URL${NC}"
+    echo -e "   The WebSocket URL for real-time communication."
+    echo -e "   For remote access, use your machine's IP address."
+    echo -e "   Detected local IP: ${GREEN}$local_ip${NC}"
+    local default_socket="http://$local_ip:$BACKEND_PORT"
+    read -p "   Socket URL [$default_socket]: " input_socket_url
+    WEGENT_SOCKET_URL=${input_socket_url:-$default_socket}
+    echo ""
+
+    # Show summary
+    echo -e "${BLUE}════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}Configuration Summary:${NC}"
+    echo -e "  ${YELLOW}Service Ports:${NC}"
+    echo -e "    Backend Port:        ${CYAN}$BACKEND_PORT${NC}"
+    echo -e "    Chat Shell Port:     ${CYAN}$CHAT_SHELL_PORT${NC}"
+    echo -e "    Executor Mgr Port:   ${CYAN}$EXECUTOR_MANAGER_PORT${NC}"
+    echo -e "    Frontend Port:       ${CYAN}$WEGENT_FRONTEND_PORT${NC}"
+    echo -e "  ${YELLOW}Other Settings:${NC}"
+    echo -e "    Executor Image:      ${CYAN}$EXECUTOR_IMAGE${NC}"
+    echo -e "    Socket URL:          ${CYAN}$WEGENT_SOCKET_URL${NC}"
+    echo -e "${BLUE}════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    read -p "Save this configuration? [Y/n]: " confirm
+    if [[ "$confirm" =~ ^[Nn]$ ]]; then
+        echo -e "${YELLOW}Configuration not saved.${NC}"
+        if [ "$mode" = "standalone" ]; then
+            exit 0
+        else
+            return 1
+        fi
+    fi
+
+    save_config
+
+    echo ""
+    echo -e "${GREEN}✓ Configuration initialized successfully!${NC}"
+    
+    # Only show these messages in standalone mode
+    if [ "$mode" = "standalone" ]; then
+        echo -e "${YELLOW}You can now run './start.sh' to start all services.${NC}"
+        echo -e "${YELLOW}To modify configuration, edit .env or run './start.sh --init' again.${NC}"
+    fi
+}
 
 # Detect Python command and version
 detect_python() {
@@ -105,6 +317,7 @@ check_docker_installed() {
     fi
     return 1
 }
+
 # Show docker installation instructions
 show_docker_install_instructions() {
     echo -e "${RED}Error: Docker is not installed or not running.${NC}"
@@ -378,31 +591,21 @@ check_frontend_dependencies() {
 
     echo -e "${GREEN}✓ Frontend dependencies are up to date${NC}"
 }
-
-# Default configuration
-DEFAULT_FRONTEND_PORT=3000
-DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:latest"
-
-FRONTEND_PORT=$DEFAULT_FRONTEND_PORT
-EXECUTOR_IMAGE=$DEFAULT_EXECUTOR_IMAGE
-DEFAULT_API_URL="http://localhost:8000"
-API_URL=$DEFAULT_API_URL
-
-# Get local IP address
+# Get local IP address (defined early as it's used by default values)
 get_local_ip() {
     # Try to get the local IP address, fallback to localhost if not available
     local ip=""
-    
+
     # Method 1: Try Linux ip command (most reliable, works on Linux)
     if command -v ip &> /dev/null; then
         ip=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
     fi
-    
+
     # Method 2: Try hostname -I (works on some Linux, gets first non-loopback IP)
     if [ -z "$ip" ] && command -v hostname &> /dev/null; then
         ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     fi
-    
+
     # Method 3: Try macOS/BSD ifconfig (works on macOS)
     # Filter out docker/bridge interfaces (br-, docker, veth)
     if [ -z "$ip" ] && command -v ifconfig &> /dev/null; then
@@ -412,17 +615,36 @@ get_local_ip() {
             ip=$(ifconfig | grep -v "^br-\|^docker\|^veth" | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
         fi
     fi
-    
+
     # Fallback to localhost if no IP found
     if [ -z "$ip" ]; then
         ip="localhost"
     fi
-    
+
     echo "$ip"
 }
 
-DEFAULT_SOCKET_URL="http://$(get_local_ip):8000"
-SOCKET_URL=$DEFAULT_SOCKET_URL
+# Default configuration (use same variable names as docker-compose)
+# Service ports
+DEFAULT_BACKEND_PORT=8000
+DEFAULT_CHAT_SHELL_PORT=8100
+DEFAULT_EXECUTOR_MANAGER_PORT=8001
+DEFAULT_WEGENT_FRONTEND_PORT=3000
+
+# Other settings
+DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:latest"
+
+# Initialize port variables
+BACKEND_PORT=$DEFAULT_BACKEND_PORT
+CHAT_SHELL_PORT=$DEFAULT_CHAT_SHELL_PORT
+EXECUTOR_MANAGER_PORT=$DEFAULT_EXECUTOR_MANAGER_PORT
+WEGENT_FRONTEND_PORT=$DEFAULT_WEGENT_FRONTEND_PORT
+EXECUTOR_IMAGE=$DEFAULT_EXECUTOR_IMAGE
+
+# These will be computed after ports are loaded from config
+WEGENT_SOCKET_URL=""
+TASK_API_DOMAIN=""
+EXECUTOR_MANAGER_URL=""
 
 # PID file directory
 PID_DIR="$SCRIPT_DIR/.pids"
@@ -434,17 +656,37 @@ Wegent One-Click Startup Script (Local Development Mode)
 Usage: $0 [options]
 
 Options:
-  -p, --port PORT           Frontend port (default: $DEFAULT_FRONTEND_PORT)
+  -p, --port PORT           Frontend port (default: $DEFAULT_WEGENT_FRONTEND_PORT)
   -e, --executor-image IMG  Executor image (default: $DEFAULT_EXECUTOR_IMAGE)
-  --api-url                 Backend api url (default: $DEFAULT_API_URL)
-  --socket-url              Socket direct url (default: $DEFAULT_SOCKET_URL)
+  --socket-url URL          Socket direct url (auto-computed from BACKEND_PORT)
+  --init                    Interactive configuration initialization
   --stop                    Stop all services
   --restart                 Restart all services
   --status                  Check service status
   -h, --help                Show help information
 
+Configuration File:
+  The script uses the .env configuration file in the project root.
+  Variables defined in .env will be loaded automatically on startup.
+  This is the same file used by docker-compose.yml.
+  Use '--init' to create or update the configuration file interactively.
+
+  Supported variables in .env:
+    Service Ports:
+      BACKEND_PORT          - Backend API port (default: $DEFAULT_BACKEND_PORT)
+      CHAT_SHELL_PORT       - Chat Shell port (default: $DEFAULT_CHAT_SHELL_PORT)
+      EXECUTOR_MANAGER_PORT - Executor Manager port (default: $DEFAULT_EXECUTOR_MANAGER_PORT)
+      WEGENT_FRONTEND_PORT  - Frontend port (default: $DEFAULT_WEGENT_FRONTEND_PORT)
+
+    Other Settings:
+      EXECUTOR_IMAGE        - Docker image for executor
+      WEGENT_SOCKET_URL     - WebSocket URL (auto-computed: http://LOCAL_IP:BACKEND_PORT)
+      TASK_API_DOMAIN       - URL for executor_manager to call backend (auto-computed)
+      EXECUTOR_MANAGER_URL  - URL for backend to call executor_manager (auto-computed)
+
 Examples:
   $0                                    # Start with default configuration
+  $0 --init                             # Initialize configuration interactively
   $0 -p 8080                            # Specify frontend port as 8080
   $0 -e my-executor:latest              # Specify custom executor image
   $0 --socket-url http://192.168.1.100:8000  # Specify socket URL with your IP
@@ -456,23 +698,28 @@ EOF
 # Parse arguments
 ACTION="start"
 
+# Track which variables were set via command line (to override config file)
+CLI_WEGENT_FRONTEND_PORT=""
+CLI_EXECUTOR_IMAGE=""
+CLI_WEGENT_SOCKET_URL=""
+
 while [[ $# -gt 0 ]]; do
 case $1 in
     -p|--port)
-        FRONTEND_PORT="$2"
+        CLI_WEGENT_FRONTEND_PORT="$2"
         shift 2
         ;;
     -e|--executor-image)
-        EXECUTOR_IMAGE="$2"
-        shift 2
-        ;;
-    --api-url)
-        API_URL="$2"
+        CLI_EXECUTOR_IMAGE="$2"
         shift 2
         ;;
     --socket-url)
-        SOCKET_URL="$2"
+        CLI_WEGENT_SOCKET_URL="$2"
         shift 2
+        ;;
+    --init)
+        ACTION="init"
+        shift
         ;;
     --stop)
         ACTION="stop"
@@ -498,6 +745,21 @@ case $1 in
 esac
 done
 
+# Load configuration from .env file (if exists)
+# This sets variables from the config file
+load_config
+
+# Apply command line overrides (CLI arguments take precedence over config file)
+[ -n "$CLI_WEGENT_FRONTEND_PORT" ] && WEGENT_FRONTEND_PORT="$CLI_WEGENT_FRONTEND_PORT"
+[ -n "$CLI_EXECUTOR_IMAGE" ] && EXECUTOR_IMAGE="$CLI_EXECUTOR_IMAGE"
+[ -n "$CLI_WEGENT_SOCKET_URL" ] && WEGENT_SOCKET_URL="$CLI_WEGENT_SOCKET_URL"
+
+# Compute derived URLs based on configured ports (if not already set from config)
+LOCAL_IP=$(get_local_ip)
+[ -z "$WEGENT_SOCKET_URL" ] && WEGENT_SOCKET_URL="http://$LOCAL_IP:$BACKEND_PORT"
+[ -z "$TASK_API_DOMAIN" ] && TASK_API_DOMAIN="http://$LOCAL_IP:$BACKEND_PORT"
+[ -z "$EXECUTOR_MANAGER_URL" ] && EXECUTOR_MANAGER_URL="http://localhost:$EXECUTOR_MANAGER_PORT"
+
 # Create PID directory
 mkdir -p "$PID_DIR"
 
@@ -513,7 +775,7 @@ check_port() {
 
 # Check all required ports
 check_all_ports() {
-    local ports=("8000:Backend" "8100:Chat Shell" "8001:Executor Manager" "$FRONTEND_PORT:Frontend")
+    local ports=("$BACKEND_PORT:Backend" "$CHAT_SHELL_PORT:Chat Shell" "$EXECUTOR_MANAGER_PORT:Executor Manager" "$WEGENT_FRONTEND_PORT:Frontend")
     local conflicts=()
 
     for item in "${ports[@]}"; do
@@ -577,7 +839,7 @@ stop_services() {
     pkill -f "uvicorn app.main:app" 2>/dev/null || true
     pkill -f "uvicorn main:app.*8001" 2>/dev/null || true
     pkill -f "uvicorn chat_shell.main:app" 2>/dev/null || true
-    pkill -f "npm run dev.*$FRONTEND_PORT" 2>/dev/null || true
+    pkill -f "npm run dev.*$WEGENT_FRONTEND_PORT" 2>/dev/null || true
 
     echo -e "${GREEN}All services stopped${NC}"
 }
@@ -587,7 +849,7 @@ show_status() {
     echo -e "${BLUE}Wegent Service Status:${NC}"
     echo ""
 
-    local services=("backend:8000" "frontend:3000" "chat_shell:8100" "executor_manager:8001")
+    local services=("backend:$BACKEND_PORT" "frontend:$WEGENT_FRONTEND_PORT" "chat_shell:$CHAT_SHELL_PORT" "executor_manager:$EXECUTOR_MANAGER_PORT")
 
     for item in "${services[@]}"; do
         local service="${item%%:*}"
@@ -686,6 +948,24 @@ check_service_health() {
 
 # Start all services
 start_services() {
+    # Check if config file exists, if not, run init wizard first
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo -e "${YELLOW}╔════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${YELLOW}║     No configuration file found. Starting setup...     ║${NC}"
+        echo -e "${YELLOW}╚════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${YELLOW}This appears to be your first time running Wegent.${NC}"
+        echo -e "${YELLOW}Let's create a configuration file (.env) first.${NC}"
+        echo ""
+
+        # Run the init config wizard in embedded mode (don't exit after saving)
+        if ! init_config "embedded"; then
+            echo -e "${RED}Configuration setup cancelled. Exiting.${NC}"
+            exit 1
+        fi
+        echo ""
+    fi
+
     echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
     echo -e "${BLUE}║      Wegent One-Click Startup Script (Local Dev)      ║${NC}"
     echo -e "${BLUE}╚════════════════════════════════════════════════════════╝${NC}"
@@ -727,10 +1007,14 @@ start_services() {
 
     echo ""
     echo -e "${GREEN}Configuration:${NC}"
-    echo -e "  Frontend Port:    $FRONTEND_PORT"
-    echo -e "  Executor Image:   $EXECUTOR_IMAGE"
-    echo -e "  API URL:          $API_URL"
-    echo -e "  Socket URL:       $SOCKET_URL"
+    echo -e "  Backend Port:        $BACKEND_PORT"
+    echo -e "  Chat Shell Port:     $CHAT_SHELL_PORT"
+    echo -e "  Executor Mgr Port:   $EXECUTOR_MANAGER_PORT"
+    echo -e "  Frontend Port:       $WEGENT_FRONTEND_PORT"
+    echo -e "  Executor Image:      $EXECUTOR_IMAGE"
+    echo -e "  Socket URL:          $WEGENT_SOCKET_URL"
+    echo -e "  Task API Domain:     $TASK_API_DOMAIN"
+    echo -e "  Executor Manager:    $EXECUTOR_MANAGER_URL"
     echo ""
 
     # Check port conflicts
@@ -762,29 +1046,34 @@ start_services() {
     echo -e "${BLUE}Starting services...${NC}"
 
     # 1. Start Backend
+    # EXECUTOR_MANAGER_URL: URL for backend to call executor_manager
+    # CHAT_SHELL_URL: URL for backend to call chat_shell service
     start_service "backend" "backend" \
-        "source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+        "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT"
 
     # 2. Start Chat Shell
+    # EXECUTOR_MANAGER_URL: URL for chat_shell to call executor_manager (for sandbox operations)
     start_service "chat_shell" "chat_shell" \
-        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:8000/api/internal && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --host 0.0.0.0 --port 8100"
+        "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --host 0.0.0.0 --port $CHAT_SHELL_PORT"
 
     # 3. Start Executor Manager
-    # TASK_API_DOMAIN uses local IP so docker containers can access the backend
+    # TASK_API_DOMAIN: URL for executor_manager to call backend (uses local IP so docker containers can access)
     # DOCKER_HOST_ADDR=localhost so executor_manager can access docker containers
+    # CALLBACK_HOST: URL for executor containers to call back to executor_manager (uses local IP so docker containers can access)
+    local CALLBACK_HOST="http://$LOCAL_IP:$EXECUTOR_MANAGER_PORT"
     start_service "executor_manager" "executor_manager" \
-        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=http://$(get_local_ip):8000 && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && source .venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port 8001"
+        "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=$TASK_API_DOMAIN && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && export CALLBACK_HOST=$CALLBACK_HOST && source .venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT"
 
     # 4. Start Frontend (run in background)
     echo -e "  Starting ${BLUE}frontend${NC}..."
     cd "$SCRIPT_DIR/frontend"
 
-    # Set environment variables
-    export RUNTIME_INTERNAL_API_URL=$API_URL
-    export RUNTIME_SOCKET_DIRECT_URL=$SOCKET_URL
+    # Set environment variables (use same names as docker-compose)
+    export RUNTIME_INTERNAL_API_URL=http://localhost:$BACKEND_PORT
+    export RUNTIME_SOCKET_DIRECT_URL=$WEGENT_SOCKET_URL
 
     # Start frontend in background
-    nohup bash -c "PORT=$FRONTEND_PORT npm run dev" > "$PID_DIR/frontend.log" 2>&1 &
+    nohup bash -c "PORT=$WEGENT_FRONTEND_PORT npm run dev" > "$PID_DIR/frontend.log" 2>&1 &
     local frontend_pid=$!
     echo $frontend_pid > "$PID_DIR/frontend.pid"
 
@@ -803,10 +1092,10 @@ start_services() {
 
     # Health check for all services
     local failed=0
-    check_service_health "backend" 8000 "/health" || failed=1
-    check_service_health "chat_shell" 8100 "/health" || failed=1
-    check_service_health "executor_manager" 8001 "/health" || failed=1
-    check_service_health "frontend" $FRONTEND_PORT "" || failed=1
+    check_service_health "backend" $BACKEND_PORT "/health" || failed=1
+    check_service_health "chat_shell" $CHAT_SHELL_PORT "/health" || failed=1
+    check_service_health "executor_manager" $EXECUTOR_MANAGER_PORT "/health" || failed=1
+    check_service_health "frontend" $WEGENT_FRONTEND_PORT "" || failed=1
 
     echo ""
     if [ $failed -eq 1 ]; then
@@ -826,13 +1115,13 @@ start_services() {
     echo -e "${GREEN}All services started successfully!${NC}"
     echo ""
     echo -e "${GREEN}🌐 Access URLs:${NC}"
-    echo -e "  Local Frontend:  ${BLUE}http://localhost:$FRONTEND_PORT${NC}"
-    echo -e "  Remote Frontend: ${BLUE}http://$(get_local_ip):$FRONTEND_PORT${NC}"
-    echo -e "  Socket URL:      ${BLUE}$SOCKET_URL${NC}"
+    echo -e "  Local Frontend:  ${BLUE}http://localhost:$WEGENT_FRONTEND_PORT${NC}"
+    echo -e "  Remote Frontend: ${BLUE}http://$(get_local_ip):$WEGENT_FRONTEND_PORT${NC}"
+    echo -e "  Socket URL:      ${BLUE}$WEGENT_SOCKET_URL${NC}"
     echo ""
     echo -e "${YELLOW}📋 Share with others for remote access:${NC}"
-    echo -e "  Frontend URL: ${BLUE}http://$(get_local_ip):$FRONTEND_PORT${NC}"
-    echo -e "  Socket URL:   ${BLUE}$SOCKET_URL${NC}"
+    echo -e "  Frontend URL: ${BLUE}http://$(get_local_ip):$WEGENT_FRONTEND_PORT${NC}"
+    echo -e "  Socket URL:   ${BLUE}$WEGENT_SOCKET_URL${NC}"
     echo ""
     echo -e "${YELLOW}Common Commands:${NC}"
     echo -e "  $0 --status    Check service status"
@@ -851,6 +1140,9 @@ start_services() {
 case $ACTION in
     start)
         start_services
+        ;;
+    init)
+        init_config
         ;;
     stop)
         stop_services

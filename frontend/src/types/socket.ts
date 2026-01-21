@@ -24,6 +24,9 @@ export const ClientEvents = {
 // Server -> Client Events
 // ============================================================
 export const ServerEvents = {
+  // Authentication events
+  AUTH_ERROR: 'auth:error', // Token expired or invalid
+
   // Chat streaming events (to task room)
   CHAT_START: 'chat:start',
   CHAT_CHUNK: 'chat:chunk',
@@ -50,7 +53,11 @@ export const ServerEvents = {
   TASK_STATUS: 'task:status',
   TASK_SHARED: 'task:shared',
   TASK_INVITED: 'task:invited', // User invited to group chat
+  TASK_APP_UPDATE: 'task:app_update', // App data updated (to task room)
   UNREAD_COUNT: 'unread:count',
+
+  // Background execution events (to user room)
+  BACKGROUND_EXECUTION_UPDATE: 'background:execution_update',
 
   // Generic Skill Events
   SKILL_REQUEST: 'skill:request', // Server -> Client: generic skill request
@@ -97,7 +104,9 @@ export interface ChatSendPayload {
   git_repo_id?: number
   git_domain?: string
   branch_name?: string
-  task_type?: 'chat' | 'code'
+  task_type?: 'chat' | 'code' | 'knowledge'
+  // Knowledge base ID for knowledge type tasks
+  knowledge_base_id?: number
 }
 
 export interface ChatCancelPayload {
@@ -132,6 +141,11 @@ export interface HistorySyncPayload {
 // ============================================================
 // Server -> Client Payloads
 // ============================================================
+
+export interface AuthErrorPayload {
+  error: string
+  code: 'TOKEN_EXPIRED' | 'INVALID_TOKEN' | string
+}
 
 export interface SourceReference {
   /** Source index number (e.g., 1, 2, 3) */
@@ -297,8 +311,39 @@ export interface TaskInvitedPayload {
   created_at: string
 }
 
+export interface TaskAppUpdatePayload {
+  task_id: number
+  app: {
+    name: string
+    address: string
+    previewUrl: string
+    mysql?: string
+  }
+}
+
 export interface UnreadCountPayload {
   count: number
+}
+
+// ============================================================
+// Background Execution Event Payloads
+// ============================================================
+
+export interface BackgroundExecutionUpdatePayload {
+  execution_id: number
+  subscription_id: number
+  subscription_name: string
+  subscription_display_name?: string
+  team_name?: string
+  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'RETRYING' | 'CANCELLED'
+  task_id?: number
+  task_type?: string
+  prompt?: string
+  result_summary?: string
+  error_message?: string
+  trigger_reason?: string
+  created_at: string
+  updated_at: string
 }
 
 // ============================================================

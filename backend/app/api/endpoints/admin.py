@@ -2,6 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import threading
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -50,7 +53,7 @@ from app.schemas.task import TaskCreate, TaskInDB
 from app.schemas.user import Token, UserInDB, UserInfo
 from app.services.adapters.public_retriever import public_retriever_service
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.k_batch import batch_service
+from app.services.k_batch import apply_default_resources_async, batch_service
 from app.services.kind import kind_service
 from app.services.user import user_service
 
@@ -165,10 +168,19 @@ async def create_user(
         role=user_data.role,
         auth_source=user_data.auth_source,
         is_active=True,
+        git_info=[],
+        preferences="{}",
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    # Apply default resources for the new user in a background thread
+    def run_async_task():
+        asyncio.run(apply_default_resources_async(new_user.id))
+
+    thread = threading.Thread(target=run_async_task, daemon=True)
+    thread.start()
 
     return AdminUserResponse(
         id=new_user.id,
@@ -263,7 +275,7 @@ async def delete_user(
     current_user: User = Depends(get_admin_user),
 ):
     """
-    Delete a user (soft delete by setting is_active=False)
+    Delete a user (hard delete - permanently removes the user from database)
     """
     # Query user directly to avoid decrypt_user_git_info modifying the object
     user = db.query(User).filter(User.id == user_id).first()
@@ -280,8 +292,8 @@ async def delete_user(
             detail="Cannot delete your own account",
         )
 
-    # Soft delete
-    user.is_active = False
+    # Hard delete - permanently remove the user
+    db.delete(user)
     db.commit()
 
     return None
@@ -1696,3 +1708,229 @@ async def delete_public_retriever(
         db, retriever_id=retriever_id, current_user=current_user
     )
     return None
+
+
+# ==================== Subscription Monitor Endpoints (formerly Flow Monitor) ====================
+
+from app.schemas.admin import (
+    SubscriptionMonitorError,
+    SubscriptionMonitorErrorListResponse,
+    SubscriptionMonitorStats,
+)
+
+
+@router.get("/subscription-monitor/stats", response_model=SubscriptionMonitorStats)
+async def get_subscription_monitor_stats(
+    hours: int = Query(default=24, ge=1, le=720, description="Time range in hours"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get subscription execution statistics for admin monitoring.
+
+    Returns aggregate statistics for all users' subscription executions within the
+    specified time range. For privacy, only IDs and aggregate data are shown.
+    """
+    from app.models.subscription import BackgroundExecution
+    from app.schemas.subscription import BackgroundExecutionStatus
+
+    # Calculate time threshold
+    threshold = datetime.utcnow() - timedelta(hours=hours)
+
+    # Query all executions within time range
+    base_query = db.query(BackgroundExecution).filter(
+        BackgroundExecution.created_at >= threshold
+    )
+
+    # Get counts by status
+    total = base_query.count()
+    completed = base_query.filter(
+        BackgroundExecution.status == BackgroundExecutionStatus.COMPLETED.value
+    ).count()
+    failed = base_query.filter(
+        BackgroundExecution.status == BackgroundExecutionStatus.FAILED.value
+    ).count()
+    cancelled = base_query.filter(
+        BackgroundExecution.status == BackgroundExecutionStatus.CANCELLED.value
+    ).count()
+    running = base_query.filter(
+        BackgroundExecution.status == BackgroundExecutionStatus.RUNNING.value
+    ).count()
+    pending = base_query.filter(
+        BackgroundExecution.status == BackgroundExecutionStatus.PENDING.value
+    ).count()
+
+    # Count timeout failures (error message contains "timeout" or "timed out")
+    timeout = base_query.filter(
+        BackgroundExecution.status == BackgroundExecutionStatus.FAILED.value,
+        BackgroundExecution.error_message.ilike("%timeout%"),
+    ).count()
+
+    # Calculate rates
+    terminal_count = completed + failed + cancelled
+    success_rate = (completed / terminal_count * 100) if terminal_count > 0 else 0.0
+    failure_rate = (failed / terminal_count * 100) if terminal_count > 0 else 0.0
+    timeout_rate = (timeout / terminal_count * 100) if terminal_count > 0 else 0.0
+
+    # Get subscription counts (Subscription is stored in kinds table with kind='Subscription')
+    total_subscriptions = (
+        db.query(Kind)
+        .filter(Kind.kind == "Subscription", Kind.is_active == True)
+        .count()
+    )
+    # Active subscriptions are those with enabled=True in their JSON spec
+    active_subscriptions = 0
+    subscriptions = (
+        db.query(Kind).filter(Kind.kind == "Subscription", Kind.is_active == True).all()
+    )
+    for sub in subscriptions:
+        if sub.json and isinstance(sub.json, dict):
+            spec = sub.json.get("spec", {})
+            if spec.get("enabled", True):
+                active_subscriptions += 1
+
+    return SubscriptionMonitorStats(
+        total_executions=total,
+        completed_count=completed,
+        failed_count=failed,
+        timeout_count=timeout,
+        cancelled_count=cancelled,
+        running_count=running,
+        pending_count=pending,
+        success_rate=round(success_rate, 2),
+        failure_rate=round(failure_rate, 2),
+        timeout_rate=round(timeout_rate, 2),
+        active_subscriptions_count=active_subscriptions,
+        total_subscriptions_count=total_subscriptions,
+    )
+
+
+# Backward compatibility alias for flow-monitor endpoint
+@router.get(
+    "/flow-monitor/stats",
+    response_model=SubscriptionMonitorStats,
+    include_in_schema=False,
+)
+async def get_flow_monitor_stats(
+    hours: int = Query(default=24, ge=1, le=720, description="Time range in hours"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """Backward compatibility alias for subscription-monitor/stats."""
+    return await get_subscription_monitor_stats(
+        hours=hours, db=db, current_user=current_user
+    )
+
+
+@router.get(
+    "/subscription-monitor/errors", response_model=SubscriptionMonitorErrorListResponse
+)
+async def get_subscription_monitor_errors(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    hours: int = Query(default=24, ge=1, le=720, description="Time range in hours"),
+    status_filter: Optional[str] = Query(
+        None,
+        alias="status",
+        description="Filter by status (FAILED, CANCELLED, RUNNING)",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get list of subscription execution errors for admin monitoring.
+
+    Returns a paginated list of failed, cancelled, or stuck executions.
+    For privacy, only IDs, status, and error messages are shown - no task content.
+    """
+    from app.models.subscription import BackgroundExecution
+    from app.schemas.subscription import BackgroundExecutionStatus
+
+    # Calculate time threshold
+    threshold = datetime.utcnow() - timedelta(hours=hours)
+
+    # Build query for error/abnormal executions
+    query = db.query(BackgroundExecution).filter(
+        BackgroundExecution.created_at >= threshold
+    )
+
+    # Apply status filter
+    if status_filter:
+        query = query.filter(BackgroundExecution.status == status_filter)
+    else:
+        # Default: show FAILED, CANCELLED, and stuck RUNNING (older than 1 hour)
+        stuck_threshold = datetime.utcnow() - timedelta(hours=1)
+        query = query.filter(
+            (
+                BackgroundExecution.status.in_(
+                    [
+                        BackgroundExecutionStatus.FAILED.value,
+                        BackgroundExecutionStatus.CANCELLED.value,
+                    ]
+                )
+            )
+            | (
+                (BackgroundExecution.status == BackgroundExecutionStatus.RUNNING.value)
+                & (BackgroundExecution.started_at < stuck_threshold)
+            )
+        )
+
+    # Get total count
+    total = query.count()
+
+    # Get paginated results
+    skip = (page - 1) * limit
+    executions = (
+        query.order_by(BackgroundExecution.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    # Convert to response model (privacy-preserving: no prompt or result details)
+    items = [
+        SubscriptionMonitorError(
+            execution_id=e.id,
+            subscription_id=e.subscription_id,
+            user_id=e.user_id,
+            task_id=e.task_id,
+            status=e.status,
+            error_message=e.error_message,
+            trigger_type=e.trigger_type,
+            created_at=e.created_at,
+            started_at=e.started_at,
+            completed_at=e.completed_at,
+        )
+        for e in executions
+    ]
+
+    return SubscriptionMonitorErrorListResponse(total=total, items=items)
+
+
+# Backward compatibility alias for flow-monitor endpoint
+@router.get(
+    "/flow-monitor/errors",
+    response_model=SubscriptionMonitorErrorListResponse,
+    include_in_schema=False,
+)
+async def get_flow_monitor_errors(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    hours: int = Query(default=24, ge=1, le=720, description="Time range in hours"),
+    status_filter: Optional[str] = Query(
+        None,
+        alias="status",
+        description="Filter by status (FAILED, CANCELLED, RUNNING)",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """Backward compatibility alias for subscription-monitor/errors."""
+    return await get_subscription_monitor_errors(
+        page=page,
+        limit=limit,
+        hours=hours,
+        status_filter=status_filter,
+        db=db,
+        current_user=current_user,
+    )

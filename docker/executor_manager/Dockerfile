@@ -2,15 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.0.1
+FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest
 WORKDIR /app/executor_manager
-
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    export PATH="/root/.local/bin:${PATH}" && \
-    uv --version
-
-ENV PATH="/root/.local/bin:${PATH}"
 
 # Copy shared module first (required for local dependency)
 COPY shared /app/shared

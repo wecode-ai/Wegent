@@ -32,7 +32,9 @@
     "retry": "重试",
     "toggle_theme": "切换主题",
     "upload": "上传",
-    "view": "查看"
+    "view": "查看",
+    "copy": "复制",
+    "copied": "已复制"
   },
   "errors": {
     "request_failed": "请求大模型接口失败，请点击重试"
@@ -56,6 +58,7 @@
     "chat": "聊天",
     "code": "编码",
     "wiki": "知识",
+    "flow": "关注",
     "settings": "设置",
     "docs": "文档",
     "feedback": "问题反馈",
@@ -75,7 +78,8 @@
   "user": {
     "default_name": "用户",
     "logout": "退出登录",
-    "login": "登录"
+    "login": "登录",
+    "menu": "用户菜单"
   },
   "chat": {
     "placeholder_chat": "使用智能体进行探索和发现",
@@ -205,6 +209,10 @@
     "more_teams": "查看更多智能体",
     "more_actions": "更多操作",
     "no_teams": "没有可用的智能体",
+    "no_teams_title": "还没有可用的智能体",
+    "no_teams_description": "创建您的第一个智能体，开始智能对话",
+    "create_first_team": "创建智能体",
+    "system_recommended": "系统推荐",
     "new_team": "新建智能体",
     "search_placeholder": "搜索智能体...",
     "no_match": "没有匹配的智能体",
@@ -243,6 +251,7 @@
     "filter_code": "编码",
     "go_to_chat": "去聊天",
     "go_to_code": "去编码",
+    "public": "公共",
     "icon": "图标",
     "selectIcon": "选择图标",
     "share": {
@@ -395,6 +404,9 @@
     "copy_task_id": "复制任务ID",
     "cancel_task": "取消任务",
     "delete_task": "删除任务",
+    "rename_task": "重命名任务",
+    "rename_empty_error": "任务名称不能为空",
+    "rename_save_error": "保存失败，请重试",
     "searching": "搜索中...",
     "refreshing": "同步中...",
     "press_enter_to_search": "按 Enter 键搜索",
@@ -406,7 +418,8 @@
     "open_from_git": "Git",
     "access_denied_title": "无访问权限",
     "access_denied_description": "您没有权限访问此任务。请联系任务创建者，通过「邀请成员」功能邀请您加入。",
-    "access_denied_go_home": "返回聊天页"
+    "access_denied_go_home": "返回聊天页",
+    "total_count": "共 {{count}} 条记录"
   },
   "settings": {
     "title": "设置",
@@ -539,6 +552,12 @@
     "save_success": "搜索快捷键已保存",
     "save_failed": "保存搜索快捷键失败"
   },
+  "memory": {
+    "title": "长期记忆",
+    "description": "让AI记住您在不同任务中的对话历史和上下文信息",
+    "save_success": "记忆偏好设置已保存",
+    "save_failed": "保存记忆偏好设置失败"
+  },
   "guide": {
     "title": "欢迎",
     "description": "在开始使用此应用之前，请先完成下面的设置！",
@@ -566,14 +585,20 @@
     "done": "完成",
     "restart_tour": "重新查看新手引导"
   },
+  "time": {
+    "just_now": "刚刚",
+    "minutes_ago": "{{count}} 分钟前",
+    "hours_ago": "{{count}} 小时前",
+    "days_ago": "{{count}} 天前"
+  },
   "common": {
     "back": "返回",
     "cancel": "取消",
     "confirm": "确认",
     "open_sidebar": "打开侧边栏",
     "close_sidebar": "关闭侧边栏",
-    "previous": "上一步",
-    "next": "下一步",
+    "previous": "上一页",
+    "next": "下一页",
     "page_info": "第 {{current}} 页 / 共 {{total}} 页",
     "warning": "警告",
     "cannotUndo": "此操作无法撤销",
@@ -587,6 +612,10 @@
   },
   "correction": {
     "result_title": "纠正结果"
+  },
+  "appPreview": {
+    "button": "预览",
+    "title": "应用预览"
   },
   "userSearch": {
     "placeholder": "搜索用户名或邮箱...",

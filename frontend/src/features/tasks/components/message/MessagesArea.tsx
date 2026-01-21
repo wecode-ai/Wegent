@@ -57,6 +57,7 @@ import CorrectionProgressIndicator, {
 } from '../CorrectionProgressIndicator'
 import { useSocket } from '@/contexts/SocketContext'
 import type { CorrectionStage, CorrectionField } from '@/types/socket'
+import type { Model } from '../../hooks/useModelSelection'
 
 /**
  * Component to render a streaming message with typewriter effect.
@@ -147,6 +148,12 @@ interface MessagesAreaProps {
   onShareButtonRender?: (button: React.ReactNode) => void
   onContentChange?: () => void
   onSendMessage?: (content: string) => void
+  /** Callback for sending message with a specific model override (used for regenerate) */
+  onSendMessageWithModel?: (
+    content: string,
+    model: Model,
+    existingContexts?: import('@/types/api').SubtaskContextBrief[]
+  ) => void
   isGroupChat?: boolean
   onRetry?: (message: Message) => void
   // Correction mode props
@@ -168,6 +175,8 @@ interface MessagesAreaProps {
   isPendingConfirmation?: boolean
   /** Callback when user clicks on a context badge to re-select it */
   onContextReselect?: (context: import('@/types/api').SubtaskContextBrief) => void
+  /** Hide group chat management button (e.g., in notebook mode) */
+  hideGroupChatOptions?: boolean
 }
 
 export default function MessagesArea({
@@ -177,6 +186,7 @@ export default function MessagesArea({
   onContentChange,
   onShareButtonRender,
   onSendMessage,
+  onSendMessageWithModel,
   isGroupChat = false,
   onRetry,
   enableCorrectionMode = false,
@@ -186,6 +196,7 @@ export default function MessagesArea({
   pendingTaskId,
   isPendingConfirmation,
   onContextReselect,
+  hideGroupChatOptions = false,
 }: MessagesAreaProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -229,6 +240,9 @@ export default function MessagesArea({
 
   // Message edit state
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
+
+  // Regenerate state
+  const [isRegenerating, setIsRegenerating] = useState(false)
 
   // Correction mode state
   const [correctionResults, setCorrectionResults] = useState<Map<number, CorrectionResponse>>(
@@ -728,6 +742,114 @@ export default function MessagesArea({
     ]
   )
 
+  // Handle regenerate - find the user message before the AI message and resend it with selected model
+  const handleRegenerate = useCallback(
+    async (aiMessage: Message, selectedModel: Model) => {
+      // 0. Check if currently streaming - prevent regenerate during active streaming
+      if (isStreaming) {
+        toast({
+          variant: 'destructive',
+          title: t('chat:regenerate.failed') || 'Failed to regenerate response',
+          description:
+            t('chat:edit.wait_for_completion') ||
+            'Please wait for the current response to complete',
+        })
+        return
+      }
+
+      // 0.5. Validate aiMessage has subtaskId
+      if (!aiMessage.subtaskId) {
+        console.error('AI message has no subtaskId, cannot regenerate')
+        return
+      }
+
+      // 1. Find the index of this AI message by subtaskId
+      const aiIndex = messages.findIndex(
+        m => m.subtaskId !== undefined && m.subtaskId === aiMessage.subtaskId
+      )
+      if (aiIndex < 0) {
+        console.error('AI message not found in messages list')
+        return
+      }
+
+      // 2. Find the preceding user message
+      const userMessage = messages[aiIndex - 1]
+      if (!userMessage || userMessage.type !== 'user') {
+        console.error('No user message found before AI message')
+        return
+      }
+
+      // 3. Get the subtask ID of the user message for API call
+      const userSubtaskId = userMessage.subtaskId
+      if (!userSubtaskId) {
+        console.error('User message has no subtaskId')
+        return
+      }
+
+      // 4. Save original content and contexts for potential recovery
+      const originalUserContent = userMessage.content
+      // Extract contexts from the original user message (attachments, knowledge bases, tables)
+      const originalContexts = userMessage.contexts || []
+
+      setIsRegenerating(true)
+      try {
+        // 4.5. Refresh task detail first to ensure we have latest state from backend
+        // This helps detect any running subtasks that frontend might have missed
+        await refreshSelectedTaskDetail(false)
+
+        // 5. Call the edit message API with the SAME content (this will delete the AI response)
+        const response = await subtaskApis.editMessage(userSubtaskId, originalUserContent)
+
+        if (response.success) {
+          // 6. Clean up local messages from the edited position
+          if (selectedTaskDetail?.id) {
+            cleanupMessagesAfterEdit(selectedTaskDetail.id, userSubtaskId)
+          }
+
+          // 7. Refresh task detail to sync with backend
+          await refreshSelectedTaskDetail(true)
+
+          // 8. Resend the same user message with the selected model to trigger new AI response
+          // Pass the original contexts (attachments, knowledge bases, etc.) to preserve them
+          if (onSendMessageWithModel) {
+            onSendMessageWithModel(originalUserContent, selectedModel, originalContexts)
+          } else if (onSendMessage) {
+            // Fallback to regular send if model override is not supported
+            onSendMessage(originalUserContent)
+          }
+        }
+      } catch (error) {
+        console.error('Failed to regenerate:', error)
+        const errorMessage = (error as Error)?.message || 'Unknown error'
+
+        // If backend says AI is generating, refresh task detail to sync frontend state
+        if (errorMessage.includes('AI is generating')) {
+          // Refresh to get latest state from backend
+          await refreshSelectedTaskDetail(false)
+        }
+
+        toast({
+          variant: 'destructive',
+          title: t('chat:regenerate.failed') || 'Failed to regenerate response',
+          description: errorMessage,
+        })
+      } finally {
+        setIsRegenerating(false)
+      }
+    },
+    [
+      messages,
+      selectedTaskDetail?.id,
+      cleanupMessagesAfterEdit,
+      refreshSelectedTaskDetail,
+      onSendMessage,
+      onSendMessageWithModel,
+      toast,
+      t,
+      isStreaming,
+    ]
+  )
+
   // Memoize share and export buttons
   const shareButton = useMemo(() => {
     if (!selectedTaskDetail?.id || messages.length === 0) {
@@ -736,7 +858,8 @@ export default function MessagesArea({
 
     const isGroupChatTask = selectedTaskDetail?.is_group_chat || false
     const isChatAgentType = selectedTaskDetail?.team?.agent_type === 'chat'
-    const showMembersButton = isGroupChatTask || isChatAgentType
+    // Hide members button in notebook mode (hideGroupChatOptions)
+    const showMembersButton = !hideGroupChatOptions && (isGroupChatTask || isChatAgentType)
 
     // Mobile: Use a single "More" dropdown menu (like Gemini)
     if (isMobile) {
@@ -884,6 +1007,7 @@ export default function MessagesArea({
     handleExportPdf,
     handleExportDocx,
     t,
+    hideGroupChatOptions,
   ])
 
   // Pass share button to parent for rendering in TopNavigation
@@ -934,6 +1058,16 @@ export default function MessagesArea({
     [appliedCorrections]
   )
 
+  // Pre-compute the last AI message subtaskId to avoid O(n²) complexity in render loop
+  const lastAiMessageSubtaskId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].type === 'ai') {
+        return messages[i].subtaskId
+      }
+    }
+    return null
+  }, [messages])
+
   return (
     <div
       className="flex-1 w-full max-w-3xl mx-auto flex flex-col"
@@ -954,6 +1088,9 @@ export default function MessagesArea({
             // Determine if this is the current user's message (for group chat alignment)
             const isCurrentUserMessage =
               msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false
+
+            // Calculate if this is the last AI message (for regenerate button)
+            const isLastAiMessage = msg.type === 'ai' && msg.subtaskId === lastAiMessageSubtaskId
 
             // Check if this AI message has a correction result
             const hasCorrectionResult =
@@ -1080,6 +1217,9 @@ export default function MessagesArea({
                 onEdit={handleEditMessage}
                 onEditSave={handleEditSave}
                 onEditCancel={handleEditCancel}
+                isLastAiMessage={isLastAiMessage}
+                onRegenerate={!isGroupChat ? handleRegenerate : undefined}
+                isRegenerating={isRegenerating}
               />
             )
           })}

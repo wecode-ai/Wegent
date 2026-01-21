@@ -2,44 +2,56 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# ---- 构建阶段 ----
-FROM node:22-slim AS builder
-
+# ---- Dependencies Stage ----
+FROM node:22-slim AS deps
 
 WORKDIR /app
 
-# 复制依赖文件和 postinstall 所需的脚本
+# Copy dependency files and postinstall scripts
 COPY frontend/package.json frontend/package-lock.json ./
 COPY frontend/scripts ./scripts
+
+# Install dependencies (this layer will be cached, only reinstall when package.json changes)
 RUN npm ci && npm cache clean --force
 
-# 复制其余源码
+# ---- Build Stage ----
+FROM node:22-slim AS builder
+
+WORKDIR /app
+
+# Copy node_modules from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+
+# Copy source code
 COPY frontend .
 
-# 构建 Next.js 应用
+# Disable Next.js telemetry to speed up build
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Build Next.js application
 RUN npm run build
 
-# ---- 生产运行阶段 ----
+# ---- Production Stage ----
 FROM node:22-slim AS runner
 
 WORKDIR /app
 
-# 创建非root用户
+# Create non-root user
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# 复制 Next.js standalone 输出
+# Copy Next.js standalone output
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
-# 创建 cache 目录并设置权限
+# Create cache directory and set permissions
 RUN mkdir -p .next/cache && chown -R nextjs:nodejs .next
 
-# 设置用户权限
+# Set user permissions
 USER nextjs
 
-# 环境变量
+# Environment variables
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
@@ -47,5 +59,5 @@ ENV RUNTIME_ENABLE_CHAT_CONTEXT=true
 
 EXPOSE ${PORT}
 
-# 使用 Next.js standalone 服务器启动
+# Start with Next.js standalone server
 CMD ["node", "server.js"]

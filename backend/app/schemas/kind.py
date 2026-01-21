@@ -451,6 +451,14 @@ class TaskSpec(BaseModel):
     )
 
 
+class TaskApp(BaseModel):
+    """App preview information (set by expose_service tool when service starts)"""
+
+    name: str
+    address: str
+    previewUrl: str
+
+
 class TaskStatus(Status):
     """Task status"""
 
@@ -463,6 +471,7 @@ class TaskStatus(Status):
     updatedAt: Optional[datetime] = None
     completedAt: Optional[datetime] = None
     subTasks: Optional[List[Dict[str, Any]]] = None
+    app: Optional[TaskApp] = None  # App preview information
 
 
 class Task(BaseModel):
@@ -540,6 +549,11 @@ class SkillSpec(BaseModel):
         "Valid values: 'ClaudeCode', 'Agno', 'Dify', 'Chat'. "
         "REQUIRED: Skills must explicitly specify bindShells to be available. "
         "If not specified or empty, the skill will NOT be available for any shell type.",
+    )
+    config: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Skill-level configuration shared by all tools. "
+        "Tool-specific configs override these values.",
     )
     tools: Optional[List[SkillToolDeclaration]] = Field(
         None,
@@ -631,16 +645,39 @@ class RetrievalConfig(BaseModel):
     )
 
 
+class SummaryModelRef(BaseModel):
+    """Reference to a Model for summary generation"""
+
+    name: str = Field(..., description="Model name")
+    namespace: str = Field("default", description="Model namespace")
+    type: str = Field(
+        "public",
+        description="Model type: 'public' (system public model), 'user' (personal model), or 'group' (group model)",
+    )
+
+
 class KnowledgeBaseSpec(BaseModel):
     """KnowledgeBase specification"""
 
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
+    kbType: Optional[str] = Field(
+        "notebook",
+        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+    )
     document_count: Optional[int] = Field(
         default=0, description="Cached document count"
     )
     retrievalConfig: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
+    )
+    summaryEnabled: bool = Field(
+        default=False,
+        description="Enable automatic summary generation for documents",
+    )
+    summaryModelRef: Optional[SummaryModelRef] = Field(
+        None,
+        description="Model reference for summary generation. Required when summaryEnabled=True",
     )
 
 

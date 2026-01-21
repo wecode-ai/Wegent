@@ -15,6 +15,8 @@ export interface ParsedError {
     | 'llm_unsupported'
     | 'invalid_parameter'
     | 'forbidden'
+    | 'container_oom'
+    | 'container_error'
     | 'generic_error'
   message: string
   originalError?: string
@@ -30,6 +32,40 @@ export interface ParsedError {
 export function parseError(error: Error | string): ParsedError {
   const errorMessage = typeof error === 'string' ? error : error.message
   const lowerMessage = errorMessage.toLowerCase()
+
+  // Check for container OOM (Out of Memory) errors
+  // These errors indicate the executor container was killed due to memory limits
+  if (
+    lowerMessage.includes('out of memory') ||
+    lowerMessage.includes('oom') ||
+    lowerMessage.includes('memory allocation')
+  ) {
+    return {
+      type: 'container_oom',
+      message: errorMessage,
+      originalError: errorMessage,
+      retryable: false, // OOM errors usually need configuration change, not simple retry
+    }
+  }
+
+  // Check for container/executor errors
+  // These errors indicate the executor container crashed or disappeared
+  if (
+    lowerMessage.includes('container') ||
+    lowerMessage.includes('executor') ||
+    lowerMessage.includes('docker') ||
+    lowerMessage.includes('disappeared unexpectedly') ||
+    lowerMessage.includes('no ports mapped') ||
+    lowerMessage.includes('crashed unexpectedly') ||
+    lowerMessage.includes('exit code')
+  ) {
+    return {
+      type: 'container_error',
+      message: errorMessage,
+      originalError: errorMessage,
+      retryable: false, // Container errors usually need a fresh task
+    }
+  }
 
   // Check for forbidden/unauthorized errors
   if (
@@ -51,6 +87,9 @@ export function parseError(error: Error | string): ParsedError {
   if (
     lowerMessage.includes('multi-modal') ||
     lowerMessage.includes('multimodal') ||
+    lowerMessage.includes('do not support') ||
+    lowerMessage.includes('does not support') ||
+    lowerMessage.includes('not support image') ||
     (lowerMessage.includes('llm model') && lowerMessage.includes('received'))
   ) {
     return {
@@ -63,10 +102,19 @@ export function parseError(error: Error | string): ParsedError {
 
   // Check for general LLM errors (model unavailable, not found, etc.)
   // These are temporary issues that can be retried
+  // Note: Avoid overly broad patterns like 'llm' which can match unrelated strings
+  // (e.g., model_category_type="llm" in backend responses)
   if (
     lowerMessage.includes('model not found') ||
     lowerMessage.includes('model unavailable') ||
-    lowerMessage.includes('llm')
+    lowerMessage.includes('llm request failed') ||
+    lowerMessage.includes('llm api error') ||
+    lowerMessage.includes('llm call failed') ||
+    lowerMessage.includes('llm service error') ||
+    lowerMessage.includes('model error') ||
+    lowerMessage.includes('api rate limit') ||
+    lowerMessage.includes('quota exceeded') ||
+    lowerMessage.includes('token limit')
   ) {
     return {
       type: 'llm_error',
@@ -100,7 +148,9 @@ export function parseError(error: Error | string): ParsedError {
   if (
     lowerMessage.includes('network') ||
     lowerMessage.includes('fetch') ||
-    lowerMessage.includes('connection')
+    lowerMessage.includes('connection') ||
+    lowerMessage.includes('not connected') ||
+    lowerMessage.includes('websocket')
   ) {
     return {
       type: 'network_error',
@@ -146,6 +196,10 @@ export function getUserFriendlyErrorMessage(
     case 'forbidden':
       // Use dedicated translation key for forbidden errors, fallback to generic if not available
       return t('errors.forbidden') || t('errors.generic_error')
+    case 'container_oom':
+      return t('errors.container_oom')
+    case 'container_error':
+      return t('errors.container_error')
     case 'llm_unsupported':
       return t('errors.llm_unsupported')
     case 'llm_error':
@@ -161,4 +215,34 @@ export function getUserFriendlyErrorMessage(
     default:
       return t('errors.generic_error')
   }
+}
+
+/**
+ * Get error message for display in toast/UI
+ *
+ * Logic:
+ * - For specific error types (network, timeout, llm_error, etc.), return friendly translated message
+ * - For generic/unclassified errors, return the original error message directly
+ *
+ * This is the same logic used in useChatStreamHandlers.tsx for consistency
+ *
+ * @param error - Error object or error message
+ * @param t - i18n translation function
+ * @param fallbackMessage - Fallback message when originalError is empty
+ * @returns Display message for toast/UI
+ */
+export function getErrorDisplayMessage(
+  error: Error | string,
+  t: (key: string) => string,
+  fallbackMessage?: string
+): string {
+  const parsedError = parseError(error)
+
+  if (parsedError.type === 'generic_error') {
+    // Show original error message for business errors (e.g., "Team not found")
+    return parsedError.originalError || fallbackMessage || t('errors.generic_error')
+  }
+
+  // Use friendly message for specific error types
+  return getUserFriendlyErrorMessage(error, t)
 }

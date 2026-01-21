@@ -13,6 +13,7 @@ import type {
   UserPreferences,
   QuickAccessResponse,
   WelcomeConfigResponse,
+  DefaultTeamsResponse,
 } from '@/types/api'
 
 // Type definitions
@@ -163,6 +164,10 @@ export const userApis = {
 
   async getWelcomeConfig(): Promise<WelcomeConfigResponse> {
     return apiClient.get('/users/welcome-config')
+  },
+
+  async getDefaultTeams(): Promise<DefaultTeamsResponse> {
+    return apiClient.get('/users/default-teams')
   },
 
   async searchUsers(query: string): Promise<SearchUsersResponse> {

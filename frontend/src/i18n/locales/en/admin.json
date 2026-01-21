@@ -6,8 +6,13 @@
     "public_models": "Public Models",
     "public_retrievers": "Public Retrievers",
     "public_skills": "Public Skills",
+    "public_teams": "Public Agents",
+    "public_bots": "Public Bots",
+    "public_ghosts": "Public Ghosts",
+    "public_shells": "Public Shells",
     "api_keys": "API Keys",
-    "system_config": "System Config"
+    "system_config": "System Config",
+    "monitor": "Monitor"
   },
   "stats": {
     "total_users": "Total Users",
@@ -77,7 +82,7 @@
     },
     "confirm": {
       "delete_title": "Delete User",
-      "delete_message": "Are you sure you want to delete user \"{{name}}\"? This action will deactivate the account.",
+      "delete_message": "Are you sure you want to delete user \"{{name}}\"? This action will delete the account.",
       "reset_password_title": "Reset Password",
       "reset_password_message": "Enter new password for user \"{{name}}\"",
       "toggle_status_title": "Toggle Status",
@@ -356,6 +361,260 @@
       "load_failed": "Failed to load personal keys",
       "delete_failed": "Failed to delete personal key",
       "toggle_failed": "Failed to toggle personal key status"
+    }
+  },
+  "monitor": {
+    "title": "Flow Execution Monitor",
+    "description": "View flow execution statistics and errors for all users",
+    "time_range": {
+      "1h": "Last 1 hour",
+      "6h": "Last 6 hours",
+      "24h": "Last 24 hours",
+      "3d": "Last 3 days",
+      "7d": "Last 7 days"
+    },
+    "stats": {
+      "total_executions": "Total Executions",
+      "completed": "Completed",
+      "failed": "Failed",
+      "timeout": "Timeout",
+      "running": "Running",
+      "pending": "Pending",
+      "active_flows": "Active Flows",
+      "total_flows": "Total Flows",
+      "enabled_flows": "Enabled scheduled tasks",
+      "all_flows": "All flows"
+    },
+    "error_list": {
+      "title": "Abnormal Executions",
+      "all_status": "All Status",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "running": "Running",
+      "no_errors": "No abnormal executions found",
+      "columns": {
+        "execution_id": "Execution ID",
+        "flow_id": "Flow ID",
+        "user_id": "User ID",
+        "status": "Status",
+        "trigger_type": "Trigger Type",
+        "error_message": "Error Message",
+        "created_at": "Created At"
+      },
+      "pagination": "Showing {{start}}-{{end}} of {{total}}"
+    },
+    "errors": {
+      "load_stats_failed": "Failed to load statistics",
+      "load_errors_failed": "Failed to load error records"
+    }
+  },
+  "public_teams": {
+    "title": "Public Agent Management",
+    "description": "Manage system-level public agents available to all users",
+    "create_description": "Create a new public agent. All referenced bots must be public bots.",
+    "loading": "Loading agents...",
+    "no_teams": "No public agents found",
+    "create_team": "Create Agent",
+    "edit_team": "Edit Agent",
+    "delete_team": "Delete Agent",
+    "member_count": "{{count}} Bot(s)",
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "columns": {
+      "id": "ID",
+      "name": "Name",
+      "namespace": "Namespace",
+      "status": "Status",
+      "created_at": "Created At",
+      "actions": "Actions"
+    },
+    "form": {
+      "name": "Agent Name",
+      "name_placeholder": "Enter agent name",
+      "namespace": "Namespace",
+      "namespace_placeholder": "default",
+      "config": "Agent Configuration",
+      "config_placeholder": "Enter agent configuration as JSON",
+      "config_hint": "The configuration must include spec.members referencing public bots"
+    },
+    "confirm": {
+      "delete_title": "Delete Agent",
+      "delete_message": "Are you sure you want to delete public agent \"{{name}}\"? This action cannot be undone."
+    },
+    "success": {
+      "created": "Public agent created successfully",
+      "updated": "Public agent updated successfully",
+      "deleted": "Public agent deleted successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load public agents",
+      "create_failed": "Failed to create public agent",
+      "update_failed": "Failed to update public agent",
+      "delete_failed": "Failed to delete public agent",
+      "name_required": "Agent name is required",
+      "config_required": "Agent configuration is required",
+      "config_invalid_json": "Agent configuration must be valid JSON"
+    }
+  },
+  "public_bots": {
+    "title": "Public Bot Management",
+    "description": "Manage system-level public bots available to all users",
+    "create_description": "Create a new public bot. All referenced resources (Ghost, Shell, Model) must be public.",
+    "loading": "Loading bots...",
+    "no_bots": "No public bots found",
+    "create_bot": "Create Bot",
+    "edit_bot": "Edit Bot",
+    "delete_bot": "Delete Bot",
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "columns": {
+      "id": "ID",
+      "name": "Name",
+      "namespace": "Namespace",
+      "status": "Status",
+      "created_at": "Created At",
+      "actions": "Actions"
+    },
+    "form": {
+      "name": "Bot Name",
+      "name_placeholder": "Enter bot name",
+      "namespace": "Namespace",
+      "namespace_placeholder": "default",
+      "ghost": "Ghost",
+      "ghost_placeholder": "Select a Ghost (optional)",
+      "ghost_none": "None",
+      "shell": "Shell",
+      "shell_placeholder": "Select a Shell (optional)",
+      "shell_none": "None",
+      "model": "Model",
+      "model_placeholder": "Select a Model (optional)",
+      "model_none": "None",
+      "config": "Bot Configuration",
+      "config_placeholder": "Enter bot configuration as JSON",
+      "config_hint": "The configuration must reference public Ghost, Shell, and Model resources"
+    },
+    "confirm": {
+      "delete_title": "Delete Bot",
+      "delete_message": "Are you sure you want to delete public bot \"{{name}}\"? This action cannot be undone."
+    },
+    "success": {
+      "created": "Public bot created successfully",
+      "updated": "Public bot updated successfully",
+      "deleted": "Public bot deleted successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load public bots",
+      "create_failed": "Failed to create public bot",
+      "update_failed": "Failed to update public bot",
+      "delete_failed": "Failed to delete public bot",
+      "name_required": "Bot name is required",
+      "config_required": "Bot configuration is required",
+      "config_invalid_json": "Bot configuration must be valid JSON"
+    }
+  },
+  "public_ghosts": {
+    "title": "Public Ghost Management",
+    "description": "Manage system-level public ghosts (system prompts) available to all users",
+    "create_description": "Create a new public ghost. Ghosts define system prompts and tool configurations for bots.",
+    "loading": "Loading ghosts...",
+    "no_ghosts": "No public ghosts found",
+    "create_ghost": "Create Ghost",
+    "edit_ghost": "Edit Ghost",
+    "delete_ghost": "Delete Ghost",
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "columns": {
+      "id": "ID",
+      "name": "Name",
+      "namespace": "Namespace",
+      "status": "Status",
+      "created_at": "Created At",
+      "actions": "Actions"
+    },
+    "form": {
+      "name": "Ghost Name",
+      "name_placeholder": "Enter ghost name",
+      "namespace": "Namespace",
+      "namespace_placeholder": "default",
+      "config": "Ghost Configuration",
+      "config_placeholder": "Enter ghost configuration as JSON",
+      "config_hint": "The configuration should include spec.systemPrompt and optionally spec.mcpServers, spec.skills"
+    },
+    "confirm": {
+      "delete_title": "Delete Ghost",
+      "delete_message": "Are you sure you want to delete public ghost \"{{name}}\"? This action cannot be undone.",
+      "delete_in_use_message": "This ghost is referenced by public bots and cannot be deleted."
+    },
+    "success": {
+      "created": "Public ghost created successfully",
+      "updated": "Public ghost updated successfully",
+      "deleted": "Public ghost deleted successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load public ghosts",
+      "create_failed": "Failed to create public ghost",
+      "update_failed": "Failed to update public ghost",
+      "delete_failed": "Failed to delete public ghost",
+      "name_required": "Ghost name is required",
+      "config_required": "Ghost configuration is required",
+      "config_invalid_json": "Ghost configuration must be valid JSON"
+    }
+  },
+  "public_shells": {
+    "title": "Public Shell Management",
+    "description": "Manage system-level public shells (execution environments) available to all users",
+    "create_description": "Create a new public shell. Shells define the execution environment for bots.",
+    "loading": "Loading shells...",
+    "no_shells": "No public shells found",
+    "create_shell": "Create Shell",
+    "edit_shell": "Edit Shell",
+    "delete_shell": "Delete Shell",
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "columns": {
+      "id": "ID",
+      "name": "Name",
+      "namespace": "Namespace",
+      "shell_type": "Shell Type",
+      "status": "Status",
+      "created_at": "Created At",
+      "actions": "Actions"
+    },
+    "form": {
+      "name": "Shell Name",
+      "name_placeholder": "Enter shell name",
+      "namespace": "Namespace",
+      "namespace_placeholder": "default",
+      "config": "Shell Configuration",
+      "config_placeholder": "Enter shell configuration as JSON",
+      "config_hint": "The configuration should include spec.shellType (ClaudeCode, Agno, Dify, Chat)"
+    },
+    "confirm": {
+      "delete_title": "Delete Shell",
+      "delete_message": "Are you sure you want to delete public shell \"{{name}}\"? This action cannot be undone.",
+      "delete_in_use_message": "This shell is referenced by public bots and cannot be deleted."
+    },
+    "success": {
+      "created": "Public shell created successfully",
+      "updated": "Public shell updated successfully",
+      "deleted": "Public shell deleted successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load public shells",
+      "create_failed": "Failed to create public shell",
+      "update_failed": "Failed to update public shell",
+      "delete_failed": "Failed to delete public shell",
+      "name_required": "Shell name is required",
+      "config_required": "Shell configuration is required",
+      "config_invalid_json": "Shell configuration must be valid JSON"
     }
   }
 }

@@ -4,6 +4,9 @@
     "input": "Type your message here...",
     "empty": "No messages yet. Start a conversation!"
   },
+  "input": {
+    "no_team_placeholder": "Please select or create an agent first"
+  },
   "actions": {
     "send": "Send",
     "clear": "Clear Chat",
@@ -22,7 +25,14 @@
     "confirm_title": "Confirm Edit",
     "confirm_description": "This edit will clear this message and all subsequent messages. The conversation will restart from this point. Are you sure you want to continue?",
     "confirm_button": "Confirm",
-    "confirming": "Processing..."
+    "confirming": "Processing...",
+    "wait_for_completion": "Please wait for the current response to complete"
+  },
+  "regenerate": {
+    "failed": "Failed to regenerate response",
+    "tooltip": "Regenerate response",
+    "select_model": "Select Model",
+    "select_model_desc": "Choose a model for regeneration"
   },
   "quote": {
     "ask_wegent": "Ask Wegent",
@@ -34,7 +44,9 @@
     "thinking": "AI is thinking...",
     "error": "Failed to send message",
     "connecting": "Connecting...",
-    "disconnected": "Disconnected"
+    "disconnected": "Disconnected",
+    "reconnecting": "Reconnecting... (attempt {{count}})",
+    "reconnected": "Reconnected"
   },
   "messages": {
     "assistant": "AI Assistant",
@@ -190,6 +202,8 @@
     "invalid_parameter": "Invalid parameter: Request parameters are incorrect, please check your input",
     "network_error": "Network error: Please check your connection and try again",
     "timeout_error": "Request timeout: Service response time exceeded, please try again later",
+    "container_oom": "Executor out of memory: Please start a new conversation to retry, or contact administrator to increase memory allocation",
+    "container_error": "Executor error: Container has stopped running. Please start a new conversation to retry",
     "generic_error": "Request failed: Unknown error, please try again or contact administrator",
     "copy_error": "Copy error details"
   },
@@ -266,7 +280,8 @@
     "chars": "chars"
   },
   "upload": {
-    "tooltip": "Supported file types: PDF, Word, PPT, Excel, TXT, Markdown, Images(JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nSupports multiple file uploads"
+    "tooltip": "Supported file types: PDF, Word, PPT, Excel, TXT, Markdown, Images(JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nSupports multiple file uploads",
+    "wait_for_upload": "Please wait for file upload to complete"
   },
   "clarification_toggle": {
     "enable": "Enable smart follow-up mode",

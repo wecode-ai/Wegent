@@ -32,7 +32,9 @@
     "retry": "Retry",
     "toggle_theme": "Toggle Theme",
     "upload": "Upload",
-    "view": "View"
+    "view": "View",
+    "copy": "Copy",
+    "copied": "Copied"
   },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"
@@ -56,6 +58,7 @@
     "chat": "Chat",
     "code": "Code",
     "wiki": "Knowledge",
+    "flow": "Feed",
     "settings": "Settings",
     "docs": "Docs",
     "feedback": "Feedback",
@@ -75,7 +78,8 @@
   "user": {
     "default_name": "User",
     "logout": "Logout",
-    "login": "Login"
+    "login": "Login",
+    "menu": "User menu"
   },
   "chat": {
     "placeholder_chat": "Use the Agent team to explore and discover",
@@ -205,6 +209,10 @@
     "more_teams": "View more teams",
     "more_actions": "More Actions",
     "no_teams": "No teams available",
+    "no_teams_title": "No Agents Available",
+    "no_teams_description": "Create your first agent to start intelligent conversations",
+    "create_first_team": "Create Agent",
+    "system_recommended": "Recommended",
     "new_team": "New Team",
     "search_placeholder": "Search team...",
     "no_match": "No matching teams",
@@ -243,6 +251,7 @@
     "filter_code": "Code",
     "go_to_chat": "Go to Chat",
     "go_to_code": "Go to Code",
+    "public": "Public",
     "icon": "Icon",
     "selectIcon": "Select Icon",
     "share": {
@@ -395,6 +404,9 @@
     "copy_task_id": "Copy TaskId",
     "cancel_task": "Cancel Task",
     "delete_task": "Delete Task",
+    "rename_task": "Rename Task",
+    "rename_empty_error": "Task name cannot be empty",
+    "rename_save_error": "Failed to save, please try again",
     "searching": "Searching...",
     "refreshing": "Syncing...",
     "press_enter_to_search": "Press Enter to search",
@@ -406,7 +418,8 @@
     "open_from_git": "Git",
     "access_denied_title": "Access Denied",
     "access_denied_description": "You don't have permission to access this task. Please contact the task owner to invite you via the \"Invite Members\" feature.",
-    "access_denied_go_home": "Go to Chat"
+    "access_denied_go_home": "Go to Chat",
+    "total_count": "{{count}} items total"
   },
   "settings": {
     "title": "Settings",
@@ -539,6 +552,12 @@
     "save_success": "Search shortcut key saved",
     "save_failed": "Failed to save search shortcut key"
   },
+  "memory": {
+    "title": "Long-term Memory",
+    "description": "Enable AI to remember context from your previous conversations across different tasks",
+    "save_success": "Memory preference saved",
+    "save_failed": "Failed to save memory preference"
+  },
   "guide": {
     "title": "Welcome",
     "description": "Before you can start using the app, please complete the setup below first!",
@@ -566,6 +585,12 @@
     "done": "Done",
     "restart_tour": "Restart Onboarding Tour"
   },
+  "time": {
+    "just_now": "Just now",
+    "minutes_ago": "{{count}}m ago",
+    "hours_ago": "{{count}}h ago",
+    "days_ago": "{{count}}d ago"
+  },
   "common": {
     "back": "Back",
     "cancel": "Cancel",
@@ -587,6 +612,10 @@
   },
   "correction": {
     "result_title": "Correction Result"
+  },
+  "appPreview": {
+    "button": "Preview",
+    "title": "App Preview"
   },
   "userSearch": {
     "placeholder": "Search username or email...",

@@ -5,12 +5,13 @@
 """
 Batch operation service for Kubernetes-style API
 """
-import asyncio
-import json
 import logging
-import os
+from pathlib import Path
 from typing import Any, Dict, List
 
+import yaml
+
+from app.core.config import settings
 from app.core.exceptions import ValidationException
 from app.services.kind import kind_service
 
@@ -145,47 +146,118 @@ class BatchService:
 batch_service = BatchService()
 
 
-def load_resources_from_file(file_path: str):
+def load_yaml_documents(file_path: Path) -> List[Dict[str, Any]]:
+    """
+    Load YAML documents from a file.
+
+    Args:
+        file_path: Path to the YAML file
+
+    Returns:
+        List of parsed YAML documents
+    """
     try:
-        if not os.path.exists(file_path):
-            logger.info(f"Resource file not found: {file_path}")
-            return None, None
-
-        with open(file_path, "r") as file:
-            resources = json.load(file)
-
-        if not resources:
-            logger.info("No resources to apply (empty file).")
-            return None, None
-
-        logger.info(f"Loaded resources from {file_path}")
-        return resources, None
-
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse resource file: {file_path}, error={e}")
-        return None, {"error": "Invalid resource file format", "details": str(e)}
+        with open(file_path, "r", encoding="utf-8") as f:
+            documents = list(yaml.safe_load_all(f))
+            # Filter out None/empty documents
+            documents = [doc for doc in documents if doc]
+            logger.info(f"Loaded {len(documents)} documents from {file_path}")
+            return documents
     except Exception as e:
-        logger.error(f"Failed to read resource file: {file_path}, error={e}")
-        return None, {"error": "Failed to read resource file", "details": str(e)}
+        logger.error(f"Failed to load YAML file {file_path}: {e}")
+        return []
+
+
+def load_resources_from_yaml_directory(directory: Path) -> List[Dict[str, Any]]:
+    """
+    Load all YAML resources from a directory.
+
+    Args:
+        directory: Path to the directory containing YAML files
+
+    Returns:
+        List of resource documents
+    """
+    if not directory.exists():
+        logger.warning(f"Resource directory does not exist: {directory}")
+        return []
+
+    if not directory.is_dir():
+        logger.error(f"Resource path is not a directory: {directory}")
+        return []
+
+    # Collect all YAML files
+    yaml_files = sorted(directory.glob("*.yaml")) + sorted(directory.glob("*.yml"))
+
+    if not yaml_files:
+        logger.info(f"No YAML files found in {directory}")
+        return []
+
+    logger.info(
+        f"Found {len(yaml_files)} YAML files in {directory}: {[f.name for f in yaml_files]}"
+    )
+
+    resources = []
+    for yaml_file in yaml_files:
+        logger.info(f"Processing {yaml_file.name}...")
+        documents = load_yaml_documents(yaml_file)
+
+        # Filter valid resource documents
+        for doc in documents:
+            if not isinstance(doc, dict) or "kind" not in doc or "metadata" not in doc:
+                continue
+            resources.append(doc)
+            logger.info(
+                f"  Added resource: {doc.get('kind')}/{doc.get('metadata', {}).get('name')}"
+            )
+
+    logger.info(f"Total resources loaded: {len(resources)}")
+    return resources
+
+
+def get_new_user_resource_directory() -> Path:
+    """
+    Get the directory for new user default resources.
+
+    Uses INIT_DATA_DIR/new_user as the default location for new user resources.
+
+    Returns:
+        Path to the new user resource directory
+    """
+    init_data_dir = Path(settings.INIT_DATA_DIR)
+
+    # Handle local development: try relative path if absolute path doesn't exist
+    if not init_data_dir.exists() and init_data_dir.is_absolute():
+        # Try relative path for local development
+        relative_dir = Path(__file__).parent.parent.parent / "init_data"
+        if relative_dir.exists():
+            init_data_dir = relative_dir
+            logger.info(f"Using relative path for local development: {init_data_dir}")
+
+    return init_data_dir / "new_user"
 
 
 async def apply_default_resources_async(user_id: int):
+    """
+    Asynchronous version of apply_default_resources.
+    Loads YAML resources from new user resource directory and applies them for the user.
 
+    Default directory: INIT_DATA_DIR/new_user
+    Can be overridden by: NEW_USER_INIT_DATA_DIR
+    """
     try:
-        resource_file_path = "/app/resource.json"
-        logger.info(
-            f"Loading resources from {resource_file_path} for user_id={user_id}"
-        )
-        resources, error = load_resources_from_file(resource_file_path)
+        directory = get_new_user_resource_directory()
+        if not directory:
+            logger.info(
+                f"New user resource directory not available, skipping default resources for user_id={user_id}"
+            )
+            return None
+        logger.info(f"Loading resources from {directory} for user_id={user_id}")
 
-        if error:
-            logger.warning(f"Error loading resources for user_id={user_id}: {error}")
-            return error
+        resources = load_resources_from_yaml_directory(directory)
 
         if not resources:
-            logger.info(
-                f"No resources found in {resource_file_path} for user_id={user_id}"
-            )
+            logger.info(f"No resources found in {directory} for user_id={user_id}")
             return None
 
         logger.info(f"Found {len(resources)} resources to apply for user_id={user_id}")
@@ -194,12 +266,12 @@ async def apply_default_resources_async(user_id: int):
             f"[SUCCESS] Default resources applied successfully: user_id={user_id}, results={results}"
         )
         return results
-    except json.JSONDecodeError as e:
+    except yaml.YAMLError as e:
         logger.error(
-            f"Failed to parse DEFAULT_RESOURCES: user_id={user_id}, error={e}",
+            f"Failed to parse YAML resources: user_id={user_id}, error={e}",
             exc_info=True,
         )
-        return {"error": "Invalid DEFAULT_RESOURCES format", "details": str(e)}
+        return {"error": "Invalid YAML format", "details": str(e)}
     except Exception as e:
         logger.error(
             f"[ERROR] Failed to apply default resources: user_id={user_id}, error={e}",
@@ -229,23 +301,25 @@ async def apply_user_resources_async(user_id: int, resources: List[Dict[str, Any
 def apply_default_resources_sync(user_id: int):
     """
     Synchronous version of apply_default_resources_async.
+    Loads YAML resources from new user resource directory and applies them for the user.
     Used when default resources need to be applied synchronously during user creation.
+
+    Default directory: INIT_DATA_DIR/new_user
+    Can be overridden by: NEW_USER_INIT_DATA_DIR
     """
     try:
-        resource_file_path = "/app/resource.json"
-        logger.info(
-            f"Loading resources from {resource_file_path} for user_id={user_id}"
-        )
-        resources, error = load_resources_from_file(resource_file_path)
+        directory = get_new_user_resource_directory()
+        if not directory:
+            logger.info(
+                f"New user resource directory not available, skipping default resources for user_id={user_id}"
+            )
+            return None
+        logger.info(f"Loading resources from {directory} for user_id={user_id}")
 
-        if error:
-            logger.warning(f"Error loading resources for user_id={user_id}: {error}")
-            return error
+        resources = load_resources_from_yaml_directory(directory)
 
         if not resources:
-            logger.info(
-                f"No resources found in {resource_file_path} for user_id={user_id}"
-            )
+            logger.info(f"No resources found in {directory} for user_id={user_id}")
             return None
 
         logger.info(f"Found {len(resources)} resources to apply for user_id={user_id}")
@@ -254,12 +328,12 @@ def apply_default_resources_sync(user_id: int):
             f"[SUCCESS] Default resources applied successfully: user_id={user_id}, results={results}"
         )
         return results
-    except json.JSONDecodeError as e:
+    except yaml.YAMLError as e:
         logger.error(
-            f"Failed to parse DEFAULT_RESOURCES: user_id={user_id}, error={e}",
+            f"Failed to parse YAML resources: user_id={user_id}, error={e}",
             exc_info=True,
         )
-        return {"error": "Invalid DEFAULT_RESOURCES format", "details": str(e)}
+        return {"error": "Invalid YAML format", "details": str(e)}
     except Exception as e:
         logger.error(
             f"[ERROR] Failed to apply default resources: user_id={user_id}, error={e}",

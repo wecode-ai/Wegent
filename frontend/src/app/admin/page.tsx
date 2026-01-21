@@ -15,8 +15,13 @@ import UserList from '@/features/admin/components/UserList'
 import PublicModelList from '@/features/admin/components/PublicModelList'
 import PublicRetrieverList from '@/features/admin/components/PublicRetrieverList'
 import PublicSkillList from '@/features/admin/components/PublicSkillList'
+import PublicGhostList from '@/features/admin/components/PublicGhostList'
+import PublicShellList from '@/features/admin/components/PublicShellList'
+import PublicTeamList from '@/features/admin/components/PublicTeamList'
+import PublicBotList from '@/features/admin/components/PublicBotList'
 import ApiKeyManagement from '@/features/admin/components/ApiKeyManagement'
 import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel'
+import BackgroundExecutionMonitorPanel from '@/features/admin/components/BackgroundExecutionMonitorPanel'
 import { UserProvider, useUser } from '@/features/common/UserContext'
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
@@ -66,8 +71,13 @@ function AdminContent() {
         'public-models',
         'public-retrievers',
         'public-skills',
+        'public-ghosts',
+        'public-shells',
+        'public-teams',
+        'public-bots',
         'api-keys',
         'system-config',
+        'monitor',
       ].includes(tab)
     ) {
       return tab as AdminTabId
@@ -119,10 +129,20 @@ function AdminContent() {
         return <PublicRetrieverList />
       case 'public-skills':
         return <PublicSkillList />
+      case 'public-ghosts':
+        return <PublicGhostList />
+      case 'public-shells':
+        return <PublicShellList />
+      case 'public-teams':
+        return <PublicTeamList />
+      case 'public-bots':
+        return <PublicBotList />
       case 'api-keys':
         return <ApiKeyManagement />
       case 'system-config':
         return <SystemConfigPanel />
+      case 'monitor':
+        return <BackgroundExecutionMonitorPanel />
       default:
         return <UserList />
     }

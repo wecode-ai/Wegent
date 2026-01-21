@@ -46,7 +46,7 @@ def load_yaml_documents(file_path: Path) -> List[Dict[str, Any]]:
         return []
 
 
-def ensure_default_user(db: Session) -> int:
+def ensure_default_user(db: Session) -> tuple[int, bool]:
     """
     Ensure the default admin user exists.
 
@@ -54,7 +54,7 @@ def ensure_default_user(db: Session) -> int:
         db: Database session
 
     Returns:
-        User ID of the default admin user
+        Tuple of (User ID of the default admin user, is_newly_created)
     """
     # Check for admin user
     admin_user = db.query(User).filter(User.user_name == "admin").first()
@@ -74,10 +74,10 @@ def ensure_default_user(db: Session) -> int:
         db.commit()
         db.refresh(admin_user)
         logger.info(f"Created default admin user with ID: {admin_user.id}")
+        return admin_user.id, True
     else:
         logger.info(f"Default admin user already exists with ID: {admin_user.id}")
-
-    return admin_user.id
+        return admin_user.id, False
 
 
 def apply_yaml_resources(
@@ -202,26 +202,29 @@ def apply_yaml_resources(
         return []
 
 
-def apply_public_shells(
+def apply_public_resources(
     db: Session, resources: List[Dict[str, Any]], force: bool = False
 ) -> List[Dict[str, Any]]:
     """
-    Apply public shell resources to the kinds table (user_id=0).
-    Only creates new shells, skips existing ones (create-only mode).
+    Apply public resources (Shell, Ghost, Bot, Team) to the kinds table (user_id=0).
+    Only creates new resources, skips existing ones (create-only mode).
 
     Args:
         db: Database session
-        resources: List of Shell resource documents
-        force: If True, delete existing shells and recreate them
+        resources: List of resource documents (Shell, Ghost, Bot, Team)
+        force: If True, delete existing resources and recreate them
 
     Returns:
         List of operation results
     """
     if not resources:
-        logger.info("No public shells to apply")
+        logger.info("No public resources to apply")
         return []
 
     from app.models.kind import Kind
+
+    # Supported public resource kinds
+    supported_kinds = {"Shell", "Ghost", "Bot", "Team"}
 
     results = []
     created_count = 0
@@ -230,15 +233,20 @@ def apply_public_shells(
 
     for resource in resources:
         try:
+            kind = resource.get("kind")
+            if kind not in supported_kinds:
+                logger.warning(f"Unsupported public resource kind: {kind}, skipping")
+                continue
+
             metadata = resource.get("metadata", {})
             name = metadata.get("name")
             namespace = metadata.get("namespace", "default")
 
             if not name:
-                logger.error("Public shell missing name in metadata")
+                logger.error(f"Public {kind} missing name in metadata")
                 results.append(
                     {
-                        "kind": "Shell",
+                        "kind": kind,
                         "name": "unknown",
                         "namespace": namespace,
                         "operation": "failed",
@@ -248,12 +256,12 @@ def apply_public_shells(
                 )
                 continue
 
-            # Check if public shell already exists
+            # Check if public resource already exists
             existing = (
                 db.query(Kind)
                 .filter(
                     Kind.user_id == 0,
-                    Kind.kind == "Shell",
+                    Kind.kind == kind,
                     Kind.name == name,
                     Kind.namespace == namespace,
                 )
@@ -265,23 +273,23 @@ def apply_public_shells(
                     # Force mode: delete and recreate
                     db.delete(existing)
                     db.commit()
-                    new_shell = Kind(
+                    new_resource = Kind(
                         user_id=0,
-                        kind="Shell",
+                        kind=kind,
                         name=name,
                         namespace=namespace,
                         json=resource,
                         is_active=True,
                     )
-                    db.add(new_shell)
+                    db.add(new_resource)
                     db.commit()
-                    db.refresh(new_shell)
+                    db.refresh(new_resource)
                     logger.info(
-                        f"Force updated public shell {name} in namespace {namespace} (id={new_shell.id})"
+                        f"Force updated public {kind} {name} in namespace {namespace} (id={new_resource.id})"
                     )
                     results.append(
                         {
-                            "kind": "Shell",
+                            "kind": kind,
                             "name": name,
                             "namespace": namespace,
                             "operation": "updated",
@@ -290,13 +298,13 @@ def apply_public_shells(
                     )
                     updated_count += 1
                 else:
-                    # Skip existing public shells to preserve modifications
+                    # Skip existing public resources to preserve modifications
                     logger.info(
-                        f"Skipping existing public shell {name} in namespace {namespace}"
+                        f"Skipping existing public {kind} {name} in namespace {namespace}"
                     )
                     results.append(
                         {
-                            "kind": "Shell",
+                            "kind": kind,
                             "name": name,
                             "namespace": namespace,
                             "operation": "skipped",
@@ -306,24 +314,24 @@ def apply_public_shells(
                     )
                     skipped_count += 1
             else:
-                # Create new public shell
-                new_shell = Kind(
+                # Create new public resource
+                new_resource = Kind(
                     user_id=0,
-                    kind="Shell",
+                    kind=kind,
                     name=name,
                     namespace=namespace,
                     json=resource,
                     is_active=True,
                 )
-                db.add(new_shell)
+                db.add(new_resource)
                 db.commit()
-                db.refresh(new_shell)
+                db.refresh(new_resource)
                 logger.info(
-                    f"Created public shell {name} in namespace {namespace} (id={new_shell.id})"
+                    f"Created public {kind} {name} in namespace {namespace} (id={new_resource.id})"
                 )
                 results.append(
                     {
-                        "kind": "Shell",
+                        "kind": kind,
                         "name": name,
                         "namespace": namespace,
                         "operation": "created",
@@ -333,10 +341,10 @@ def apply_public_shells(
                 created_count += 1
 
         except Exception as e:
-            logger.error(f"Failed to process public shell: {e}")
+            logger.error(f"Failed to process public {kind}: {e}")
             results.append(
                 {
-                    "kind": "Shell",
+                    "kind": resource.get("kind", "unknown"),
                     "name": resource.get("metadata", {}).get("name", "unknown"),
                     "namespace": resource.get("metadata", {}).get(
                         "namespace", "default"
@@ -348,7 +356,7 @@ def apply_public_shells(
             )
 
     logger.info(
-        f"Public shells initialization complete: {created_count} created, "
+        f"Public resources initialization complete: {created_count} created, "
         f"{updated_count} updated, {skipped_count} skipped, {len(resources)} total"
     )
     return results
@@ -494,12 +502,15 @@ def scan_and_apply_yaml_directory(
     user_id: int, directory: Path, db: Session, force: bool = False
 ) -> Dict[str, Any]:
     """
-    Scan a directory for YAML files and apply all resources.
+    Scan a directory for YAML files and apply all resources as PUBLIC (user_id=0).
+
+    All resources (Shell, Ghost, Bot, Team) from init_data are created as public
+    resources so they can be accessed by all users.
 
     Args:
-        user_id: User ID to apply resources for
+        user_id: User ID (kept for API compatibility, not used for resource creation)
         directory: Directory to scan
-        db: Database session for public_shells handling
+        db: Database session for public resources handling
         force: If True, delete existing resources and recreate them
 
     Returns:
@@ -527,8 +538,7 @@ def scan_and_apply_yaml_directory(
         f"Found {len(yaml_files)} YAML files in {directory}: {[f.name for f in yaml_files]}"
     )
 
-    user_resources = []  # Resources for kinds table (user-owned)
-    public_shell_resources = []  # Resources for public_shells table
+    public_resources = []  # All resources are now public (user_id=0)
     files_processed = []
 
     # Load all resources from all YAML files
@@ -537,7 +547,7 @@ def scan_and_apply_yaml_directory(
         documents = load_yaml_documents(yaml_file)
         logger.info(f"Loaded {len(documents)} documents from {yaml_file.name}")
 
-        # Filter and categorize valid resource documents
+        # Filter valid resource documents - all go to public resources
         for doc in documents:
             if not isinstance(doc, dict) or "kind" not in doc or "metadata" not in doc:
                 continue
@@ -545,36 +555,19 @@ def scan_and_apply_yaml_directory(
             kind = doc.get("kind")
             metadata = doc.get("metadata", {})
 
-            # Check if this is a public shell (no user_id in metadata)
-            if kind == "Shell" and "user_id" not in metadata:
-                public_shell_resources.append(doc)
-                logger.info(f"  Added public shell: {metadata.get('name')}")
-            else:
-                # User-owned resource
-                user_resources.append(doc)
-                logger.info(f"  Added user resource: {kind}/{metadata.get('name')}")
+            # All resources (Shell, Ghost, Bot, Team) are now public
+            public_resources.append(doc)
+            logger.info(f"  Added public resource: {kind}/{metadata.get('name')}")
 
         if documents:
             files_processed.append(yaml_file.name)
 
     logger.info(
-        f"[scan_and_apply_yaml_directory] Total resources: {len(user_resources)} user, {len(public_shell_resources)} public shells"
+        f"[scan_and_apply_yaml_directory] Total public resources: {len(public_resources)}"
     )
 
-    # Apply public shells FIRST (goes to public_shells table)
-    # This must be done before user resources because Bots may reference public shells
-    public_shell_results = []
-    if public_shell_resources:
-        logger.info(
-            f"Applying {len(public_shell_resources)} public shell resources (force={force})..."
-        )
-        public_shell_results = apply_public_shells(
-            db, public_shell_resources, force=force
-        )
-        logger.info(f"Public shells applied: {len(public_shell_results)} results")
-
-    # Apply skills from skills subdirectory
-    # This must be done before user resources because Ghosts may reference skills
+    # Apply skills from skills subdirectory FIRST
+    # This must be done before other resources because Ghosts may reference skills
     skills_dir = directory / "skills"
     skill_results = []
     if skills_dir.exists():
@@ -584,24 +577,27 @@ def scan_and_apply_yaml_directory(
         )
         logger.info(f"Skills applied: {len(skill_results)} results")
 
-    # Apply user resources (goes to kinds table)
-    # This is done after public shells and skills so that Bots/Ghosts can reference them
-    user_results = []
-    if user_resources:
+    # Apply all public resources (Shell, Ghost, Bot, Team)
+    # Order matters: Shell -> Ghost -> Bot -> Team (due to references)
+    # Sort resources by kind to ensure correct order
+    kind_order = {"Shell": 0, "Ghost": 1, "Bot": 2, "Team": 3}
+    sorted_resources = sorted(
+        public_resources, key=lambda r: kind_order.get(r.get("kind"), 99)
+    )
+
+    public_results = []
+    if sorted_resources:
         logger.info(
-            f"Applying {len(user_resources)} user resources for user_id={user_id} (force={force})..."
+            f"Applying {len(sorted_resources)} public resources (force={force})..."
         )
-        user_results = apply_yaml_resources(user_id, user_resources, force=force)
-        logger.info(f"User resources applied: {len(user_results)} results")
+        public_results = apply_public_resources(db, sorted_resources, force=force)
+        logger.info(f"Public resources applied: {len(public_results)} results")
 
     # Combine results
-    user_success = sum(1 for r in user_results if r.get("success"))
-    shell_success = sum(1 for r in public_shell_results if r.get("success"))
+    public_success = sum(1 for r in public_results if r.get("success"))
     skill_success = sum(1 for r in skill_results if r.get("success"))
-    total_resources = (
-        len(user_resources) + len(public_shell_resources) + len(skill_results)
-    )
-    total_success = user_success + shell_success + skill_success
+    total_resources = len(public_resources) + len(skill_results)
+    total_success = public_success + skill_success
 
     return {
         "status": "completed",
@@ -610,8 +606,7 @@ def scan_and_apply_yaml_directory(
         "resources_total": total_resources,
         "resources_applied": total_success,
         "resources_failed": total_resources - total_success,
-        "user_resources": len(user_resources),
-        "public_shells": len(public_shell_resources),
+        "public_resources": len(public_resources),
         "skills": len(skill_results),
     }
 
@@ -619,7 +614,10 @@ def scan_and_apply_yaml_directory(
 def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, Any]:
     """
     Main entry point for YAML initialization.
-    Scans the configured directory and applies all YAML resources.
+    Scans the configured directory and applies all YAML resources as PUBLIC (user_id=0).
+
+    All resources (Shell, Ghost, Bot, Team, Skill) from init_data are created as public
+    resources so they can be accessed by all users.
 
     Note: Distributed locking is now handled by the caller (main.py) using a unified
     startup lock that covers both Alembic migrations and YAML initialization.
@@ -641,8 +639,10 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
     # Ensure default admin user exists
     try:
         logger.info("Ensuring default admin user exists...")
-        user_id = ensure_default_user(db)
-        logger.info(f"Default admin user ready with ID: {user_id}")
+        user_id, is_new_user = ensure_default_user(db)
+        logger.info(
+            f"Default admin user ready with ID: {user_id}, is_new_user: {is_new_user}"
+        )
     except Exception as e:
         logger.error(f"Failed to create default user: {e}", exc_info=True)
         return {"status": "error", "reason": "failed to create default user"}
@@ -665,7 +665,10 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
     logger.info(f"Scanning initialization directory: {init_dir}")
 
     try:
+        # Apply all public resources (Shell, Ghost, Bot, Team, Skill)
+        # All resources are now public (user_id=0) and accessible by all users
         summary = scan_and_apply_yaml_directory(user_id, init_dir, db, force=force)
+
         logger.info(f"YAML initialization completed: {summary}")
         return summary
     except Exception as e:

@@ -4,6 +4,9 @@
     "input": "在此输入您的消息...",
     "empty": "还没有消息。开始对话吧！"
   },
+  "input": {
+    "no_team_placeholder": "请先选择或创建智能体"
+  },
   "actions": {
     "send": "发送",
     "clear": "清空聊天",
@@ -22,7 +25,14 @@
     "confirm_title": "确认编辑",
     "confirm_description": "此编辑操作将清除本条消息及其后的所有消息，对话将从当前位置重新开始。确定要继续吗？",
     "confirm_button": "确认",
-    "confirming": "处理中..."
+    "confirming": "处理中...",
+    "wait_for_completion": "请等待当前回复生成完成"
+  },
+  "regenerate": {
+    "failed": "重新生成失败",
+    "tooltip": "重新生成回复",
+    "select_model": "选择模型",
+    "select_model_desc": "选择用于重新生成的模型"
   },
   "quote": {
     "ask_wegent": "询问 Wegent",
@@ -34,7 +44,9 @@
     "thinking": "AI 正在思考...",
     "error": "发送消息失败",
     "connecting": "连接中...",
-    "disconnected": "连接断开"
+    "disconnected": "连接断开",
+    "reconnecting": "正在重连...（第 {{count}} 次尝试）",
+    "reconnected": "已重新连接"
   },
   "messages": {
     "assistant": "AI 助手",
@@ -190,6 +202,8 @@
     "invalid_parameter": "参数错误：请求参数不正确，请检查输入内容",
     "network_error": "网络连接失败：请检查网络连接后重试",
     "timeout_error": "请求超时：服务响应时间过长，请稍后重试",
+    "container_oom": "执行环境内存不足：请新建一个对话任务重试，或联系管理员增加内存配置",
+    "container_error": "执行环境异常：容器已停止运行，请新建一个对话任务重试",
     "generic_error": "请求失败：未知错误，请重试或联系管理员",
     "copy_error": "复制错误详情"
   },
@@ -266,7 +280,8 @@
     "chars": "字符"
   },
   "upload": {
-    "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传"
+    "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传",
+    "wait_for_upload": "请等待文件上传完成"
   },
   "clarification_toggle": {
     "enable": "启用智能追问模式",

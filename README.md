@@ -14,7 +14,11 @@ English | [简体中文](README_zh.md)
 
 <div align="center">
 
-<img src="./docs/assets/images/example.gif" width="75%" alt="Demo"/>
+<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
+
+<img src="https://github.com/user-attachments/assets/2b210d33-2569-4bc9-acac-e163de4e12a5" width="100%" alt="Knowledge Demo"/>
+
+<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
 
 [Quick Start](#-quick-start) · [Documentation](docs/en/README.md) · [Development Guide](docs/en/guides/developer/setup.md)
 
@@ -24,7 +28,7 @@ English | [简体中文](README_zh.md)
 
 ## ✨ Core Modes
 
-| 💬 Chat Mode | 💻 Code Mode | 📚 Knowledge Mode *(Experimental)* |
+| 💬 Chat Mode | 💻 Code Mode | 📚 Knowledge Mode |
 |:-------------|:-------------|:-----------------------------------|
 | **LLM**: Supports Claude / OpenAI / Gemini and other mainstream models<br>**Multimodal**: Supports automatic parsing of images / PPT / Word / PDF / Excel files<br>**Web Search**: Supports integration with various search engines<br>**Deep Research**: Supports deep research mode with automatic search, organization, and report generation<br>**Error Correction**: Multiple AIs automatically detect and correct errors in responses<br>**Follow-up Mode**: AI proactively asks clarifying questions to ensure accurate understanding<br>**Extensions**: Supports Skill packages / MCP tools / Custom tools | **Multi-platform Integration**: Supports GitHub / GitLab / Gitea / Gitee / Gerrit platforms<br>**Automated AI Workflow**: Branch → Code → Commit → PR automation<br>**Requirement Clarification**: AI proactively asks questions to ensure accurate understanding<br>**Wiki Generation**: Automatic codebase documentation generation | **RAG Retrieval**: Vector / Keyword / Hybrid retrieval<br>**Storage Backends**: Elasticsearch / Qdrant<br>**Document Parsing**: PDF / Markdown / DOCX / Code files<br>**Wiki**: Automatic codebase documentation generation |
 
@@ -138,21 +142,6 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/moqimoqidea">
-            <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
-            <br />
-            <sub><b>Moqimoqidea</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/2561056571">
-            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
-            <br />
-            <sub><b>Xuemin</b></sub>
-        </a>
-    </td></tr>
-<tr>
-    <td align="center">
         <a href="https://github.com/joyway1978">
             <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
             <br />
@@ -160,10 +149,18 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/FicoHu">
-            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
+        <a href="https://github.com/moqimoqidea">
+            <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
             <br />
-            <sub><b>FicoHu</b></sub>
+            <sub><b>Moqimoqidea</b></sub>
+        </a>
+    </td></tr>
+<tr>
+    <td align="center">
+        <a href="https://github.com/2561056571">
+            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+            <br />
+            <sub><b>Xuemin</b></sub>
         </a>
     </td>
     <td align="center">
@@ -174,10 +171,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/FicoHu">
+            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
+            <br />
+            <sub><b>FicoHu</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/icycrystal4">
             <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
             <br />
-            <sub><b>icycrystal4</b></sub>
+            <sub><b>Icycrystal4</b></sub>
         </a>
     </td>
     <td align="center">
@@ -188,12 +192,27 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/yixiangxx">
+            <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+            <br />
+            <sub><b>Yi Xiang</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/parabala">
+            <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
+            <br />
+            <sub><b>Parabala</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/fengkuizhi">
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
             <br />
             <sub><b>Fengkuizhi</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/jolestar">
             <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
@@ -202,13 +221,26 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/DeadLion">
+            <img src="https://avatars.githubusercontent.com/u/2594907?v=4" width="80;" alt="DeadLion"/>
+            <br />
+            <sub><b>Jasper Zhong</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/andrewzq777">
             <img src="https://avatars.githubusercontent.com/u/223815624?v=4" width="80;" alt="andrewzq777"/>
             <br />
             <sub><b>Andrewzq777</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
+    <td align="center">
+        <a href="https://github.com/fingki">
+            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
+            <br />
+            <sub><b>Fingki</b></sub>
+        </a>
+    </td>
     <td align="center">
         <a href="https://github.com/graindt">
             <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
@@ -217,10 +249,10 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/parabala">
-            <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
+        <a href="https://github.com/salt-hai">
+            <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>
             <br />
-            <sub><b>parabala</b></sub>
+            <sub><b>salt-hai</b></sub>
         </a>
     </td></tr>
 </table>

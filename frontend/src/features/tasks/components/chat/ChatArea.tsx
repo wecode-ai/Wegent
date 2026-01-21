@@ -18,6 +18,7 @@ import { useChatStreamHandlers } from './useChatStreamHandlers'
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
 import type { Team, SubtaskContextBrief } from '@/types/api'
+import type { Model } from '../../hooks/useModelSelection'
 import type { ContextItem } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
@@ -27,7 +28,6 @@ import { Button } from '@/components/ui/button'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
-import { getLastTeamIdByMode, saveLastTeamByMode } from '@/utils/userPreferences'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -40,9 +40,22 @@ interface ChatAreaProps {
   isTeamsLoading: boolean
   selectedTeamForNewTask?: Team | null
   showRepositorySelector?: boolean
-  taskType?: 'chat' | 'code'
+  taskType?: 'chat' | 'code' | 'knowledge'
   onShareButtonRender?: (button: React.ReactNode) => void
   onRefreshTeams?: () => Promise<Team[]>
+  /** Initial knowledge base to pre-select when starting a new chat from knowledge page */
+  initialKnowledgeBase?: {
+    id: number
+    name: string
+    namespace: string
+    document_count?: number
+  } | null
+  /** Callback when a new task is created (used for binding knowledge base) */
+  onTaskCreated?: (taskId: number) => void
+  /** Knowledge base ID for knowledge type tasks */
+  knowledgeBaseId?: number
+  /** Selected document IDs from DocumentPanel (for notebook mode context injection) */
+  selectedDocumentIds?: number[]
 }
 
 /**
@@ -57,6 +70,10 @@ function ChatAreaContent({
   taskType = 'chat',
   onShareButtonRender,
   onRefreshTeams,
+  initialKnowledgeBase,
+  onTaskCreated,
+  knowledgeBaseId,
+  selectedDocumentIds,
 }: ChatAreaProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -82,6 +99,7 @@ function ChatAreaContent({
     teams,
     taskType,
     selectedTeamForNewTask,
+    initialKnowledgeBase,
   })
 
   // Compute subtask info for scroll management
@@ -122,8 +140,9 @@ function ChatAreaContent({
   // Extract values for dependency array
   const selectedTeam = chatState.selectedTeam
   const handleTeamChange = chatState.handleTeamChange
+  const findDefaultTeamForMode = chatState.findDefaultTeamForMode
 
-  // Team selection logic - simplified and direct
+  // Team selection logic - using default team from server configuration
   useEffect(() => {
     if (filteredTeams.length === 0) return
 
@@ -173,21 +192,19 @@ function ChatAreaContent({
       }
     }
 
-    // Case 2: New chat (no taskId in URL) - restore from localStorage
+    // Case 2: New chat (no taskId in URL) - use default team from server config
     if (!taskIdFromUrl && !hasInitializedTeamRef.current) {
-      const lastTeamId = getLastTeamIdByMode(taskType)
-      if (lastTeamId) {
-        const lastTeam = filteredTeams.find(t => t.id === lastTeamId)
-        if (lastTeam) {
-          console.log('[ChatArea] Restoring team from localStorage:', lastTeam.name)
-          handleTeamChange(lastTeam)
-          hasInitializedTeamRef.current = true
-          lastSyncedTaskIdRef.current = null
-          return
-        }
+      // Use the default team computed from server config
+      const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
+      if (defaultTeamForMode) {
+        console.log('[ChatArea] Using default team from server config:', defaultTeamForMode.name)
+        handleTeamChange(defaultTeamForMode)
+        hasInitializedTeamRef.current = true
+        lastSyncedTaskIdRef.current = null
+        return
       }
-      // No saved preference or team not found, select first team
-      if (!selectedTeam) {
+      // No default found, select first team
+      if (!selectedTeam && filteredTeams.length > 0) {
         console.log('[ChatArea] Selecting first team:', filteredTeams[0].name)
         handleTeamChange(filteredTeams[0])
       }
@@ -200,15 +217,24 @@ function ChatAreaContent({
     if (selectedTeam) {
       const exists = filteredTeams.some(t => t.id === selectedTeam.id)
       if (!exists) {
-        console.log('[ChatArea] Current team not in filtered list, selecting first')
-        handleTeamChange(filteredTeams[0])
+        console.log('[ChatArea] Current team not in filtered list, selecting default')
+        const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
+        handleTeamChange(defaultTeamForMode || filteredTeams[0])
       }
     } else if (!taskIdFromUrl) {
-      // No selection and no task - select first team
-      console.log('[ChatArea] No selection, selecting first team')
-      handleTeamChange(filteredTeams[0])
+      // No selection and no task - select default team
+      console.log('[ChatArea] No selection, selecting default team')
+      const defaultTeamForMode = findDefaultTeamForMode(filteredTeams)
+      handleTeamChange(defaultTeamForMode || filteredTeams[0])
     }
-  }, [filteredTeams, selectedTaskDetail, taskIdFromUrl, selectedTeam, handleTeamChange, taskType])
+  }, [
+    filteredTeams,
+    selectedTaskDetail,
+    taskIdFromUrl,
+    selectedTeam,
+    handleTeamChange,
+    findDefaultTeamForMode,
+  ])
 
   // Reset initialization when switching from task to new chat
   useEffect(() => {
@@ -217,13 +243,12 @@ function ChatAreaContent({
     }
   }, [taskIdFromUrl])
 
-  // Save team preference when user manually selects (via QuickAccessCards)
+  // Handle team selection from QuickAccessCards
   const handleTeamSelect = useCallback(
     (team: Team) => {
       handleTeamChange(team)
-      saveLastTeamByMode(team.id, taskType)
     },
-    [handleTeamChange, taskType]
+    [handleTeamChange]
   )
 
   // Use scroll management hook - consolidates 4 useEffect calls
@@ -270,10 +295,13 @@ function ChatAreaContent({
     resetAttachment: chatState.resetAttachment,
     isAttachmentReadyToSend: chatState.isAttachmentReadyToSend,
     taskType,
+    knowledgeBaseId,
     shouldHideChatInput: chatState.shouldHideChatInput,
     scrollToBottom,
     selectedContexts: chatState.selectedContexts,
     resetContexts: chatState.resetContexts,
+    onTaskCreated,
+    selectedDocumentIds,
   })
 
   // Determine if there are messages to display (full computation)
@@ -388,6 +416,15 @@ function ChatAreaContent({
     [chatState, streamHandlers]
   )
 
+  // Callback for child components to send messages with a specific model (for regeneration)
+  // Accepts optional existingContexts to preserve attachments/knowledge bases from the original message
+  const handleSendMessageWithModelFromChild = useCallback(
+    async (content: string, model: Model, existingContexts?: SubtaskContextBrief[]) => {
+      await streamHandlers.handleSendMessageWithModel(content, model, existingContexts)
+    },
+    [streamHandlers]
+  )
+
   // Callback for re-selecting a context from a message badge
   const handleContextReselect = useCallback(
     (context: SubtaskContextBrief) => {
@@ -478,6 +515,9 @@ function ChatAreaContent({
     onTeamChange: chatState.handleTeamChange,
     onExternalApiParamsChange: chatState.handleExternalApiParamsChange,
     onAppModeChange: chatState.handleAppModeChange,
+    // Only enable restore when default team exists
+    onRestoreDefaultTeam: chatState.defaultTeam ? chatState.restoreDefaultTeam : undefined,
+    isUsingDefaultTeam: chatState.isUsingDefaultTeam,
     taskType,
     tipText: chatState.randomTip,
     isGroupChat: selectedTaskDetail?.is_group_chat || false,
@@ -541,6 +581,10 @@ function ChatAreaContent({
       }
       streamHandlers.handleSendMessage(message)
     },
+    // Whether there are no available teams for current mode
+    hasNoTeams: filteredTeams.length === 0,
+    // Knowledge base ID to exclude from context selector (used in notebook mode)
+    knowledgeBaseId,
   }
 
   return (
@@ -591,6 +635,7 @@ function ChatAreaContent({
               onContentChange={handleMessagesContentChange}
               onShareButtonRender={onShareButtonRender}
               onSendMessage={handleSendMessageFromChild}
+              onSendMessageWithModel={handleSendMessageWithModelFromChild}
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
               onRetry={streamHandlers.handleRetry}
               enableCorrectionMode={chatState.enableCorrectionMode}
@@ -600,6 +645,7 @@ function ChatAreaContent({
               pendingTaskId={streamHandlers.pendingTaskId}
               isPendingConfirmation={pipelineStageInfo?.is_pending_confirmation}
               onContextReselect={handleContextReselect}
+              hideGroupChatOptions={taskType === 'knowledge'}
             />
           </div>
         </div>
@@ -610,27 +656,34 @@ function ChatAreaContent({
         {/* Center area for input when no messages */}
         {!hasMessages && (
           <div
-            className="flex-1 flex items-center justify-center w-full"
-            style={{ marginBottom: '20vh' }}
+            className={
+              taskType === 'knowledge'
+                ? 'flex-1 flex items-end justify-center w-full pb-6'
+                : 'flex-1 flex items-center justify-center w-full'
+            }
+            style={taskType === 'knowledge' ? undefined : { marginBottom: '20vh' }}
           >
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
-              <SloganDisplay slogan={chatState.randomSlogan} />
+              {taskType !== 'knowledge' && <SloganDisplay slogan={chatState.randomSlogan} />}
               <ChatInputCard
                 {...inputCardProps}
                 autoFocus={!hasMessages}
                 inputControlsRef={inputControlsRef}
               />
-              <QuickAccessCards
-                teams={teams}
-                selectedTeam={chatState.selectedTeam}
-                onTeamSelect={handleTeamSelect}
-                currentMode={taskType}
-                isLoading={isTeamsLoading}
-                isTeamsLoading={isTeamsLoading}
-                hideSelected={true}
-                onRefreshTeams={onRefreshTeams}
-                showWizardButton={taskType === 'chat'}
-              />
+              {taskType !== 'knowledge' && (
+                <QuickAccessCards
+                  teams={teams}
+                  selectedTeam={chatState.selectedTeam}
+                  onTeamSelect={handleTeamSelect}
+                  currentMode={taskType}
+                  isLoading={isTeamsLoading}
+                  isTeamsLoading={isTeamsLoading}
+                  hideSelected={true}
+                  onRefreshTeams={onRefreshTeams}
+                  showWizardButton={taskType === 'chat'}
+                  defaultTeam={chatState.defaultTeam}
+                />
+              )}
             </div>
           </div>
         )}

@@ -6,8 +6,13 @@
     "public_models": "公共模型",
     "public_retrievers": "公共检索引擎",
     "public_skills": "公共技能",
+    "public_teams": "公共智能体",
+    "public_bots": "公共机器人",
+    "public_ghosts": "公共 Ghost",
+    "public_shells": "公共 Shell",
     "api_keys": "密钥管理",
-    "system_config": "系统配置"
+    "system_config": "系统配置",
+    "monitor": "监控"
   },
   "stats": {
     "total_users": "总用户数",
@@ -77,7 +82,7 @@
     },
     "confirm": {
       "delete_title": "删除用户",
-      "delete_message": "确定要删除用户 \"{{name}}\" 吗？此操作将禁用该账号。",
+      "delete_message": "确定要删除用户 \"{{name}}\" 吗？此操作将永久删除该账号。",
       "reset_password_title": "重置密码",
       "reset_password_message": "请为用户 \"{{name}}\" 输入新密码",
       "toggle_status_title": "切换状态",
@@ -356,6 +361,260 @@
       "load_failed": "加载个人密钥失败",
       "delete_failed": "删除个人密钥失败",
       "toggle_failed": "切换个人密钥状态失败"
+    }
+  },
+  "monitor": {
+    "title": "Flow 执行监控",
+    "description": "查看所有用户的 Flow 执行统计和错误信息",
+    "time_range": {
+      "1h": "最近 1 小时",
+      "6h": "最近 6 小时",
+      "24h": "最近 24 小时",
+      "3d": "最近 3 天",
+      "7d": "最近 7 天"
+    },
+    "stats": {
+      "total_executions": "总执行数",
+      "completed": "已完成",
+      "failed": "失败",
+      "timeout": "超时",
+      "running": "运行中",
+      "pending": "等待中",
+      "active_flows": "活跃 Flow",
+      "total_flows": "总 Flow 数",
+      "enabled_flows": "已启用的定时任务",
+      "all_flows": "所有 Flow"
+    },
+    "error_list": {
+      "title": "异常执行记录",
+      "all_status": "全部状态",
+      "failed": "失败",
+      "cancelled": "已取消",
+      "running": "运行中",
+      "no_errors": "暂无异常执行记录",
+      "columns": {
+        "execution_id": "执行 ID",
+        "flow_id": "Flow ID",
+        "user_id": "用户 ID",
+        "status": "状态",
+        "trigger_type": "触发类型",
+        "error_message": "错误信息",
+        "created_at": "创建时间"
+      },
+      "pagination": "显示 {{start}}-{{end}} / 共 {{total}} 条"
+    },
+    "errors": {
+      "load_stats_failed": "加载统计数据失败",
+      "load_errors_failed": "加载异常记录失败"
+    }
+  },
+  "public_teams": {
+    "title": "公共智能体管理",
+    "description": "管理系统级公共智能体，所有用户可用",
+    "create_description": "创建新的公共智能体。所有引用的机器人必须是公共机器人。",
+    "loading": "加载智能体中...",
+    "no_teams": "暂无公共智能体",
+    "create_team": "创建智能体",
+    "edit_team": "编辑智能体",
+    "delete_team": "删除智能体",
+    "member_count": "{{count}} 个机器人",
+    "status": {
+      "active": "启用",
+      "inactive": "禁用"
+    },
+    "columns": {
+      "id": "ID",
+      "name": "名称",
+      "namespace": "命名空间",
+      "status": "状态",
+      "created_at": "创建时间",
+      "actions": "操作"
+    },
+    "form": {
+      "name": "智能体名称",
+      "name_placeholder": "请输入智能体名称",
+      "namespace": "命名空间",
+      "namespace_placeholder": "default",
+      "config": "智能体配置",
+      "config_placeholder": "请输入 JSON 格式的智能体配置",
+      "config_hint": "配置必须包含 spec.members 并引用公共机器人"
+    },
+    "confirm": {
+      "delete_title": "删除智能体",
+      "delete_message": "确定要删除公共智能体 \"{{name}}\" 吗？此操作无法撤销。"
+    },
+    "success": {
+      "created": "公共智能体创建成功",
+      "updated": "公共智能体更新成功",
+      "deleted": "公共智能体删除成功"
+    },
+    "errors": {
+      "load_failed": "加载公共智能体失败",
+      "create_failed": "创建公共智能体失败",
+      "update_failed": "更新公共智能体失败",
+      "delete_failed": "删除公共智能体失败",
+      "name_required": "智能体名称不能为空",
+      "config_required": "智能体配置不能为空",
+      "config_invalid_json": "智能体配置必须是有效的 JSON 格式"
+    }
+  },
+  "public_bots": {
+    "title": "公共机器人管理",
+    "description": "管理系统级公共机器人，所有用户可用",
+    "create_description": "创建新的公共机器人。所有引用的资源（Ghost、Shell、Model）必须是公共资源。",
+    "loading": "加载机器人中...",
+    "no_bots": "暂无公共机器人",
+    "create_bot": "创建机器人",
+    "edit_bot": "编辑机器人",
+    "delete_bot": "删除机器人",
+    "status": {
+      "active": "启用",
+      "inactive": "禁用"
+    },
+    "columns": {
+      "id": "ID",
+      "name": "名称",
+      "namespace": "命名空间",
+      "status": "状态",
+      "created_at": "创建时间",
+      "actions": "操作"
+    },
+    "form": {
+      "name": "机器人名称",
+      "name_placeholder": "请输入机器人名称",
+      "namespace": "命名空间",
+      "namespace_placeholder": "default",
+      "ghost": "Ghost",
+      "ghost_placeholder": "选择 Ghost（可选）",
+      "ghost_none": "无",
+      "shell": "Shell",
+      "shell_placeholder": "选择 Shell（可选）",
+      "shell_none": "无",
+      "model": "Model",
+      "model_placeholder": "选择 Model（可选）",
+      "model_none": "无",
+      "config": "机器人配置",
+      "config_placeholder": "请输入 JSON 格式的机器人配置",
+      "config_hint": "配置必须引用公共的 Ghost、Shell 和 Model 资源"
+    },
+    "confirm": {
+      "delete_title": "删除机器人",
+      "delete_message": "确定要删除公共机器人 \"{{name}}\" 吗？此操作无法撤销。"
+    },
+    "success": {
+      "created": "公共机器人创建成功",
+      "updated": "公共机器人更新成功",
+      "deleted": "公共机器人删除成功"
+    },
+    "errors": {
+      "load_failed": "加载公共机器人失败",
+      "create_failed": "创建公共机器人失败",
+      "update_failed": "更新公共机器人失败",
+      "delete_failed": "删除公共机器人失败",
+      "name_required": "机器人名称不能为空",
+      "config_required": "机器人配置不能为空",
+      "config_invalid_json": "机器人配置必须是有效的 JSON 格式"
+    }
+  },
+  "public_ghosts": {
+    "title": "公共 Ghost 管理",
+    "description": "管理系统级公共 Ghost（系统提示词），所有用户可用",
+    "create_description": "创建新的公共 Ghost。Ghost 定义机器人的系统提示词和工具配置。",
+    "loading": "加载 Ghost 中...",
+    "no_ghosts": "暂无公共 Ghost",
+    "create_ghost": "创建 Ghost",
+    "edit_ghost": "编辑 Ghost",
+    "delete_ghost": "删除 Ghost",
+    "status": {
+      "active": "启用",
+      "inactive": "禁用"
+    },
+    "columns": {
+      "id": "ID",
+      "name": "名称",
+      "namespace": "命名空间",
+      "status": "状态",
+      "created_at": "创建时间",
+      "actions": "操作"
+    },
+    "form": {
+      "name": "Ghost 名称",
+      "name_placeholder": "请输入 Ghost 名称",
+      "namespace": "命名空间",
+      "namespace_placeholder": "default",
+      "config": "Ghost 配置",
+      "config_placeholder": "请输入 JSON 格式的 Ghost 配置",
+      "config_hint": "配置应包含 spec.systemPrompt，可选 spec.mcpServers、spec.skills"
+    },
+    "confirm": {
+      "delete_title": "删除 Ghost",
+      "delete_message": "确定要删除公共 Ghost \"{{name}}\" 吗？此操作无法撤销。",
+      "delete_in_use_message": "此 Ghost 被公共机器人引用，无法删除。"
+    },
+    "success": {
+      "created": "公共 Ghost 创建成功",
+      "updated": "公共 Ghost 更新成功",
+      "deleted": "公共 Ghost 删除成功"
+    },
+    "errors": {
+      "load_failed": "加载公共 Ghost 失败",
+      "create_failed": "创建公共 Ghost 失败",
+      "update_failed": "更新公共 Ghost 失败",
+      "delete_failed": "删除公共 Ghost 失败",
+      "name_required": "Ghost 名称不能为空",
+      "config_required": "Ghost 配置不能为空",
+      "config_invalid_json": "Ghost 配置必须是有效的 JSON 格式"
+    }
+  },
+  "public_shells": {
+    "title": "公共 Shell 管理",
+    "description": "管理系统级公共 Shell（执行环境），所有用户可用",
+    "create_description": "创建新的公共 Shell。Shell 定义机器人的执行环境。",
+    "loading": "加载 Shell 中...",
+    "no_shells": "暂无公共 Shell",
+    "create_shell": "创建 Shell",
+    "edit_shell": "编辑 Shell",
+    "delete_shell": "删除 Shell",
+    "status": {
+      "active": "启用",
+      "inactive": "禁用"
+    },
+    "columns": {
+      "id": "ID",
+      "name": "名称",
+      "namespace": "命名空间",
+      "shell_type": "Shell 类型",
+      "status": "状态",
+      "created_at": "创建时间",
+      "actions": "操作"
+    },
+    "form": {
+      "name": "Shell 名称",
+      "name_placeholder": "请输入 Shell 名称",
+      "namespace": "命名空间",
+      "namespace_placeholder": "default",
+      "config": "Shell 配置",
+      "config_placeholder": "请输入 JSON 格式的 Shell 配置",
+      "config_hint": "配置应包含 spec.shellType（ClaudeCode、Agno、Dify、Chat）"
+    },
+    "confirm": {
+      "delete_title": "删除 Shell",
+      "delete_message": "确定要删除公共 Shell \"{{name}}\" 吗？此操作无法撤销。",
+      "delete_in_use_message": "此 Shell 被公共机器人引用，无法删除。"
+    },
+    "success": {
+      "created": "公共 Shell 创建成功",
+      "updated": "公共 Shell 更新成功",
+      "deleted": "公共 Shell 删除成功"
+    },
+    "errors": {
+      "load_failed": "加载公共 Shell 失败",
+      "create_failed": "创建公共 Shell 失败",
+      "update_failed": "更新公共 Shell 失败",
+      "delete_failed": "删除公共 Shell 失败",
+      "name_required": "Shell 名称不能为空",
+      "config_required": "Shell 配置不能为空",
+      "config_invalid_json": "Shell 配置必须是有效的 JSON 格式"
     }
   }
 }
