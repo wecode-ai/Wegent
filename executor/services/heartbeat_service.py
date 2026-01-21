@@ -8,6 +8,7 @@ This module provides a background service that:
 - Sends periodic heartbeat signals to executor_manager
 - Enables detection of executor container failures
 - Supports configurable heartbeat interval
+- Supports both sandbox (long-lived) and task (regular) heartbeat types
 """
 
 import os
@@ -33,6 +34,10 @@ class HeartbeatService:
 
     When the executor container dies unexpectedly, the heartbeat stops
     and executor_manager can detect this via heartbeat timeout.
+
+    Supports two heartbeat types:
+    - sandbox: For long-lived sandbox tasks (uses sandbox_id)
+    - task: For regular online/offline tasks (uses task_id)
     """
 
     _instance: Optional["HeartbeatService"] = None
@@ -40,49 +45,71 @@ class HeartbeatService:
 
     def __init__(
         self,
-        sandbox_id: Optional[str] = None,
+        heartbeat_id: Optional[str] = None,
+        heartbeat_type: Optional[str] = None,
         heartbeat_url: Optional[str] = None,
         interval: Optional[int] = None,
     ):
         """Initialize the heartbeat service.
 
         Args:
-            sandbox_id: Sandbox ID (task_id as string). If not provided,
-                        reads from SANDBOX_ID environment variable.
+            heartbeat_id: Heartbeat ID (sandbox_id or task_id). If not provided,
+                         reads from HEARTBEAT_ID or SANDBOX_ID environment variable.
+            heartbeat_type: Type of heartbeat ('sandbox' or 'task'). If not provided,
+                           reads from HEARTBEAT_TYPE environment variable.
             heartbeat_url: Full URL for heartbeat endpoint. If not provided,
                           constructs from EXECUTOR_MANAGER_HEARTBEAT_BASE_URL or CALLBACK_URL.
             interval: Heartbeat interval in seconds. If not provided,
                      reads from HEARTBEAT_INTERVAL env var or uses default.
         """
-        self._sandbox_id = sandbox_id or os.getenv("SANDBOX_ID")
+        # Get heartbeat ID from new env var first, fall back to legacy SANDBOX_ID
+        self._heartbeat_id = (
+            heartbeat_id or os.getenv("HEARTBEAT_ID") or os.getenv("SANDBOX_ID")
+        )
+
+        # Get heartbeat type: 'sandbox' or 'task'
+        self._heartbeat_type = heartbeat_type or os.getenv("HEARTBEAT_TYPE", "sandbox")
+
         self._interval = interval or int(
             os.getenv("HEARTBEAT_INTERVAL", str(DEFAULT_HEARTBEAT_INTERVAL))
         )
-        self._enabled = os.getenv("HEARTBEAT_ENABLED", "true").lower() == "true"
+        self._enabled = os.getenv("HEARTBEAT_ENABLED", "false").lower() == "true"
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._claude_initialized = False  # Track if Claude has been initialized
 
-        # Build heartbeat URL
+        # Build heartbeat URL based on type
         if heartbeat_url:
             self._heartbeat_url = heartbeat_url
         else:
-            # Use EXECUTOR_MANAGER_HEARTBEAT_BASE_URL if provided, otherwise derive from CALLBACK_URL
-            heartbeat_base = os.getenv("EXECUTOR_MANAGER_HEARTBEAT_BASE_URL")
-            if heartbeat_base:
-                # Direct configuration: http://host:port/executor-manager
-                self._heartbeat_url = f"{heartbeat_base.rstrip('/')}/sandboxes/{self._sandbox_id}/heartbeat"
-            else:
-                # Derive from CALLBACK_URL for backward compatibility
-                callback_url = os.getenv(
-                    "CALLBACK_URL",
-                    "http://localhost:8001/executor-manager/callback",
-                )
-                # From: http://host:port/executor-manager/callback
-                # To:   http://host:port/executor-manager/sandboxes/{sandbox_id}/heartbeat
-                base_url = callback_url.replace("/callback", "")
-                self._heartbeat_url = (
-                    f"{base_url}/sandboxes/{self._sandbox_id}/heartbeat"
-                )
+            self._heartbeat_url = self._build_heartbeat_url()
+
+    def _build_heartbeat_url(self) -> str:
+        """Build the heartbeat URL based on heartbeat type.
+
+        Returns:
+            The heartbeat URL string
+        """
+        heartbeat_base = os.getenv("EXECUTOR_MANAGER_HEARTBEAT_BASE_URL")
+
+        if not heartbeat_base:
+            # Derive from CALLBACK_URL for backward compatibility
+            callback_url = os.getenv(
+                "CALLBACK_URL",
+                "http://localhost:8001/executor-manager/callback",
+            )
+            # From: http://host:port/executor-manager/callback
+            # To:   http://host:port/executor-manager
+            heartbeat_base = callback_url.replace("/callback", "")
+
+        heartbeat_base = heartbeat_base.rstrip("/")
+
+        # Build URL based on heartbeat type
+        if self._heartbeat_type == "sandbox":
+            return f"{heartbeat_base}/sandboxes/{self._heartbeat_id}/heartbeat"
+        else:
+            # For regular tasks, use a different endpoint
+            return f"{heartbeat_base}/tasks/{self._heartbeat_id}/heartbeat"
 
     @classmethod
     def get_instance(cls) -> "HeartbeatService":
@@ -100,7 +127,7 @@ class HeartbeatService:
     @property
     def is_enabled(self) -> bool:
         """Check if heartbeat service is enabled."""
-        return self._enabled and self._sandbox_id is not None
+        return self._enabled and self._heartbeat_id is not None
 
     @property
     def is_running(self) -> bool:
@@ -115,8 +142,8 @@ class HeartbeatService:
         """
         if not self.is_enabled:
             logger.info(
-                f"[HeartbeatService] Disabled or no sandbox_id configured "
-                f"(enabled={self._enabled}, sandbox_id={self._sandbox_id})"
+                f"[HeartbeatService] Disabled or no heartbeat_id configured "
+                f"(enabled={self._enabled}, heartbeat_id={self._heartbeat_id})"
             )
             return False
 
@@ -133,8 +160,8 @@ class HeartbeatService:
         self._thread.start()
 
         logger.info(
-            f"[HeartbeatService] Started: sandbox_id={self._sandbox_id}, "
-            f"interval={self._interval}s, url={self._heartbeat_url}"
+            f"[HeartbeatService] Started: type={self._heartbeat_type}, "
+            f"id={self._heartbeat_id}, interval={self._interval}s, url={self._heartbeat_url}"
         )
         return True
 
@@ -189,7 +216,8 @@ class HeartbeatService:
             response = requests.post(
                 self._heartbeat_url,
                 json={
-                    "sandbox_id": self._sandbox_id,
+                    "heartbeat_id": self._heartbeat_id,
+                    "heartbeat_type": self._heartbeat_type,
                     "timestamp": time.time(),
                 },
                 timeout=DEFAULT_HEARTBEAT_TIMEOUT,
@@ -197,8 +225,24 @@ class HeartbeatService:
 
             if response.status_code == 200:
                 logger.debug(
-                    f"[HeartbeatService] Heartbeat sent: sandbox_id={self._sandbox_id}"
+                    f"[HeartbeatService] Heartbeat sent: type={self._heartbeat_type}, "
+                    f"id={self._heartbeat_id}"
                 )
+
+                # Check if response contains Claude configuration
+                try:
+                    response_data = response.json()
+                    if (
+                        not self._claude_initialized
+                        and "claude_config" in response_data
+                    ):
+                        # Initialize Claude Code on first heartbeat if configuration is provided
+                        self._initialize_claude(response_data["claude_config"])
+                except Exception as e:
+                    logger.warning(
+                        f"[HeartbeatService] Failed to process Claude config: {e}"
+                    )
+
                 return True
             else:
                 logger.warning(
@@ -216,6 +260,63 @@ class HeartbeatService:
         except Exception as e:
             logger.error(f"[HeartbeatService] Unexpected error: {e}")
             return False
+
+    def _initialize_claude(self, claude_config: dict) -> None:
+        """Initialize Claude Code using configuration from heartbeat response.
+
+        This method is called once when the first heartbeat receives Claude configuration.
+        It creates the ClaudeCodeAgent and runs initialization to:
+        - Save Claude settings to ~/.claude/settings.json
+        - Save Claude user config to ~/.claude.json
+        - Download and deploy skills to ~/.claude/skills/
+
+        Args:
+            claude_config: Claude configuration dict with bot, user, and team info
+        """
+        if self._claude_initialized:
+            return
+
+        try:
+            logger.info(
+                f"[HeartbeatService] Initializing Claude Code for sandbox {self._sandbox_id}..."
+            )
+
+            # Import here to avoid circular dependencies
+            from shared.status import TaskStatus
+
+            from executor.agents.claude_code.claude_code_agent import \
+                ClaudeCodeAgent
+
+            # Create minimal task data for initialization
+            init_task_data = {
+                "task_id": int(self._sandbox_id) if self._sandbox_id.isdigit() else -1,
+                "subtask_id": -1,
+                "bot": [claude_config.get("bot")],
+                "user": claude_config.get("user", {}),
+                "team": claude_config.get("team", {}),
+            }
+
+            # Create ClaudeCodeAgent instance
+            agent = ClaudeCodeAgent(init_task_data)
+
+            # Run initialization
+            init_status = agent.initialize()
+
+            if init_status == TaskStatus.SUCCESS:
+                self._claude_initialized = True
+                logger.info(
+                    f"[HeartbeatService] Claude Code initialized successfully for sandbox {self._sandbox_id}"
+                )
+            else:
+                logger.warning(
+                    f"[HeartbeatService] Claude Code initialization returned status: {init_status}"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"[HeartbeatService] Failed to initialize Claude Code: {e}",
+                exc_info=True,
+            )
 
 
 # Module-level functions for easy access

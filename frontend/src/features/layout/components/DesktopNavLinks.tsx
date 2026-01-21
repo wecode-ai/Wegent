@@ -11,7 +11,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 interface DesktopNavLinksProps {
-  activePage: 'chat' | 'code' | 'wiki' | 'dashboard'
+  activePage: 'chat' | 'code' | 'wiki' | 'flow' | 'dashboard'
 }
 
 export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
@@ -30,6 +30,7 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
   useEffect(() => {
     router.prefetch(paths.chat.getHref())
     router.prefetch(paths.code.getHref())
+    router.prefetch(paths.feed.getHref())
     if (isWikiEnabled) {
       router.prefetch(paths.wiki.getHref())
     }
@@ -52,6 +53,15 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
         onClick: () => {
           startTransition(() => {
             router.push(paths.code.getHref())
+          })
+        },
+      },
+      {
+        key: 'flow' as const,
+        label: t('common:navigation.flow'),
+        onClick: () => {
+          startTransition(() => {
+            router.push(paths.feed.getHref())
           })
         },
       },

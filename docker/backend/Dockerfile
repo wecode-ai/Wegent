@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest
+FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.2.1
 
 # Set working directory
 WORKDIR /app
@@ -18,35 +18,6 @@ COPY shared /shared
 COPY backend/pyproject.toml .
 RUN uv pip install --system --no-cache -r pyproject.toml
 
-# Install Playwright system dependencies for AlmaLinux/RHEL
-# These are required for Chromium browser to run (crawl4ai uses Playwright for web scraping)
-RUN dnf install -y \
-    nspr \
-    nss \
-    nss-util \
-    atk \
-    at-spi2-atk \
-    cups-libs \
-    libxcb \
-    libxkbcommon \
-    at-spi2-core \
-    libX11 \
-    libXcomposite \
-    libXdamage \
-    libXext \
-    libXfixes \
-    libXrandr \
-    mesa-libgbm \
-    cairo \
-    pango \
-    alsa-lib \
-    libdrm \
-    && dnf clean all \
-    && rm -rf /var/cache/dnf/*
-
-# Install Playwright Chromium browser for crawl4ai web scraping
-RUN playwright install chromium
-
 # Copy application code
 COPY backend /app
 # Also copy shared to /app/shared for PYTHONPATH imports
@@ -56,7 +27,7 @@ COPY shared /app/shared
 # This includes:
 # - 01-default-resources.yaml: Default Ghost, Model, Shell, Bot, Team resources
 # - 02-public-shells.yaml: Public shell configurations
-# - skills/: Skill packages (mermaid-diagram, wiki_submit, subagent)
+# - skills/: Skill packages (mermaid-diagram, wiki_submit, sandbox)
 COPY backend/init_data /app/init_data
 
 # Create .env file (if it doesn't exist)

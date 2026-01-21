@@ -32,9 +32,16 @@ class SkillValidator:
         Returns:
             Dictionary containing:
             - description: str
+            - displayName: Optional[str]
+            - prompt: Optional[str]
             - version: Optional[str]
             - author: Optional[str]
             - tags: Optional[List[str]]
+            - bindShells: List[str]
+            - config: Optional[Dict[str, Any]]
+            - tools: Optional[List[Dict[str, Any]]]
+            - provider: Optional[Dict[str, Any]]
+            - preload: bool
             - file_size: int
             - file_hash: str (SHA256)
 
@@ -129,6 +136,7 @@ class SkillValidator:
                     "author": metadata.get("author"),
                     "tags": metadata.get("tags"),
                     "bindShells": bind_shells,  # Shell types this skill is compatible with
+                    "config": metadata.get("config"),  # Skill-level configuration
                     "tools": metadata.get(
                         "tools"
                     ),  # Tool declarations for skill-tool binding

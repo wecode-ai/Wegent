@@ -171,20 +171,20 @@ export default function SoloModeEditor({
     const currentBotIds = new Set(bots.map(b => b.id))
     const newBotIds = bots.filter(b => !prevBotIdsRef.current.has(b.id))
 
-    // If there's a new bot, select it and close creation mode
-    if (newBotIds.length > 0) {
+    // Only process if we're in creation mode and there are new bots
+    // This prevents unnecessary state updates when just selecting existing bots
+    if (isCreatingBot && newBotIds.length > 0) {
       // Select the first new bot (should be the one we just created)
       const newBot = newBotIds[0]
       setSelectedBotId(newBot.id)
-      // Close creation mode if we were creating
-      if (isCreatingBot) {
-        setIsCreatingBot(false)
-      }
+      setIsCreatingBot(false)
     }
 
     // Update the ref for next comparison
     prevBotIdsRef.current = currentBotIds
-  }, [bots, isCreatingBot, setSelectedBotId])
+    // Note: setSelectedBotId is excluded from deps as React setState functions are stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bots, isCreatingBot])
 
   // Determine the current mode label
   const currentModeLabel = useMemo(() => {
@@ -293,6 +293,7 @@ export default function SoloModeEditor({
           /* Show BotEdit component in creation mode */
           <div className="h-full overflow-auto">
             <BotEdit
+              key="bot-create"
               ref={botEditRef}
               bots={bots}
               setBots={setBots}
@@ -313,6 +314,7 @@ export default function SoloModeEditor({
           /* Show BotEdit component in edit mode - bot saves with team */
           <div className="h-full overflow-auto">
             <BotEdit
+              key={`bot-edit-${selectedBotId}`}
               ref={botEditRef}
               bots={bots}
               setBots={setBots}

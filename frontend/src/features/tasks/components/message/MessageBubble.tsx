@@ -1518,21 +1518,31 @@ const MessageBubble = memo(
                   </div>
                   {/* Action buttons: Retry and Copy */}
                   <div className="flex items-center gap-1 flex-shrink-0">
-                    {onRetry && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => onRetry(msg)}
-                            className="h-7 w-7 !rounded-md bg-red-100 dark:bg-red-900/30 hover:!bg-red-200 dark:hover:!bg-red-900/50"
-                          >
-                            <RefreshCw className="h-4 w-4 text-red-600 dark:text-red-400" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>{t('actions.retry') || '重试'}</TooltipContent>
-                      </Tooltip>
-                    )}
+                    {/* Only show retry button for retryable errors */}
+                    {/* Container errors (OOM, container crash) are not retryable - user should start new task */}
+                    {onRetry &&
+                      (() => {
+                        const parsedError = parseError(msg.error)
+                        const isRetryable =
+                          parsedError.type !== 'container_oom' &&
+                          parsedError.type !== 'container_error'
+                        if (!isRetryable) return null
+                        return (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => onRetry(msg)}
+                                className="h-7 w-7 !rounded-md bg-red-100 dark:bg-red-900/30 hover:!bg-red-200 dark:hover:!bg-red-900/50"
+                              >
+                                <RefreshCw className="h-4 w-4 text-red-600 dark:text-red-400" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>{t('actions.retry') || '重试'}</TooltipContent>
+                          </Tooltip>
+                        )
+                      })()}
                     <CopyButton
                       content={msg.error}
                       className="h-7 w-7 flex-shrink-0 !rounded-md bg-red-100 dark:bg-red-900/30 hover:!bg-red-200 dark:hover:!bg-red-900/50"

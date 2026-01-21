@@ -11,7 +11,8 @@
     "public_ghosts": "公共 Ghost",
     "public_shells": "公共 Shell",
     "api_keys": "密钥管理",
-    "system_config": "系统配置"
+    "system_config": "系统配置",
+    "monitor": "监控"
   },
   "stats": {
     "total_users": "总用户数",
@@ -360,6 +361,51 @@
       "load_failed": "加载个人密钥失败",
       "delete_failed": "删除个人密钥失败",
       "toggle_failed": "切换个人密钥状态失败"
+    }
+  },
+  "monitor": {
+    "title": "Flow 执行监控",
+    "description": "查看所有用户的 Flow 执行统计和错误信息",
+    "time_range": {
+      "1h": "最近 1 小时",
+      "6h": "最近 6 小时",
+      "24h": "最近 24 小时",
+      "3d": "最近 3 天",
+      "7d": "最近 7 天"
+    },
+    "stats": {
+      "total_executions": "总执行数",
+      "completed": "已完成",
+      "failed": "失败",
+      "timeout": "超时",
+      "running": "运行中",
+      "pending": "等待中",
+      "active_flows": "活跃 Flow",
+      "total_flows": "总 Flow 数",
+      "enabled_flows": "已启用的定时任务",
+      "all_flows": "所有 Flow"
+    },
+    "error_list": {
+      "title": "异常执行记录",
+      "all_status": "全部状态",
+      "failed": "失败",
+      "cancelled": "已取消",
+      "running": "运行中",
+      "no_errors": "暂无异常执行记录",
+      "columns": {
+        "execution_id": "执行 ID",
+        "flow_id": "Flow ID",
+        "user_id": "用户 ID",
+        "status": "状态",
+        "trigger_type": "触发类型",
+        "error_message": "错误信息",
+        "created_at": "创建时间"
+      },
+      "pagination": "显示 {{start}}-{{end}} / 共 {{total}} 条"
+    },
+    "errors": {
+      "load_stats_failed": "加载统计数据失败",
+      "load_errors_failed": "加载异常记录失败"
     }
   },
   "public_teams": {

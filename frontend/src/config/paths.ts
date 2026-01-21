@@ -32,6 +32,12 @@ export const paths = {
   wiki: {
     getHref: () => '/knowledge',
   },
+  feed: {
+    getHref: () => '/feed',
+  },
+  feedSubscriptions: {
+    getHref: () => '/feed/subscriptions',
+  },
   settings: {
     root: {
       getHref: () => '/settings',

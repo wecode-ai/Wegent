@@ -77,6 +77,9 @@ class ServerEvents:
     # Generic Skill Events
     SKILL_REQUEST = "skill:request"  # Server -> Client: skill request
 
+    # Background execution events (to user room)
+    BACKGROUND_EXECUTION_UPDATE = "background:execution_update"
+
 
 # ============================================================
 # Client -> Server Payloads
@@ -468,6 +471,34 @@ class CorrectionErrorPayload(BaseModel):
     task_id: int
     subtask_id: int
     error: str
+
+
+# ============================================================
+# Background Execution Event Payloads
+# ============================================================
+
+
+class BackgroundExecutionUpdatePayload(BaseModel):
+    """Payload for background:execution_update event."""
+
+    execution_id: int = Field(..., description="Background execution ID")
+    subscription_id: int = Field(..., description="Subscription ID")
+    subscription_name: Optional[str] = Field(None, description="Subscription name")
+    subscription_display_name: Optional[str] = Field(
+        None, description="Subscription display name"
+    )
+    team_name: Optional[str] = Field(None, description="Team name")
+    status: str = Field(..., description="Execution status")
+    task_id: Optional[int] = Field(None, description="Associated task ID")
+    task_type: Optional[str] = Field(
+        None, description="Task type (execution/collection)"
+    )
+    prompt: Optional[str] = Field(None, description="Prompt used")
+    result_summary: Optional[str] = Field(None, description="Result summary")
+    error_message: Optional[str] = Field(None, description="Error message if failed")
+    trigger_reason: Optional[str] = Field(None, description="Trigger reason")
+    created_at: str = Field(..., description="Creation timestamp")
+    updated_at: str = Field(..., description="Last update timestamp")
 
 
 # ============================================================

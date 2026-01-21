@@ -3,9 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
-from typing import Any, Mapping, Tuple, Type
+from typing import Any, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
+from pydantic import field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -128,6 +129,67 @@ class Settings(BaseSettings):
 
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+
+    # Celery configuration
+    CELERY_BROKER_URL: Optional[str] = None  # If None/empty, uses REDIS_URL
+    CELERY_RESULT_BACKEND: Optional[str] = None  # If None/empty, uses REDIS_URL
+
+    # Celery Beat scheduler configuration
+    # "default" = SQLite file (single instance only)
+    # "sqlalchemy" = MySQL database (multi-instance deployment)
+    CELERY_BEAT_SCHEDULER: str = "default"
+    # Database URL for Beat scheduler (only used when CELERY_BEAT_SCHEDULER="sqlalchemy")
+    # If None/empty, uses DATABASE_URL
+    CELERY_BEAT_DATABASE_URL: Optional[str] = None
+
+    # Embedded Celery configuration
+    # When True, Backend starts Celery worker/beat as daemon threads (for local dev)
+    # When False, Celery must be started separately (for production)
+    EMBEDDED_CELERY_ENABLED: bool = True
+
+    @field_validator(
+        "CELERY_BROKER_URL",
+        "CELERY_RESULT_BACKEND",
+        "CELERY_BEAT_DATABASE_URL",
+        mode="before",
+    )
+    @classmethod
+    def empty_str_to_none(cls, v: Any) -> Optional[str]:
+        """Convert empty strings to None for proper fallback to REDIS_URL."""
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
+
+    # Scheduler backend configuration
+    # Supported backends: "celery" (default), "apscheduler", "xxljob"
+    SCHEDULER_BACKEND: str = "celery"
+
+    # APScheduler configuration (only used when SCHEDULER_BACKEND="apscheduler")
+    APSCHEDULER_JOB_STORE: str = "memory"  # "memory" or "sqlite"
+    APSCHEDULER_SQLITE_PATH: str = "scheduler_jobs.db"
+
+    # XXL-JOB configuration (only used when SCHEDULER_BACKEND="xxljob")
+    XXLJOB_ADMIN_ADDRESSES: str = ""  # Comma-separated admin URLs
+    XXLJOB_APP_NAME: str = "wegent-executor"
+    XXLJOB_ACCESS_TOKEN: str = ""
+    XXLJOB_EXECUTOR_PORT: int = 9999
+
+    # Flow scheduler configuration
+    FLOW_SCHEDULER_INTERVAL_SECONDS: int = 60
+    FLOW_DEFAULT_TIMEOUT_SECONDS: int = 600  # 10 minutes
+    FLOW_DEFAULT_RETRY_COUNT: int = 1
+    FLOW_EXECUTION_PAGE_LIMIT: int = 50
+    # Stale execution cleanup thresholds (hours)
+    FLOW_STALE_PENDING_HOURS: int = (
+        2  # PENDING executions older than this will be recovered
+    )
+    FLOW_STALE_RUNNING_HOURS: int = (
+        3  # RUNNING executions older than this will be marked FAILED
+    )
+
+    # Circuit breaker configuration
+    CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures
+    CIRCUIT_BREAKER_RESET_TIMEOUT: int = 60  # Try to recover after 60 seconds
 
     # Service extension module (empty = disabled)
     SERVICE_EXTENSION: str = ""
@@ -256,9 +318,8 @@ class Settings(BaseSettings):
 
     # Default team configuration for each mode
     # Format: "name#namespace" (namespace is optional, defaults to "default")
-    # Example: "通用助手#default" or "Code Assistant"
-    DEFAULT_TEAM_CHAT: str = ""  # Default team for chat mode
-    DEFAULT_TEAM_CODE: str = ""  # Default team for code mode
+    DEFAULT_TEAM_CHAT: str = "wegent-chat#default"  # Default team for chat mode
+    DEFAULT_TEAM_CODE: str = "wegent-notebook#default"  # Default team for code mode
     DEFAULT_TEAM_KNOWLEDGE: str = ""  # Default team for knowledge mode
 
     # JSON configuration for MCP servers (similar to Claude Desktop format)
