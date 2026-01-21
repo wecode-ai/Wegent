@@ -268,6 +268,37 @@ class DocumentService:
             user_id=user_id,
         )
 
+    async def delete_chunk(
+        self,
+        knowledge_id: str,
+        doc_ref: str,
+        chunk_index: int,
+        user_id: Optional[int] = None,
+    ) -> Dict:
+        """
+        Delete a specific chunk from storage.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            doc_ref: Document reference ID
+            chunk_index: Index of the chunk to delete
+            user_id: Optional user ID for per_user index strategy
+
+        Returns:
+            Deletion result dict with:
+                - doc_ref: Document reference ID
+                - chunk_index: Deleted chunk index
+                - status: Deletion status ('deleted' or 'not_found')
+        """
+        # Run in thread pool to avoid uvloop conflicts
+        return await asyncio.to_thread(
+            self.storage_backend.delete_chunk,
+            knowledge_id=knowledge_id,
+            doc_ref=doc_ref,
+            chunk_index=chunk_index,
+            user_id=user_id,
+        )
+
     async def list_documents(
         self,
         knowledge_id: str,

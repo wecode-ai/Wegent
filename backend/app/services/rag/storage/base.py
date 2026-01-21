@@ -314,6 +314,27 @@ class BaseStorageBackend(ABC):
         pass
 
     @abstractmethod
+    def delete_chunk(
+        self, knowledge_id: str, doc_ref: str, chunk_index: int, **kwargs
+    ) -> Dict:
+        """
+        Delete a specific chunk from storage.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            doc_ref: Document reference ID
+            chunk_index: Index of the chunk to delete
+            **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
+
+        Returns:
+            Deletion result dict with:
+                - doc_ref: Document reference ID
+                - chunk_index: Deleted chunk index
+                - status: Deletion status ('deleted' or 'not_found')
+        """
+        pass
+
+    @abstractmethod
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
         Get document details.

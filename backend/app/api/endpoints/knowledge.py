@@ -7,6 +7,7 @@ API endpoints for knowledge base and document management.
 """
 
 import asyncio
+import copy
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,6 +16,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.dependencies import get_db
 from app.core import security
@@ -1449,6 +1451,7 @@ def get_document_chunks(
 def delete_document_chunk(
     document_id: int,
     chunk_index: int,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1457,6 +1460,9 @@ def delete_document_chunk(
 
     Available for all documents that have been indexed with chunk storage.
     Also removes the chunk from vector storage.
+
+    Note: chunk_index is a stable identifier - remaining chunks are NOT re-indexed
+    after deletion to maintain consistency with vector storage.
     """
     from app.models.knowledge import KnowledgeDocument
 
@@ -1479,29 +1485,33 @@ def delete_document_chunk(
             detail="Not authorized to modify this document",
         )
 
-    # Get chunks data
-    chunks_data = document.chunks or {}
+    # Get chunks data - use deep copy to ensure SQLAlchemy detects the change
+    original_chunks_data = document.chunks or {}
 
     # Check for validation error
-    if "error" in chunks_data:
+    if "error" in original_chunks_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot delete chunks from a document with indexing errors",
         )
 
     # Check if chunks data is available
-    if not chunks_data or ("items" not in chunks_data and "chunks" not in chunks_data):
+    if not original_chunks_data or (
+        "items" not in original_chunks_data and "chunks" not in original_chunks_data
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No chunks data available for this document",
         )
 
     # Support both new format (items) and legacy format (chunks)
-    is_new_format = "items" in chunks_data
-    all_chunks = chunks_data.get("items", chunks_data.get("chunks", []))
+    is_new_format = "items" in original_chunks_data
+    all_chunks = original_chunks_data.get(
+        "items", original_chunks_data.get("chunks", [])
+    )
     chunk_index_key = "index" if is_new_format else "chunk_index"
 
-    # Find and remove chunk
+    # Find and remove chunk (do NOT re-index remaining chunks)
     chunk_found = False
     new_chunks = []
     for chunk in all_chunks:
@@ -1516,24 +1526,62 @@ def delete_document_chunk(
             detail=f"Chunk with index {chunk_index} not found",
         )
 
-    # Re-index remaining chunks
-    for idx, chunk in enumerate(new_chunks):
-        chunk[chunk_index_key] = idx
+    # Create a new dict to ensure SQLAlchemy detects the change
+    # (JSON fields don't track in-place mutations by default)
+    new_chunks_data = copy.deepcopy(original_chunks_data)
 
-    # Update document chunks based on format
+    # Update document chunks based on format (keep original indices)
     if is_new_format:
-        chunks_data["items"] = new_chunks
-        chunks_data["total_count"] = len(new_chunks)
+        new_chunks_data["items"] = new_chunks
+        new_chunks_data["total_count"] = len(new_chunks)
     else:
-        chunks_data["chunks"] = new_chunks
-        chunks_data["total_chunks"] = len(new_chunks)
-    document.chunks = chunks_data
+        new_chunks_data["chunks"] = new_chunks
+        new_chunks_data["total_chunks"] = len(new_chunks)
+
+    # Assign the new dict to trigger SQLAlchemy change detection
+    document.chunks = new_chunks_data
+    # Also explicitly mark as modified to be extra safe
+    flag_modified(document, "chunks")
 
     db.commit()
 
-    # TODO: Also remove chunk from vector storage
-    # This would require knowledge of the retriever configuration
-    # For now, we only update the database
+    # Delete chunk from vector storage in background
+    # Get retrieval config from knowledge base
+    spec = kb.json.get("spec", {})
+    retrieval_config = spec.get("retrievalConfig")
+
+    if retrieval_config:
+        retriever_name = retrieval_config.get("retriever_name")
+        retriever_namespace = retrieval_config.get("retriever_namespace", "default")
+
+        if retriever_name:
+            # Determine index_owner_user_id for per_user index strategy
+            if kb.namespace == "default":
+                index_owner_user_id = current_user.id
+            else:
+                # Group KB - use creator's user_id for shared index
+                index_owner_user_id = kb.user_id
+
+            # Schedule vector storage deletion in background
+            background_tasks.add_task(
+                _delete_chunk_from_vector_storage,
+                knowledge_base_id=str(document.kind_id),
+                document_id=document_id,
+                chunk_index=chunk_index,
+                retriever_name=retriever_name,
+                retriever_namespace=retriever_namespace,
+                user_id=current_user.id,
+                index_owner_user_id=index_owner_user_id,
+            )
+            logger.info(
+                f"Scheduled vector storage deletion for chunk {chunk_index} "
+                f"from document {document_id}"
+            )
+    else:
+        logger.warning(
+            f"No retrieval_config found for KB {document.kind_id}, "
+            f"skipping vector storage deletion for chunk {chunk_index}"
+        )
 
     logger.info(
         f"Deleted chunk {chunk_index} from document {document_id}, "
@@ -1546,3 +1594,97 @@ def delete_document_chunk(
         status="deleted",
         remaining_chunks=len(new_chunks),
     )
+
+
+def _delete_chunk_from_vector_storage(
+    knowledge_base_id: str,
+    document_id: int,
+    chunk_index: int,
+    retriever_name: str,
+    retriever_namespace: str,
+    user_id: int,
+    index_owner_user_id: int,
+):
+    """
+    Background task to delete a chunk from vector storage.
+
+    This is a synchronous function that creates its own event loop to run
+    the async deletion code. This is necessary because FastAPI's BackgroundTasks
+    runs tasks in a thread pool, which doesn't have an event loop.
+
+    Args:
+        knowledge_base_id: Knowledge base ID
+        document_id: Document ID (used as doc_ref)
+        chunk_index: Index of the chunk to delete
+        retriever_name: Retriever name
+        retriever_namespace: Retriever namespace
+        user_id: User ID who triggered the deletion
+        index_owner_user_id: User ID for per_user index strategy
+    """
+    logger.info(
+        f"Background task started: deleting chunk {chunk_index} from document {document_id} "
+        f"in knowledge base {knowledge_base_id}"
+    )
+
+    # Create a new database session for the background task
+    db = SessionLocal()
+    try:
+        # Get retriever from database
+        retriever_crd = retriever_kinds_service.get_retriever(
+            db=db,
+            user_id=user_id,
+            name=retriever_name,
+            namespace=retriever_namespace,
+        )
+
+        if not retriever_crd:
+            logger.error(
+                f"Retriever {retriever_name} (namespace: {retriever_namespace}) not found"
+            )
+            return
+
+        # Create storage backend from retriever
+        storage_backend = create_storage_backend(retriever_crd)
+        logger.info(f"Created storage backend: {type(storage_backend).__name__}")
+
+        # Create document service
+        doc_service = DocumentService(storage_backend=storage_backend)
+
+        # Delete chunk from vector storage
+        # Use index_owner_user_id for per_user index strategy
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(
+                doc_service.delete_chunk(
+                    knowledge_id=knowledge_base_id,
+                    doc_ref=str(document_id),
+                    chunk_index=chunk_index,
+                    user_id=index_owner_user_id,
+                )
+            )
+        finally:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
+
+        if result.get("status") == "deleted":
+            logger.info(
+                f"Successfully deleted chunk {chunk_index} from vector storage "
+                f"for document {document_id}"
+            )
+        else:
+            logger.warning(
+                f"Chunk {chunk_index} not found in vector storage for document {document_id}"
+            )
+
+    except Exception as e:
+        logger.error(
+            f"Failed to delete chunk {chunk_index} from vector storage "
+            f"for document {document_id}: {str(e)}",
+            exc_info=True,
+        )
+    finally:
+        db.close()
+        logger.info(
+            f"Background task completed: chunk deletion for document {document_id}"
+        )

@@ -323,6 +323,70 @@ class QdrantBackend(BaseStorageBackend):
             "status": "deleted",
         }
 
+    def delete_chunk(
+        self, knowledge_id: str, doc_ref: str, chunk_index: int, **kwargs
+    ) -> Dict:
+        """
+        Delete a specific chunk from Qdrant.
+
+        Uses delete_nodes with metadata filters to remove the chunk
+        with matching doc_ref and chunk_index.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            doc_ref: Document reference ID (doc_xxx format)
+            chunk_index: Index of the chunk to delete
+            **kwargs: Additional parameters (e.g., user_id for per_user strategy)
+
+        Returns:
+            Deletion result dict
+        """
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
+        vector_store = self.create_vector_store(collection_name)
+
+        # Build filters to match the specific chunk
+        filters = self._build_chunk_filters(knowledge_id, doc_ref, chunk_index)
+
+        # Get nodes first to check if chunk exists
+        nodes = vector_store.get_nodes(filters=filters)
+
+        if not nodes:
+            return {
+                "doc_ref": doc_ref,
+                "chunk_index": chunk_index,
+                "status": "not_found",
+            }
+
+        # Delete the chunk using LlamaIndex API
+        vector_store.delete_nodes(filters=filters)
+
+        return {
+            "doc_ref": doc_ref,
+            "chunk_index": chunk_index,
+            "status": "deleted",
+        }
+
+    def _build_chunk_filters(self, knowledge_id: str, doc_ref: str, chunk_index: int):
+        """
+        Build metadata filters for specific chunk lookup.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            doc_ref: Document reference ID (doc_xxx format)
+            chunk_index: Index of the chunk
+
+        Returns:
+            MetadataFilters object for filtering by knowledge_id, doc_ref, and chunk_index
+        """
+        return MetadataFilters(
+            filters=[
+                ExactMatchFilter(key="knowledge_id", value=knowledge_id),
+                ExactMatchFilter(key="doc_ref", value=doc_ref),
+                ExactMatchFilter(key="chunk_index", value=chunk_index),
+            ],
+            condition="and",
+        )
+
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
         Get document details from Qdrant using LlamaIndex API.

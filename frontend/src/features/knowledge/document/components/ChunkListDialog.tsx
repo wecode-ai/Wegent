@@ -5,12 +5,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { AlertCircle, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -115,7 +110,7 @@ export function ChunkListDialog({
       <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>
-            {t('document.chunks.title', { name: document?.name || '' })}
+            {t('document.document.chunks.title', { name: document?.name || '' })}
           </DialogTitle>
         </DialogHeader>
 
@@ -124,7 +119,7 @@ export function ChunkListDialog({
           <div className="flex items-center gap-2 p-3 bg-warning/10 text-warning rounded-lg text-sm">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
             <span>
-              {t('document.chunks.skippedWarning', {
+              {t('document.document.chunks.skippedWarning', {
                 elements: skippedElements.join(', '),
               })}
             </span>
@@ -144,7 +139,7 @@ export function ChunkListDialog({
             </div>
           ) : chunks.length === 0 ? (
             <div className="flex items-center justify-center py-12 text-text-muted">
-              {t('document.chunks.empty')}
+              {t('document.document.chunks.empty')}
             </div>
           ) : (
             chunks.map(chunk => (
@@ -156,13 +151,11 @@ export function ChunkListDialog({
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium">#{chunk.chunk_index + 1}</span>
-                    <span className="text-xs text-text-muted">
-                      {chunk.token_count} tokens
-                    </span>
+                    <span className="text-xs text-text-muted">{chunk.token_count} tokens</span>
                     {chunk.forced_split && (
                       <span className="text-xs text-warning flex items-center gap-1">
                         <AlertCircle className="w-3 h-3" />
-                        {t('document.chunks.forcedSplit')}
+                        {t('document.document.chunks.forcedSplit')}
                       </span>
                     )}
                   </div>
@@ -172,7 +165,11 @@ export function ChunkListDialog({
                       size="sm"
                       onClick={() => toggleExpand(chunk.chunk_index)}
                       aria-expanded={expandedChunks.has(chunk.chunk_index)}
-                      aria-label={expandedChunks.has(chunk.chunk_index) ? t('common:actions.collapse') : t('common:actions.expand')}
+                      aria-label={
+                        expandedChunks.has(chunk.chunk_index)
+                          ? t('common:actions.collapse')
+                          : t('common:actions.expand')
+                      }
                     >
                       {expandedChunks.has(chunk.chunk_index) ? (
                         <ChevronUp className="w-4 h-4" />
@@ -213,7 +210,7 @@ export function ChunkListDialog({
         {totalPages > 1 && (
           <div className="flex items-center justify-between pt-4 border-t border-border">
             <span className="text-sm text-text-muted">
-              {t('document.chunks.pagination', {
+              {t('document.document.chunks.pagination', {
                 current: page,
                 total: totalPages,
                 count: total,

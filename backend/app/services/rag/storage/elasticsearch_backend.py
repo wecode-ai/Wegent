@@ -357,6 +357,89 @@ class ElasticsearchBackend(BaseStorageBackend):
             "status": "deleted",
         }
 
+    def delete_chunk(
+        self, knowledge_id: str, doc_ref: str, chunk_index: int, **kwargs
+    ) -> Dict:
+        """
+        Delete a specific chunk from Elasticsearch.
+
+        Uses native Elasticsearch delete_by_query API for reliable deletion
+        with metadata filters to remove the chunk with matching doc_ref and chunk_index.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            doc_ref: Document reference ID (doc_xxx format)
+            chunk_index: Index of the chunk to delete
+            **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
+
+        Returns:
+            Deletion result dict
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        index_name = self.get_index_name(knowledge_id, **kwargs)
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+
+        # Build query to match the specific chunk using native ES query
+        # Use term queries for exact matching on keyword and numeric fields
+        query = {
+            "bool": {
+                "must": [
+                    {"term": {"metadata.knowledge_id.keyword": knowledge_id}},
+                    {"term": {"metadata.doc_ref.keyword": doc_ref}},
+                    {"term": {"metadata.chunk_index": chunk_index}},
+                ]
+            }
+        }
+
+        logger.info(
+            f"[Elasticsearch] Deleting chunk: index={index_name}, "
+            f"knowledge_id={knowledge_id}, doc_ref={doc_ref}, chunk_index={chunk_index}"
+        )
+
+        try:
+            # First check if the chunk exists
+            search_result = es_client.search(
+                index=index_name, query=query, size=1, _source=False
+            )
+
+            if search_result["hits"]["total"]["value"] == 0:
+                logger.warning(
+                    f"[Elasticsearch] Chunk not found: doc_ref={doc_ref}, chunk_index={chunk_index}"
+                )
+                return {
+                    "doc_ref": doc_ref,
+                    "chunk_index": chunk_index,
+                    "status": "not_found",
+                }
+
+            # Delete the chunk using delete_by_query
+            delete_result = es_client.delete_by_query(
+                index=index_name, query=query, refresh=True
+            )
+
+            deleted_count = delete_result.get("deleted", 0)
+            logger.info(
+                f"[Elasticsearch] Deleted {deleted_count} chunk(s): "
+                f"doc_ref={doc_ref}, chunk_index={chunk_index}"
+            )
+
+            return {
+                "doc_ref": doc_ref,
+                "chunk_index": chunk_index,
+                "deleted_count": deleted_count,
+                "status": "deleted" if deleted_count > 0 else "not_found",
+            }
+
+        except Exception as e:
+            logger.error(
+                f"[Elasticsearch] Failed to delete chunk: doc_ref={doc_ref}, "
+                f"chunk_index={chunk_index}, error={str(e)}"
+            )
+            raise
+
     def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
         Get document details from Elasticsearch using LlamaIndex API.
