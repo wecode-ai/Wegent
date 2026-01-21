@@ -946,12 +946,15 @@ class DockerExecutor(Executor):
                 }
 
             # Get container port
-            port = self._get_container_port(container_name)
+            port, error_msg = self._get_container_port(container_name)
             if not port:
-                logger.error(f"Could not find port for container {container_name}")
+                logger.error(
+                    f"Could not find port for container {container_name}: {error_msg}"
+                )
                 return {
                     "status": "failed",
-                    "error_msg": f"Could not find port for container {container_name}",
+                    "error_msg": error_msg
+                    or f"Could not find port for container {container_name}",
                 }
 
             # Call the executor's cancel API
@@ -1060,11 +1063,12 @@ class DockerExecutor(Executor):
             Dict with status and base_url (e.g., http://localhost:8080)
         """
         try:
-            port = self._get_container_port(executor_name)
+            port, error_msg = self._get_container_port(executor_name)
             if not port:
                 return {
                     "status": "failed",
-                    "error_msg": f"Container {executor_name} port not available",
+                    "error_msg": error_msg
+                    or f"Container {executor_name} port not available",
                 }
 
             return {
