@@ -75,9 +75,11 @@ def _setup_fastapi_instrumentation(app: Any, logger: logging.Logger) -> None:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-        from shared.telemetry.config import (get_excluded_urls_regex,
-                                             get_http_capture_settings,
-                                             get_otel_config)
+        from shared.telemetry.config import (
+            get_excluded_urls_regex,
+            get_http_capture_settings,
+            get_otel_config,
+        )
 
         # Get HTTP capture settings
         capture_settings = get_http_capture_settings()
@@ -300,8 +302,7 @@ def _setup_sqlalchemy_instrumentation(
 ) -> None:
     """Setup SQLAlchemy instrumentation for tracing database queries."""
     try:
-        from opentelemetry.instrumentation.sqlalchemy import \
-            SQLAlchemyInstrumentor
+        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
         if engine is None:
             logger.warning(
@@ -839,8 +840,9 @@ def _setup_requests_instrumentation(logger: logging.Logger) -> None:
 def _setup_system_metrics_instrumentation(logger: logging.Logger) -> None:
     """Setup system metrics instrumentation for CPU, memory, etc."""
     try:
-        from opentelemetry.instrumentation.system_metrics import \
-            SystemMetricsInstrumentor
+        from opentelemetry.instrumentation.system_metrics import (
+            SystemMetricsInstrumentor,
+        )
 
         SystemMetricsInstrumentor().instrument()
         logger.info("✓ System metrics instrumentation enabled")

@@ -4,7 +4,7 @@ from typing import Optional
 
 import click
 
-from ..client import WegentClient, APIError
+from ..client import APIError, WegentClient
 from ..config import get_namespace
 from ..output import format_describe
 

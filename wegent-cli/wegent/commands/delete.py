@@ -6,7 +6,7 @@ from typing import List, Optional
 import click
 import yaml
 
-from ..client import WegentClient, APIError
+from ..client import APIError, WegentClient
 from ..config import get_namespace
 from .apply import load_resources_from_file
 
@@ -14,9 +14,13 @@ from .apply import load_resources_from_file
 @click.command("delete")
 @click.argument("kind", required=False)
 @click.argument("name", required=False)
-@click.option("-f", "--filename", multiple=True, help="File(s) containing resources to delete")
+@click.option(
+    "-f", "--filename", multiple=True, help="File(s) containing resources to delete"
+)
 @click.option("-n", "--namespace", default=None, help="Namespace")
-@click.option("--all", "delete_all", is_flag=True, help="Delete all resources of this kind")
+@click.option(
+    "--all", "delete_all", is_flag=True, help="Delete all resources of this kind"
+)
 @click.option("-y", "--yes", is_flag=True, help="Skip confirmation")
 @click.pass_context
 def delete_cmd(

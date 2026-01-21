@@ -989,9 +989,7 @@ class TaskOperationsMixin:
                             exc_info=exc,
                         )
             except Exception:
-                logger.exception(
-                    "[delete_task] Error checking cleanup task status"
-                )
+                logger.exception("[delete_task] Error checking cleanup task status")
 
         # Try to get the running event loop
         try:
@@ -1029,6 +1027,4 @@ class TaskOperationsMixin:
                         "[delete_task] Cannot cleanup memories: no running event loop"
                     )
             except Exception as e:
-                logger.warning(
-                    "[delete_task] Failed to schedule memory cleanup: %s", e
-                )
+                logger.warning("[delete_task] Failed to schedule memory cleanup: %s", e)

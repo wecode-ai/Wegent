@@ -58,7 +58,10 @@ def _do_oidc_login(api_server: str, username: str) -> dict:
             timeout=30,
         )
         if response.status_code != 200:
-            return {"success": False, "error": f"Failed to initialize OIDC login: {response.text}"}
+            return {
+                "success": False,
+                "error": f"Failed to initialize OIDC login: {response.text}",
+            }
 
         data = response.json()
         auth_url = data.get("auth_url")
@@ -108,7 +111,9 @@ def _do_oidc_login(api_server: str, username: str) -> dict:
 
                 # Show progress indicator
                 if (attempt + 1) % 15 == 0:
-                    remaining = (POLL_MAX_ATTEMPTS - attempt - 1) * POLL_INTERVAL_SECONDS
+                    remaining = (
+                        POLL_MAX_ATTEMPTS - attempt - 1
+                    ) * POLL_INTERVAL_SECONDS
                     click.echo(f"  Still waiting... ({remaining}s remaining)")
 
             except requests.exceptions.RequestException:
@@ -234,7 +239,9 @@ def login_cmd(username: str, password: str, server: str, method: str):
 
         except requests.exceptions.ConnectionError:
             click.echo(
-                click.style(f"Error: Failed to connect to server: {api_server}", fg="red"),
+                click.style(
+                    f"Error: Failed to connect to server: {api_server}", fg="red"
+                ),
                 err=True,
             )
             raise SystemExit(1)
@@ -262,7 +269,9 @@ def login_cmd(username: str, password: str, server: str, method: str):
             raise SystemExit(1)
 
 
-def _save_login_config(server: str, api_server: str, token: str, auth_method: str, username: str):
+def _save_login_config(
+    server: str, api_server: str, token: str, auth_method: str, username: str
+):
     """Save login configuration to file."""
     config = load_config()
     config["token"] = token

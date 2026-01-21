@@ -17,13 +17,14 @@ import threading
 from contextlib import asynccontextmanager
 
 import uvicorn
-# Import the shared logger
-from shared.logger import setup_logger
-from shared.telemetry.config import get_otel_config
 
 from executor_manager.services.sandbox import get_sandbox_manager
 from routers.routers import app  # Import the FastAPI app defined in routes.py
 from scheduler.scheduler import TaskScheduler
+
+# Import the shared logger
+from shared.logger import setup_logger
+from shared.telemetry.config import get_otel_config
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -57,8 +58,9 @@ async def lifespan(app):
             logger.info("OpenTelemetry initialized successfully")
 
             # Apply instrumentation
-            from shared.telemetry.instrumentation import \
-                setup_opentelemetry_instrumentation
+            from shared.telemetry.instrumentation import (
+                setup_opentelemetry_instrumentation,
+            )
 
             setup_opentelemetry_instrumentation(app, logger)
         except Exception as e:

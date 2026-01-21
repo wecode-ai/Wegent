@@ -17,15 +17,15 @@ from agno.agent import RunEvent
 from agno.db.sqlite import SqliteDb
 from agno.team import Team
 from agno.team.team import TeamRunEvent
-from shared.logger import setup_logger
-from shared.models.task import ExecutionResult, ThinkingStep
-from shared.status import TaskStatus
-from shared.telemetry.decorators import add_span_event, trace_async
 
 from executor.agents.base import Agent
 from executor.config.config import DEBUG_RUN, EXECUTOR_ENV
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
+from shared.logger import setup_logger
+from shared.models.task import ExecutionResult, ThinkingStep
+from shared.status import TaskStatus
+from shared.telemetry.decorators import add_span_event, trace_async
 
 from .config_utils import ConfigManager
 from .mcp_manager import MCPManager
@@ -356,8 +356,10 @@ class AgnoAgent(Agent):
                 # Copy ContextVars before creating new event loop
                 # ContextVars don't automatically propagate to new event loops
                 try:
-                    from shared.telemetry.context import (copy_context_vars,
-                                                          restore_context_vars)
+                    from shared.telemetry.context import (
+                        copy_context_vars,
+                        restore_context_vars,
+                    )
 
                     saved_context = copy_context_vars()
                 except ImportError:

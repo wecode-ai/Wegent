@@ -4,8 +4,12 @@
 
 """Common utilities and base classes for executor_manager services."""
 
-from executor_manager.common.config import (RedisConfig, RetryConfig,
-                                            TimeoutConfig, get_config)
+from executor_manager.common.config import (
+    RedisConfig,
+    RetryConfig,
+    TimeoutConfig,
+    get_config,
+)
 from executor_manager.common.redis_factory import RedisClientFactory
 from executor_manager.common.singleton import SingletonMeta
 

@@ -15,6 +15,7 @@ from claude_agent_sdk.types import (
     ToolUseBlock,
     UserMessage,
 )
+
 from shared.logger import setup_logger
 from shared.models.task import ExecutionResult
 from shared.status import TaskStatus
@@ -25,7 +26,6 @@ from shared.utils.sensitive_data_masker import mask_sensitive_data
 # SPDX-License-Identifier: Apache-2.0
 
 # -*- coding: utf-8 -*-
-
 
 
 logger = setup_logger("claude_response_processor")

@@ -14,8 +14,7 @@ import os
 from typing import Dict, Optional
 
 from opentelemetry import context, trace
-from opentelemetry.trace.propagation.tracecontext import \
-    TraceContextTextMapPropagator
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 logger = logging.getLogger(__name__)
 

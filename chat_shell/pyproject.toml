@@ -125,6 +125,8 @@ force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
 skip = [".venv", "venv"]
+skip_gitignore = true
+known_first_party = ["chat_shell", "shared"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

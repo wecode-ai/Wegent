@@ -16,7 +16,7 @@ import os
 CONTAINER_OWNER = "executor_manager"
 
 # Docker host configuration
-DEFAULT_DOCKER_HOST = os.getenv("DOCKER_HOST_ADDR","host.docker.internal")
+DEFAULT_DOCKER_HOST = os.getenv("DOCKER_HOST_ADDR", "host.docker.internal")
 DOCKER_SOCKET_PATH = "/var/run/docker.sock"
 
 # API configuration

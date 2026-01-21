@@ -8,7 +8,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
-from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -24,6 +23,7 @@ from app.services.adapters.shell_utils import (
     get_shells_by_names_batch,
 )
 from app.services.base import BaseService
+from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
 
 class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):

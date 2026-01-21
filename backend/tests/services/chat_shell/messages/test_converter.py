@@ -6,11 +6,12 @@ import base64
 import io
 from unittest.mock import patch
 
+from PIL import Image
+
 from chat_shell.messages.converter import (
     MAX_IMAGE_SIZE_BYTES,
     MessageConverter,
 )
-from PIL import Image
 
 
 def create_test_image(width, height, color="red"):

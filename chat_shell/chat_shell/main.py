@@ -29,15 +29,15 @@ from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-
-# Import telemetry config (always available)
-from shared.telemetry.config import get_otel_config
 from starlette.responses import StreamingResponse
 
 from chat_shell import __version__
 from chat_shell.core.config import settings
 from chat_shell.core.logging import setup_logging
 from chat_shell.storage import StorageProvider, StorageType, create_storage_provider
+
+# Import telemetry config (always available)
+from shared.telemetry.config import get_otel_config
 
 # Initialize logging at module level
 setup_logging()
@@ -309,6 +309,7 @@ def create_app(
         # Add OpenTelemetry span attributes if enabled
         if otel_config.enabled:
             from opentelemetry import trace
+
             from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():

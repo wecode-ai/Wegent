@@ -11,11 +11,11 @@ Task callback handler module, responsible for handling task callbacks
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 from executor.callback.callback_client import CallbackClient
-from shared.status import TaskStatus
 from shared.logger import setup_logger
+from shared.status import TaskStatus
 
 # Use the shared logger setup function
 logger = setup_logger("task_callback_handler")
@@ -65,14 +65,14 @@ def send_status_callback(
             executor_namespace=executor_namespace,
             task_type=task_type,
         )
-        
+
         if result and result.get("status") == TaskStatus.SUCCESS.value:
             logger.info(f"Sent task '{status}' status callback successfully")
         else:
             logger.error(
                 f"Failed to send '{status}' status callback: {result.get('error_msg')}"
             )
-        
+
         return result
     except Exception as e:
         error_msg = f"Failed to send '{status}' status callback: {e}"
