@@ -220,6 +220,7 @@ async def _stream_response(
         table_contexts = []
         task_data = None
         history_limit = None  # For subscription tasks
+        auth_token = ""  # JWT token for API authentication
 
         if request.metadata:
             task_id = getattr(request.metadata, "task_id", 0) or 0
@@ -248,6 +249,7 @@ async def _stream_response(
             table_contexts = getattr(request.metadata, "table_contexts", None) or []
             task_data = getattr(request.metadata, "task_data", None)
             history_limit = getattr(request.metadata, "history_limit", None)
+            auth_token = getattr(request.metadata, "auth_token", None) or ""
         # Merge skill configs from tools and metadata
         all_skill_configs = skill_configs + skill_configs_from_meta
 
@@ -290,6 +292,7 @@ async def _stream_response(
             table_contexts=table_contexts,
             task_data=task_data,
             mcp_servers=mcp_servers,
+            auth_token=auth_token,
         )
 
         logger.info(

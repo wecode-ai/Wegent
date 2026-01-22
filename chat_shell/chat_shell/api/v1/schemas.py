@@ -232,6 +232,11 @@ class Metadata(BaseModel):
     )
     # Task data for MCP tools
     task_data: Optional[dict] = Field(None, description="Task data for MCP tools")
+    # Authentication
+    auth_token: Optional[str] = Field(
+        None,
+        description="JWT token for API authentication (e.g., attachment upload/download)",
+    )
 
 
 class AttachmentConfig(BaseModel):
@@ -283,7 +288,7 @@ class ResponseRequest(BaseModel):
 
     # Generation parameters
     temperature: float = Field(0.7, ge=0.0, le=2.0, description="Sampling temperature")
-    max_tokens: int = Field(4096, ge=1, description="Max output tokens")
+    max_tokens: int = Field(32768, ge=1, description="Max output tokens")
 
     # Input (flexible format)
     input: InputConfig = Field(..., description="Input configuration")

@@ -101,6 +101,11 @@ class ChatRequest:
     # Extra tools to add
     extra_tools: list = field(default_factory=list)
 
+    # Authentication
+    auth_token: str = (
+        ""  # JWT token for API authentication (e.g., attachment upload/download)
+    )
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -139,6 +144,7 @@ class ChatRequest:
             "task_data": self.task_data,
             "extra_tools": self.extra_tools,
             "mcp_servers": self.mcp_servers,
+            "auth_token": self.auth_token,
         }
 
 

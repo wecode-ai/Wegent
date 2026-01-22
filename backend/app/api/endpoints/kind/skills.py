@@ -74,6 +74,7 @@ class UnifiedSkillResponse(BaseModel):
     bindShells: Optional[List[str]] = None  # Shell types this skill is compatible with
     is_active: bool
     is_public: bool
+    user_id: int  # ID of the user who uploaded this skill
     created_at: Any
     updated_at: Any
 
@@ -556,14 +557,12 @@ def list_unified_skills(
         else:
             # Query all user's groups (excluding default)
             user_groups = get_user_groups(db, current_user.id)
-            namespaces_to_query = [
-                (g.name, False) for g in user_groups if g.name != "default"
-            ]
+            namespaces_to_query = [(g, False) for g in user_groups if g != "default"]
     else:  # scope == "all"
         # Query personal + all user's groups
         user_groups = get_user_groups(db, current_user.id)
         namespaces_to_query = [("default", True)] + [
-            (g.name, False) for g in user_groups if g.name != "default"
+            (g, False) for g in user_groups if g != "default"
         ]
 
     # Query skills from all relevant namespaces
@@ -598,6 +597,7 @@ def list_unified_skills(
                         "bindShells": skill.spec.bindShells,
                         "is_active": True,
                         "is_public": False,
+                        "user_id": int(skill.metadata.labels.get("user_id", 0)),
                         "created_at": None,
                         "updated_at": None,
                     }
@@ -834,7 +834,56 @@ def delete_skill(
     """
     Delete Skill.
 
+    Permission rules:
+    - Users can delete their own skills
+    - Group Owners/Maintainers can delete any skill in their group
+    - System admins can delete any skill
+
     Returns 400 error if the Skill is referenced by any Ghost.
     """
-    skill_kinds_service.delete_skill(db=db, skill_id=skill_id, user_id=current_user.id)
+    from app.services.group_permission import get_effective_role_in_group
+
+    # First, get the skill to check its namespace and owner
+    skill_kind = (
+        db.query(Kind)
+        .filter(
+            Kind.id == skill_id,
+            Kind.kind == "Skill",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if not skill_kind:
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    # Check permissions
+    can_delete = False
+
+    # 1. User can delete their own skills
+    if skill_kind.user_id == current_user.id:
+        can_delete = True
+
+    # 2. System admin can delete any skill
+    elif current_user.role == "admin":
+        can_delete = True
+
+    # 3. Group admin (Owner/Maintainer) can delete any skill in their group
+    elif skill_kind.namespace != "default":
+        user_role = get_effective_role_in_group(
+            db, current_user.id, skill_kind.namespace
+        )
+        if user_role in ["Owner", "Maintainer"]:
+            can_delete = True
+
+    if not can_delete:
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to delete this skill",
+        )
+
+    # Use the original user_id for deletion to bypass the service-level check
+    skill_kinds_service.delete_skill(
+        db=db, skill_id=skill_id, user_id=skill_kind.user_id
+    )
     return None

@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     CHAT_API_TIMEOUT_SECONDS: int = 300
 
     # Tool calling flow limits
-    CHAT_TOOL_MAX_REQUESTS: int = 10
+    CHAT_TOOL_MAX_REQUESTS: int = 30
     CHAT_TOOL_MAX_TIME_SECONDS: float = 60.0
 
     # Group chat history configuration

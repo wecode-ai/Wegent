@@ -118,7 +118,7 @@ class LangChainModelFactory:
                 ),
                 "anthropic_api_url": cfg.get("base_url") or None,
                 "temperature": kw.get("temperature", 1.0),
-                "max_tokens": kw.get("max_tokens", 4096),
+                "max_tokens": kw.get("max_tokens", 32768),
                 "streaming": kw.get("streaming", False),
                 # Enable prompt caching for Anthropic models (90% cost reduction on cached tokens)
                 # Merge user-provided headers with the prompt-caching beta header
