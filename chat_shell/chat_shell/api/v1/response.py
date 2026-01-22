@@ -515,6 +515,9 @@ async def _stream_response(
                     index=source.get("index"),
                     title=source.get("title", "Unknown"),
                     kb_id=source.get("kb_id"),
+                    document_id=source.get("document_id"),
+                    chunk_index=source.get("chunk_index"),
+                    content_preview=source.get("content_preview"),
                     url=source.get("url"),
                     snippet=source.get("snippet"),
                 )

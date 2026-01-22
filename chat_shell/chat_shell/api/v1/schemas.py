@@ -414,6 +414,15 @@ class SourceItem(BaseModel):
     index: Optional[int] = Field(None, description="Source index number (1, 2, 3...)")
     title: str = Field(..., description="Source title/document name")
     kb_id: Optional[int] = Field(None, description="Knowledge base ID")
+    document_id: Optional[int] = Field(
+        None, description="Document ID (knowledge_documents.id)"
+    )
+    chunk_index: Optional[int] = Field(
+        None, description="Chunk index (corresponds to chunks.items[].index)"
+    )
+    content_preview: Optional[str] = Field(
+        None, description="Chunk content preview (first 100 characters)"
+    )
     url: Optional[str] = Field(None, description="Source URL (for web sources)")
     snippet: Optional[str] = Field(None, description="Content snippet")
 

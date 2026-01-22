@@ -16,6 +16,7 @@ import katex from 'katex'
 import { Check, Copy, Code, ChevronDown, ChevronUp } from 'lucide-react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import type { SourceReference } from '@/types/socket'
 
 import 'katex/dist/katex.min.css'
 
@@ -38,6 +39,10 @@ interface EnhancedMarkdownProps {
   /** Custom components to override default rendering */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   components?: Record<string, React.ComponentType<any>>
+  /** Source references for citation markers */
+  sources?: SourceReference[]
+  /** Callback when a citation marker is clicked */
+  onCitationClick?: (index: number, sources: SourceReference[]) => void
 }
 
 /**
@@ -355,6 +360,91 @@ function preprocessLatexSyntax(text: string): string {
 }
 
 /**
+ * Parse text and replace citation markers [n] with clickable buttons
+ * Only replaces markers that have a corresponding source reference
+ */
+function parseCitations(
+  text: string,
+  sources: SourceReference[] | undefined,
+  onCitationClick?: (index: number, sources: SourceReference[]) => void
+): React.ReactNode {
+  if (!sources || sources.length === 0 || !onCitationClick) {
+    return text
+  }
+
+  // Get all valid indices from sources
+  const validIndices = new Set(sources.map(s => s.index))
+
+  // Pattern to match citation markers like [1], [2], [12], etc.
+  const citationPattern = /\[(\d+)\]/g
+
+  const parts: React.ReactNode[] = []
+  let lastIndex = 0
+  let match
+  let hasMatches = false
+
+  while ((match = citationPattern.exec(text)) !== null) {
+    const citationIndex = parseInt(match[1], 10)
+
+    // Only create a clickable link if this index exists in sources
+    if (validIndices.has(citationIndex)) {
+      hasMatches = true
+
+      // Add text before the citation
+      if (match.index > lastIndex) {
+        parts.push(text.slice(lastIndex, match.index))
+      }
+
+      // Add the clickable citation button
+      parts.push(
+        <button
+          key={`citation-${match.index}-${citationIndex}`}
+          onClick={() => onCitationClick(citationIndex, sources)}
+          className="inline-flex items-center justify-center font-mono text-xs text-primary hover:text-primary-dark hover:bg-primary/10 px-0.5 rounded cursor-pointer transition-colors"
+          title={sources.find(s => s.index === citationIndex)?.title || `Reference ${citationIndex}`}
+        >
+          [{citationIndex}]
+        </button>
+      )
+
+      lastIndex = match.index + match[0].length
+    }
+  }
+
+  // If no citations were found, return plain text
+  if (!hasMatches) {
+    return text
+  }
+
+  // Add remaining text after the last citation
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex))
+  }
+
+  return <>{parts}</>
+}
+
+/**
+ * Process React children to parse citation markers in text nodes
+ */
+function processChildrenForCitations(
+  children: React.ReactNode,
+  sources: SourceReference[] | undefined,
+  onCitationClick?: (index: number, sources: SourceReference[]) => void
+): React.ReactNode {
+  if (!sources || sources.length === 0 || !onCitationClick) {
+    return children
+  }
+
+  return React.Children.map(children, child => {
+    if (typeof child === 'string') {
+      return parseCitations(child, sources, onCitationClick)
+    }
+    return child
+  })
+}
+
+/**
  * Enhanced Markdown renderer with Mermaid diagram and LaTeX math formula support
  *
  * Detects ```mermaid code blocks and renders them using MermaidDiagram component.
@@ -366,6 +456,8 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   source,
   theme,
   components,
+  sources,
+  onCitationClick,
 }: EnhancedMarkdownProps) {
   // Pre-process source to convert \[...\] and \(...\) to dollar syntax
   const processedSource = useMemo(() => preprocessLatexSyntax(source), [source])
@@ -452,9 +544,49 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
       },
       // Override pre to avoid double wrapping
       pre: ({ children }) => <>{children}</>,
+      // Process paragraph children for citation markers
+      p: ({ children, ...props }) => (
+        <p {...props}>{processChildrenForCitations(children, sources, onCitationClick)}</p>
+      ),
+      // Process list item children for citation markers
+      li: ({ children, ...props }) => (
+        <li {...props}>{processChildrenForCitations(children, sources, onCitationClick)}</li>
+      ),
+      // Process heading children for citation markers
+      h1: ({ children, ...props }) => (
+        <h1 {...props}>{processChildrenForCitations(children, sources, onCitationClick)}</h1>
+      ),
+      h2: ({ children, ...props }) => (
+        <h2 {...props}>{processChildrenForCitations(children, sources, onCitationClick)}</h2>
+      ),
+      h3: ({ children, ...props }) => (
+        <h3 {...props}>{processChildrenForCitations(children, sources, onCitationClick)}</h3>
+      ),
+      h4: ({ children, ...props }) => (
+        <h4 {...props}>{processChildrenForCitations(children, sources, onCitationClick)}</h4>
+      ),
+      h5: ({ children, ...props }) => (
+        <h5 {...props}>{processChildrenForCitations(children, sources, onCitationClick)}</h5>
+      ),
+      h6: ({ children, ...props }) => (
+        <h6 {...props}>{processChildrenForCitations(children, sources, onCitationClick)}</h6>
+      ),
+      // Process blockquote children for citation markers
+      blockquote: ({ children, ...props }) => (
+        <blockquote {...props}>
+          {processChildrenForCitations(children, sources, onCitationClick)}
+        </blockquote>
+      ),
+      // Process table cell children for citation markers
+      td: ({ children, ...props }) => (
+        <td {...props}>{processChildrenForCitations(children, sources, onCitationClick)}</td>
+      ),
+      th: ({ children, ...props }) => (
+        <th {...props}>{processChildrenForCitations(children, sources, onCitationClick)}</th>
+      ),
       ...components,
     }),
-    [components, theme]
+    [components, theme, sources, onCitationClick]
   )
 
   // Configure remark/rehype plugins based on content

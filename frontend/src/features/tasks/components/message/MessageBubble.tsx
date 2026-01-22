@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { memo, useState } from 'react'
+import React, { memo, useState, useCallback } from 'react'
 import type {
   TaskDetail,
   Team,
@@ -39,6 +39,7 @@ import StreamingWaitIndicator from './StreamingWaitIndicator'
 import BubbleTools, { CopyButton, EditButton } from './BubbleTools'
 import InlineMessageEdit from './InlineMessageEdit'
 import { SourceReferences } from '../chat/SourceReferences'
+import { SourceChunkDialog } from '../chat/SourceChunkDialog'
 import CollapsibleMessage from './CollapsibleMessage'
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api'
 import type { SourceReference } from '@/types/socket'
@@ -297,6 +298,17 @@ const MessageBubble = memo(
         }),
     })
 
+    // State for citation click handling
+    const [citationDialogOpen, setCitationDialogOpen] = useState(false)
+    const [selectedCitationIndex, setSelectedCitationIndex] = useState(1)
+    const messageSources = msg.sources || msg.result?.sources || []
+
+    // Callback when citation marker [n] is clicked in the markdown content
+    const handleCitationClick = useCallback((index: number) => {
+      setSelectedCitationIndex(index)
+      setCitationDialogOpen(true)
+    }, [])
+
     // Determine if this is a user-type message (for styling purposes)
     const isUserTypeMessage = msg.type === 'user'
 
@@ -503,6 +515,8 @@ const MessageBubble = memo(
         <EnhancedMarkdown
           source={normalizedResult}
           theme={theme}
+          sources={messageSources}
+          onCitationClick={handleCitationClick}
           components={
             paragraphAction
               ? {
@@ -582,7 +596,16 @@ const MessageBubble = memo(
           <CollapsibleMessage content={normalizedResult} enabled={shouldEnableCollapse}>
             {markdownContent}
           </CollapsibleMessage>
-          <SourceReferences sources={msg.sources || msg.result?.sources || []} />
+          <SourceReferences sources={messageSources} />
+          {/* Citation dialog for viewing chunk details when clicking [n] in markdown */}
+          {messageSources.length > 0 && (
+            <SourceChunkDialog
+              open={citationDialogOpen}
+              onOpenChange={setCitationDialogOpen}
+              sources={messageSources}
+              initialSourceIndex={selectedCitationIndex}
+            />
+          )}
           <BubbleTools
             contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`}
             onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
@@ -1300,6 +1323,8 @@ const MessageBubble = memo(
               <EnhancedMarkdown
                 source={contentToRender}
                 theme={theme}
+                sources={messageSources}
+                onCitationClick={handleCitationClick}
                 components={{
                   a: ({ href, children }) => {
                     if (!href) {
@@ -1318,7 +1343,16 @@ const MessageBubble = memo(
                 }}
               />
               {/* Show copy and download buttons during streaming */}
-              <SourceReferences sources={msg.sources || msg.result?.sources || []} />
+              <SourceReferences sources={messageSources} />
+              {/* Citation dialog for viewing chunk details when clicking [n] in markdown */}
+              {messageSources.length > 0 && (
+                <SourceChunkDialog
+                  open={citationDialogOpen}
+                  onOpenChange={setCitationDialogOpen}
+                  sources={messageSources}
+                  initialSourceIndex={selectedCitationIndex}
+                />
+              )}
               <BubbleTools
                 contentToCopy={contentToRender}
                 onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
