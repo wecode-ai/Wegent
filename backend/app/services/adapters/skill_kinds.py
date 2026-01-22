@@ -695,7 +695,10 @@ class SkillKindsService:
         metadata = ObjectMeta(
             name=kind.name,
             namespace=kind.namespace,
-            labels={"id": str(kind.id)},  # Store database ID in labels
+            labels={
+                "id": str(kind.id),
+                "user_id": str(kind.user_id),
+            },  # Store database ID and user_id in labels
         )
         return Skill(
             apiVersion=kind.json.get("apiVersion", "agent.wecode.io/v1"),
