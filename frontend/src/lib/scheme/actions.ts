@@ -77,11 +77,6 @@ export function initializeActionMappings(): void {
       const type = params.type as string
       const id = params.id as string
 
-      if (!type || !id) {
-        console.warn('[SchemeURL] share requires type and id parameters')
-        return
-      }
-
       // Dispatch event to open share dialog
       const event = new CustomEvent('wegent:open-dialog', {
         detail: {
@@ -92,8 +87,13 @@ export function initializeActionMappings(): void {
       window.dispatchEvent(event)
     },
     requireAuth: true,
-    description: 'Open share dialog',
-    examples: ['wegent://action/share?type=task&id=123', 'wegent://action/share?type=team&id=456'],
+    description: 'Generate and copy share link (uses current task if id not provided)',
+    examples: [
+      'wegent://action/share',
+      'wegent://action/share?type=task',
+      'wegent://action/share?type=task&id=123',
+      'wegent://action/share?type=team&id=456',
+    ],
   })
 
   // Export chat action
@@ -102,11 +102,6 @@ export function initializeActionMappings(): void {
     handler: (context: SchemeHandlerContext) => {
       const { params } = context
       const taskId = params.taskId as string
-
-      if (!taskId) {
-        console.warn('[SchemeURL] export-chat requires taskId parameter')
-        return
-      }
 
       // Dispatch event to trigger chat export
       const event = new CustomEvent('wegent:export', {
@@ -118,8 +113,8 @@ export function initializeActionMappings(): void {
       window.dispatchEvent(event)
     },
     requireAuth: true,
-    description: 'Export chat history',
-    examples: ['wegent://action/export-chat?taskId=123'],
+    description: 'Export chat history (uses current task if taskId not provided)',
+    examples: ['wegent://action/export-chat', 'wegent://action/export-chat?taskId=123'],
   })
 
   // Export task action
@@ -128,11 +123,6 @@ export function initializeActionMappings(): void {
     handler: (context: SchemeHandlerContext) => {
       const { params } = context
       const taskId = params.taskId as string
-
-      if (!taskId) {
-        console.warn('[SchemeURL] export-task requires taskId parameter')
-        return
-      }
 
       // Dispatch event to trigger task export
       const event = new CustomEvent('wegent:export', {
@@ -144,8 +134,8 @@ export function initializeActionMappings(): void {
       window.dispatchEvent(event)
     },
     requireAuth: true,
-    description: 'Export task details',
-    examples: ['wegent://action/export-task?taskId=123'],
+    description: 'Export task details (uses current task if taskId not provided)',
+    examples: ['wegent://action/export-task', 'wegent://action/export-task?taskId=123'],
   })
 
   // Export code action
@@ -155,11 +145,6 @@ export function initializeActionMappings(): void {
       const { params } = context
       const taskId = params.taskId as string
       const fileId = params.fileId as string
-
-      if (!taskId) {
-        console.warn('[SchemeURL] export-code requires taskId parameter')
-        return
-      }
 
       // Dispatch event to trigger code export
       const event = new CustomEvent('wegent:export', {
@@ -172,8 +157,9 @@ export function initializeActionMappings(): void {
       window.dispatchEvent(event)
     },
     requireAuth: true,
-    description: 'Export code file',
+    description: 'Export code file (uses current task if taskId not provided)',
     examples: [
+      'wegent://action/export-code',
       'wegent://action/export-code?taskId=123',
       'wegent://action/export-code?taskId=123&fileId=456',
     ],

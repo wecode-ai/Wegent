@@ -5,7 +5,7 @@
 'use client'
 
 import React, { memo, useMemo, useState, useCallback } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
@@ -486,12 +486,39 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     return plugins
   }, [hasMath])
 
+  /**
+   * react-markdown sanitizes URLs by default and will drop unknown protocols.
+   * We allow the custom `wegent:` scheme for deep links like `wegent://open/chat`.
+   *
+   * Security: keep a strict allowlist to avoid `javascript:`/`data:` injection.
+   */
+  const urlTransform = useCallback((url: string) => {
+    const trimmed = url.trim()
+
+    // Relative URLs (including anchors) are safe to keep.
+    const protocolMatch = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.exec(trimmed)
+    if (!protocolMatch) {
+      return trimmed
+    }
+
+    const protocol = protocolMatch[0].toLowerCase()
+    const allowedProtocols = new Set(['http:', 'https:', 'mailto:', 'tel:', 'wegent:'])
+    if (allowedProtocols.has(protocol)) {
+      return trimmed
+    }
+
+    // Fallback to react-markdown default for any other cases.
+    // If react-markdown deems it unsafe, it will be sanitized.
+    return defaultUrlTransform(trimmed)
+  }, [])
+
   // Render markdown content
   const renderMarkdown = (content: string) => (
     <ReactMarkdown
       remarkPlugins={remarkPlugins}
       rehypePlugins={rehypePlugins}
       components={defaultComponents}
+      urlTransform={urlTransform}
     >
       {content}
     </ReactMarkdown>

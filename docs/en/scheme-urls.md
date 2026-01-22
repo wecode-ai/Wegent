@@ -49,27 +49,20 @@ Open creation/edit dialogs.
 | `wegent://form/add-repository` | Open add repository dialog | ✅ |
 
 ### Actions (`wegent://action/*`)
+### Actions (`wegent://action/*`)
 
 Execute operations.
 
-| Scheme URL | Description | Parameters | Auth Required |
-|------------|-------------|------------|---------------|
-| `wegent://action/send-message` | Send message automatically | `text`, `team` (optional) | ✅ |
-| `wegent://action/prefill-message` | Prefill message input | `text`, `team` (optional) | ✅ |
-| `wegent://action/share` | Open share dialog | `type`, `id` | ✅ |
-| `wegent://action/export-chat` | Export chat history | `taskId` | ✅ |
-| `wegent://action/export-task` | Export task details | `taskId` | ✅ |
-| `wegent://action/export-code` | Export code file | `taskId`, `fileId` (optional) | ✅ |
+| Scheme URL | Description | Parameters | Auth Required | Implementation |
+|------------|-------------|------------|---------------|----------------|
+| `wegent://action/send-message` | Send message automatically | `text`, `team` (optional) | ✅ | Dispatches event to chat input |
+| `wegent://action/prefill-message` | Prefill message input | `text`, `team` (optional) | ✅ | Dispatches event to chat input |
+| `wegent://action/share` | Generate and copy share link | `type` (optional), `id` (optional) | ✅ | Generates share link and copies to clipboard. Uses current task if id not provided |
+| `wegent://action/export-chat` | Export chat via share link | `taskId` (optional) | ✅ | Generates share link and copies to clipboard. Uses current task if taskId not provided |
+| `wegent://action/export-task` | Export task via share link | `taskId` (optional) | ✅ | Generates share link and copies to clipboard. Uses current task if taskId not provided |
+| `wegent://action/export-code` | Export code via share link | `taskId` (optional), `fileId` (optional) | ✅ | Generates share link and copies to clipboard. Uses current task if taskId not provided |
 
-### Modals (`wegent://modal/*`)
-
-Open selector dialogs.
-
-| Scheme URL | Description | Auth Required |
-|------------|-------------|---------------|
-| `wegent://modal/model-selector` | Open model selector | ✅ |
-| `wegent://modal/team-selector` | Open agent selector | ✅ |
-| `wegent://modal/repository-selector` | Open repository selector | ✅ |
+**Note:** If `taskId` or `id` parameters are not provided, the system will automatically use the currently open task. Export actions generate a shareable link that can be used to view and export the task content. The link is automatically copied to the clipboard.
 
 ## Usage
 

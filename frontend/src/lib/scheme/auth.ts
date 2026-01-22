@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { userApis } from '@/apis/user'
 import type { SchemeHandlerContext } from './types'
 
 /**
@@ -10,18 +11,19 @@ import type { SchemeHandlerContext } from './types'
  * @returns true if authenticated, false otherwise (silently fails)
  */
 export function checkAuth(context: SchemeHandlerContext): boolean {
-  // Check if user is authenticated
-  // In Next.js, we'll check this via the user context
-  if (!context.user) {
-    console.warn(
-      '[SchemeURL] Authentication required for:',
-      context.parsed.type,
-      context.parsed.path
-    )
-    return false
+  // Prefer explicit user context when available.
+  if (context.user) {
+    return true
   }
 
-  return true
+  // Fallback: if UserProvider is not mounted on this page, still allow auth-required
+  // scheme URLs when a valid token exists.
+  if (typeof window !== 'undefined' && userApis.isAuthenticated()) {
+    return true
+  }
+
+  console.warn('[SchemeURL] Authentication required for:', context.parsed.type, context.parsed.path)
+  return false
 }
 
 /**

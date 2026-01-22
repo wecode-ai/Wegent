@@ -56,20 +56,13 @@ wegent://{type}/{path}?{params}
 |------------|------|------|----------|
 | `wegent://action/send-message` | 自动发送消息 | `text`, `team` (可选) | ✅ |
 | `wegent://action/prefill-message` | 预填充消息输入 | `text`, `team` (可选) | ✅ |
-| `wegent://action/share` | 打开分享对话框 | `type`, `id` | ✅ |
-| `wegent://action/export-chat` | 导出对话历史 | `taskId` | ✅ |
-| `wegent://action/export-task` | 导出任务详情 | `taskId` | ✅ |
-| `wegent://action/export-code` | 导出代码文件 | `taskId`, `fileId` (可选) | ✅ |
+| `wegent://action/share` | 生成并复制分享链接 | `type` (可选), `id` (可选) | ✅ |
+| `wegent://action/export-chat` | 通过分享链接导出对话 | `taskId` (可选) | ✅ |
+| `wegent://action/export-task` | 通过分享链接导出任务 | `taskId` (可选) | ✅ |
+| `wegent://action/export-code` | 通过分享链接导出代码 | `taskId` (可选), `fileId` (可选) | ✅ |
 
-### 模态框 (`wegent://modal/*`)
+**注意：** 如果不提供 `taskId` 或 `id` 参数，系统将自动使用当前打开的任务。
 
-打开选择器对话框。
-
-| Scheme URL | 描述 | 需要认证 |
-|------------|------|----------|
-| `wegent://modal/model-selector` | 打开模型选择器 | ✅ |
-| `wegent://modal/team-selector` | 打开智能体选择器 | ✅ |
-| `wegent://modal/repository-selector` | 打开代码仓库选择器 | ✅ |
 
 ## 使用方法
 

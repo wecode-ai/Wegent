@@ -4,10 +4,14 @@
 
 'use client'
 
-import React from 'react'
+import React, { useCallback } from 'react'
+import { useRouter } from 'next/navigation'
+
 import ImagePreview from '@/components/common/ImagePreview'
 import LinkCard from '@/components/common/LinkCard'
 import AttachmentCard from '@/components/common/AttachmentCard'
+import { useUser } from '@/features/common/UserContext'
+import { handleSchemeURL } from '@/lib/scheme'
 import { isImageUrl, detectUrls } from '@/utils/url-detector'
 
 /**
@@ -49,6 +53,18 @@ interface SmartLinkProps {
  * other constrained containers. All links are rendered as simple styled links.
  */
 export function SmartLink({ href, children }: SmartLinkProps) {
+  const router = useRouter()
+  const { user } = useUser()
+
+  const handleClick = useCallback(
+    (e: React.MouseEvent<HTMLAnchorElement>) => {
+      if (!href.startsWith('wegent://')) return
+      e.preventDefault()
+      handleSchemeURL(href, router, user)
+    },
+    [href, router, user]
+  )
+
   // Check if this is an attachment download URL
   // Matches: /api/attachments/{id}/download
   const attachmentUrlMatch = href.match(/^\/api\/attachments\/(\d+)\/download$/)
@@ -57,6 +73,16 @@ export function SmartLink({ href, children }: SmartLinkProps) {
     const attachmentId = parseInt(attachmentUrlMatch[1], 10)
     // Render as attachment card
     return <AttachmentCard attachmentId={attachmentId} />
+  }
+
+  // In-app scheme URLs (wegent://*) should be handled by the scheme system,
+  // not by the browser's external protocol handler.
+  if (href.startsWith('wegent://')) {
+    return (
+      <a href={href} onClick={handleClick} className="text-primary hover:underline">
+        {children}
+      </a>
+    )
   }
 
   // For non-absolute HTTP(S) URLs (relative links, anchors, mailto:, tel:, etc.),
@@ -139,6 +165,11 @@ export function createSmartMarkdownComponents(options?: { enableImagePreview?: b
         const attachmentId = parseInt(attachmentUrlMatch[1], 10)
         // Render as attachment card
         return <AttachmentCard attachmentId={attachmentId} />
+      }
+
+      // In-app scheme URLs (wegent://*) should be handled by the scheme system.
+      if (href.startsWith('wegent://')) {
+        return <SmartLink href={href}>{children}</SmartLink>
       }
 
       // For non-absolute HTTP(S) URLs (anchors, relative paths, mailto, tel, etc.)
