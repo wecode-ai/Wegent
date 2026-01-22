@@ -14,6 +14,7 @@ import ErrorBoundary from '@/features/common/ErrorBoundary'
 import ServiceWorkerRegistration from '@/components/ServiceWorkerRegistration'
 import TelemetryInit from '@/components/TelemetryInit'
 import RuntimeConfigInit from '@/components/RuntimeConfigInit'
+import SchemeURLInit from '@/components/SchemeURLInit'
 import { Toaster } from '@/components/ui/toaster'
 import { Toaster as SonnerToaster } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -44,6 +45,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="font-sans antialiased bg-base text-text-primary" suppressHydrationWarning>
         <ServiceWorkerRegistration />
         <TelemetryInit />
+        <SchemeURLInit />
         <ErrorBoundary>
           <ThemeProvider>
             <TooltipProvider>
