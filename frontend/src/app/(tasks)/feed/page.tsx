@@ -6,7 +6,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Settings } from 'lucide-react'
+import { Settings, Bell } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
@@ -15,11 +15,12 @@ import {
 } from '@/features/tasks/components/sidebar'
 import { SubscriptionPage as SubscriptionPageContent } from '@/features/feed/components'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTranslation } from '@/hooks/useTranslation'
-import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { subscriptionApis } from '@/apis/subscription'
 
 /**
  * Subscription Page with Sidebar
@@ -66,6 +67,27 @@ export default function SubscriptionPage() {
     router.push('/feed/subscriptions')
   }
 
+  // Handle go to invitations
+  const handleGoToInvitations = () => {
+    router.push('/feed/invitations')
+  }
+
+  // Pending invitations count
+  const [pendingInvitationsCount, setPendingInvitationsCount] = useState(0)
+
+  // Load pending invitations count
+  useEffect(() => {
+    const loadPendingCount = async () => {
+      try {
+        const response = await subscriptionApis.getPendingInvitations({ page: 1, limit: 1 })
+        setPendingInvitationsCount(response.total)
+      } catch (error) {
+        console.error('Failed to load pending invitations count:', error)
+      }
+    }
+    loadPendingCount()
+  }, [])
+
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* Collapsed sidebar floating buttons */}
@@ -96,13 +118,30 @@ export default function SubscriptionPage() {
           <Button
             variant="outline"
             size="sm"
+            onClick={handleGoToInvitations}
+            className="h-9 gap-1.5 relative"
+          >
+            <Bell className="h-4 w-4" />
+            {t('feed:invitations')}
+            {pendingInvitationsCount > 0 && (
+              <Badge
+                variant="error"
+                size="sm"
+                className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] p-0 flex items-center justify-center"
+              >
+                {pendingInvitationsCount}
+              </Badge>
+            )}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             className="h-9 gap-1.5"
             onClick={handleGoToSubscriptions}
           >
             <Settings className="h-4 w-4" />
             {t('feed:feed.manage')}
           </Button>
-          <ThemeToggle />
         </TopNavigation>
 
         {/* Main content area - Subscription page content */}

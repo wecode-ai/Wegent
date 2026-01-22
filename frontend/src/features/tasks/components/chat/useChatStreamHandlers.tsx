@@ -537,6 +537,7 @@ export function useChatStreamHandlers({
             task_id: selectedTaskDetail?.id,
             model_id: modelId,
             force_override_bot_model: forceOverride,
+            force_override_bot_model_type: selectedModel?.type,
             attachment_ids: attachments.map(a => a.id),
             enable_deep_thinking: enableDeepThinking,
             enable_clarification: enableClarification,
@@ -616,6 +617,7 @@ export function useChatStreamHandlers({
       selectedContexts,
       resetContexts,
       selectedModel?.name,
+      selectedModel?.type,
       selectedTaskDetail,
       contextSendMessage,
       forceOverride,
@@ -774,6 +776,7 @@ export function useChatStreamHandlers({
             task_id: selectedTaskDetail?.id,
             model_id: modelId,
             force_override_bot_model: true, // Always force override when using model override
+            force_override_bot_model_type: modelOverride.type,
             attachment_ids: attachmentIds,
             enable_deep_thinking: enableDeepThinking,
             enable_clarification: enableClarification,

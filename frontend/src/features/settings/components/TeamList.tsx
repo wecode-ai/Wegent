@@ -679,7 +679,12 @@ export default function TeamList({
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button variant="primary" onClick={handleOpenWizard} className="gap-2">
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={handleOpenWizard}
+                            className="gap-2"
+                          >
                             <SparklesIcon className="w-4 h-4" />
                             {t('wizard:wizard_button')}
                           </Button>

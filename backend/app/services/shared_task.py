@@ -308,6 +308,7 @@ class SharedTaskService:
         new_team_id: int,
         model_id: Optional[str] = None,
         force_override_bot_model: bool = False,
+        force_override_bot_model_type: Optional[str] = None,
         git_repo_id: Optional[int] = None,
         git_url: Optional[str] = None,
         git_repo: Optional[str] = None,
@@ -492,12 +493,17 @@ class SharedTaskService:
         if task_crd.metadata.labels and "modelId" in task_crd.metadata.labels:
             del task_crd.metadata.labels["modelId"]
 
-        # Remove forceOverrideBotModel from original task as well
+        # Remove forceOverrideBotModel and forceOverrideBotModelType from original task as well
         if (
             task_crd.metadata.labels
             and "forceOverrideBotModel" in task_crd.metadata.labels
         ):
             del task_crd.metadata.labels["forceOverrideBotModel"]
+        if (
+            task_crd.metadata.labels
+            and "forceOverrideBotModelType" in task_crd.metadata.labels
+        ):
+            del task_crd.metadata.labels["forceOverrideBotModelType"]
 
         # Update model configuration in metadata labels if provided by user during import
         if model_id or force_override_bot_model:
@@ -507,6 +513,10 @@ class SharedTaskService:
                 task_crd.metadata.labels["modelId"] = model_id
             if force_override_bot_model:
                 task_crd.metadata.labels["forceOverrideBotModel"] = "true"
+            if force_override_bot_model_type:
+                task_crd.metadata.labels["forceOverrideBotModelType"] = (
+                    force_override_bot_model_type
+                )
 
         # Generate unique task name with timestamp to avoid duplicate key errors
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
@@ -612,6 +622,7 @@ class SharedTaskService:
         team_id: int,
         model_id: Optional[str] = None,
         force_override_bot_model: bool = False,
+        force_override_bot_model_type: Optional[str] = None,
         git_repo_id: Optional[int] = None,
         git_url: Optional[str] = None,
         git_repo: Optional[str] = None,
@@ -687,6 +698,7 @@ class SharedTaskService:
             new_team_id=team_id,
             model_id=model_id,
             force_override_bot_model=force_override_bot_model,
+            force_override_bot_model_type=force_override_bot_model_type,
             git_repo_id=git_repo_id,
             git_url=git_url,
             git_repo=git_repo,
