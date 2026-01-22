@@ -401,6 +401,12 @@ class BackgroundExecutionInDB(BackgroundExecutionBase):
     subscription_display_name: Optional[str] = None
     team_name: Optional[str] = None
     task_type: Optional[str] = None
+    # Permission field - indicates if current user can delete this execution
+    can_delete: bool = Field(
+        False,
+        description="Whether the current user can delete this execution. "
+        "Only the subscription owner can delete executions.",
+    )
 
     class Config:
         from_attributes = True

@@ -20,8 +20,7 @@ class TestRunningTaskTracker:
 
         module._running_task_tracker = None
 
-        from executor_manager.services.task_heartbeat_manager import \
-            RunningTaskTracker
+        from executor_manager.services.task_heartbeat_manager import RunningTaskTracker
 
         RunningTaskTracker._instance = None
         yield
@@ -35,8 +34,7 @@ class TestRunningTaskTracker:
             "executor_manager.common.redis_factory.RedisClientFactory.get_sync_client",
             return_value=mock_redis_client,
         )
-        from executor_manager.services.task_heartbeat_manager import \
-            RunningTaskTracker
+        from executor_manager.services.task_heartbeat_manager import RunningTaskTracker
 
         tracker = RunningTaskTracker()
         tracker._sync_client = mock_redis_client
@@ -50,8 +48,7 @@ class TestRunningTaskTracker:
             "executor_manager.common.redis_factory.RedisClientFactory.get_sync_client",
             return_value=mock_redis_client,
         )
-        from executor_manager.services.task_heartbeat_manager import \
-            RunningTaskTracker
+        from executor_manager.services.task_heartbeat_manager import RunningTaskTracker
 
         instance1 = RunningTaskTracker.get_instance()
         instance2 = RunningTaskTracker.get_instance()
@@ -64,8 +61,9 @@ class TestRunningTaskTracker:
             "executor_manager.common.redis_factory.RedisClientFactory.get_sync_client",
             return_value=mock_redis_client,
         )
-        from executor_manager.services.task_heartbeat_manager import \
-            get_running_task_tracker
+        from executor_manager.services.task_heartbeat_manager import (
+            get_running_task_tracker,
+        )
 
         tracker1 = get_running_task_tracker()
         tracker2 = get_running_task_tracker()

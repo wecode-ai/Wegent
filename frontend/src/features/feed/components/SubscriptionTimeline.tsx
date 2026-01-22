@@ -42,6 +42,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
+import { SmartImage } from '@/components/common/SmartUrlRenderer'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useSubscriptionContext } from '../contexts/subscriptionContext'
 import type { BackgroundExecution, BackgroundExecutionStatus } from '@/types/subscription'
@@ -253,9 +254,13 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
     }
   }
 
-  // Check if execution can be deleted (only terminal states)
-  const canDelete = (status: BackgroundExecutionStatus) => {
-    return status === 'COMPLETED' || status === 'FAILED' || status === 'CANCELLED'
+  // Check if execution can be deleted
+  // Only subscription owner can delete, and only for terminal states
+  const canDelete = (exec: BackgroundExecution) => {
+    const isTerminalState =
+      exec.status === 'COMPLETED' || exec.status === 'FAILED' || exec.status === 'CANCELLED'
+    // Use can_delete from backend if available, otherwise fall back to terminal state check
+    return exec.can_delete !== undefined ? exec.can_delete && isTerminalState : isTerminalState
   }
 
   // Track which execution's summary is expanded
@@ -351,7 +356,7 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
                           {t('feed.view_conversation')}
                         </button>
                       )}
-                      {canDelete(exec.status) && (
+                      {canDelete(exec) && (
                         <button
                           onClick={() => handleDeleteClick(exec)}
                           disabled={deletingId === exec.id}
@@ -369,10 +374,28 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
                   </div>
                   <div className="text-sm prose prose-sm max-w-none dark:prose-invert">
                     {isSummaryExpanded ? (
-                      <EnhancedMarkdown source={exec.result_summary} theme={theme} />
+                      <EnhancedMarkdown
+                        source={exec.result_summary}
+                        theme={theme}
+                        components={{
+                          img: ({ src, alt }) => {
+                            if (!src || typeof src !== 'string') return null
+                            return <SmartImage src={src} alt={alt} />
+                          },
+                        }}
+                      />
                     ) : (
                       <div className="line-clamp-6 overflow-hidden">
-                        <EnhancedMarkdown source={exec.result_summary} theme={theme} />
+                        <EnhancedMarkdown
+                          source={exec.result_summary}
+                          theme={theme}
+                          components={{
+                            img: ({ src, alt }) => {
+                              if (!src || typeof src !== 'string') return null
+                              return <SmartImage src={src} alt={alt} />
+                            },
+                          }}
+                        />
                       </div>
                     )}
                   </div>
@@ -439,8 +462,8 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
                   <ChevronRight className="h-3.5 w-3.5" />
                 </button>
               )}
-              {/* Delete button for terminal state executions */}
-              {canDelete(exec.status) && (
+              {/* Delete button for terminal state executions - only show if user can delete */}
+              {canDelete(exec) && (
                 <button
                   onClick={() => handleDeleteClick(exec)}
                   disabled={deletingId === exec.id}

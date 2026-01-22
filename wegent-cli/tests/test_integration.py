@@ -10,12 +10,11 @@ Environment variables:
 
 import os
 import uuid
+
 import pytest
 from click.testing import CliRunner
-
 from wegent.cli import cli
-from wegent.client import WegentClient, APIError
-
+from wegent.client import APIError, WegentClient
 
 # Skip if not running integration tests
 pytestmark = pytest.mark.integration
@@ -42,10 +41,12 @@ def client(server_url, token):
 @pytest.fixture(scope="module")
 def runner(server_url, token):
     """Create CLI runner with environment."""
-    runner = CliRunner(env={
-        "WEGENT_SERVER": server_url,
-        "WEGENT_TOKEN": token or "",
-    })
+    runner = CliRunner(
+        env={
+            "WEGENT_SERVER": server_url,
+            "WEGENT_TOKEN": token or "",
+        }
+    )
     return runner
 
 
@@ -94,7 +95,11 @@ class TestGhostLifecycle:
         result = runner.invoke(cli, ["get", "ghosts"])
         # Accept success or auth error (401/403)
         if result.exit_code != 0:
-            assert "401" in result.output or "403" in result.output or "Error" in result.output
+            assert (
+                "401" in result.output
+                or "403" in result.output
+                or "Error" in result.output
+            )
 
     def test_list_ghosts_yaml(self, runner):
         """Test listing ghosts in YAML format."""
@@ -109,6 +114,7 @@ class TestGhostLifecycle:
         # Accept success or auth error
         if result.exit_code == 0:
             import json
+
             data = json.loads(result.output)
             assert "items" in data
 
@@ -223,6 +229,7 @@ class TestOutputFormats:
         assert result.exit_code == 0
         # Should be valid YAML
         import yaml
+
         data = yaml.safe_load(result.output)
         assert data["kind"] == "Ghost"
 

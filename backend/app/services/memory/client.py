@@ -20,7 +20,6 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import aiohttp
-from shared.telemetry.decorators import trace_async
 
 from app.core.config import settings
 from app.services.memory.schemas import (
@@ -28,6 +27,7 @@ from app.services.memory.schemas import (
     MemorySearchRequest,
     MemorySearchResponse,
 )
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 

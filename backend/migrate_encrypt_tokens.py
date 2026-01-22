@@ -15,12 +15,12 @@ from typing import List
 # Add parent directory to path to import app modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from shared.utils.crypto import encrypt_git_token, is_token_encrypted
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
 from app.models.user import User
+from shared.utils.crypto import encrypt_git_token, is_token_encrypted
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

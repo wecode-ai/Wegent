@@ -21,10 +21,6 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import socketio
-from shared.telemetry.context import (
-    set_request_context,
-    set_user_context,
-)
 from sqlalchemy.orm import Session
 
 from app.api.ws.context_decorators import auto_task_context
@@ -66,6 +62,10 @@ from app.services.chat.operations import (
 )
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
+from shared.telemetry.context import (
+    set_request_context,
+    set_user_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1376,11 +1376,10 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"success": true} or {"error": "..."}
         """
+        from app.api.ws.events import SkillResponsePayload
         from chat_shell.tools import (
             get_pending_request_registry,
         )
-
-        from app.api.ws.events import SkillResponsePayload
 
         request_id = data.get("request_id")
         skill_name = data.get("skill_name")

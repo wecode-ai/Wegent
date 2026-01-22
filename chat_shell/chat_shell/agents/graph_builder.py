@@ -25,6 +25,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.prebuilt import create_react_agent
 from opentelemetry import trace as otel_trace
+
 from shared.telemetry.decorators import add_span_event, trace_sync
 
 from ..tools.base import ToolRegistry

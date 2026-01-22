@@ -13,10 +13,6 @@ This module provides the WebSocket streaming handler that:
 import logging
 from typing import Any
 
-from chat_shell.agent import AgentConfig, ChatAgent
-from chat_shell.history import get_chat_history
-from chat_shell.tools.events import create_tool_event_handler
-from chat_shell.tools.mcp import load_mcp_tools
 from langchain_core.tools.base import BaseTool
 
 from app.core.config import settings
@@ -26,6 +22,10 @@ from app.services.streaming import (
     StreamingState,
     WebSocketEmitter,
 )
+from chat_shell.agent import AgentConfig, ChatAgent
+from chat_shell.history import get_chat_history
+from chat_shell.tools.events import create_tool_event_handler
+from chat_shell.tools.mcp import load_mcp_tools
 
 from ..config import WebSocketStreamConfig
 
@@ -75,16 +75,16 @@ class WebSocketStreamingHandler:
             namespace: ChatNamespace instance for emitting events
             max_iterations: Max tool loop iterations
         """
-        from chat_shell.tools import WebSearchTool
         from opentelemetry import trace
+
+        from app.core.shutdown import shutdown_manager
+        from app.services.chat.ws_emitter import get_ws_emitter
+        from chat_shell.tools import WebSearchTool
         from shared.telemetry.context import (
             SpanNames,
             set_task_context,
         )
         from shared.telemetry.core import is_telemetry_enabled
-
-        from app.core.shutdown import shutdown_manager
-        from app.services.chat.ws_emitter import get_ws_emitter
 
         subtask_id = config.subtask_id
         task_id = config.task_id

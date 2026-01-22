@@ -6,7 +6,7 @@ from typing import List, Optional
 import click
 import yaml
 
-from ..client import WegentClient, APIError
+from ..client import APIError, WegentClient
 from ..config import get_namespace
 
 
@@ -24,8 +24,16 @@ def load_resources_from_file(filepath: str) -> List[dict]:
 
 
 @click.command("apply")
-@click.option("-f", "--filename", multiple=True, required=True, help="File(s) containing resources")
-@click.option("-n", "--namespace", default=None, help="Override namespace for resources")
+@click.option(
+    "-f",
+    "--filename",
+    multiple=True,
+    required=True,
+    help="File(s) containing resources",
+)
+@click.option(
+    "-n", "--namespace", default=None, help="Override namespace for resources"
+)
 @click.pass_context
 def apply_cmd(
     ctx: click.Context,

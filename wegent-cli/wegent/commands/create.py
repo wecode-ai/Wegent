@@ -5,9 +5,8 @@ from typing import Optional
 import click
 import yaml
 
-from ..client import VALID_KINDS, WegentClient, APIError
+from ..client import VALID_KINDS, APIError, WegentClient
 from ..config import get_namespace
-
 
 # Resource templates
 TEMPLATES = {
@@ -116,6 +115,7 @@ def create_cmd(
 
     # Create resource from template
     import copy
+
     resource = copy.deepcopy(TEMPLATES[normalized_kind])
     resource["metadata"]["name"] = name
     resource["metadata"]["namespace"] = ns

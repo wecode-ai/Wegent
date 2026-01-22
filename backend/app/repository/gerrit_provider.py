@@ -15,14 +15,14 @@ from typing import Any, Dict, List, Optional
 import requests
 from fastapi import HTTPException
 from requests.auth import HTTPBasicAuth, HTTPDigestAuth
-from shared.utils.sensitive_data_masker import mask_string
-from shared.utils.url_util import build_url
 
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.user import User
 from app.repository.interfaces.repository_provider import RepositoryProvider
 from app.schemas.github import Branch, Repository
+from shared.utils.sensitive_data_masker import mask_string
+from shared.utils.url_util import build_url
 
 
 class GerritProvider(RepositoryProvider):

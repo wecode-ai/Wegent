@@ -14,8 +14,7 @@ Configuration via environment variables:
 import os
 from typing import AsyncGenerator, Optional
 
-from sqlalchemy.ext.asyncio import (AsyncEngine, AsyncSession,
-                                    create_async_engine)
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 # Module-level async engine and session factory (lazily initialized)

@@ -19,13 +19,17 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import redis
-from shared.logger import setup_logger
 
 from executor_manager.common.config import get_config
 from executor_manager.common.redis_factory import RedisClientFactory
 from executor_manager.common.singleton import SingletonMeta
-from executor_manager.models.sandbox import (Execution, ExecutionStatus,
-                                             Sandbox, SandboxStatus)
+from executor_manager.models.sandbox import (
+    Execution,
+    ExecutionStatus,
+    Sandbox,
+    SandboxStatus,
+)
+from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 
