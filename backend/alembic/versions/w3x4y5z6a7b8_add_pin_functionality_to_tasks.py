@@ -46,7 +46,7 @@ def upgrade() -> None:
         # Add index on is_pinned for faster sorting queries
         op.execute(
             """
-            CREATE INDEX idx_tasks_is_pinned ON tasks(is_pinned)
+            ALTER TABLE tasks ADD INDEX idx_tasks_is_pinned (is_pinned)
             """
         )
 
@@ -55,7 +55,7 @@ def upgrade() -> None:
         op.execute(
             """
             ALTER TABLE tasks
-            ADD COLUMN pinned_at DATETIME NULL DEFAULT NULL COMMENT 'Time when the task was pinned'
+            ADD COLUMN pinned_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00' COMMENT 'Time when the task was pinned'
             """
         )
 
@@ -63,7 +63,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Remove is_pinned and pinned_at columns from tasks table."""
     # Drop index on is_pinned
-    op.execute("DROP INDEX idx_tasks_is_pinned ON tasks")
+    op.execute("ALTER TABLE tasks DROP INDEX idx_tasks_is_pinned")
 
     # Drop columns
     op.execute("ALTER TABLE tasks DROP COLUMN is_pinned")

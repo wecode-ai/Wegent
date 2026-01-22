@@ -84,8 +84,8 @@ class TaskResource(Base):
     )
     pinned_at = Column(
         DateTime,
-        nullable=True,
-        default=None,
+        nullable=False,
+        default=datetime(1970, 1, 1, 0, 0, 0),
         comment="Time when the task was pinned",
     )
 
