@@ -215,30 +215,34 @@ class SubscriptionService:
         enabled: Optional[bool] = None,
         trigger_type: Optional[SubscriptionTriggerType] = None,
     ) -> Tuple[List[SubscriptionInDB], int]:
-        """List user's Subscriptions with pagination."""
+        """List user's Subscriptions with pagination.
+
+        Note: This method excludes rental subscriptions (is_rental=True).
+        Rental subscriptions should be accessed via the market API.
+        """
         query = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Subscription",
             Kind.is_active == True,
         )
 
+        # Get all subscriptions first to filter by JSON fields
+        all_subscriptions = query.order_by(desc(Kind.updated_at)).all()
+
+        # Filter out rental subscriptions (is_rental=True)
+        subscriptions = [
+            s
+            for s in all_subscriptions
+            if not s.json.get("_internal", {}).get("is_rental", False)
+        ]
+
         # Filter by enabled status if specified
         if enabled is not None:
-            # We need to filter by the _internal.enabled field in JSON
-            # This is a workaround since we store enabled in JSON
-            subscriptions = query.all()
-            filtered = []
-            for s in subscriptions:
-                internal = s.json.get("_internal", {})
-                if internal.get("enabled", True) == enabled:
-                    filtered.append(s)
-            total = len(filtered)
-            subscriptions = filtered[skip : skip + limit]
-        else:
-            total = query.count()
-            subscriptions = (
-                query.order_by(desc(Kind.updated_at)).offset(skip).limit(limit).all()
-            )
+            subscriptions = [
+                s
+                for s in subscriptions
+                if s.json.get("_internal", {}).get("enabled", True) == enabled
+            ]
 
         # Filter by trigger_type if specified
         if trigger_type is not None:
@@ -247,7 +251,9 @@ class SubscriptionService:
                 for s in subscriptions
                 if s.json.get("_internal", {}).get("trigger_type") == trigger_type.value
             ]
-            total = len(subscriptions)
+
+        total = len(subscriptions)
+        subscriptions = subscriptions[skip : skip + limit]
 
         return [self._convert_to_subscription_in_db(s) for s in subscriptions], total
 
@@ -774,6 +780,16 @@ class SubscriptionService:
             subscription_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
         )
 
+        # Get rental-related fields from _internal
+        is_rental = internal.get("is_rental", False)
+        source_subscription_id = internal.get("source_subscription_id")
+        source_subscription_name = internal.get("source_subscription_name")
+        source_subscription_display_name = internal.get(
+            "source_subscription_display_name"
+        )
+        source_owner_username = internal.get("source_owner_username")
+        rental_count = internal.get("rental_count", 0)
+
         return SubscriptionInDB(
             id=subscription.id,
             user_id=subscription.user_id,
@@ -809,6 +825,13 @@ class SubscriptionService:
             followers_count=0,
             is_following=False,
             owner_username=None,
+            # Market rental fields
+            is_rental=is_rental,
+            source_subscription_id=source_subscription_id,
+            source_subscription_name=source_subscription_name,
+            source_subscription_display_name=source_subscription_display_name,
+            source_owner_username=source_owner_username,
+            rental_count=rental_count,
             created_at=subscription.created_at,
             updated_at=subscription.updated_at,
         )

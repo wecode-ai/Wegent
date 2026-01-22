@@ -16,3 +16,6 @@ export { SubscriptionDetailPage } from './SubscriptionDetailPage'
 export { SubscriptionShareDialog } from './SubscriptionShareDialog'
 export { SubscriptionInvitations } from './SubscriptionInvitations'
 export { FollowingSubscriptionList } from './FollowingSubscriptionList'
+
+// Market and rental feature components
+export { RentalSubscriptionList } from './RentalSubscriptionList'

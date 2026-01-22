@@ -34,6 +34,7 @@ from app.api.endpoints.adapter import (
     retrievers,
     shells,
     subscription_follows,
+    subscription_market,
     subscriptions,
     task_knowledge_bases,
     task_members,
@@ -79,6 +80,10 @@ api_router.include_router(
     subscription_follows.invitation_router,
     prefix="/subscription-invitations",
     tags=["subscription-invitations"],
+)
+# Subscription market endpoints (browse, rent, rentals)
+api_router.include_router(
+    subscription_market.router, prefix="/market", tags=["subscription-market"]
 )
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])

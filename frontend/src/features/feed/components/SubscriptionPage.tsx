@@ -10,11 +10,12 @@
  * Supports multiple tabs for extensibility.
  */
 import { useState, useCallback, useEffect } from 'react'
-import { Compass } from 'lucide-react'
+import { Compass, Eye, EyeOff, Store } from 'lucide-react'
 import { SubscriptionProvider, useSubscriptionContext } from '../contexts/subscriptionContext'
 import { SubscriptionTimeline } from './SubscriptionTimeline'
 import { SubscriptionForm } from './SubscriptionForm'
 import { DiscoverPageInline } from './DiscoverPageInline'
+import { MarketPageInline } from './MarketPageInline'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -22,7 +23,7 @@ import { useTranslation } from '@/hooks/useTranslation'
  * Tab configuration for extensibility.
  * Add new tabs here as the feature grows.
  */
-export type FeedTabValue = 'all' | 'discover'
+export type FeedTabValue = 'all' | 'discover' | 'market'
 
 function SubscriptionPageContent() {
   const { t } = useTranslation('feed')
@@ -31,7 +32,8 @@ function SubscriptionPageContent() {
     undefined
   )
   const [activeTab, setActiveTab] = useState<FeedTabValue>('all')
-  const { refreshSubscriptions, refreshExecutions } = useSubscriptionContext()
+  const { refreshSubscriptions, refreshExecutions, showSilentExecutions, setShowSilentExecutions } =
+    useSubscriptionContext()
 
   const handleCreateSubscription = useCallback(() => {
     setIsFormOpen(true)
@@ -108,10 +110,16 @@ function SubscriptionPageContent() {
     }
   }, [])
 
+  const handleRentalSuccess = useCallback(() => {
+    // Refresh subscriptions to show newly rented subscriptions
+    refreshSubscriptions()
+    refreshExecutions()
+  }, [refreshSubscriptions, refreshExecutions])
+
   return (
     <div className="h-full bg-surface/30 flex flex-col">
       {/* Tab navigation */}
-      <div className="border-b border-border px-4 pt-3 bg-base">
+      <div className="border-b border-border px-4 pt-3 bg-base flex items-end justify-between">
         <Tabs value={activeTab} onValueChange={value => setActiveTab(value as FeedTabValue)}>
           <TabsList className="bg-transparent p-0 h-auto gap-4">
             <TabsTrigger
@@ -127,8 +135,34 @@ function SubscriptionPageContent() {
               <Compass className="h-4 w-4" />
               {t('discover')}
             </TabsTrigger>
+            <TabsTrigger
+              value="market"
+              className="px-1 pb-3 pt-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-transparent flex items-center gap-1.5"
+            >
+              <Store className="h-4 w-4" />
+              {t('market.tab')}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
+        {/* Silent executions toggle - only show on "all" tab */}
+        {activeTab === 'all' && (
+          <button
+            onClick={() => setShowSilentExecutions(!showSilentExecutions)}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 mb-1.5 rounded-md text-xs font-medium transition-colors ${
+              showSilentExecutions
+                ? 'bg-primary/10 text-primary'
+                : 'bg-surface text-text-muted hover:text-text-primary hover:bg-surface-hover'
+            }`}
+            title={showSilentExecutions ? t('feed.hide_silent') : t('feed.show_silent')}
+          >
+            {showSilentExecutions ? (
+              <Eye className="h-3.5 w-3.5" />
+            ) : (
+              <EyeOff className="h-3.5 w-3.5" />
+            )}
+            {t('feed.silent_executions')}
+          </button>
+        )}
       </div>
 
       {/* Tab content */}
@@ -139,6 +173,11 @@ function SubscriptionPageContent() {
         {activeTab === 'discover' && (
           <div className="h-full">
             <DiscoverPageInline onInvitationHandled={handleInvitationHandled} />
+          </div>
+        )}
+        {activeTab === 'market' && (
+          <div className="h-full">
+            <MarketPageInline onRentalSuccess={handleRentalSuccess} />
           </div>
         )}
       </div>
