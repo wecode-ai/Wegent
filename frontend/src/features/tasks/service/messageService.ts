@@ -159,11 +159,9 @@ export async function sendMessage(params: {
  * Teams that use external_api execution type (Dify) or Chat Shell typically do not.
  *
  * This function determines requiresWorkspace based on:
- * 1. team.agent_type - 'chat' or 'dify' do not require workspace
- * 2. bot.shell_type - If ANY bot has shell_type that is not 'chat'/'dify', require workspace
- *
- * Note: The actual requiresWorkspace configuration should come from the Shell CRD,
- * but for backward compatibility, we infer it from agent_type/shell_type.
+ * 1. team.requires_workspace - explicit Team-level configuration (highest priority)
+ * 2. team.agent_type - 'chat' or 'dify' do not require workspace
+ * 3. bot.shell_type - If ANY bot has shell_type that is not 'chat'/'dify', require workspace
  *
  * @param team - Team to check
  * @returns true if the team requires a workspace
@@ -171,6 +169,13 @@ export async function sendMessage(params: {
 export function teamRequiresWorkspace(team: Team | null): boolean {
   if (!team) return false
 
+  // Priority 1: Check explicit Team-level configuration
+  // If requires_workspace is explicitly set (true or false), use that value
+  if (team.requires_workspace !== undefined && team.requires_workspace !== null) {
+    return team.requires_workspace
+  }
+
+  // Priority 2: Infer from agent_type and shell_type
   // Chat Shell and Dify agent types do not require workspace
   const agentType = team.agent_type?.toLowerCase()
   if (agentType === 'chat' || agentType === 'dify') {

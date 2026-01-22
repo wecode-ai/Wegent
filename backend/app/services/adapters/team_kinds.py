@@ -176,6 +176,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if icon is not None:
             spec["icon"] = icon
 
+        # Handle requires_workspace - get from obj_in directly
+        requires_workspace = getattr(obj_in, "requires_workspace", None)
+        if requires_workspace is not None:
+            spec["requiresWorkspace"] = requires_workspace
+
         # Create Team JSON
         team_json = {
             "kind": "Team",
@@ -898,6 +903,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if "icon" in update_data:
             team_crd.spec.icon = update_data["icon"]
 
+        # Handle requires_workspace update
+        if "requires_workspace" in update_data:
+            team_crd.spec.requiresWorkspace = update_data["requires_workspace"]
+
         # Save the updated team CRD
         team.json = team_crd.model_dump(mode="json")
         team.updated_at = datetime.now()
@@ -1376,6 +1385,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Get icon from spec
         icon = team_crd.spec.icon
 
+        # Get requires_workspace from spec
+        requires_workspace = team_crd.spec.requiresWorkspace
+
         total_convert_time = time.time() - convert_start
         if total_convert_time > 0.2:
             logger.info(
@@ -1398,6 +1410,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "updated_at": team.updated_at,
             "agent_type": agent_type,  # Add agent_type field
             "icon": icon,  # Add icon field
+            "requires_workspace": requires_workspace,  # Add requires_workspace field
         }
 
     def _convert_to_team_dict_with_cache(
@@ -1570,6 +1583,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Get icon from spec
         icon = team_crd.spec.icon
 
+        # Get requires_workspace from spec
+        requires_workspace = team_crd.spec.requiresWorkspace
+
         return {
             "id": team.id,
             "user_id": team.user_id,
@@ -1586,6 +1602,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "updated_at": team.updated_at,
             "agent_type": agent_type,
             "icon": icon,
+            "requires_workspace": requires_workspace,  # Add requires_workspace field
         }
 
     def _get_bot_summary_with_cache(

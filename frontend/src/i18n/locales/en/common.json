@@ -332,7 +332,9 @@
     "bind_mode_chat": "Chat",
     "bind_mode_code": "Code",
     "bind_mode_required": "Please select at least one bind mode (Chat or Code)",
-    "require_confirmation_tooltip": "When enabled, the task will pause after this stage completes, waiting for user confirmation before proceeding to the next stage"
+    "require_confirmation_tooltip": "When enabled, the task will pause after this stage completes, waiting for user confirmation before proceeding to the next stage",
+    "requires_workspace": "Requires Repository",
+    "requires_workspace_hint": "When enabled, this agent requires a code repository to be selected in code mode before starting a task. When disabled, tasks can start without selecting a repository."
   },
   "team_model": {
     "solo": "Solo",

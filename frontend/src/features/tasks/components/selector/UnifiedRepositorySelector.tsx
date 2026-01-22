@@ -6,8 +6,14 @@
 
 import * as React from 'react'
 import { useState, useEffect, useMemo, useCallback, useContext } from 'react'
-import { FiGithub, FiGitBranch } from 'react-icons/fi'
-import { Check, ChevronDown, ChevronLeft, Loader2 } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  Loader2,
+  GitBranch as GitBranchIcon,
+  FolderGit2,
+} from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
@@ -308,7 +314,7 @@ export default function UnifiedRepositorySelector({
                     'disabled:cursor-not-allowed disabled:opacity-50'
                   )}
                 >
-                  <FiGithub
+                  <FolderGit2
                     className={cn(
                       'w-4 h-4 flex-shrink-0',
                       isNotSelected ? 'text-text-muted' : 'text-primary'
@@ -349,7 +355,7 @@ export default function UnifiedRepositorySelector({
               shouldFilter={false}
             >
               <div className="flex items-center border-b border-border px-3 py-2">
-                <FiGithub className="w-4 h-4 text-text-muted mr-2" />
+                <FolderGit2 className="w-4 h-4 text-text-muted mr-2" />
                 <span className="text-sm font-medium text-text-primary">
                   {t('common:repos.repository')}
                 </span>
@@ -423,7 +429,7 @@ export default function UnifiedRepositorySelector({
                 onClick={handleBackToRepo}
               >
                 <ChevronLeft className="w-4 h-4 text-text-muted mr-1" />
-                <FiGitBranch className="w-4 h-4 text-text-muted mr-2" />
+                <GitBranchIcon className="w-4 h-4 text-text-muted mr-2" />
                 <span className="text-sm font-medium text-text-primary">
                   {t('common:repos.branch')}
                 </span>
