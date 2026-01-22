@@ -46,6 +46,7 @@ jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) => {
       const translations: Record<string, string> = {
+        // keys without namespace prefix (for tasks namespace)
         'branches.search_repository': 'Search repository...',
         'branches.select_repository': 'Select repository',
         'branches.no_match': 'No match found',
@@ -56,6 +57,20 @@ jest.mock('@/hooks/useTranslation', () => ({
         'branches.load_more': 'Load more',
         'actions.refresh': 'Refresh',
         'repos.repository_tooltip': 'Select repository',
+        // keys with common: namespace prefix
+        'common:branches.search_repository': 'Search repository...',
+        'common:branches.select_repository': 'Select repository',
+        'common:branches.no_match': 'No match found',
+        'common:branches.refresh_success': 'Refresh successful',
+        'common:branches.refresh_failed': 'Refresh failed',
+        'common:branches.refreshing': 'Refreshing...',
+        'common:branches.configure_integration': 'Configure Integration',
+        'common:branches.load_more': 'Load more',
+        'common:actions.refresh': 'Refresh',
+        'common:repos.repository_tooltip': 'Select repository',
+        // Quick Start translations
+        'quick_start.label': 'Quick Start',
+        'quick_start.tooltip': 'Run code tasks without selecting a repository',
       }
       return translations[key] || key
     },
