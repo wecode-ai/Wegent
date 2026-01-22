@@ -231,12 +231,23 @@ export async function deleteSkill(skillId: number): Promise<void> {
 
 /**
  * Download a skill ZIP file
+ * @param skillId - Skill ID
+ * @param skillName - Skill name (used for the downloaded file name)
+ * @param namespace - Namespace for group skill lookup (optional; when omitted, backend uses 'default')
  */
-export async function downloadSkill(skillId: number, skillName: string): Promise<void> {
+export async function downloadSkill(
+  skillId: number,
+  skillName: string,
+  namespace?: string
+): Promise<void> {
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
-  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}/download`
+  const queryParams = new URLSearchParams()
+  if (namespace) queryParams.append('namespace', namespace)
+
+  const queryString = queryParams.toString()
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}/download${queryString ? `?${queryString}` : ''}`
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -289,6 +300,7 @@ export interface UnifiedSkill {
   bindShells?: string[]
   is_active: boolean
   is_public: boolean
+  user_id: number // ID of the user who uploaded this skill
   created_at?: string
   updated_at?: string
 }

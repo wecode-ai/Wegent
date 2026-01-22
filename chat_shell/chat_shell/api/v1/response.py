@@ -223,6 +223,7 @@ async def _stream_response(
         table_contexts = []
         task_data = None
         history_limit = None  # For subscription tasks
+        auth_token = ""  # JWT token for API authentication
         is_subscription = False  # For SilentExitTool injection
 
         if request.metadata:
@@ -252,6 +253,7 @@ async def _stream_response(
             table_contexts = getattr(request.metadata, "table_contexts", None) or []
             task_data = getattr(request.metadata, "task_data", None)
             history_limit = getattr(request.metadata, "history_limit", None)
+            auth_token = getattr(request.metadata, "auth_token", None) or ""
             is_subscription = (
                 getattr(request.metadata, "is_subscription", False) or False
             )
@@ -297,6 +299,7 @@ async def _stream_response(
             table_contexts=table_contexts,
             task_data=task_data,
             mcp_servers=mcp_servers,
+            auth_token=auth_token,
             is_subscription=is_subscription,
         )
 

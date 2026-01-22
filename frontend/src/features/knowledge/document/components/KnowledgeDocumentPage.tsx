@@ -109,12 +109,16 @@ export function KnowledgeDocumentPage() {
     name: string
     description?: string
     retrieval_config?: Parameters<typeof personalKb.create>[0]['retrieval_config']
+    summary_enabled?: boolean
+    summary_model_ref?: Parameters<typeof personalKb.create>[0]['summary_model_ref'] | null
   }) => {
     await personalKb.create({
       name: data.name,
       description: data.description,
       namespace: createForGroup || 'default',
       retrieval_config: data.retrieval_config,
+      summary_enabled: data.summary_enabled,
+      summary_model_ref: data.summary_model_ref,
       kb_type: createKbType,
     })
     setShowCreateDialog(false)
