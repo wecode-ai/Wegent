@@ -671,9 +671,11 @@ class ExecutorKindsService(
         Returns:
             Model Kind object or None
         """
+        model_kind = None
+
         if bind_model_type == "public":
             # Explicitly public model - query with user_id = 0
-            return (
+            model_kind = (
                 db.query(Kind)
                 .filter(
                     Kind.user_id == 0,
@@ -684,9 +686,10 @@ class ExecutorKindsService(
                 )
                 .first()
             )
+            return model_kind
         elif bind_model_type == "group":
             # Group model - query without user_id filter
-            return (
+            model_kind = (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "Model",
@@ -700,7 +703,7 @@ class ExecutorKindsService(
             # User's private model - query with the provided user_id
             # When force_override is true, this is the chat user's ID
             # Otherwise, this is the bot's user_id
-            return (
+            model_kind = (
                 db.query(Kind)
                 .filter(
                     Kind.user_id == model_user_id,
@@ -711,13 +714,13 @@ class ExecutorKindsService(
                 )
                 .first()
             )
-        else:
-            # No explicit type - use fallback logic
-            # First try user's private models
+
+        # Final fallback: if not found in any of the above, try public models
+        if not model_kind:
             model_kind = (
                 db.query(Kind)
                 .filter(
-                    Kind.user_id == model_user_id,
+                    Kind.user_id == 0,
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == "default",
@@ -725,20 +728,8 @@ class ExecutorKindsService(
                 )
                 .first()
             )
-            # If not found, try public models
-            if not model_kind:
-                model_kind = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == 0,
-                        Kind.kind == "Model",
-                        Kind.name == model_name,
-                        Kind.namespace == "default",
-                        Kind.is_active.is_(True),
-                    )
-                    .first()
-                )
-            return model_kind
+
+        return model_kind
 
     def _resolve_model_config(
         self,
