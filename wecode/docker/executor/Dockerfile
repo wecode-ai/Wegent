@@ -108,7 +108,7 @@ RUN mkdir -p /usr/share/fonts/truetype/noto && \
         -o /usr/share/fonts/truetype/noto/SourceHanSansSC.ttf || \
      curl -sL "https://fonts.gstatic.com/s/notosanssc/v36/k3kXo84MPvpLmixcA63oeALhL4Gxr9Ov.ttf" \
         -o /usr/share/fonts/truetype/noto/NotoSansSC.ttf) && \
-    fc-cache -f -v
+    fc-cache -f
 
 # Copy standalone binaries from builder
 COPY --from=builder /app/executor/dist/executor /app/executor
