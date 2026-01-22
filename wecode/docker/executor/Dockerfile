@@ -76,7 +76,8 @@ ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 ENV CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY="false"
 
 # Install system packages for document generation (AlmaLinux uses dnf)
-RUN dnf install -y \
+# Set LANG to C to ensure UTF-8 compatible output and prevent encoding errors during build
+RUN LANG=C dnf install -y \
     # LibreOffice for document conversion and PDF operations
     libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress \
     # Document and PDF utilities
