@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-image: registry.api.weibo.com/ci/ci-runner:extend
+image: registry.api.weibo.com/ci/ci-runner:extend-fix-utf8-snapshot
 
 variables:
   K8S_NAMESPACE: ci-deploy-video
