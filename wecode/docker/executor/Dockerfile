@@ -75,23 +75,23 @@ ENV PATH="/usr/local/bin:${PATH}"
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 ENV CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY="false"
 
-# Install system packages for document generation (AlmaLinux uses dnf)
-# Set LANG to C to ensure UTF-8 compatible output and prevent encoding errors during build
-RUN LANG=C dnf install -y \
-    # LibreOffice for document conversion and PDF operations
-    libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress \
-    # Document and PDF utilities
-    poppler-utils pandoc tesseract \
-    # Chromium dependencies for Playwright browser automation
-    atk at-spi2-atk libXcomposite libXdamage libXfixes libXrandr libxkbcommon \
-    && dnf clean all \
-    && rm -rf /var/cache/dnf/*
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 
-# Install Claude marketplace skills and npm packages for document generation
-# Install to /root so it's available in the base image
-RUN claude plugin marketplace add anthropics/skills \
-    && npm install -g pptxgenjs playwright sharp react react-dom react-icons docx pdf-lib \
-    && npx playwright install chromium \
+# Install system packages for document generation (AlmaLinux uses dnf)
+# Use --setopt to reduce memory usage and avoid exit code 139 (SIGSEGV)
+RUN dnf install -y --setopt=install_weak_deps=False --setopt=tsflags=nodocs \
+    libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress \
+    poppler-utils pandoc tesseract \
+    && dnf clean all && rm -rf /var/cache/dnf/*
+
+# Copy Claude skills from local directory (downloaded by prepare_build.sh)
+# Skills are installed to /root/.claude/plugins/skills to match marketplace structure
+COPY wegent-skills/cc-skills/skills /root/.claude/plugins/skills
+
+# Install npm packages for document generation (using China mirror for faster download)
+RUN npm install -g pptxgenjs playwright sharp react react-dom react-icons docx pdf-lib --registry=https://registry.npmmirror.com \
+    && PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright npx playwright install chromium \
     && npm cache clean --force
 
 # Install Python packages for document generation
@@ -101,14 +101,12 @@ RUN pip install python-pptx openpyxl python-docx reportlab Pillow pandas \
     "markitdown[pptx]" defusedxml weasyprint \
     && pip cache purge || true
 
-# Download Chinese fonts for document generation
+# Download Chinese fonts for document generation (from internal mirror)
 RUN mkdir -p /usr/share/fonts/truetype/noto && \
-    (curl -sL "https://github.com/googlefonts/noto-cjk/raw/main/Sans/Variable/TTF/NotoSansCJKsc-VF.ttf" \
+    (curl -sL "http://maven.intra.weibo.com/nexus/service/local/repositories/releases/content/adobe-fonts/NotoSansCJKsc/1.0/NotoSansCJKsc-1.0.ttf" \
         -o /usr/share/fonts/truetype/noto/NotoSansCJKsc.ttf || \
-     curl -sL "https://github.com/adobe-fonts/source-han-sans/raw/release/Variable/TTF/SourceHanSansSC-VF.ttf" \
-        -o /usr/share/fonts/truetype/noto/SourceHanSansSC.ttf || \
-     curl -sL "https://fonts.gstatic.com/s/notosanssc/v36/k3kXo84MPvpLmixcA63oeALhL4Gxr9Ov.ttf" \
-        -o /usr/share/fonts/truetype/noto/NotoSansSC.ttf) && \
+     curl -sL "http://maven.intra.weibo.com/nexus/service/local/repositories/releases/content/adobe-fonts/source-han-sans/1.0/source-han-sans-1.0.ttf" \
+        -o /usr/share/fonts/truetype/noto/SourceHanSansSC.ttf) && \
     fc-cache -f
 
 # Copy standalone binaries from builder
