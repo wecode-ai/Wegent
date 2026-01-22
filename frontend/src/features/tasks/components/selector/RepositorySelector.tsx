@@ -24,7 +24,6 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command'
-import { Switch } from '@/components/ui/switch'
 
 import { truncateMiddle } from '@/utils/stringUtils'
 import { RepositorySelectorProps, RepositorySelectItem } from './types'
