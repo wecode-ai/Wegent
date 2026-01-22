@@ -26,6 +26,35 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Function to get local IP address
+get_local_ip() {
+    # Try to get the primary IP address (not localhost or docker bridge)
+    # Priority: en0 (macOS), eth0 (Linux), fallback to localhost
+    if command -v ifconfig &> /dev/null; then
+        # macOS/BSD style
+        local ip=$(ifconfig | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1' | grep -v '172.17.0.1' | head -n1)
+        if [ -n "$ip" ]; then
+            echo "$ip"
+            return
+        fi
+    fi
+
+    if command -v ip &> /dev/null; then
+        # Linux style
+        local ip=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+')
+        if [ -n "$ip" ]; then
+            echo "$ip"
+            return
+        fi
+    fi
+
+    # Fallback to localhost
+    echo "localhost"
+}
+
+# Get local IP for backend URL (used by executor containers in Docker)
+export BACKEND_API_URL=$(get_local_ip):8000
+
 # Default configuration
 DEFAULT_PORT=8100
 DEFAULT_HOST="0.0.0.0"

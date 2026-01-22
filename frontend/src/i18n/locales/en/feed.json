@@ -74,7 +74,6 @@
   "webhook_url_copied": "Webhook URL copied to clipboard",
   "webhook_secret_copied": "Webhook secret copied to clipboard",
   "copy_failed": "Failed to copy to clipboard",
-
   "webhook_api_usage": "Webhook API Usage",
   "webhook_endpoint": "API Endpoint",
   "webhook_secret_label": "Signing Secret (HMAC-SHA256)",
@@ -110,7 +109,6 @@
   "cancel_execution": "Cancel",
   "cancel_success": "Execution cancelled",
   "cancel_failed": "Failed to cancel execution",
-
   "basic_info": "Basic Info",
   "trigger_settings": "Trigger Settings",
   "prompt_config": "Prompt Config",
@@ -124,7 +122,6 @@
   "loading_branches": "Loading branches...",
   "no_branches": "No branches available",
   "workspace_hint": "Code-type agents require a repository and branch selection",
-
   "model_settings": "Model Settings",
   "select_model": "Select Model",
   "select_model_placeholder": "Use default model",
@@ -133,7 +130,6 @@
   "use_default_model": "Use default model",
   "model_hint": "Optional: Specify a model for task execution. If not selected, the agent's default model will be used",
   "model_required_hint": "The selected agent has no model configured. You must select a model",
-
   "schedule_type": "Schedule Type",
   "schedule_preset": "Common Presets",
   "schedule_hourly": "Every N Hours",
@@ -150,7 +146,6 @@
   "day_of_month": "Day {{day}}",
   "cron_preview": "Cron Expression",
   "timezone_hint": "Timezone",
-
   "weekday_monday": "Monday",
   "weekday_tuesday": "Tuesday",
   "weekday_wednesday": "Wednesday",
@@ -158,7 +153,6 @@
   "weekday_friday": "Friday",
   "weekday_saturday": "Saturday",
   "weekday_sunday": "Sunday",
-
   "weekday_short_mon": "Mon",
   "weekday_short_tue": "Tue",
   "weekday_short_wed": "Wed",
@@ -166,18 +160,15 @@
   "weekday_short_fri": "Fri",
   "weekday_short_sat": "Sat",
   "weekday_short_sun": "Sun",
-
   "schedule_frequency": "Frequency",
   "frequency_hourly": "Hourly",
   "frequency_daily": "Daily",
   "frequency_weekly": "Weekly",
   "frequency_monthly": "Monthly",
   "frequency_custom": "Custom",
-
   "hourly_interval": "Interval (hours)",
   "hourly_interval_hint": "Execute every {{interval}} hour(s)",
   "at_minute_label": "At minute",
-
   "execute_hour": "Hour",
   "execute_minute": "Minute",
   "more_hours": "More",
@@ -186,21 +177,17 @@
   "multi_select_hint": "multi-select",
   "selected_hours": "Selected hours",
   "selected_minutes": "Selected minutes",
-
   "select_weekdays": "Select Days",
   "month_day_select": "Select Day",
   "last_day": "Last Day",
-
   "execution_preview": "Execution Preview",
   "next_run": "Next run",
-
   "advanced_cron_editor": "Advanced: View/Edit cron expression",
   "cron_format_hint": "Format: min hour day month weekday (e.g., 0 9 * * 1-5 = Weekdays at 9 AM)",
   "cron_format_label": "Format",
   "cron_format_parts": "min hour day month weekday",
   "cron_example": "Example: 0 9 * * 1-5 = Weekdays at 9 AM",
   "cron_invalid_expression": "Invalid cron expression",
-
   "preset_every_hour": "Every Hour",
   "preset_every_2_hours": "Every 2 Hours",
   "preset_every_6_hours": "Every 6 Hours",
@@ -211,7 +198,6 @@
   "preset_weekdays_9am": "Weekdays at 9 AM",
   "preset_weekly_monday_9am": "Every Monday at 9 AM",
   "preset_monthly_1st_9am": "1st of Month at 9 AM",
-
   "visibility": "Visibility",
   "visibility_public": "Public",
   "visibility_private": "Private",
@@ -237,7 +223,7 @@
   "share_to_namespace": "Share to Group",
   "share_dialog_title": "Share Subscription",
   "share_dialog_desc": "Invite users or groups to follow this subscription",
-  "invitations": "Invitations",
+  "invitations": "Notifications",
   "invitation_pending": "Pending",
   "invitation_accept": "Accept",
   "invitation_reject": "Reject",
@@ -260,7 +246,6 @@
   "view_conversation": "View Conversation",
   "show_more_history": "Show More",
   "latest_execution": "Latest Execution",
-
   "tabs": {
     "all": "All"
   },

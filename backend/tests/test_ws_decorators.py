@@ -137,6 +137,14 @@ class TestTraceWebSocketEventDecorator:
                     assert attribute_dict["task.id"] == 789
                     assert attribute_dict["team_id"] == 456
                     assert attribute_dict["subtask.id"] == 123
+                    # Verify request body is included as JSON
+                    assert "websocket.request_body" in attribute_dict
+                    import json
+
+                    assert (
+                        json.loads(attribute_dict["websocket.request_body"])
+                        == event_data
+                    )
 
     @pytest.mark.asyncio
     async def test_decorator_handles_none_values_safely(self):
@@ -380,9 +388,11 @@ class TestSetEventDataAttributes:
 
         _set_event_data_attributes(mock_span, event_data)
 
-        # Verify all fields were set
+        # Verify all fields were set (including request body and server IP)
         calls = mock_span.set_attribute.call_args_list
-        assert len(calls) == 3
+        assert (
+            len(calls) == 5
+        )  # task_id, team_id, subtask_id, server.ip, websocket.request_body
 
     def test_handles_missing_fields(self):
         """Test that missing fields are handled gracefully."""
@@ -395,9 +405,9 @@ class TestSetEventDataAttributes:
         # Should not raise exception
         _set_event_data_attributes(mock_span, event_data)
 
-        # Only task_id should be set
+        # task_id, server.ip and websocket.request_body should be set
         calls = mock_span.set_attribute.call_args_list
-        assert len(calls) == 1
+        assert len(calls) == 3  # task_id, server.ip, websocket.request_body
 
     def test_handles_none_values(self):
         """Test that None values are not set."""
@@ -410,8 +420,8 @@ class TestSetEventDataAttributes:
 
         _set_event_data_attributes(mock_span, event_data)
 
-        # Only team_id should be set
+        # team_id, server.ip and websocket.request_body should be set
         calls = mock_span.set_attribute.call_args_list
-        assert len(calls) == 1
+        assert len(calls) == 3  # team_id, server.ip, websocket.request_body
         assert calls[0][0][0] == "team_id"
         assert calls[0][0][1] == 456
