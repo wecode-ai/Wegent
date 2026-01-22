@@ -86,8 +86,8 @@ RUN dnf install -y --setopt=install_weak_deps=False --setopt=tsflags=nodocs \
     && dnf clean all && rm -rf /var/cache/dnf/*
 
 # Copy Claude skills from local directory (downloaded by prepare_build.sh)
-# Skills are installed to /root/.claude/plugins/skills to match marketplace structure
-COPY wegent-skills/cc-skills/skills /root/.claude/plugins/skills
+# Skills are installed to /root/.claude/plugins/marketplaces/anthropic-agent-skills/skills to match marketplace structure
+COPY wegent-skills/cc-skills/skills /root/.claude/plugins/marketplaces/anthropic-agent-skills/skills
 
 # Install npm packages for document generation (using China mirror for faster download)
 RUN npm install -g pptxgenjs playwright sharp react react-dom react-icons docx pdf-lib --registry=https://registry.npmmirror.com \
