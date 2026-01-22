@@ -74,7 +74,6 @@
   "webhook_url_copied": "Webhook URL 已复制到剪贴板",
   "webhook_secret_copied": "Webhook 密钥已复制到剪贴板",
   "copy_failed": "复制到剪贴板失败",
-
   "webhook_api_usage": "Webhook API 使用说明",
   "webhook_endpoint": "API 端点",
   "webhook_secret_label": "签名密钥 (HMAC-SHA256)",
@@ -110,7 +109,6 @@
   "cancel_execution": "取消执行",
   "cancel_success": "执行已取消",
   "cancel_failed": "取消执行失败",
-
   "basic_info": "基本信息",
   "trigger_settings": "触发设置",
   "prompt_config": "Prompt 配置",
@@ -124,7 +122,6 @@
   "loading_branches": "加载分支列表中...",
   "no_branches": "暂无可用分支",
   "workspace_hint": "编程类智能体需要选择代码仓库和分支",
-
   "model_settings": "模型设置",
   "select_model": "选择模型",
   "select_model_placeholder": "使用默认模型",
@@ -133,7 +130,6 @@
   "use_default_model": "使用默认模型",
   "model_hint": "可选：指定执行任务时使用的模型，不选则使用智能体默认模型",
   "model_required_hint": "所选智能体未配置模型，必须选择一个模型",
-
   "schedule_type": "定时类型",
   "schedule_preset": "常用预设",
   "schedule_hourly": "每隔几小时",
@@ -150,7 +146,6 @@
   "day_of_month": "每月 {{day}} 日",
   "cron_preview": "Cron 表达式",
   "timezone_hint": "时区",
-
   "weekday_monday": "星期一",
   "weekday_tuesday": "星期二",
   "weekday_wednesday": "星期三",
@@ -158,7 +153,6 @@
   "weekday_friday": "星期五",
   "weekday_saturday": "星期六",
   "weekday_sunday": "星期日",
-
   "weekday_short_mon": "一",
   "weekday_short_tue": "二",
   "weekday_short_wed": "三",
@@ -166,18 +160,15 @@
   "weekday_short_fri": "五",
   "weekday_short_sat": "六",
   "weekday_short_sun": "日",
-
   "schedule_frequency": "执行频率",
   "frequency_hourly": "每小时",
   "frequency_daily": "每天",
   "frequency_weekly": "每周",
   "frequency_monthly": "每月",
   "frequency_custom": "自定义",
-
   "hourly_interval": "间隔小时数",
   "hourly_interval_hint": "每 {{interval}} 小时执行一次",
   "at_minute_label": "在第几分钟执行",
-
   "execute_hour": "执行小时",
   "execute_minute": "执行分钟",
   "more_hours": "更多",
@@ -186,21 +177,17 @@
   "multi_select_hint": "可多选",
   "selected_hours": "已选小时",
   "selected_minutes": "已选分钟",
-
   "select_weekdays": "选择星期",
   "month_day_select": "选择日期",
   "last_day": "最后一天",
-
   "execution_preview": "执行计划预览",
   "next_run": "下次执行",
-
   "advanced_cron_editor": "高级：查看/编辑 cron 表达式",
   "cron_format_hint": "格式：分 时 日 月 周（如：0 9 * * 1-5 = 工作日每天上午9点）",
   "cron_format_label": "格式",
   "cron_format_parts": "分 时 日 月 周",
   "cron_example": "示例：0 9 * * 1-5 = 工作日每天上午9点",
   "cron_invalid_expression": "无效的 Cron 表达式",
-
   "preset_every_hour": "每小时",
   "preset_every_2_hours": "每 2 小时",
   "preset_every_6_hours": "每 6 小时",
@@ -211,7 +198,6 @@
   "preset_weekdays_9am": "工作日上午 9 点",
   "preset_weekly_monday_9am": "每周一上午 9 点",
   "preset_monthly_1st_9am": "每月 1 日上午 9 点",
-
   "visibility": "可见性",
   "visibility_public": "公开",
   "visibility_private": "私有",
@@ -237,7 +223,7 @@
   "share_to_namespace": "分享给组",
   "share_dialog_title": "分享订阅",
   "share_dialog_desc": "邀请用户或组关注此订阅",
-  "invitations": "邀请",
+  "invitations": "通知",
   "invitation_pending": "待确认",
   "invitation_accept": "接受",
   "invitation_reject": "拒绝",
@@ -271,7 +257,6 @@
   "view_conversation": "查看对话",
   "show_more_history": "展开更多",
   "latest_execution": "最近执行",
-
   "tabs": {
     "all": "全部"
   },
