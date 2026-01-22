@@ -149,10 +149,7 @@ export interface BubbleToolsProps {
   /** Whether regenerate is in progress */
   isRegenerating?: boolean
   /** Optional render prop for custom regenerate button with popover */
-  renderRegenerateButton?: (
-    defaultButton: React.ReactNode,
-    tooltipText: string
-  ) => React.ReactNode
+  renderRegenerateButton?: (defaultButton: React.ReactNode, tooltipText: string) => React.ReactNode
 }
 
 // Bubble toolbar: supports copy button, feedback buttons, and extensible tool buttons
