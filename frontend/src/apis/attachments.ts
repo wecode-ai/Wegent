@@ -446,16 +446,21 @@ export async function downloadAttachment(attachmentId: number, filename?: string
     if (contentDisposition) {
       // Parse filename from Content-Disposition header
       // Format: attachment; filename="example.pdf" or attachment; filename*=UTF-8''example.pdf
-      const filenameMatch =
-        contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/) ||
-        contentDisposition.match(/filename\*=UTF-8''(.+)/)
-      if (filenameMatch && filenameMatch[1]) {
-        downloadFilename = filenameMatch[1].replace(/['"]/g, '')
+      // Try RFC 5987 format first (filename*=UTF-8''encoded_filename)
+      const rfc5987Match = contentDisposition.match(/filename\*=UTF-8''(.+)/)
+      if (rfc5987Match && rfc5987Match[1]) {
+        downloadFilename = rfc5987Match[1]
         // Decode URI component if it's encoded
         try {
           downloadFilename = decodeURIComponent(downloadFilename)
         } catch {
           // Keep original if decode fails
+        }
+      } else {
+        // Fallback to standard format (filename="example.pdf")
+        const standardMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
+        if (standardMatch && standardMatch[1]) {
+          downloadFilename = standardMatch[1].replace(/['"]/g, '')
         }
       }
     }
