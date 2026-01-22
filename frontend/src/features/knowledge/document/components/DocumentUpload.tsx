@@ -220,6 +220,7 @@ export function DocumentUpload({
     if (successfulAttachments.length === 0) return
 
     setIsConfirming(true)
+    reset()
     try {
       await onUploadComplete(successfulAttachments, splitterConfig)
       reset()
