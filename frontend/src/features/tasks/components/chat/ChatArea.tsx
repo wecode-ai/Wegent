@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
+import { useSchemeMessageActions } from '@/lib/scheme'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -304,88 +305,20 @@ function ChatAreaContent({
     selectedDocumentIds,
   })
 
-  /**
-   * Scheme URL action bridge.
-   * `wegent://action/send-message` and `wegent://action/prefill-message` handlers
-   * dispatch DOM events. Chat UI listens here to actually apply the actions.
-   */
-  const pendingSchemeActionRef = useRef<{
-    type: 'send' | 'prefill'
-    text: string
-    teamId?: number
-  } | null>(null)
-
-  useEffect(() => {
-    const dispatchAction = (action: {
-      type: 'send' | 'prefill'
-      text: string
-      teamId?: number
-    }) => {
-      const teamId = action.teamId
-      const currentTeamId = chatState.selectedTeam?.id
-
-      // If a team is specified, switch team first.
-      if (teamId && currentTeamId !== teamId) {
-        const targetTeam =
-          filteredTeams.find(t => t.id === teamId) || teams.find(t => t.id === teamId)
-
-        if (targetTeam) {
-          pendingSchemeActionRef.current = action
-          handleTeamChange(targetTeam)
-          return
-        }
+  // Scheme URL action bridge - handles wegent://action/send-message and wegent://action/prefill-message
+  useSchemeMessageActions({
+    onSendMessage: streamHandlers.handleSendMessage,
+    onPrefillMessage: chatState.setTaskInputMessage,
+    onTeamChange: teamId => {
+      const targetTeam =
+        filteredTeams.find(t => t.id === teamId) || teams.find(t => t.id === teamId)
+      if (targetTeam) {
+        handleTeamChange(targetTeam)
       }
-
-      if (action.type === 'prefill') {
-        chatState.setTaskInputMessage(action.text)
-        return
-      }
-
-      streamHandlers.handleSendMessage(action.text)
-    }
-
-    const onPrefill = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { text?: string; team?: string } | undefined
-      const text = detail?.text?.trim()
-      if (!text) return
-      const teamId = detail?.team ? Number(detail.team) : undefined
-      dispatchAction({ type: 'prefill', text, teamId })
-    }
-
-    const onSend = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { text?: string; team?: string } | undefined
-      const text = detail?.text?.trim()
-      if (!text) return
-      const teamId = detail?.team ? Number(detail.team) : undefined
-      dispatchAction({ type: 'send', text, teamId })
-    }
-
-    window.addEventListener('wegent:prefill-message', onPrefill)
-    window.addEventListener('wegent:send-message', onSend)
-
-    return () => {
-      window.removeEventListener('wegent:prefill-message', onPrefill)
-      window.removeEventListener('wegent:send-message', onSend)
-    }
-  }, [chatState, filteredTeams, handleTeamChange, streamHandlers, teams])
-
-  // Flush pending action after team switching.
-  useEffect(() => {
-    const pending = pendingSchemeActionRef.current
-    if (!pending) return
-
-    const currentTeamId = chatState.selectedTeam?.id
-    if (pending.teamId && pending.teamId !== currentTeamId) return
-
-    pendingSchemeActionRef.current = null
-
-    if (pending.type === 'prefill') {
-      chatState.setTaskInputMessage(pending.text)
-      return
-    }
-
-    streamHandlers.handleSendMessage(pending.text)
-  }, [chatState.selectedTeam?.id, chatState, streamHandlers])
+    },
+    currentTeamId: chatState.selectedTeam?.id,
+    teams: [...filteredTeams, ...teams],
+  })
 
   // Determine if there are messages to display (full computation)
   const hasMessages = useMemo(() => {

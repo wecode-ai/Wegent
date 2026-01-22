@@ -19,12 +19,19 @@ export {
 export { handleSchemeURL, createSchemeLinkHandler } from './handler'
 export { checkAuth, withAuth } from './auth'
 export { useSchemeURL } from './hooks'
+export { useSchemeMessageActions } from './hooks/useSchemeMessageActions'
 
 // Initializers
 export { initializeRouteMappings } from './routes'
 export { initializeFormMappings } from './forms'
 export { initializeActionMappings } from './actions'
 export { initializeModalMappings } from './modals'
+
+// Components
+export { SchemeLink } from './components/SchemeLink'
+
+// Utilities
+export { createSchemeAwareUrlTransform } from './utils/url-transform'
 
 // Types
 export type {
@@ -40,6 +47,8 @@ export type {
   ActionSchemeURL,
   ModalSchemeURL,
 } from './types'
+export type { SchemeMessageActionsConfig } from './hooks/useSchemeMessageActions'
+export type { SchemeLinkProps } from './components/SchemeLink'
 
 /**
  * Initializes the entire scheme URL system
