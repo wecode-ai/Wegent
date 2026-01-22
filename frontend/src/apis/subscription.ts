@@ -340,7 +340,7 @@ export const subscriptionApis = {
     const queryParams = new URLSearchParams()
     queryParams.append('skip', String(((params?.page || 1) - 1) * (params?.limit || 20)))
     queryParams.append('limit', String(params?.limit || 20))
-    return apiClient.get(`/users/me/rentals?${queryParams.toString()}`)
+    return apiClient.get(`/market/users/me/rentals?${queryParams.toString()}`)
   },
 
   /**

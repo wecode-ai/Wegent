@@ -32,7 +32,7 @@ from app.services.subscription import subscription_market_service
 router = APIRouter()
 
 
-@router.get("/market/subscriptions", response_model=MarketSubscriptionsListResponse)
+@router.get("/subscriptions", response_model=MarketSubscriptionsListResponse)
 def discover_market_subscriptions(
     sort_by: str = Query("rental_count", description="Sort by: rental_count or recent"),
     search: Optional[str] = Query(None, description="Search query"),
@@ -62,9 +62,7 @@ def discover_market_subscriptions(
     return MarketSubscriptionsListResponse(total=total, items=items)
 
 
-@router.get(
-    "/market/subscriptions/{subscription_id}", response_model=MarketSubscriptionDetail
-)
+@router.get("/subscriptions/{subscription_id}", response_model=MarketSubscriptionDetail)
 def get_market_subscription_detail(
     subscription_id: int,
     db: Session = Depends(get_db),
@@ -84,7 +82,7 @@ def get_market_subscription_detail(
 
 
 @router.post(
-    "/market/subscriptions/{subscription_id}/rent",
+    "/subscriptions/{subscription_id}/rent",
     response_model=RentalSubscriptionResponse,
 )
 def rent_subscription(

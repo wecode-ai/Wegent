@@ -130,7 +130,7 @@ class SubscriptionMarketService:
 
             # Get owner username
             owner = db.query(User).filter(User.id == sub.user_id).first()
-            owner_username = owner.name if owner else "Unknown"
+            owner_username = owner.user_name if owner else "Unknown"
 
             trigger_type = SubscriptionTriggerType(internal.get("trigger_type", "cron"))
             trigger_config = extract_trigger_config(subscription_crd.spec.trigger)
@@ -216,7 +216,7 @@ class SubscriptionMarketService:
 
         # Get owner username
         owner = db.query(User).filter(User.id == subscription.user_id).first()
-        owner_username = owner.name if owner else "Unknown"
+        owner_username = owner.user_name if owner else "Unknown"
 
         # Check if user has rented this subscription
         rented_source_ids = self._get_user_rented_source_ids(db, user_id)
@@ -328,7 +328,7 @@ class SubscriptionMarketService:
 
         # Get source owner username
         source_owner = db.query(User).filter(User.id == source.user_id).first()
-        source_owner_username = source_owner.name if source_owner else "Unknown"
+        source_owner_username = source_owner.user_name if source_owner else "Unknown"
 
         # Build trigger config
         trigger = build_trigger_config(request.trigger_type, request.trigger_config)
