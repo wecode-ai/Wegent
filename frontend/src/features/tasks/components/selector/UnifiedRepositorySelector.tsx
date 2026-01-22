@@ -315,10 +315,7 @@ export default function UnifiedRepositorySelector({
                   )}
                 >
                   <FolderGit2
-                    className={cn(
-                      'w-4 h-4 flex-shrink-0',
-                      isNotSelected ? 'text-text-muted' : 'text-primary'
-                    )}
+                    className={cn('w-4 h-4 flex-shrink-0', isNotSelected ? 'text-text-muted' : '')}
                   />
                   {!compact && (
                     <>
