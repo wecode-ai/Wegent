@@ -60,6 +60,20 @@ class MemberBuilder:
             mcp_tools = await self.mcp_manager.setup_mcp_tools(member_config, task_data)
             agent_config = member_config.get("agent_config", {})
 
+            # Prepare tools list
+            all_tools = []
+            if mcp_tools:
+                all_tools.extend(mcp_tools)
+
+            # Add wegent MCP server for subscription tasks (provides silent_exit tool via Streamable HTTP)
+            if task_data.get("is_subscription"):
+                wegent_mcp_tools = await self._setup_wegent_mcp_tools()
+                if wegent_mcp_tools:
+                    all_tools.extend(wegent_mcp_tools)
+                    logger.info(
+                        f"Added wegent MCP tools (Streamable HTTP) for subscription task (member: {member_config.get('name', 'Unnamed')})"
+                    )
+
             # Prepare data sources for placeholder replacement
             data_sources = {
                 "agent_config": agent_config,
@@ -87,7 +101,7 @@ class MemberBuilder:
                 role=member_description,
                 add_name_to_context=True,
                 add_datetime_to_context=True,
-                tools=mcp_tools if mcp_tools else [],
+                tools=all_tools if all_tools else [],
                 description=member_description,
                 db=self.db,
                 add_history_to_context=True,
@@ -122,6 +136,20 @@ class MemberBuilder:
             mcp_tools = await self.mcp_manager.setup_mcp_tools(options, task_data)
             agent_config = options.get("agent_config", {})
 
+            # Prepare tools list
+            all_tools = []
+            if mcp_tools:
+                all_tools.extend(mcp_tools)
+
+            # Add wegent MCP server for subscription tasks (provides silent_exit tool via Streamable HTTP)
+            if task_data.get("is_subscription"):
+                wegent_mcp_tools = await self._setup_wegent_mcp_tools()
+                if wegent_mcp_tools:
+                    all_tools.extend(wegent_mcp_tools)
+                    logger.info(
+                        "Added wegent MCP tools (Streamable HTTP) for subscription task (default member)"
+                    )
+
             # Prepare data sources for placeholder replacement
             data_sources = {
                 "agent_config": agent_config,
@@ -141,7 +169,7 @@ class MemberBuilder:
             member = AgnoSdkAgent(
                 name="DefaultAgent",
                 model=ModelFactory.create_model(agent_config, default_headers),
-                tools=mcp_tools if mcp_tools else [],
+                tools=all_tools if all_tools else [],
                 description="Default team member",
                 add_name_to_context=True,
                 add_datetime_to_context=True,
@@ -241,6 +269,81 @@ class MemberBuilder:
             Member description string
         """
         return member_config.get("system_prompt", "Team member")
+
+    async def _setup_wegent_mcp_tools(self) -> Optional[List[Any]]:
+        """
+        Setup wegent MCP tools via Streamable HTTP transport.
+
+        The wegent MCP server provides internal tools like silent_exit.
+        It runs as an HTTP server within the executor process.
+
+        Returns:
+            List of MCPTools if successful, None otherwise
+        """
+        import asyncio
+        import traceback
+
+        try:
+            from executor.mcp_servers.wegent.server import get_wegent_mcp_url
+
+            wegent_mcp_url = get_wegent_mcp_url()
+            logger.info(
+                f"Attempting to connect to wegent MCP server at {wegent_mcp_url}"
+            )
+
+            # Create Streamable HTTP MCP configuration for wegent server
+            # Use shorter timeout for internal server connection
+            wegent_mcp_config = {
+                "type": "streamable-http",
+                "url": wegent_mcp_url,
+                "timeout": 30,  # 30 seconds timeout for internal server
+                "sse_read_timeout": 60,  # 60 seconds read timeout
+            }
+
+            # Use the existing MCP manager to create and connect the tools
+            mcp_tools = self.mcp_manager._create_streamable_http_tools(
+                wegent_mcp_config
+            )
+
+            if mcp_tools:
+                # Retry connection with exponential backoff
+                max_retries = 3
+                retry_delay = 0.5  # Start with 500ms delay
+
+                for attempt in range(max_retries):
+                    try:
+                        await mcp_tools.connect()
+                        self.mcp_manager.connected_tools.append(mcp_tools)
+                        logger.info(
+                            f"Connected to wegent MCP server at {wegent_mcp_url} (attempt {attempt + 1})"
+                        )
+                        return [mcp_tools]
+                    except Exception as connect_error:
+                        if attempt < max_retries - 1:
+                            logger.warning(
+                                f"Failed to connect to wegent MCP server (attempt {attempt + 1}/{max_retries}): "
+                                f"{type(connect_error).__name__}: {str(connect_error)}"
+                            )
+                            await asyncio.sleep(retry_delay)
+                            retry_delay *= 2  # Exponential backoff
+                        else:
+                            # Log full traceback on final failure
+                            logger.error(
+                                f"Failed to connect to wegent MCP server after {max_retries} attempts: "
+                                f"{type(connect_error).__name__}: {str(connect_error)}\n"
+                                f"Traceback: {traceback.format_exc()}"
+                            )
+                            raise
+
+            return None
+
+        except Exception as e:
+            # Log full traceback for debugging
+            logger.error(
+                f"Failed to setup wegent MCP tools: {type(e).__name__}: {str(e)}\n"
+                f"Traceback: {traceback.format_exc()}"
+            )
+            return None
 
     def _validate_member_config(self, member_config: Dict[str, Any]) -> bool:
         """

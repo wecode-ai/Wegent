@@ -10,6 +10,7 @@ This module contains utility functions for:
 - Trigger configuration handling
 - Next execution time calculation
 - Prompt template resolution
+- Result summary extraction
 """
 
 import json
@@ -472,3 +473,31 @@ def create_or_get_workspace(
     db.flush()  # Get the ID without committing
 
     return workspace.id
+
+
+def extract_result_summary(result: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Extract a summary from the result dict.
+
+    This function extracts the model output from task result for display in
+    BackgroundExecution result_summary. It is used by both:
+    - SubscriptionEventEmitter (for Chat Shell type tasks)
+    - ExecutorKindsService (for Executor type tasks like Claude Code, Agno)
+
+    Args:
+        result: The result dictionary from task/chat completion.
+                Expected structure: {"value": "model output text", ...}
+
+    Returns:
+        A summary string (the model output), or None if no result or empty value
+    """
+    if not result:
+        return None
+
+    # Try to get the value from result
+    value = result.get("value", "")
+    if not value:
+        return None
+
+    # Return full content - database column is TEXT type which can store large content
+    return value

@@ -121,7 +121,7 @@ export function KnowledgeDocumentPage() {
   const handleCreate = async (data: {
     name: string
     description?: string
-    retrieval_config?: Parameters<typeof personalKb.create>[0]['retrieval_config'],
+    retrieval_config?: Parameters<typeof personalKb.create>[0]['retrieval_config']
     summary_enabled?: boolean
     summary_model_ref?: Parameters<typeof personalKb.create>[0]['summary_model_ref'] | null
   }) => {

@@ -138,6 +138,9 @@ def list_executions(
     ),
     start_date: Optional[datetime] = Query(None, description="Filter by start date"),
     end_date: Optional[datetime] = Query(None, description="Filter by end date"),
+    include_silent: bool = Query(
+        False, description="Include silent executions (COMPLETED_SILENT)"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -146,6 +149,9 @@ def list_executions(
 
     Returns paginated list of execution records sorted by creation time (newest first).
     Supports filtering by subscription, status, and date range.
+
+    By default, silent executions (COMPLETED_SILENT) are excluded. Set include_silent=True
+    to include them in the results.
     """
     skip = (page - 1) * limit
 
@@ -158,6 +164,7 @@ def list_executions(
         status=status,
         start_date=start_date,
         end_date=end_date,
+        include_silent=include_silent,
     )
 
     return BackgroundExecutionListResponse(total=total, items=items)

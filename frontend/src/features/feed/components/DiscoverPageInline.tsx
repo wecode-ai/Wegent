@@ -22,6 +22,7 @@ import {
   Sparkles,
   TrendingUp,
   Users,
+  VolumeX,
   XCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -84,6 +85,11 @@ const statusConfig: Record<
   CANCELLED: {
     icon: <AlertCircle className="h-3 w-3" />,
     text: 'status_cancelled',
+    color: 'text-text-muted',
+  },
+  COMPLETED_SILENT: {
+    icon: <VolumeX className="h-3 w-3" />,
+    text: 'status_completed_silent',
     color: 'text-text-muted',
   },
 }

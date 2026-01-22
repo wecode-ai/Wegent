@@ -17,6 +17,7 @@ import {
   Loader2,
   MessageSquare,
   RefreshCw,
+  VolumeX,
   XCircle,
 } from 'lucide-react'
 import {
@@ -84,6 +85,12 @@ const statusConfig: Record<
   CANCELLED: {
     icon: <AlertCircle className="h-4 w-4" />,
     text: 'status_cancelled',
+    color: 'text-text-muted',
+    bgColor: 'bg-gray-100 dark:bg-gray-800',
+  },
+  COMPLETED_SILENT: {
+    icon: <VolumeX className="h-4 w-4" />,
+    text: 'status_completed_silent',
     color: 'text-text-muted',
     bgColor: 'bg-gray-100 dark:bg-gray-800',
   },

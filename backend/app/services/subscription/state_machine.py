@@ -25,6 +25,7 @@ VALID_STATE_TRANSITIONS: Dict[
     },
     BackgroundExecutionStatus.RUNNING: {
         BackgroundExecutionStatus.COMPLETED,
+        BackgroundExecutionStatus.COMPLETED_SILENT,  # Silent completion for subscription tasks
         BackgroundExecutionStatus.FAILED,
         BackgroundExecutionStatus.RETRYING,
         BackgroundExecutionStatus.CANCELLED,  # Allow cancellation of running executions
@@ -33,8 +34,10 @@ VALID_STATE_TRANSITIONS: Dict[
         BackgroundExecutionStatus.RUNNING,
         BackgroundExecutionStatus.FAILED,
         BackgroundExecutionStatus.CANCELLED,
+        BackgroundExecutionStatus.COMPLETED_SILENT,  # Can also complete silently after retry
     },
     BackgroundExecutionStatus.COMPLETED: set(),  # Terminal state
+    BackgroundExecutionStatus.COMPLETED_SILENT: set(),  # Terminal state (silent completion)
     BackgroundExecutionStatus.FAILED: set(),  # Terminal state
     BackgroundExecutionStatus.CANCELLED: set(),  # Terminal state
 }
@@ -100,6 +103,7 @@ def is_terminal_state(status: BackgroundExecutionStatus) -> bool:
     """
     return status in {
         BackgroundExecutionStatus.COMPLETED,
+        BackgroundExecutionStatus.COMPLETED_SILENT,
         BackgroundExecutionStatus.FAILED,
         BackgroundExecutionStatus.CANCELLED,
     }

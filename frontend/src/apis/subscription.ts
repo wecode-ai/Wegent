@@ -99,7 +99,8 @@ export const subscriptionApis = {
     subscriptionId?: number,
     status?: BackgroundExecutionStatus[],
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    includeSilent?: boolean
   ): Promise<BackgroundExecutionListResponse> {
     const queryParams = new URLSearchParams()
     queryParams.append('page', String(params?.page || 1))
@@ -119,6 +120,10 @@ export const subscriptionApis = {
 
     if (endDate) {
       queryParams.append('end_date', endDate)
+    }
+
+    if (includeSilent !== undefined) {
+      queryParams.append('include_silent', String(includeSilent))
     }
 
     return apiClient.get(`/subscriptions/executions?${queryParams.toString()}`)
