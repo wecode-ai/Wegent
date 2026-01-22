@@ -10,7 +10,7 @@
  * Supports multiple tabs for extensibility.
  */
 import { useState, useCallback, useEffect } from 'react'
-import { Compass, Store } from 'lucide-react'
+import { Compass, Eye, EyeOff, Store } from 'lucide-react'
 import { SubscriptionProvider, useSubscriptionContext } from '../contexts/subscriptionContext'
 import { SubscriptionTimeline } from './SubscriptionTimeline'
 import { SubscriptionForm } from './SubscriptionForm'
@@ -32,7 +32,8 @@ function SubscriptionPageContent() {
     undefined
   )
   const [activeTab, setActiveTab] = useState<FeedTabValue>('all')
-  const { refreshSubscriptions, refreshExecutions } = useSubscriptionContext()
+  const { refreshSubscriptions, refreshExecutions, showSilentExecutions, setShowSilentExecutions } =
+    useSubscriptionContext()
 
   const handleCreateSubscription = useCallback(() => {
     setIsFormOpen(true)
@@ -118,7 +119,7 @@ function SubscriptionPageContent() {
   return (
     <div className="h-full bg-surface/30 flex flex-col">
       {/* Tab navigation */}
-      <div className="border-b border-border px-4 pt-3 bg-base">
+      <div className="border-b border-border px-4 pt-3 bg-base flex items-end justify-between">
         <Tabs value={activeTab} onValueChange={value => setActiveTab(value as FeedTabValue)}>
           <TabsList className="bg-transparent p-0 h-auto gap-4">
             <TabsTrigger
@@ -143,6 +144,25 @@ function SubscriptionPageContent() {
             </TabsTrigger>
           </TabsList>
         </Tabs>
+        {/* Silent executions toggle - only show on "all" tab */}
+        {activeTab === 'all' && (
+          <button
+            onClick={() => setShowSilentExecutions(!showSilentExecutions)}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 mb-1.5 rounded-md text-xs font-medium transition-colors ${
+              showSilentExecutions
+                ? 'bg-primary/10 text-primary'
+                : 'bg-surface text-text-muted hover:text-text-primary hover:bg-surface-hover'
+            }`}
+            title={showSilentExecutions ? t('feed.hide_silent') : t('feed.show_silent')}
+          >
+            {showSilentExecutions ? (
+              <Eye className="h-3.5 w-3.5" />
+            ) : (
+              <EyeOff className="h-3.5 w-3.5" />
+            )}
+            {t('feed.silent_executions')}
+          </button>
+        )}
       </div>
 
       {/* Tab content */}
