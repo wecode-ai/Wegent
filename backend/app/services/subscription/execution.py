@@ -69,11 +69,42 @@ class BackgroundExecutionManager:
             BackgroundExecutionInDB object
         """
         subscription_crd = Subscription.model_validate(subscription.json)
+        internal = subscription.json.get("_internal", {})
+
+        # For rental subscriptions, get promptTemplate from source subscription
+        prompt_template = subscription_crd.spec.promptTemplate
+        display_name = subscription_crd.spec.displayName
+
+        if internal.get("is_rental", False):
+            source_subscription_id = internal.get("source_subscription_id")
+            if source_subscription_id:
+                source_subscription = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == source_subscription_id,
+                        Kind.kind == "Subscription",
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+                if source_subscription:
+                    source_crd = Subscription.model_validate(source_subscription.json)
+                    # Use source subscription's promptTemplate
+                    prompt_template = source_crd.spec.promptTemplate
+                    logger.info(
+                        f"[Subscription] Using source subscription {source_subscription_id} "
+                        f"promptTemplate for rental {subscription.id}"
+                    )
+                else:
+                    logger.warning(
+                        f"[Subscription] Source subscription {source_subscription_id} not found "
+                        f"for rental {subscription.id}, using placeholder"
+                    )
 
         # Resolve prompt template
         resolved_prompt = resolve_prompt_template(
-            subscription_crd.spec.promptTemplate,
-            subscription_crd.spec.displayName,
+            prompt_template,
+            display_name,
             extra_variables,
         )
 

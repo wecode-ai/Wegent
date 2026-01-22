@@ -17,8 +17,6 @@ import {
   ChevronRight,
   Clock,
   Copy,
-  Eye,
-  EyeOff,
   Loader2,
   MessageSquare,
   Plus,
@@ -111,8 +109,6 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
     refreshExecutions,
     cancelExecution,
     deleteExecution,
-    showSilentExecutions,
-    setShowSilentExecutions,
   } = useSubscriptionContext()
 
   // Dialog state for viewing conversation
@@ -508,26 +504,6 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
 
   return (
     <div className="relative flex h-full flex-col">
-      {/* Silent executions toggle */}
-      <div className="flex items-center justify-end px-4 py-2 border-b border-border bg-surface/50">
-        <button
-          onClick={() => setShowSilentExecutions(!showSilentExecutions)}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-            showSilentExecutions
-              ? 'bg-primary/10 text-primary'
-              : 'bg-surface text-text-muted hover:text-text-primary hover:bg-surface-hover'
-          }`}
-          title={showSilentExecutions ? t('feed.hide_silent') : t('feed.show_silent')}
-        >
-          {showSilentExecutions ? (
-            <Eye className="h-3.5 w-3.5" />
-          ) : (
-            <EyeOff className="h-3.5 w-3.5" />
-          )}
-          {t('feed.silent_executions')}
-        </button>
-      </div>
-
       {/* Feed Content */}
       <div className="flex-1 overflow-y-auto">
         {/* Refresh indicator */}
