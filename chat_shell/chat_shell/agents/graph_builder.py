@@ -29,6 +29,7 @@ from opentelemetry import trace as otel_trace
 from shared.telemetry.decorators import add_span_event, trace_sync
 
 from ..tools.base import ToolRegistry
+from ..tools.builtin.silent_exit import SilentExitException
 
 logger = logging.getLogger(__name__)
 
@@ -543,6 +544,14 @@ class LangGraphAgentBuilder:
                 streamed_content,
             )
 
+        except SilentExitException:
+            # Silent exit requested by tool - re-raise to be handled by caller
+            # This is not an error, just a signal to terminate silently
+            logger.info(
+                "[stream_tokens] SilentExitException caught, re-raising for caller to handle"
+            )
+            raise
+
         except GraphRecursionError as e:
             # Tool call limit reached - ask model to provide final response
             logger.warning(
@@ -722,6 +731,14 @@ class LangGraphAgentBuilder:
             )
 
             return final_state, all_events
+
+        except SilentExitException:
+            # Silent exit requested by tool - re-raise to be handled by caller
+            # This is not an error, just a signal to terminate silently
+            logger.info(
+                "[stream_events_with_state] SilentExitException caught, re-raising for caller to handle"
+            )
+            raise
 
         except GraphRecursionError:
             # Tool call limit reached - ask model to provide final response
