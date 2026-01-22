@@ -94,9 +94,10 @@ RUN npm install -g pptxgenjs playwright sharp react react-dom react-icons docx p
     && PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright npx playwright install chromium \
     && npm cache clean --force
 
-# Install Python packages for document generation
+# Install Python packages for document generation (using China mirror)
 # These are commonly used by document skills
-RUN pip install python-pptx openpyxl python-docx reportlab Pillow pandas \
+RUN pip install -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com \
+    python-pptx openpyxl python-docx reportlab Pillow pandas \
     pypdf pdfplumber pytesseract \
     "markitdown[pptx]" defusedxml weasyprint \
     && pip cache purge || true
