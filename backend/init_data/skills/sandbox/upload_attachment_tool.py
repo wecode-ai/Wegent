@@ -89,7 +89,7 @@ Example:
 }
 
 After successful upload, you can provide the download_url to the user:
-"文档已生成完成！[点击下载](/api/attachments/123/download)"
+"Document generation completed! [Click to Download](/api/attachments/123/download)"
 """
 
     args_schema: type[BaseModel] = SandboxUploadAttachmentInput

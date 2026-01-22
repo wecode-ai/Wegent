@@ -261,11 +261,11 @@ Upload a file from sandbox to Wegent and get a download URL for users.
 **After Upload - Presenting to User:**
 After a successful upload, present the download link to the user:
 ```
-文档已生成完成！
+Document generation completed!
 
 📄 **report.pdf**
 
-[点击下载](/api/attachments/123/download)
+[Click to Download](/api/attachments/123/download)
 ```
 
 ---

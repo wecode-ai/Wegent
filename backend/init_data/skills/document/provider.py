@@ -13,8 +13,9 @@ The provider depends on the sandbox skill for command execution and file operati
 
 from typing import Any, Optional
 
-from chat_shell.skills import SkillToolContext, SkillToolProvider
 from langchain_core.tools import BaseTool
+
+from chat_shell.skills import SkillToolContext, SkillToolProvider
 
 
 class DocumentToolProvider(SkillToolProvider):

@@ -104,7 +104,9 @@ class ChatRequest:
     history_limit: Optional[int] = None  # Max number of history messages to load
 
     # Authentication
-    auth_token: str = ""  # JWT token for API authentication (e.g., attachment upload/download)
+    auth_token: str = (
+        ""  # JWT token for API authentication (e.g., attachment upload/download)
+    )
 
 
 @dataclass

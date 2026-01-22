@@ -245,17 +245,17 @@ Example:
                     "user_presentation": {
                         "format": "Provide the download link to user with the URL on a separate line",
                         "example": (
-                            "文档已生成完成！\n\n"
+                            "Document generation completed!\n\n"
                             "📄 **{filename}**\n\n"
-                            "[点击下载]({download_url})"
+                            "[Click to Download]({download_url})"
                         ),
                         "critical_formatting_rules": [
                             "⚠️ The download URL link MUST be on its own line",
                             "⚠️ Do NOT put other text before or after the link on the same line",
                             "⚠️ Frontend will automatically render the link as an interactive card",
-                            "✅ Correct: '文档已生成！\\n\\n[点击下载](/api/attachments/123/download)'",
-                            "❌ Wrong: '文档已生成！[点击下载](/api/attachments/123/download)'",
-                            "❌ Wrong: '[点击下载](/api/attachments/123/download) 下载完成'",
+                            "✅ Correct: 'Document generated!\\n\\n[Click to Download](/api/attachments/123/download)'",
+                            "❌ Wrong: 'Document generated![Click to Download](/api/attachments/123/download)'",
+                            "❌ Wrong: '[Click to Download](/api/attachments/123/download) Download completed'",
                         ],
                     },
                     "critical_importance": (
@@ -299,8 +299,8 @@ Example:
                 f"   → Call: sandbox_upload_attachment(file_path='{{generated_file_path}}')\n"
                 f"   → Get the 'download_url' from response\n"
                 f"   → ⚠️ CRITICAL: Put the download link on its own line with no other text\n"
-                f"   → ✅ Correct format: '文档已生成！\\n\\n[点击下载]({{download_url}})'\n"
-                f"   → ❌ Wrong format: '文档已生成！[点击下载]({{download_url}})' (link not on separate line)\n"
+                f"   → ✅ Correct format: 'Document generated!\\n\\n[Click to Download]({{download_url}})'\n"
+                f"   → ❌ Wrong format: 'Document generated![Click to Download]({{download_url}})' (link not on separate line)\n"
                 f"   → Frontend will automatically render the link as an interactive card\n\n"
                 f"⚠️ DO NOT generate {document_type.upper()} files before completing step 3!\n"
                 f"⚠️ DO NOT skip step 5 - users cannot access sandbox files directly!\n"

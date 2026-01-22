@@ -172,11 +172,11 @@ Get mandatory step-by-step instructions for loading a specific document skill.
 
    Then present the download link to user:
    ```
-   文档已生成完成！
+   Document generation completed!
 
    📄 **ai_trends.pptx**
 
-   [点击下载](/api/attachments/123/download)
+   [Click to Download](/api/attachments/123/download)
    ```
 
 ## How It Works
@@ -304,9 +304,9 @@ After reading the skill file in Step 3, you'll receive:
 // Step 5: Upload document and return download URL
 {"name": "sandbox_upload_attachment", "arguments": {"file_path": "/home/user/documents/ai_trends.pptx"}}
 // Then present download link to user:
-// 文档已生成完成！
+// Document generation completed!
 // 📄 **ai_trends.pptx**
-// [点击下载](/api/attachments/123/download)
+// [Click to Download](/api/attachments/123/download)
 ```
 
 ### Example 2: Generate Excel Spreadsheet

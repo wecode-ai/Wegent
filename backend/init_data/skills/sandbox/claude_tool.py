@@ -75,7 +75,7 @@ class SandboxClaudeTool(BaseSandboxTool):
     display_name: str = "执行 Claude 命令"
     description: str = """Execute a Claude command in an isolated sandbox environment.
 
-⚠️ ONLY use when user EXPLICITLY requests Claude by name (e.g., "use Claude to...", "让Claude帮我...").
+⚠️ ONLY use when user EXPLICITLY requests Claude by name (e.g., "use Claude to...", "let Claude help me...").
 DO NOT use for normal sandbox operations - use sandbox_command, sandbox_read_file, etc. instead.
 
 Parameters:
