@@ -59,6 +59,8 @@ export type FormSchemeURL =
   | 'wegent://form/create-team'
   | 'wegent://form/create-bot'
   | 'wegent://form/add-repository'
+  | 'wegent://form/create-subscription'
+  | `wegent://form/create-subscription?data=${string}`
 
 export type ActionSchemeURL =
   | `wegent://action/send-message?text=${string}&team=${string}`

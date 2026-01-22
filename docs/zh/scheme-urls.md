@@ -47,6 +47,27 @@ wegent://{type}/{path}?{params}
 | `wegent://form/create-team` | 打开创建智能体对话框 | ✅ |
 | `wegent://form/create-bot` | 打开创建机器人对话框 | ✅ |
 | `wegent://form/add-repository` | 打开添加代码仓库对话框 | ✅ |
+| `wegent://form/create-subscription` | 打开创建订阅对话框 | ✅ |
+
+**预填充表单数据:**
+
+您可以通过传递包含 JSON 编码表单数据的 `data` 参数来预填充订阅表单:
+
+```
+wegent://form/create-subscription?data={"displayName":"每日新闻","description":"收集每日新闻","triggerType":"cron"}
+```
+
+**`data` 参数中支持的字段:**
+- `displayName` (string): 订阅显示名称
+- `description` (string): 订阅描述
+- `taskType` (string): 任务类型 (`collection`, `analysis`, `notification`)
+- `triggerType` (string): 触发类型 (`cron`, `interval`, `one_time`, `event`)
+- `promptTemplate` (string): 订阅的提示词模板
+- `retryCount` (number): 失败时重试次数
+- `timeoutSeconds` (number): 超时时间(秒)
+- `enabled` (boolean): 是否启用订阅
+- `preserveHistory` (boolean): 是否保留执行历史
+- `visibility` (string): 可见性 (`private`, `public`, `unlisted`)
 
 ### 操作 (`wegent://action/*`)
 

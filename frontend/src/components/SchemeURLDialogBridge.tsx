@@ -61,6 +61,36 @@ export default function SchemeURLDialogBridge() {
         }
         return
       }
+
+      if (dialogType === 'create-subscription') {
+        // Redirect to feed page where SubscriptionPage will handle opening the dialog
+        const currentPath = window.location.pathname
+
+        if (currentPath === paths.feed.getHref()) {
+          // Already on feed page, re-dispatch the event after a short delay
+          // to ensure SubscriptionPage listener is ready
+          setTimeout(() => {
+            const event = new CustomEvent('wegent:open-dialog', {
+              detail: { type: 'create-subscription', params },
+            })
+            window.dispatchEvent(event)
+          }, 100)
+        } else {
+          // Navigate to feed page first, then the event will be handled by SubscriptionPage
+          router.push(paths.feed.getHref())
+          // The event will need to be re-dispatched after navigation
+          // Store it in sessionStorage to trigger after page load
+          sessionStorage.setItem(
+            'wegent:pending-dialog',
+            JSON.stringify({
+              type: 'create-subscription',
+              params,
+            })
+          )
+        }
+        return
+      }
+
       // Actions requiring dialogs
       if (dialogType === 'share') {
         const shareType = params.shareType as string

@@ -9,7 +9,7 @@
  * Displays AI agent activities as a pure social media-like feed.
  * Supports multiple tabs for extensibility.
  */
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Compass } from 'lucide-react'
 import { SubscriptionProvider, useSubscriptionContext } from '../contexts/subscriptionContext'
 import { SubscriptionTimeline } from './SubscriptionTimeline'
@@ -27,6 +27,9 @@ export type FeedTabValue = 'all' | 'discover'
 function SubscriptionPageContent() {
   const { t } = useTranslation('feed')
   const [isFormOpen, setIsFormOpen] = useState(false)
+  const [formInitialData, setFormInitialData] = useState<Record<string, unknown> | undefined>(
+    undefined
+  )
   const [activeTab, setActiveTab] = useState<FeedTabValue>('all')
   const { refreshSubscriptions, refreshExecutions } = useSubscriptionContext()
 
@@ -37,12 +40,73 @@ function SubscriptionPageContent() {
   const handleFormSuccess = useCallback(() => {
     refreshSubscriptions()
     refreshExecutions()
+    // Clear initial data after successful creation
+    setFormInitialData(undefined)
   }, [refreshSubscriptions, refreshExecutions])
 
   const handleInvitationHandled = useCallback(() => {
     // Refresh executions to show newly followed subscriptions
     refreshExecutions()
   }, [refreshExecutions])
+
+  // Listen for scheme URL events to open create subscription dialog
+  useEffect(() => {
+    const handleOpenDialog = (e: Event) => {
+      const detail = (e as CustomEvent).detail as {
+        type?: string
+        params?: Record<string, unknown>
+      }
+      if (detail?.type === 'create-subscription') {
+        // Parse the data parameter if provided
+        if (detail.params?.data && typeof detail.params.data === 'string') {
+          try {
+            const parsedData = JSON.parse(detail.params.data as string)
+            setFormInitialData(parsedData)
+          } catch (error) {
+            console.error('Failed to parse scheme URL data parameter:', error)
+          }
+        }
+        setIsFormOpen(true)
+      }
+    }
+
+    window.addEventListener('wegent:open-dialog', handleOpenDialog)
+
+    // Check for pending dialog in sessionStorage (from navigation)
+    const pendingDialog = sessionStorage.getItem('wegent:pending-dialog')
+    if (pendingDialog) {
+      try {
+        const data = JSON.parse(pendingDialog) as {
+          type?: string
+          params?: Record<string, unknown>
+        }
+        sessionStorage.removeItem('wegent:pending-dialog')
+
+        if (data.type === 'create-subscription') {
+          // Parse the data parameter if provided
+          if (data.params?.data && typeof data.params.data === 'string') {
+            try {
+              const parsedData = JSON.parse(data.params.data as string)
+              setFormInitialData(parsedData)
+            } catch (error) {
+              console.error('Failed to parse scheme URL data parameter:', error)
+            }
+          }
+
+          // Delay to ensure component is fully mounted
+          setTimeout(() => {
+            setIsFormOpen(true)
+          }, 300)
+        }
+      } catch (error) {
+        console.error('Failed to parse pending dialog:', error)
+      }
+    }
+
+    return () => {
+      window.removeEventListener('wegent:open-dialog', handleOpenDialog)
+    }
+  }, [])
 
   return (
     <div className="h-full bg-surface/30 flex flex-col">
@@ -83,6 +147,7 @@ function SubscriptionPageContent() {
         open={isFormOpen}
         onOpenChange={setIsFormOpen}
         onSuccess={handleFormSuccess}
+        initialData={formInitialData}
       />
     </div>
   )

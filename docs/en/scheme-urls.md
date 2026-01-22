@@ -47,6 +47,27 @@ Open creation/edit dialogs.
 | `wegent://form/create-team` | Open create agent dialog | ✅ |
 | `wegent://form/create-bot` | Open create bot dialog | ✅ |
 | `wegent://form/add-repository` | Open add repository dialog | ✅ |
+| `wegent://form/create-subscription` | Open create subscription dialog | ✅ |
+
+**Prefilling Form Data:**
+
+You can prefill the subscription form by passing a `data` parameter with JSON-encoded form data:
+
+```
+wegent://form/create-subscription?data={"displayName":"Daily News","description":"Collect daily news","triggerType":"cron"}
+```
+
+**Supported fields in `data` parameter:**
+- `displayName` (string): Subscription display name
+- `description` (string): Subscription description
+- `taskType` (string): Task type (`collection`, `analysis`, `notification`)
+- `triggerType` (string): Trigger type (`cron`, `interval`, `one_time`, `event`)
+- `promptTemplate` (string): Prompt template for the subscription
+- `retryCount` (number): Number of retries on failure
+- `timeoutSeconds` (number): Timeout in seconds
+- `enabled` (boolean): Whether the subscription is enabled
+- `preserveHistory` (boolean): Whether to preserve execution history
+- `visibility` (string): Visibility (`private`, `public`, `unlisted`)
 
 ### Actions (`wegent://action/*`)
 ### Actions (`wegent://action/*`)

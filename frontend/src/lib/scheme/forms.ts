@@ -84,4 +84,21 @@ export function initializeFormMappings(): void {
     description: 'Open add repository dialog',
     examples: ['wegent://form/add-repository'],
   })
+
+  // Create subscription form
+  registerScheme('form-create-subscription', {
+    pattern: 'wegent://form/create-subscription',
+    handler: (context: SchemeHandlerContext) => {
+      const event = new CustomEvent('wegent:open-dialog', {
+        detail: {
+          type: 'create-subscription',
+          params: context.parsed.params,
+        },
+      })
+      window.dispatchEvent(event)
+    },
+    requireAuth: true,
+    description: 'Open create subscription dialog',
+    examples: ['wegent://form/create-subscription'],
+  })
 }
