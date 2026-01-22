@@ -160,7 +160,7 @@ export async function sendMessage(params: {
  *
  * This function determines requiresWorkspace based on:
  * 1. team.agent_type - 'chat' or 'dify' do not require workspace
- * 2. bot.shell_type - 'Chat' or 'Dify' do not require workspace
+ * 2. bot.shell_type - If ANY bot has shell_type that is not 'chat'/'dify', require workspace
  *
  * Note: The actual requiresWorkspace configuration should come from the Shell CRD,
  * but for backward compatibility, we infer it from agent_type/shell_type.
@@ -171,21 +171,26 @@ export async function sendMessage(params: {
 export function teamRequiresWorkspace(team: Team | null): boolean {
   if (!team) return false
 
-  // Chat Shell and Dify do not require workspace
+  // Chat Shell and Dify agent types do not require workspace
   const agentType = team.agent_type?.toLowerCase()
   if (agentType === 'chat' || agentType === 'dify') {
     return false
   }
 
-  // Fallback: check first bot's shell_type
+  // Check all bots in the team - if any bot requires workspace, the team requires workspace
+  // This handles mixed teams correctly
   if (team.bots && team.bots.length > 0) {
-    const firstBot = team.bots[0]
-    const shellType = firstBot.bot?.shell_type?.toLowerCase()
-    if (shellType === 'chat' || shellType === 'dify') {
-      return false
+    for (const teamBot of team.bots) {
+      const shellType = teamBot.bot?.shell_type?.toLowerCase()
+      // If shellType is undefined/null or not 'chat'/'dify', it requires workspace
+      if (!shellType || (shellType !== 'chat' && shellType !== 'dify')) {
+        return true
+      }
     }
+    // All bots are chat/dify, no workspace required
+    return false
   }
 
-  // Default: local_engine types (ClaudeCode, Agno) require workspace
+  // Default: if no bots info available, assume local_engine types require workspace
   return true
 }

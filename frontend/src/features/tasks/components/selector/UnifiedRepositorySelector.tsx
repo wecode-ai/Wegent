@@ -138,10 +138,13 @@ export default function UnifiedRepositorySelector({
 
   // Fetch branches when repo changes
   useEffect(() => {
+    // Clear previous branches immediately when repo changes to avoid showing stale data
+    setBranches([])
+    setBranchError(null)
+    setUserCleared(false)
     onBranchChange(null)
+
     if (!selectedRepo) {
-      setBranches([])
-      setBranchError(null)
       setBranchLoading(false)
       return
     }
@@ -155,7 +158,6 @@ export default function UnifiedRepositorySelector({
         if (!ignore) {
           setBranches(data)
           setBranchError(null)
-          setUserCleared(false)
         }
       })
       .catch(() => {
@@ -415,8 +417,9 @@ export default function UnifiedRepositorySelector({
           {/* Branch View */}
           {currentView === 'branch' && (
             <Command className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden">
-              <div
-                className="flex items-center border-b border-border px-3 py-2 cursor-pointer hover:bg-hover"
+              <button
+                type="button"
+                className="flex items-center border-b border-border px-3 py-2 cursor-pointer hover:bg-hover w-full text-left"
                 onClick={handleBackToRepo}
               >
                 <ChevronLeft className="w-4 h-4 text-text-muted mr-1" />
@@ -429,7 +432,7 @@ export default function UnifiedRepositorySelector({
                     ({truncateMiddle(selectedRepo.git_repo, 20)})
                   </span>
                 )}
-              </div>
+              </button>
               <CommandInput
                 placeholder={t('common:branches.search_branch')}
                 className={cn(
