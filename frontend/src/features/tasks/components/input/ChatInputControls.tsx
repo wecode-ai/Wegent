@@ -7,8 +7,7 @@
 import React from 'react'
 import { CircleStop } from 'lucide-react'
 import ModelSelector, { Model } from '../selector/ModelSelector'
-import RepositorySelector from '../selector/RepositorySelector'
-import BranchSelector from '../selector/BranchSelector'
+import UnifiedRepositorySelector from '../selector/UnifiedRepositorySelector'
 import ClarificationToggle from '../clarification/ClarificationToggle'
 import CorrectionModeToggle from '../CorrectionModeToggle'
 import ChatContextInput from '../chat/ChatContextInput'
@@ -25,7 +24,7 @@ import type {
   MultiAttachmentUploadState,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
-import { isChatShell } from '../../service/messageService'
+import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
@@ -328,27 +327,17 @@ export function ChatInputControls({
           />
         )}
 
-        {/* Repository and Branch Selectors - inside input box */}
-        {showRepositorySelector && (
-          <>
-            <RepositorySelector
-              selectedRepo={selectedRepo}
-              handleRepoChange={setSelectedRepo}
-              disabled={hasMessages}
-              selectedTaskDetail={selectedTaskDetail}
-              compact={shouldCollapseSelectors}
-            />
-
-            {selectedRepo && (
-              <BranchSelector
-                selectedRepo={selectedRepo}
-                selectedBranch={selectedBranch}
-                handleBranchChange={setSelectedBranch}
-                disabled={hasMessages}
-                compact={shouldCollapseSelectors}
-              />
-            )}
-          </>
+        {/* Repository and Branch Unified Selector - show based on team requiresWorkspace */}
+        {showRepositorySelector && teamRequiresWorkspace(selectedTeam) && (
+          <UnifiedRepositorySelector
+            selectedRepo={selectedRepo}
+            selectedBranch={selectedBranch}
+            onRepoChange={setSelectedRepo}
+            onBranchChange={setSelectedBranch}
+            disabled={hasMessages}
+            taskDetail={selectedTaskDetail}
+            compact={shouldCollapseSelectors}
+          />
         )}
       </div>
 

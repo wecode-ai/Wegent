@@ -26,7 +26,7 @@ import {
 } from '@/components/ui/dropdown'
 import type { Team, GitRepoInfo, GitBranch as GitBranchType, TaskDetail } from '@/types/api'
 import type { ContextItem } from '@/types/context'
-import { isChatShell } from '../../service/messageService'
+import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 
 export interface MobileChatInputControlsProps {
@@ -246,8 +246,8 @@ export function MobileChatInputControls({
               />
             )}
 
-            {/* Repository Selector - full row clickable */}
-            {showRepositorySelector && (
+            {/* Repository Selector - full row clickable, only show if team requires workspace */}
+            {showRepositorySelector && teamRequiresWorkspace(selectedTeam) && (
               <>
                 {/* Only show separator if there's content above (chat shell features) */}
                 {isChatShell(selectedTeam) && <DropdownMenuSeparator />}
@@ -260,8 +260,8 @@ export function MobileChatInputControls({
               </>
             )}
 
-            {/* Branch Selector - full row clickable */}
-            {showRepositorySelector && selectedRepo && (
+            {/* Branch Selector - full row clickable, only show if team requires workspace */}
+            {showRepositorySelector && teamRequiresWorkspace(selectedTeam) && selectedRepo && (
               <MobileBranchSelector
                 selectedRepo={selectedRepo}
                 selectedBranch={selectedBranch}

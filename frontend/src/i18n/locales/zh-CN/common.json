@@ -7,7 +7,9 @@
     "repository": "选择仓库",
     "branch": "选择分支",
     "repository_tooltip": "选择代码仓库",
-    "branch_tooltip": "选择分支"
+    "branch_tooltip": "选择分支",
+    "select_repository": "选择仓库",
+    "unified_selector_placeholder": "选择仓库 / 分支"
   },
   "actions": {
     "save": "保存",

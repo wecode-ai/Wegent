@@ -152,3 +152,40 @@ export async function sendMessage(params: {
     return { error: (error as Error)?.message || 'Failed to send message', newTask: null }
   }
 }
+
+/**
+ * Check if a team requires workspace (code repository).
+ * Teams that use local_engine execution type (ClaudeCode, Agno) typically require a workspace.
+ * Teams that use external_api execution type (Dify) or Chat Shell typically do not.
+ *
+ * This function determines requiresWorkspace based on:
+ * 1. team.agent_type - 'chat' or 'dify' do not require workspace
+ * 2. bot.shell_type - 'Chat' or 'Dify' do not require workspace
+ *
+ * Note: The actual requiresWorkspace configuration should come from the Shell CRD,
+ * but for backward compatibility, we infer it from agent_type/shell_type.
+ *
+ * @param team - Team to check
+ * @returns true if the team requires a workspace
+ */
+export function teamRequiresWorkspace(team: Team | null): boolean {
+  if (!team) return false
+
+  // Chat Shell and Dify do not require workspace
+  const agentType = team.agent_type?.toLowerCase()
+  if (agentType === 'chat' || agentType === 'dify') {
+    return false
+  }
+
+  // Fallback: check first bot's shell_type
+  if (team.bots && team.bots.length > 0) {
+    const firstBot = team.bots[0]
+    const shellType = firstBot.bot?.shell_type?.toLowerCase()
+    if (shellType === 'chat' || shellType === 'dify') {
+      return false
+    }
+  }
+
+  // Default: local_engine types (ClaudeCode, Agno) require workspace
+  return true
+}

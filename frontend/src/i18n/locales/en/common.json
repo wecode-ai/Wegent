@@ -7,7 +7,9 @@
     "repository": "Select Repository",
     "branch": "Select Branch",
     "repository_tooltip": "Select code repository",
-    "branch_tooltip": "Select branch"
+    "branch_tooltip": "Select branch",
+    "select_repository": "Select repository",
+    "unified_selector_placeholder": "Select repo / branch"
   },
   "actions": {
     "save": "Save",

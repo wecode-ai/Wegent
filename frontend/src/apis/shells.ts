@@ -17,6 +17,7 @@ export interface UnifiedShell {
   supportModel?: string[] | null
   executionType?: 'local_engine' | 'external_api' | null // Shell execution type
   namespace?: string // Resource namespace (group name or 'default')
+  requiresWorkspace?: boolean // Whether this shell requires a workspace (default: true for local_engine)
 }
 
 export interface UnifiedShellListResponse {

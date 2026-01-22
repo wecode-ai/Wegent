@@ -21,6 +21,7 @@ import { correctionApis } from '@/apis/correction'
 import { saveLastRepo } from '@/utils/userPreferences'
 import { useTaskContext } from '../../contexts/taskContext'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
+import { teamRequiresWorkspace } from '../../service/messageService'
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18
 
@@ -412,6 +413,7 @@ export function useChatAreaState({
   }, [defaultTeam])
 
   // Handle team change - marks user as not using default team
+  // Also clears repository if the new team doesn't require a workspace
   const handleTeamChange = useCallback(
     (team: Team | null) => {
       console.log('[ChatArea] handleTeamChange called:', team?.name || 'null', team?.id || 'null')
@@ -420,6 +422,14 @@ export function useChatAreaState({
       // Reset external API params when team changes
       setExternalApiParams({})
       setAppMode(undefined)
+
+      // Clear repository and branch if the new team doesn't require a workspace
+      // This handles switching from code agents (ClaudeCode, Agno) to chat-only agents (Chat, Dify)
+      if (team && !teamRequiresWorkspace(team)) {
+        console.log('[ChatArea] Team does not require workspace, clearing repo and branch')
+        setSelectedRepo(null)
+        setSelectedBranch(null)
+      }
 
       // Check if the selected team is the same as the default team
       if (team && defaultTeam && team.id === defaultTeam.id) {
