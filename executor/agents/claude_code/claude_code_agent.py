@@ -799,13 +799,8 @@ class ClaudeCodeAgent(Agent):
                     logger.info(
                         "Subscription task detected, waiting for async execution to complete"
                     )
-                    # Create a future and wait for it
-                    future = asyncio.ensure_future(self.execute_async())
-                    # We can't block here in async context, but we need to return the actual status
-                    # Use run_until_complete in a new thread or return a wrapper
-                    # Actually, since we're in an async context, we should use await
-                    # But this is a sync method, so we need a different approach
-                    # The safest approach is to run in a new event loop in a separate thread
+                    # Run in a new event loop in a separate thread to avoid blocking
+                    # the current async context while still waiting for completion
                     import concurrent.futures
 
                     def run_async_task():
