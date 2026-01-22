@@ -366,6 +366,14 @@ class DocumentDetailResponse(BaseModel):
     summary: Optional[dict] = Field(None, description="Document summary object")
 
 
+class DocumentContentUpdate(BaseModel):
+    """Schema for updating document content (TEXT type only)."""
+
+    content: str = Field(
+        ..., min_length=1, max_length=500000, description="New Markdown content"
+    )
+
+
 # ============== Web Scraper Schemas ==============
 
 
