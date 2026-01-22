@@ -201,6 +201,20 @@ interface SubscriptionFormProps {
   onOpenChange: (open: boolean) => void
   subscription?: Subscription | null
   onSuccess: () => void
+  /** Initial form data for prefilling (from scheme URL or other sources) */
+  initialData?: Partial<{
+    displayName: string
+    description: string
+    taskType: SubscriptionTaskType
+    triggerType: SubscriptionTriggerType
+    triggerConfig: Record<string, unknown>
+    promptTemplate: string
+    retryCount: number
+    timeoutSeconds: number
+    enabled: boolean
+    preserveHistory: boolean
+    visibility: SubscriptionVisibility
+  }>
 }
 
 // Get user's local timezone (e.g., 'Asia/Shanghai', 'America/New_York')
@@ -224,25 +238,32 @@ export function SubscriptionForm({
   onOpenChange,
   subscription,
   onSuccess,
+  initialData,
 }: SubscriptionFormProps) {
   const { t } = useTranslation('feed')
   const isEditing = !!subscription
 
   // Form state
-  const [displayName, setDisplayName] = useState('')
-  const [description, setDescription] = useState('')
-  const [taskType, setTaskType] = useState<SubscriptionTaskType>('collection')
-  const [triggerType, setTriggerType] = useState<SubscriptionTriggerType>('cron')
+  const [displayName, setDisplayName] = useState(initialData?.displayName || '')
+  const [description, setDescription] = useState(initialData?.description || '')
+  const [taskType, setTaskType] = useState<SubscriptionTaskType>(
+    initialData?.taskType || 'collection'
+  )
+  const [triggerType, setTriggerType] = useState<SubscriptionTriggerType>(
+    initialData?.triggerType || 'cron'
+  )
   const [triggerConfig, setTriggerConfig] = useState<Record<string, unknown>>(
-    defaultTriggerConfig.cron
+    initialData?.triggerConfig || defaultTriggerConfig.cron
   )
   const [teamId, setTeamId] = useState<number | null>(null)
-  const [promptTemplate, setPromptTemplate] = useState('')
-  const [retryCount, setRetryCount] = useState(0)
-  const [timeoutSeconds, setTimeoutSeconds] = useState(600) // Default 10 minutes
-  const [enabled, setEnabled] = useState(true)
-  const [preserveHistory, setPreserveHistory] = useState(false) // History preservation
-  const [visibility, setVisibility] = useState<SubscriptionVisibility>('private') // Visibility setting
+  const [promptTemplate, setPromptTemplate] = useState(initialData?.promptTemplate || '')
+  const [retryCount, setRetryCount] = useState(initialData?.retryCount ?? 0)
+  const [timeoutSeconds, setTimeoutSeconds] = useState(initialData?.timeoutSeconds ?? 600) // Default 10 minutes
+  const [enabled, setEnabled] = useState(initialData?.enabled ?? true)
+  const [preserveHistory, setPreserveHistory] = useState(initialData?.preserveHistory ?? false) // History preservation
+  const [visibility, setVisibility] = useState<SubscriptionVisibility>(
+    initialData?.visibility || 'private'
+  ) // Visibility setting
 
   // Model selection state
   const [selectedModel, setSelectedModel] = useState<SubscriptionModel | null>(null)
@@ -388,23 +409,26 @@ export function SubscriptionForm({
         setSelectedModel(null)
       }
     } else {
-      setDisplayName('')
-      setDescription('')
-      setTaskType('collection')
-      setTriggerType('cron')
-      setTriggerConfig(defaultTriggerConfig.cron)
+      // Use initialData if provided, otherwise use defaults
+      setDisplayName(initialData?.displayName || '')
+      setDescription(initialData?.description || '')
+      setTaskType(initialData?.taskType || 'collection')
+      setTriggerType(initialData?.triggerType || 'cron')
+      setTriggerConfig(
+        initialData?.triggerConfig || defaultTriggerConfig[initialData?.triggerType || 'cron']
+      )
       setTeamId(null)
-      setPromptTemplate('')
-      setRetryCount(0)
-      setTimeoutSeconds(600)
-      setEnabled(true)
-      setPreserveHistory(false)
-      setVisibility('private')
+      setPromptTemplate(initialData?.promptTemplate || '')
+      setRetryCount(initialData?.retryCount ?? 0)
+      setTimeoutSeconds(initialData?.timeoutSeconds ?? 600)
+      setEnabled(initialData?.enabled ?? true)
+      setPreserveHistory(initialData?.preserveHistory ?? false)
+      setVisibility(initialData?.visibility || 'private')
       setSelectedRepo(null)
       setSelectedBranch(null)
       setSelectedModel(null)
     }
-  }, [subscription, open])
+  }, [subscription, open, initialData])
 
   // Update selected model display name when models load
   useEffect(() => {

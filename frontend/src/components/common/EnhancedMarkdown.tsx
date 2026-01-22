@@ -16,6 +16,7 @@ import katex from 'katex'
 import { Check, Copy, Code, ChevronDown, ChevronUp } from 'lucide-react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { createSchemeAwareUrlTransform } from '@/lib/scheme'
 
 import 'katex/dist/katex.min.css'
 
@@ -486,12 +487,16 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     return plugins
   }, [hasMath])
 
+  // URL transform to allow wegent:// scheme URLs
+  const urlTransform = useMemo(() => createSchemeAwareUrlTransform(['wegent:']), [])
+
   // Render markdown content
   const renderMarkdown = (content: string) => (
     <ReactMarkdown
       remarkPlugins={remarkPlugins}
       rehypePlugins={rehypePlugins}
       components={defaultComponents}
+      urlTransform={urlTransform}
     >
       {content}
     </ReactMarkdown>

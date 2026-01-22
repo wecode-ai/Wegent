@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
+import { useSchemeMessageActions } from '@/lib/scheme'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -302,6 +303,21 @@ function ChatAreaContent({
     resetContexts: chatState.resetContexts,
     onTaskCreated,
     selectedDocumentIds,
+  })
+
+  // Scheme URL action bridge - handles wegent://action/send-message and wegent://action/prefill-message
+  useSchemeMessageActions({
+    onSendMessage: streamHandlers.handleSendMessage,
+    onPrefillMessage: chatState.setTaskInputMessage,
+    onTeamChange: teamId => {
+      const targetTeam =
+        filteredTeams.find(t => t.id === teamId) || teams.find(t => t.id === teamId)
+      if (targetTeam) {
+        handleTeamChange(targetTeam)
+      }
+    },
+    currentTeamId: chatState.selectedTeam?.id,
+    teams: [...filteredTeams, ...teams],
   })
 
   // Determine if there are messages to display (full computation)
