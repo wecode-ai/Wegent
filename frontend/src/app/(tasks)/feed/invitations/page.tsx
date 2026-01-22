@@ -19,7 +19,6 @@ import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTranslation } from '@/hooks/useTranslation'
-import { ThemeToggle } from '@/features/theme/ThemeToggle'
 
 /**
  * Flow Invitations Page
@@ -41,7 +40,7 @@ function InvitationsPageContent() {
   return (
     <div className="flex h-full flex-col bg-base">
       {/* Back button header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-base">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" className="h-9 w-9" onClick={handleBack}>
             <ArrowLeft className="h-5 w-5" />
@@ -118,9 +117,7 @@ export default function InvitationsPage() {
           title={t('common:navigation.flow')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
-        >
-          <ThemeToggle />
-        </TopNavigation>
+        />
 
         {/* Main content area - Invitations page content */}
         <div className="flex-1 overflow-hidden">
