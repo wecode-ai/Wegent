@@ -67,6 +67,9 @@ async def process_response(
     """
     index = 0
     api_error_retry_count = 0  # Track retry count for this session
+    # Track silent exit detection from UserMessage tool results
+    silent_exit_detected = False
+    silent_exit_reason = ""
     try:
         while True:
             retry_requested = False
@@ -97,8 +100,14 @@ async def process_response(
                     _handle_system_message(msg, state_manager, thinking_manager)
 
                 elif isinstance(msg, UserMessage):
-                    # Handle UserMessage
-                    _handle_user_message(msg, thinking_manager)
+                    # Handle UserMessage and check for silent_exit in tool results
+                    is_silent, reason = _handle_user_message(msg, thinking_manager)
+                    if is_silent:
+                        silent_exit_detected = True
+                        silent_exit_reason = reason
+                        logger.info(
+                            f"🔇 Silent exit detected in UserMessage, will propagate to result: reason={reason}"
+                        )
 
                 elif isinstance(msg, AssistantMessage):
                     # Handle assistant message and detect API errors
@@ -119,6 +128,8 @@ async def process_response(
                         current_session_id,
                         api_error_retry_count,
                         MAX_API_ERROR_RETRIES,
+                        silent_exit_detected,
+                        silent_exit_reason,
                     )
                     if result_status == "RETRY":
                         # Increment retry count and restart response stream for retry
@@ -191,8 +202,21 @@ def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=N
         )
 
 
-def _handle_user_message(msg: UserMessage, thinking_manager=None):
-    """处理用户消息，提取详细信息"""
+def _handle_user_message(msg: UserMessage, thinking_manager=None) -> tuple[bool, str]:
+    """处理用户消息，提取详细信息
+
+    Args:
+        msg: UserMessage to process
+        thinking_manager: Optional ThinkingStepManager instance
+
+    Returns:
+        Tuple of (silent_exit_detected, silent_exit_reason)
+    """
+    from executor.tools.silent_exit import detect_silent_exit
+
+    # Track silent exit detection
+    silent_exit_detected = False
+    silent_exit_reason = ""
 
     # 构建用户消息的详细信息，符合目标格式
     message_details = {
@@ -264,6 +288,31 @@ def _handle_user_message(msg: UserMessage, thinking_manager=None):
                     f"UserMessage ToolResultBlock: tool_use_id = {block.tool_use_id}, is_error = {block.is_error}"
                 )
 
+                # Check for silent_exit marker in tool result content
+                # The content can be a string or a list of content blocks
+                content_to_check = block.content
+                if isinstance(content_to_check, list):
+                    # If it's a list, extract text from each block
+                    for item in content_to_check:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            text_content = item.get("text", "")
+                            is_silent, reason = detect_silent_exit(text_content)
+                            if is_silent:
+                                silent_exit_detected = True
+                                silent_exit_reason = reason
+                                logger.info(
+                                    f"🔇 Silent exit detected in ToolResultBlock: reason={reason}"
+                                )
+                                break
+                elif isinstance(content_to_check, str):
+                    is_silent, reason = detect_silent_exit(content_to_check)
+                    if is_silent:
+                        silent_exit_detected = True
+                        silent_exit_reason = reason
+                        logger.info(
+                            f"🔇 Silent exit detected in ToolResultBlock: reason={reason}"
+                        )
+
             else:
                 # 未知块类型，符合目标格式
                 unknown_detail = {
@@ -288,6 +337,8 @@ def _handle_user_message(msg: UserMessage, thinking_manager=None):
             use_i18n_keys=True,
             details=masked_message_details,
         )
+
+    return silent_exit_detected, silent_exit_reason
 
 
 def _handle_assistant_message(
@@ -456,6 +507,8 @@ async def _process_result_message(
     session_id: str = None,
     api_error_retry_count: int = 0,
     max_retries: int = 3,
+    propagated_silent_exit: bool = False,
+    propagated_silent_exit_reason: str = "",
 ) -> Union[TaskStatus, str, None]:
     """
     Process a ResultMessage from Claude
@@ -468,13 +521,15 @@ async def _process_result_message(
         session_id: Session ID for retry operations
         api_error_retry_count: Current retry count
         max_retries: Maximum retry attempts
+        propagated_silent_exit: Silent exit flag propagated from UserMessage tool results
+        propagated_silent_exit_reason: Silent exit reason propagated from UserMessage tool results
 
     Returns:
         TaskStatus: Processing status (COMPLETED if successful, otherwise None)
         str: "RETRY" if retry was initiated
     """
 
-    # 构建详细的结果信息，符合目标格式
+    # Construct detailed result info, matching target format
     result_details = {
         "type": "result",
         "subtype": msg.subtype,
@@ -497,6 +552,31 @@ async def _process_result_message(
     logger.info(
         f"Result message received: subtype={msg.subtype}, is_error={msg.is_error}, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}"
     )
+
+    # Check for silent exit marker in result
+    # First use propagated values from UserMessage tool results (more reliable)
+    silent_exit_detected = propagated_silent_exit
+    silent_exit_reason = propagated_silent_exit_reason
+
+    # Also check in msg.result as fallback (for backward compatibility)
+    if not silent_exit_detected and msg.result:
+        from executor.tools.silent_exit import detect_silent_exit
+
+        # Handle dict/list results by converting to JSON string
+        if isinstance(msg.result, (dict, list)):
+            result_str = json.dumps(msg.result, ensure_ascii=False)
+        else:
+            result_str = str(msg.result) if msg.result is not None else ""
+        silent_exit_detected, silent_exit_reason = detect_silent_exit(result_str)
+        if silent_exit_detected:
+            logger.info(
+                f"🔇 Silent exit detected in Claude Code result: reason={silent_exit_reason}"
+            )
+
+    if silent_exit_detected:
+        logger.info(
+            f"🔇 Silent exit will be added to result: reason={silent_exit_reason}"
+        )
 
     # If it's a successful result message, send the result back via callback
     if msg.subtype == "success" and not msg.is_error:
@@ -523,6 +603,15 @@ async def _process_result_message(
                 else:
                     result_dict = {"value": msg.result}
                     result_value = msg.result
+
+                # Add silent_exit flag if detected
+                if silent_exit_detected:
+                    result_dict["silent_exit"] = True
+                    if silent_exit_reason:
+                        result_dict["silent_exit_reason"] = silent_exit_reason
+                    logger.info(
+                        f"🔇 Adding silent_exit flag to result: reason={silent_exit_reason}"
+                    )
 
                 # Update workbench status to completed
                 state_manager.update_workbench_status("completed")

@@ -1129,6 +1129,14 @@ class ExecutorKindsService(
                 or "online"
             )
 
+            # Check if this is a subscription task for silent exit support
+            is_subscription = type == "subscription"
+            logger.info(
+                f"[EXECUTOR_DISPATCH] task_id={subtask.task_id}, subtask_id={subtask.id}, "
+                f"type={type}, is_subscription={is_subscription}, "
+                f"labels={task_crd.metadata.labels}"
+            )
+
             # Generate auth token for skills download
             # Use user's JWT token or generate a temporary one
             auth_token = None
@@ -1193,6 +1201,7 @@ class ExecutorKindsService(
                     "subtask_next_id": next_subtask.id if next_subtask else None,
                     "task_id": subtask.task_id,
                     "type": type,
+                    "is_subscription": is_subscription,  # For silent exit tool injection
                     "executor_name": subtask.executor_name,
                     "executor_namespace": subtask.executor_namespace,
                     "subtask_title": subtask.title,
@@ -2477,11 +2486,14 @@ class ExecutorKindsService(
                 )
                 return
 
-            # Use subscription_service.update_execution_status for unified status update and WebSocket emission
+            # Use BackgroundExecutionManager directly for status update
+            # This avoids circular dependency with subscription_service
             from app.schemas.subscription import BackgroundExecutionStatus
-            from app.services.subscription import subscription_service
+            from app.services.subscription.execution import background_execution_manager
+            from app.services.subscription.helpers import extract_result_summary
 
             # Map task status to BackgroundExecutionStatus
+            # For COMPLETED status, check if silent_exit flag is set in result
             status_map = {
                 "COMPLETED": BackgroundExecutionStatus.COMPLETED,
                 "FAILED": BackgroundExecutionStatus.FAILED,
@@ -2494,18 +2506,33 @@ class ExecutorKindsService(
                 )
                 return
 
+            # Check for silent_exit flag in result when task is COMPLETED
+            # This handles Executor-type tasks (Claude Code, Agno) that call silent_exit tool
+            if task_crd.status.status == "COMPLETED":
+                is_silent_exit = False
+                if task_crd.status.result and isinstance(task_crd.status.result, dict):
+                    is_silent_exit = task_crd.status.result.get("silent_exit", False)
+
+                if is_silent_exit:
+                    new_status = BackgroundExecutionStatus.COMPLETED_SILENT
+                    logger.info(
+                        f"Detected silent_exit in task {task_id} result, "
+                        f"setting BackgroundExecution {execution_id} status to COMPLETED_SILENT"
+                    )
+
             # Prepare result_summary and error_message
             result_summary = None
             error_message = None
             if task_crd.status.status == "COMPLETED":
-                result_summary = "Task completed successfully"
+                # Extract actual model output from task result using shared helper
+                result_summary = extract_result_summary(task_crd.status.result)
             elif task_crd.status.status == "FAILED":
                 error_message = task_crd.status.errorMessage or "Task failed"
             elif task_crd.status.status == "CANCELLED":
                 error_message = "Task was cancelled"
 
-            # Call subscription_service to update status (this will also emit WebSocket event)
-            success = subscription_service.update_execution_status(
+            # Use BackgroundExecutionManager to update status (this will also emit WebSocket event)
+            success = background_execution_manager.update_execution_status(
                 db=db,
                 execution_id=execution_id,
                 status=new_status,
@@ -2516,7 +2543,7 @@ class ExecutorKindsService(
             if success:
                 logger.info(
                     f"Updated BackgroundExecution {execution_id} status to {new_status.value} "
-                    f"for task {task_id} via subscription_service"
+                    f"for task {task_id} via background_execution_manager"
                 )
             else:
                 logger.warning(

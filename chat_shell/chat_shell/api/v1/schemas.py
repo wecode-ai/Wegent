@@ -237,6 +237,11 @@ class Metadata(BaseModel):
         None,
         description="JWT token for API authentication (e.g., attachment upload/download)",
     )
+    # Subscription task flag - when True, SilentExitTool will be added
+    is_subscription: Optional[bool] = Field(
+        False,
+        description="Whether this is a subscription task. When True, SilentExitTool will be added.",
+    )
 
 
 class AttachmentConfig(BaseModel):
@@ -479,6 +484,13 @@ class ResponseDone(BaseModel):
         ..., description="Stop reason: end_turn, tool_use, max_tokens"
     )
     sources: Optional[list[SourceItem]] = Field(None, description="Source references")
+    silent_exit: Optional[bool] = Field(
+        None,
+        description="Whether this was a silent exit (subscription task decided not to respond)",
+    )
+    silent_exit_reason: Optional[str] = Field(
+        None, description="Reason for silent exit (for logging)"
+    )
 
 
 class ResponseCancelled(BaseModel):
