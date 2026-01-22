@@ -120,6 +120,7 @@ async def trigger_ai_response(
     event_emitter: Optional["ChatEventEmitter"] = None,
     history_limit: Optional[int] = None,
     auth_token: str = "",
+    is_subscription: bool = False,
 ) -> None:
     """
     Trigger AI response for a chat message.
@@ -152,6 +153,8 @@ async def trigger_ai_response(
         history_limit: Optional limit on number of history messages to include.
             Used by Subscription tasks with preserveHistory enabled.
         auth_token: JWT token from user's request for downstream API authentication
+        is_subscription: Whether this is a subscription task. When True, SilentExitTool
+            will be added in chat_shell for silent task completion.
     """
     logger.info(
         "[ai_trigger] Triggering AI response: task_id=%d, "
@@ -177,6 +180,7 @@ async def trigger_ai_response(
             event_emitter=event_emitter,
             history_limit=history_limit,
             auth_token=auth_token,
+            is_subscription=is_subscription,
         )
     else:
         # Executor-based (ClaudeCode, Agno, etc.)
@@ -200,6 +204,7 @@ async def _trigger_direct_chat(
     event_emitter: Optional["ChatEventEmitter"] = None,
     history_limit: Optional[int] = None,
     auth_token: str = "",
+    is_subscription: bool = False,
 ) -> None:
     """
     Trigger direct chat (Chat Shell) AI response using ChatService.
@@ -222,6 +227,8 @@ async def _trigger_direct_chat(
         history_limit: Optional limit on number of history messages to include.
             Used by Subscription tasks with preserveHistory enabled.
         auth_token: JWT token from user's request for downstream API authentication
+        is_subscription: Whether this is a subscription task. When True, SilentExitTool
+            will be added in chat_shell for silent task completion.
     """
     # Extract data from ORM objects before starting background task
     # This prevents DetachedInstanceError when the session is closed
@@ -264,6 +271,7 @@ async def _trigger_direct_chat(
             event_emitter=event_emitter,
             history_limit=history_limit,
             auth_token=auth_token,
+            is_subscription=is_subscription,
         )
         logger.info(
             "[ai_trigger] Flow task mode: stream task completed (subtask_id=%d)",
@@ -285,6 +293,7 @@ async def _trigger_direct_chat(
                 event_emitter=event_emitter,
                 history_limit=history_limit,
                 auth_token=auth_token,
+                is_subscription=is_subscription,
             )
         )
 
@@ -307,6 +316,7 @@ async def _stream_chat_response(
     event_emitter: Optional["ChatEventEmitter"] = None,
     history_limit: Optional[int] = None,
     auth_token: str = "",
+    is_subscription: bool = False,
 ) -> None:
     """
     Stream chat response using ChatService.
@@ -332,6 +342,8 @@ async def _stream_chat_response(
             Pass NoOpEventEmitter for background tasks without WebSocket (e.g., Flow Scheduler).
         history_limit: Optional limit on number of history messages to include.
             Used by Subscription tasks with preserveHistory enabled.
+        is_subscription: Whether this is a subscription task. When True, SilentExitTool
+            will be added in chat_shell for silent task completion.
     """
     # Import here to avoid circular imports
     from app.services.chat.trigger.emitter import (
@@ -658,6 +670,7 @@ async def _stream_chat_response(
                 user_subtask_id=user_subtask_id,  # Pass user subtask ID for RAG persistence
                 history_limit=history_limit,  # Pass history limit for subscription tasks
                 auth_token=auth_token,  # Pass auth token from WebSocket session
+                is_subscription=is_subscription,  # Pass subscription flag for SilentExitTool
             )
         elif streaming_mode == "bridge":
             # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards
@@ -726,6 +739,7 @@ async def _stream_with_http_adapter(
     user_subtask_id: Optional[int] = None,
     history_limit: Optional[int] = None,
     auth_token: str = "",
+    is_subscription: bool = False,
 ) -> None:
     """Stream using HTTP adapter to call remote chat_shell service.
 
@@ -757,6 +771,8 @@ async def _stream_with_http_adapter(
         history_limit: Optional limit on number of history messages to include.
             Used by Subscription tasks with preserveHistory enabled.
         auth_token: JWT token from user's request for downstream API authentication
+        is_subscription: Whether this is a subscription task. When True, SilentExitTool
+            will be added in chat_shell for silent task completion.
     """
     # Import here to avoid circular imports
     from app.core.config import settings
@@ -865,6 +881,7 @@ async def _stream_with_http_adapter(
         mcp_servers=mcp_servers,
         history_limit=history_limit,  # Pass history limit for subscription tasks
         auth_token=auth_token,  # JWT token for API authentication
+        is_subscription=is_subscription,  # Pass subscription flag for SilentExitTool
     )
 
     logger.info(

@@ -108,6 +108,9 @@ class ChatRequest:
         ""  # JWT token for API authentication (e.g., attachment upload/download)
     )
 
+    # Subscription task flag - when True, SilentExitTool will be added
+    is_subscription: bool = False
+
 
 @dataclass
 class ChatEvent:

@@ -106,6 +106,9 @@ class ChatRequest:
         ""  # JWT token for API authentication (e.g., attachment upload/download)
     )
 
+    # Subscription task flag - when True, SilentExitTool will be added in chat_shell
+    is_subscription: bool = False
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -145,6 +148,7 @@ class ChatRequest:
             "extra_tools": self.extra_tools,
             "mcp_servers": self.mcp_servers,
             "auth_token": self.auth_token,
+            "is_subscription": self.is_subscription,
         }
 
 

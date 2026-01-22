@@ -335,7 +335,15 @@ export interface BackgroundExecutionUpdatePayload {
   subscription_name: string
   subscription_display_name?: string
   team_name?: string
-  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'RETRYING' | 'CANCELLED'
+  status:
+    | 'PENDING'
+    | 'RUNNING'
+    | 'COMPLETED'
+    | 'COMPLETED_SILENT'
+    | 'FAILED'
+    | 'RETRYING'
+    | 'CANCELLED'
+  is_silent: boolean // Flag for silent executions
   task_id?: number
   task_type?: string
   prompt?: string

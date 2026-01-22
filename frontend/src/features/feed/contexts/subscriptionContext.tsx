@@ -53,6 +53,11 @@ interface SubscriptionContextType {
   }
   setExecutionFilter: (filter: SubscriptionContextType['executionFilter']) => void
 
+  // Silent executions toggle
+  /** Whether to show silent executions in the timeline */
+  showSilentExecutions: boolean
+  setShowSilentExecutions: (show: boolean) => void
+
   // Active tab
   activeTab: 'timeline' | 'config'
   setActiveTab: (tab: 'timeline' | 'config') => void
@@ -93,6 +98,9 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
 
   // Active tab state
   const [activeTab, setActiveTab] = useState<'timeline' | 'config'>('timeline')
+
+  // Silent executions toggle - default to false (hide silent executions)
+  const [showSilentExecutions, setShowSilentExecutions] = useState(false)
 
   // Fetch subscriptions
   const refreshSubscriptions = useCallback(async () => {
@@ -146,7 +154,8 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
         executionFilter.subscriptionId,
         executionFilter.status,
         executionFilter.startDate,
-        executionFilter.endDate
+        executionFilter.endDate,
+        showSilentExecutions
       )
       setExecutions(response.items)
       setExecutionsTotal(response.total)
@@ -157,7 +166,7 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
       setExecutionsLoading(false)
       setExecutionsRefreshing(false)
     }
-  }, [executionFilter, executions.length])
+  }, [executionFilter, executions.length, showSilentExecutions])
 
   // Load more executions
   const loadMoreExecutions = useCallback(async () => {
@@ -171,7 +180,8 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
         executionFilter.subscriptionId,
         executionFilter.status,
         executionFilter.startDate,
-        executionFilter.endDate
+        executionFilter.endDate,
+        showSilentExecutions
       )
       setExecutions(prev => [...prev, ...response.items])
       setExecutionsPage(nextPage)
@@ -180,7 +190,7 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     } finally {
       setExecutionsLoading(false)
     }
-  }, [executions.length, executionsTotal, executionsPage, executionFilter])
+  }, [executions.length, executionsTotal, executionsPage, executionFilter, showSilentExecutions])
 
   // Cancel an execution
   const cancelExecution = useCallback(async (executionId: number) => {
@@ -198,16 +208,18 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
     setExecutionsTotal(prev => Math.max(0, prev - 1))
   }, [])
 
-  // Initial load
+  // Initial load - only load subscriptions here
+  // executions are loaded by the dependency-based useEffect below
   useEffect(() => {
     refreshSubscriptions()
-    refreshExecutions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Refresh executions when filter changes
+  // Refresh executions when filter or showSilentExecutions changes
+  // This also handles the initial load
   useEffect(() => {
     refreshExecutions()
-  }, [executionFilter, refreshExecutions])
+  }, [executionFilter, showSilentExecutions, refreshExecutions])
 
   // Handle WebSocket background execution updates
   const handleBackgroundExecutionUpdate = useCallback((data: BackgroundExecutionUpdatePayload) => {
@@ -215,6 +227,18 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
       // Check if this execution already exists
       const existingIndex = prev.findIndex(e => e.id === data.execution_id)
       const existingExecution = existingIndex >= 0 ? prev[existingIndex] : null
+
+      // If it's a silent execution and we're not showing silent executions,
+      // remove it from the list if it exists (handles status transition to silent)
+      if (data.is_silent && !showSilentExecutions) {
+        if (existingIndex >= 0) {
+          const newList = [...prev]
+          newList.splice(existingIndex, 1)
+          return newList
+        }
+        // Not showing silent executions and it's not in the list, skip
+        return prev
+      }
 
       const updatedExecution: BackgroundExecution = {
         id: data.execution_id,
@@ -234,6 +258,7 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
         retry_attempt: existingExecution?.retry_attempt ?? 0,
         created_at: data.created_at,
         updated_at: data.updated_at,
+        is_silent: data.is_silent,
       }
 
       if (existingIndex >= 0) {
@@ -246,7 +271,7 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
         return [updatedExecution, ...prev]
       }
     })
-  }, [])
+  }, [showSilentExecutions])
 
   // Subscribe to WebSocket background execution events
   useEffect(() => {
@@ -280,6 +305,8 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
         deleteExecution,
         executionFilter,
         setExecutionFilter,
+        showSilentExecutions,
+        setShowSilentExecutions,
         activeTab,
         setActiveTab,
       }}

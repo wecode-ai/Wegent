@@ -304,6 +304,7 @@ class BackgroundExecutionManager:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         include_following: bool = True,
+        include_silent: bool = False,
     ) -> Tuple[List[BackgroundExecutionInDB], int]:
         """
         List BackgroundExecution records (timeline view).
@@ -322,6 +323,7 @@ class BackgroundExecutionManager:
             start_date: Optional filter by start date
             end_date: Optional filter by end date
             include_following: Include executions from followed subscriptions
+            include_silent: Include COMPLETED_SILENT executions (default False)
 
         Returns:
             Tuple of (list of BackgroundExecutionInDB, total count)
@@ -388,6 +390,16 @@ class BackgroundExecutionManager:
         if status:
             query = query.filter(
                 BackgroundExecution.status.in_([s.value for s in status])
+            )
+
+        # Exclude silent executions unless explicitly requested
+        # Skip exclusion if COMPLETED_SILENT is explicitly included in status filter
+        if not include_silent and (
+            not status or BackgroundExecutionStatus.COMPLETED_SILENT not in status
+        ):
+            query = query.filter(
+                BackgroundExecution.status
+                != BackgroundExecutionStatus.COMPLETED_SILENT.value
             )
 
         if start_date:
@@ -619,6 +631,7 @@ class BackgroundExecutionManager:
             update_values["started_at"] = now_utc
         elif status in (
             BackgroundExecutionStatus.COMPLETED,
+            BackgroundExecutionStatus.COMPLETED_SILENT,
             BackgroundExecutionStatus.FAILED,
         ):
             update_values["completed_at"] = now_utc
@@ -655,6 +668,10 @@ class BackgroundExecutionManager:
         db.refresh(execution)
 
         # Update subscription statistics (only for terminal states to avoid double counting)
+        # Note: COMPLETED_SILENT is intentionally excluded from stats updates because:
+        # - Silent executions are designed for routine monitoring tasks
+        # - They are hidden from the timeline by default
+        # - Including them would pollute subscription metrics with routine checks
         if status in (
             BackgroundExecutionStatus.COMPLETED,
             BackgroundExecutionStatus.FAILED,
