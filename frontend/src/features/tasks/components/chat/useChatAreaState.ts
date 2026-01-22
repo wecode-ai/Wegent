@@ -62,6 +62,11 @@ export interface ChatAreaState {
   selectedBranch: GitBranch | null
   setSelectedBranch: (branch: GitBranch | null) => void
 
+  // Workspace override state (allows user to override team's default requires_workspace setting)
+  requiresWorkspaceOverride: boolean | null
+  setRequiresWorkspaceOverride: (value: boolean | null) => void
+  effectiveRequiresWorkspace: boolean // Computed: override ?? teamRequiresWorkspace(team)
+
   // Model state
   selectedModel: Model | null
   setSelectedModel: (model: Model | null) => void
@@ -175,6 +180,9 @@ export function useChatAreaState({
   // Repository and branch state
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
   const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null)
+
+  // Workspace override state (null means use team's default)
+  const [requiresWorkspaceOverride, setRequiresWorkspaceOverride] = useState<boolean | null>(null)
 
   // Model state
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
@@ -423,6 +431,9 @@ export function useChatAreaState({
       setExternalApiParams({})
       setAppMode(undefined)
 
+      // Reset workspace override to use new team's default setting
+      setRequiresWorkspaceOverride(null)
+
       // Clear repository and branch if the new team doesn't require a workspace
       // This handles switching from code agents (ClaudeCode, Agno) to chat-only agents (Chat, Dify)
       if (team && !teamRequiresWorkspace(team)) {
@@ -502,6 +513,15 @@ export function useChatAreaState({
     return appMode === 'workflow'
   }, [appMode])
 
+  // Compute effective requires workspace value
+  // Priority: user override > team default
+  const effectiveRequiresWorkspace = useMemo(() => {
+    if (requiresWorkspaceOverride !== null) {
+      return requiresWorkspaceOverride
+    }
+    return teamRequiresWorkspace(selectedTeam)
+  }, [requiresWorkspaceOverride, selectedTeam])
+
   return {
     // Team state
     selectedTeam,
@@ -521,6 +541,11 @@ export function useChatAreaState({
     // Branch state
     selectedBranch,
     setSelectedBranch,
+
+    // Workspace override state
+    requiresWorkspaceOverride,
+    setRequiresWorkspaceOverride,
+    effectiveRequiresWorkspace,
 
     // Model state
     selectedModel,

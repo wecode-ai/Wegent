@@ -49,6 +49,10 @@ export interface MobileChatInputControlsProps {
   selectedBranch: GitBranchType | null
   setSelectedBranch: (branch: GitBranchType | null) => void
   selectedTaskDetail: TaskDetail | null
+  /** Effective requires workspace value (considering user override) */
+  effectiveRequiresWorkspace?: boolean
+  /** Callback when user toggles the requires workspace switch */
+  onRequiresWorkspaceChange?: (value: boolean) => void
 
   // Clarification
   enableClarification: boolean
@@ -105,6 +109,8 @@ export function MobileChatInputControls({
   selectedBranch,
   setSelectedBranch,
   selectedTaskDetail,
+  effectiveRequiresWorkspace,
+  onRequiresWorkspaceChange: _onRequiresWorkspaceChange,
   enableClarification,
   setEnableClarification,
   enableCorrectionMode = false,
@@ -247,29 +253,34 @@ export function MobileChatInputControls({
             )}
 
             {/* Repository Selector - full row clickable, only show if team requires workspace */}
-            {showRepositorySelector && teamRequiresWorkspace(selectedTeam) && (
-              <>
-                {/* Only show separator if there's content above (chat shell features) */}
-                {isChatShell(selectedTeam) && <DropdownMenuSeparator />}
-                <MobileRepositorySelector
-                  selectedRepo={selectedRepo}
-                  handleRepoChange={setSelectedRepo}
-                  disabled={hasMessages}
-                  selectedTaskDetail={selectedTaskDetail}
-                />
-              </>
-            )}
+            {showRepositorySelector &&
+              teamRequiresWorkspace(selectedTeam) &&
+              effectiveRequiresWorkspace !== false && (
+                <>
+                  {/* Only show separator if there's content above (chat shell features) */}
+                  {isChatShell(selectedTeam) && <DropdownMenuSeparator />}
+                  <MobileRepositorySelector
+                    selectedRepo={selectedRepo}
+                    handleRepoChange={setSelectedRepo}
+                    disabled={hasMessages}
+                    selectedTaskDetail={selectedTaskDetail}
+                  />
+                </>
+              )}
 
             {/* Branch Selector - full row clickable, only show if team requires workspace */}
-            {showRepositorySelector && teamRequiresWorkspace(selectedTeam) && selectedRepo && (
-              <MobileBranchSelector
-                selectedRepo={selectedRepo}
-                selectedBranch={selectedBranch}
-                handleBranchChange={setSelectedBranch}
-                disabled={hasMessages}
-                taskDetail={selectedTaskDetail}
-              />
-            )}
+            {showRepositorySelector &&
+              teamRequiresWorkspace(selectedTeam) &&
+              effectiveRequiresWorkspace !== false &&
+              selectedRepo && (
+                <MobileBranchSelector
+                  selectedRepo={selectedRepo}
+                  selectedBranch={selectedBranch}
+                  handleBranchChange={setSelectedBranch}
+                  disabled={hasMessages}
+                  taskDetail={selectedTaskDetail}
+                />
+              )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

@@ -13,6 +13,7 @@ import {
   Loader2,
   GitBranch as GitBranchIcon,
   FolderGit2,
+  FolderX,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -21,6 +22,7 @@ import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Switch } from '@/components/ui/switch'
 import {
   Command,
   CommandEmpty,
@@ -52,6 +54,10 @@ export interface UnifiedRepositorySelectorProps {
   taskDetail?: TaskDetail | null
   /** When true, display only icon without text (for responsive collapse) */
   compact?: boolean
+  /** Whether workspace is required (can be overridden by user) */
+  requiresWorkspace?: boolean
+  /** Callback when user toggles the requires workspace switch */
+  onRequiresWorkspaceChange?: (value: boolean) => void
 }
 
 /**
@@ -72,6 +78,8 @@ export default function UnifiedRepositorySelector({
   className,
   taskDetail,
   compact = false,
+  requiresWorkspace = true,
+  onRequiresWorkspaceChange,
 }: UnifiedRepositorySelectorProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -260,8 +268,24 @@ export default function UnifiedRepositorySelector({
     setCurrentView('repo')
   }, [])
 
+  // Handle requires workspace toggle
+  const handleRequiresWorkspaceToggle = useCallback(
+    (checked: boolean) => {
+      onRequiresWorkspaceChange?.(checked)
+      // When turning off workspace requirement, clear the selected repo and branch
+      if (!checked) {
+        onRepoChange(null)
+        onBranchChange(null)
+      }
+    },
+    [onRequiresWorkspaceChange, onRepoChange, onBranchChange]
+  )
+
   // Determine the display text
   const getDisplayText = useCallback(() => {
+    if (!requiresWorkspace) {
+      return t('common:repos.no_workspace_needed')
+    }
     if (!selectedRepo) {
       return t('common:repos.select_repository')
     }
@@ -271,10 +295,13 @@ export default function UnifiedRepositorySelector({
     const repoName = truncateMiddle(selectedRepo.git_repo, isMobile ? 10 : 15)
     const branchName = truncateMiddle(selectedBranch.name, isMobile ? 8 : 12)
     return `${repoName} / ${branchName}`
-  }, [selectedRepo, selectedBranch, t, isMobile])
+  }, [selectedRepo, selectedBranch, t, isMobile, requiresWorkspace])
 
   // Tooltip content
   const tooltipContent = useMemo(() => {
+    if (!requiresWorkspace) {
+      return t('common:repos.no_workspace_needed')
+    }
     if (selectedRepo && selectedBranch) {
       return `${selectedRepo.git_repo} / ${selectedBranch.name}`
     }
@@ -282,10 +309,11 @@ export default function UnifiedRepositorySelector({
       return selectedRepo.git_repo
     }
     return t('common:repos.select_repository')
-  }, [selectedRepo, selectedBranch, t])
+  }, [selectedRepo, selectedBranch, t, requiresWorkspace])
 
   // Determine if selector is in "not selected" state
-  const isNotSelected = !selectedRepo
+  // When workspace is not required, we don't show the "not selected" style
+  const isNotSelected = requiresWorkspace && !selectedRepo
 
   // Loading state
   const isLoading = repoLoading || branchLoading
@@ -314,9 +342,16 @@ export default function UnifiedRepositorySelector({
                     'disabled:cursor-not-allowed disabled:opacity-50'
                   )}
                 >
-                  <FolderGit2
-                    className={cn('w-4 h-4 flex-shrink-0', isNotSelected ? 'text-text-muted' : '')}
-                  />
+                  {requiresWorkspace ? (
+                    <FolderGit2
+                      className={cn(
+                        'w-4 h-4 flex-shrink-0',
+                        isNotSelected ? 'text-text-muted' : ''
+                      )}
+                    />
+                  ) : (
+                    <FolderX className="w-4 h-4 flex-shrink-0 text-text-muted" />
+                  )}
                   {!compact && (
                     <>
                       <span className="truncate text-xs min-w-0">{getDisplayText()}</span>
@@ -351,69 +386,99 @@ export default function UnifiedRepositorySelector({
               className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden"
               shouldFilter={false}
             >
-              <div className="flex items-center border-b border-border px-3 py-2">
-                <FolderGit2 className="w-4 h-4 text-text-muted mr-2" />
-                <span className="text-sm font-medium text-text-primary">
-                  {t('common:repos.repository')}
-                </span>
-              </div>
-              <CommandInput
-                placeholder={t('common:branches.search_repository')}
-                onValueChange={handleSearchChange}
-                className={cn(
-                  'h-9 rounded-none border-b border-border flex-shrink-0',
-                  'placeholder:text-text-muted text-sm'
-                )}
-              />
-              <CommandList className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1">
-                {repoError ? (
-                  <div className="py-4 px-3 text-center text-sm text-error">{repoError}</div>
-                ) : repoItems.length === 0 ? (
-                  <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                    {repoLoading ? 'Loading...' : t('common:branches.select_repository')}
-                  </CommandEmpty>
-                ) : (
-                  <>
-                    <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                      {t('common:branches.no_match')}
-                    </CommandEmpty>
-                    <CommandGroup>
-                      {repoItems.map(item => (
-                        <CommandItem
-                          key={item.value}
-                          value={item.searchText || item.label}
-                          onSelect={() => handleRepoSelect(item.value)}
-                          className={cn(
-                            'group cursor-pointer select-none',
-                            'px-3 py-1.5 text-sm text-text-primary',
-                            'rounded-md mx-1 my-[2px]',
-                            'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
-                            'aria-selected:bg-hover',
-                            '!flex !flex-row !items-center !gap-3'
-                          )}
-                        >
-                          <Check
-                            className={cn(
-                              'h-3 w-3 shrink-0',
-                              selectedRepo?.git_repo_id.toString() === item.value
-                                ? 'opacity-100 text-primary'
-                                : 'opacity-0 text-text-muted'
-                            )}
-                          />
-                          <span className="flex-1 min-w-0 truncate" title={item.label}>
-                            {item.label}
-                          </span>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </>
-                )}
-              </CommandList>
-              <RepositorySelectorFooter
-                onConfigureClick={handleIntegrationClick}
-                onRefreshClick={handleRefreshCache}
-                isRefreshing={isRefreshing}
-              />
+              {/* Requires Workspace Toggle */}
+              {onRequiresWorkspaceChange && (
+                <div className="flex items-center justify-between border-b border-border px-3 py-2.5 bg-surface/50">
+                  <div className="flex items-center gap-2">
+                    <FolderGit2 className="w-4 h-4 text-text-muted" />
+                    <span className="text-sm text-text-primary">
+                      {t('common:repos.requires_workspace')}
+                    </span>
+                  </div>
+                  <Switch
+                    checked={requiresWorkspace}
+                    onCheckedChange={handleRequiresWorkspaceToggle}
+                    className="scale-90"
+                  />
+                </div>
+              )}
+
+              {/* Repository Selection - only show when workspace is required */}
+              {requiresWorkspace ? (
+                <>
+                  <div className="flex items-center border-b border-border px-3 py-2">
+                    <FolderGit2 className="w-4 h-4 text-text-muted mr-2" />
+                    <span className="text-sm font-medium text-text-primary">
+                      {t('common:repos.repository')}
+                    </span>
+                  </div>
+                  <CommandInput
+                    placeholder={t('common:branches.search_repository')}
+                    onValueChange={handleSearchChange}
+                    className={cn(
+                      'h-9 rounded-none border-b border-border flex-shrink-0',
+                      'placeholder:text-text-muted text-sm'
+                    )}
+                  />
+                  <CommandList className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1">
+                    {repoError ? (
+                      <div className="py-4 px-3 text-center text-sm text-error">{repoError}</div>
+                    ) : repoItems.length === 0 ? (
+                      <CommandEmpty className="py-4 text-center text-sm text-text-muted">
+                        {repoLoading ? 'Loading...' : t('common:branches.select_repository')}
+                      </CommandEmpty>
+                    ) : (
+                      <>
+                        <CommandEmpty className="py-4 text-center text-sm text-text-muted">
+                          {t('common:branches.no_match')}
+                        </CommandEmpty>
+                        <CommandGroup>
+                          {repoItems.map(item => (
+                            <CommandItem
+                              key={item.value}
+                              value={item.searchText || item.label}
+                              onSelect={() => handleRepoSelect(item.value)}
+                              className={cn(
+                                'group cursor-pointer select-none',
+                                'px-3 py-1.5 text-sm text-text-primary',
+                                'rounded-md mx-1 my-[2px]',
+                                'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
+                                'aria-selected:bg-hover',
+                                '!flex !flex-row !items-center !gap-3'
+                              )}
+                            >
+                              <Check
+                                className={cn(
+                                  'h-3 w-3 shrink-0',
+                                  selectedRepo?.git_repo_id.toString() === item.value
+                                    ? 'opacity-100 text-primary'
+                                    : 'opacity-0 text-text-muted'
+                                )}
+                              />
+                              <span className="flex-1 min-w-0 truncate" title={item.label}>
+                                {item.label}
+                              </span>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </>
+                    )}
+                  </CommandList>
+                  <RepositorySelectorFooter
+                    onConfigureClick={handleIntegrationClick}
+                    onRefreshClick={handleRefreshCache}
+                    isRefreshing={isRefreshing}
+                  />
+                </>
+              ) : (
+                /* No workspace needed - show message */
+                <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
+                  <FolderX className="w-10 h-10 text-text-muted mb-3" />
+                  <p className="text-sm text-text-muted">
+                    {t('common:repos.no_workspace_description')}
+                  </p>
+                </div>
+              )}
             </Command>
           )}
 

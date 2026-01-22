@@ -9,7 +9,10 @@
     "repository_tooltip": "选择代码仓库",
     "branch_tooltip": "选择分支",
     "select_repository": "选择仓库",
-    "unified_selector_placeholder": "选择仓库 / 分支"
+    "unified_selector_placeholder": "选择仓库 / 分支",
+    "requires_workspace": "需要仓库",
+    "no_workspace_needed": "无需仓库",
+    "no_workspace_description": "此任务将在不使用代码仓库的情况下运行"
   },
   "actions": {
     "save": "保存",

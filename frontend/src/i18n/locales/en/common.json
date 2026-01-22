@@ -9,7 +9,10 @@
     "repository_tooltip": "Select code repository",
     "branch_tooltip": "Select branch",
     "select_repository": "Select repository",
-    "unified_selector_placeholder": "Select repo / branch"
+    "unified_selector_placeholder": "Select repo / branch",
+    "requires_workspace": "Requires Repository",
+    "no_workspace_needed": "No repository needed",
+    "no_workspace_description": "This task will run without a code repository"
   },
   "actions": {
     "save": "Save",

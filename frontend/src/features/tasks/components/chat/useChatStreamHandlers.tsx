@@ -29,6 +29,8 @@ export interface UseChatStreamHandlersOptions {
   selectedRepo: GitRepoInfo | null
   selectedBranch: GitBranch | null
   showRepositorySelector: boolean
+  /** Effective requires workspace value (considering user override) */
+  effectiveRequiresWorkspace?: boolean
 
   // Input
   taskInputMessage: string
@@ -139,6 +141,7 @@ export function useChatStreamHandlers({
   selectedRepo,
   selectedBranch,
   showRepositorySelector,
+  effectiveRequiresWorkspace,
   taskInputMessage,
   setTaskInputMessage,
   setIsLoading,
@@ -408,7 +411,7 @@ export function useChatStreamHandlers({
       if (
         taskType === 'code' &&
         showRepositorySelector &&
-        teamRequiresWorkspace(selectedTeam) &&
+        (effectiveRequiresWorkspace ?? teamRequiresWorkspace(selectedTeam)) &&
         !effectiveRepo?.git_repo
       ) {
         toast({
@@ -688,7 +691,7 @@ export function useChatStreamHandlers({
       if (
         taskType === 'code' &&
         showRepositorySelector &&
-        teamRequiresWorkspace(selectedTeam) &&
+        (effectiveRequiresWorkspace ?? teamRequiresWorkspace(selectedTeam)) &&
         !effectiveRepo?.git_repo
       ) {
         toast({
