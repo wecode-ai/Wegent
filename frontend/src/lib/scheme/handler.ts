@@ -36,6 +36,7 @@ export async function handleSchemeURL(
     const context: SchemeHandlerContext = {
       url,
       parsed,
+      params: parsed.params, // Add shortcut for easy access
       router,
       user,
     }

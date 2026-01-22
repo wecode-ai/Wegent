@@ -21,6 +21,7 @@ export interface ParsedSchemeURL {
 export interface SchemeHandlerContext {
   url: string
   parsed: ParsedSchemeURL
+  params: Record<string, string | string[]> // Shortcut for parsed.params
   router: AppRouterInstance // Next.js router
   user?: unknown // User context if authenticated
 }
