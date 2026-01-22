@@ -288,7 +288,7 @@ class ResponseRequest(BaseModel):
 
     # Generation parameters
     temperature: float = Field(0.7, ge=0.0, le=2.0, description="Sampling temperature")
-    max_tokens: int = Field(4096, ge=1, description="Max output tokens")
+    max_tokens: int = Field(32768, ge=1, description="Max output tokens")
 
     # Input (flexible format)
     input: InputConfig = Field(..., description="Input configuration")

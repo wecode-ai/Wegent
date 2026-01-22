@@ -46,8 +46,18 @@ RUN claude plugin marketplace add anthropics/skills \
 # These are commonly used by document skills
 RUN pip install python-pptx openpyxl python-docx reportlab Pillow pandas \
     pypdf pdfplumber pytesseract \
-    "markitdown[pptx]" defusedxml \
+    "markitdown[pptx]" defusedxml weasyprint \
     && pip cache purge || true
+
+# Download Chinese fonts for document generation
+RUN mkdir -p /usr/share/fonts/truetype/noto && \
+    (curl -sL "https://github.com/googlefonts/noto-cjk/raw/main/Sans/Variable/TTF/NotoSansCJKsc-VF.ttf" \
+        -o /usr/share/fonts/truetype/noto/NotoSansCJKsc.ttf || \
+     curl -sL "https://github.com/adobe-fonts/source-han-sans/raw/release/Variable/TTF/SourceHanSansSC-VF.ttf" \
+        -o /usr/share/fonts/truetype/noto/SourceHanSansSC.ttf || \
+     curl -sL "https://fonts.gstatic.com/s/notosanssc/v36/k3kXo84MPvpLmixcA63oeALhL4Gxr9Ov.ttf" \
+        -o /usr/share/fonts/truetype/noto/NotoSansSC.ttf) && \
+    fc-cache -f -v
 
 
 # Copy only the standalone binary from builder
