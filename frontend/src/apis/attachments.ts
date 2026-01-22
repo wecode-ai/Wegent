@@ -423,9 +423,9 @@ export function getAttachmentDownloadUrl(attachmentId: number): string {
  * Download attachment file
  *
  * @param attachmentId - Attachment ID
- * @param filename - Filename for download
+ * @param filename - Optional filename for download. If not provided, will be extracted from Content-Disposition header
  */
-export async function downloadAttachment(attachmentId: number, filename: string): Promise<void> {
+export async function downloadAttachment(attachmentId: number, filename?: string): Promise<void> {
   const token = getToken()
 
   const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}/download`, {
@@ -439,11 +439,42 @@ export async function downloadAttachment(attachmentId: number, filename: string)
     throw new Error('Failed to download attachment')
   }
 
+  // Extract filename from Content-Disposition header if not provided
+  let downloadFilename = filename
+  if (!downloadFilename) {
+    const contentDisposition = response.headers.get('Content-Disposition')
+    if (contentDisposition) {
+      // Parse filename from Content-Disposition header
+      // Format: attachment; filename="example.pdf" or attachment; filename*=UTF-8''example.pdf
+      // Try RFC 5987 format first (filename*=UTF-8''encoded_filename)
+      const rfc5987Match = contentDisposition.match(/filename\*=UTF-8''(.+)/)
+      if (rfc5987Match && rfc5987Match[1]) {
+        downloadFilename = rfc5987Match[1]
+        // Decode URI component if it's encoded
+        try {
+          downloadFilename = decodeURIComponent(downloadFilename)
+        } catch {
+          // Keep original if decode fails
+        }
+      } else {
+        // Fallback to standard format (filename="example.pdf")
+        const standardMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
+        if (standardMatch && standardMatch[1]) {
+          downloadFilename = standardMatch[1].replace(/['"]/g, '')
+        }
+      }
+    }
+    // Fallback filename if extraction fails
+    if (!downloadFilename) {
+      downloadFilename = `attachment-${attachmentId}.file`
+    }
+  }
+
   const blob = await response.blob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = filename
+  a.download = downloadFilename
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)

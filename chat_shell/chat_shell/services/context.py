@@ -311,6 +311,7 @@ class ChatContext:
             load_skill_tool=load_skill_tool,
             preload_skills=self._request.preload_skills,
             user_name=self._request.user_name,
+            auth_token=self._request.auth_token,
         )
         add_span_event("skill_tools_prepared", {"tools_count": len(tools)})
         return tools
