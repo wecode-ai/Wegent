@@ -29,11 +29,13 @@ export interface ShellCreateRequest {
   displayName?: string
   baseShellRef: string // Required: base public shell name (e.g., "ClaudeCode")
   baseImage: string // Required: custom base image address
+  requiresWorkspace?: boolean // Whether this shell requires a workspace
 }
 
 export interface ShellUpdateRequest {
   displayName?: string
   baseImage?: string
+  requiresWorkspace?: boolean // Whether this shell requires a workspace
 }
 
 // Image Validation Types

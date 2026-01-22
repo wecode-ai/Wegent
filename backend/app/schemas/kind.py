@@ -239,6 +239,10 @@ class ShellSpec(BaseModel):
     baseShellRef: Optional[str] = (
         None  # Reference to base public shell (e.g., "ClaudeCode")
     )
+    requiresWorkspace: Optional[bool] = Field(
+        default=None,
+        description="Whether this shell requires a workspace/repository. Defaults to True for local_engine types (ClaudeCode, Agno), False for external_api types (Dify, Chat).",
+    )
 
 
 class ShellStatus(Status):

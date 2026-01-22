@@ -955,7 +955,9 @@
     "software_requirements_hint": "The following software must be pre-installed in your base image and meet minimum version requirements",
     "required": "Required",
     "optional": "Optional",
-    "copy_command": "Copy command"
+    "copy_command": "Copy command",
+    "requires_workspace": "Requires Workspace",
+    "requires_workspace_hint": "When enabled, this shell requires selecting a code repository to run tasks"
   },
   "inAppBrowser": {
     "title": "Open in Default Browser",

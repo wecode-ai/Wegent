@@ -955,7 +955,9 @@
     "software_requirements_hint": "以下软件需要在您的 Base Image 中预先安装并满足最低版本要求",
     "required": "必需",
     "optional": "可选",
-    "copy_command": "复制命令"
+    "copy_command": "复制命令",
+    "requires_workspace": "需要代码仓库",
+    "requires_workspace_hint": "启用后，此执行环境需要选择代码仓库才能运行任务"
   },
   "inAppBrowser": {
     "title": "默认浏览器打开",
