@@ -326,6 +326,8 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
         If result contains silent_exit=True, status is set to COMPLETED_SILENT.
         Otherwise, status is set to COMPLETED.
         """
+        from app.services.subscription.helpers import extract_result_summary
+
         logger.info(
             f"[SubscriptionEmitter] chat:done task={task_id} subtask={subtask_id} "
             f"execution_id={self.execution_id}"
@@ -340,10 +342,10 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
                 f"[SubscriptionEmitter] Silent exit detected for execution {self.execution_id}"
             )
 
-        # Update BackgroundExecution status
+        # Update BackgroundExecution status using shared helper
         await self._update_execution_status(
             status=status,
-            result_summary=self._extract_result_summary(result),
+            result_summary=extract_result_summary(result),
         )
 
     async def emit_chat_error(
@@ -413,28 +415,6 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
                 f"[SubscriptionEmitter] Failed to update execution {self.execution_id} "
                 f"status to {status}: {e}"
             )
-
-    def _extract_result_summary(
-        self, result: Optional[Dict[str, Any]]
-    ) -> Optional[str]:
-        """Extract a summary from the result dict.
-
-        Args:
-            result: The result dictionary from chat completion
-
-        Returns:
-            A summary string, or None if no result
-        """
-        if not result:
-            return None
-
-        # Try to get the value from result
-        value = result.get("value", "")
-        if not value:
-            return None
-
-        # Return full content - database column is TEXT type which can store large content
-        return value
 
 
 # Backward compatibility alias

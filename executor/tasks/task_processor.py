@@ -110,6 +110,10 @@ def process(task_data: Dict[str, Any]) -> TaskStatus:
     """
     Process task and send callback with distributed tracing support.
 
+    For subscription tasks, the container will exit after task completion
+    (success or failure) since subscription tasks are one-time background
+    executions that don't need to keep the container running.
+
     Args:
         task_data (dict): Task data
 
@@ -117,6 +121,9 @@ def process(task_data: Dict[str, Any]) -> TaskStatus:
         TaskStatus: Processing status
     """
     callback_params = _get_callback_params(task_data)
+
+    # Check if this is a subscription task
+    is_subscription = task_data.get("is_subscription", False)
 
     # Extract validation_id for validation tasks
     validation_params = task_data.get("validation_params", {})
@@ -134,6 +141,12 @@ def process(task_data: Dict[str, Any]) -> TaskStatus:
         logger.error("Failed to send 'running' status callback")
         set_span_attribute("error", True)
         set_span_attribute("error.message", "Failed to send running status callback")
+        # For subscription tasks, exit container on failure
+        if is_subscription:
+            logger.info(
+                "Subscription task failed to start, exiting container with code 1"
+            )
+            os._exit(1)
         return TaskStatus.FAILED
 
     add_span_event("task_started_callback_sent")
@@ -186,6 +199,21 @@ def process(task_data: Dict[str, Any]) -> TaskStatus:
             error_message=message, result=fail_result, **callback_params
         )
         add_span_event("task_failed_callback_sent")
+
+    # For subscription tasks, exit container after completion
+    # Subscription tasks are one-time background executions that don't need
+    # to keep the container running for follow-up messages
+    if is_subscription and status in [
+        TaskStatus.SUCCESS,
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
+    ]:
+        exit_code = 0 if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED] else 1
+        logger.info(
+            f"Subscription task completed with status {status.value}, "
+            f"exiting container with code {exit_code}"
+        )
+        os._exit(exit_code)
 
     return status
 

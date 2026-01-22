@@ -669,18 +669,23 @@ class ClaudeCodeAgent(Agent):
                 logger.info(f"Detected MCP servers configuration: {mcp_servers}")
                 bot_config["mcp_servers"] = mcp_servers
 
-            # Add silent_exit MCP server for subscription tasks
+            # Add wegent MCP server for subscription tasks (provides silent_exit tool via HTTP)
             if task_data.get("is_subscription"):
-                silent_exit_mcp = {
-                    "silent-exit": {
-                        "command": "python",
-                        "args": ["-m", "executor.mcp_servers.silent_exit.server"],
+                from executor.mcp_servers.wegent.server import get_wegent_mcp_url
+
+                wegent_mcp_url = get_wegent_mcp_url()
+                wegent_mcp = {
+                    "wegent": {
+                        "type": "http",
+                        "url": wegent_mcp_url,
                     }
                 }
                 if "mcp_servers" not in bot_config:
                     bot_config["mcp_servers"] = {}
-                bot_config["mcp_servers"].update(silent_exit_mcp)
-                logger.info("Added silent_exit MCP server for subscription task")
+                bot_config["mcp_servers"].update(wegent_mcp)
+                logger.info(
+                    f"Added wegent MCP server (HTTP) for subscription task at {wegent_mcp_url}"
+                )
 
             for key in valid_options:
                 if key in bot_config and bot_config[key] is not None:
@@ -773,6 +778,11 @@ class ClaudeCodeAgent(Agent):
             self.state_manager.report_progress(
                 progress, TaskStatus.RUNNING.value, "${{thinking.initialize_agent}}"
             )
+
+            # Check if this is a subscription task - subscription tasks need to wait for completion
+            # so the container can exit properly after task finishes
+            is_subscription = self.task_data.get("is_subscription", False)
+
             # Check if currently running in coroutine
             try:
                 # Try to get current running event loop
@@ -782,12 +792,44 @@ class ClaudeCodeAgent(Agent):
                 logger.info(
                     "Detected running in an async context, calling execute_async"
                 )
-                # Create async task to run in background, but return PENDING instead of task object
-                asyncio.create_task(self.execute_async())
-                logger.info(
-                    "Created async task for execution, returning RUNNING status"
-                )
-                return TaskStatus.RUNNING
+
+                if is_subscription:
+                    # For subscription tasks, we need to wait for completion
+                    # so the container can exit with proper status
+                    logger.info(
+                        "Subscription task detected, waiting for async execution to complete"
+                    )
+                    # Create a future and wait for it
+                    future = asyncio.ensure_future(self.execute_async())
+                    # We can't block here in async context, but we need to return the actual status
+                    # Use run_until_complete in a new thread or return a wrapper
+                    # Actually, since we're in an async context, we should use await
+                    # But this is a sync method, so we need a different approach
+                    # The safest approach is to run in a new event loop in a separate thread
+                    import concurrent.futures
+
+                    def run_async_task():
+                        new_loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(new_loop)
+                        try:
+                            return new_loop.run_until_complete(self._async_execute())
+                        finally:
+                            new_loop.close()
+
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(run_async_task)
+                        result = future.result()
+                        logger.info(
+                            f"Subscription task async execution completed with status: {result}"
+                        )
+                        return result
+                else:
+                    # For non-subscription tasks, create background task and return immediately
+                    asyncio.create_task(self.execute_async())
+                    logger.info(
+                        "Created async task for execution, returning RUNNING status"
+                    )
+                    return TaskStatus.RUNNING
             except RuntimeError:
                 # No running event loop, can safely use run_until_complete
                 logger.info("No running event loop detected, using new event loop")

@@ -65,14 +65,14 @@ class MemberBuilder:
             if mcp_tools:
                 all_tools.extend(mcp_tools)
 
-            # Add SilentExitTool for subscription tasks
+            # Add wegent MCP server for subscription tasks (provides silent_exit tool via Streamable HTTP)
             if task_data.get("is_subscription"):
-                from executor.tools.silent_exit import SilentExitTool as AgnoSilentExitTool
-
-                all_tools.append(AgnoSilentExitTool())
-                logger.info(
-                    f"Added SilentExitTool for subscription task (member: {member_config.get('name', 'Unnamed')})"
-                )
+                wegent_mcp_tools = await self._setup_wegent_mcp_tools()
+                if wegent_mcp_tools:
+                    all_tools.extend(wegent_mcp_tools)
+                    logger.info(
+                        f"Added wegent MCP tools (Streamable HTTP) for subscription task (member: {member_config.get('name', 'Unnamed')})"
+                    )
 
             # Prepare data sources for placeholder replacement
             data_sources = {
@@ -141,12 +141,14 @@ class MemberBuilder:
             if mcp_tools:
                 all_tools.extend(mcp_tools)
 
-            # Add SilentExitTool for subscription tasks
+            # Add wegent MCP server for subscription tasks (provides silent_exit tool via Streamable HTTP)
             if task_data.get("is_subscription"):
-                from executor.tools.silent_exit import SilentExitTool as AgnoSilentExitTool
-
-                all_tools.append(AgnoSilentExitTool())
-                logger.info("Added SilentExitTool for subscription task (default member)")
+                wegent_mcp_tools = await self._setup_wegent_mcp_tools()
+                if wegent_mcp_tools:
+                    all_tools.extend(wegent_mcp_tools)
+                    logger.info(
+                        "Added wegent MCP tools (Streamable HTTP) for subscription task (default member)"
+                    )
 
             # Prepare data sources for placeholder replacement
             data_sources = {
@@ -267,6 +269,81 @@ class MemberBuilder:
             Member description string
         """
         return member_config.get("system_prompt", "Team member")
+
+    async def _setup_wegent_mcp_tools(self) -> Optional[List[Any]]:
+        """
+        Setup wegent MCP tools via Streamable HTTP transport.
+
+        The wegent MCP server provides internal tools like silent_exit.
+        It runs as an HTTP server within the executor process.
+
+        Returns:
+            List of MCPTools if successful, None otherwise
+        """
+        import asyncio
+        import traceback
+
+        try:
+            from executor.mcp_servers.wegent.server import get_wegent_mcp_url
+
+            wegent_mcp_url = get_wegent_mcp_url()
+            logger.info(
+                f"Attempting to connect to wegent MCP server at {wegent_mcp_url}"
+            )
+
+            # Create Streamable HTTP MCP configuration for wegent server
+            # Use shorter timeout for internal server connection
+            wegent_mcp_config = {
+                "type": "streamable-http",
+                "url": wegent_mcp_url,
+                "timeout": 30,  # 30 seconds timeout for internal server
+                "sse_read_timeout": 60,  # 60 seconds read timeout
+            }
+
+            # Use the existing MCP manager to create and connect the tools
+            mcp_tools = self.mcp_manager._create_streamable_http_tools(
+                wegent_mcp_config
+            )
+
+            if mcp_tools:
+                # Retry connection with exponential backoff
+                max_retries = 3
+                retry_delay = 0.5  # Start with 500ms delay
+
+                for attempt in range(max_retries):
+                    try:
+                        await mcp_tools.connect()
+                        self.mcp_manager.connected_tools.append(mcp_tools)
+                        logger.info(
+                            f"Connected to wegent MCP server at {wegent_mcp_url} (attempt {attempt + 1})"
+                        )
+                        return [mcp_tools]
+                    except Exception as connect_error:
+                        if attempt < max_retries - 1:
+                            logger.warning(
+                                f"Failed to connect to wegent MCP server (attempt {attempt + 1}/{max_retries}): "
+                                f"{type(connect_error).__name__}: {str(connect_error)}"
+                            )
+                            await asyncio.sleep(retry_delay)
+                            retry_delay *= 2  # Exponential backoff
+                        else:
+                            # Log full traceback on final failure
+                            logger.error(
+                                f"Failed to connect to wegent MCP server after {max_retries} attempts: "
+                                f"{type(connect_error).__name__}: {str(connect_error)}\n"
+                                f"Traceback: {traceback.format_exc()}"
+                            )
+                            raise
+
+            return None
+
+        except Exception as e:
+            # Log full traceback for debugging
+            logger.error(
+                f"Failed to setup wegent MCP tools: {type(e).__name__}: {str(e)}\n"
+                f"Traceback: {traceback.format_exc()}"
+            )
+            return None
 
     def _validate_member_config(self, member_config: Dict[str, Any]) -> bool:
         """
