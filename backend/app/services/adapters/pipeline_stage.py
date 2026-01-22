@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
-from app.models.shared_team import SharedTeam
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.kind import Task, Team
@@ -602,7 +601,8 @@ class PipelineStageService:
         Supports:
         1. Teams owned by task owner
         2. Teams shared via SharedTeam table
-        3. Group teams (namespace != 'default') - can be created by any group member
+        3. Public teams (user_id=0)
+        4. Group teams (namespace != 'default') - can be created by any group member
 
         Args:
             db: Database session
@@ -612,60 +612,19 @@ class PipelineStageService:
         Returns:
             Team Kind object or None if not found
         """
+        from app.services.readers.kinds import KindType, kindReader
+
         team_name = task_crd.spec.teamRef.name
         team_namespace = task_crd.spec.teamRef.namespace
 
-        # First try to find team owned by task owner
-        team = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == task.user_id,
-                Kind.kind == "Team",
-                Kind.name == team_name,
-                Kind.namespace == team_namespace,
-                Kind.is_active.is_(True),
-            )
-            .first()
+        # Use kindReader which handles all team types:
+        # - Personal teams (owned by user)
+        # - Shared teams (via SharedTeam table)
+        # - Public teams (user_id=0)
+        # - Group teams (namespace != 'default')
+        return kindReader.get_by_name_and_namespace(
+            db, task.user_id, KindType.TEAM, team_namespace, team_name
         )
-
-        # If not found, check shared teams
-        if not team:
-            shared_teams = (
-                db.query(SharedTeam)
-                .filter(
-                    SharedTeam.user_id == task.user_id, SharedTeam.is_active.is_(True)
-                )
-                .all()
-            )
-            original_user_ids = [st.original_user_id for st in shared_teams]
-            if original_user_ids:
-                team = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id.in_(original_user_ids),
-                        Kind.kind == "Team",
-                        Kind.name == team_name,
-                        Kind.namespace == team_namespace,
-                        Kind.is_active.is_(True),
-                    )
-                    .first()
-                )
-
-        # If still not found and namespace is not 'default', this might be a group team
-        # Group teams can be created by any group member, so we query without user_id filter
-        if not team and team_namespace and team_namespace != "default":
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Team",
-                    Kind.name == team_name,
-                    Kind.namespace == team_namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
-            )
-
-        return team
 
 
 # Singleton instance
