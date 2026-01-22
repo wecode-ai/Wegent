@@ -25,8 +25,11 @@ class RedisConfig:
     url: str = field(
         default_factory=lambda: os.getenv("REDIS_URL", "redis://localhost:6379/0")
     )
-    socket_timeout: float = 5.0
-    connect_timeout: float = 2.0
+    # socket_timeout must be larger than BRPOP timeout to avoid timeout conflicts
+    # BRPOP blocks for up to TASK_QUEUE_DEQUEUE_TIMEOUT (default 5s), so socket_timeout
+    # should be significantly larger to account for the blocking operation plus buffer
+    socket_timeout: float = 30.0
+    connect_timeout: float = 5.0
     encoding: str = "utf-8"
     decode_responses: bool = True
 
