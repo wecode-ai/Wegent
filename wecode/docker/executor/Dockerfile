@@ -75,6 +75,41 @@ ENV PATH="/usr/local/bin:${PATH}"
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 ENV CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY="false"
 
+# Install system packages for document generation (AlmaLinux uses dnf)
+RUN dnf install -y \
+    # LibreOffice for document conversion and PDF operations
+    libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress \
+    # Document and PDF utilities
+    poppler-utils pandoc tesseract \
+    # Chromium dependencies for Playwright browser automation
+    atk at-spi2-atk libXcomposite libXdamage libXfixes libXrandr libxkbcommon \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf/*
+
+# Install Claude marketplace skills and npm packages for document generation
+# Install to /root so it's available in the base image
+RUN claude plugin marketplace add anthropics/skills \
+    && npm install -g pptxgenjs playwright sharp react react-dom react-icons docx pdf-lib \
+    && npx playwright install chromium \
+    && npm cache clean --force
+
+# Install Python packages for document generation
+# These are commonly used by document skills
+RUN pip install python-pptx openpyxl python-docx reportlab Pillow pandas \
+    pypdf pdfplumber pytesseract \
+    "markitdown[pptx]" defusedxml weasyprint \
+    && pip cache purge || true
+
+# Download Chinese fonts for document generation
+RUN mkdir -p /usr/share/fonts/truetype/noto && \
+    (curl -sL "https://github.com/googlefonts/noto-cjk/raw/main/Sans/Variable/TTF/NotoSansCJKsc-VF.ttf" \
+        -o /usr/share/fonts/truetype/noto/NotoSansCJKsc.ttf || \
+     curl -sL "https://github.com/adobe-fonts/source-han-sans/raw/release/Variable/TTF/SourceHanSansSC-VF.ttf" \
+        -o /usr/share/fonts/truetype/noto/SourceHanSansSC.ttf || \
+     curl -sL "https://fonts.gstatic.com/s/notosanssc/v36/k3kXo84MPvpLmixcA63oeALhL4Gxr9Ov.ttf" \
+        -o /usr/share/fonts/truetype/noto/NotoSansSC.ttf) && \
+    fc-cache -f -v
+
 # Copy standalone binaries from builder
 COPY --from=builder /app/executor/dist/executor /app/executor
 COPY --from=builder /app/dist/file_change_sender /app/scripts/file_change_sender
@@ -84,6 +119,7 @@ COPY claude_hooks.json /app/config/claude_hooks.json
 
 ENV PORT=10001
 ENV PYTHONPATH=/app
+ENV NODE_PATH=/usr/lib/node_modules
 ENV CUSTOM_CONFIG='{"wecode_config": "executor.wecode.config.config.WeCodeConfig"}'
 
 # Run the standalone binary
