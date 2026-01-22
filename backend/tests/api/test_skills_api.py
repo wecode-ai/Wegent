@@ -402,7 +402,7 @@ tags: ["api", "test"]
     def test_user_isolation(
         self, test_client: TestClient, test_token: str, test_admin_token: str
     ):
-        """Test users cannot access each other's skills"""
+        """Test regular users cannot access each other's skills, but admins can delete any skill"""
         skill_md = "---\ndescription: User isolation test\n---\n"
         zip_content = self.create_test_zip(skill_md)
 
@@ -417,7 +417,7 @@ tags: ["api", "test"]
 
         skill_id = create_response.json()["metadata"]["labels"]["id"]
 
-        # User 2 tries to access User 1's skill
+        # Admin tries to access User 1's skill (should still be 404 due to namespace isolation in GET)
         response = test_client.get(
             f"/api/v1/kinds/skills/{skill_id}",
             headers={"Authorization": f"Bearer {test_admin_token}"},
@@ -425,13 +425,14 @@ tags: ["api", "test"]
 
         assert response.status_code == 404
 
-        # User 2 tries to delete User 1's skill
+        # Admin can delete User 1's skill (system admin has permission)
         delete_response = test_client.delete(
             f"/api/v1/kinds/skills/{skill_id}",
             headers={"Authorization": f"Bearer {test_admin_token}"},
         )
 
-        assert delete_response.status_code == 404
+        # Admin should be able to delete any skill
+        assert delete_response.status_code == 204
 
 
 @pytest.mark.api
