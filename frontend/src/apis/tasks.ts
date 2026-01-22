@@ -107,6 +107,7 @@ export interface JoinSharedTaskRequest {
   team_id?: number // Optional: if not provided, backend will use user's first team
   model_id?: string // Model name (not database ID)
   force_override_bot_model?: boolean // Force override bot's predefined model
+  force_override_bot_model_type?: string // Model type: 'public', 'user', 'group'
   // Complete repository information (for code tasks)
   git_repo_id?: number // Git repository ID
   git_url?: string // Git repository URL
