@@ -155,7 +155,7 @@ class SubscriptionSpec(BaseModel):
     )
     visibility: SubscriptionVisibility = Field(
         SubscriptionVisibility.PRIVATE,
-        description="Visibility: 'public' or 'private'. Default is private.",
+        description="Visibility: 'public', 'private', or 'market'. Default is private.",
     )
     trigger: SubscriptionTriggerConfig = Field(..., description="Trigger configuration")
     teamRef: SubscriptionTeamRef = Field(
@@ -270,7 +270,7 @@ class SubscriptionBase(BaseModel):
     )
     visibility: SubscriptionVisibility = Field(
         SubscriptionVisibility.PRIVATE,
-        description="Visibility: 'public' or 'private'. Default is private.",
+        description="Visibility: 'public', 'private', or 'market'. Default is private.",
     )
     trigger_type: SubscriptionTriggerType = Field(..., description="Trigger type")
     trigger_config: Dict[str, Any] = Field(..., description="Trigger configuration")

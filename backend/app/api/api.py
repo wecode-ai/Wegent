@@ -82,7 +82,9 @@ api_router.include_router(
     tags=["subscription-invitations"],
 )
 # Subscription market endpoints (browse, rent, rentals)
-api_router.include_router(subscription_market.router, tags=["subscription-market"])
+api_router.include_router(
+    subscription_market.router, prefix="/market", tags=["subscription-market"]
+)
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])
 api_router.include_router(task_members.router, prefix="/tasks", tags=["task-members"])

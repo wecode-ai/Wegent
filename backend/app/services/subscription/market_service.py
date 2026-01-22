@@ -292,6 +292,12 @@ class SubscriptionMarketService:
                 status_code=400, detail="Source subscription is not available in market"
             )
 
+        # Prevent users from renting their own subscriptions
+        if source.user_id == renter_user_id:
+            raise HTTPException(
+                status_code=400, detail="Cannot rent your own subscription"
+            )
+
         # Check if user already rented this subscription
         existing_rental = self._get_user_rental_for_source(
             db, renter_user_id, source_subscription_id
