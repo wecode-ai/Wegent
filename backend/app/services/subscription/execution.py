@@ -398,7 +398,8 @@ class BackgroundExecutionManager:
             not status or BackgroundExecutionStatus.COMPLETED_SILENT not in status
         ):
             query = query.filter(
-                BackgroundExecution.status != BackgroundExecutionStatus.COMPLETED_SILENT.value
+                BackgroundExecution.status
+                != BackgroundExecutionStatus.COMPLETED_SILENT.value
             )
 
         if start_date:

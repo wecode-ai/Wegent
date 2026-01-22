@@ -101,6 +101,9 @@ async def _stream_response(
         set()
     )  # Track emitted tool events to avoid duplicates
     accumulated_sources: list[dict] = []  # Track knowledge base sources for citation
+    # Silent exit tracking for subscription tasks
+    is_silent_exit = False
+    silent_exit_reason = ""
 
     try:
         # Send response.start event
@@ -220,6 +223,7 @@ async def _stream_response(
         table_contexts = []
         task_data = None
         history_limit = None  # For subscription tasks
+        is_subscription = False  # For SilentExitTool injection
 
         if request.metadata:
             task_id = getattr(request.metadata, "task_id", 0) or 0
@@ -248,6 +252,9 @@ async def _stream_response(
             table_contexts = getattr(request.metadata, "table_contexts", None) or []
             task_data = getattr(request.metadata, "task_data", None)
             history_limit = getattr(request.metadata, "history_limit", None)
+            is_subscription = (
+                getattr(request.metadata, "is_subscription", False) or False
+            )
         # Merge skill configs from tools and metadata
         all_skill_configs = skill_configs + skill_configs_from_meta
 
@@ -290,6 +297,7 @@ async def _stream_response(
             table_contexts=table_contexts,
             task_data=task_data,
             mcp_servers=mcp_servers,
+            is_subscription=is_subscription,
         )
 
         logger.info(
@@ -483,6 +491,15 @@ async def _stream_response(
                 if usage:
                     total_input_tokens = usage.get("input_tokens", 0)
                     total_output_tokens = usage.get("output_tokens", 0)
+                # Extract silent exit flag from result
+                if result and result.get("silent_exit"):
+                    is_silent_exit = True
+                    silent_exit_reason = result.get("silent_exit_reason", "")
+                    logger.info(
+                        "[RESPONSE] Silent exit detected: subtask_id=%d, reason=%s",
+                        subtask_id,
+                        silent_exit_reason,
+                    )
 
             elif event.type == ChatEventType.ERROR:
                 error_msg = event.data.get("error", "Unknown error")
@@ -536,8 +553,10 @@ async def _stream_response(
                     if total_input_tokens or total_output_tokens
                     else None
                 ),
-                stop_reason="end_turn",
+                stop_reason="silent_exit" if is_silent_exit else "end_turn",
                 sources=formatted_sources,
+                silent_exit=is_silent_exit if is_silent_exit else None,
+                silent_exit_reason=silent_exit_reason if silent_exit_reason else None,
             ).model_dump(),
         )
 

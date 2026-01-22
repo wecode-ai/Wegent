@@ -455,6 +455,7 @@ async def _trigger_chat_shell_response(
             user_subtask_id=user_subtask.id if user_subtask else None,
             event_emitter=subscription_emitter,
             history_limit=history_limit,
+            is_subscription=True,  # Enable SilentExitTool in chat_shell
         )
 
     try:

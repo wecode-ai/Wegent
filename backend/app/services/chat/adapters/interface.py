@@ -101,6 +101,9 @@ class ChatRequest:
     # Extra tools to add
     extra_tools: list = field(default_factory=list)
 
+    # Subscription task flag - when True, SilentExitTool will be added in chat_shell
+    is_subscription: bool = False
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -139,6 +142,7 @@ class ChatRequest:
             "task_data": self.task_data,
             "extra_tools": self.extra_tools,
             "mcp_servers": self.mcp_servers,
+            "is_subscription": self.is_subscription,
         }
 
 

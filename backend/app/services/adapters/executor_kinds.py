@@ -1131,6 +1131,11 @@ class ExecutorKindsService(
 
             # Check if this is a subscription task for silent exit support
             is_subscription = type == "subscription"
+            logger.info(
+                f"[EXECUTOR_DISPATCH] task_id={subtask.task_id}, subtask_id={subtask.id}, "
+                f"type={type}, is_subscription={is_subscription}, "
+                f"labels={task_crd.metadata.labels}"
+            )
 
             # Generate auth token for skills download
             # Use user's JWT token or generate a temporary one

@@ -53,7 +53,9 @@ class BackgroundExecutionStatus(str, Enum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
-    COMPLETED_SILENT = "COMPLETED_SILENT"  # Silent completion (hidden from timeline by default)
+    COMPLETED_SILENT = (
+        "COMPLETED_SILENT"  # Silent completion (hidden from timeline by default)
+    )
     FAILED = "FAILED"
     RETRYING = "RETRYING"
     CANCELLED = "CANCELLED"

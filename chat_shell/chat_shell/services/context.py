@@ -572,12 +572,19 @@ class ChatContext:
             )
 
         # Add SilentExitTool for subscription tasks
+        logger.info(
+            "[CHAT_CONTEXT] is_subscription=%s for task_id=%d, subtask_id=%d",
+            self._request.is_subscription,
+            self._request.task_id,
+            self._request.subtask_id,
+        )
         if self._request.is_subscription:
             from chat_shell.tools.builtin import SilentExitTool
 
             extra_tools.append(SilentExitTool())
             logger.info(
-                "[CHAT_CONTEXT] Added SilentExitTool for subscription task",
+                "[CHAT_CONTEXT] Added SilentExitTool for subscription task (task_id=%d)",
+                self._request.task_id,
             )
 
         # === External Tools ===
