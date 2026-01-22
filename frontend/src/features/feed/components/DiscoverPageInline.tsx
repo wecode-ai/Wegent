@@ -13,10 +13,12 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   AlertCircle,
+  Check,
   CheckCircle2,
   Clock,
   History,
   Loader2,
+  Plus,
   RefreshCw,
   Search,
   Sparkles,
@@ -390,12 +392,26 @@ export function DiscoverPageInline({ onInvitationHandled }: DiscoverPageInlinePr
                       {/* Follow Button - hide for own subscriptions */}
                       {user?.id !== subscription.owner_user_id && (
                         <Button
-                          variant={followingIds.has(subscription.id) ? 'outline' : 'default'}
+                          variant={followingIds.has(subscription.id) ? 'ghost' : 'default'}
                           size="sm"
                           onClick={e => handleFollow(e, subscription.id)}
-                          className="shrink-0 ml-2"
+                          className={
+                            followingIds.has(subscription.id)
+                              ? 'shrink-0 ml-2 text-text-muted hover:text-destructive hover:bg-destructive/10'
+                              : 'shrink-0 ml-2'
+                          }
                         >
-                          {followingIds.has(subscription.id) ? t('following') : t('follow')}
+                          {followingIds.has(subscription.id) ? (
+                            <>
+                              <Check className="h-4 w-4 mr-1" />
+                              {t('following')}
+                            </>
+                          ) : (
+                            <>
+                              <Plus className="h-4 w-4 mr-1" />
+                              {t('follow')}
+                            </>
+                          )}
                         </Button>
                       )}
                     </div>
