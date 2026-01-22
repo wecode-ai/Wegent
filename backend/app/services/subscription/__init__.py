@@ -12,6 +12,10 @@ configurations and BackgroundExecution records.
 from app.services.subscription.execution import (
     BackgroundExecutionManager,
 )
+from app.services.subscription.market_service import (
+    SubscriptionMarketService,
+    subscription_market_service,
+)
 from app.services.subscription.service import (
     SubscriptionService,
     subscription_service,
@@ -27,6 +31,9 @@ __all__ = [
     # Main service
     "SubscriptionService",
     "subscription_service",
+    # Market service
+    "SubscriptionMarketService",
+    "subscription_market_service",
     # Execution manager
     "BackgroundExecutionManager",
     # State machine

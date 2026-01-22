@@ -17,6 +17,7 @@ import {
   SubscriptionList,
   SubscriptionForm,
   FollowingSubscriptionList,
+  RentalSubscriptionList,
 } from '@/features/feed/components'
 import {
   SubscriptionProvider,
@@ -33,7 +34,7 @@ import type { Subscription } from '@/types/subscription'
 /**
  * Tab type for subscription management
  */
-type SubscriptionTabValue = 'my_created' | 'my_following' | 'shared_to_me'
+type SubscriptionTabValue = 'my_created' | 'my_following' | 'shared_to_me' | 'my_rentals'
 
 /**
  * Flow Subscriptions Management Page
@@ -42,6 +43,7 @@ type SubscriptionTabValue = 'my_created' | 'my_following' | 'shared_to_me'
  * - My Created: Subscriptions created by the user
  * - My Following: Public subscriptions the user follows directly
  * - Shared to Me: Subscriptions shared to the user via invitation
+ * - My Rentals: Subscriptions rented from the market
  */
 function SubscriptionsPageContent() {
   const { t } = useTranslation('feed')
@@ -118,6 +120,12 @@ function SubscriptionsPageContent() {
             >
               {t('tabs_shared_to_me')}
             </TabsTrigger>
+            <TabsTrigger
+              value="my_rentals"
+              className="px-4 py-3 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-transparent"
+            >
+              {t('tabs_my_rentals')}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -132,6 +140,7 @@ function SubscriptionsPageContent() {
         )}
         {activeTab === 'my_following' && <FollowingSubscriptionList followType="direct" />}
         {activeTab === 'shared_to_me' && <FollowingSubscriptionList followType="invited" />}
+        {activeTab === 'my_rentals' && <RentalSubscriptionList />}
       </div>
 
       {/* Form Dialog */}

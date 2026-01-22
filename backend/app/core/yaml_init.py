@@ -633,6 +633,15 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
         logger.info("YAML initialization is disabled (INIT_DATA_ENABLED=False)")
         return {"status": "disabled"}
 
+    # Skip YAML initialization in production environment
+    # Production deployments should use pre-configured databases or manual initialization
+    if settings.ENVIRONMENT == "production":
+        logger.info(
+            "YAML initialization is skipped in production environment. "
+            "Set ENVIRONMENT=development or use manual initialization if needed."
+        )
+        return {"status": "skipped", "reason": "production environment"}
+
     force = settings.INIT_DATA_FORCE
     logger.info(f"Starting YAML initialization (force={force})...")
 

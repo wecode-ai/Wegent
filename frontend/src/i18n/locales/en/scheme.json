@@ -1,0 +1,27 @@
+{
+  "scheme_url": {
+    "page_navigation": "Page Navigation",
+    "forms": "Forms",
+    "actions": "Actions",
+    "modals": "Modals",
+    "open_chat": "Open Chat",
+    "open_code": "Open Code",
+    "open_settings": "Open Settings",
+    "open_knowledge": "Open Knowledge Base",
+    "open_feed": "Open Activity Feed",
+    "open_feedback": "Send Feedback",
+    "create_task": "Create Task",
+    "create_team": "Create Agent",
+    "create_bot": "Create Bot",
+    "add_repository": "Add Repository",
+    "send_message": "Send Message",
+    "prefill_message": "Prefill Message",
+    "share": "Share",
+    "export_chat": "Export Chat",
+    "export_task": "Export Task",
+    "export_code": "Export Code",
+    "model_selector": "Select Model",
+    "team_selector": "Select Agent",
+    "repository_selector": "Select Repository"
+  }
+}

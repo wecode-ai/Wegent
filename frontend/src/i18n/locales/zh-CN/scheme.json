@@ -1,0 +1,27 @@
+{
+  "scheme_url": {
+    "page_navigation": "页面导航",
+    "forms": "表单",
+    "actions": "操作",
+    "modals": "弹窗",
+    "open_chat": "打开对话",
+    "open_code": "打开代码",
+    "open_settings": "打开设置",
+    "open_knowledge": "打开知识库",
+    "open_feed": "打开动态流",
+    "open_feedback": "发送反馈",
+    "create_task": "创建任务",
+    "create_team": "创建智能体",
+    "create_bot": "创建机器人",
+    "add_repository": "添加代码仓库",
+    "send_message": "发送消息",
+    "prefill_message": "预填充消息",
+    "share": "分享",
+    "export_chat": "导出对话",
+    "export_task": "导出任务",
+    "export_code": "导出代码",
+    "model_selector": "选择模型",
+    "team_selector": "选择智能体",
+    "repository_selector": "选择代码仓库"
+  }
+}
