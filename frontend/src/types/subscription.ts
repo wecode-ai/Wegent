@@ -11,7 +11,7 @@
 export type SubscriptionTaskType = 'execution' | 'collection'
 
 // Subscription visibility enumeration
-export type SubscriptionVisibility = 'public' | 'private'
+export type SubscriptionVisibility = 'public' | 'private' | 'market'
 
 // Subscription trigger type enumeration
 export type SubscriptionTriggerType = 'cron' | 'interval' | 'one_time' | 'event'
@@ -102,6 +102,13 @@ export interface Subscription {
   followers_count: number
   is_following: boolean
   owner_username?: string
+  // Market rental fields
+  is_rental?: boolean
+  source_subscription_id?: number
+  source_subscription_name?: string
+  source_subscription_display_name?: string
+  source_owner_username?: string
+  rental_count?: number
   created_at: string
   updated_at: string
 }
@@ -295,4 +302,73 @@ export interface DiscoverSubscriptionResponse {
 export interface DiscoverSubscriptionsListResponse {
   total: number
   items: DiscoverSubscriptionResponse[]
+}
+
+// ========== Market/Rental Types ==========
+
+// Market subscription detail (hides sensitive information)
+export interface MarketSubscriptionDetail {
+  id: number
+  name: string
+  display_name: string
+  description?: string
+  task_type: SubscriptionTaskType
+  trigger_type: SubscriptionTriggerType
+  trigger_description: string
+  owner_user_id: number
+  owner_username: string
+  rental_count: number
+  is_rented: boolean
+  created_at: string
+  updated_at: string
+}
+
+// Market subscriptions list response
+export interface MarketSubscriptionsListResponse {
+  total: number
+  items: MarketSubscriptionDetail[]
+}
+
+// Rent subscription request
+export interface RentSubscriptionRequest {
+  name: string
+  display_name: string
+  trigger_type: SubscriptionTriggerType
+  trigger_config: Record<string, unknown>
+  model_ref?: SubscriptionModelRef
+}
+
+// Rental subscription response
+export interface RentalSubscriptionResponse {
+  id: number
+  name: string
+  display_name: string
+  namespace: string
+  source_subscription_id: number
+  source_subscription_name: string
+  source_subscription_display_name: string
+  source_owner_user_id: number
+  source_owner_username: string
+  trigger_type: SubscriptionTriggerType
+  trigger_config: Record<string, unknown>
+  model_ref?: SubscriptionModelRef
+  enabled: boolean
+  last_execution_time?: string
+  last_execution_status?: string
+  next_execution_time?: string
+  execution_count: number
+  created_at: string
+  updated_at: string
+}
+
+// Rental subscriptions list response
+export interface RentalSubscriptionsListResponse {
+  total: number
+  items: RentalSubscriptionResponse[]
+}
+
+// Rental count response
+export interface RentalCountResponse {
+  subscription_id: number
+  rental_count: number
 }

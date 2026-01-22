@@ -10,11 +10,12 @@
  * Supports multiple tabs for extensibility.
  */
 import { useState, useCallback } from 'react'
-import { Compass } from 'lucide-react'
+import { Compass, Store } from 'lucide-react'
 import { SubscriptionProvider, useSubscriptionContext } from '../contexts/subscriptionContext'
 import { SubscriptionTimeline } from './SubscriptionTimeline'
 import { SubscriptionForm } from './SubscriptionForm'
 import { DiscoverPageInline } from './DiscoverPageInline'
+import { MarketPageInline } from './MarketPageInline'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -22,7 +23,7 @@ import { useTranslation } from '@/hooks/useTranslation'
  * Tab configuration for extensibility.
  * Add new tabs here as the feature grows.
  */
-export type FeedTabValue = 'all' | 'discover'
+export type FeedTabValue = 'all' | 'discover' | 'market'
 
 function SubscriptionPageContent() {
   const { t } = useTranslation('feed')
@@ -44,6 +45,12 @@ function SubscriptionPageContent() {
     refreshExecutions()
   }, [refreshExecutions])
 
+  const handleRentalSuccess = useCallback(() => {
+    // Refresh subscriptions to show newly rented subscriptions
+    refreshSubscriptions()
+    refreshExecutions()
+  }, [refreshSubscriptions, refreshExecutions])
+
   return (
     <div className="h-full bg-surface/30 flex flex-col">
       {/* Tab navigation */}
@@ -63,6 +70,13 @@ function SubscriptionPageContent() {
               <Compass className="h-4 w-4" />
               {t('discover')}
             </TabsTrigger>
+            <TabsTrigger
+              value="market"
+              className="px-1 pb-3 pt-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-transparent flex items-center gap-1.5"
+            >
+              <Store className="h-4 w-4" />
+              {t('market.tab')}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -75,6 +89,11 @@ function SubscriptionPageContent() {
         {activeTab === 'discover' && (
           <div className="h-full">
             <DiscoverPageInline onInvitationHandled={handleInvitationHandled} />
+          </div>
+        )}
+        {activeTab === 'market' && (
+          <div className="h-full">
+            <MarketPageInline onRentalSuccess={handleRentalSuccess} />
           </div>
         )}
       </div>

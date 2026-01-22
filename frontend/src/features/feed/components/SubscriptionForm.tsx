@@ -972,8 +972,20 @@ export function SubscriptionForm({
                     <Eye className="h-4 w-4 mr-1.5" />
                     {t('visibility_public')}
                   </Button>
+                  <Button
+                    type="button"
+                    variant={visibility === 'market' ? 'primary' : 'outline'}
+                    size="sm"
+                    onClick={() => setVisibility('market')}
+                    className="flex-1"
+                  >
+                    <Eye className="h-4 w-4 mr-1.5" />
+                    {t('visibility_market')}
+                  </Button>
                 </div>
-                <p className="text-xs text-text-muted">{t('visibility_hint')}</p>
+                <p className="text-xs text-text-muted">
+                  {visibility === 'market' ? t('visibility_market_hint') : t('visibility_hint')}
+                </p>
               </div>
 
               {/* Enabled */}

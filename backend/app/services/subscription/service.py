@@ -774,6 +774,16 @@ class SubscriptionService:
             subscription_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
         )
 
+        # Get rental-related fields from _internal
+        is_rental = internal.get("is_rental", False)
+        source_subscription_id = internal.get("source_subscription_id")
+        source_subscription_name = internal.get("source_subscription_name")
+        source_subscription_display_name = internal.get(
+            "source_subscription_display_name"
+        )
+        source_owner_username = internal.get("source_owner_username")
+        rental_count = internal.get("rental_count", 0)
+
         return SubscriptionInDB(
             id=subscription.id,
             user_id=subscription.user_id,
@@ -809,6 +819,13 @@ class SubscriptionService:
             followers_count=0,
             is_following=False,
             owner_username=None,
+            # Market rental fields
+            is_rental=is_rental,
+            source_subscription_id=source_subscription_id,
+            source_subscription_name=source_subscription_name,
+            source_subscription_display_name=source_subscription_display_name,
+            source_owner_username=source_owner_username,
+            rental_count=rental_count,
             created_at=subscription.created_at,
             updated_at=subscription.updated_at,
         )
