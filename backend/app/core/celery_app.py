@@ -23,9 +23,13 @@ Beat Scheduler Storage:
   - No external dependencies beyond Redis for locking
 """
 
+import logging
+
 from celery import Celery
+from celery.signals import after_setup_logger, after_setup_task_logger
 
 from app.core.config import settings
+from app.core.logging import RequestIdFilter
 
 # Use configured broker/backend or fallback to REDIS_URL
 # Settings validator already converts empty strings to None
@@ -70,6 +74,42 @@ celery_app.conf.update(
     # Application-level distributed lock in check_due_subscriptions prevents duplicate execution
     beat_scheduler="celery.beat:PersistentScheduler",
 )
+
+
+# Configure Celery logging to use the same format as backend (with request_id)
+@after_setup_logger.connect
+def setup_celery_logger(logger, *args, **kwargs):
+    """
+    Configure Celery logger to use backend's log format with request_id.
+
+    This signal handler is called after Celery sets up its logger,
+    allowing us to override the format to match backend's format.
+    """
+    log_format = "%(asctime)s %(levelname)-4s [%(request_id)s] : %(message)s"
+    formatter = logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
+
+    # Add RequestIdFilter to all handlers
+    for handler in logger.handlers:
+        handler.setFormatter(formatter)
+        handler.addFilter(RequestIdFilter())
+
+
+@after_setup_task_logger.connect
+def setup_celery_task_logger(logger, *args, **kwargs):
+    """
+    Configure Celery task logger to use backend's log format with request_id.
+
+    This signal handler is called after Celery sets up its task logger,
+    allowing us to override the format to match backend's format.
+    """
+    log_format = "%(asctime)s %(levelname)-4s [%(request_id)s] : %(message)s"
+    formatter = logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
+
+    # Add RequestIdFilter to all handlers
+    for handler in logger.handlers:
+        handler.setFormatter(formatter)
+        handler.addFilter(RequestIdFilter())
+
 
 # Import dead letter queue handlers to register signal handlers
 # This must be done after celery_app is created

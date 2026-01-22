@@ -311,6 +311,7 @@ class ChatContext:
             load_skill_tool=load_skill_tool,
             preload_skills=self._request.preload_skills,
             user_name=self._request.user_name,
+            auth_token=self._request.auth_token,
         )
         add_span_event("skill_tools_prepared", {"tools_count": len(tools)})
         return tools
@@ -569,6 +570,22 @@ class ChatContext:
             logger.info(
                 "[CHAT_CONTEXT] Added DataTableTool with %d table context(s)",
                 len(self._request.table_contexts),
+            )
+
+        # Add SilentExitTool for subscription tasks
+        logger.info(
+            "[CHAT_CONTEXT] is_subscription=%s for task_id=%d, subtask_id=%d",
+            self._request.is_subscription,
+            self._request.task_id,
+            self._request.subtask_id,
+        )
+        if self._request.is_subscription:
+            from chat_shell.tools.builtin import SilentExitTool
+
+            extra_tools.append(SilentExitTool())
+            logger.info(
+                "[CHAT_CONTEXT] Added SilentExitTool for subscription task (task_id=%d)",
+                self._request.task_id,
             )
 
         # === External Tools ===

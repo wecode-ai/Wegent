@@ -27,6 +27,8 @@ class SkillToolContext:
         db_session: Database session for data access
         ws_emitter: WebSocket emitter for real-time communication
         skill_config: Skill-specific configuration from SKILL.md
+        user_name: Username for identifying the user
+        auth_token: JWT token for API authentication (e.g., attachment upload/download)
     """
 
     task_id: int
@@ -36,6 +38,7 @@ class SkillToolContext:
     ws_emitter: Any  # WebSocket emitter
     skill_config: dict[str, Any] = field(default_factory=dict)
     user_name: str = ""
+    auth_token: str = ""  # JWT token for API authentication
 
     def get_config(self, key: str, default: Any = None) -> Any:
         """Get a configuration value from skill config.

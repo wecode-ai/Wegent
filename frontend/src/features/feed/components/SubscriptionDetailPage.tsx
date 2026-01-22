@@ -13,10 +13,12 @@ import { useRouter } from 'next/navigation'
 import {
   ArrowLeft,
   CalendarClock,
+  Check,
   Clock,
   Eye,
   EyeOff,
   Loader2,
+  Plus,
   Share2,
   Timer,
   Users,
@@ -199,12 +201,23 @@ export function SubscriptionDetailPage({ subscriptionId }: SubscriptionDetailPag
             )}
             {!isOwner && (
               <Button
-                variant={isFollowing ? 'outline' : 'default'}
+                variant={isFollowing ? 'ghost' : 'default'}
                 size="sm"
                 onClick={handleFollow}
                 disabled={followLoading}
+                className={
+                  isFollowing
+                    ? 'text-text-muted hover:text-destructive hover:bg-destructive/10'
+                    : ''
+                }
               >
-                {followLoading && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+                {followLoading ? (
+                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                ) : isFollowing ? (
+                  <Check className="h-4 w-4 mr-1.5" />
+                ) : (
+                  <Plus className="h-4 w-4 mr-1.5" />
+                )}
                 {isFollowing ? t('following') : t('follow')}
               </Button>
             )}

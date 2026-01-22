@@ -103,6 +103,7 @@
   "status_pending": "等待中",
   "status_running": "运行中",
   "status_completed": "已完成",
+  "status_completed_silent": "已完成（静默）",
   "status_failed": "失败",
   "status_retrying": "重试中",
   "status_cancelled": "已取消",
@@ -290,6 +291,9 @@
     "delete_success": "执行记录已删除",
     "delete_failed": "删除执行记录失败",
     "delete_confirm_title": "删除执行记录",
-    "delete_confirm_message": "确定要删除这条执行记录吗？此操作无法撤销。"
+    "delete_confirm_message": "确定要删除这条执行记录吗？此操作无法撤销。",
+    "silent_executions": "静默",
+    "show_silent": "显示静默执行",
+    "hide_silent": "隐藏静默执行"
   }
 }

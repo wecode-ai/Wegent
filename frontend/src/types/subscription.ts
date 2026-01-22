@@ -24,6 +24,7 @@ export type BackgroundExecutionStatus =
   | 'PENDING'
   | 'RUNNING'
   | 'COMPLETED'
+  | 'COMPLETED_SILENT'
   | 'FAILED'
   | 'RETRYING'
   | 'CANCELLED'
@@ -189,6 +190,8 @@ export interface BackgroundExecution {
   task_type?: string
   // Permission field - indicates if current user can delete this execution
   can_delete?: boolean
+  // Silent execution flag - indicates if this execution completed silently
+  is_silent?: boolean
 }
 
 // Background execution list response

@@ -35,7 +35,7 @@ DEFAULT_CONFIG = {
     },
     "defaults": {
         "temperature": 0.7,
-        "max_tokens": 4096,
+        "max_tokens": 32768,
     },
 }
 

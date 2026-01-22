@@ -85,10 +85,12 @@ def emit_background_execution_update(
         logger.warning(f"Failed to get subscription details for WS event: {e}")
 
     # Build payload
+    is_silent = status == BackgroundExecutionStatus.COMPLETED_SILENT
     payload = {
         "execution_id": execution.id,
         "subscription_id": execution.subscription_id,
         "status": status.value,
+        "is_silent": is_silent,  # Flag for silent executions
         "task_id": execution.task_id,
         "prompt": execution.prompt,
         "result_summary": result_summary or execution.result_summary,

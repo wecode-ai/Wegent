@@ -238,6 +238,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 "user_name": user.user_name,
                 "request_id": request_id,
                 "token_exp": token_exp,  # Store token expiry for later checks
+                "auth_token": token,  # Store original token for downstream services
             },
         )
 
@@ -407,6 +408,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         session = await self.get_session(sid)
         user_id = session.get("user_id")
         user_name = session.get("user_name")
+        auth_token = session.get("auth_token", "")  # Get original JWT token
         logger.info(f"[WS] chat:send session: user_id={user_id}, user_name={user_name}")
 
         if not user_id:
@@ -703,6 +705,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                         if user_subtask_for_context
                         else None
                     ),  # Pass user subtask ID for unified context processing
+                    auth_token=auth_token,  # Pass original JWT token from WebSocket session
                 )
 
             # Return unified response - same structure for all modes

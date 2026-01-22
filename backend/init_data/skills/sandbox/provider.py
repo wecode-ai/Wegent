@@ -89,6 +89,8 @@ class SandboxToolProvider(SkillToolProvider):
             "sandbox_list_files",
             "sandbox_read_file",
             "sandbox_write_file",
+            "sandbox_upload_attachment",
+            "sandbox_download_attachment",
         ]
 
     def create_tool(
@@ -161,6 +163,25 @@ class SandboxToolProvider(SkillToolProvider):
             tool_instance = SandboxWriteFileTool(
                 **base_params,
                 max_size=config.get("max_file_size", 10485760),  # 10MB default
+            )
+
+        elif tool_name == "sandbox_upload_attachment":
+            from .upload_attachment_tool import SandboxUploadAttachmentTool
+
+            tool_instance = SandboxUploadAttachmentTool(
+                **base_params,
+                max_upload_size=config.get("max_file_size", 104857600),  # 100MB default
+                auth_token=context.auth_token,  # Get auth_token from context
+                api_base_url=config.get("api_base_url", ""),
+            )
+
+        elif tool_name == "sandbox_download_attachment":
+            from .download_attachment_tool import SandboxDownloadAttachmentTool
+
+            tool_instance = SandboxDownloadAttachmentTool(
+                **base_params,
+                auth_token=context.auth_token,  # Get auth_token from context
+                api_base_url=config.get("api_base_url", ""),
             )
 
         else:

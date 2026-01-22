@@ -321,16 +321,31 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
         result: Optional[Dict[str, Any]] = None,
         message_id: Optional[int] = None,
     ) -> None:
-        """Emit chat:done event and update BackgroundExecution status to COMPLETED."""
+        """Emit chat:done event and update BackgroundExecution status.
+
+        If result contains silent_exit=True, status is set to COMPLETED_SILENT.
+        Otherwise, status is set to COMPLETED.
+        """
+        from app.services.subscription.helpers import extract_result_summary
+
         logger.info(
             f"[SubscriptionEmitter] chat:done task={task_id} subtask={subtask_id} "
             f"execution_id={self.execution_id}"
         )
 
-        # Update BackgroundExecution status to COMPLETED
+        # Check if this is a silent exit
+        is_silent_exit = result.get("silent_exit", False) if result else False
+        status = "COMPLETED_SILENT" if is_silent_exit else "COMPLETED"
+
+        if is_silent_exit:
+            logger.info(
+                f"[SubscriptionEmitter] Silent exit detected for execution {self.execution_id}"
+            )
+
+        # Update BackgroundExecution status using shared helper
         await self._update_execution_status(
-            status="COMPLETED",
-            result_summary=self._extract_result_summary(result),
+            status=status,
+            result_summary=extract_result_summary(result),
         )
 
     async def emit_chat_error(
@@ -400,28 +415,6 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
                 f"[SubscriptionEmitter] Failed to update execution {self.execution_id} "
                 f"status to {status}: {e}"
             )
-
-    def _extract_result_summary(
-        self, result: Optional[Dict[str, Any]]
-    ) -> Optional[str]:
-        """Extract a summary from the result dict.
-
-        Args:
-            result: The result dictionary from chat completion
-
-        Returns:
-            A summary string, or None if no result
-        """
-        if not result:
-            return None
-
-        # Try to get the value from result
-        value = result.get("value", "")
-        if not value:
-            return None
-
-        # Return full content - database column is TEXT type which can store large content
-        return value
 
 
 # Backward compatibility alias
