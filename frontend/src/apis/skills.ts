@@ -300,6 +300,7 @@ export interface UnifiedSkill {
   bindShells?: string[]
   is_active: boolean
   is_public: boolean
+  user_id: number // ID of the user who uploaded this skill
   created_at?: string
   updated_at?: string
 }

@@ -16,6 +16,8 @@ import {
   parseSkillReferenceError,
   ReferencedGhost,
 } from '@/apis/skills'
+import { getGroup } from '@/apis/groups'
+import { Group } from '@/types/group'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -32,6 +34,7 @@ import { Download, Trash2, Sparkles, Globe, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import SkillUploadModal from './skills/SkillUploadModal'
 import { SkillReferenceConflictDialog } from './skills/SkillReferenceConflictDialog'
+import { useUser } from '@/features/common/UserContext'
 
 interface SkillListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
@@ -41,6 +44,7 @@ interface SkillListWithScopeProps {
 
 export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeProps) {
   const { t } = useTranslation('common')
+  const { user } = useUser()
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -48,10 +52,29 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
   const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
+  const [currentGroup, setCurrentGroup] = useState<Group | null>(null)
 
   // Reference conflict dialog state
   const [referenceConflictOpen, setReferenceConflictOpen] = useState(false)
   const [referencedGhosts, setReferencedGhosts] = useState<ReferencedGhost[]>([])
+
+  // Fetch group details when selectedGroup changes
+  useEffect(() => {
+    const fetchGroupDetails = async () => {
+      if (selectedGroup && scope === 'group') {
+        try {
+          const groupData = await getGroup(selectedGroup)
+          setCurrentGroup(groupData)
+        } catch (err) {
+          console.error('Failed to fetch group details:', err)
+          setCurrentGroup(null)
+        }
+      } else {
+        setCurrentGroup(null)
+      }
+    }
+    fetchGroupDetails()
+  }, [selectedGroup, scope])
 
   const loadSkills = useCallback(async () => {
     try {
@@ -72,6 +95,24 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
   useEffect(() => {
     loadSkills()
   }, [loadSkills])
+
+  // Check if current user can delete a skill
+  const canDeleteSkill = (skill: UnifiedSkill): boolean => {
+    if (!user) return false
+
+    // User can delete their own skills
+    if (skill.user_id === user.id) return true
+
+    // In group scope, check if user is group admin (Owner or Maintainer)
+    if (scope === 'group' && currentGroup?.my_role) {
+      return currentGroup.my_role === 'Owner' || currentGroup.my_role === 'Maintainer'
+    }
+
+    // System admin can delete any skill
+    if (user.role === 'admin') return true
+
+    return false
+  }
 
   const handleDelete = async () => {
     if (!skillToDelete || skillToDelete.is_public) return
@@ -266,14 +307,17 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
                     >
                       <Download className="w-4 h-4" />
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => openDeleteDialog(skill)}
-                      className="text-red-500 hover:text-red-600"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                    {/* Show delete button if user has permission */}
+                    {canDeleteSkill(skill) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openDeleteDialog(skill)}
+                        className="text-red-500 hover:text-red-600"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    )}
                   </>
                 )}
                 {skill.is_public && (
