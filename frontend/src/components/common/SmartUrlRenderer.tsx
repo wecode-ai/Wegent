@@ -7,6 +7,7 @@
 import React from 'react'
 import ImagePreview from '@/components/common/ImagePreview'
 import LinkCard from '@/components/common/LinkCard'
+import AttachmentCard from '@/components/common/AttachmentCard'
 import { isImageUrl, detectUrls } from '@/utils/url-detector'
 
 /**
@@ -39,6 +40,7 @@ interface SmartLinkProps {
 
 /**
  * SmartLink component that renders URLs intelligently:
+ * - Attachment download URLs (/api/attachments/{id}/download): Intercepted and downloaded with authentication
  * - Relative URLs, anchors, and non-HTTP protocols: Rendered as plain links
  * - Image URLs: Rendered as inline image previews with Lightbox
  * - Web URLs: Rendered as styled plain links (cards disabled to avoid layout issues)
@@ -47,6 +49,16 @@ interface SmartLinkProps {
  * other constrained containers. All links are rendered as simple styled links.
  */
 export function SmartLink({ href, children }: SmartLinkProps) {
+  // Check if this is an attachment download URL
+  // Matches: /api/attachments/{id}/download
+  const attachmentUrlMatch = href.match(/^\/api\/attachments\/(\d+)\/download$/)
+
+  if (attachmentUrlMatch) {
+    const attachmentId = parseInt(attachmentUrlMatch[1], 10)
+    // Render as attachment card
+    return <AttachmentCard attachmentId={attachmentId} />
+  }
+
   // For non-absolute HTTP(S) URLs (relative links, anchors, mailto:, tel:, etc.),
   // render without target="_blank"
   if (!isAbsoluteHttpUrl(href)) {
@@ -103,7 +115,7 @@ export function createSmartMarkdownComponents(options?: { enableImagePreview?: b
   const { enableImagePreview = true } = options || {}
 
   return {
-    // Custom link renderer - always render as plain styled links
+    // Custom link renderer - handles attachment downloads with authentication
     // Link cards are disabled in markdown to avoid layout issues in tables
     a: ({
       href,
@@ -117,6 +129,16 @@ export function createSmartMarkdownComponents(options?: { enableImagePreview?: b
             {children}
           </a>
         )
+      }
+
+      // Check if this is an attachment download URL
+      // Matches: /api/attachments/{id}/download
+      const attachmentUrlMatch = href.match(/^\/api\/attachments\/(\d+)\/download$/)
+
+      if (attachmentUrlMatch) {
+        const attachmentId = parseInt(attachmentUrlMatch[1], 10)
+        // Render as attachment card
+        return <AttachmentCard attachmentId={attachmentId} />
       }
 
       // For non-absolute HTTP(S) URLs (anchors, relative paths, mailto, tel, etc.)

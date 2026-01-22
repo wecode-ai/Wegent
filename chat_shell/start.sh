@@ -53,7 +53,7 @@ get_local_ip() {
 }
 
 # Get local IP for backend URL (used by executor containers in Docker)
-export BACKEND_API_URL=$(get_local_ip)
+export BACKEND_API_URL=$(get_local_ip):8000
 
 # Default configuration
 DEFAULT_PORT=8100
