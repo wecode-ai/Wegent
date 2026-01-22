@@ -223,7 +223,6 @@ export function DocumentUpload({
     reset()
     try {
       await onUploadComplete(successfulAttachments, splitterConfig)
-      reset()
       setSplitterConfig({
         type: 'sentence',
         separator: '\n\n',
