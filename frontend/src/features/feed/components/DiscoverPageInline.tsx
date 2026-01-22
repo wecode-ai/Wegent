@@ -354,7 +354,7 @@ export function DiscoverPageInline({ onInvitationHandled }: DiscoverPageInlinePr
                   <div
                     key={subscription.id}
                     onClick={() => handleCardClick(subscription)}
-                    className="group bg-surface border border-border rounded-xl p-4 hover:shadow-md hover:border-primary/30 transition-all cursor-pointer"
+                    className="group bg-surface border border-border rounded-xl p-4 hover:shadow-md hover:border-primary/30 transition-all cursor-pointer flex flex-col h-full"
                   >
                     {/* Card Header */}
                     <div className="flex items-start justify-between mb-3">
@@ -394,41 +394,44 @@ export function DiscoverPageInline({ onInvitationHandled }: DiscoverPageInlinePr
                       )}
                     </div>
 
-                    {/* Description */}
-                    {subscription.description && (
-                      <p className="text-sm text-text-muted line-clamp-2 mb-3">
-                        {subscription.description}
-                      </p>
-                    )}
+                    {/* Content area - grows to fill available space */}
+                    <div className="flex-1">
+                      {/* Description */}
+                      {subscription.description && (
+                        <p className="text-sm text-text-muted line-clamp-2 mb-3">
+                          {subscription.description}
+                        </p>
+                      )}
 
-                    {/* Latest Execution Preview */}
-                    {latestExecution && execConfig && (
-                      <div className="rounded-lg border border-border/50 bg-base/50 overflow-hidden mb-3">
-                        <div className="flex items-center gap-1.5 px-3 py-2 text-xs bg-surface/50 border-b border-border/30">
-                          <span className={execConfig.color}>{execConfig.icon}</span>
-                          <span className={execConfig.color}>{t(execConfig.text)}</span>
-                          <span className="text-text-muted ml-auto">
-                            {formatRelativeTime(latestExecution.created_at)}
-                          </span>
+                      {/* Latest Execution Preview */}
+                      {latestExecution && execConfig && (
+                        <div className="rounded-lg border border-border/50 bg-base/50 overflow-hidden mb-3">
+                          <div className="flex items-center gap-1.5 px-3 py-2 text-xs bg-surface/50 border-b border-border/30">
+                            <span className={execConfig.color}>{execConfig.icon}</span>
+                            <span className={execConfig.color}>{t(execConfig.text)}</span>
+                            <span className="text-text-muted ml-auto">
+                              {formatRelativeTime(latestExecution.created_at)}
+                            </span>
+                          </div>
+                          {latestExecution.result_summary && (
+                            <div className="px-3 py-2 text-xs prose prose-xs max-w-none dark:prose-invert line-clamp-3 overflow-hidden">
+                              <EnhancedMarkdown
+                                source={latestExecution.result_summary}
+                                theme={theme}
+                              />
+                            </div>
+                          )}
+                          {latestExecution.status === 'FAILED' && latestExecution.error_message && (
+                            <div className="px-3 py-2 text-xs text-red-500 bg-red-50 dark:bg-red-950/20 line-clamp-2">
+                              {latestExecution.error_message}
+                            </div>
+                          )}
                         </div>
-                        {latestExecution.result_summary && (
-                          <div className="px-3 py-2 text-xs prose prose-xs max-w-none dark:prose-invert line-clamp-3 overflow-hidden">
-                            <EnhancedMarkdown
-                              source={latestExecution.result_summary}
-                              theme={theme}
-                            />
-                          </div>
-                        )}
-                        {latestExecution.status === 'FAILED' && latestExecution.error_message && (
-                          <div className="px-3 py-2 text-xs text-red-500 bg-red-50 dark:bg-red-950/20 line-clamp-2">
-                            {latestExecution.error_message}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                      )}
+                    </div>
 
-                    {/* Card Footer */}
-                    <div className="flex items-center justify-between text-xs text-text-muted pt-2 border-t border-border/50">
+                    {/* Card Footer - always at bottom */}
+                    <div className="flex items-center justify-between text-xs text-text-muted pt-2 border-t border-border/50 mt-auto">
                       <div className="flex items-center gap-3">
                         <span className="flex items-center gap-1">
                           <Users className="h-3.5 w-3.5" />
