@@ -37,6 +37,12 @@ tools:
     provider: sandbox
     config:
       max_file_size: 10485760
+  - name: sandbox_upload_attachment
+    provider: sandbox
+    config:
+      max_file_size: 104857600
+  - name: sandbox_download_attachment
+    provider: sandbox
 ---
 
 # Sandbox Environment
@@ -51,6 +57,7 @@ The sandbox environment provides fully isolated execution spaces with:
 2. **File Operations** - Read/write files, browse directories, manage filesystems
 3. **Code Execution** - Safely execute and test code
 4. **Claude AI Tasks** - Available for advanced use cases when explicitly requested by users
+5. **Attachment Upload/Download** - Upload generated files to Wegent for user download, or download user attachments for processing
 
 ## When to Use
 
@@ -216,6 +223,83 @@ Write content to a file.
 
 ---
 
+### Attachment Operations
+
+#### `sandbox_upload_attachment`
+Upload a file from sandbox to Wegent and get a download URL for users.
+
+**Use Cases:**
+- Upload generated documents (PDF, Word, etc.) for user download
+- Share files created in the sandbox with users
+- Export results from sandbox to Wegent storage
+
+**Parameters:**
+- `file_path` (required): Path to the file in sandbox to upload
+- `timeout_seconds` (optional): Upload timeout in seconds (default: 300)
+
+**Returns:**
+- `success`: Whether the upload succeeded
+- `attachment_id`: ID of the uploaded attachment
+- `filename`: Name of the uploaded file
+- `file_size`: Size of the file in bytes
+- `mime_type`: MIME type of the file
+- `download_url`: Relative URL for downloading (e.g., `/api/attachments/123/download`)
+
+**Limits:**
+- Maximum file size: 100MB
+
+**Example:**
+```json
+{
+  "name": "sandbox_upload_attachment",
+  "arguments": {
+    "file_path": "/home/user/documents/report.pdf"
+  }
+}
+```
+
+**After Upload - Presenting to User:**
+After a successful upload, present the download link to the user:
+```
+Document generation completed!
+
+📄 **report.pdf**
+
+[Click to Download](/api/attachments/123/download)
+```
+
+---
+
+#### `sandbox_download_attachment`
+Download a file from Wegent attachment URL to sandbox for processing.
+
+**Use Cases:**
+- Download user-uploaded attachments for processing
+- Retrieve files from Wegent storage into the sandbox
+
+**Parameters:**
+- `attachment_url` (required): Wegent attachment URL (e.g., `/api/attachments/123/download`)
+- `save_path` (required): Path to save the file in sandbox
+- `timeout_seconds` (optional): Download timeout in seconds (default: 300)
+
+**Returns:**
+- `success`: Whether the download succeeded
+- `file_path`: Full path to the downloaded file in sandbox
+- `file_size`: Size of the downloaded file in bytes
+
+**Example:**
+```json
+{
+  "name": "sandbox_download_attachment",
+  "arguments": {
+    "attachment_url": "/api/attachments/123/download",
+    "save_path": "/home/user/downloads/document.pdf"
+  }
+}
+```
+
+---
+
 ## Tool Selection Guide
 
 | Task Type | Recommended Tool | Reason |
@@ -225,6 +309,8 @@ Write content to a file.
 | Read files | `sandbox_read_file` | Better error handling and size validation |
 | Write files | `sandbox_write_file` | Auto directory creation, size validation |
 | Browse directories | `sandbox_list_files` | Structured output with metadata |
+| Upload files for user download | `sandbox_upload_attachment` | Get download URL for user-facing files |
+| Download attachments | `sandbox_download_attachment` | Retrieve Wegent attachments into sandbox |
 | Complex tasks with Claude | `sandbox_claude` | **Only when user explicitly requests** |
 
 **Important**: Always prefer `sandbox_command` for standard operations. Only use `sandbox_claude` when the user specifically asks for Claude AI assistance.
@@ -332,6 +418,7 @@ Write content to a file.
 ### Resource Limits
 - **Read file limit**: 1MB (configurable)
 - **Write file limit**: 10MB (configurable)
+- **Upload file limit**: 100MB (configurable)
 - **Command timeout**: 300 seconds (5 minutes)
 - **Claude timeout**: 1800 seconds (30 minutes, minimum: 600 seconds / 10 minutes)
 - **Total task timeout**: 7200 seconds (2 hours)
