@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { BookOpen, FolderOpen } from 'lucide-react'
 import {
   Dialog,
@@ -73,6 +73,15 @@ export function CreateKnowledgeBaseDialog({
   })
   const [error, setError] = useState('')
   const [accordionValue, setAccordionValue] = useState<string>('')
+
+  // Reset summaryEnabled when dialog opens based on kbType
+  // This is necessary because useState initial value only applies on first mount,
+  // but the dialog component persists and kbType can change between opens
+  useEffect(() => {
+    if (open) {
+      setSummaryEnabled(kbType === 'notebook')
+    }
+  }, [open, kbType])
 
   // Note: Auto-selection of retriever and embedding model is handled by RetrievalSettingsSection
 
