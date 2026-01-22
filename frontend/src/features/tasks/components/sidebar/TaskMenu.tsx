@@ -101,8 +101,8 @@ export default function TaskMenu({
             </DropdownMenuItem>
           )}
 
-          {/* Move to Group - only for non-group chats */}
-          {!isGroupChat && (
+          {/* Move to Group - only for non-group chats and non-pinned tasks */}
+          {!isGroupChat && !isPinned && (
             <DropdownMenuSub>
               <DropdownMenuSubTrigger onClick={e => e.stopPropagation()}>
                 <FolderPlusIcon className="h-3.5 w-3.5 mr-2" />
