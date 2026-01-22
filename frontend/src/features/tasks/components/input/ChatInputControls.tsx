@@ -54,6 +54,10 @@ export interface ChatInputControlsProps {
   selectedBranch: GitBranch | null
   setSelectedBranch: (branch: GitBranch | null) => void
   selectedTaskDetail: TaskDetail | null
+  /** Quick start mode - when enabled, repository selection is optional */
+  quickStartMode?: boolean
+  /** Callback when quick start mode changes */
+  onQuickStartModeChange?: (enabled: boolean) => void
 
   // Deep Thinking and Clarification
   enableDeepThinking: boolean
@@ -129,6 +133,8 @@ export function ChatInputControls({
   selectedBranch,
   setSelectedBranch,
   selectedTaskDetail,
+  quickStartMode = false,
+  onQuickStartModeChange,
   enableClarification,
   setEnableClarification,
   enableCorrectionMode = false,
@@ -245,6 +251,8 @@ export function ChatInputControls({
         selectedBranch={selectedBranch}
         setSelectedBranch={setSelectedBranch}
         selectedTaskDetail={selectedTaskDetail}
+        quickStartMode={quickStartMode}
+        onQuickStartModeChange={onQuickStartModeChange}
         enableClarification={enableClarification}
         setEnableClarification={setEnableClarification}
         enableCorrectionMode={enableCorrectionMode}
@@ -337,9 +345,11 @@ export function ChatInputControls({
               disabled={hasMessages}
               selectedTaskDetail={selectedTaskDetail}
               compact={shouldCollapseSelectors}
+              quickStartMode={quickStartMode}
+              onQuickStartModeChange={onQuickStartModeChange}
             />
 
-            {selectedRepo && (
+            {selectedRepo && !quickStartMode && (
               <BranchSelector
                 selectedRepo={selectedRepo}
                 selectedBranch={selectedBranch}
