@@ -5,9 +5,11 @@
 'use client'
 
 import React from 'react'
+
 import ImagePreview from '@/components/common/ImagePreview'
 import LinkCard from '@/components/common/LinkCard'
 import AttachmentCard from '@/components/common/AttachmentCard'
+import { SchemeLink } from '@/lib/scheme'
 import { isImageUrl, detectUrls } from '@/utils/url-detector'
 
 /**
@@ -57,6 +59,11 @@ export function SmartLink({ href, children }: SmartLinkProps) {
     const attachmentId = parseInt(attachmentUrlMatch[1], 10)
     // Render as attachment card
     return <AttachmentCard attachmentId={attachmentId} />
+  }
+
+  // In-app scheme URLs (wegent://*) should be handled by the scheme system
+  if (href.startsWith('wegent://')) {
+    return <SchemeLink href={href}>{children}</SchemeLink>
   }
 
   // For non-absolute HTTP(S) URLs (relative links, anchors, mailto:, tel:, etc.),
@@ -139,6 +146,11 @@ export function createSmartMarkdownComponents(options?: { enableImagePreview?: b
         const attachmentId = parseInt(attachmentUrlMatch[1], 10)
         // Render as attachment card
         return <AttachmentCard attachmentId={attachmentId} />
+      }
+
+      // In-app scheme URLs (wegent://*) should be handled by the scheme system.
+      if (href.startsWith('wegent://')) {
+        return <SmartLink href={href}>{children}</SmartLink>
       }
 
       // For non-absolute HTTP(S) URLs (anchors, relative paths, mailto, tel, etc.)
