@@ -172,9 +172,9 @@ export function DocumentPanel({
   const router = useRouter()
 
   // Handle back to knowledge list
-  const handleBack = useCallback(() => {
-    router.push('/knowledge')
-  }, [router])
+  const handleBack = () => {
+    router.back()
+  }
 
   // When collapsed, show a floating button to expand
   if (isCollapsed) {
