@@ -419,7 +419,16 @@ class SandboxManager(metaclass=SingletonMeta):
         try:
             executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
             result = executor.delete_executor(sandbox.container_name)
-            if result.get("status") != "success":
+
+            # Fallback: if pod not found by name, try to delete by task_id label
+            if result.get("status") == "not_found":
+                logger.info(
+                    f"[SandboxManager] Pod not found by name '{sandbox.container_name}', "
+                    f"trying to delete by task_id label: {sandbox_id}"
+                )
+                result = executor.delete_executor_by_task_id(sandbox_id)
+
+            if result.get("status") not in ("success", "not_found"):
                 logger.warning(
                     f"[SandboxManager] Failed to delete container: {result.get('error_msg')}"
                 )
@@ -615,7 +624,7 @@ class SandboxManager(metaclass=SingletonMeta):
         # Add to sandbox and save
         sandbox.add_execution(execution)
         self._repository.save_sandbox(sandbox)
-        save_result = self._repository.save_execution(execution)
+        save_result = self._repository.save_execution(execution, update_activity=True)
 
         logger.info(
             f"[SandboxManager] Created execution: execution_id={execution.execution_id}, "

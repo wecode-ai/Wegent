@@ -482,7 +482,8 @@ async def _handle_sandbox_callback(request: CallbackRequest):
         )
 
     # Save updated execution state to Redis
-    manager._repository.save_execution(execution)
+    # Set update_activity=True because callback indicates the sandbox is actively being used
+    manager._repository.save_execution(execution, update_activity=True)
 
     logger.info(
         f"[SandboxCallback] Execution updated: "
