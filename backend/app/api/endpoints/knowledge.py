@@ -25,6 +25,7 @@ from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
     BatchDocumentIds,
     BatchOperationResult,
+    DocumentContentUpdate,
     DocumentDetailResponse,
     DocumentSourceType,
     KnowledgeBaseCreate,
@@ -38,7 +39,11 @@ from app.schemas.knowledge import (
     ResourceScope,
 )
 from app.schemas.knowledge_qa_history import QAHistoryResponse
-from app.schemas.rag import SplitterConfig
+from app.schemas.rag import (
+    SemanticSplitterConfig,
+    SentenceSplitterConfig,
+    SplitterConfig,
+)
 from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.knowledge import (
     KnowledgeBaseQAService,
@@ -513,6 +518,36 @@ def _resolve_kb_index_info(
         return kb_info
 
 
+def _parse_splitter_config(config_dict: dict) -> Optional[SplitterConfig]:
+    """
+    Parse a dictionary into the appropriate SplitterConfig type.
+
+    Since SplitterConfig is a Union type (Union[SemanticSplitterConfig, SentenceSplitterConfig]),
+    it cannot be instantiated directly. This function determines the correct type based on
+    the 'type' field in the config dictionary.
+
+    Args:
+        config_dict: Dictionary containing splitter configuration
+
+    Returns:
+        SemanticSplitterConfig or SentenceSplitterConfig instance, or None if invalid
+    """
+    if not config_dict:
+        return None
+
+    splitter_type = config_dict.get("type")
+    if splitter_type == "semantic":
+        return SemanticSplitterConfig(**config_dict)
+    elif splitter_type == "sentence":
+        return SentenceSplitterConfig(**config_dict)
+    else:
+        # Default to sentence splitter if type is not specified or unknown
+        logger.warning(
+            f"Unknown splitter type '{splitter_type}', defaulting to sentence splitter"
+        )
+        return SentenceSplitterConfig(**config_dict)
+
+
 def _trigger_document_summary_if_enabled(
     db: Session,
     document_id: int,
@@ -778,6 +813,114 @@ def delete_document(
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
+
+
+@document_router.put("/{document_id}/content")
+async def update_document_content(
+    document_id: int,
+    data: DocumentContentUpdate,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Update document content (TEXT type only).
+
+    Updates the extracted_text field and triggers RAG re-indexing.
+    Only Owner or Maintainer of the knowledge base can update documents.
+
+    Returns:
+        Success message with document_id
+    """
+    from app.models.knowledge import KnowledgeDocument
+
+    try:
+        # Update document content via service
+        document = KnowledgeService.update_document_content(
+            db=db,
+            document_id=document_id,
+            content=data.content,
+            user_id=current_user.id,
+        )
+
+        if not document:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document not found or access denied",
+            )
+
+        # Get knowledge base to check for retrieval_config and trigger RAG re-indexing
+        knowledge_base = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=document.kind_id,
+            user_id=current_user.id,
+        )
+
+        if knowledge_base:
+            spec = knowledge_base.json.get("spec", {})
+            retrieval_config = spec.get("retrievalConfig")
+
+            if retrieval_config:
+                # Extract configuration using snake_case format
+                retriever_name = retrieval_config.get("retriever_name")
+                retriever_namespace = retrieval_config.get(
+                    "retriever_namespace", "default"
+                )
+                embedding_config = retrieval_config.get("embedding_config")
+
+                if retriever_name and embedding_config:
+                    # Extract embedding model info
+                    embedding_model_name = embedding_config.get("model_name")
+                    embedding_model_namespace = embedding_config.get(
+                        "model_namespace", "default"
+                    )
+
+                    # Pre-compute KB index info
+                    summary_enabled = spec.get("summaryEnabled", False)
+                    if knowledge_base.namespace == "default":
+                        index_owner_user_id = current_user.id
+                    else:
+                        index_owner_user_id = knowledge_base.user_id
+
+                    kb_index_info = KnowledgeBaseIndexInfo(
+                        index_owner_user_id=index_owner_user_id,
+                        summary_enabled=summary_enabled,
+                    )
+
+                    # Schedule RAG re-indexing in background
+                    background_tasks.add_task(
+                        _index_document_background,
+                        knowledge_base_id=str(document.kind_id),
+                        attachment_id=document.attachment_id,
+                        retriever_name=retriever_name,
+                        retriever_namespace=retriever_namespace,
+                        embedding_model_name=embedding_model_name,
+                        embedding_model_namespace=embedding_model_namespace,
+                        user_id=current_user.id,
+                        user_name=current_user.user_name,
+                        splitter_config=(
+                            _parse_splitter_config(document.splitter_config)
+                            if document.splitter_config
+                            else None
+                        ),
+                        document_id=document.id,
+                        kb_index_info=kb_index_info,
+                    )
+                    logger.info(
+                        f"Scheduled RAG re-indexing for document {document.id} after content update"
+                    )
+
+        return {
+            "success": True,
+            "document_id": document.id,
+            "message": "Document content updated successfully",
+        }
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
 

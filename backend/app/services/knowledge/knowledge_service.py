@@ -894,6 +894,80 @@ class KnowledgeService:
 
         return DocumentDeleteResult(success=True, kb_id=kind_id)
 
+    @staticmethod
+    def update_document_content(
+        db: Session,
+        document_id: int,
+        content: str,
+        user_id: int,
+    ) -> Optional[KnowledgeDocument]:
+        """
+        Update document content for TEXT type documents.
+
+        Updates the extracted_text field in SubtaskContext and returns
+        the updated document. RAG re-indexing should be handled separately
+        by the API endpoint.
+
+        Args:
+            db: Database session
+            document_id: Document ID
+            content: New Markdown content
+            user_id: Requesting user ID
+
+        Returns:
+            Updated KnowledgeDocument if successful, None if not found
+
+        Raises:
+            ValueError: If document is not TEXT type or permission denied
+        """
+        from app.models.subtask_context import SubtaskContext
+
+        doc = KnowledgeService.get_document(db, document_id, user_id)
+        if not doc:
+            return None
+
+        # Verify document is editable (TEXT type or plain text files)
+        editable_extensions = ["txt", "md", "markdown"]
+        is_text_type = doc.source_type == "text"
+        is_editable_file = (
+            doc.source_type == "file"
+            and doc.file_extension.lower() in editable_extensions
+        )
+        if not (is_text_type or is_editable_file):
+            raise ValueError(
+                "Only TEXT type documents or plain text files (txt, md) can be edited"
+            )
+
+        # Check permission for team knowledge base
+        kb = (
+            db.query(Kind)
+            .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
+            .first()
+        )
+        if kb and kb.namespace != "default":
+            if not check_group_permission(
+                db, user_id, kb.namespace, GroupRole.Maintainer
+            ):
+                raise ValueError(
+                    "Only Owner or Maintainer can edit documents in this knowledge base"
+                )
+
+        # Update the extracted_text in SubtaskContext
+        if doc.attachment_id:
+            context = (
+                db.query(SubtaskContext)
+                .filter(SubtaskContext.id == doc.attachment_id)
+                .first()
+            )
+            if context:
+                context.extracted_text = content
+                context.text_length = len(content)
+                db.commit()
+                db.refresh(context)
+
+        db.refresh(doc)
+        return doc
+
     # ============== Accessible Knowledge Query ==============
 
     @staticmethod

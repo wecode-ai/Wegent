@@ -133,7 +133,17 @@
         "copyError": "复制失败",
         "contentLength": "内容长度",
         "characters": "字符",
-        "noContent": "暂无内容"
+        "noContent": "暂无内容",
+        "edit": "编辑",
+        "save": "保存",
+        "cancel": "取消",
+        "saving": "保存中...",
+        "saveSuccess": "保存成功",
+        "saveFailed": "保存失败",
+        "unsavedChanges": "您有未保存的更改，确定要放弃吗？",
+        "discardChanges": "放弃更改",
+        "viewRaw": "查看原始内容",
+        "viewPreview": "查看渲染预览"
       }
     },
     "upload": {
