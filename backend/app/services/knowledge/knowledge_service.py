@@ -926,9 +926,17 @@ class KnowledgeService:
         if not doc:
             return None
 
-        # Verify document is TEXT type
-        if doc.source_type != "text":
-            raise ValueError("Only TEXT type documents can be edited")
+        # Verify document is editable (TEXT type or plain text files)
+        editable_extensions = ["txt", "md", "markdown"]
+        is_text_type = doc.source_type == "text"
+        is_editable_file = (
+            doc.source_type == "file"
+            and doc.file_extension.lower() in editable_extensions
+        )
+        if not (is_text_type or is_editable_file):
+            raise ValueError(
+                "Only TEXT type documents or plain text files (txt, md) can be edited"
+            )
 
         # Check permission for team knowledge base
         kb = (

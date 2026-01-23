@@ -4,8 +4,10 @@
 
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
-import { FileText, RefreshCw, Copy, Check, Pencil, X, Save } from 'lucide-react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
+import { FileText, RefreshCw, Copy, Check, Pencil, X, Save, Eye, Code } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 import {
   Dialog,
   DialogContent,
@@ -32,7 +34,7 @@ import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { toast } from 'sonner'
 import dynamic from 'next/dynamic'
-
+import { useTheme } from '@/features/theme/ThemeProvider'
 // Dynamically import the WYSIWYG editor to avoid SSR issues
 const WysiwygEditor = dynamic(
   () => import('@/components/common/WysiwygEditor').then(mod => mod.WysiwygEditor),
@@ -46,11 +48,65 @@ const WysiwygEditor = dynamic(
   }
 )
 
+// Dynamically import EnhancedMarkdown for markdown preview
+const EnhancedMarkdown = dynamic(() => import('@/components/common/EnhancedMarkdown'), {
+  ssr: false,
+  loading: () => (
+    <div className="min-h-[100px] animate-pulse rounded-lg bg-surface flex items-center justify-center">
+      <Spinner />
+    </div>
+  ),
+})
+
+/**
+ * Check if content contains markdown syntax
+ * Returns true if the content appears to be markdown
+ */
+function containsMarkdownSyntax(content: string): boolean {
+  if (!content) return false
+
+  // Check for common markdown patterns
+  // Note: Table separator regex uses string concatenation to avoid Tailwind CSS
+  // scanner misinterpreting the pattern as an arbitrary value class
+  const markdownPatterns = [
+    /^#{1,6}\s+.+$/m, // Headers: # Header
+    /\*\*[^*]+\*\*/, // Bold: **text**
+    /\*[^*]+\*/, // Italic: *text*
+    /__[^_]+__/, // Bold: __text__
+    /_[^_]+_/, // Italic: _text_
+    /\[.+\]\(.+\)/, // Links: [text](url)
+    /!\[.*\]\(.+\)/, // Images: ![alt](url)
+    /^[-*+]\s+.+$/m, // Unordered lists: - item or * item
+    /^\d+\.\s+.+$/m, // Ordered lists: 1. item
+    /^>\s+.+$/m, // Blockquotes: > quote
+    /`[^`]+`/, // Inline code: `code`
+    /^```[\s\S]*?```$/m, // Code blocks: ```code```
+    /^\|.+\|$/m, // Tables: | col1 | col2 |
+    // Table separators: |---|---| - split pattern to avoid Tailwind scanner
+    new RegExp('^' + '[-' + ':]+\\|' + '[-' + ':|\\s]+$', 'm'),
+    /^---+$/m, // Horizontal rules: ---
+    /^\*\*\*+$/m, // Horizontal rules: ***
+  ]
+
+  return markdownPatterns.some(pattern => pattern.test(content))
+}
+
+/**
+ * Check if file extension indicates markdown content
+ */
+function isMarkdownFileExtension(extension: string | undefined): boolean {
+  if (!extension) return false
+  const mdExtensions = ['md', 'markdown', 'mdx', 'mdown', 'mkd', 'mkdn']
+  return mdExtensions.includes(extension.toLowerCase())
+}
+
 interface DocumentDetailDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   document: KnowledgeDocument | null
   knowledgeBaseId: number
+  /** Knowledge base type - edit is only available for 'notebook' type */
+  kbType?: 'notebook' | 'classic'
 }
 
 export function DocumentDetailDialog({
@@ -58,13 +114,17 @@ export function DocumentDetailDialog({
   onOpenChange,
   document,
   knowledgeBaseId,
+  kbType,
 }: DocumentDetailDialogProps) {
   const { t, getCurrentLanguage } = useTranslation('knowledge')
+  const { theme } = useTheme()
   const [copiedContent, setCopiedContent] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editedContent, setEditedContent] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [showDiscardDialog, setShowDiscardDialog] = useState(false)
+  // View mode: 'preview' for markdown rendering, 'raw' for plain text
+  const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview')
 
   const { detail, loading, error, refresh } = useDocumentDetail({
     kbId: knowledgeBaseId,
@@ -72,14 +132,23 @@ export function DocumentDetailDialog({
     enabled: open && !!document,
   })
 
-  // Check if document is editable (TEXT type or plain text files)
+  // Check if document is editable (only for notebook type knowledge base, and TEXT type or plain text files)
   const isEditable =
-    document?.source_type === 'text' ||
-    (document?.source_type === 'file' &&
-      ['txt', 'md', 'markdown'].includes(document?.file_extension?.toLowerCase() || ''))
+    kbType === 'notebook' &&
+    (document?.source_type === 'text' ||
+      (document?.source_type === 'file' &&
+        ['txt', 'md', 'markdown'].includes(document?.file_extension?.toLowerCase() || '')))
 
   // Track if content has changed
   const hasChanges = editedContent !== (detail?.content || '')
+
+  // Check if content should be rendered as markdown (based on file extension or content detection)
+  const isMarkdownContent = useMemo(() => {
+    if (!detail?.content) return false
+    return (
+      isMarkdownFileExtension(document?.file_extension) || containsMarkdownSyntax(detail.content)
+    )
+  }, [detail?.content, document?.file_extension])
 
   // Reset editing state when dialog closes or document changes
   useEffect(() => {
@@ -186,7 +255,7 @@ export function DocumentDetailDialog({
           </DialogHeader>
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className={cn('flex-1 overflow-y-auto px-6 py-4', isEditing && 'flex flex-col')}>
             {loading ? (
               <div className="flex items-center justify-center py-12">
                 <Spinner />
@@ -199,7 +268,7 @@ export function DocumentDetailDialog({
                 </Button>
               </div>
             ) : (
-              <div className="space-y-6">
+              <div className={cn('space-y-6', isEditing && 'flex-1 flex flex-col')}>
                 {/* Summary Section - only show when not editing */}
                 {!isEditing && detail?.summary && (
                   <div className="space-y-3">
@@ -307,6 +376,31 @@ export function DocumentDetailDialog({
                           </>
                         ) : (
                           <>
+                            {/* View mode toggle - only show when content is markdown */}
+                            {isMarkdownContent && detail.content && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() =>
+                                      setViewMode(viewMode === 'preview' ? 'raw' : 'preview')
+                                    }
+                                  >
+                                    {viewMode === 'preview' ? (
+                                      <Code className="w-3.5 h-3.5" />
+                                    ) : (
+                                      <Eye className="w-3.5 h-3.5" />
+                                    )}
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {viewMode === 'preview'
+                                    ? t('document.document.detail.viewRaw')
+                                    : t('document.document.detail.viewPreview')}
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
                             {isEditable && (
                               <Button variant="outline" size="sm" onClick={handleEdit}>
                                 <Pencil className="w-3.5 h-3.5 mr-1" />
@@ -315,7 +409,7 @@ export function DocumentDetailDialog({
                             )}
                             {detail.content && (
                               <Button
-                                variant="ghost"
+                                variant="outline"
                                 size="sm"
                                 onClick={handleCopyContent}
                                 disabled={copiedContent}
@@ -345,10 +439,15 @@ export function DocumentDetailDialog({
                         className="min-h-[400px]"
                       />
                     ) : detail.content ? (
-                      <div className="p-4 bg-surface rounded-lg border border-border">
-                        <pre className="text-xs text-text-secondary whitespace-pre-wrap break-words font-mono leading-relaxed">
-                          {detail.content}
-                        </pre>
+                      <div className="p-4 bg-white rounded-lg border border-border">
+                        {/* Use markdown preview if content is markdown and viewMode is preview */}
+                        {isMarkdownContent && viewMode === 'preview' ? (
+                          <EnhancedMarkdown source={detail.content} theme={theme} />
+                        ) : (
+                          <pre className="text-xs text-text-secondary whitespace-pre-wrap break-words font-mono leading-relaxed">
+                            {detail.content}
+                          </pre>
+                        )}
                         {detail.content_length !== undefined && (
                           <div className="mt-3 pt-3 border-t border-border text-xs text-text-muted">
                             {t('document.document.detail.contentLength')}:{' '}

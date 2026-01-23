@@ -4,6 +4,7 @@
 
 import type { Metadata } from 'next'
 import './globals.css'
+import '@/styles/markdown.css'
 import '@/features/common/scrollbar.css'
 import MockInit from '@/features/mock/MockInit'
 import AuthGuard from '@/features/common/AuthGuard'

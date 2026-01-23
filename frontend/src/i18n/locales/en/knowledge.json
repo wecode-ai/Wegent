@@ -141,7 +141,9 @@
         "saveSuccess": "Save successful",
         "saveFailed": "Save failed",
         "unsavedChanges": "You have unsaved changes. Are you sure you want to discard them?",
-        "discardChanges": "Discard changes"
+        "discardChanges": "Discard changes",
+        "viewRaw": "View raw content",
+        "viewPreview": "View rendered preview"
       }
     },
     "upload": {

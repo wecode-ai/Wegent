@@ -5,13 +5,11 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Editor, rootCtx, defaultValueCtx, editorViewCtx } from '@milkdown/core'
-import { commonmark } from '@milkdown/preset-commonmark'
-import { gfm } from '@milkdown/preset-gfm'
-import { listener, listenerCtx } from '@milkdown/plugin-listener'
-import { history } from '@milkdown/plugin-history'
-import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react'
 import { cn } from '@/lib/utils'
+import { Eye, Edit3, Columns } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import EnhancedMarkdown from './EnhancedMarkdown'
+import { useTheme } from '@/features/theme/ThemeProvider'
 
 interface WysiwygEditorProps {
   initialContent: string
@@ -20,83 +18,16 @@ interface WysiwygEditorProps {
   readOnly?: boolean
 }
 
-/**
- * Internal Milkdown editor component
- */
-function MilkdownEditor({
-  initialContent,
-  onChange,
-  readOnly = false,
-}: Omit<WysiwygEditorProps, 'className'>) {
-  const editorRef = useRef<Editor | null>(null)
-  // Store initial content in a ref to prevent re-initialization on every render
-  const initialContentRef = useRef(initialContent)
-  // Store onChange in a ref to avoid recreating the editor when callback changes
-  const onChangeRef = useRef(onChange)
-
-  // Update the onChange ref when it changes
-  useEffect(() => {
-    onChangeRef.current = onChange
-  }, [onChange])
-
-  const { get } = useEditor(
-    root => {
-      const editor = Editor.make()
-        .config(ctx => {
-          ctx.set(rootCtx, root)
-          ctx.set(defaultValueCtx, initialContentRef.current)
-
-          // Setup listener for content changes
-          const listenerInstance = ctx.get(listenerCtx)
-          listenerInstance.markdownUpdated((_, markdown) => {
-            if (onChangeRef.current) {
-              onChangeRef.current(markdown)
-            }
-          })
-        })
-        .use(commonmark)
-        .use(gfm)
-        .use(listener)
-        .use(history)
-
-      return editor
-    },
-    [] // Empty dependency array - editor should only be created once
-  )
-
-  // Store editor reference
-  useEffect(() => {
-    const editor = get()
-    if (editor) {
-      editorRef.current = editor
-    }
-  }, [get])
-
-  // Handle read-only mode
-  useEffect(() => {
-    const editor = get()
-    if (editor) {
-      editor.action(ctx => {
-        const view = ctx.get(editorViewCtx)
-        if (view) {
-          view.setProps({
-            editable: () => !readOnly,
-          })
-        }
-      })
-    }
-  }, [get, readOnly])
-
-  return <Milkdown />
-}
+type ViewMode = 'edit' | 'preview' | 'split'
 
 /**
- * WYSIWYG Markdown Editor component using Milkdown
+ * Markdown Editor component with Enhanced Markdown preview
  *
  * Features:
- * - Real-time Markdown editing with WYSIWYG preview
- * - CommonMark and GFM (GitHub Flavored Markdown) support
- * - History (undo/redo) support
+ * - Real-time Markdown editing with live preview
+ * - Three view modes: Edit only, Preview only, Split view
+ * - CommonMark and GFM (GitHub Flavored Markdown) support via EnhancedMarkdown
+ * - Syntax highlighting, Mermaid diagrams, and LaTeX math support in preview
  * - Content change callback
  *
  * @example
@@ -113,56 +44,179 @@ export function WysiwygEditor({
   className,
   readOnly = false,
 }: WysiwygEditorProps) {
+  const [content, setContent] = useState(initialContent)
+  const [viewMode, setViewMode] = useState<ViewMode>(readOnly ? 'preview' : 'split')
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const { theme } = useTheme()
+
+  // Update content when initialContent changes (e.g., when switching documents)
+  useEffect(() => {
+    setContent(initialContent)
+  }, [initialContent])
+
+  // Handle content change
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const newContent = e.target.value
+      setContent(newContent)
+      onChange?.(newContent)
+    },
+    [onChange]
+  )
+
+  // Handle keyboard shortcuts
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // Tab key inserts spaces instead of changing focus
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        const textarea = textareaRef.current
+        if (!textarea) return
+
+        const start = textarea.selectionStart
+        const end = textarea.selectionEnd
+        const newContent = content.substring(0, start) + '  ' + content.substring(end)
+        setContent(newContent)
+        onChange?.(newContent)
+
+        // Move cursor after the inserted spaces
+        requestAnimationFrame(() => {
+          textarea.selectionStart = textarea.selectionEnd = start + 2
+        })
+      }
+    },
+    [content, onChange]
+  )
+
+  // Render the editor toolbar
+  const renderToolbar = () => (
+    <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-surface-hover/50">
+      <div className="flex items-center gap-1">
+        <span className="text-xs font-medium text-text-secondary">Markdown</span>
+      </div>
+      {!readOnly && (
+        <div className="flex items-center gap-1">
+          <Button
+            variant={viewMode === 'edit' ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => setViewMode('edit')}
+            className="h-7 px-2"
+            title="Edit mode"
+          >
+            <Edit3 className="w-3.5 h-3.5" />
+          </Button>
+          <Button
+            variant={viewMode === 'split' ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => setViewMode('split')}
+            className="h-7 px-2"
+            title="Split view"
+          >
+            <Columns className="w-3.5 h-3.5" />
+          </Button>
+          <Button
+            variant={viewMode === 'preview' ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => setViewMode('preview')}
+            className="h-7 px-2"
+            title="Preview mode"
+          >
+            <Eye className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+
+  // Render the editor textarea
+  const renderEditor = () => (
+    <div className={cn('flex flex-col', viewMode === 'split' ? 'w-1/2' : 'w-full')}>
+      {viewMode === 'split' && (
+        <div className="px-3 py-1.5 border-b border-border bg-surface text-xs font-medium text-text-secondary">
+          Edit
+        </div>
+      )}
+      <textarea
+        ref={textareaRef}
+        value={content}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
+        className={cn(
+          'flex-1 w-full p-4 resize-none outline-none',
+          'font-mono text-sm leading-relaxed',
+          'text-text-primary bg-white',
+          'placeholder:text-text-muted',
+          readOnly && 'cursor-default'
+        )}
+        placeholder="Enter markdown content..."
+        readOnly={readOnly}
+        spellCheck={false}
+      />
+    </div>
+  )
+
+  // Render the preview panel - same as MessageBubble
+  const renderPreview = () => {
+    // Normalize content same as MessageBubble's renderMarkdownResult
+    const trimmed = (content ?? '').trim()
+    const fencedMatch = trimmed.match(/^```(?:\s*(?:markdown|md))?\s*\n([\s\S]*?)\n```$/)
+    const normalizedResult = fencedMatch ? fencedMatch[1] : trimmed
+
+    return (
+      <div
+        className={cn(
+          'flex flex-col overflow-hidden',
+          viewMode === 'split' ? 'w-1/2 border-l border-border' : 'w-full'
+        )}
+      >
+        {viewMode === 'split' && (
+          <div className="px-3 py-1.5 border-b border-border bg-surface text-xs font-medium text-text-secondary">
+            Preview
+          </div>
+        )}
+        <div className="flex-1 p-4 overflow-y-auto bg-white">
+          {normalizedResult ? (
+            <EnhancedMarkdown source={normalizedResult} theme={theme} />
+          ) : (
+            <p className="text-text-muted text-sm italic">No content to preview</p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       className={cn(
-        'wysiwyg-editor prose prose-sm max-w-none',
-        // Base styling
-        'min-h-[300px] w-full',
+        'wysiwyg-editor',
+        // Base styling - flex to fill container
+        'flex flex-col min-h-[300px] h-full w-full',
         // Border and background
-        'rounded-lg border border-border bg-surface',
+        'rounded-lg border border-border bg-white overflow-hidden',
         // Focus styling
         'focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary',
-        // Padding for content area
-        '[&_.milkdown]:p-4',
-        // Typography styling for editor content
-        '[&_.milkdown]:text-text-primary [&_.milkdown]:text-sm [&_.milkdown]:leading-relaxed',
-        // Heading styles
-        '[&_.milkdown_h1]:text-xl [&_.milkdown_h1]:font-bold [&_.milkdown_h1]:mt-6 [&_.milkdown_h1]:mb-4',
-        '[&_.milkdown_h2]:text-lg [&_.milkdown_h2]:font-semibold [&_.milkdown_h2]:mt-5 [&_.milkdown_h2]:mb-3',
-        '[&_.milkdown_h3]:text-base [&_.milkdown_h3]:font-semibold [&_.milkdown_h3]:mt-4 [&_.milkdown_h3]:mb-2',
-        // Paragraph styles
-        '[&_.milkdown_p]:my-2',
-        // List styles
-        '[&_.milkdown_ul]:list-disc [&_.milkdown_ul]:pl-6 [&_.milkdown_ul]:my-2',
-        '[&_.milkdown_ol]:list-decimal [&_.milkdown_ol]:pl-6 [&_.milkdown_ol]:my-2',
-        '[&_.milkdown_li]:my-1',
-        // Code styles
-        '[&_.milkdown_code]:bg-muted [&_.milkdown_code]:px-1.5 [&_.milkdown_code]:py-0.5 [&_.milkdown_code]:rounded [&_.milkdown_code]:text-xs [&_.milkdown_code]:font-mono',
-        '[&_.milkdown_pre]:bg-muted [&_.milkdown_pre]:p-3 [&_.milkdown_pre]:rounded-lg [&_.milkdown_pre]:overflow-x-auto [&_.milkdown_pre]:my-3',
-        // Blockquote styles
-        '[&_.milkdown_blockquote]:border-l-4 [&_.milkdown_blockquote]:border-primary/50 [&_.milkdown_blockquote]:pl-4 [&_.milkdown_blockquote]:my-3 [&_.milkdown_blockquote]:text-text-secondary [&_.milkdown_blockquote]:italic',
-        // Link styles
-        '[&_.milkdown_a]:text-primary [&_.milkdown_a]:underline [&_.milkdown_a]:underline-offset-2',
-        // Table styles
-        '[&_.milkdown_table]:w-full [&_.milkdown_table]:border-collapse [&_.milkdown_table]:my-3',
-        '[&_.milkdown_th]:border [&_.milkdown_th]:border-border [&_.milkdown_th]:px-3 [&_.milkdown_th]:py-2 [&_.milkdown_th]:bg-muted [&_.milkdown_th]:font-medium',
-        '[&_.milkdown_td]:border [&_.milkdown_td]:border-border [&_.milkdown_td]:px-3 [&_.milkdown_td]:py-2',
-        // HR style
-        '[&_.milkdown_hr]:my-4 [&_.milkdown_hr]:border-border',
-        // Strong and emphasis
-        '[&_.milkdown_strong]:font-bold',
-        '[&_.milkdown_em]:italic',
-        // Strikethrough
-        '[&_.milkdown_del]:line-through',
-        // Read-only mode cursor
-        readOnly && 'cursor-default [&_.milkdown]:cursor-default',
         className
       )}
     >
-      <MilkdownProvider>
-        <MilkdownEditor initialContent={initialContent} onChange={onChange} readOnly={readOnly} />
-      </MilkdownProvider>
+      {/* Toolbar */}
+      {renderToolbar()}
+
+      {/* Content area */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Edit mode: show only editor */}
+        {viewMode === 'edit' && renderEditor()}
+
+        {/* Preview mode: show only preview */}
+        {viewMode === 'preview' && renderPreview()}
+
+        {/* Split mode: show both */}
+        {viewMode === 'split' && (
+          <>
+            {renderEditor()}
+            {renderPreview()}
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -170,7 +224,7 @@ export function WysiwygEditor({
 /**
  * Fallback Markdown Editor using @uiw/react-md-editor
  *
- * Used when Milkdown has compatibility issues.
+ * Used when the main editor has compatibility issues.
  * Provides a simpler split-pane or preview mode editing experience.
  */
 export function MarkdownEditorFallback({

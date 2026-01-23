@@ -39,7 +39,11 @@ from app.schemas.knowledge import (
     ResourceScope,
 )
 from app.schemas.knowledge_qa_history import QAHistoryResponse
-from app.schemas.rag import SplitterConfig
+from app.schemas.rag import (
+    SemanticSplitterConfig,
+    SentenceSplitterConfig,
+    SplitterConfig,
+)
 from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.knowledge import (
     KnowledgeBaseQAService,
@@ -514,6 +518,36 @@ def _resolve_kb_index_info(
         return kb_info
 
 
+def _parse_splitter_config(config_dict: dict) -> Optional[SplitterConfig]:
+    """
+    Parse a dictionary into the appropriate SplitterConfig type.
+
+    Since SplitterConfig is a Union type (Union[SemanticSplitterConfig, SentenceSplitterConfig]),
+    it cannot be instantiated directly. This function determines the correct type based on
+    the 'type' field in the config dictionary.
+
+    Args:
+        config_dict: Dictionary containing splitter configuration
+
+    Returns:
+        SemanticSplitterConfig or SentenceSplitterConfig instance, or None if invalid
+    """
+    if not config_dict:
+        return None
+
+    splitter_type = config_dict.get("type")
+    if splitter_type == "semantic":
+        return SemanticSplitterConfig(**config_dict)
+    elif splitter_type == "sentence":
+        return SentenceSplitterConfig(**config_dict)
+    else:
+        # Default to sentence splitter if type is not specified or unknown
+        logger.warning(
+            f"Unknown splitter type '{splitter_type}', defaulting to sentence splitter"
+        )
+        return SentenceSplitterConfig(**config_dict)
+
+
 def _trigger_document_summary_if_enabled(
     db: Session,
     document_id: int,
@@ -867,7 +901,7 @@ async def update_document_content(
                         user_id=current_user.id,
                         user_name=current_user.user_name,
                         splitter_config=(
-                            SplitterConfig(**document.splitter_config)
+                            _parse_splitter_config(document.splitter_config)
                             if document.splitter_config
                             else None
                         ),
