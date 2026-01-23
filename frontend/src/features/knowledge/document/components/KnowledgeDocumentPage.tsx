@@ -507,13 +507,17 @@ function GroupKnowledgeContent({
   const { t } = useTranslation()
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
 
-  // Initialize selected group from URL parameter
+  // Sync selected group with URL parameter
   useEffect(() => {
-    if (initialGroupName && groups.length > 0 && !selectedGroup) {
+    if (initialGroupName && groups.length > 0) {
+      // URL has group parameter - select the group if different from current
       const foundGroup = groups.find(g => g.name === initialGroupName)
-      if (foundGroup) {
+      if (foundGroup && selectedGroup?.name !== foundGroup.name) {
         setSelectedGroup(foundGroup)
       }
+    } else if (!initialGroupName && selectedGroup) {
+      // URL no longer has group parameter - reset to group list
+      setSelectedGroup(null)
     }
   }, [initialGroupName, groups, selectedGroup])
 
