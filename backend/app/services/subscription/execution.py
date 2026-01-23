@@ -69,11 +69,42 @@ class BackgroundExecutionManager:
             BackgroundExecutionInDB object
         """
         subscription_crd = Subscription.model_validate(subscription.json)
+        internal = subscription.json.get("_internal", {})
+
+        # For rental subscriptions, get promptTemplate from source subscription
+        prompt_template = subscription_crd.spec.promptTemplate
+        display_name = subscription_crd.spec.displayName
+
+        if internal.get("is_rental", False):
+            source_subscription_id = internal.get("source_subscription_id")
+            if source_subscription_id:
+                source_subscription = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == source_subscription_id,
+                        Kind.kind == "Subscription",
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+                if source_subscription:
+                    source_crd = Subscription.model_validate(source_subscription.json)
+                    # Use source subscription's promptTemplate
+                    prompt_template = source_crd.spec.promptTemplate
+                    logger.info(
+                        f"[Subscription] Using source subscription {source_subscription_id} "
+                        f"promptTemplate for rental {subscription.id}"
+                    )
+                else:
+                    logger.warning(
+                        f"[Subscription] Source subscription {source_subscription_id} not found "
+                        f"for rental {subscription.id}, using placeholder"
+                    )
 
         # Resolve prompt template
         resolved_prompt = resolve_prompt_template(
-            subscription_crd.spec.promptTemplate,
-            subscription_crd.spec.displayName,
+            prompt_template,
+            display_name,
             extra_variables,
         )
 
@@ -304,6 +335,7 @@ class BackgroundExecutionManager:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         include_following: bool = True,
+        include_silent: bool = False,
     ) -> Tuple[List[BackgroundExecutionInDB], int]:
         """
         List BackgroundExecution records (timeline view).
@@ -322,6 +354,7 @@ class BackgroundExecutionManager:
             start_date: Optional filter by start date
             end_date: Optional filter by end date
             include_following: Include executions from followed subscriptions
+            include_silent: Include COMPLETED_SILENT executions (default False)
 
         Returns:
             Tuple of (list of BackgroundExecutionInDB, total count)
@@ -388,6 +421,16 @@ class BackgroundExecutionManager:
         if status:
             query = query.filter(
                 BackgroundExecution.status.in_([s.value for s in status])
+            )
+
+        # Exclude silent executions unless explicitly requested
+        # Skip exclusion if COMPLETED_SILENT is explicitly included in status filter
+        if not include_silent and (
+            not status or BackgroundExecutionStatus.COMPLETED_SILENT not in status
+        ):
+            query = query.filter(
+                BackgroundExecution.status
+                != BackgroundExecutionStatus.COMPLETED_SILENT.value
             )
 
         if start_date:
@@ -619,6 +662,7 @@ class BackgroundExecutionManager:
             update_values["started_at"] = now_utc
         elif status in (
             BackgroundExecutionStatus.COMPLETED,
+            BackgroundExecutionStatus.COMPLETED_SILENT,
             BackgroundExecutionStatus.FAILED,
         ):
             update_values["completed_at"] = now_utc
@@ -655,6 +699,10 @@ class BackgroundExecutionManager:
         db.refresh(execution)
 
         # Update subscription statistics (only for terminal states to avoid double counting)
+        # Note: COMPLETED_SILENT is intentionally excluded from stats updates because:
+        # - Silent executions are designed for routine monitoring tasks
+        # - They are hidden from the timeline by default
+        # - Including them would pollute subscription metrics with routine checks
         if status in (
             BackgroundExecutionStatus.COMPLETED,
             BackgroundExecutionStatus.FAILED,

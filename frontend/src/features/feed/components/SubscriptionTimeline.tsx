@@ -25,6 +25,7 @@ import {
   Sparkles,
   StopCircle,
   Trash2,
+  VolumeX,
   XCircle,
   Zap,
 } from 'lucide-react'
@@ -72,6 +73,11 @@ const statusConfig: Record<
     icon: <CheckCircle2 className="h-3 w-3" />,
     text: 'status_completed',
     color: 'text-green-600',
+  },
+  COMPLETED_SILENT: {
+    icon: <VolumeX className="h-3 w-3" />,
+    text: 'status_completed_silent',
+    color: 'text-text-muted',
   },
   FAILED: {
     icon: <XCircle className="h-3 w-3" />,
@@ -258,7 +264,10 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
   // Only subscription owner can delete, and only for terminal states
   const canDelete = (exec: BackgroundExecution) => {
     const isTerminalState =
-      exec.status === 'COMPLETED' || exec.status === 'FAILED' || exec.status === 'CANCELLED'
+      exec.status === 'COMPLETED' ||
+      exec.status === 'COMPLETED_SILENT' ||
+      exec.status === 'FAILED' ||
+      exec.status === 'CANCELLED'
     // Use can_delete from backend if available, otherwise fall back to terminal state check
     return exec.can_delete !== undefined ? exec.can_delete && isTerminalState : isTerminalState
   }
@@ -271,9 +280,10 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
     const subscriptionName =
       exec.subscription_display_name || exec.subscription_name || t('feed.unnamed_subscription')
     const isSummaryExpanded = expandedSummaryId === exec.id
+    const isSilent = exec.status === 'COMPLETED_SILENT' || exec.is_silent
 
     return (
-      <div key={exec.id} className="relative">
+      <div key={exec.id} className={`relative ${isSilent ? 'opacity-60' : ''}`}>
         {/* Timeline connector line */}
         {!isLast && <div className="absolute left-5 top-12 bottom-0 w-px bg-border" />}
 
@@ -284,17 +294,25 @@ export function SubscriptionTimeline({ onCreateSubscription }: SubscriptionTimel
               className={`h-10 w-10 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center ring-[3px] ${
                 exec.status === 'COMPLETED'
                   ? 'ring-green-500'
-                  : exec.status === 'FAILED'
-                    ? 'ring-red-500'
-                    : exec.status === 'RUNNING'
-                      ? 'ring-primary animate-pulse'
-                      : exec.status === 'RETRYING'
-                        ? 'ring-amber-500 animate-pulse'
-                        : 'ring-gray-400/50'
+                  : exec.status === 'COMPLETED_SILENT'
+                    ? 'ring-gray-400/50'
+                    : exec.status === 'FAILED'
+                      ? 'ring-red-500'
+                      : exec.status === 'RUNNING'
+                        ? 'ring-primary animate-pulse'
+                        : exec.status === 'RETRYING'
+                          ? 'ring-amber-500 animate-pulse'
+                          : 'ring-gray-400/50'
               }`}
             >
               <Bot className="h-5 w-5 text-primary" />
             </div>
+            {/* Silent indicator badge */}
+            {isSilent && (
+              <div className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-surface border border-border flex items-center justify-center">
+                <VolumeX className="h-2.5 w-2.5 text-text-muted" />
+              </div>
+            )}
           </div>
 
           {/* Content */}

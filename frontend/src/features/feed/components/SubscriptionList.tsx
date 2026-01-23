@@ -28,6 +28,7 @@ import {
   RefreshCw,
   Timer,
   Trash2,
+  VolumeX,
   Webhook,
   XCircle,
 } from 'lucide-react'
@@ -97,6 +98,11 @@ const statusConfig: Record<
     icon: <CheckCircle2 className="h-3 w-3" />,
     text: 'status_completed',
     color: 'text-green-600',
+  },
+  COMPLETED_SILENT: {
+    icon: <VolumeX className="h-3 w-3" />,
+    text: 'status_completed_silent',
+    color: 'text-text-muted',
   },
   FAILED: {
     icon: <XCircle className="h-3 w-3" />,

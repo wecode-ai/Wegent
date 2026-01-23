@@ -97,6 +97,9 @@ def _load_subscription_execution_context(
     """
     Load all required entities for subscription execution.
 
+    For rental subscriptions (is_rental=True), this function loads the
+    team, prompt template, and workspace from the source subscription.
+
     Returns None if any required entity is not found.
     """
     from app.core.constants import KIND_TEAM
@@ -104,7 +107,7 @@ def _load_subscription_execution_context(
     from app.models.subscription import BackgroundExecution
     from app.models.task import TaskResource
     from app.models.user import User
-    from app.schemas.subscription import Subscription
+    from app.schemas.subscription import Subscription, SubscriptionVisibility
 
     # Get subscription (stored in kinds table)
     subscription = (
@@ -124,6 +127,57 @@ def _load_subscription_execution_context(
     internal = subscription.json.get("_internal", {})
     trigger_type = internal.get("trigger_type", "unknown")
 
+    # Check if this is a rental subscription
+    is_rental = internal.get("is_rental", False)
+    source_subscription = None
+    source_crd = None
+    source_internal = {}
+
+    if is_rental:
+        # Load source subscription for rental
+        source_subscription_id = internal.get("source_subscription_id")
+        if not source_subscription_id:
+            logger.error(
+                f"[subscription_tasks] Rental subscription {subscription_id} has no source_subscription_id"
+            )
+            return None
+
+        source_subscription = (
+            db.query(Kind)
+            .filter(
+                Kind.id == source_subscription_id,
+                Kind.kind == "Subscription",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not source_subscription:
+            logger.error(
+                f"[subscription_tasks] Source subscription {source_subscription_id} not found "
+                f"for rental {subscription_id}"
+            )
+            return None
+
+        source_crd = Subscription.model_validate(source_subscription.json)
+        source_internal = source_subscription.json.get("_internal", {})
+
+        # Verify source is still market visibility
+        source_visibility = getattr(
+            source_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
+        )
+        if source_visibility != SubscriptionVisibility.MARKET:
+            logger.error(
+                f"[subscription_tasks] Source subscription {source_subscription_id} is no longer "
+                f"in market (visibility={source_visibility})"
+            )
+            return None
+
+        logger.info(
+            f"[subscription_tasks] Loading rental subscription {subscription_id} "
+            f"with source {source_subscription_id}"
+        )
+
     # Get execution record
     execution = (
         db.query(BackgroundExecution)
@@ -134,8 +188,12 @@ def _load_subscription_execution_context(
         logger.error(f"[subscription_tasks] Execution {execution_id} not found")
         return None
 
-    # Get team
-    team_id = internal.get("team_id")
+    # Get team - from source for rentals, from internal for regular
+    if is_rental:
+        team_id = source_internal.get("team_id")
+    else:
+        team_id = internal.get("team_id")
+
     team = (
         db.query(Kind)
         .filter(Kind.id == team_id, Kind.kind == KIND_TEAM, Kind.is_active == True)
@@ -147,7 +205,7 @@ def _load_subscription_execution_context(
         )
         return None
 
-    # Get user
+    # Get user - always use the rental subscriber's user for execution
     user = db.query(User).filter(User.id == subscription.user_id).first()
     if not user:
         logger.error(
@@ -155,14 +213,45 @@ def _load_subscription_execution_context(
         )
         return None
 
-    # Get workspace info
-    workspace_id = internal.get("workspace_id")
+    # Get workspace info - from source for rentals, from internal for regular
+    if is_rental:
+        workspace_id = source_internal.get("workspace_id")
+    else:
+        workspace_id = internal.get("workspace_id")
     workspace_info = _load_workspace_info(db, workspace_id)
 
-    # Extract history preservation settings from Subscription CRD
-    preserve_history = getattr(subscription_crd.spec, "preserveHistory", False)
-    history_message_count = getattr(subscription_crd.spec, "historyMessageCount", 10)
-    bound_task_id = internal.get("bound_task_id", 0) or 0
+    # Determine which CRD to use for history settings
+    # For rentals, we use the rental's settings (which are not stored, so use defaults)
+    # For regular subscriptions, use their own settings
+    if is_rental:
+        # Rentals don't support history preservation (they don't have their own task context)
+        preserve_history = False
+        history_message_count = 10
+        bound_task_id = 0
+    else:
+        preserve_history = getattr(subscription_crd.spec, "preserveHistory", False)
+        history_message_count = getattr(
+            subscription_crd.spec, "historyMessageCount", 10
+        )
+        bound_task_id = internal.get("bound_task_id", 0) or 0
+
+    # Build effective subscription_crd for execution
+    # For rentals, we need to merge source's team/prompt/workspace with rental's trigger/model
+    if is_rental:
+        # Create a merged CRD for execution
+        effective_crd = subscription_crd
+        # Override teamRef, promptTemplate, workspaceRef from source
+        effective_crd.spec.teamRef = source_crd.spec.teamRef
+        effective_crd.spec.promptTemplate = source_crd.spec.promptTemplate
+        effective_crd.spec.workspaceRef = source_crd.spec.workspaceRef
+        # Use rental's modelRef if provided, otherwise use source's
+        if not effective_crd.spec.modelRef and source_crd.spec.modelRef:
+            effective_crd.spec.modelRef = source_crd.spec.modelRef
+        # Copy other execution-related settings from source
+        effective_crd.spec.retryCount = source_crd.spec.retryCount
+        effective_crd.spec.timeoutSeconds = source_crd.spec.timeoutSeconds
+        effective_crd.spec.preserveHistory = False  # Rentals don't support history
+        subscription_crd = effective_crd
 
     return SubscriptionExecutionContext(
         subscription=subscription,
@@ -455,6 +544,7 @@ async def _trigger_chat_shell_response(
             user_subtask_id=user_subtask.id if user_subtask else None,
             event_emitter=subscription_emitter,
             history_limit=history_limit,
+            is_subscription=True,  # Enable SilentExitTool in chat_shell
         )
 
     try:

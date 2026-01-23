@@ -22,6 +22,12 @@ import type {
   InviteNamespaceRequest,
   SubscriptionFollowersListResponse,
   SubscriptionInvitationsListResponse,
+  MarketSubscriptionsListResponse,
+  MarketSubscriptionDetail,
+  RentSubscriptionRequest,
+  RentalSubscriptionResponse,
+  RentalSubscriptionsListResponse,
+  RentalCountResponse,
 } from '@/types/subscription'
 import type { PaginationParams } from '@/types/api'
 
@@ -99,7 +105,8 @@ export const subscriptionApis = {
     subscriptionId?: number,
     status?: BackgroundExecutionStatus[],
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    includeSilent?: boolean
   ): Promise<BackgroundExecutionListResponse> {
     const queryParams = new URLSearchParams()
     queryParams.append('page', String(params?.page || 1))
@@ -119,6 +126,10 @@ export const subscriptionApis = {
 
     if (endDate) {
       queryParams.append('end_date', endDate)
+    }
+
+    if (includeSilent !== undefined) {
+      queryParams.append('include_silent', String(includeSilent))
     }
 
     return apiClient.get(`/subscriptions/executions?${queryParams.toString()}`)
@@ -283,5 +294,59 @@ export const subscriptionApis = {
    */
   async deleteExecution(id: number): Promise<void> {
     await apiClient.delete(`/subscriptions/executions/${id}`)
+  },
+
+  // ========== Market/Rental APIs ==========
+
+  /**
+   * Discover market subscriptions
+   */
+  async discoverMarketSubscriptions(
+    params?: PaginationParams & { sortBy?: 'rental_count' | 'recent'; search?: string }
+  ): Promise<MarketSubscriptionsListResponse> {
+    const queryParams = new URLSearchParams()
+    queryParams.append('skip', String(((params?.page || 1) - 1) * (params?.limit || 20)))
+    queryParams.append('limit', String(params?.limit || 20))
+    if (params?.sortBy) {
+      queryParams.append('sort_by', params.sortBy)
+    }
+    if (params?.search) {
+      queryParams.append('search', params.search)
+    }
+    return apiClient.get(`/market/subscriptions?${queryParams.toString()}`)
+  },
+
+  /**
+   * Get market subscription detail
+   */
+  async getMarketSubscriptionDetail(id: number): Promise<MarketSubscriptionDetail> {
+    return apiClient.get(`/market/subscriptions/${id}`)
+  },
+
+  /**
+   * Rent a market subscription
+   */
+  async rentSubscription(
+    subscriptionId: number,
+    data: RentSubscriptionRequest
+  ): Promise<RentalSubscriptionResponse> {
+    return apiClient.post(`/market/subscriptions/${subscriptionId}/rent`, data)
+  },
+
+  /**
+   * Get current user's rental subscriptions
+   */
+  async getMyRentals(params?: PaginationParams): Promise<RentalSubscriptionsListResponse> {
+    const queryParams = new URLSearchParams()
+    queryParams.append('skip', String(((params?.page || 1) - 1) * (params?.limit || 20)))
+    queryParams.append('limit', String(params?.limit || 20))
+    return apiClient.get(`/market/users/me/rentals?${queryParams.toString()}`)
+  },
+
+  /**
+   * Get rental count for a subscription
+   */
+  async getRentalCount(subscriptionId: number): Promise<RentalCountResponse> {
+    return apiClient.get(`/subscriptions/${subscriptionId}/rental-count`)
   },
 }

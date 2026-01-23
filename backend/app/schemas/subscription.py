@@ -29,6 +29,7 @@ class SubscriptionVisibility(str, Enum):
 
     PUBLIC = "public"  # Public: visible to all, can be followed
     PRIVATE = "private"  # Private: only visible to owner and invited users
+    MARKET = "market"  # Market: visible to all, can be rented
 
 
 class SubscriptionTriggerType(str, Enum):
@@ -53,6 +54,9 @@ class BackgroundExecutionStatus(str, Enum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
+    COMPLETED_SILENT = (
+        "COMPLETED_SILENT"  # Silent completion (hidden from timeline by default)
+    )
     FAILED = "FAILED"
     RETRYING = "RETRYING"
     CANCELLED = "CANCELLED"
@@ -132,6 +136,14 @@ class SubscriptionWorkspaceRef(BaseModel):
     namespace: str = "default"
 
 
+class SourceSubscriptionRef(BaseModel):
+    """Reference to source subscription for rentals."""
+
+    id: int = Field(..., description="Source subscription ID")
+    name: str = Field(..., description="Source subscription name (for display)")
+    namespace: str = Field("default", description="Source subscription namespace")
+
+
 # CRD spec and status
 class SubscriptionSpec(BaseModel):
     """Subscription CRD specification."""
@@ -143,7 +155,7 @@ class SubscriptionSpec(BaseModel):
     )
     visibility: SubscriptionVisibility = Field(
         SubscriptionVisibility.PRIVATE,
-        description="Visibility: 'public' or 'private'. Default is private.",
+        description="Visibility: 'public', 'private', or 'market'. Default is private.",
     )
     trigger: SubscriptionTriggerConfig = Field(..., description="Trigger configuration")
     teamRef: SubscriptionTeamRef = Field(
@@ -187,6 +199,12 @@ class SubscriptionSpec(BaseModel):
         le=50,
         description="Number of recent messages to include as context (0-50, default: 10). "
         "Only effective when preserveHistory is enabled.",
+    )
+    # Market rental reference
+    sourceSubscriptionRef: Optional[SourceSubscriptionRef] = Field(
+        None,
+        description="Reference to source subscription (for rentals). "
+        "When set, this subscription is a rental instance.",
     )
 
 
@@ -252,7 +270,7 @@ class SubscriptionBase(BaseModel):
     )
     visibility: SubscriptionVisibility = Field(
         SubscriptionVisibility.PRIVATE,
-        description="Visibility: 'public' or 'private'. Default is private.",
+        description="Visibility: 'public', 'private', or 'market'. Default is private.",
     )
     trigger_type: SubscriptionTriggerType = Field(..., description="Trigger type")
     trigger_config: Dict[str, Any] = Field(..., description="Trigger configuration")
@@ -350,6 +368,23 @@ class SubscriptionInDB(SubscriptionBase):
     followers_count: int = Field(0, description="Number of followers")
     is_following: bool = Field(False, description="Whether current user is following")
     owner_username: Optional[str] = Field(None, description="Owner's username")
+    # Market rental fields
+    is_rental: bool = Field(False, description="Whether this is a rental subscription")
+    source_subscription_id: Optional[int] = Field(
+        None, description="Source subscription ID (for rentals)"
+    )
+    source_subscription_name: Optional[str] = Field(
+        None, description="Source subscription name (for rentals)"
+    )
+    source_subscription_display_name: Optional[str] = Field(
+        None, description="Source subscription display name (for rentals)"
+    )
+    source_owner_username: Optional[str] = Field(
+        None, description="Source subscription owner username (for rentals)"
+    )
+    rental_count: int = Field(
+        0, description="Number of rentals (for market subscriptions)"
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -592,3 +627,92 @@ class DiscoverSubscriptionsListResponse(BaseModel):
 
     total: int
     items: List[DiscoverSubscriptionResponse]
+
+
+# ========== Market/Rental Schemas ==========
+
+
+class MarketSubscriptionDetail(BaseModel):
+    """Market subscription detail (hides sensitive information)."""
+
+    id: int = Field(..., description="Subscription ID")
+    name: str = Field(..., description="Subscription name")
+    display_name: str = Field(..., description="Display name")
+    description: Optional[str] = Field(None, description="Subscription description")
+    task_type: SubscriptionTaskType = Field(..., description="Task type")
+    trigger_type: SubscriptionTriggerType = Field(..., description="Trigger type")
+    trigger_description: str = Field(
+        ..., description="Human-readable trigger description"
+    )
+    owner_user_id: int = Field(..., description="Owner user ID")
+    owner_username: str = Field(..., description="Owner username")
+    rental_count: int = Field(0, description="Number of rentals")
+    is_rented: bool = Field(False, description="Whether current user has rented this")
+    created_at: datetime
+    updated_at: datetime
+    # Note: Does not include prompt_template, team_ref, workspace_ref
+
+
+class MarketSubscriptionsListResponse(BaseModel):
+    """Response for market subscriptions list."""
+
+    total: int
+    items: List[MarketSubscriptionDetail]
+
+
+class RentSubscriptionRequest(BaseModel):
+    """Request to rent a market subscription."""
+
+    name: str = Field(..., description="Rental subscription name (unique identifier)")
+    display_name: str = Field(..., description="Display name for the rental")
+    trigger_type: SubscriptionTriggerType = Field(..., description="Trigger type")
+    trigger_config: Dict[str, Any] = Field(..., description="Trigger configuration")
+    model_ref: Optional[Dict[str, str]] = Field(
+        None, description="Optional model reference (name, namespace)"
+    )
+
+
+class RentalSubscriptionResponse(BaseModel):
+    """Response for a rental subscription."""
+
+    id: int = Field(..., description="Rental subscription ID")
+    name: str = Field(..., description="Rental subscription name")
+    display_name: str = Field(..., description="Display name")
+    namespace: str = Field("default", description="Namespace")
+    source_subscription_id: int = Field(..., description="Source subscription ID")
+    source_subscription_name: str = Field(..., description="Source subscription name")
+    source_subscription_display_name: str = Field(
+        ..., description="Source subscription display name"
+    )
+    source_owner_user_id: int = Field(..., description="Source owner user ID")
+    source_owner_username: str = Field(..., description="Source owner username")
+    trigger_type: SubscriptionTriggerType = Field(..., description="Trigger type")
+    trigger_config: Dict[str, Any] = Field(..., description="Trigger configuration")
+    model_ref: Optional[Dict[str, str]] = Field(None, description="Model reference")
+    enabled: bool = Field(True, description="Whether enabled")
+    last_execution_time: Optional[datetime] = Field(
+        None, description="Last execution time"
+    )
+    last_execution_status: Optional[str] = Field(
+        None, description="Last execution status"
+    )
+    next_execution_time: Optional[datetime] = Field(
+        None, description="Next execution time"
+    )
+    execution_count: int = Field(0, description="Execution count")
+    created_at: datetime
+    updated_at: datetime
+
+
+class RentalSubscriptionsListResponse(BaseModel):
+    """Response for rental subscriptions list."""
+
+    total: int
+    items: List[RentalSubscriptionResponse]
+
+
+class RentalCountResponse(BaseModel):
+    """Response for rental count."""
+
+    subscription_id: int
+    rental_count: int
