@@ -555,6 +555,18 @@ def create_app():
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(Exception, python_exception_handler)
 
+    # Register rate limiter exception handler and state
+    from app.core.rate_limit import get_limiter, is_rate_limit_enabled
+
+    if is_rate_limit_enabled():
+        from slowapi import _rate_limit_exceeded_handler
+        from slowapi.errors import RateLimitExceeded
+
+        limiter = get_limiter()
+        app.state.limiter = limiter
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+        logger.info("Rate limiting enabled for API endpoints")
+
     # Include API routes
     app.include_router(api_router, prefix=settings.API_PREFIX)
 

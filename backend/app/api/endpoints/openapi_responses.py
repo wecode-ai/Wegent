@@ -11,11 +11,14 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from slowapi import Limiter
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.config import settings
+from app.core.rate_limit import get_limiter
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -47,6 +50,9 @@ from app.services.readers.kinds import KindType, kindReader
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Get rate limiter instance
+limiter = get_limiter()
 
 
 def _task_to_response_object(
@@ -112,7 +118,9 @@ def _task_to_response_object(
 
 
 @router.post("")
+@limiter.limit(settings.RATE_LIMIT_CREATE_RESPONSE)
 async def create_response(
+    request: Request,
     request_body: ResponseCreateInput,
     db: Session = Depends(get_db),
     auth_context: security.AuthContext = Depends(security.get_auth_context),
@@ -379,7 +387,9 @@ async def create_response(
 
 
 @router.get("/{response_id}", response_model=ResponseObject)
+@limiter.limit(settings.RATE_LIMIT_GET_RESPONSE)
 async def get_response(
+    request: Request,
     response_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_flexible),
@@ -459,7 +469,9 @@ async def get_response(
 
 
 @router.post("/{response_id}/cancel", response_model=ResponseObject)
+@limiter.limit(settings.RATE_LIMIT_CANCEL_RESPONSE)
 async def cancel_response(
+    request: Request,
     response_id: str,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -651,7 +663,9 @@ async def cancel_response(
 
 
 @router.delete("/{response_id}", response_model=ResponseDeletedObject)
+@limiter.limit(settings.RATE_LIMIT_DELETE_RESPONSE)
 async def delete_response(
+    request: Request,
     response_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_flexible),
