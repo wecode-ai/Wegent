@@ -77,6 +77,19 @@ export default function MobileModelSelector({
     }
   }, [modelSelection.selectedModel, externalSelectedModel, externalSetSelectedModel])
 
+  // Reverse sync: When external state changes (e.g., from initialModelRef),
+  // update internal hook state. This is needed for notebook mode where
+  // the model is pre-selected based on knowledge base's summary model.
+  useEffect(() => {
+    if (
+      externalSelectedModel &&
+      externalSelectedModel !== modelSelection.selectedModel &&
+      externalSelectedModel.name !== modelSelection.selectedModel?.name
+    ) {
+      modelSelection.selectModel(externalSelectedModel)
+    }
+  }, [externalSelectedModel, modelSelection.selectedModel, modelSelection])
+
   useEffect(() => {
     if (modelSelection.forceOverride !== externalForceOverride) {
       externalSetForceOverride(modelSelection.forceOverride)
