@@ -5,6 +5,7 @@
 'use client'
 
 import { useState } from 'react'
+import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRenderer'
 import { Copy, Check, Plus, Star, RefreshCw, Edit3, X, Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { FinalPromptData, Team, GitRepoInfo, GitBranch } from '@/types/api'
@@ -223,13 +224,7 @@ export default function FinalPromptMessage({
             source={data.final_prompt}
             style={{ background: 'transparent' }}
             wrapperElement={{ 'data-color-mode': theme }}
-            components={{
-              a: ({ href, children, ...props }) => (
-                <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                  {children}
-                </a>
-              ),
-            }}
+            components={createSmartMarkdownComponents({ enableImagePreview: true })}
           />
         )}
       </div>

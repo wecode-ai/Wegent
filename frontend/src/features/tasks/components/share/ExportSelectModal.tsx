@@ -50,7 +50,7 @@ export interface SelectableMessage {
   knowledgeBases?: SelectableKnowledgeBase[]
 }
 
-export type ExportFormat = 'pdf' | 'docx'
+export type ExportFormat = 'pdf' | 'docx' | 'markdown' | 'md'
 
 interface ExportSelectModalProps {
   /** Whether the modal is open */

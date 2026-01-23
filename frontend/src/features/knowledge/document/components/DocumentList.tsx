@@ -600,6 +600,7 @@ export function DocumentList({
         onOpenChange={open => !open && setViewingDoc(null)}
         document={viewingDoc}
         knowledgeBaseId={knowledgeBase.id}
+        kbType={knowledgeBase.kb_type}
       />
 
       <DocumentUpload

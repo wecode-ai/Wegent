@@ -248,7 +248,12 @@ class ChatContext:
         },
     )
     async def _prepare_kb_tools(self, db: AsyncSession) -> tuple[list, str]:
-        """Prepare knowledge base tools asynchronously."""
+        """Prepare knowledge base tools asynchronously.
+
+        In HTTP mode (when Backend calls chat_shell via HTTP), the system prompt
+        may already contain KB instructions added by Backend. We detect this by
+        checking for KB prompt markers to avoid duplicate KB prompts.
+        """
         from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
 
         base_system_prompt = self._request.system_prompt or ""
@@ -265,6 +270,18 @@ class ChatContext:
             if self._request.model_config
             else None
         )
+
+        # In HTTP mode, check if system_prompt already contains KB instructions
+        # to avoid duplicate KB prompts (Backend adds them before calling chat_shell)
+        skip_prompt_enhancement = self._should_skip_kb_prompt_enhancement(
+            base_system_prompt
+        )
+        if skip_prompt_enhancement:
+            logger.debug(
+                "[CHAT_CONTEXT] Detected KB prompt in system_prompt, "
+                "skipping KB prompt enhancement"
+            )
+
         result = await prepare_knowledge_base_tools(
             knowledge_base_ids=self._request.knowledge_base_ids,
             user_id=self._request.user_id,
@@ -275,9 +292,44 @@ class ChatContext:
             is_user_selected=self._request.is_user_selected_kb,
             document_ids=self._request.document_ids,
             context_window=context_window,
+            skip_prompt_enhancement=skip_prompt_enhancement,
         )
         add_span_event("kb_tools_prepared", {"tools_count": len(result[0])})
         return result
+
+    def _should_skip_kb_prompt_enhancement(self, system_prompt: str) -> bool:
+        """Check if KB prompt enhancement should be skipped.
+
+        In HTTP mode with remote storage, Backend adds KB prompts to system_prompt
+        before calling chat_shell. We detect this by:
+        1. Checking if we're in HTTP mode with remote storage
+        2. Checking if system_prompt already contains KB prompt markers
+
+        Returns:
+            True if KB prompt enhancement should be skipped, False otherwise.
+        """
+        # Check if in HTTP mode with remote storage
+        mode = settings.CHAT_SHELL_MODE.lower()
+        storage = settings.STORAGE_TYPE.lower()
+        is_http_mode = mode == "http" and storage == "remote"
+
+        if not is_http_mode:
+            return False
+
+        # Check for KB prompt markers in system_prompt
+        # Using both old (# IMPORTANT:) and new (## Knowledge Base) markers for compatibility
+        kb_prompt_markers = [
+            "## Knowledge Base Requirement",
+            "## Knowledge Base Available",
+            "# IMPORTANT: Knowledge Base Requirement",
+            "# Knowledge Base Available",
+        ]
+
+        for marker in kb_prompt_markers:
+            if marker in system_prompt:
+                return True
+
+        return False
 
     @trace_async(
         span_name="chat_context.prepare_skill_tools",
