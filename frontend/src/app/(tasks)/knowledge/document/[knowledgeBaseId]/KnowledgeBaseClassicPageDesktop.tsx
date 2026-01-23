@@ -115,7 +115,7 @@ export function KnowledgeBaseClassicPageDesktop() {
 
   // Handle back to knowledge list
   const handleBack = () => {
-    router.push('/knowledge')
+    router.back()
   }
 
   // Check if user can manage this knowledge base

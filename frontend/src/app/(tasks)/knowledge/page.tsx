@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
@@ -23,6 +23,7 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { paths } from '@/config/paths'
+import { Spinner } from '@/components/ui/spinner'
 import {
   WikiProjectList,
   AddRepoModal,
@@ -203,7 +204,17 @@ export default function KnowledgePage() {
             </>
           )}
 
-          {activeTab === 'document' && <KnowledgeDocumentPage />}
+          {activeTab === 'document' && (
+            <Suspense
+              fallback={
+                <div className="flex justify-center py-12">
+                  <Spinner />
+                </div>
+              }
+            >
+              <KnowledgeDocumentPage />
+            </Suspense>
+          )}
         </div>
       </div>
 
