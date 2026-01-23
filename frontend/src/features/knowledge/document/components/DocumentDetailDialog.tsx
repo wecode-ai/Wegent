@@ -5,7 +5,19 @@
 'use client'
 
 import { useState, useCallback, useEffect, useMemo } from 'react'
-import { FileText, RefreshCw, Copy, Check, Pencil, X, Save, Eye, Code } from 'lucide-react'
+import {
+  FileText,
+  RefreshCw,
+  Copy,
+  Check,
+  Pencil,
+  X,
+  Save,
+  Eye,
+  Code,
+  Maximize2,
+  Minimize2,
+} from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import {
@@ -125,6 +137,8 @@ export function DocumentDetailDialog({
   const [showDiscardDialog, setShowDiscardDialog] = useState(false)
   // View mode: 'preview' for markdown rendering, 'raw' for plain text
   const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview')
+  // Fullscreen mode for editing
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   const { detail, loading, error, refresh } = useDocumentDetail({
     kbId: knowledgeBaseId,
@@ -155,8 +169,16 @@ export function DocumentDetailDialog({
     if (!open) {
       setIsEditing(false)
       setEditedContent('')
+      setIsFullscreen(false)
     }
   }, [open])
+
+  // Reset fullscreen when exiting edit mode
+  useEffect(() => {
+    if (!isEditing) {
+      setIsFullscreen(false)
+    }
+  }, [isEditing])
 
   // Initialize edited content when entering edit mode
   useEffect(() => {
@@ -228,34 +250,50 @@ export function DocumentDetailDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col p-0">
-          {/* Header */}
-          <DialogHeader className="px-6 py-4 border-b border-border flex-shrink-0">
-            <div className="flex items-start gap-3">
-              <div className="p-2 bg-primary/10 rounded-lg flex-shrink-0 mt-0.5">
-                <FileText className="w-5 h-5 text-primary" />
+        <DialogContent
+          className={cn(
+            'flex flex-col p-0',
+            isFullscreen
+              ? 'max-w-[100vw] w-[100vw] max-h-[100vh] h-[100vh] rounded-none'
+              : 'max-w-4xl max-h-[85vh]'
+          )}
+          hideCloseButton={isFullscreen}
+        >
+          {/* Header - hidden in fullscreen mode */}
+          {!isFullscreen && (
+            <DialogHeader className="px-6 py-4 border-b border-border flex-shrink-0">
+              <div className="flex items-start gap-3">
+                <div className="p-2 bg-primary/10 rounded-lg flex-shrink-0 mt-0.5">
+                  <FileText className="w-5 h-5 text-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <DialogTitle className="text-base font-medium text-text-primary truncate">
+                    {document.name}
+                  </DialogTitle>
+                  <DialogDescription className="flex items-center gap-2 mt-1 text-xs text-text-muted">
+                    <span>{document.file_extension.toUpperCase()}</span>
+                    <span>•</span>
+                    <span>
+                      {new Date(document.created_at).toLocaleDateString(getCurrentLanguage(), {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                      })}
+                    </span>
+                  </DialogDescription>
+                </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <DialogTitle className="text-base font-medium text-text-primary truncate">
-                  {document.name}
-                </DialogTitle>
-                <DialogDescription className="flex items-center gap-2 mt-1 text-xs text-text-muted">
-                  <span>{document.file_extension.toUpperCase()}</span>
-                  <span>•</span>
-                  <span>
-                    {new Date(document.created_at).toLocaleDateString(getCurrentLanguage(), {
-                      year: 'numeric',
-                      month: '2-digit',
-                      day: '2-digit',
-                    })}
-                  </span>
-                </DialogDescription>
-              </div>
-            </div>
-          </DialogHeader>
+            </DialogHeader>
+          )}
 
           {/* Content */}
-          <div className={cn('flex-1 overflow-y-auto px-6 py-4', isEditing && 'flex flex-col')}>
+          <div
+            className={cn(
+              'flex-1 px-6 py-4',
+              isEditing && isFullscreen ? 'flex flex-col overflow-hidden' : 'overflow-y-auto',
+              isEditing && !isFullscreen && 'flex flex-col'
+            )}
+          >
             {loading ? (
               <div className="flex items-center justify-center py-12">
                 <Spinner />
@@ -268,7 +306,12 @@ export function DocumentDetailDialog({
                 </Button>
               </div>
             ) : (
-              <div className={cn('space-y-6', isEditing && 'flex-1 flex flex-col')}>
+              <div
+                className={cn(
+                  isEditing && isFullscreen ? 'flex-1 flex flex-col h-full' : 'space-y-6',
+                  isEditing && !isFullscreen && 'flex-1 flex flex-col space-y-6'
+                )}
+              >
                 {/* Summary Section - only show when not editing */}
                 {!isEditing && detail?.summary && (
                   <div className="space-y-3">
@@ -338,11 +381,25 @@ export function DocumentDetailDialog({
 
                 {/* Content Section */}
                 {detail?.content !== undefined && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-medium text-text-primary">
-                        {t('document.document.detail.content')}
-                      </h3>
+                  <div
+                    className={cn(
+                      isEditing && isFullscreen ? 'flex-1 flex flex-col h-full' : 'space-y-3',
+                      isEditing && !isFullscreen && 'space-y-3 flex-1 flex flex-col'
+                    )}
+                  >
+                    <div className="flex items-center justify-between flex-shrink-0">
+                      {/* Content title - hidden in fullscreen mode */}
+                      {!isFullscreen && (
+                        <h3 className="text-sm font-medium text-text-primary">
+                          {t('document.document.detail.content')}
+                        </h3>
+                      )}
+                      {/* In fullscreen mode, show document name instead */}
+                      {isFullscreen && (
+                        <span className="text-sm font-medium text-text-primary truncate max-w-[50%]">
+                          {document.name}
+                        </span>
+                      )}
                       <div className="flex items-center gap-2">
                         {!isEditing && detail.truncated && (
                           <Badge variant="warning" size="sm">
@@ -351,6 +408,26 @@ export function DocumentDetailDialog({
                         )}
                         {isEditing ? (
                           <>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setIsFullscreen(!isFullscreen)}
+                                >
+                                  {isFullscreen ? (
+                                    <Minimize2 className="w-3.5 h-3.5" />
+                                  ) : (
+                                    <Maximize2 className="w-3.5 h-3.5" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {isFullscreen
+                                  ? t('document.document.detail.exitFullscreen')
+                                  : t('document.document.detail.fullscreen')}
+                              </TooltipContent>
+                            </Tooltip>
                             <Button
                               variant="outline"
                               size="sm"
@@ -433,11 +510,18 @@ export function DocumentDetailDialog({
                     </div>
 
                     {isEditing ? (
-                      <WysiwygEditor
-                        initialContent={editedContent}
-                        onChange={handleContentChange}
-                        className="min-h-[400px]"
-                      />
+                      <div
+                        className={cn(
+                          'flex-1 flex flex-col',
+                          isFullscreen ? 'h-full mt-3' : 'mt-3'
+                        )}
+                      >
+                        <WysiwygEditor
+                          initialContent={editedContent}
+                          onChange={handleContentChange}
+                          className={cn(isFullscreen ? 'flex-1' : 'min-h-[400px]')}
+                        />
+                      </div>
                     ) : detail.content ? (
                       <div className="p-4 bg-white rounded-lg border border-border">
                         {/* Use markdown preview if content is markdown and viewMode is preview */}
