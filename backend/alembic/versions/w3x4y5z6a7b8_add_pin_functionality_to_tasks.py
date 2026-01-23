@@ -11,6 +11,8 @@ Create Date: 2026-01-21
 This migration adds pin functionality for tasks:
 1. Adds is_pinned column (boolean) to tasks table
 2. Adds pinned_at column (datetime) to tasks table
+
+Note: No index on is_pinned - low cardinality boolean field, index provides minimal benefit.
 """
 from typing import Sequence, Union
 
@@ -43,13 +45,6 @@ def upgrade() -> None:
             """
         )
 
-        # Add index on is_pinned for faster sorting queries
-        op.execute(
-            """
-            ALTER TABLE tasks ADD INDEX idx_tasks_is_pinned (is_pinned)
-            """
-        )
-
     # Add pinned_at column if not exists
     if "pinned_at" not in columns:
         op.execute(
@@ -62,9 +57,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Remove is_pinned and pinned_at columns from tasks table."""
-    # Drop index on is_pinned
-    op.execute("ALTER TABLE tasks DROP INDEX idx_tasks_is_pinned")
-
     # Drop columns
     op.execute("ALTER TABLE tasks DROP COLUMN is_pinned")
     op.execute("ALTER TABLE tasks DROP COLUMN pinned_at")
