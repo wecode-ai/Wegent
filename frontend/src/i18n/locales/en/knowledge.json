@@ -143,7 +143,9 @@
         "unsavedChanges": "You have unsaved changes. Are you sure you want to discard them?",
         "discardChanges": "Discard changes",
         "viewRaw": "View raw content",
-        "viewPreview": "View rendered preview"
+        "viewPreview": "View rendered preview",
+        "fullscreen": "Fullscreen",
+        "exitFullscreen": "Exit fullscreen"
       }
     },
     "upload": {
