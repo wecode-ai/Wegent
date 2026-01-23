@@ -66,8 +66,13 @@ export function CitationTooltip({ source, children }: CitationTooltipProps) {
   return (
     <span
       className="relative inline-block"
+      tabIndex={0}
+      role="button"
+      aria-label={`Show citation source: ${source.document_name}`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      onFocus={() => setIsHovered(true)}
+      onBlur={() => setIsHovered(false)}
     >
       {children}
 

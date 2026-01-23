@@ -69,7 +69,7 @@ class CitationParser:
             old_idx = int(match.group(1))
             if old_idx in old_to_new_map:
                 return f"[{old_to_new_map[old_idx]}]"
-            return match.group(0)  # Keep original if not in map
+            return ""  # Drop unmatched citation markers to avoid dangling UI markers
 
         return cls.CITATION_PATTERN.sub(replace_citation, content)
 

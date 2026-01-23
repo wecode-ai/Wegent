@@ -23,6 +23,8 @@ from llama_index.core.node_parser import (
 )
 from llama_index.core.schema import BaseNode
 
+from shared.telemetry.decorators import set_span_attribute, trace_sync
+
 
 class SmartSplitter:
     """Smart splitter that selects splitting strategy based on file type.
@@ -72,6 +74,7 @@ class SmartSplitter:
         """
         return file_extension.lower() in cls.SMART_EXTENSIONS
 
+    @trace_sync("rag.splitter.split_documents")
     def split_documents(self, documents: List[Document]) -> List[BaseNode]:
         """Split documents using the appropriate strategy for the file type.
 
@@ -81,6 +84,11 @@ class SmartSplitter:
         Returns:
             List of BaseNode objects (chunks)
         """
+        # Add span attributes for observability
+        set_span_attribute("file_extension", self.file_extension)
+        set_span_attribute("chunk_size", self.chunk_size)
+        set_span_attribute("chunk_overlap", self.chunk_overlap)
+
         if self.file_extension == ".md":
             return self._split_markdown(documents)
         elif self.file_extension == ".txt":
@@ -157,12 +165,18 @@ class SmartSplitter:
         parser = LangchainNodeParser(lc_splitter=lc_splitter)
         return parser.get_nodes_from_documents(documents)
 
+    @trace_sync("rag.splitter.get_config")
     def get_config(self) -> dict:
         """Get splitter configuration for storage.
 
         Returns:
             Configuration dict with type and parameters
         """
+        # Add span attributes for observability
+        set_span_attribute("file_extension", self.file_extension)
+        set_span_attribute("chunk_size", self.chunk_size)
+        set_span_attribute("chunk_overlap", self.chunk_overlap)
+
         return {
             "type": "smart",
             "subtype": self._get_subtype(),

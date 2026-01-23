@@ -1763,7 +1763,12 @@ def delete_document_chunk(
             detail=f"Chunk with index {chunk_index} not found",
         )
 
-    # Update document chunks
+    # Update document chunks with contiguous re-indexing
+    # Re-index chunks to maintain contiguous indices (0..n-1)
+    for new_idx, item in enumerate(new_items):
+        item["index"] = new_idx
+        # Adjust position fields if they exist and are relative
+        # Note: start_position/end_position are document-relative, so they stay unchanged
     chunks_data["items"] = new_items
     chunks_data["total_count"] = len(new_items)
     document.chunks = chunks_data
@@ -1818,9 +1823,9 @@ def _delete_chunk_from_vector_store(
 
         spec = kb.json.get("spec", {})
         retrieval_config = spec.get("retrievalConfig", {})
-        retriever_ref = retrieval_config.get("retrieverRef", {})
-        retriever_name = retriever_ref.get("name", "default-retriever")
-        retriever_namespace = retriever_ref.get("namespace", "default")
+        # Use flat keys as per schema definition (retriever_name, retriever_namespace)
+        retriever_name = retrieval_config.get("retriever_name", "default-retriever")
+        retriever_namespace = retrieval_config.get("retriever_namespace", "default")
 
         # Get retriever
         retriever_crd = retriever_kinds_service.get_retriever(
