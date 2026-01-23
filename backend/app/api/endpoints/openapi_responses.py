@@ -325,16 +325,21 @@ async def create_response(
         )
 
     # Non-Chat Shell type (Executor-based): create task and return queued response
+    workspace = tool_settings.get("workspace")
     task_create = TaskCreate(
         prompt=input_text,
         team_name=model_info["team_name"],
         team_namespace=model_info["namespace"],
-        task_type="chat",
+        task_type="code" if workspace else "chat",
         type="online",
         source="api",
         model_id=model_info.get("model_id"),
         force_override_bot_model=model_info.get("model_id") is not None,
         api_key_name=api_key_name,
+        git_url=workspace.get("git_url", "") if workspace else "",
+        git_repo=workspace.get("git_repo", "") if workspace else "",
+        git_domain=workspace.get("git_domain", "") if workspace else "",
+        branch_name=workspace.get("branch", "") if workspace else "",
     )
 
     try:
