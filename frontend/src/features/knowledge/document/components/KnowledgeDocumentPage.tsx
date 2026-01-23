@@ -506,6 +506,18 @@ function GroupKnowledgeContent({
 }: GroupKnowledgeContentProps) {
   const { t } = useTranslation()
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+
+  // Filter groups based on search query
+  const filteredGroups = useMemo(() => {
+    if (!searchQuery.trim()) return groups
+    const query = searchQuery.toLowerCase()
+    return groups.filter(
+      group =>
+        group.name.toLowerCase().includes(query) ||
+        group.display_name?.toLowerCase().includes(query)
+    )
+  }, [groups, searchQuery])
 
   // Sync selected group with URL parameter
   useEffect(() => {
@@ -569,11 +581,33 @@ function GroupKnowledgeContent({
   // Show group cards grid - centered
   return (
     <div className="flex flex-col items-center">
+      {/* Search bar */}
+      <div className="mb-4 w-full max-w-4xl">
+        <div className="relative w-full max-w-md mx-auto">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+          <input
+            type="text"
+            className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+            placeholder={t('knowledge:document.searchGroups')}
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
       <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {groups.map(group => (
+        {filteredGroups.map(group => (
           <GroupCard key={group.name} group={group} onClick={() => handleGroupSelect(group)} />
         ))}
       </div>
+
+      {/* No results message */}
+      {searchQuery && filteredGroups.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
+          <Users className="w-12 h-12 mb-4 opacity-50" />
+          <p>{t('knowledge:document.noGroupResults')}</p>
+        </div>
+      )}
     </div>
   )
 }
