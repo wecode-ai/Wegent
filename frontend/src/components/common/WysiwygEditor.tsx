@@ -11,7 +11,6 @@ import { gfm } from '@milkdown/preset-gfm'
 import { listener, listenerCtx } from '@milkdown/plugin-listener'
 import { history } from '@milkdown/plugin-history'
 import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react'
-import { getMarkdown } from '@milkdown/utils'
 import { cn } from '@/lib/utils'
 
 interface WysiwygEditorProps {
@@ -32,9 +31,9 @@ function MilkdownEditor({
   const editorRef = useRef<Editor | null>(null)
 
   const { get } = useEditor(
-    (root) => {
+    root => {
       const editor = Editor.make()
-        .config((ctx) => {
+        .config(ctx => {
           ctx.set(rootCtx, root)
           ctx.set(defaultValueCtx, initialContent)
 
@@ -68,7 +67,7 @@ function MilkdownEditor({
   useEffect(() => {
     const editor = get()
     if (editor) {
-      editor.action((ctx) => {
+      editor.action(ctx => {
         const view = ctx.get(editorViewCtx)
         if (view) {
           view.setProps({
@@ -153,11 +152,7 @@ export function WysiwygEditor({
       )}
     >
       <MilkdownProvider>
-        <MilkdownEditor
-          initialContent={initialContent}
-          onChange={onChange}
-          readOnly={readOnly}
-        />
+        <MilkdownEditor initialContent={initialContent} onChange={onChange} readOnly={readOnly} />
       </MilkdownProvider>
     </div>
   )
@@ -192,7 +187,7 @@ export function MarkdownEditorFallback({
   )
 
   useEffect(() => {
-    import('@uiw/react-md-editor').then((mod) => {
+    import('@uiw/react-md-editor').then(mod => {
       setMDEditor(() => mod.default)
     })
   }, [])
