@@ -232,7 +232,10 @@ function CodeBlock({ language, code, theme }: CodeBlockProps) {
       shell: 'bash',
       zsh: 'bash',
       yml: 'yaml',
-      md: 'markdown',
+      // Map markdown to text to avoid syntax highlighting issues with table tokens
+      // The Prism markdown highlighter creates table-related CSS classes that cause display problems
+      md: 'text',
+      markdown: 'text',
       dockerfile: 'docker',
       plaintext: 'text',
       txt: 'text',
