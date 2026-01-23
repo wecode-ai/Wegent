@@ -35,7 +35,7 @@ import dynamic from 'next/dynamic'
 
 // Dynamically import the WYSIWYG editor to avoid SSR issues
 const WysiwygEditor = dynamic(
-  () => import('@/components/common/WysiwygEditor').then((mod) => mod.WysiwygEditor),
+  () => import('@/components/common/WysiwygEditor').then(mod => mod.WysiwygEditor),
   {
     ssr: false,
     loading: () => (
@@ -72,8 +72,11 @@ export function DocumentDetailDialog({
     enabled: open && !!document,
   })
 
-  // Check if document is editable (TEXT type only)
-  const isEditable = document?.source_type === 'text'
+  // Check if document is editable (TEXT type or plain text files)
+  const isEditable =
+    document?.source_type === 'text' ||
+    (document?.source_type === 'file' &&
+      ['txt', 'md', 'markdown'].includes(document?.file_extension?.toLowerCase() || ''))
 
   // Track if content has changed
   const hasChanges = editedContent !== (detail?.content || '')
