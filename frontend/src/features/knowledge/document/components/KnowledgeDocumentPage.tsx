@@ -176,8 +176,8 @@ export function KnowledgeDocumentPage() {
   const handleTabChange = useCallback(
     (tab: DocumentTabType) => {
       setActiveTab(tab)
-      // Update URL without adding to browser history
-      router.replace(`?tab=${tab}`)
+      // Update URL without adding to browser history, preserve type=document
+      router.replace(`?type=document&tab=${tab}`)
     },
     [router]
   )
@@ -186,9 +186,9 @@ export function KnowledgeDocumentPage() {
   const handleGroupSelect = useCallback(
     (groupName: string | null) => {
       if (groupName) {
-        router.replace(`?tab=group&group=${encodeURIComponent(groupName)}`)
+        router.replace(`?type=document&tab=group&group=${encodeURIComponent(groupName)}`)
       } else {
-        router.replace(`?tab=group`)
+        router.replace(`?type=document&tab=group`)
       }
     },
     [router]
