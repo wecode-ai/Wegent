@@ -78,6 +78,26 @@ class Executor(abc.ABC):
         """
         return None
 
+    def delete_executor_by_task_id(self, task_id: str) -> Dict[str, Any]:
+        """Delete executor by task_id label (fallback method).
+
+        This is used when the executor name is not known or the executor
+        was not found by name. It searches for executors with the matching
+        task_id label and deletes them.
+
+        Default implementation returns not_found. Subclasses should override.
+
+        Args:
+            task_id: Task ID to search for
+
+        Returns:
+            Dict with status and error_msg if failed
+        """
+        return {
+            "status": "not_found",
+            "error_msg": "delete_executor_by_task_id not implemented",
+        }
+
     def register_task_for_heartbeat(
         self,
         task_id: Union[int, str],
