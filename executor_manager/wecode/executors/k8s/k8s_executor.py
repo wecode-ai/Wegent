@@ -385,6 +385,87 @@ class K8sExecutor(Executor):
             logger.error(f"Error deleting Kubernetes pod '{pod_name}': {e}")
             return {"status": "failed", "error_msg": f"Error: {e}"}
 
+    def delete_executor_by_task_id(self, task_id: str) -> Dict[str, Any]:
+        """Delete a Kubernetes pod by task_id label (fallback method).
+
+        This is used when the pod name is not known or the pod was not found
+        by name. It searches for pods with the matching task_id label and
+        deletes them.
+
+        Args:
+            task_id: Task ID to search for
+
+        Returns:
+            Dict with status and error_msg if failed
+        """
+        try:
+            core_v1 = self._get_core_v1_api()
+            if core_v1 is None:
+                return {
+                    "status": "failed",
+                    "error_msg": "Failed to get Kubernetes API client",
+                }
+
+            # Search for pods with the matching task_id label
+            label_selector = (
+                f"aigc.weibo.com/executor=wegent,"
+                f"aigc.weibo.com/executor-task-id={task_id}"
+            )
+            pods = core_v1.list_namespaced_pod(
+                namespace=K8S_NAMESPACE, label_selector=label_selector
+            )
+
+            if not pods.items:
+                logger.warning(
+                    f"No pod found with task_id label '{task_id}' "
+                    f"in namespace {K8S_NAMESPACE}"
+                )
+                return {
+                    "status": "not_found",
+                    "error_msg": f"No pod found with task_id '{task_id}'",
+                }
+
+            delete_options = client.V1DeleteOptions(propagation_policy="Background")
+
+            # Delete all matching pods (should typically be one)
+            deleted_pods = []
+            for pod in pods.items:
+                pod_name = pod.metadata.name
+                try:
+                    core_v1.delete_namespaced_pod(
+                        name=pod_name,
+                        namespace=K8S_NAMESPACE,
+                        body=delete_options,
+                    )
+                    deleted_pods.append(pod_name)
+                    logger.info(
+                        f"Deleted Kubernetes pod '{pod_name}' "
+                        f"found by task_id label '{task_id}'"
+                    )
+                except ApiException as e:
+                    if e.status != 404:
+                        logger.error(f"Failed to delete pod '{pod_name}': {e}")
+
+            if deleted_pods:
+                return {
+                    "status": "success",
+                    "deleted_pods": deleted_pods,
+                }
+            else:
+                return {
+                    "status": "not_found",
+                    "error_msg": f"Failed to delete any pods for task_id '{task_id}'",
+                }
+
+        except ApiException as e:
+            logger.error(
+                f"Kubernetes API error searching pods by task_id '{task_id}': {e}"
+            )
+            return {"status": "failed", "error_msg": f"Kubernetes API error: {e}"}
+        except Exception as e:
+            logger.error(f"Error deleting pods by task_id '{task_id}': {e}")
+            return {"status": "failed", "error_msg": f"Error: {e}"}
+
     def get_executor_task_id(self, executor_name: str) -> Optional[str]:
         """Get task_id from pod label.
 
