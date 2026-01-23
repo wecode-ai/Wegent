@@ -426,6 +426,28 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
           {children}
         </a>
       ),
+      // Restore list styles that Tailwind preflight resets
+      ul: ({ children, ...props }) => (
+        <ul
+          style={{ listStyleType: 'disc', paddingLeft: '1.5em', marginBottom: '0.75em' }}
+          {...props}
+        >
+          {children}
+        </ul>
+      ),
+      ol: ({ children, ...props }) => (
+        <ol
+          style={{ listStyleType: 'decimal', paddingLeft: '1.5em', marginBottom: '0.75em' }}
+          {...props}
+        >
+          {children}
+        </ol>
+      ),
+      li: ({ children, ...props }) => (
+        <li style={{ marginBottom: '0.25em' }} {...props}>
+          {children}
+        </li>
+      ),
       // Custom code block rendering with syntax highlighting
       code: ({ className, children, ...props }) => {
         // Check if this is an inline code or a code block
