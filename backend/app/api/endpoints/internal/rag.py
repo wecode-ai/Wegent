@@ -368,6 +368,8 @@ class ChunkInfo(BaseModel):
     title: str
     chunk_id: Optional[int] = None
     doc_ref: Optional[str] = None
+    document_id: Optional[int] = None
+    chunk_index: Optional[int] = None
     metadata: Optional[dict] = None
 
 
@@ -425,6 +427,8 @@ async def get_all_chunks(
                     title=c.get("title", "Unknown"),
                     chunk_id=c.get("chunk_id"),
                     doc_ref=c.get("doc_ref"),
+                    document_id=c.get("document_id"),
+                    chunk_index=c.get("chunk_index"),
                     metadata=c.get("metadata"),
                 )
                 for c in chunks

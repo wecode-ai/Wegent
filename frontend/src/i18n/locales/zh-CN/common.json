@@ -32,7 +32,11 @@
     "retry": "重试",
     "toggle_theme": "切换主题",
     "upload": "上传",
-    "view": "查看"
+    "view": "查看",
+    "previous": "上一页",
+    "next": "下一页",
+    "expand": "展开",
+    "collapse": "收起"
   },
   "errors": {
     "request_failed": "请求大模型接口失败，请点击重试"

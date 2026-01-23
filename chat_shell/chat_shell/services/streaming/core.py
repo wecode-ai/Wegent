@@ -91,14 +91,41 @@ class StreamingState:
         self.thinking.append(step)
 
     def add_sources(self, sources: list) -> None:
-        """Add knowledge base sources for citation."""
-        existing_keys = {(s.get("kb_id"), s.get("title")) for s in self.sources}
+        """Add knowledge base sources for citation.
+
+        Uses chunk-level deduplication (kb_id, document_id, chunk_index) to ensure
+        each unique chunk is preserved. This is important because the same document
+        may have multiple chunks referenced in the AI response.
+        """
+        # Build existing keys set using chunk-level deduplication
+        # Use (kb_id, document_id, chunk_index) for precise deduplication
+        existing_keys = set()
+        for s in self.sources:
+            kb_id = s.get("kb_id")
+            doc_id = s.get("document_id")
+            chunk_idx = s.get("chunk_index")
+            # Use index as fallback key if document_id/chunk_index not available
+            if doc_id is not None and chunk_idx is not None:
+                existing_keys.add((kb_id, doc_id, chunk_idx))
+            else:
+                # Fallback to (kb_id, title, index) for backward compatibility
+                existing_keys.add((kb_id, s.get("title"), s.get("index")))
+
         for source in sources:
             kb_id = source.get("kb_id")
             title = source.get("title")
             if kb_id is None or title is None:
                 continue
-            key = (kb_id, title)
+
+            doc_id = source.get("document_id")
+            chunk_idx = source.get("chunk_index")
+
+            # Use chunk-level key if available, otherwise fallback to index-based key
+            if doc_id is not None and chunk_idx is not None:
+                key = (kb_id, doc_id, chunk_idx)
+            else:
+                key = (kb_id, title, source.get("index"))
+
             if key not in existing_keys:
                 self.sources.append(source)
                 existing_keys.add(key)

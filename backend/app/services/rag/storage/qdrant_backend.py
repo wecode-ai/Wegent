@@ -277,12 +277,25 @@ class QdrantBackend(BaseStorageBackend):
 
             # Qdrant with cosine similarity returns scores in 0-1 range
             if score >= score_threshold:
+                # Extract document_id from doc_ref if available
+                # doc_ref is stored as string document ID (e.g., "123")
+                doc_ref = node.metadata.get("doc_ref", "")
+                document_id = None
+                if doc_ref:
+                    try:
+                        document_id = int(doc_ref)
+                    except (ValueError, TypeError):
+                        pass
+
                 results.append(
                     {
                         "content": node.text,
                         "score": float(score),
                         "title": node.metadata.get("source_file", ""),
                         "metadata": node.metadata,
+                        # Add document_id and chunk_index for citation references
+                        "document_id": document_id,
+                        "chunk_index": node.metadata.get("chunk_index"),
                     }
                 )
 
@@ -623,13 +636,25 @@ class QdrantBackend(BaseStorageBackend):
                 # fields (id_, relationships, embeddings, etc.).
                 raw_content = payload.get("_node_content", "")
 
+                # Extract document_id from doc_ref
+                doc_ref = payload.get("doc_ref", "")
+                document_id = None
+                if doc_ref:
+                    try:
+                        document_id = int(doc_ref)
+                    except (ValueError, TypeError):
+                        pass
+
                 chunks.append(
                     {
                         "content": self.extract_chunk_text(raw_content),
                         "title": payload.get("source_file", ""),
                         "chunk_id": payload.get("chunk_index", 0),
-                        "doc_ref": payload.get("doc_ref", ""),
+                        "doc_ref": doc_ref,
                         "metadata": payload,
+                        # Add document_id and chunk_index for citation references
+                        "document_id": document_id,
+                        "chunk_index": payload.get("chunk_index", 0),
                     }
                 )
 

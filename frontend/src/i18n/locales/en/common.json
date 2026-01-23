@@ -32,7 +32,11 @@
     "retry": "Retry",
     "toggle_theme": "Toggle Theme",
     "upload": "Upload",
-    "view": "View"
+    "view": "View",
+    "previous": "Previous",
+    "next": "Next",
+    "expand": "Expand",
+    "collapse": "Collapse"
   },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"

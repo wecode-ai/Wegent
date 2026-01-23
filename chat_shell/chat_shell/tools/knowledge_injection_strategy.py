@@ -217,7 +217,7 @@ class InjectionStrategy:
         """Format chunks for direct injection into context.
 
         Args:
-            chunks: Prepared chunks
+            chunks: Prepared chunks (should have 'index' field set by caller)
             include_sources: Whether to include source information
 
         Returns:
@@ -234,8 +234,14 @@ class InjectionStrategy:
             score = chunk.get("score")
             kb_id = chunk.get("knowledge_base_id", 0)
 
+            # Use 1-based index for display to match citation format [1], [2], etc.
+            # The display_index is used in the chunk header that AI sees
+            # We use loop index + 1 to ensure consistent 1-based numbering
+            # The 'source_index' field will be set by the caller to match this display_index
+            display_index = i + 1
+
             # Format chunk with metadata
-            chunk_header = f"[Knowledge Chunk {i+1}]"
+            chunk_header = f"[Knowledge Chunk {display_index}]"
             if include_sources:
                 # Score may be None for direct injection chunks (non-RAG retrieval)
                 if score is None:

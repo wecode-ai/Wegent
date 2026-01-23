@@ -480,8 +480,11 @@
   },
   "sourceReferences": "Sources",
   "citation": {
+    "content": "Content",
+    "documentContent": "Document Content",
+    "sourceReference": "Source Reference",
     "viewDetail": "View Details",
-    "viewOriginal": "View Original Document",
+    "viewOriginal": "View Document",
     "sourceList": "Source References",
     "chunkContext": "Context",
     "currentChunk": "Current Reference",
@@ -490,6 +493,18 @@
     "selectSource": "Select a source to view details",
     "supplementInfo": "Supplementary Info",
     "noPreview": "No preview available",
-    "close": "Close"
+    "close": "Close",
+    "sourceCount": "{{count}} sources",
+    "chunkPosition": "Chunk {{current}} of {{total}}",
+    "reference": "Reference",
+    "loading": "Loading content...",
+    "errorHint": "Please try again later",
+    "copy": "Copy",
+    "copied": "Copied",
+    "copySuccess": "Copied to clipboard",
+    "copyError": "Failed to copy",
+    "truncated": "Truncated",
+    "contentLength": "Content length",
+    "characters": "characters"
   }
 }

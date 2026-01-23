@@ -374,12 +374,32 @@ async def _stream_response(
                 # Accumulate sources from result (knowledge base citations)
                 if result and result.get("sources"):
                     for source in result["sources"]:
-                        # Avoid duplicates based on (kb_id, title)
-                        key = (source.get("kb_id"), source.get("title"))
-                        existing_keys = {
-                            (s.get("kb_id"), s.get("title"))
-                            for s in accumulated_sources
-                        }
+                        # Avoid duplicates based on (kb_id, document_id, chunk_index)
+                        # This ensures each unique chunk is preserved, even from the same document
+                        kb_id = source.get("kb_id")
+                        doc_id = source.get("document_id")
+                        chunk_idx = source.get("chunk_index")
+
+                        # Use chunk-level key if available, otherwise fallback to index-based key
+                        if doc_id is not None and chunk_idx is not None:
+                            key = (kb_id, doc_id, chunk_idx)
+                        else:
+                            # Fallback to (kb_id, title, index) for backward compatibility
+                            key = (kb_id, source.get("title"), source.get("index"))
+
+                        # Build existing keys set
+                        existing_keys = set()
+                        for s in accumulated_sources:
+                            s_kb_id = s.get("kb_id")
+                            s_doc_id = s.get("document_id")
+                            s_chunk_idx = s.get("chunk_index")
+                            if s_doc_id is not None and s_chunk_idx is not None:
+                                existing_keys.add((s_kb_id, s_doc_id, s_chunk_idx))
+                            else:
+                                existing_keys.add(
+                                    (s_kb_id, s.get("title"), s.get("index"))
+                                )
+
                         if key not in existing_keys:
                             accumulated_sources.append(source)
                 if result and result.get("thinking"):

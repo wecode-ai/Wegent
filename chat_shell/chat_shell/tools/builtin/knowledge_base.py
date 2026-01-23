@@ -713,12 +713,15 @@ class KnowledgeBaseTool(BaseTool):
         # Extract chunks used for persistence
         chunks_used = injection_result.get("chunks_used", [])
 
-        # Build source references from chunks_used with chunk-level granularity
-        # Each unique (kb_id, document_id, chunk_index) gets its own reference
+        # Build source references from chunks_used with 1-based indexing
+        # The index must match the display_index used in format_chunks_for_injection
+        # which uses 1-based loop index (i + 1) for consistent citation format [1], [2], etc.
         source_references = []
         seen_chunks: set[tuple[int, int, int]] = set()  # (kb_id, doc_id, chunk_idx)
-        source_index = 1
 
+        # Use 1-based index to match AI-generated citations
+        # AI sees [Knowledge Chunk 1], [Knowledge Chunk 2], etc. and generates [1], [2], etc.
+        source_index = 1
         for chunk in chunks_used:
             kb_id = chunk.get("knowledge_base_id")
             document_id = chunk.get("document_id")
@@ -735,6 +738,8 @@ class KnowledgeBaseTool(BaseTool):
             # Generate content preview (first 100 characters)
             content_preview = content[:100] + ("..." if len(content) > 100 else "")
 
+            # Use 1-based source_index to match AI-generated citations
+            # This ensures [n] in AI response matches sources[].index
             source_references.append(
                 {
                     "index": source_index,
@@ -746,6 +751,12 @@ class KnowledgeBaseTool(BaseTool):
                 }
             )
             source_index += 1
+
+        # Log the generated sources for debugging
+        logger.info(
+            f"[KnowledgeBaseTool] Direct injection sources: count={len(source_references)}, "
+            f"indices={[s.get('index') for s in source_references]}"
+        )
 
         # Persist RAG results if user_subtask_id is available
         if self.user_subtask_id and chunks_used:

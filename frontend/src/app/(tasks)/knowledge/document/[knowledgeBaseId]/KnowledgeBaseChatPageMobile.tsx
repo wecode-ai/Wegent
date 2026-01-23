@@ -30,7 +30,6 @@ import { teamService } from '@/features/tasks/service/teamService'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { DocumentList, KnowledgeBaseSummaryCard } from '@/features/knowledge/document/components'
 import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-chat'
-import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import { listGroups } from '@/apis/groups'
 import type { Team } from '@/types/api'
 import type { GroupRole } from '@/types/group'
@@ -279,18 +278,6 @@ export function KnowledgeBaseChatPageMobile() {
               name: knowledgeBase.name,
               namespace: knowledgeBase.namespace,
               document_count: knowledgeBase.document_count,
-            }}
-            onTaskCreated={async (taskId: number) => {
-              // Bind the knowledge base to the newly created task
-              try {
-                await taskKnowledgeBaseApi.bindKnowledgeBase(
-                  taskId,
-                  knowledgeBase.name,
-                  knowledgeBase.namespace
-                )
-              } catch (error) {
-                console.error('Failed to bind knowledge base to task:', error)
-              }
             }}
           />
         </div>

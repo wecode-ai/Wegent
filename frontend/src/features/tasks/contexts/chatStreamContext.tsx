@@ -111,6 +111,9 @@ export interface UnifiedMessage {
       index: number
       title: string
       kb_id: number
+      document_id?: number
+      chunk_index?: number
+      content_preview?: string
     }>
     /** Reasoning content from models like DeepSeek R1 */
     reasoning_content?: string
@@ -120,6 +123,9 @@ export interface UnifiedMessage {
     index: number
     title: string
     kb_id: number
+    document_id?: number
+    chunk_index?: number
+    content_preview?: string
   }>
 }
 

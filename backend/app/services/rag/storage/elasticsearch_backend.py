@@ -659,12 +659,17 @@ class ElasticsearchBackend(BaseStorageBackend):
                 raw_content = source.get("content", "")
 
                 # Extract document_id from doc_ref
+                # doc_ref can be either a numeric string (e.g., "31") or
+                # a legacy format (e.g., "doc_abc123"). For legacy format,
+                # we need to look up the document ID from the database.
                 doc_ref = metadata.get("doc_ref", "")
                 document_id = None
                 if doc_ref:
                     try:
                         document_id = int(doc_ref)
                     except (ValueError, TypeError):
+                        # Legacy format (doc_xxx) - document_id will remain None
+                        # Frontend will handle this gracefully by showing content preview
                         pass
 
                 chunks.append(

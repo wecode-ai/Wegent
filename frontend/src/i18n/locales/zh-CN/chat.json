@@ -480,6 +480,9 @@
   },
   "sourceReferences": "资料来源",
   "citation": {
+    "content": "内容",
+    "documentContent": "文档内容",
+    "sourceReference": "引用来源",
     "viewDetail": "查看详情",
     "viewOriginal": "查看原文档",
     "sourceList": "引用来源详情",
@@ -490,6 +493,18 @@
     "selectSource": "请选择一个来源查看详情",
     "supplementInfo": "补充信息",
     "noPreview": "暂无预览",
-    "close": "关闭"
+    "close": "关闭",
+    "sourceCount": "共 {{count}} 个来源",
+    "chunkPosition": "第 {{current}} / {{total}} 段",
+    "reference": "引用",
+    "loading": "正在加载内容...",
+    "errorHint": "请稍后重试",
+    "copy": "复制",
+    "copied": "已复制",
+    "copySuccess": "已复制到剪贴板",
+    "copyError": "复制失败",
+    "truncated": "内容已截断",
+    "contentLength": "内容长度",
+    "characters": "字符"
   }
 }

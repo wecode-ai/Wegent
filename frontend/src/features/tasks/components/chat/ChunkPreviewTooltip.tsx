@@ -5,17 +5,30 @@
 'use client'
 
 /**
- * Chunk Preview Tooltip Component
+ * Source Document Preview Dialog Component
  *
- * Displays a preview of a knowledge base chunk when hovering over a citation reference.
- * Shows chunk content preview with options to view full details or original document.
+ * Displays the full original document content when clicking on a citation reference.
+ * Shows document content in a dialog similar to DocumentDetailDialog style.
+ * Fetches full document content from the API when kb_id and document_id are available.
  */
 
-import React, { useEffect, useRef } from 'react'
-import { FileText, ExternalLink, X } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { FileText, Copy, Check } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
+import { toast } from 'sonner'
 import type { SourceReference } from '@/types/socket'
+import type { DocumentDetailResponse } from '@/types/knowledge'
+import { knowledgeBaseApi } from '@/apis/knowledge-base'
 
 interface ChunkPreviewTooltipProps {
   source: SourceReference
@@ -24,115 +37,147 @@ interface ChunkPreviewTooltipProps {
   onViewDetail: () => void
 }
 
-export function ChunkPreviewTooltip({
-  source,
-  anchorRef,
-  onClose,
-  onViewDetail,
-}: ChunkPreviewTooltipProps) {
+export function ChunkPreviewTooltip({ source, onClose }: ChunkPreviewTooltipProps) {
   const { t } = useTranslation('chat')
-  const tooltipRef = useRef<HTMLDivElement>(null)
+  const [copiedContent, setCopiedContent] = useState(false)
+  const [documentDetail, setDocumentDetail] = useState<DocumentDetailResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  // Click outside to close
+  // Check if we have valid kb_id and document_id to fetch full document content
+  const hasValidDocumentInfo =
+    source.kb_id != null &&
+    source.document_id != null &&
+    typeof source.kb_id === 'number' &&
+    typeof source.document_id === 'number'
+
+  // Fetch full document content when dialog opens
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (
-        tooltipRef.current &&
-        !tooltipRef.current.contains(e.target as Node) &&
-        anchorRef.current &&
-        !anchorRef.current.contains(e.target as Node)
-      ) {
-        onClose()
-      }
+    if (hasValidDocumentInfo) {
+      setLoading(true)
+      setError(null)
+
+      knowledgeBaseApi
+        .getDocumentDetail(source.kb_id!, source.document_id!, {
+          includeContent: true,
+          includeSummary: false,
+        })
+        .then(response => {
+          setDocumentDetail(response)
+        })
+        .catch(err => {
+          console.error('Failed to load document content:', err)
+          setError(err.message || 'Failed to load content')
+        })
+        .finally(() => setLoading(false))
     }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [onClose, anchorRef])
+  }, [hasValidDocumentInfo, source.kb_id, source.document_id])
 
-  // ESC to close
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+  // Use document content if available, otherwise fall back to content_preview
+  const displayContent = documentDetail?.content || source.content_preview
+
+  const handleCopyContent = async () => {
+    if (!displayContent) return
+    try {
+      await navigator.clipboard.writeText(displayContent)
+      setCopiedContent(true)
+      toast.success(t('citation.copySuccess', 'Copied to clipboard'))
+      setTimeout(() => setCopiedContent(false), 2000)
+    } catch {
+      toast.error(t('citation.copyError', 'Failed to copy'))
     }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
-
-  // Position tooltip relative to anchor
-  const [position, setPosition] = React.useState({ top: 0, left: 0 })
-  useEffect(() => {
-    if (anchorRef.current) {
-      const rect = anchorRef.current.getBoundingClientRect()
-      const tooltipWidth = 320
-      const viewportWidth = window.innerWidth
-
-      // Calculate left position, ensuring tooltip stays within viewport
-      let left = rect.left
-      if (left + tooltipWidth > viewportWidth - 16) {
-        left = viewportWidth - tooltipWidth - 16
-      }
-      if (left < 16) {
-        left = 16
-      }
-
-      setPosition({
-        top: rect.bottom + 4,
-        left,
-      })
-    }
-  }, [anchorRef])
+  }
 
   return (
-    <div
-      ref={tooltipRef}
-      className="fixed z-50 w-80 bg-surface border border-border rounded-lg shadow-sm p-3"
-      style={{ top: position.top, left: position.left }}
-      role="dialog"
-      aria-label={`Source ${source.index} preview`}
-    >
-      {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <FileText className="w-4 h-4 text-primary" />
-          <span className="text-primary font-mono">[{source.index}]</span>
-          <span className="text-text-primary truncate max-w-[180px]">{source.title}</span>
+    <Dialog open={true} onOpenChange={open => !open && onClose()}>
+      <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col p-0">
+        {/* Header */}
+        <DialogHeader className="px-6 py-4 border-b border-border flex-shrink-0">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-primary/10 rounded-lg flex-shrink-0 mt-0.5">
+              <FileText className="w-5 h-5 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <DialogTitle className="text-base font-medium text-text-primary truncate">
+                {source.title}
+              </DialogTitle>
+              <DialogDescription className="mt-1 text-xs text-text-muted">
+                {t('citation.sourceReference', 'Source Reference')}
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-text-primary">
+                {t('citation.documentContent', 'Document Content')}
+              </h3>
+              <div className="flex items-center gap-2">
+                {documentDetail?.truncated && (
+                  <Badge variant="warning" size="sm">
+                    {t('citation.truncated', 'Truncated')}
+                  </Badge>
+                )}
+                {displayContent && !loading && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleCopyContent}
+                    disabled={copiedContent}
+                  >
+                    {copiedContent ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 mr-1" />
+                        {t('citation.copied', 'Copied')}
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 mr-1" />
+                        {t('citation.copy', 'Copy')}
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {loading ? (
+              <div className="p-8 bg-surface rounded-lg border border-border flex items-center justify-center">
+                <Spinner />
+              </div>
+            ) : error ? (
+              <div className="p-4 bg-surface rounded-lg border border-border">
+                <div className="text-sm text-destructive mb-2">{error}</div>
+                {source.content_preview && (
+                  <pre className="text-xs text-text-secondary whitespace-pre-wrap break-words font-mono leading-relaxed">
+                    {source.content_preview}
+                  </pre>
+                )}
+              </div>
+            ) : displayContent ? (
+              <div className="p-4 bg-surface rounded-lg border border-border">
+                <pre className="text-xs text-text-secondary whitespace-pre-wrap break-words font-mono leading-relaxed">
+                  {displayContent}
+                </pre>
+                {documentDetail?.content_length !== undefined && (
+                  <div className="mt-3 pt-3 border-t border-border text-xs text-text-muted">
+                    {t('citation.contentLength', 'Content length')}:{' '}
+                    {documentDetail.content_length.toLocaleString()}{' '}
+                    {t('citation.characters', 'characters')}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="p-4 bg-surface rounded-lg border border-border text-center text-sm text-text-muted">
+                {t('citation.noPreview', 'No preview available')}
+              </div>
+            )}
+          </div>
         </div>
-        <button
-          onClick={onClose}
-          className="text-text-muted hover:text-text-primary p-1 rounded transition-colors"
-          aria-label={t('citation.close', 'Close')}
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* Chunk preview with highlight style */}
-      <div className="text-sm text-text-secondary bg-primary/5 border-l-2 border-primary p-2 rounded-r mb-3 max-h-32 overflow-y-auto">
-        {source.content_preview || t('citation.noPreview', 'No preview available')}
-      </div>
-
-      {/* Action buttons */}
-      <div className="flex gap-2">
-        <Button variant="outline" size="sm" className="flex-1 h-9" onClick={onViewDetail}>
-          {t('citation.viewDetail', 'View Details')}
-        </Button>
-        {source.document_id !== undefined && source.chunk_index !== undefined && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-9 px-3"
-            onClick={() => {
-              window.open(
-                `/knowledge/document/${source.kb_id}?doc=${source.document_id}&chunk=${source.chunk_index}`,
-                '_blank'
-              )
-            }}
-            aria-label={t('citation.viewOriginal', 'View Original Document')}
-          >
-            <ExternalLink className="w-4 h-4" />
-          </Button>
-        )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
