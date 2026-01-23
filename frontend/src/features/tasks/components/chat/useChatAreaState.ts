@@ -120,6 +120,11 @@ export interface ChatAreaState {
   isDragging: boolean
   setIsDragging: (value: boolean) => void
 
+  // Quick start mode state (skip repository selection for code tasks)
+  quickStartMode: boolean
+  setQuickStartMode: (value: boolean) => void
+  handleQuickStartModeChange: (enabled: boolean) => void
+
   // Context selection state (knowledge bases)
   selectedContexts: ContextItem[]
   setSelectedContexts: (contexts: ContextItem[]) => void
@@ -203,6 +208,9 @@ export function useChatAreaState({
   // Drag and drop
   const [isDragging, setIsDragging] = useState(false)
 
+  // Quick start mode - allows code tasks to run without selecting a repository
+  const [quickStartMode, setQuickStartMode] = useState(false)
+
   // Context selection state (knowledge bases)
   const [selectedContexts, setSelectedContexts] = useState<ContextItem[]>([])
 
@@ -210,6 +218,18 @@ export function useChatAreaState({
   const resetContexts = useCallback(() => {
     setSelectedContexts([])
   }, [])
+
+  // Handle quick start mode change
+  const handleQuickStartModeChange = useCallback(
+    (enabled: boolean) => {
+      setQuickStartMode(enabled)
+      // Clear selected repo when enabling quick start mode
+      if (enabled && selectedRepo) {
+        setSelectedRepo(null)
+      }
+    },
+    [selectedRepo]
+  )
 
   // Media query
   const isMobile = useMediaQuery('(max-width: 640px)')
@@ -570,6 +590,11 @@ export function useChatAreaState({
     // Drag and drop state
     isDragging,
     setIsDragging,
+
+    // Quick start mode state
+    quickStartMode,
+    setQuickStartMode,
+    handleQuickStartModeChange,
 
     // Context selection state (knowledge bases)
     selectedContexts,

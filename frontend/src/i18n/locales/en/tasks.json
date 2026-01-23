@@ -1,4 +1,8 @@
 {
+  "quick_start": {
+    "label": "Quick Start",
+    "tooltip": "Run code tasks without selecting a repository, execute in sandbox environment"
+  },
   "access_denied_title": "Access Denied",
   "access_denied_description": "You don't have permission to access this task. It may have been deleted or you don't have the necessary permissions.",
   "access_denied_go_home": "Go Home",

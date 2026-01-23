@@ -49,6 +49,10 @@ export interface MobileChatInputControlsProps {
   selectedBranch: GitBranchType | null
   setSelectedBranch: (branch: GitBranchType | null) => void
   selectedTaskDetail: TaskDetail | null
+  /** Quick start mode - when enabled, repository selection is optional */
+  quickStartMode?: boolean
+  /** Callback when quick start mode changes */
+  onQuickStartModeChange?: (enabled: boolean) => void
 
   // Clarification
   enableClarification: boolean
@@ -105,6 +109,8 @@ export function MobileChatInputControls({
   selectedBranch,
   setSelectedBranch,
   selectedTaskDetail,
+  quickStartMode = false,
+  onQuickStartModeChange,
   enableClarification,
   setEnableClarification,
   enableCorrectionMode = false,
@@ -256,12 +262,14 @@ export function MobileChatInputControls({
                   handleRepoChange={setSelectedRepo}
                   disabled={hasMessages}
                   selectedTaskDetail={selectedTaskDetail}
+                  quickStartMode={quickStartMode}
+                  onQuickStartModeChange={onQuickStartModeChange}
                 />
               </>
             )}
 
-            {/* Branch Selector - full row clickable */}
-            {showRepositorySelector && selectedRepo && (
+            {/* Branch Selector - full row clickable (hidden in quick start mode) */}
+            {showRepositorySelector && selectedRepo && !quickStartMode && (
               <MobileBranchSelector
                 selectedRepo={selectedRepo}
                 selectedBranch={selectedBranch}

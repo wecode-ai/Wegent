@@ -29,6 +29,8 @@ export interface UseChatStreamHandlersOptions {
   selectedRepo: GitRepoInfo | null
   selectedBranch: GitBranch | null
   showRepositorySelector: boolean
+  /** Quick start mode - when enabled, repository is not required for code tasks */
+  quickStartMode?: boolean
 
   // Input
   taskInputMessage: string
@@ -139,6 +141,7 @@ export function useChatStreamHandlers({
   selectedRepo,
   selectedBranch,
   showRepositorySelector,
+  quickStartMode = false,
   taskInputMessage,
   setTaskInputMessage,
   setIsLoading,
@@ -405,7 +408,8 @@ export function useChatStreamHandlers({
             }
           : null)
 
-      if (taskType === 'code' && showRepositorySelector && !effectiveRepo?.git_repo) {
+      // For code type tasks, repository is required unless in quick start mode
+      if (taskType === 'code' && showRepositorySelector && !quickStartMode && !effectiveRepo?.git_repo) {
         toast({
           variant: 'destructive',
           title: 'Please select a repository for code tasks',
@@ -627,6 +631,7 @@ export function useChatStreamHandlers({
       searchParams,
       router,
       showRepositorySelector,
+      quickStartMode,
       selectedRepo,
       selectedBranch,
       taskType,
@@ -680,7 +685,8 @@ export function useChatStreamHandlers({
             }
           : null)
 
-      if (taskType === 'code' && showRepositorySelector && !effectiveRepo?.git_repo) {
+      // For code type tasks, repository is required unless in quick start mode
+      if (taskType === 'code' && showRepositorySelector && !quickStartMode && !effectiveRepo?.git_repo) {
         toast({
           variant: 'destructive',
           title: t('common:selector.repository') || 'Please select a repository for code tasks',
@@ -857,6 +863,7 @@ export function useChatStreamHandlers({
       searchParams,
       router,
       showRepositorySelector,
+      quickStartMode,
       selectedRepo,
       selectedBranch,
       taskType,

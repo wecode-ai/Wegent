@@ -8,7 +8,7 @@ import * as React from 'react'
 import { useState, useMemo } from 'react'
 import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select'
 import { FiGithub } from 'react-icons/fi'
-import { Loader2, Check } from 'lucide-react'
+import { Loader2, Check, Zap } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -41,8 +41,10 @@ export default function RepositorySelector({
   selectedTaskDetail,
   fullWidth = false,
   compact = false,
+  quickStartMode = false,
+  onQuickStartModeChange,
 }: RepositorySelectorProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('tasks')
   const router = useRouter()
   const isMobile = useIsMobile()
 
@@ -94,16 +96,95 @@ export default function RepositorySelector({
     router.push(paths.settings.integrations.getHref())
   }
 
+  // Handle quick start mode toggle
+  const handleQuickStartToggle = (checked: boolean) => {
+    if (onQuickStartModeChange) {
+      onQuickStartModeChange(checked)
+      // Clear selected repo when enabling quick start mode
+      if (checked && selectedRepo) {
+        handleRepoChange(null)
+      }
+    }
+  }
+
+  // Detect if viewing a historical task that was created with quick start mode
+  // A task is considered a quick-start task if:
+  // 1. We're in disabled mode (viewing historical task)
+  // 2. The task has no git_url (empty string or undefined)
+  // Note: We don't strictly require task_type === 'code' because RepositorySelector
+  // is only rendered when showRepositorySelector=true (code page context)
+  const isHistoricalQuickStartTask =
+    disabled &&
+    selectedTaskDetail?.id &&
+    !selectedTaskDetail?.git_url
+
   // Tooltip content for repository selector
   const tooltipContent =
     compact && selectedRepo
-      ? `${t('repos.repository_tooltip', '选择代码仓库')}: ${selectedRepo.git_repo}`
-      : t('repos.repository_tooltip', '选择代码仓库')
+      ? `${t('common:repos.repository_tooltip', '选择代码仓库')}: ${selectedRepo.git_repo}`
+      : t('common:repos.repository_tooltip', '选择代码仓库')
 
   // Compact mode: use Popover with Command
   if (compact) {
     return (
-      <div className="flex items-center min-w-0" data-tour="repo-selector">
+      <div className="flex items-center min-w-0 gap-2" data-tour="repo-selector">
+        {/* Quick Start Toggle - show when feature is enabled OR when viewing any historical code task */}
+        {/* For new tasks: allow interaction; For historical tasks: show as read-only indicator */}
+        {(onQuickStartModeChange || isHistoricalQuickStartTask) && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => !disabled && handleQuickStartToggle(!quickStartMode)}
+                  disabled={disabled}
+                  className={cn(
+                    'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
+                    'transition-colors',
+                    'focus:outline-none focus:ring-0',
+                    disabled
+                      ? 'cursor-default text-text-muted/50 opacity-50'
+                      : quickStartMode
+                        ? 'text-primary bg-primary/10'
+                        : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                  )}
+                >
+                  <Zap className="w-4 h-4 flex-shrink-0" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                <p>{t('quick_start.tooltip')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+
+        {/* Repository Display (read-only) - show for historical tasks with repository */}
+        {!quickStartMode && disabled && selectedRepo && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div
+                  className={cn(
+                    'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
+                    'text-text-muted/50 cursor-not-allowed opacity-50'
+                  )}
+                >
+                  <FiGithub className="w-4 h-4 flex-shrink-0" />
+                  <span className="text-xs truncate max-w-[120px]" title={selectedRepo.git_repo}>
+                    {truncateMiddle(selectedRepo.git_repo, 15)}
+                  </span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                <p>{selectedRepo.git_repo}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+
+        {/* Repository Selector Popover - hide when quick start mode is enabled or disabled (historical conversations) */}
+        {!quickStartMode && !disabled && (
         <Popover open={compactOpen} onOpenChange={setCompactOpen}>
           <TooltipProvider>
             <Tooltip>
@@ -148,7 +229,7 @@ export default function RepositorySelector({
               shouldFilter={false}
             >
               <CommandInput
-                placeholder={t('branches.search_repository')}
+                placeholder={t('common:branches.search_repository')}
                 onValueChange={handleSearchChange}
                 className={cn(
                   'h-9 rounded-none border-b border-border flex-shrink-0',
@@ -160,12 +241,12 @@ export default function RepositorySelector({
                   <div className="py-4 px-3 text-center text-sm text-error">{error}</div>
                 ) : selectItems.length === 0 ? (
                   <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                    {loading ? 'Loading...' : t('branches.select_repository')}
+                    {loading ? 'Loading...' : t('common:branches.select_repository')}
                   </CommandEmpty>
                 ) : (
                   <>
                     <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                      {t('branches.no_match')}
+                      {t('common:branches.no_match')}
                     </CommandEmpty>
                     <CommandGroup>
                       {selectItems.map(item => (
@@ -210,6 +291,7 @@ export default function RepositorySelector({
             />
           </PopoverContent>
         </Popover>
+        )}
       </div>
     )
   }
@@ -217,61 +299,121 @@ export default function RepositorySelector({
   // Normal mode: use SearchableSelect
   return (
     <div
-      className={cn('flex items-center min-w-0', fullWidth && 'w-full')}
+      className={cn('flex items-center min-w-0 gap-2', fullWidth && 'w-full')}
       data-tour="repo-selector"
       style={fullWidth ? undefined : { maxWidth: isMobile ? 200 : 280 }}
     >
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div
-              className={cn(
-                'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
-                'text-text-muted',
-                loading ? 'animate-pulse' : ''
+      {/* Quick Start Toggle - show when feature is enabled OR when viewing any historical code task */}
+      {/* For new tasks: allow interaction; For historical tasks: show as read-only indicator */}
+      {(onQuickStartModeChange || isHistoricalQuickStartTask) && (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => !disabled && handleQuickStartToggle(!quickStartMode)}
+                disabled={disabled}
+                className={cn(
+                  'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
+                  'transition-colors',
+                  'focus:outline-none focus:ring-0',
+                  disabled
+                    ? 'cursor-default text-text-muted/50 opacity-50'
+                    : quickStartMode
+                      ? 'text-primary bg-primary/10'
+                      : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                )}
+              >
+                <Zap className="w-4 h-4 flex-shrink-0" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p>{t('quick_start.tooltip')}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+
+      {/* Repository Display (read-only) - show for historical tasks with repository */}
+      {!quickStartMode && disabled && selectedRepo && (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div
+                className={cn(
+                  'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
+                  'text-text-muted/50 cursor-not-allowed opacity-50'
+                )}
+              >
+                <FiGithub className="w-4 h-4 flex-shrink-0" />
+                <span className="text-xs truncate max-w-[120px]" title={selectedRepo.git_repo}>
+                  {truncateMiddle(selectedRepo.git_repo, 15)}
+                </span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p>{selectedRepo.git_repo}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+
+      {/* Repository Selector - hide when quick start mode is enabled or disabled (historical conversations) */}
+      {!quickStartMode && !disabled && (
+        <>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div
+                  className={cn(
+                    'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
+                    'text-text-muted',
+                    loading ? 'animate-pulse' : ''
+                  )}
+                >
+                  <FiGithub className="w-4 h-4 flex-shrink-0" />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                <p>{tooltipContent}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <div className={cn('relative flex items-center gap-2 min-w-0 flex-1', fullWidth && 'w-full')}>
+            <SearchableSelect
+              value={selectedRepo?.git_repo_id.toString()}
+              onValueChange={handleChange}
+              onSearchChange={handleSearchChange}
+              disabled={disabled || loading}
+              placeholder={t('common:branches.select_repository')}
+              searchPlaceholder={t('common:branches.search_repository')}
+              items={selectItems}
+              loading={loading}
+              error={error}
+              emptyText={t('common:branches.select_repository')}
+              noMatchText={t('common:branches.no_match')}
+              className={fullWidth ? 'w-full' : undefined}
+              triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
+              contentClassName="min-w-[280px] max-w-[min(500px,90vw)] w-auto"
+              renderTriggerValue={item => (
+                <span className="block" title={item?.label}>
+                  {item?.label ? truncateMiddle(item.label, fullWidth ? 60 : isMobile ? 20 : 25) : ''}
+                </span>
               )}
-            >
-              <FiGithub className="w-4 h-4 flex-shrink-0" />
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="top">
-            <p>{tooltipContent}</p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-      <div className={cn('relative flex items-center gap-2 min-w-0 flex-1', fullWidth && 'w-full')}>
-        <SearchableSelect
-          value={selectedRepo?.git_repo_id.toString()}
-          onValueChange={handleChange}
-          onSearchChange={handleSearchChange}
-          disabled={disabled || loading}
-          placeholder={t('branches.select_repository')}
-          searchPlaceholder={t('branches.search_repository')}
-          items={selectItems}
-          loading={loading}
-          error={error}
-          emptyText={t('branches.select_repository')}
-          noMatchText={t('branches.no_match')}
-          className={fullWidth ? 'w-full' : undefined}
-          triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
-          contentClassName="min-w-[280px] max-w-[min(500px,90vw)] w-auto"
-          renderTriggerValue={item => (
-            <span className="block" title={item?.label}>
-              {item?.label ? truncateMiddle(item.label, fullWidth ? 60 : isMobile ? 20 : 25) : ''}
-            </span>
-          )}
-          footer={
-            <RepositorySelectorFooter
-              onConfigureClick={handleIntegrationClick}
-              onRefreshClick={handleRefreshCache}
-              isRefreshing={isRefreshing}
+              footer={
+                <RepositorySelectorFooter
+                  onConfigureClick={handleIntegrationClick}
+                  onRefreshClick={handleRefreshCache}
+                  isRefreshing={isRefreshing}
+                />
+              }
             />
-          }
-        />
-        {isSearching && (
-          <Loader2 className="w-3 h-3 text-text-muted animate-spin flex-shrink-0 absolute right-0" />
-        )}
-      </div>
+            {isSearching && (
+              <Loader2 className="w-3 h-3 text-text-muted animate-spin flex-shrink-0 absolute right-0" />
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }
