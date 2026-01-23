@@ -521,18 +521,16 @@ function GroupKnowledgeContent({
     }
   }, [initialGroupName, groups, selectedGroup])
 
-  // Handle group selection with URL sync
+  // Handle group selection - only update URL, let useEffect sync state
   const handleGroupSelect = useCallback(
     (group: Group) => {
-      setSelectedGroup(group)
       onGroupSelect(group.name)
     },
     [onGroupSelect]
   )
 
-  // Handle back to group list with URL sync
+  // Handle back to group list - only update URL, let useEffect sync state
   const handleBack = useCallback(() => {
-    setSelectedGroup(null)
     onGroupSelect(null)
   }, [onGroupSelect])
 
