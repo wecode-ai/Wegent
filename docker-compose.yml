@@ -71,7 +71,7 @@ services:
     # build:
       # dockerfile: docker/backend/Dockerfile
     image: ghcr.io/wecode-ai/wegent-backend:latest
-    pull_policy: always
+    pull_policy: ${DOCKER_PULL_POLICY:-always}
     container_name: wegent-backend
     restart: always
     ports:
@@ -98,6 +98,9 @@ services:
       INIT_DATA_ENABLED: "${BACKEND_INIT_DATA_ENABLED:-True}"
       MAX_UPLOAD_FILE_SIZE_MB: ${BACKEND_MAX_UPLOAD_FILE_SIZE_MB:-50}
       MAX_EXTRACTED_TEXT_LENGTH: ${BACKEND_MAX_EXTRACTED_TEXT_LENGTH:-1000000}
+      TEAM_SHARE_BASE_URL: ${TEAM_SHARE_BASE_URL:-http://localhost:3000/chat}
+      TASK_SHARE_BASE_URL: ${TASK_SHARE_BASE_URL:-http://localhost:3000}
+      TEAM_SHARE_QUERY_PARAM: ${TEAM_SHARE_QUERY_PARAM:-teamShare}
       # Chat Shell Configuration (uncomment to use HTTP mode)
       CHAT_SHELL_MODE: ${CHAT_SHELL_MODE:-http}
       CHAT_SHELL_URL: ${CHAT_SHELL_URL:-http://chat_shell:8100}
@@ -120,7 +123,7 @@ services:
     # build:
     #   dockerfile: docker/frontend/Dockerfile
     image: ghcr.io/wecode-ai/wegent-web:latest
-    pull_policy: always
+    pull_policy: ${DOCKER_PULL_POLICY:-always}
     container_name: wegent-frontend
     restart: always
     ports:
@@ -152,7 +155,7 @@ services:
 
   chat_shell:
     image: ghcr.io/wecode-ai/wegent-chat-shell:latest
-    pull_policy: always
+    pull_policy: ${DOCKER_PULL_POLICY:-always}
     container_name: wegent-chat-shell
     restart: always
     ports:
@@ -184,7 +187,7 @@ services:
     # build:
     #   dockerfile: docker/executor_manager/Dockerfile
     image: ghcr.io/wecode-ai/wegent-executor-manager:latest
-    pull_policy: always
+    pull_policy: ${DOCKER_PULL_POLICY:-always}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     container_name: wegent-executor-manager
@@ -216,6 +219,7 @@ services:
       - EXECUTOR_PORT_RANGE_MIN=${EXECUTOR_PORT_RANGE_MIN:-10001}
       - EXECUTOR_PORT_RANGE_MAX=${EXECUTOR_PORT_RANGE_MAX:-10100}
       - EXECUTOR_WORKSPACE=${EXECUTOR_WORKSPACE:-${HOME}/wecode-bot}
+      - DOCKER_HOST_ADDR=${DOCKER_HOST_ADDR:-host.docker.internal}
       # Seccomp Configuration
       # Set to 'true' (default) to enable seccomp (default Docker behavior)
       # Set to 'false' to disable seccomp (add --security-opt seccomp=unconfined)
