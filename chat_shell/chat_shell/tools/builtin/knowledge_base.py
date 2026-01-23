@@ -743,6 +743,12 @@ class KnowledgeBaseTool(BaseTool):
                 "message": "All knowledge base content has been fully injected above. "
                 "No further retrieval is needed - you have access to the complete knowledge base. "
                 "Please answer the user's question based on the injected content.",
+                "citation_instructions": (
+                    "When using the injected knowledge base content to answer the user's question, "
+                    "please cite your sources using [N] notation where N corresponds to the source index. "
+                    "For example: 'According to the documentation [1], ...' or 'This feature is described in [2].' "
+                    "Only cite sources you actually use in your response."
+                ),
             },
             ensure_ascii=False,
         )
@@ -817,6 +823,12 @@ class KnowledgeBaseTool(BaseTool):
                 "count": len(all_chunks),
                 "sources": source_references,
                 "strategy_stats": self.injection_strategy.get_injection_statistics(),
+                "citation_instructions": (
+                    "When using the above knowledge base search results to answer the user's question, "
+                    "please cite your sources using [N] notation where N is the source_index number. "
+                    "For example: 'According to the documentation [1], ...' or 'This feature is described in [2].' "
+                    "Only cite sources you actually use in your response."
+                ),
             },
             ensure_ascii=False,
         )
