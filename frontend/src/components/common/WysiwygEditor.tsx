@@ -29,19 +29,28 @@ function MilkdownEditor({
   readOnly = false,
 }: Omit<WysiwygEditorProps, 'className'>) {
   const editorRef = useRef<Editor | null>(null)
+  // Store initial content in a ref to prevent re-initialization on every render
+  const initialContentRef = useRef(initialContent)
+  // Store onChange in a ref to avoid recreating the editor when callback changes
+  const onChangeRef = useRef(onChange)
+
+  // Update the onChange ref when it changes
+  useEffect(() => {
+    onChangeRef.current = onChange
+  }, [onChange])
 
   const { get } = useEditor(
     root => {
       const editor = Editor.make()
         .config(ctx => {
           ctx.set(rootCtx, root)
-          ctx.set(defaultValueCtx, initialContent)
+          ctx.set(defaultValueCtx, initialContentRef.current)
 
           // Setup listener for content changes
           const listenerInstance = ctx.get(listenerCtx)
           listenerInstance.markdownUpdated((_, markdown) => {
-            if (onChange) {
-              onChange(markdown)
+            if (onChangeRef.current) {
+              onChangeRef.current(markdown)
             }
           })
         })
@@ -52,7 +61,7 @@ function MilkdownEditor({
 
       return editor
     },
-    [initialContent]
+    [] // Empty dependency array - editor should only be created once
   )
 
   // Store editor reference
