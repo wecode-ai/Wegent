@@ -27,6 +27,21 @@ def _get_redis_storage_uri() -> Optional[str]:
     return settings.REDIS_URL
 
 
+def _check_redis_available() -> bool:
+    """Check if Redis is available for rate limiting."""
+    if not settings.RATE_LIMIT_ENABLED:
+        return False
+    try:
+        import redis
+
+        client = redis.from_url(settings.REDIS_URL, socket_connect_timeout=1)
+        client.ping()
+        return True
+    except Exception as e:
+        logger.warning(f"Redis not available for rate limiting, disabling: {e}")
+        return False
+
+
 def get_api_key_from_request(request: Request) -> str:
     """
     Extract API key from request headers for rate limiting.
@@ -67,11 +82,13 @@ def get_api_key_from_request(request: Request) -> str:
 # Create limiter instance
 # Uses Redis for distributed rate limiting across multiple workers
 # Key function extracts API key from request headers
+# Automatically disabled if Redis is not available
 limiter = Limiter(
     key_func=get_api_key_from_request,
     storage_uri=_get_redis_storage_uri(),
     strategy="fixed-window",  # Simple and efficient
     default_limits=[],  # No default limits, apply per-endpoint
+    enabled=_check_redis_available(),
 )
 
 
