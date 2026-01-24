@@ -1117,5 +1117,16 @@
     "supported_types": "PDF、Word、Excel、TXT、Markdown、图片、代码文件",
     "characters": "字符",
     "upload_tooltip": "支持的文件类型: 文档(PDF, Word, PPT, Excel), 图片, 代码文件及各类文本文件\n最大文件大小: {{size}} MB"
+  },
+  "editor": {
+    "vim": {
+      "toggle": "切换 Vim 模式",
+      "enable": "启用 Vim 模式",
+      "disable": "禁用 Vim 模式",
+      "saved": "内容已保存",
+      "hint_toast": "Vim 模式已启用",
+      "hint_description": "使用 hjkl 导航，i 进入插入模式，Esc 返回普通模式。:w 保存，:q 关闭。",
+      "commands_hint": ":w 保存 | :q 关闭 | :wq 保存并关闭"
+    }
   }
 }
