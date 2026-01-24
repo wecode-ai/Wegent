@@ -25,6 +25,7 @@ const VIM_MODE_STORAGE_KEY = 'editor-vim-mode'
 interface WysiwygEditorProps {
   initialContent: string
   onChange?: (content: string) => void
+  onSave?: (content: string) => void
   onClose?: () => void
   className?: string
   readOnly?: boolean
@@ -56,6 +57,7 @@ type ViewMode = 'edit' | 'preview' | 'split'
 export function WysiwygEditor({
   initialContent,
   onChange,
+  onSave,
   onClose,
   className,
   readOnly = false,
@@ -64,12 +66,12 @@ export function WysiwygEditor({
   const [content, setContent] = useState(initialContent)
   const [viewMode, setViewMode] = useState<ViewMode>(readOnly ? 'preview' : 'split')
   const [vimEnabled, setVimEnabled] = useState<boolean>(() => {
-    // Initialize from prop, localStorage, or default to false
-    if (typeof defaultVimMode === 'boolean') return defaultVimMode
+    // Initialize from localStorage first, then prop, then default to false
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem(VIM_MODE_STORAGE_KEY)
-      return stored === 'true'
+      if (stored !== null) return stored === 'true'
     }
+    if (typeof defaultVimMode === 'boolean') return defaultVimMode
     return false
   })
   const [vimMode, setVimMode] = useState<VimMode>('normal')
@@ -134,9 +136,13 @@ export function WysiwygEditor({
 
   // Handle save from Vim :w command
   const handleVimSave = useCallback(() => {
-    onChange?.(content)
+    if (onSave) {
+      onSave(content)
+    } else {
+      onChange?.(content)
+    }
     toast.success(t('editor.vim.saved'))
-  }, [content, onChange, t])
+  }, [content, onSave, onChange, t])
 
   // Handle close from Vim :q command
   const handleVimClose = useCallback(() => {

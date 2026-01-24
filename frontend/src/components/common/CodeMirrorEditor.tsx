@@ -10,7 +10,7 @@ import { EditorState, Extension } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { vim, Vim } from '@replit/codemirror-vim'
+import { vim, Vim, getCM } from '@replit/codemirror-vim'
 import { cn } from '@/lib/utils'
 import type { ThemeMode } from '@/features/theme/ThemeProvider'
 
@@ -276,28 +276,29 @@ export function CodeMirrorEditor({
 
     editorRef.current = view
 
-    // Set up vim mode change listener
-    let interval: ReturnType<typeof setInterval> | null = null
+    // Set up vim mode change listener using the public getCM API
+    let modeChangeHandler: ((modeObj: { mode: string; subMode?: string }) => void) | null = null
     if (vimEnabled) {
-      const checkVimMode = () => {
-        const cm = (view as unknown as { cm?: { state?: { vim?: { mode?: string } } } }).cm
-        const vimState = cm?.state?.vim
-        if (vimState) {
-          const mode = vimState.mode as VimMode
+      const cm = getCM(view)
+      if (cm) {
+        modeChangeHandler = (modeObj: { mode: string; subMode?: string }) => {
+          const mode = modeObj.mode as VimMode
           if (mode && mode !== currentVimModeRef.current) {
             setCurrentVimMode(mode)
             onVimModeChangeRef.current?.(mode)
           }
         }
+        cm.on('vim-mode-change', modeChangeHandler)
       }
-
-      // Poll for vim mode changes (workaround since vim doesn't expose events)
-      interval = setInterval(checkVimMode, 100)
     }
 
     return () => {
-      if (interval) {
-        clearInterval(interval)
+      // Clean up vim mode change listener
+      if (vimEnabled && modeChangeHandler) {
+        const cm = getCM(view)
+        if (cm) {
+          cm.off('vim-mode-change', modeChangeHandler)
+        }
       }
       view.destroy()
     }
