@@ -4,6 +4,76 @@ This document introduces the core concepts of the Wegent platform to help you un
 
 ---
 
+## 🚀 Platform Features Overview
+
+Wegent is an open-source AI-native operating system that provides five core feature modules:
+
+### 💬 Chat - AI Conversation
+
+A fully open-source chat agent supporting:
+
+- **Multi-model compatibility**: DeepSeek, GLM, GPT, Claude, and other protocol-compatible models
+- **Conversation history**: Create new conversations, multi-turn dialogues, save and share history
+- **Group chat**: AI group conversations where AI responds based on chat history
+- **Attachment parsing**: Send txt, pdf, ppt, doc, and image attachments in single/group chats
+- **Follow-up mode**: Model helps clarify your thoughts through heuristic questions
+- **Correction mode**: Automatically invoke multiple models to correct answers
+- **Long-term memory**: Support mem0 integration for conversation memory
+- **Sandbox execution**: Execute commands or modify files via sandbox (E2B protocol compatible)
+- **Customization**: Configure prompts, MCP servers, and Skills (includes chart drawing skill)
+
+### 💻 Code - Cloud Coding Engine
+
+A cloud-based Claude Code execution engine supporting:
+
+- **Model configuration**: Configure various Claude protocol-compatible models
+- **Parallel execution**: Execute multiple coding tasks simultaneously in the cloud
+- **Requirements clarification**: AI analyzes code and questions to generate specification documents
+- **Git integration**: Integrate with GitHub/GitLab/Gitea/Gerrit for cloning, modifying, and creating PRs
+- **MCP/Skill integration**: Configure MCP servers and Skills for agents
+- **Multi-turn conversations**: Continue conversations with follow-up questions
+
+### 📡 Follow - AI Task Trigger
+
+A cloud-based AI task trigger supporting:
+
+- **Full capabilities**: Tasks can use all Chat and Code features
+- **Scheduled/Event triggers**: Execute AI tasks on schedule or based on events (e.g., summarize AI news daily at 9 AM)
+- **Information feed**: Display AI-generated information streams
+- **Event filtering**: Filter events (e.g., "only notify me if it will rain tomorrow")
+
+### 📚 Knowledge - AI Document Repository
+
+A cloud-based AI document repository supporting:
+
+- **Document management**: Upload and manage txt/doc/ppt/xls and other format documents
+- **Import sources**: Import web pages and DingTalk multi-dimensional tables
+- **NotebookLM mode**: Select documents directly in notebooks for Q&A
+- **Online editing**: Edit text files online in notebook mode
+- **Knowledge reference**: Let AI reference knowledge base in single/group chats
+
+### ⚙️ Customization - Fully Configurable
+
+All features above are customizable:
+
+- **Web-based agent creation**: Create custom agents with prompts, MCP, Skills, and multi-agent collaboration
+- **Agent wizard**: Automatically generate and fine-tune prompts based on requirements
+- **Group sharing**: Create and join groups to share agents, models, Skills, and more
+
+---
+
+## 🔗 Features and CRD Mapping
+
+| Feature | Related CRDs | Description |
+|---------|--------------|-------------|
+| **Chat** | Chat Shell + Team | Direct LLM conversation via Chat Shell |
+| **Code** | ClaudeCode Shell + Team + Workspace | Cloud coding execution with Git integration |
+| **Follow** | Subscription + Team | Scheduled/event-triggered AI tasks |
+| **Knowledge** | KnowledgeBase + Retriever | Document storage and RAG retrieval |
+| **Customization** | Ghost + Bot + Team | Configure prompts, tools, and collaboration |
+
+---
+
 ## ⚠️ Terminology Note: Team vs Bot
 
 > **Important:** Please note the distinction between code-level terminology and user interface display names.
@@ -19,7 +89,7 @@ This document introduces the core concepts of the Wegent platform to help you un
 
 ---
 
-## 📋 Concept Overview
+## 📋 CRD Architecture Overview
 
 Wegent is built on Kubernetes-style declarative API and CRD (Custom Resource Definition) design patterns, providing a standardized framework for creating and managing AI agent ecosystems.
 
@@ -98,6 +168,15 @@ status:
 ## 🐚 Shell - Runtime Environment
 
 Shell is the container where agents run, specifying the runtime environment.
+
+### Shell Types
+
+| Type | Description | Use Case |
+|------|-------------|----------|
+| **Chat** | Direct LLM API (no Docker) | Lightweight conversations |
+| **ClaudeCode** | Claude Code SDK in Docker | Cloud coding tasks |
+| **Agno** | Agno framework in Docker | Multi-agent collaboration |
+| **Dify** | External Dify API proxy | Dify workflow integration |
 
 ### YAML Configuration Example
 
