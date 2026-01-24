@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { EditorView, keymap, ViewUpdate } from '@codemirror/view'
+import { EditorView, keymap, ViewUpdate, drawSelection } from '@codemirror/view'
 import { EditorState, Extension } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
@@ -13,6 +13,23 @@ import { oneDark } from '@codemirror/theme-one-dark'
 import { vim, Vim, getCM } from '@replit/codemirror-vim'
 import { cn } from '@/lib/utils'
 import type { ThemeMode } from '@/features/theme/ThemeProvider'
+
+/**
+ * Safely define a Vim Ex command, ignoring errors if the command already exists.
+ * This is necessary because @replit/codemirror-vim throws an error when trying
+ * to redefine an existing Ex command, which can happen during HMR or when
+ * multiple editor instances are created.
+ */
+function safeDefineEx(shortName: string, fullName: string, callback: () => void): void {
+  try {
+    Vim.defineEx(shortName, fullName, callback)
+    console.log(`[CodeMirrorEditor] Successfully defined Ex command: ${shortName}`)
+  } catch (error) {
+    // Command already exists, ignore the error
+    // This can happen during HMR or when multiple editors are mounted
+    console.log(`[CodeMirrorEditor] Ex command already exists: ${shortName}`, error)
+  }
+}
 
 /**
  * Vim mode status indicator type
@@ -63,11 +80,16 @@ const lightTheme = EditorView.theme({
   '&.cm-focused .cm-cursor': {
     borderLeftColor: 'rgb(var(--color-primary))',
   },
+  // Selection background for Visual mode - more visible purple color
   '.cm-selectionBackground, .cm-content ::selection': {
-    backgroundColor: 'rgba(var(--color-primary), 0.2)',
+    backgroundColor: 'rgba(147, 51, 234, 0.3) !important', // Purple for visual mode
   },
   '&.cm-focused .cm-selectionBackground': {
-    backgroundColor: 'rgba(var(--color-primary), 0.3)',
+    backgroundColor: 'rgba(147, 51, 234, 0.4) !important', // Darker purple when focused
+  },
+  // Vim visual mode selection layer
+  '.cm-selectionLayer .cm-selectionBackground': {
+    backgroundColor: 'rgba(147, 51, 234, 0.35) !important',
   },
   '.cm-activeLine': {
     backgroundColor: 'rgba(var(--color-primary), 0.05)',
@@ -80,13 +102,21 @@ const lightTheme = EditorView.theme({
   '.cm-activeLineGutter': {
     backgroundColor: 'rgba(var(--color-primary), 0.1)',
   },
-  // Vim mode styling
+  // Vim mode styling - block cursor for normal mode
   '.cm-fat-cursor': {
-    backgroundColor: 'rgba(var(--color-primary), 0.7) !important',
+    background: '#14B8A6 !important',
     color: 'white !important',
   },
-  '.cm-fat-cursor .cm-cursor-primary': {
-    backgroundColor: 'rgba(var(--color-primary), 0.7)',
+  '&.cm-focused .cm-fat-cursor': {
+    background: '#14B8A6 !important',
+  },
+  '.cm-cursor.cm-cursor-primary': {
+    borderLeftColor: '#14B8A6',
+    borderLeftWidth: '2px',
+  },
+  // Vim cursor layer styling
+  '.cm-vimCursorLayer .cm-fat-cursor': {
+    background: '#14B8A6 !important',
   },
   // Vim status panel
   '.cm-vim-panel': {
@@ -116,6 +146,16 @@ const darkThemeOverrides = EditorView.theme(
     },
     '.cm-content': {
       caretColor: '#14B8A6',
+    },
+    // Selection background for Visual mode in dark theme - more visible purple
+    '.cm-selectionBackground, .cm-content ::selection': {
+      backgroundColor: 'rgba(167, 139, 250, 0.4) !important', // Lighter purple for dark mode
+    },
+    '&.cm-focused .cm-selectionBackground': {
+      backgroundColor: 'rgba(167, 139, 250, 0.5) !important',
+    },
+    '.cm-selectionLayer .cm-selectionBackground': {
+      backgroundColor: 'rgba(167, 139, 250, 0.45) !important',
     },
     '.cm-gutters': {
       backgroundColor: '#252525',
@@ -201,22 +241,23 @@ export function CodeMirrorEditor({
     }
   }, [])
 
-  // Configure Ex commands
+  // Configure Ex commands - use safeDefineEx to handle duplicate registration during HMR
   useEffect(() => {
     if (!vimEnabled) return
 
-    // :w - Save
-    Vim.defineEx('w', 'write', () => {
+    // :w - Save (shortName must be prefix of fullName, e.g., 'w' is prefix of 'write')
+    safeDefineEx('write', 'w', () => {
+      console.log('[CodeMirrorEditor] :w command triggered, onSaveRef.current:', onSaveRef.current)
       onSaveRef.current?.()
     })
 
     // :q - Close/quit
-    Vim.defineEx('q', 'quit', () => {
+    safeDefineEx('quit', 'q', () => {
       onCloseRef.current?.()
     })
 
     // :wq - Save and close
-    Vim.defineEx('wq', 'writequit', () => {
+    safeDefineEx('wq', '', () => {
       onSaveRef.current?.()
       // Small delay to ensure save completes before close
       setTimeout(() => {
@@ -225,7 +266,7 @@ export function CodeMirrorEditor({
     })
 
     // :x - Same as :wq
-    Vim.defineEx('x', 'exit', () => {
+    safeDefineEx('x', '', () => {
       onSaveRef.current?.()
       setTimeout(() => {
         onCloseRef.current?.()
@@ -250,11 +291,58 @@ export function CodeMirrorEditor({
       theme === 'dark' ? [oneDark, darkThemeOverrides] : lightTheme,
       // Basic settings
       EditorView.lineWrapping,
+      // Custom selection drawing - required for Vim visual mode selection to be visible
+      drawSelection(),
     ]
 
-    // Add Vim mode if enabled
+    // Add Vim mode if enabled with IME handling
     if (vimEnabled) {
       extensions.unshift(vim())
+
+      // Track IME composition state to handle input in non-insert modes
+      // When IME is active in normal mode, we save the document state and cursor position,
+      // then restore both after composition ends, effectively preventing IME from modifying
+      // the document or moving the cursor
+      let compositionStartDoc: string | null = null
+      let compositionStartCursor: number | null = null
+
+      // Add DOM event handlers for Vim mode IME compatibility
+      extensions.push(
+        EditorView.domEventHandlers({
+          // Track when IME composition starts - save document state and cursor in non-insert modes
+          compositionstart: (_event, view) => {
+            if (currentVimModeRef.current !== 'insert') {
+              compositionStartDoc = view.state.doc.toString()
+              compositionStartCursor = view.state.selection.main.head
+            }
+            return false
+          },
+          // When IME composition ends, revert document changes and restore cursor position
+          compositionend: (_event, view) => {
+            // If we saved a document state (meaning we were in non-insert mode),
+            // restore it to undo the IME input and restore cursor position
+            if (compositionStartDoc !== null && currentVimModeRef.current !== 'insert') {
+              const currentDoc = view.state.doc.toString()
+              const savedCursor = compositionStartCursor
+              if (currentDoc !== compositionStartDoc) {
+                // Restore the original document content and cursor position
+                view.dispatch({
+                  changes: {
+                    from: 0,
+                    to: currentDoc.length,
+                    insert: compositionStartDoc,
+                  },
+                  // Restore cursor position after document is restored
+                  selection: savedCursor !== null ? { anchor: savedCursor } : undefined,
+                })
+              }
+              compositionStartDoc = null
+              compositionStartCursor = null
+            }
+            return false
+          },
+        })
+      )
     }
 
     // Add read-only if needed
@@ -275,6 +363,12 @@ export function CodeMirrorEditor({
     })
 
     editorRef.current = view
+
+    // Auto-focus the editor after initialization
+    // Use requestAnimationFrame to ensure the DOM is ready
+    requestAnimationFrame(() => {
+      view.focus()
+    })
 
     // Set up vim mode change listener using the public getCM API
     let modeChangeHandler: ((modeObj: { mode: string; subMode?: string }) => void) | null = null
@@ -321,6 +415,37 @@ export function CodeMirrorEditor({
       })
     }
   }, [value])
+
+  // Add native event listener to handle ESC key for Vim mode
+  // This manually triggers Vim's ESC handling and stops propagation to Dialog
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container || !vimEnabled) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        const view = editorRef.current
+
+        // Manually trigger Vim's ESC handling
+        if (view) {
+          const cm = getCM(view)
+          if (cm) {
+            Vim.handleKey(cm, '<Esc>', 'user')
+          }
+        }
+
+        // Stop propagation to prevent Dialog from closing
+        event.stopPropagation()
+      }
+    }
+
+    // Add listener in bubble phase (not capture)
+    container.addEventListener('keydown', handleKeyDown, false)
+
+    return () => {
+      container.removeEventListener('keydown', handleKeyDown, false)
+    }
+  }, [vimEnabled])
 
   return (
     <div

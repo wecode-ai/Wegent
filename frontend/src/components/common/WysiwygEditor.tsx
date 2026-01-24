@@ -12,12 +12,7 @@ import EnhancedMarkdown from './EnhancedMarkdown'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { CodeMirrorEditor, VimModeIndicator, VimMode } from './CodeMirrorEditor'
 import { useTranslation } from '@/hooks/useTranslation'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from 'sonner'
 
 const VIM_MODE_STORAGE_KEY = 'editor-vim-mode'
@@ -57,7 +52,7 @@ type ViewMode = 'edit' | 'preview' | 'split'
 export function WysiwygEditor({
   initialContent,
   onChange,
-  onSave,
+  onSave: _onSave,
   onClose,
   className,
   readOnly = false,
@@ -135,14 +130,13 @@ export function WysiwygEditor({
   )
 
   // Handle save from Vim :w command
+  // Only shows toast notification, does not trigger actual save to backend
+  // The actual save should be done via the Save button or :wq command
   const handleVimSave = useCallback(() => {
-    if (onSave) {
-      onSave(content)
-    } else {
-      onChange?.(content)
-    }
+    // Sync content to parent via onChange (in-memory update only)
+    onChange?.(content)
     toast.success(t('editor.vim.saved'))
-  }, [content, onSave, onChange, t])
+  }, [content, onChange, t])
 
   // Handle close from Vim :q command
   const handleVimClose = useCallback(() => {
@@ -178,9 +172,7 @@ export function WysiwygEditor({
     <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-surface-hover/50">
       <div className="flex items-center gap-2">
         <span className="text-xs font-medium text-text-secondary">Markdown</span>
-        {vimEnabled && viewMode !== 'preview' && (
-          <VimModeIndicator mode={vimMode} />
-        )}
+        {vimEnabled && viewMode !== 'preview' && <VimModeIndicator mode={vimMode} />}
       </div>
       {!readOnly && (
         <div className="flex items-center gap-1">
@@ -205,9 +197,7 @@ export function WysiwygEditor({
               <TooltipContent side="bottom">
                 <p>{vimEnabled ? t('editor.vim.disable') : t('editor.vim.enable')}</p>
                 {vimEnabled && (
-                  <p className="text-xs text-text-muted mt-1">
-                    {t('editor.vim.commands_hint')}
-                  </p>
+                  <p className="text-xs text-text-muted mt-1">{t('editor.vim.commands_hint')}</p>
                 )}
               </TooltipContent>
             </Tooltip>
