@@ -5,6 +5,7 @@
 import { apiClient } from './client'
 import type { TeamBot, Team, PaginationParams } from '@/types/api'
 import type { CheckRunningTasksResponse } from './common'
+import type { InputParametersResponse } from '@/types/input-parameter'
 
 // Team Request/Response Types
 export interface CreateTeamRequest {
@@ -40,9 +41,10 @@ export interface TeamShareInfoResponse {
 // Team Share Join Request Type
 export interface TeamShareJoinRequest {
   share_token: string
+  input_parameters?: Record<string, string>
 }
 
-// Team Input Parameters Response Type
+// Team Input Parameters Response Type (for Dify external API bots)
 export interface TeamInputParametersResponse {
   has_parameters: boolean
   parameters: Array<{
@@ -108,6 +110,13 @@ export const teamApis = {
   },
   async getTeamInputParameters(teamId: number): Promise<TeamInputParametersResponse> {
     return apiClient.get(`/teams/${teamId}/input-parameters`)
+  },
+  /**
+   * Get custom placeholder parameters from the team's Ghost systemPrompt.
+   * These parameters use {{name:label:type}} syntax.
+   */
+  async getTeamPlaceholderParameters(teamId: number): Promise<InputParametersResponse> {
+    return apiClient.get(`/teams/${teamId}/placeholder-parameters`)
   },
   async checkRunningTasks(id: number): Promise<CheckRunningTasksResponse> {
     return apiClient.get(`/teams/${id}/running-tasks`)

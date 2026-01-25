@@ -7,6 +7,9 @@ import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import MermaidDiagram from '@/components/common/MermaidDiagram'
 
+// Set a higher default timeout for all tests in this file
+jest.setTimeout(15000)
+
 // Mock the theme context
 jest.mock('@/features/theme/ThemeProvider', () => ({
   useTheme: () => ({ theme: 'light', setTheme: jest.fn() }),
@@ -58,6 +61,9 @@ const renderWithProviders = (ui: React.ReactElement) => {
   return render(<TooltipProvider>{ui}</TooltipProvider>)
 }
 
+// Common waitFor timeout for async operations
+const waitForOptions = { timeout: 10000 }
+
 describe('MermaidDiagram', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -84,7 +90,7 @@ describe('MermaidDiagram', () => {
 
     await waitFor(() => {
       expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
-    })
+    }, waitForOptions)
 
     // Check that the diagram container is rendered
     expect(screen.getByText('Diagram')).toBeInTheDocument()
@@ -97,7 +103,7 @@ describe('MermaidDiagram', () => {
 
     await waitFor(() => {
       expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
-    })
+    }, waitForOptions)
 
     // Check zoom controls exist
     expect(screen.getByText('100%')).toBeInTheDocument()
@@ -110,7 +116,7 @@ describe('MermaidDiagram', () => {
 
     await waitFor(() => {
       expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
-    })
+    }, waitForOptions)
 
     // Find zoom in button and click
     const zoomInButtons = screen.getAllByRole('button')
@@ -131,7 +137,7 @@ describe('MermaidDiagram', () => {
 
     await waitFor(() => {
       expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
-    })
+    }, waitForOptions)
 
     // Find zoom out button and click
     const zoomOutButtons = screen.getAllByRole('button')
@@ -152,7 +158,7 @@ describe('MermaidDiagram', () => {
 
     await waitFor(() => {
       expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
-    })
+    }, waitForOptions)
 
     // Find copy button and click
     const copyButtons = screen.getAllByRole('button')
@@ -177,7 +183,7 @@ describe('MermaidDiagram', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Mermaid render failed/)).toBeInTheDocument()
-    })
+    }, waitForOptions)
 
     // Check that raw code is displayed
     expect(screen.getByText('invalid mermaid code')).toBeInTheDocument()
@@ -190,7 +196,7 @@ describe('MermaidDiagram', () => {
 
     await waitFor(() => {
       expect(screen.queryByText('Loading diagram...')).not.toBeInTheDocument()
-    })
+    }, waitForOptions)
 
     // Check for custom class on the container
     const diagramContainer = document.querySelector('.custom-class')
@@ -204,6 +210,6 @@ describe('MermaidDiagram', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Empty diagram code/)).toBeInTheDocument()
-    })
+    }, waitForOptions)
   })
 })

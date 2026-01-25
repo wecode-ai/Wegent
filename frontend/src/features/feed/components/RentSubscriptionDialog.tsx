@@ -44,6 +44,8 @@ import { subscriptionApis } from '@/apis/subscription'
 import { modelApis, UnifiedModel } from '@/apis/models'
 import type { MarketSubscriptionDetail, SubscriptionTriggerType } from '@/types/subscription'
 import { toast } from 'sonner'
+import { InputParameterForm } from '@/features/common/components/InputParameterForm'
+import type { InputParameter } from '@/types/input-parameter'
 
 interface RentSubscriptionDialogProps {
   open: boolean
@@ -74,6 +76,11 @@ export function RentSubscriptionDialog({
   const [executeAt, setExecuteAt] = useState<Date | undefined>()
   const [selectedModel, setSelectedModel] = useState<string>('')
 
+  // Input parameters state
+  const [inputParameters, setInputParameters] = useState<InputParameter[]>([])
+  const [inputParameterValues, setInputParameterValues] = useState<Record<string, string>>({})
+  const [isLoadingParameters, setIsLoadingParameters] = useState(false)
+
   // Initialize form with subscription info
   useEffect(() => {
     if (open && subscription) {
@@ -93,6 +100,21 @@ export function RentSubscriptionDialog({
         tomorrow.setHours(9, 0, 0, 0)
         setExecuteAt(tomorrow)
       }
+
+      // Fetch input parameters for the subscription
+      setIsLoadingParameters(true)
+      subscriptionApis
+        .getSubscriptionInputParameters(subscription.id)
+        .then(response => {
+          setInputParameters(response.parameters || [])
+        })
+        .catch(() => {
+          // Parameters are optional, don't fail the whole flow
+          console.warn('Failed to fetch subscription input parameters')
+        })
+        .finally(() => {
+          setIsLoadingParameters(false)
+        })
     }
   }, [open, subscription])
 
@@ -111,6 +133,14 @@ export function RentSubscriptionDialog({
         .finally(() => {
           setModelsLoading(false)
         })
+    }
+  }, [open])
+
+  // Reset input parameters when dialog closes
+  useEffect(() => {
+    if (!open) {
+      setInputParameters([])
+      setInputParameterValues({})
     }
   }, [open])
 
@@ -143,6 +173,8 @@ export function RentSubscriptionDialog({
         trigger_type: triggerType,
         trigger_config: triggerConfig,
         model_ref: selectedModel ? { name: selectedModel, namespace: 'default' } : undefined,
+        input_parameters:
+          Object.keys(inputParameterValues).length > 0 ? inputParameterValues : undefined,
       })
       toast.success(t('market.rent_success'))
       onSuccess()
@@ -161,6 +193,7 @@ export function RentSubscriptionDialog({
     intervalUnit,
     executeAt,
     selectedModel,
+    inputParameterValues,
     subscription.id,
     t,
     onSuccess,
@@ -225,6 +258,19 @@ export function RentSubscriptionDialog({
               placeholder={t('market.rental_display_name_placeholder')}
             />
           </div>
+
+          {/* Input parameters form */}
+          {!isLoadingParameters && inputParameters.length > 0 && (
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">{t('common:input_parameters.title')}</Label>
+              <InputParameterForm
+                parameters={inputParameters}
+                values={inputParameterValues}
+                onChange={setInputParameterValues}
+                disabled={loading}
+              />
+            </div>
+          )}
 
           {/* Trigger type */}
           <div className="space-y-2">

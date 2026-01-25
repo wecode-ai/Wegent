@@ -95,6 +95,17 @@ class BackgroundExecutionManager:
                         f"[Subscription] Using source subscription {source_subscription_id} "
                         f"promptTemplate for rental {subscription.id}"
                     )
+
+                    # Merge rental's input_parameters into extra_variables
+                    rental_input_params = internal.get("input_parameters")
+                    if rental_input_params:
+                        if extra_variables is None:
+                            extra_variables = {}
+                        # Rental input parameters take precedence
+                        extra_variables = {**rental_input_params, **extra_variables}
+                        logger.info(
+                            f"[Subscription] Merging rental input_parameters for subscription {subscription.id}"
+                        )
                 else:
                     logger.warning(
                         f"[Subscription] Source subscription {source_subscription_id} not found "

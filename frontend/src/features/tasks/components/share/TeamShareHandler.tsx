@@ -14,6 +14,8 @@ import { Team } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import Modal from '@/features/common/Modal'
+import { InputParameterForm } from '@/features/common/components/InputParameterForm'
+import type { InputParameter } from '@/types/input-parameter'
 
 interface TeamShareHandlerProps {
   teams: Team[]
@@ -41,6 +43,11 @@ export default function TeamShareHandler({
   const [isJoining, setIsJoining] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Input parameters state
+  const [inputParameters, setInputParameters] = useState<InputParameter[]>([])
+  const [inputParameterValues, setInputParameterValues] = useState<Record<string, string>>({})
+  const [isLoadingParameters, setIsLoadingParameters] = useState(false)
+
   const isTeamAlreadyJoined = shareInfo ? teams.some(team => team.id === shareInfo.team_id) : false
   const isSelfShare = shareInfo && user && shareInfo.user_id === user.id
 
@@ -63,6 +70,18 @@ export default function TeamShareHandler({
         const info = await teamApis.getTeamShareInfo(encodeURIComponent(teamShareToken))
         setShareInfo(info)
         setIsModalOpen(true)
+
+        // Fetch placeholder parameters for the team
+        setIsLoadingParameters(true)
+        try {
+          const paramsResponse = await teamApis.getTeamPlaceholderParameters(info.team_id)
+          setInputParameters(paramsResponse.parameters || [])
+        } catch {
+          // Parameters are optional, don't fail the whole flow
+          console.warn('Failed to fetch team placeholder parameters')
+        } finally {
+          setIsLoadingParameters(false)
+        }
       } catch {
         console.error('Failed to fetch team share info:', error)
         toast({
@@ -99,7 +118,11 @@ export default function TeamShareHandler({
     setIsJoining(true)
     setError(null)
     try {
-      await teamApis.joinSharedTeam({ share_token: searchParams.get('teamShare')! })
+      await teamApis.joinSharedTeam({
+        share_token: searchParams.get('teamShare')!,
+        input_parameters:
+          Object.keys(inputParameterValues).length > 0 ? inputParameterValues : undefined,
+      })
 
       toast({
         title: t('common:teams.share.join_success', { teamName: shareInfo?.team_name || '' }),
@@ -132,6 +155,8 @@ export default function TeamShareHandler({
     setIsModalOpen(false)
     setShareInfo(null)
     setError(null)
+    setInputParameters([])
+    setInputParameterValues({})
     cleanupUrlParams()
   }
 
@@ -231,6 +256,19 @@ export default function TeamShareHandler({
                 )}
               </AlertDescription>
             </Alert>
+
+            {/* Input parameters form */}
+            {!isLoadingParameters && inputParameters.length > 0 && (
+              <div className="border-t border-border pt-4 mt-4">
+                <h4 className="text-sm font-medium mb-3">{t('common:input_parameters.title')}</h4>
+                <InputParameterForm
+                  parameters={inputParameters}
+                  values={inputParameterValues}
+                  onChange={setInputParameterValues}
+                  disabled={isJoining}
+                />
+              </div>
+            )}
           </>
         )}
       </div>

@@ -5,6 +5,7 @@
 from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer
+from sqlalchemy.dialects.mysql import JSON
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
@@ -24,6 +25,9 @@ class SharedTeam(Base):
     )  # Original user who created the team
     team_id = Column(Integer, nullable=False, index=True)  # Team that was shared
     is_active = Column(Boolean, default=True)
+    # Input parameters filled by user when joining the shared team
+    # Format: {"param_name": "param_value", ...}
+    input_parameters = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 

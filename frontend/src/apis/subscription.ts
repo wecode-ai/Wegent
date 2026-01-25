@@ -349,4 +349,14 @@ export const subscriptionApis = {
   async getRentalCount(subscriptionId: number): Promise<RentalCountResponse> {
     return apiClient.get(`/subscriptions/${subscriptionId}/rental-count`)
   },
+
+  /**
+   * Get input parameters for a market subscription's promptTemplate.
+   * These parameters use {{name:label:type}} syntax.
+   */
+  async getSubscriptionInputParameters(
+    subscriptionId: number
+  ): Promise<import('@/types/input-parameter').InputParametersResponse> {
+    return apiClient.get(`/market/subscriptions/${subscriptionId}/input-parameters`)
+  },
 }
