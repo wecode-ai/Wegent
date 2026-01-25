@@ -189,7 +189,7 @@ export function AIAssistProvider({
 }: AIAssistProviderProps) {
   const [state, dispatch] = useReducer(aiAssistReducer, initialState)
   const editorRef = useRef<_EditorRef | null>(null)
-  const _abortControllerRef = useRef<AbortController | null>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   // Store callbacks in refs to avoid stale closures
   const _onSendToChatRef = useRef(onSendToChat)
