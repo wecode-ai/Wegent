@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { EditorSelection, Position } from '../types'
+import type { EditorSelection, _Position } from '../types'
 
 interface UseEditorSelectionOptions {
   /** Container element or selector to monitor */
@@ -64,7 +64,7 @@ export function useEditorSelection(options: UseEditorSelectionOptions) {
   /**
    * Calculate position for floating UI
    */
-  const calculatePosition = useCallback((sel: Selection): Position | null => {
+  const calculatePosition = useCallback((sel: Selection): _Position | null => {
     if (!sel.rangeCount) return null
 
     const range = sel.getRangeAt(0)
