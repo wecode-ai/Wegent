@@ -22,8 +22,9 @@ export type AIAssistStatus = 'idle' | 'thinking' | 'searching' | 'generating' | 
 
 /**
  * Position information for floating elements
+ * @internal Used by FloatingToolbar and CommandPalette components
  */
-export interface Position {
+export interface _Position {
   top: number
   left: number
 }
@@ -39,7 +40,7 @@ export interface EditorSelection {
   /** End position (character offset from document start) */
   to: number
   /** Position for floating UI elements */
-  position: Position
+  position: { top: number; left: number }
 }
 
 /**
@@ -144,8 +145,9 @@ export interface CommandSuggestion {
 
 /**
  * Editor ref interface for controlling the editor
+ * @internal Used internally by AIAssistContext
  */
-export interface EditorRef {
+export interface _EditorRef {
   /** Get current content */
   getContent: () => string
   /** Set content */

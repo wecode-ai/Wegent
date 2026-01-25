@@ -4,14 +4,14 @@
 
 'use client'
 
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { PenLine, List, Search, Command, ArrowRight } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useAIAssist } from './AIAssistContext'
-import type { AIAssistAction, CommandSuggestion } from './types'
+import type { CommandSuggestion } from './types'
 
 /**
  * Default command suggestions
@@ -63,7 +63,7 @@ interface CommandPaletteProps {
  */
 export function CommandPalette({ open, onClose, position, className }: CommandPaletteProps) {
   const { t } = useTranslation('knowledge')
-  const { startOperation, editorRef } = useAIAssist()
+  const { startOperation, editorRef: _editorRef } = useAIAssist()
 
   const [inputValue, setInputValue] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -72,10 +72,10 @@ export function CommandPalette({ open, onClose, position, className }: CommandPa
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Filter suggestions based on input
-  const filteredSuggestions = inputValue.trim()
-    ? [] // If user types something, don't show suggestions (treat as custom prompt)
-    : DEFAULT_SUGGESTIONS
+  // Filter suggestions based on input - wrapped in useMemo to avoid deps warning
+  const filteredSuggestions = useMemo(() => {
+    return inputValue.trim() ? [] : DEFAULT_SUGGESTIONS
+  }, [inputValue])
 
   // Calculate palette position
   useEffect(() => {

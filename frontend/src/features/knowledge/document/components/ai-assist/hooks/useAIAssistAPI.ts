@@ -164,7 +164,7 @@ export function useAIAssistAPI(options: UseAIAssistAPIOptions = {}) {
                 } else if (data.type === 'error') {
                   throw new Error(data.error || 'Unknown error')
                 }
-              } catch (parseError) {
+              } catch (_parseError) {
                 // Skip non-JSON lines
               }
             }

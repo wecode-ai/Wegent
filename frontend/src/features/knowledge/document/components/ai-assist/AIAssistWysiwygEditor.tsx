@@ -382,11 +382,11 @@ interface AIAssistWysiwygEditorProps {
 export function AIAssistWysiwygEditor({
   initialContent,
   onChange,
-  onSave,
-  onClose,
+  onSave: _onSave,
+  onClose: _onClose,
   className,
   readOnly = false,
-  defaultVimMode,
+  defaultVimMode: _defaultVimMode,
   knowledgeBaseId,
   onSendToChat,
 }: AIAssistWysiwygEditorProps) {
@@ -531,7 +531,7 @@ export function AIAssistWysiwygEditor({
                 } else if (data.type === 'error') {
                   throw new Error(data.error || 'Unknown error')
                 }
-              } catch (parseError) {
+              } catch (_parseError) {
                 // Skip non-JSON lines
               }
             }

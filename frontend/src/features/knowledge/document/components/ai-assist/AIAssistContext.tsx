@@ -11,7 +11,7 @@ import type {
   AIAssistStatus,
   EditorSelection,
   DiffResult,
-  EditorRef,
+  _EditorRef,
 } from './types'
 
 /**
@@ -128,7 +128,7 @@ interface AIAssistContextValue {
   /** Current state */
   state: AIAssistState
   /** Editor ref for controlling the editor */
-  editorRef: React.MutableRefObject<EditorRef | null>
+  editorRef: React.MutableRefObject<_EditorRef | null>
   /** Set the selection state */
   setSelection: (selection: EditorSelection | null) => void
   /** Start an AI operation */
@@ -184,19 +184,19 @@ interface AIAssistProviderProps {
  */
 export function AIAssistProvider({
   children,
-  knowledgeBaseId,
+  knowledgeBaseId: _knowledgeBaseId,
   onSendToChat,
 }: AIAssistProviderProps) {
   const [state, dispatch] = useReducer(aiAssistReducer, initialState)
-  const editorRef = useRef<EditorRef | null>(null)
-  const abortControllerRef = useRef<AbortController | null>(null)
+  const editorRef = useRef<_EditorRef | null>(null)
+  const _abortControllerRef = useRef<AbortController | null>(null)
 
   // Store callbacks in refs to avoid stale closures
-  const onSendToChatRef = useRef(onSendToChat)
-  onSendToChatRef.current = onSendToChat
+  const _onSendToChatRef = useRef(onSendToChat)
+  _onSendToChatRef.current = onSendToChat
 
-  const knowledgeBaseIdRef = useRef(knowledgeBaseId)
-  knowledgeBaseIdRef.current = knowledgeBaseId
+  const _knowledgeBaseIdRef = useRef(_knowledgeBaseId)
+  _knowledgeBaseIdRef.current = _knowledgeBaseId
 
   const setSelection = useCallback((selection: EditorSelection | null) => {
     dispatch({ type: 'SET_SELECTION', selection })
