@@ -14,26 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import { toast } from 'sonner'
-
-/**
- * AI Assist action types
- */
-type AIAssistAction = 'rewrite' | 'expand' | 'summarize' | 'fix_grammar' | 'custom'
-
-/**
- * AI Assist status
- */
-type AIAssistStatus = 'idle' | 'thinking' | 'generating' | 'completed' | 'error'
-
-/**
- * Diff result for inline editing
- */
-interface DiffResult {
-  original: string
-  replacement: string
-  from: number
-  to: number
-}
+import type { AIAssistAction, AIAssistStatus, DiffResult } from './types'
 
 interface FloatingToolbarProps {
   /** Selection position */
