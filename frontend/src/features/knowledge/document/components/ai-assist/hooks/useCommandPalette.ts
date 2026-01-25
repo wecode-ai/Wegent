@@ -5,16 +5,16 @@
 'use client'
 
 import { useState, useCallback, useEffect, useRef } from 'react'
-import type { Position } from '../types'
+import type { _Position } from '../types'
 
 interface UseCommandPaletteOptions {
   /** Container element to listen for shortcuts */
-  containerRef?: React.RefObject<HTMLElement>
+  containerRef?: React.RefObject<HTMLElement | null>
   /** Editor ref to get cursor position */
   editorRef?: React.RefObject<{
-    getCursorPosition?: () => Position | null
+    getCursorPosition?: () => _Position | null
     focus?: () => void
-  }>
+  } | null>
   /** Callback when palette opens */
   onOpen?: () => void
   /** Callback when palette closes */
@@ -28,7 +28,7 @@ export function useCommandPalette(options: UseCommandPaletteOptions = {}) {
   const { containerRef, editorRef, onOpen, onClose } = options
 
   const [isOpen, setIsOpen] = useState(false)
-  const [position, setPosition] = useState<Position | null>(null)
+  const [position, setPosition] = useState<_Position | null>(null)
 
   const onOpenRef = useRef(onOpen)
   const onCloseRef = useRef(onClose)
@@ -42,7 +42,7 @@ export function useCommandPalette(options: UseCommandPaletteOptions = {}) {
   /**
    * Open the command palette
    */
-  const openPalette = useCallback((pos?: Position) => {
+  const openPalette = useCallback((pos?: _Position) => {
     setPosition(pos || null)
     setIsOpen(true)
     onOpenRef.current?.()
@@ -70,7 +70,7 @@ export function useCommandPalette(options: UseCommandPaletteOptions = {}) {
       closePalette()
     } else {
       // Get cursor position from editor if available
-      let pos: Position | null = null
+      let pos: _Position | null = null
       if (editorRef?.current?.getCursorPosition) {
         pos = editorRef.current.getCursorPosition()
       }
