@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
@@ -54,6 +54,16 @@ export function KnowledgeBaseChatPageDesktop() {
 
   // State for selected document IDs from DocumentPanel (for notebook mode context injection)
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<number[]>([])
+
+  // Ref for quote setter function from ChatArea (for AI assist send to chat)
+  const quoteSetterRef = useRef<((text: string) => void) | null>(null)
+
+  // Handler for sending content to chat from document editor
+  const handleSendToChat = useCallback((content: string) => {
+    if (quoteSetterRef.current) {
+      quoteSetterRef.current(content)
+    }
+  }, [])
 
   // Fetch knowledge base details
   const {
@@ -293,6 +303,7 @@ export function KnowledgeBaseChatPageDesktop() {
                 document_count: knowledgeBase.document_count,
               }}
               selectedDocumentIds={selectedDocumentIds}
+              quoteSetterRef={quoteSetterRef}
               onTaskCreated={async (taskId: number) => {
                 // Bind the knowledge base to the newly created task
                 try {
@@ -314,6 +325,7 @@ export function KnowledgeBaseChatPageDesktop() {
             canManage={canManageKb}
             onDocumentSelectionChange={setSelectedDocumentIds}
             onNewChat={handleNewTask}
+            onSendToChat={handleSendToChat}
           />
         </div>
       </div>
