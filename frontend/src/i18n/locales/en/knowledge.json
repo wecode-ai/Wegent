@@ -393,7 +393,11 @@
       "placeholder": "Describe what you want AI to generate...",
       "continueWriting": "Continue writing",
       "generateOutline": "Generate outline",
-      "searchAndExpand": "Search and expand with sources"
+      "searchAndExpand": "Search and expand with sources",
+      "customPromptHint": "Press Enter to generate with your prompt",
+      "hintNavigate": "↑↓ navigate",
+      "hintSelect": "↵ select",
+      "hintClose": "esc close"
     },
     "customPrompt": {
       "placeholder": "Enter your custom instruction...",
@@ -402,7 +406,8 @@
     "diff": {
       "accept": "Accept",
       "reject": "Reject",
-      "regenerate": "Regenerate"
+      "regenerate": "Regenerate",
+      "acceptSuccess": "Changes accepted"
     },
     "status": {
       "thinking": "AI is thinking...",
@@ -421,6 +426,7 @@
     },
     "shortcut": {
       "hint": "Press {{shortcut}} to open AI assistant"
-    }
+    },
+    "sources": "Sources:"
   }
 }

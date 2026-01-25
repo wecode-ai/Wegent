@@ -141,13 +141,15 @@ export function useAIAssistAPI(options: UseAIAssistAPIOptions = {}) {
         const decoder = new TextDecoder()
         let accumulatedContent = ''
         let sources: AIAssistSource[] = []
+        let buffer = ''
 
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
 
-          const chunk = decoder.decode(value)
-          const lines = chunk.split('\n')
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() ?? ''
 
           for (const line of lines) {
             if (line.startsWith('data: ')) {
@@ -159,7 +161,14 @@ export function useAIAssistAPI(options: UseAIAssistAPIOptions = {}) {
                   appendContent(data.content || '')
                 } else if (data.type === 'done') {
                   if (data.sources) {
-                    sources = data.sources
+                    // Map snake_case to camelCase
+                    sources = data.sources.map(
+                      (source: AIAssistSource & { kb_id?: number; document_id?: number }) => ({
+                        ...source,
+                        kbId: source.kb_id ?? source.kbId,
+                        documentId: source.document_id ?? source.documentId,
+                      })
+                    )
                   }
                 } else if (data.type === 'error') {
                   throw new Error(data.error || 'Unknown error')
@@ -168,6 +177,29 @@ export function useAIAssistAPI(options: UseAIAssistAPIOptions = {}) {
                 // Skip non-JSON lines
               }
             }
+          }
+        }
+
+        // Process any remaining buffer content
+        if (buffer.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(buffer.slice(6))
+            if (data.type === 'chunk') {
+              accumulatedContent += data.content || ''
+              appendContent(data.content || '')
+            } else if (data.type === 'done' && data.sources) {
+              sources = data.sources.map(
+                (source: AIAssistSource & { kb_id?: number; document_id?: number }) => ({
+                  ...source,
+                  kbId: source.kb_id ?? source.kbId,
+                  documentId: source.document_id ?? source.documentId,
+                })
+              )
+            } else if (data.type === 'error') {
+              throw new Error(data.error || 'Unknown error')
+            }
+          } catch (_parseError) {
+            // Ignore trailing partial
           }
         }
 

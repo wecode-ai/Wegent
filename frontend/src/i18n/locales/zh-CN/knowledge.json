@@ -393,7 +393,11 @@
       "placeholder": "输入你想让 AI 生成的内容...",
       "continueWriting": "继续写作",
       "generateOutline": "生成大纲",
-      "searchAndExpand": "搜索资料并补充"
+      "searchAndExpand": "搜索资料并补充",
+      "customPromptHint": "按 Enter 键使用您的提示生成",
+      "hintNavigate": "↑↓ 导航",
+      "hintSelect": "↵ 选择",
+      "hintClose": "esc 关闭"
     },
     "customPrompt": {
       "placeholder": "输入你的自定义指令...",
@@ -402,7 +406,8 @@
     "diff": {
       "accept": "接受",
       "reject": "拒绝",
-      "regenerate": "重新生成"
+      "regenerate": "重新生成",
+      "acceptSuccess": "已应用更改"
     },
     "status": {
       "thinking": "AI 正在思考...",
@@ -421,6 +426,7 @@
     },
     "shortcut": {
       "hint": "按 {{shortcut}} 打开 AI 助手"
-    }
+    },
+    "sources": "来源："
   }
 }

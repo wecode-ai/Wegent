@@ -30,7 +30,6 @@ const TOOLBAR_BUTTONS: ToolbarButton[] = [
   { id: 'summarize', icon: <FileText className="h-4 w-4" />, labelKey: 'summarize' },
   { id: 'fix_grammar', icon: <Check className="h-4 w-4" />, labelKey: 'fixGrammar' },
   { id: 'custom', icon: <MessageSquare className="h-4 w-4" />, labelKey: 'custom' },
-  { id: 'sendToChat', icon: <Send className="h-4 w-4" />, labelKey: 'sendToChat' },
 ]
 
 interface FloatingToolbarProps {
@@ -202,6 +201,24 @@ export function FloatingToolbar({ onSendToChat, className }: FloatingToolbarProp
               </TooltipContent>
             </Tooltip>
           ))}
+          {/* Send to chat button - only show when handler is provided */}
+          {onSendToChat && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleButtonClick('sendToChat')}
+                  className="h-8 w-8 p-0"
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {t('aiAssist.toolbar.sendToChat')}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
 
         {/* Custom prompt input */}

@@ -136,7 +136,7 @@ async def _get_model_config(db: Session, user: User) -> dict[str, Any]:
                 Kind.user_id == 0,  # Public model
                 Kind.kind == "Model",
                 Kind.name == settings.WIZARD_MODEL_NAME,
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -148,7 +148,7 @@ async def _get_model_config(db: Session, user: User) -> dict[str, Any]:
             .filter(
                 Kind.user_id == user.id,
                 Kind.kind == "Model",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -160,7 +160,7 @@ async def _get_model_config(db: Session, user: User) -> dict[str, Any]:
             .filter(
                 Kind.user_id == 0,
                 Kind.kind == "Model",
-                Kind.is_active == True,
+                Kind.is_active.is_(True),
             )
             .first()
         )
@@ -305,4 +305,4 @@ async def process_ai_assist_sync(
         raise
     except Exception as e:
         logger.error(f"AI assist error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

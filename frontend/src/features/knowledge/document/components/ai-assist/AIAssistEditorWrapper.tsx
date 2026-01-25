@@ -101,9 +101,7 @@ function AIAssistEditorInner({
       },
       focus: () => editorView.focus(),
       getCursorPosition: () => {
-        const pos = editorView.state.selection.main.head
-        const coords = editorView.coordsAtPos(pos)
-        return coords ? pos : 0
+        return editorView.state.selection.main.head
       },
       getContext: (charsBefore: number, charsAfter: number) => {
         const pos = editorView.state.selection.main.head
@@ -227,7 +225,7 @@ function AIAssistEditorInner({
       <CommandPalette
         open={isPaletteOpen}
         onClose={closePalette}
-        position={palettePosition ? { top: palettePosition as unknown as number, left: 0 } : undefined}
+        position={palettePosition || undefined}
       />
 
       {/* Inline diff display */}

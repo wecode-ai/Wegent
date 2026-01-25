@@ -108,7 +108,7 @@ export function InlineDiff({ diff, isStreaming, streamingContent, className }: I
       tabIndex={0}
     >
       {/* Diff content */}
-      <div className="p-3 font-mono text-sm leading-relaxed">
+      <div className="p-3 font-mono text-sm leading-relaxed whitespace-pre-wrap">
         {segments.map((segment, index) => (
           <React.Fragment key={index}>
             {segment.type === 'unchanged' && (
@@ -124,7 +124,7 @@ export function InlineDiff({ diff, isStreaming, streamingContent, className }: I
                 {segment.text}
               </span>
             )}
-            {index < segments.length - 1 && segment.text !== '' && '\n'}
+            {index < segments.length - 1 && '\n'}
           </React.Fragment>
         ))}
 
@@ -139,7 +139,7 @@ export function InlineDiff({ diff, isStreaming, streamingContent, className }: I
       {/* Source citations */}
       {diff.sources && diff.sources.length > 0 && (
         <div className="px-3 py-2 border-t border-border bg-fill-tert">
-          <div className="text-xs text-text-muted mb-1">Sources:</div>
+          <div className="text-xs text-text-muted mb-1">{t('aiAssist.sources')}</div>
           <div className="flex flex-wrap gap-2">
             {diff.sources.map((source) => (
               <SourceBadge key={source.index} source={source} />

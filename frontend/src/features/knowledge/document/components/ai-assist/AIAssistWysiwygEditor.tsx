@@ -562,7 +562,7 @@ export function AIAssistWysiwygEditor({
     setActiveDiff(null)
     setSelection(null)
     setStatus('idle')
-    toast.success(t('aiAssist.diff.accept'))
+    toast.success(t('aiAssist.diff.acceptSuccess'))
   }, [activeDiff, content, handleContentChange, t])
 
   // Reject diff

@@ -63,7 +63,7 @@ interface CommandPaletteProps {
  */
 export function CommandPalette({ open, onClose, position, className }: CommandPaletteProps) {
   const { t } = useTranslation('knowledge')
-  const { startOperation, editorRef: _editorRef } = useAIAssist()
+  const { startOperation } = useAIAssist()
 
   const [inputValue, setInputValue] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -257,16 +257,16 @@ export function CommandPalette({ open, onClose, position, className }: CommandPa
         {/* Empty state when typing */}
         {inputValue.trim() && filteredSuggestions.length === 0 && (
           <div className="px-4 py-6 text-center text-sm text-text-muted">
-            <p>Press <kbd className="px-1.5 py-0.5 rounded bg-fill-tert text-xs">Enter</kbd> to generate with your prompt</p>
+            <p>{t('aiAssist.commandPalette.customPromptHint')}</p>
           </div>
         )}
 
         {/* Shortcut hint */}
         <div className="px-3 py-2 border-t border-border bg-fill-tert">
           <div className="flex items-center justify-between text-xs text-text-muted">
-            <span>↑↓ to navigate</span>
-            <span>↵ to select</span>
-            <span>esc to close</span>
+            <span>{t('aiAssist.commandPalette.hintNavigate')}</span>
+            <span>{t('aiAssist.commandPalette.hintSelect')}</span>
+            <span>{t('aiAssist.commandPalette.hintClose')}</span>
           </div>
         </div>
       </div>
