@@ -9,6 +9,7 @@ from app.api.endpoints import (
     groups,
     health,
     knowledge,
+    knowledge_import,
     oidc,
     openapi_responses,
     projects,
@@ -110,6 +111,9 @@ api_router.include_router(
 )
 api_router.include_router(
     knowledge.router, prefix="/knowledge-bases", tags=["knowledge"]
+)
+api_router.include_router(
+    knowledge_import.router, prefix="/knowledge-bases", tags=["knowledge-imports"]
 )
 api_router.include_router(
     knowledge.document_router, prefix="/knowledge-documents", tags=["knowledge"]

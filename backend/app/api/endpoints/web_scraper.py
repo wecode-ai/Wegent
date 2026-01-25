@@ -237,55 +237,22 @@ async def create_web_document(
         )
 
         if knowledge_base:
-            spec = knowledge_base.json.get("spec", {})
-            retrieval_config = spec.get("retrievalConfig")
+            from app.services.knowledge.document_indexing import (
+                schedule_document_indexing,
+            )
 
-            if retrieval_config:
-                from app.api.endpoints.knowledge import (
-                    KnowledgeBaseIndexInfo,
-                    _index_document_background,
-                )
-
-                retriever_name = retrieval_config.get("retriever_name")
-                retriever_namespace = retrieval_config.get(
-                    "retriever_namespace", "default"
-                )
-                embedding_config = retrieval_config.get("embedding_config")
-
-                if retriever_name and embedding_config:
-                    embedding_model_name = embedding_config.get("model_name")
-                    embedding_model_namespace = embedding_config.get(
-                        "model_namespace", "default"
-                    )
-
-                    summary_enabled = spec.get("summaryEnabled", False)
-                    if knowledge_base.namespace == "default":
-                        index_owner_user_id = current_user.id
-                    else:
-                        index_owner_user_id = knowledge_base.user_id
-
-                    kb_index_info = KnowledgeBaseIndexInfo(
-                        index_owner_user_id=index_owner_user_id,
-                        summary_enabled=summary_enabled,
-                    )
-
-                    background_tasks.add_task(
-                        _index_document_background,
-                        knowledge_base_id=str(request.knowledge_base_id),
-                        attachment_id=attachment.id,
-                        retriever_name=retriever_name,
-                        retriever_namespace=retriever_namespace,
-                        embedding_model_name=embedding_model_name,
-                        embedding_model_namespace=embedding_model_namespace,
-                        user_id=current_user.id,
-                        user_name=current_user.user_name,
-                        splitter_config=None,
-                        document_id=document.id,
-                        kb_index_info=kb_index_info,
-                    )
-                    logger.info(
-                        f"Scheduled RAG indexing for web document {document.id}"
-                    )
+            scheduled = schedule_document_indexing(
+                background_tasks=background_tasks,
+                knowledge_base=knowledge_base,
+                attachment_id=attachment.id,
+                document_id=document.id,
+                current_user_id=current_user.id,
+                current_user_name=current_user.user_name,
+                source_type=DocumentSourceType.WEB,
+                splitter_config=None,
+            )
+            if scheduled:
+                logger.info("Scheduled RAG indexing for web document %s", document.id)
 
         return WebDocumentCreateResponse(
             success=True,
@@ -453,55 +420,25 @@ async def refresh_web_document(
         )
 
         if knowledge_base:
-            spec = knowledge_base.json.get("spec", {})
-            retrieval_config = spec.get("retrievalConfig")
+            from app.services.knowledge.document_indexing import (
+                schedule_document_indexing,
+            )
 
-            if retrieval_config:
-                from app.api.endpoints.knowledge import (
-                    KnowledgeBaseIndexInfo,
-                    _index_document_background,
+            scheduled = schedule_document_indexing(
+                background_tasks=background_tasks,
+                knowledge_base=knowledge_base,
+                attachment_id=attachment.id,
+                document_id=document.id,
+                current_user_id=current_user.id,
+                current_user_name=current_user.user_name,
+                source_type=DocumentSourceType.WEB,
+                splitter_config=None,
+            )
+            if scheduled:
+                logger.info(
+                    "Scheduled RAG re-indexing for refreshed web document %s",
+                    document.id,
                 )
-
-                retriever_name = retrieval_config.get("retriever_name")
-                retriever_namespace = retrieval_config.get(
-                    "retriever_namespace", "default"
-                )
-                embedding_config = retrieval_config.get("embedding_config")
-
-                if retriever_name and embedding_config:
-                    embedding_model_name = embedding_config.get("model_name")
-                    embedding_model_namespace = embedding_config.get(
-                        "model_namespace", "default"
-                    )
-
-                    summary_enabled = spec.get("summaryEnabled", False)
-                    if knowledge_base.namespace == "default":
-                        index_owner_user_id = current_user.id
-                    else:
-                        index_owner_user_id = knowledge_base.user_id
-
-                    kb_index_info = KnowledgeBaseIndexInfo(
-                        index_owner_user_id=index_owner_user_id,
-                        summary_enabled=summary_enabled,
-                    )
-
-                    background_tasks.add_task(
-                        _index_document_background,
-                        knowledge_base_id=str(document.kind_id),
-                        attachment_id=attachment.id,
-                        retriever_name=retriever_name,
-                        retriever_namespace=retriever_namespace,
-                        embedding_model_name=embedding_model_name,
-                        embedding_model_namespace=embedding_model_namespace,
-                        user_id=current_user.id,
-                        user_name=current_user.user_name,
-                        splitter_config=None,
-                        document_id=document.id,
-                        kb_index_info=kb_index_info,
-                    )
-                    logger.info(
-                        f"Scheduled RAG re-indexing for refreshed web document {document.id}"
-                    )
 
         return WebDocumentRefreshResponse(
             success=True,

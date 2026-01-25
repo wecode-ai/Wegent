@@ -8,7 +8,6 @@ API endpoints for knowledge base and document management.
 
 import asyncio
 import logging
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
@@ -18,8 +17,6 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.core.config import settings
-from app.db.session import SessionLocal
 from app.models.user import User
 from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
@@ -39,19 +36,15 @@ from app.schemas.knowledge import (
     ResourceScope,
 )
 from app.schemas.knowledge_qa_history import QAHistoryResponse
-from app.schemas.rag import (
-    SemanticSplitterConfig,
-    SentenceSplitterConfig,
-    SplitterConfig,
-)
-from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.knowledge import (
     KnowledgeBaseQAService,
     KnowledgeService,
     knowledge_base_qa_service,
 )
-from app.services.rag.document_service import DocumentService
-from app.services.rag.storage.factory import create_storage_backend
+from app.services.knowledge.document_indexing import (
+    parse_splitter_config,
+    schedule_document_indexing,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -326,67 +319,23 @@ async def create_document(
             user_id=current_user.id,
         )
 
-        # If knowledge base has retrieval_config, trigger RAG indexing
-        # Skip RAG indexing for TABLE source type as table data should be queried in real-time
-        if knowledge_base and data.source_type != DocumentSourceType.TABLE:
-            spec = knowledge_base.json.get("spec", {})
-            retrieval_config = spec.get("retrievalConfig")
-
-            if retrieval_config:
-                # Extract configuration using snake_case format
-                retriever_name = retrieval_config.get("retriever_name")
-                retriever_namespace = retrieval_config.get(
-                    "retriever_namespace", "default"
+        if knowledge_base:
+            scheduled = schedule_document_indexing(
+                background_tasks=background_tasks,
+                knowledge_base=knowledge_base,
+                attachment_id=data.attachment_id or 0,
+                document_id=document.id,
+                current_user_id=current_user.id,
+                current_user_name=current_user.user_name,
+                source_type=data.source_type,
+                splitter_config=data.splitter_config,
+            )
+            if scheduled:
+                logger.info(
+                    "Scheduled RAG indexing for document %s in knowledge base %s",
+                    document.id,
+                    knowledge_base_id,
                 )
-                embedding_config = retrieval_config.get("embedding_config")
-
-                if retriever_name and embedding_config:
-                    # Extract embedding model info
-                    embedding_model_name = embedding_config.get("model_name")
-                    embedding_model_namespace = embedding_config.get(
-                        "model_namespace", "default"
-                    )
-
-                    # Pre-compute KB index info from already-fetched knowledge_base object
-                    # This avoids redundant DB query in the background task
-                    summary_enabled = spec.get("summaryEnabled", False)
-                    if knowledge_base.namespace == "default":
-                        index_owner_user_id = current_user.id
-                    else:
-                        # Group KB - use creator's user_id for shared index
-                        index_owner_user_id = knowledge_base.user_id
-
-                    kb_index_info = KnowledgeBaseIndexInfo(
-                        index_owner_user_id=index_owner_user_id,
-                        summary_enabled=summary_enabled,
-                    )
-
-                    # Schedule RAG indexing in background
-                    # Note: We use a synchronous function that creates its own event loop
-                    # because BackgroundTasks runs in a thread pool without an event loop.
-                    # We also don't pass db session because it will be closed
-                    # after the request ends. The background task creates its own session.
-                    background_tasks.add_task(
-                        _index_document_background,
-                        knowledge_base_id=str(knowledge_base_id),
-                        attachment_id=data.attachment_id,
-                        retriever_name=retriever_name,
-                        retriever_namespace=retriever_namespace,
-                        embedding_model_name=embedding_model_name,
-                        embedding_model_namespace=embedding_model_namespace,
-                        user_id=current_user.id,
-                        user_name=current_user.user_name,
-                        splitter_config=data.splitter_config,
-                        document_id=document.id,
-                        kb_index_info=kb_index_info,
-                    )
-                    logger.info(
-                        f"Scheduled RAG indexing for document {document.id} in knowledge base {knowledge_base_id}"
-                    )
-                else:
-                    logger.warning(
-                        f"Knowledge base {knowledge_base_id} has incomplete retrieval_config, skipping RAG indexing"
-                    )
 
         return KnowledgeDocumentResponse.model_validate(document)
     except ValueError as e:
@@ -394,351 +343,6 @@ async def create_document(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-
-
-@dataclass
-class KnowledgeBaseIndexInfo:
-    """Container for knowledge base information needed for background indexing.
-
-    This dataclass holds all KB-related information needed by the background
-    indexing task, avoiding redundant database queries in the background task.
-    """
-
-    index_owner_user_id: int
-    summary_enabled: bool = False
-
-
-def _get_kb_index_info_sync(
-    db: Session, knowledge_base_id: str, current_user_id: int
-) -> KnowledgeBaseIndexInfo:
-    """
-    Get knowledge base information needed for indexing in a single query.
-    Synchronous version for use in background tasks.
-
-    Returns index_owner_user_id and summary_enabled setting in one operation
-    to avoid redundant database queries.
-
-    For personal knowledge bases (namespace="default"), use the current user's ID.
-    For group knowledge bases (namespace!="default"), use the knowledge base creator's ID.
-
-    Args:
-        db: Database session
-        knowledge_base_id: Knowledge base ID (Kind.id as string)
-        current_user_id: Current requesting user's ID
-
-    Returns:
-        KnowledgeBaseIndexInfo containing index_owner_user_id and summary_enabled
-    """
-    from app.models.kind import Kind
-
-    try:
-        kb_id = int(knowledge_base_id)
-    except ValueError:
-        # If knowledge_base_id is not a valid integer, return default info
-        return KnowledgeBaseIndexInfo(
-            index_owner_user_id=current_user_id,
-            summary_enabled=False,
-        )
-
-    # Get the knowledge base (single query for all needed info)
-    kb = (
-        db.query(Kind)
-        .filter(
-            Kind.id == kb_id,
-            Kind.kind == "KnowledgeBase",
-            Kind.is_active == True,
-        )
-        .first()
-    )
-
-    if not kb:
-        # Knowledge base not found, return default info
-        return KnowledgeBaseIndexInfo(
-            index_owner_user_id=current_user_id,
-            summary_enabled=False,
-        )
-
-    # Extract summary_enabled from KB spec
-    spec = (kb.json or {}).get("spec", {})
-    summary_enabled = spec.get("summaryEnabled", False)
-
-    # Determine index_owner_user_id based on namespace
-    if kb.namespace == "default":
-        # Personal knowledge base - use current user's ID
-        index_owner_user_id = current_user_id
-    else:
-        # Group knowledge base - use KB creator's user_id for index naming
-        # This ensures all group members access the same index
-        index_owner_user_id = kb.user_id
-
-    return KnowledgeBaseIndexInfo(
-        index_owner_user_id=index_owner_user_id,
-        summary_enabled=summary_enabled,
-    )
-
-
-def _resolve_kb_index_info(
-    db: Session,
-    knowledge_base_id: str,
-    user_id: int,
-    kb_index_info: Optional[KnowledgeBaseIndexInfo] = None,
-) -> KnowledgeBaseIndexInfo:
-    """
-    Resolve knowledge base index information.
-
-    Use pre-computed KB info if provided, otherwise fetch from DB.
-    This optimization avoids redundant DB query when called from create_document.
-
-    Args:
-        db: Database session
-        knowledge_base_id: Knowledge base ID
-        user_id: User ID (the user who triggered the indexing)
-        kb_index_info: Pre-computed KB info (optional)
-
-    Returns:
-        KnowledgeBaseIndexInfo containing index_owner_user_id and summary_enabled
-    """
-    if kb_index_info:
-        logger.info(
-            f"Using pre-computed KB info: index_owner_user_id={kb_index_info.index_owner_user_id}, "
-            f"summary_enabled={kb_index_info.summary_enabled}"
-        )
-        return kb_index_info
-    else:
-        # Fallback: fetch KB info from database (for backward compatibility)
-        kb_info = _get_kb_index_info_sync(
-            db=db,
-            knowledge_base_id=knowledge_base_id,
-            current_user_id=user_id,
-        )
-        logger.info(
-            f"Fetched KB info from DB: index_owner_user_id={kb_info.index_owner_user_id}, "
-            f"summary_enabled={kb_info.summary_enabled}"
-        )
-        return kb_info
-
-
-def _parse_splitter_config(config_dict: dict) -> Optional[SplitterConfig]:
-    """
-    Parse a dictionary into the appropriate SplitterConfig type.
-
-    Since SplitterConfig is a Union type (Union[SemanticSplitterConfig, SentenceSplitterConfig]),
-    it cannot be instantiated directly. This function determines the correct type based on
-    the 'type' field in the config dictionary.
-
-    Args:
-        config_dict: Dictionary containing splitter configuration
-
-    Returns:
-        SemanticSplitterConfig or SentenceSplitterConfig instance, or None if invalid
-    """
-    if not config_dict:
-        return None
-
-    splitter_type = config_dict.get("type")
-    if splitter_type == "semantic":
-        return SemanticSplitterConfig(**config_dict)
-    elif splitter_type == "sentence":
-        return SentenceSplitterConfig(**config_dict)
-    else:
-        # Default to sentence splitter if type is not specified or unknown
-        logger.warning(
-            f"Unknown splitter type '{splitter_type}', defaulting to sentence splitter"
-        )
-        return SentenceSplitterConfig(**config_dict)
-
-
-def _trigger_document_summary_if_enabled(
-    db: Session,
-    document_id: int,
-    user_id: int,
-    user_name: str,
-    kb_info: KnowledgeBaseIndexInfo,
-):
-    """
-    Trigger document summary generation if enabled.
-
-    Check both global setting and knowledge base setting before triggering.
-    Summary generation failure should not affect indexing result.
-
-    Args:
-        db: Database session
-        document_id: Document ID
-        user_id: User ID (the user who triggered the indexing)
-        user_name: Username for placeholder resolution
-        kb_info: Knowledge base index information
-    """
-    try:
-        global_summary_enabled = getattr(settings, "SUMMARY_ENABLED", False)
-        if global_summary_enabled and kb_info.summary_enabled:
-            from app.services.knowledge import get_summary_service
-
-            summary_service = get_summary_service(db)
-            # Use a dedicated event loop and ensure proper cleanup
-            # to avoid "no running event loop" errors during garbage collection
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(
-                    summary_service.trigger_document_summary(
-                        document_id, user_id, user_name
-                    )
-                )
-            finally:
-                # Properly shutdown async generators and close the loop
-                loop.run_until_complete(loop.shutdown_asyncgens())
-                loop.close()
-            logger.info(
-                f"Triggered document summary generation for document {document_id}"
-            )
-        else:
-            logger.info(
-                f"Skipping document summary for {document_id}: summary not enabled "
-                f"(global={global_summary_enabled}, kb={kb_info.summary_enabled})"
-            )
-    except Exception as summary_error:
-        # Summary generation failure should not affect indexing result
-        logger.warning(
-            f"Failed to trigger document summary for {document_id}: {summary_error}"
-        )
-
-
-def _index_document_background(
-    knowledge_base_id: str,
-    attachment_id: int,
-    retriever_name: str,
-    retriever_namespace: str,
-    embedding_model_name: str,
-    embedding_model_namespace: str,
-    user_id: int,
-    user_name: str,
-    splitter_config: Optional[SplitterConfig] = None,
-    document_id: Optional[int] = None,
-    kb_index_info: Optional[KnowledgeBaseIndexInfo] = None,
-):
-    """
-    Background task for RAG document indexing.
-
-    This is a synchronous function that creates its own event loop to run
-    the async indexing code. This is necessary because FastAPI's BackgroundTasks
-    runs tasks in a thread pool, which doesn't have an event loop.
-
-    This function also creates its own database session because the request-scoped
-    session will be closed after the HTTP response is sent.
-
-    Args:
-        knowledge_base_id: Knowledge base ID
-        attachment_id: Attachment ID
-        retriever_name: Retriever name
-        retriever_namespace: Retriever namespace
-        embedding_model_name: Embedding model name
-        embedding_model_namespace: Embedding model namespace
-        user_id: User ID (the user who triggered the indexing)
-        user_name: Username for placeholder resolution
-        splitter_config: Optional splitter configuration
-        document_id: Optional document ID to use as doc_ref
-        kb_index_info: Pre-computed KB info (avoids redundant DB query if provided)
-    """
-    logger.info(
-        f"Background task started: indexing document for knowledge base {knowledge_base_id}, "
-        f"attachment {attachment_id}"
-    )
-
-    # Create a new database session for the background task
-    db = SessionLocal()
-    try:
-        # Resolve KB index info (use pre-computed or fetch from DB)
-        kb_info = _resolve_kb_index_info(
-            db=db,
-            knowledge_base_id=knowledge_base_id,
-            user_id=user_id,
-            kb_index_info=kb_index_info,
-        )
-
-        # Get retriever from database
-        retriever_crd = retriever_kinds_service.get_retriever(
-            db=db,
-            user_id=user_id,
-            name=retriever_name,
-            namespace=retriever_namespace,
-        )
-
-        if not retriever_crd:
-            raise ValueError(
-                f"Retriever {retriever_name} (namespace: {retriever_namespace}) not found"
-            )
-
-        logger.info(f"Found retriever: {retriever_name}")
-
-        # Create storage backend from retriever
-        storage_backend = create_storage_backend(retriever_crd)
-        logger.info(f"Created storage backend: {type(storage_backend).__name__}")
-
-        # Create document service
-        doc_service = DocumentService(storage_backend=storage_backend)
-
-        # Use index_owner_user_id for per_user index strategy to ensure
-        # all group members access the same index created by the KB owner
-        # Use a dedicated event loop and ensure proper cleanup
-        # to avoid "no running event loop" errors during garbage collection
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(
-                doc_service.index_document(
-                    knowledge_id=knowledge_base_id,
-                    embedding_model_name=embedding_model_name,
-                    embedding_model_namespace=embedding_model_namespace,
-                    user_id=kb_info.index_owner_user_id,
-                    db=db,
-                    attachment_id=attachment_id,
-                    splitter_config=splitter_config,
-                    document_id=document_id,
-                )
-            )
-        finally:
-            # Properly shutdown async generators and close the loop
-            loop.run_until_complete(loop.shutdown_asyncgens())
-            loop.close()
-        logger.info(
-            f"Successfully indexed document for knowledge base {knowledge_base_id}: {result}"
-        )
-
-        # Update document is_active to True and status to enabled after successful indexing
-        if document_id:
-            from app.models.knowledge import DocumentStatus, KnowledgeDocument
-
-            doc = (
-                db.query(KnowledgeDocument)
-                .filter(KnowledgeDocument.id == document_id)
-                .first()
-            )
-            if doc:
-                doc.is_active = True
-                doc.status = DocumentStatus.ENABLED
-                db.commit()
-                logger.info(
-                    f"Updated document {document_id} is_active to True and status to enabled after successful indexing"
-                )
-
-                # Trigger document summary generation if enabled
-                _trigger_document_summary_if_enabled(
-                    db=db,
-                    document_id=document_id,
-                    user_id=user_id,
-                    user_name=user_name,
-                    kb_info=kb_info,
-                )
-    except Exception as e:
-        logger.error(
-            f"Failed to index document for knowledge base {knowledge_base_id}: {str(e)}",
-            exc_info=True,
-        )
-        # Don't raise exception to avoid blocking document creation
-    finally:
-        # Always close the database session
-        db.close()
-        logger.info(f"Background task completed for knowledge base {knowledge_base_id}")
 
 
 # Document-specific endpoints (without knowledge_base_id in path)
@@ -834,8 +438,6 @@ async def update_document_content(
     Returns:
         Success message with document_id
     """
-    from app.models.knowledge import KnowledgeDocument
-
     try:
         # Update document content via service
         document = KnowledgeService.update_document_content(
@@ -859,58 +461,25 @@ async def update_document_content(
         )
 
         if knowledge_base:
-            spec = knowledge_base.json.get("spec", {})
-            retrieval_config = spec.get("retrievalConfig")
-
-            if retrieval_config:
-                # Extract configuration using snake_case format
-                retriever_name = retrieval_config.get("retriever_name")
-                retriever_namespace = retrieval_config.get(
-                    "retriever_namespace", "default"
+            scheduled = schedule_document_indexing(
+                background_tasks=background_tasks,
+                knowledge_base=knowledge_base,
+                attachment_id=document.attachment_id,
+                document_id=document.id,
+                current_user_id=current_user.id,
+                current_user_name=current_user.user_name,
+                source_type=DocumentSourceType(document.source_type),
+                splitter_config=(
+                    parse_splitter_config(document.splitter_config)
+                    if document.splitter_config
+                    else None
+                ),
+            )
+            if scheduled:
+                logger.info(
+                    "Scheduled RAG re-indexing for document %s after content update",
+                    document.id,
                 )
-                embedding_config = retrieval_config.get("embedding_config")
-
-                if retriever_name and embedding_config:
-                    # Extract embedding model info
-                    embedding_model_name = embedding_config.get("model_name")
-                    embedding_model_namespace = embedding_config.get(
-                        "model_namespace", "default"
-                    )
-
-                    # Pre-compute KB index info
-                    summary_enabled = spec.get("summaryEnabled", False)
-                    if knowledge_base.namespace == "default":
-                        index_owner_user_id = current_user.id
-                    else:
-                        index_owner_user_id = knowledge_base.user_id
-
-                    kb_index_info = KnowledgeBaseIndexInfo(
-                        index_owner_user_id=index_owner_user_id,
-                        summary_enabled=summary_enabled,
-                    )
-
-                    # Schedule RAG re-indexing in background
-                    background_tasks.add_task(
-                        _index_document_background,
-                        knowledge_base_id=str(document.kind_id),
-                        attachment_id=document.attachment_id,
-                        retriever_name=retriever_name,
-                        retriever_namespace=retriever_namespace,
-                        embedding_model_name=embedding_model_name,
-                        embedding_model_namespace=embedding_model_namespace,
-                        user_id=current_user.id,
-                        user_name=current_user.user_name,
-                        splitter_config=(
-                            _parse_splitter_config(document.splitter_config)
-                            if document.splitter_config
-                            else None
-                        ),
-                        document_id=document.id,
-                        kb_index_info=kb_index_info,
-                    )
-                    logger.info(
-                        f"Scheduled RAG re-indexing for document {document.id} after content update"
-                    )
 
         return {
             "success": True,
