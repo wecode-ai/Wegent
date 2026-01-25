@@ -14,7 +14,7 @@ import { CommandPalette } from './CommandPalette'
 import { InlineDiff } from './InlineDiff'
 import { useCommandPalette } from './hooks/useCommandPalette'
 import { useAIAssistAPI } from './hooks/useAIAssistAPI'
-import type { EditorSelection, Position, EditorRef } from './types'
+import type { EditorSelection } from './types'
 
 interface AIAssistEditorWrapperProps {
   /** The CodeMirror EditorView instance */
@@ -40,8 +40,8 @@ function AIAssistEditorInner({
   className,
 }: AIAssistEditorWrapperProps) {
   const { t } = useTranslation('knowledge')
-  const { state, editorRef, setSelection, startOperation } = useAIAssist()
-  const { processRequest, cancelRequest } = useAIAssistAPI({ knowledgeBaseId })
+  const { state, editorRef, setSelection } = useAIAssist()
+  const { processRequest, cancelRequest: _cancelRequest } = useAIAssistAPI({ knowledgeBaseId })
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Command palette state
@@ -119,7 +119,9 @@ function AIAssistEditorInner({
   useEffect(() => {
     if (!editorView) return
 
-    const updateListener = EditorView.updateListener.of((update) => {
+    // Note: EditorView.updateListener.of() creates an extension, not a direct listener
+    // We use polling instead since we can't dynamically add extensions to an existing view
+    const _updateListener = EditorView.updateListener.of((update) => {
       if (update.selectionSet || update.docChanged) {
         const { from, to } = update.state.selection.main
 
