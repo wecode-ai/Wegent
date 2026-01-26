@@ -431,15 +431,18 @@ export function useChatAreaState({
       setExternalApiParams({})
       setAppMode(undefined)
 
-      // Reset workspace override to use new team's default setting
-      setRequiresWorkspaceOverride(null)
+      // Only reset workspace override when there's no selected task (new chat scenario)
+      // When loading an existing task, preserve the task's repository setting
+      if (!selectedTaskDetail) {
+        setRequiresWorkspaceOverride(null)
 
-      // Clear repository and branch if the new team doesn't require a workspace
-      // This handles switching from code agents (ClaudeCode, Agno) to chat-only agents (Chat, Dify)
-      if (team && !teamRequiresWorkspace(team)) {
-        console.log('[ChatArea] Team does not require workspace, clearing repo and branch')
-        setSelectedRepo(null)
-        setSelectedBranch(null)
+        // Clear repository and branch if the new team doesn't require a workspace
+        // This handles switching from code agents (ClaudeCode, Agno) to chat-only agents (Chat, Dify)
+        if (team && !teamRequiresWorkspace(team)) {
+          console.log('[ChatArea] Team does not require workspace, clearing repo and branch')
+          setSelectedRepo(null)
+          setSelectedBranch(null)
+        }
       }
 
       // Check if the selected team is the same as the default team
@@ -450,7 +453,7 @@ export function useChatAreaState({
         setIsUsingDefaultTeam(false)
       }
     },
-    [defaultTeam]
+    [defaultTeam, selectedTaskDetail]
   )
 
   // Save repository preference when it changes
