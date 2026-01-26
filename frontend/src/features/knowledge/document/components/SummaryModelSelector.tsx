@@ -97,11 +97,11 @@ export function SummaryModelSelector({
   const getTypeLabel = (type: string) => {
     switch (type) {
       case 'public':
-        return t('common:model.typePublic', 'Public')
+        return t('common:models.public')
       case 'user':
-        return t('common:model.typePersonal', 'Personal')
+        return t('common:models.my_models')
       case 'group':
-        return t('common:model.typeGroup', 'Group')
+        return t('common:models.group')
       default:
         return type
     }
