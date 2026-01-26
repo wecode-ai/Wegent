@@ -138,6 +138,59 @@ function formatDateTime(dateString: string | undefined): string {
   }
 }
 
+// Parse diff error message to determine error type for user-friendly display
+type DiffErrorType =
+  | 'branch_not_found'
+  | 'access_denied'
+  | 'server_error'
+  | 'network_error'
+  | 'unknown_error'
+
+function parseDiffErrorType(errorMessage: string): DiffErrorType {
+  const lowerError = errorMessage.toLowerCase()
+
+  // 404 errors - branch/resource not found
+  if (lowerError.includes('404') || lowerError.includes('not found')) {
+    return 'branch_not_found'
+  }
+
+  // 401/403 errors - access denied
+  if (
+    lowerError.includes('401') ||
+    lowerError.includes('403') ||
+    lowerError.includes('unauthorized') ||
+    lowerError.includes('forbidden') ||
+    lowerError.includes('access denied')
+  ) {
+    return 'access_denied'
+  }
+
+  // 5xx errors - server errors
+  if (
+    lowerError.includes('500') ||
+    lowerError.includes('502') ||
+    lowerError.includes('503') ||
+    lowerError.includes('504') ||
+    lowerError.includes('server error') ||
+    lowerError.includes('bad gateway') ||
+    lowerError.includes('service unavailable')
+  ) {
+    return 'server_error'
+  }
+
+  // Network errors
+  if (
+    lowerError.includes('network') ||
+    lowerError.includes('timeout') ||
+    lowerError.includes('econnrefused') ||
+    lowerError.includes('fetch failed')
+  ) {
+    return 'network_error'
+  }
+
+  return 'unknown_error'
+}
+
 export default function Workbench({
   isOpen,
   onClose,
@@ -214,7 +267,11 @@ export default function Workbench({
   }, [workbenchData, cachedWorkbenchData])
 
   const loadDiffData = async () => {
-    if (!cachedWorkbenchData || !cachedWorkbenchData.git_info.target_branch) {
+    if (
+      !cachedWorkbenchData ||
+      !cachedWorkbenchData.git_info.source_branch ||
+      !cachedWorkbenchData.git_info.target_branch
+    ) {
       return
     }
 
@@ -232,7 +289,6 @@ export default function Workbench({
       setDiffLoadError(null)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
-      console.error('Failed to load diff data:', errorMessage)
       setDiffLoadError(errorMessage)
       // Don't set diffData - let error state prevent retry
     } finally {
@@ -245,6 +301,7 @@ export default function Workbench({
   useEffect(() => {
     if (
       cachedWorkbenchData?.status === 'completed' &&
+      cachedWorkbenchData.git_info.source_branch &&
       cachedWorkbenchData.git_info.target_branch &&
       !diffData &&
       !isDiffLoading &&
@@ -255,6 +312,7 @@ export default function Workbench({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     cachedWorkbenchData?.status,
+    cachedWorkbenchData?.git_info.source_branch,
     cachedWorkbenchData?.git_info.target_branch,
     diffData,
     isDiffLoading,
@@ -273,19 +331,24 @@ export default function Workbench({
     )
   }
 
+  // Check if task has a git repository
+  const hasRepository = Boolean(displayData?.repository)
+
   const navigation = [
     {
       name: t('tasks:workbench.overview'),
       value: 'overview' as const,
       current: activeTab === 'overview',
     },
+    // Files Changed tab - always shown for code tasks
     {
       name: t('tasks:workbench.files_changed'),
       value: 'files' as const,
       current: activeTab === 'files',
-      badge: shouldShowDiffData()
-        ? diffData?.files?.length || 0
-        : displayData?.file_changes?.length || 0,
+      badge:
+        hasRepository && shouldShowDiffData()
+          ? diffData?.files?.length || 0
+          : displayData?.file_changes?.length || 0,
     },
     // Preview tab - only shown when app data is available
     ...(app
@@ -868,7 +931,12 @@ export default function Workbench({
                 ) : activeTab === 'files' ? (
                   // Files Changed Tab - with integrated diff support
                   <>
-                    {isDiffLoading ? (
+                    {!hasRepository ? (
+                      // No repository - show friendly message
+                      <div className="rounded-lg border border-border bg-surface p-8 text-center">
+                        <p className="text-text-muted">{t('tasks:workbench.no_repository')}</p>
+                      </div>
+                    ) : isDiffLoading ? (
                       // Loading diff data
                       <div className="flex items-center justify-center h-64">
                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
@@ -885,17 +953,44 @@ export default function Workbench({
                         showDiffContent={true}
                       />
                     ) : displayData?.file_changes && displayData.file_changes.length > 0 ? (
-                      // Show simple file changes without diff content, with error indicator if present
-                      <div className="relative">
+                      // Show simple file changes without diff content, with error banner if present
+                      <div className="space-y-4">
                         {diffLoadError && (
-                          <div className="absolute top-0 right-0 z-10 p-2">
-                            <button
-                              onClick={() => setShowErrorDialog(true)}
-                              className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors"
-                              title={t('tasks:workbench.view_error_details')}
-                            >
-                              <ExclamationTriangleIcon className="w-5 h-5" />
-                            </button>
+                          <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-4">
+                            <div className="flex items-start gap-3">
+                              <ExclamationTriangleIcon className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                              <div className="flex-1 min-w-0">
+                                <h4 className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                                  {t('tasks:workbench.diff_error.title')}
+                                </h4>
+                                <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">
+                                  {t(
+                                    `tasks:workbench.diff_error.${parseDiffErrorType(diffLoadError)}`
+                                  )}
+                                </p>
+                                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                                  {t('tasks:workbench.diff_error.hint_file_list')}
+                                </p>
+                                <div className="mt-3 flex items-center gap-3">
+                                  <button
+                                    onClick={() => {
+                                      setDiffLoadError(null)
+                                      setDiffData(null)
+                                      loadDiffData()
+                                    }}
+                                    className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-amber-800 dark:text-amber-200 bg-amber-100 dark:bg-amber-800/30 hover:bg-amber-200 dark:hover:bg-amber-800/50 rounded-md transition-colors"
+                                  >
+                                    {t('tasks:workbench.retry')}
+                                  </button>
+                                  <button
+                                    onClick={() => setShowErrorDialog(true)}
+                                    className="text-xs text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200 underline"
+                                  >
+                                    {t('tasks:workbench.view_error_details')}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         )}
                         <DiffViewer
@@ -905,6 +1000,37 @@ export default function Workbench({
                           fileChanges={displayData.file_changes}
                           showDiffContent={false}
                         />
+                      </div>
+                    ) : diffLoadError ? (
+                      // Error but no file changes to show - display full error state
+                      <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-6">
+                        <div className="flex flex-col items-center text-center">
+                          <ExclamationTriangleIcon className="w-10 h-10 text-amber-600 dark:text-amber-400 mb-3" />
+                          <h4 className="text-base font-medium text-amber-800 dark:text-amber-200">
+                            {t('tasks:workbench.diff_error.title')}
+                          </h4>
+                          <p className="mt-2 text-sm text-amber-700 dark:text-amber-300 max-w-md">
+                            {t(`tasks:workbench.diff_error.${parseDiffErrorType(diffLoadError)}`)}
+                          </p>
+                          <div className="mt-4 flex items-center gap-3">
+                            <button
+                              onClick={() => {
+                                setDiffLoadError(null)
+                                setDiffData(null)
+                                loadDiffData()
+                              }}
+                              className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-md transition-colors"
+                            >
+                              {t('tasks:workbench.retry')}
+                            </button>
+                            <button
+                              onClick={() => setShowErrorDialog(true)}
+                              className="text-sm text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200 underline"
+                            >
+                              {t('tasks:workbench.view_error_details')}
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     ) : (
                       // No changes found

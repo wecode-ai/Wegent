@@ -50,6 +50,15 @@
     "view_error_details": "View error details",
     "error_details": "Error Details",
     "retry": "Retry",
+    "diff_error": {
+      "title": "Unable to load code diff",
+      "branch_not_found": "The branch was not found in the repository. It may have been deleted or renamed.",
+      "access_denied": "Access denied. Please check your repository permissions.",
+      "server_error": "The Git server is temporarily unavailable. Please try again later.",
+      "network_error": "Network error. Please check your connection and try again.",
+      "unknown_error": "An unexpected error occurred while loading the diff.",
+      "hint_file_list": "You can still see the list of changed files below."
+    },
     "additions": "Additions",
     "deletions": "Deletions",
     "expand_all": "Expand All",
@@ -57,7 +66,8 @@
     "changes": "Changes",
     "loading_diff_message": "Loading diff...",
     "no_changes_between_branches": "No changes found between branches",
-    "execution_timeline": "Execution Timeline"
+    "execution_timeline": "Execution Timeline",
+    "no_repository": "This task is not associated with a code repository"
   },
   "thinking": {
     "execution_completed": "Execution Completed",
