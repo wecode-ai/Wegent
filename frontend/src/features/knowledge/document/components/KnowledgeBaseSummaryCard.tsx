@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { BookOpen, FileText, Info, AlertTriangle, RefreshCw } from 'lucide-react'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -38,6 +38,15 @@ export function KnowledgeBaseSummaryCard({
   const { t } = useTranslation('knowledge')
   const [isRetrying, setIsRetrying] = useState(false)
 
+  // Track component mounted state to prevent updates after unmount
+  const isMountedRef = useRef(true)
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
+
   const longSummary = knowledgeBase.summary?.long_summary
   const shortSummary = knowledgeBase.summary?.short_summary
   const topics = knowledgeBase.summary?.topics
@@ -58,7 +67,9 @@ export function KnowledgeBaseSummaryCard({
       // Refresh knowledge base details after a short delay
       if (onRefresh) {
         setTimeout(() => {
-          onRefresh()
+          if (isMountedRef.current) {
+            onRefresh()
+          }
         }, 2000)
       }
     } catch (error) {
@@ -68,7 +79,9 @@ export function KnowledgeBaseSummaryCard({
         description: t('chatPage.summaryFailed'),
       })
     } finally {
-      setIsRetrying(false)
+      if (isMountedRef.current) {
+        setIsRetrying(false)
+      }
     }
   }
 

@@ -137,11 +137,6 @@ export function KnowledgeDocumentPage() {
     }
 
     saveGlobalModelPreference(knowledgeDefaultTeamId, preference)
-    console.log(
-      '[KnowledgeDocumentPage] Saved summary model to preference:',
-      knowledgeDefaultTeamId,
-      preference.modelName
-    )
   }
 
   // Load user's groups

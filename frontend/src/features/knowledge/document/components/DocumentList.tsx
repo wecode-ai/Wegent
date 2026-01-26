@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import {
   ArrowLeft,
   Upload,
@@ -88,6 +88,15 @@ export function DocumentList({
   // Track if summary is being retried
   const [isSummaryRetrying, setIsSummaryRetrying] = useState(false)
 
+  // Track component mounted state to prevent updates after unmount
+  const isMountedRef = useRef(true)
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
+
   // Check if summary generation failed
   const isSummaryFailed = knowledgeBase.summary?.status === 'failed'
   const summaryError = knowledgeBase.summary?.error
@@ -103,7 +112,9 @@ export function DocumentList({
       // Refresh knowledge base details after a short delay
       if (onRefreshKnowledgeBase) {
         setTimeout(() => {
-          onRefreshKnowledgeBase()
+          if (isMountedRef.current) {
+            onRefreshKnowledgeBase()
+          }
         }, 2000)
       }
     } catch (err) {
@@ -113,7 +124,9 @@ export function DocumentList({
         description: t('chatPage.summaryFailed'),
       })
     } finally {
-      setIsSummaryRetrying(false)
+      if (isMountedRef.current) {
+        setIsSummaryRetrying(false)
+      }
     }
   }
 

@@ -43,8 +43,9 @@ export function SummaryModelSelector({
   const [open, setOpen] = useState(false)
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [loading, setLoading] = useState(false)
-  // Track if auto-preselect has been attempted to avoid repeated attempts
-  const hasAttemptedPreselect = useRef(false)
+  // Track the last team ID for which we attempted preselection
+  // This allows re-attempting when the team ID changes or dialog reopens
+  const attemptedTeamIdRef = useRef<number | null>(null)
 
   // Fetch models on mount
   useEffect(() => {
@@ -75,21 +76,20 @@ export function SummaryModelSelector({
   // 1. Models are loaded
   // 2. No value is currently selected
   // 3. Valid knowledgeDefaultTeamId is provided
-  // 4. Haven't attempted preselection yet
+  // 4. Haven't attempted preselection for this team ID yet (allows re-attempting when team changes)
   useEffect(() => {
-    // Skip if already attempted, value exists, still loading, or no teamId
-    if (
-      hasAttemptedPreselect.current ||
-      value ||
-      loading ||
-      models.length === 0 ||
-      !knowledgeDefaultTeamId
-    ) {
+    // Skip if value exists, still loading, or no teamId
+    if (value || loading || models.length === 0 || !knowledgeDefaultTeamId) {
       return
     }
 
-    // Mark as attempted to prevent repeated attempts
-    hasAttemptedPreselect.current = true
+    // Skip if we already attempted preselection for this team ID
+    if (attemptedTeamIdRef.current === knowledgeDefaultTeamId) {
+      return
+    }
+
+    // Mark this team ID as attempted
+    attemptedTeamIdRef.current = knowledgeDefaultTeamId
 
     // Read cached preference from localStorage
     const cachedPreference = getGlobalModelPreference(knowledgeDefaultTeamId)
@@ -117,11 +117,6 @@ export function SummaryModelSelector({
         namespace: matchedModel.namespace || 'default',
         type: matchedModel.type,
       })
-      console.log(
-        '[SummaryModelSelector] Auto-preselected model from cache:',
-        matchedModel.name,
-        matchedModel.type
-      )
     }
   }, [models, value, loading, knowledgeDefaultTeamId, onChange])
 
