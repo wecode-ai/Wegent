@@ -39,6 +39,8 @@ interface EnhancedMarkdownProps {
   /** Custom components to override default rendering */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   components?: Record<string, React.ComponentType<any>>
+  /** Callback to request AI fix for Mermaid code. Returns fixed code or null if failed. */
+  onMermaidFixRequest?: (code: string, error: string) => Promise<string | null>
 }
 
 /**
@@ -370,6 +372,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   source,
   theme,
   components,
+  onMermaidFixRequest,
 }: EnhancedMarkdownProps) {
   // Pre-process source to convert \[...\] and \(...\) to dollar syntax
   const processedSource = useMemo(() => preprocessLatexSyntax(source), [source])
@@ -541,7 +544,13 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     <div className="wmde-markdown enhanced-markdown" data-color-mode={theme}>
       {contentParts.map((part, index) => {
         if (part.type === 'mermaid') {
-          return <MermaidDiagram key={`mermaid-${index}`} code={part.content} />
+          return (
+            <MermaidDiagram
+              key={`mermaid-${index}`}
+              code={part.content}
+              onRequestFix={onMermaidFixRequest}
+            />
+          )
         }
 
         if (part.type === 'latex') {

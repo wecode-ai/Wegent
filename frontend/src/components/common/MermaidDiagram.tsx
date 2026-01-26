@@ -18,6 +18,8 @@ import {
   X,
   FileImage,
   Code,
+  Wand2,
+  Loader2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -27,6 +29,8 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 export interface MermaidDiagramProps {
   code: string
   className?: string
+  /** Callback to request AI fix for Mermaid code. Returns fixed code or null if failed. */
+  onRequestFix?: (code: string, error: string) => Promise<string | null>
 }
 
 /**
@@ -40,7 +44,7 @@ export interface MermaidDiagramProps {
  * - Fullscreen modal view
  * - Error handling with fallback to raw code
  */
-export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
+export function MermaidDiagram({ code, className = '', onRequestFix }: MermaidDiagramProps) {
   const { t } = useTranslation()
   const { theme } = useTheme()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -62,8 +66,24 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
   const [showCode, setShowCode] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
 
+  // Auto-fix state
+  const [currentCode, setCurrentCode] = useState(code)
+  const [retryCount, setRetryCount] = useState(0)
+  const [isFixing, setIsFixing] = useState(false)
+  const [originalError, setOriginalError] = useState<string>('')
+  const MAX_RETRIES = 2
+
   // Generate unique ID for this diagram instance
   const diagramId = useMemo(() => `mermaid-${Math.random().toString(36).substr(2, 9)}`, [])
+
+  // Reset state when code prop changes
+  useEffect(() => {
+    setCurrentCode(code)
+    setRetryCount(0)
+    setIsFixing(false)
+    setOriginalError('')
+    setError('')
+  }, [code])
 
   // Mermaid theme configuration based on current theme
   const getMermaidConfig = useCallback(() => {
@@ -295,7 +315,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
     let isMounted = true
 
     const renderDiagram = async () => {
-      if (!code.trim()) {
+      if (!currentCode.trim()) {
         setError('Empty diagram code')
         setIsLoading(false)
         return
@@ -312,7 +332,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
         mermaid.initialize(getMermaidConfig())
 
         // Render the diagram
-        const { svg } = await mermaid.render(diagramId, code.trim())
+        const { svg } = await mermaid.render(diagramId, currentCode.trim())
 
         if (isMounted) {
           // Get original dimensions
@@ -332,13 +352,43 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
           const scaledSvg = scaleSvg(sanitizedSvg, dimensions, optimalScale)
           setSvgContent(scaledSvg)
           setIsLoading(false)
+
+          // Reset retry state on successful render
+          setRetryCount(0)
+          setOriginalError('')
         }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Unknown error'
 
         if (isMounted) {
           console.error('Mermaid render error:', errorMessage)
-          setError(errorMessage)
+
+          // Store original error on first failure
+          if (retryCount === 0) {
+            setOriginalError(errorMessage)
+          }
+
+          // Attempt auto-fix if callback is available and within retry limit
+          if (retryCount < MAX_RETRIES && onRequestFix && !isFixing) {
+            setIsFixing(true)
+            try {
+              const fixedCode = await onRequestFix(currentCode, errorMessage)
+              if (fixedCode && fixedCode !== currentCode) {
+                // Update code and increment retry count
+                // The useEffect will re-run with the new code
+                setCurrentCode(fixedCode)
+                setRetryCount(prev => prev + 1)
+                setIsFixing(false)
+                return // Let the effect re-run with new code
+              }
+            } catch {
+              // Fix request failed, fall through to show error
+            }
+            setIsFixing(false)
+          }
+
+          // Show error (use original error message)
+          setError(originalError || errorMessage)
           setIsLoading(false)
         }
       }
@@ -350,7 +400,7 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
       isMounted = false
     }
   }, [
-    code,
+    currentCode,
     theme,
     diagramId,
     getMermaidConfig,
@@ -358,6 +408,10 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
     getSvgDimensions,
     calculateInitialScale,
     scaleSvg,
+    retryCount,
+    onRequestFix,
+    isFixing,
+    originalError,
   ])
 
   // Update SVG when scale changes
@@ -473,6 +527,26 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
       console.error('Failed to copy:', err)
     }
   }, [code])
+
+  // Handle manual fix request (when user clicks "Try to Fix" button)
+  const handleManualFix = useCallback(async () => {
+    if (!onRequestFix || isFixing) return
+
+    setIsFixing(true)
+    setRetryCount(0) // Reset retry count for manual fix
+
+    try {
+      const fixedCode = await onRequestFix(code, originalError || error)
+      if (fixedCode && fixedCode !== code) {
+        setCurrentCode(fixedCode)
+        setError('') // Clear error to trigger re-render
+      }
+    } catch {
+      // Keep current error state
+    } finally {
+      setIsFixing(false)
+    }
+  }, [onRequestFix, isFixing, code, originalError, error])
 
   // Toggle code view modal
   const toggleCodeView = useCallback(() => {
@@ -646,11 +720,34 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
         <div className="p-4 bg-surface overflow-auto">
           <pre className="text-sm font-mono text-text-primary whitespace-pre-wrap">{code}</pre>
         </div>
-        {/* Copy button for error state */}
-        <div className="flex justify-end px-4 py-2 border-t border-red-200 dark:border-red-800">
+        {/* Action buttons for error state */}
+        <div className="flex justify-end gap-2 px-4 py-2 border-t border-red-200 dark:border-red-800">
+          {/* Try to Fix button - only show if onRequestFix callback is available */}
+          {onRequestFix && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleManualFix}
+              disabled={isFixing}
+              className="text-primary border-primary hover:bg-primary/10"
+            >
+              {isFixing ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  {t('chat:mermaid.fixing') || 'Fixing...'}
+                </>
+              ) : (
+                <>
+                  <Wand2 className="w-4 h-4 mr-1" />
+                  {t('chat:mermaid.tryFix') || 'Try to Fix'}
+                </>
+              )}
+            </Button>
+          )}
+          {/* Copy code button */}
           <Button variant="ghost" size="sm" onClick={copyCode} className="text-text-secondary">
-            {copied ? <Check className="w-4 h-4 mr-1" /> : <Copy className="w-4 h-4 mr-1" />}
-            {copied
+            {codeCopied ? <Check className="w-4 h-4 mr-1" /> : <Copy className="w-4 h-4 mr-1" />}
+            {codeCopied
               ? t('chat:mermaid.copied') || 'Copied'
               : t('chat:mermaid.copyCode') || 'Copy Code'}
           </Button>
