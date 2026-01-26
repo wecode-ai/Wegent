@@ -44,6 +44,8 @@ interface CreateKnowledgeBaseDialogProps {
   groupName?: string
   /** Knowledge base type selected from dropdown menu (read-only in dialog) */
   kbType?: KnowledgeBaseType
+  /** Optional team ID for reading cached model preference (only used for notebook type) */
+  knowledgeDefaultTeamId?: number | null
 }
 
 export function CreateKnowledgeBaseDialog({
@@ -54,6 +56,7 @@ export function CreateKnowledgeBaseDialog({
   scope,
   groupName,
   kbType = 'notebook',
+  knowledgeDefaultTeamId,
 }: CreateKnowledgeBaseDialogProps) {
   const { t } = useTranslation()
   const [name, setName] = useState('')
@@ -271,6 +274,7 @@ export function CreateKnowledgeBaseDialog({
                       setSummaryModelError('')
                     }}
                     error={summaryModelError}
+                    knowledgeDefaultTeamId={isNotebook ? knowledgeDefaultTeamId : undefined}
                   />
                 </div>
               )}

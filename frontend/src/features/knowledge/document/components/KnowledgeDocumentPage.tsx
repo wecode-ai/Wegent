@@ -315,6 +315,7 @@ export function KnowledgeDocumentPage() {
         scope={createForGroup ? 'group' : 'personal'}
         groupName={createForGroup || undefined}
         kbType={createKbType}
+        knowledgeDefaultTeamId={knowledgeDefaultTeamId}
       />
 
       <EditKnowledgeBaseDialog
@@ -323,6 +324,7 @@ export function KnowledgeDocumentPage() {
         knowledgeBase={editingKb}
         onSubmit={handleUpdate}
         loading={personalKb.loading}
+        knowledgeDefaultTeamId={knowledgeDefaultTeamId}
       />
 
       <DeleteKnowledgeBaseDialog

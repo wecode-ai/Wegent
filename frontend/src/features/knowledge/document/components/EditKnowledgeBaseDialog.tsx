@@ -34,6 +34,8 @@ interface EditKnowledgeBaseDialogProps {
   knowledgeBase: KnowledgeBase | null
   onSubmit: (data: KnowledgeBaseUpdate) => Promise<void>
   loading?: boolean
+  /** Optional team ID for reading cached model preference (only used for notebook type without existing summary_model_ref) */
+  knowledgeDefaultTeamId?: number | null
 }
 
 export function EditKnowledgeBaseDialog({
@@ -42,6 +44,7 @@ export function EditKnowledgeBaseDialog({
   knowledgeBase,
   onSubmit,
   loading,
+  knowledgeDefaultTeamId,
 }: EditKnowledgeBaseDialogProps) {
   const { t } = useTranslation()
   const [name, setName] = useState('')
@@ -205,6 +208,13 @@ export function EditKnowledgeBaseDialog({
                       setSummaryModelError('')
                     }}
                     error={summaryModelError}
+                    knowledgeDefaultTeamId={
+                      // Only pass teamId for notebook type without existing summary_model_ref
+                      // Priority: existing KB config > cached preference
+                      knowledgeBase?.kb_type === 'notebook' && !knowledgeBase?.summary_model_ref
+                        ? knowledgeDefaultTeamId
+                        : undefined
+                    }
                   />
                 </div>
               )}
