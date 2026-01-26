@@ -81,18 +81,52 @@ async def lifespan(app):
             f"Executor binary extraction error: {e}, custom base images may not work"
         )
 
-    # Start the task scheduler
-    logger.info("Initializing task scheduler...")
-    scheduler_instance = TaskScheduler()
+    # Check dispatch mode to determine whether to start scheduler or queue consumer
+    import os
 
-    # Start the scheduler in a separate thread
-    scheduler_thread = threading.Thread(
-        target=start_scheduler, args=(scheduler_instance,)
-    )
-    scheduler_thread.daemon = True
-    scheduler_thread.start()
+    dispatch_mode = os.getenv("TASK_DISPATCH_MODE", "pull")
+    service_pool = os.getenv("SERVICE_POOL", "default")
 
-    logger.info("Task scheduler started successfully")
+    scheduler_instance = None
+    scheduler_thread = None
+    task_consumer = None
+    offline_consumer = None
+
+    if dispatch_mode == "push":
+        # Push mode: start task queue consumers for async processing
+        # Start both online (immediate) and offline (21:00-08:00) consumers
+        logger.info(
+            f"Push mode enabled: starting task queue consumers for pool '{service_pool}'"
+        )
+        try:
+            from executor_manager.services.task_queue_consumer import TaskQueueConsumer
+
+            # Online consumer - processes tasks immediately
+            task_consumer = TaskQueueConsumer(service_pool, queue_type="online")
+            task_consumer.start()
+            logger.info(f"Online task queue consumer started for pool '{service_pool}'")
+
+            # Offline consumer - only processes during 21:00-08:00
+            offline_consumer = TaskQueueConsumer(service_pool, queue_type="offline")
+            offline_consumer.start()
+            logger.info(
+                f"Offline task queue consumer started for pool '{service_pool}'"
+            )
+        except Exception as e:
+            logger.error(f"Failed to start task queue consumers: {e}")
+    else:
+        # Pull mode (default): start the task scheduler
+        logger.info("Pull mode enabled: starting task scheduler")
+        scheduler_instance = TaskScheduler()
+
+        # Start the scheduler in a separate thread
+        scheduler_thread = threading.Thread(
+            target=start_scheduler, args=(scheduler_instance,)
+        )
+        scheduler_thread.daemon = True
+        scheduler_thread.start()
+
+        logger.info("Task scheduler started successfully")
 
     # Start SandboxManager scheduler for GC
     sandbox_manager = get_sandbox_manager()
@@ -104,10 +138,20 @@ async def lifespan(app):
 
     yield  # During FastAPI application runtime
 
-    # Cleanup operations when the application shuts down (if needed)
-    logger.info("Shutting down task scheduler...")
-    # If TaskScheduler has a stop method, you can call it here
+    # Cleanup operations when the application shuts down
+    logger.info("Shutting down services...")
+
+    # Stop task queue consumers if running
+    if task_consumer:
+        logger.info("Stopping online task queue consumer...")
+        task_consumer.stop()
+    if offline_consumer:
+        logger.info("Stopping offline task queue consumer...")
+        offline_consumer.stop()
+
+    # Stop task scheduler if running
     if scheduler_instance:
+        logger.info("Stopping task scheduler...")
         scheduler_instance.stop()
 
     # Stop SandboxManager garbage collection

@@ -474,6 +474,11 @@ class TaskKindService(TaskResourceBaseService):
             )
             db.commit()
 
+            # Push mode: dispatch task to executor_manager
+            from app.services.task_dispatcher import task_dispatcher
+
+            task_dispatcher.schedule_dispatch(db_resource.id)
+
         except Exception as e:
             # Log error but don't interrupt the process
             logger.error(f"Error creating subtasks: {str(e)}")
@@ -514,6 +519,11 @@ class TaskKindService(TaskResourceBaseService):
                 user_prompt=task_crd.spec.prompt,
             )
             db.commit()
+
+            # Push mode: dispatch task to executor_manager
+            from app.services.task_dispatcher import task_dispatcher
+
+            task_dispatcher.schedule_dispatch(db_resource.id)
 
         except Exception as e:
             # Log error but don't interrupt the process
