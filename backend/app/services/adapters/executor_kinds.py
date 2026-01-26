@@ -1230,8 +1230,12 @@ class ExecutorKindsService(
                     "attachments": attachments_data,
                     "status": subtask.status,
                     "progress": subtask.progress,
-                    "created_at": subtask.created_at,
-                    "updated_at": subtask.updated_at,
+                    "created_at": (
+                        subtask.created_at.isoformat() if subtask.created_at else None
+                    ),
+                    "updated_at": (
+                        subtask.updated_at.isoformat() if subtask.updated_at else None
+                    ),
                     # Flag to indicate this subtask should start a new session (no conversation history)
                     # Used in pipeline mode when user confirms a stage and proceeds to next bot
                     "new_session": new_session,
@@ -1247,6 +1251,10 @@ class ExecutorKindsService(
         # Start a new trace for each dispatched task
         # This creates a root span for the task execution lifecycle
         self._start_dispatch_traces(formatted_subtasks)
+
+        # Note: Push mode dispatch is handled by task_dispatcher.schedule_dispatch()
+        # which is called after task/subtask creation. Do NOT dispatch here to avoid
+        # duplicate dispatches (schedule_dispatch already calls dispatch_tasks internally).
 
         return {"tasks": formatted_subtasks}
 
@@ -1954,6 +1962,26 @@ class ExecutorKindsService(
             f"Pipeline task {task.id}: created subtask {new_subtask.id} for stage {next_stage_index} "
             f"(bot={bot.name}, message_id={next_message_id})"
         )
+
+        # Push mode: dispatch the new pipeline subtask to executor_manager
+        # This ensures pipeline tasks work correctly in push mode
+        try:
+            from app.services.task_dispatcher import task_dispatcher
+
+            if task_dispatcher.enabled:
+                # Dispatch the pending subtask for this specific task
+                import asyncio
+
+                asyncio.create_task(
+                    task_dispatcher.dispatch_pending_tasks(
+                        db, task_ids=[task.id], limit=1
+                    )
+                )
+                logger.info(
+                    f"Pipeline task {task.id}: dispatching next stage subtask {new_subtask.id} in push mode"
+                )
+        except Exception as e:
+            logger.warning(f"Pipeline push mode dispatch failed: {e}")
 
         return True
 

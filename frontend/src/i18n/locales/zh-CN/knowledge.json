@@ -133,7 +133,19 @@
         "copyError": "复制失败",
         "contentLength": "内容长度",
         "characters": "字符",
-        "noContent": "暂无内容"
+        "noContent": "暂无内容",
+        "edit": "编辑",
+        "save": "保存",
+        "cancel": "取消",
+        "saving": "保存中...",
+        "saveSuccess": "保存成功",
+        "saveFailed": "保存失败",
+        "unsavedChanges": "您有未保存的更改，确定要放弃吗？",
+        "discardChanges": "放弃更改",
+        "viewRaw": "查看原始内容",
+        "viewPreview": "查看渲染预览",
+        "fullscreen": "全屏",
+        "exitFullscreen": "退出全屏"
       }
     },
     "upload": {
@@ -366,6 +378,10 @@
     "notFound": "知识库未找到",
     "createTaskError": "创建对话失败",
     "bindKnowledgeBaseError": "绑定知识库失败",
-    "newNote": "新笔记"
+    "newNote": "新笔记",
+    "summaryFailed": "摘要生成失败",
+    "summaryFailedHint": "点击重试按钮重新生成摘要",
+    "summaryRetry": "重试",
+    "summaryRetrying": "重试中..."
   }
 }

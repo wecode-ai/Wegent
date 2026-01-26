@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Check, ChevronsUpDown, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { modelApis, UnifiedModel } from '@/apis/models'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getGlobalModelPreference } from '@/utils/modelPreferences'
 import type { SummaryModelRef } from '@/types/knowledge'
 
 interface SummaryModelSelectorProps {
@@ -27,6 +28,8 @@ interface SummaryModelSelectorProps {
   onChange: (value: SummaryModelRef | null) => void
   disabled?: boolean
   error?: string
+  /** Optional team ID to read cached model preference from localStorage */
+  knowledgeDefaultTeamId?: number | null
 }
 
 export function SummaryModelSelector({
@@ -34,11 +37,15 @@ export function SummaryModelSelector({
   onChange,
   disabled = false,
   error,
+  knowledgeDefaultTeamId,
 }: SummaryModelSelectorProps) {
   const { t } = useTranslation('knowledge')
   const [open, setOpen] = useState(false)
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [loading, setLoading] = useState(false)
+  // Track the last team ID for which we attempted preselection
+  // This allows re-attempting when the team ID changes or dialog reopens
+  const attemptedTeamIdRef = useRef<number | null>(null)
 
   // Fetch models on mount
   useEffect(() => {
@@ -64,6 +71,54 @@ export function SummaryModelSelector({
 
     fetchModels()
   }, [])
+
+  // Auto-preselect model from cached preference when:
+  // 1. Models are loaded
+  // 2. No value is currently selected
+  // 3. Valid knowledgeDefaultTeamId is provided
+  // 4. Haven't attempted preselection for this team ID yet (allows re-attempting when team changes)
+  useEffect(() => {
+    // Skip if value exists, still loading, or no teamId
+    if (value || loading || models.length === 0 || !knowledgeDefaultTeamId) {
+      return
+    }
+
+    // Skip if we already attempted preselection for this team ID
+    if (attemptedTeamIdRef.current === knowledgeDefaultTeamId) {
+      return
+    }
+
+    // Mark this team ID as attempted
+    attemptedTeamIdRef.current = knowledgeDefaultTeamId
+
+    // Read cached preference from localStorage
+    const cachedPreference = getGlobalModelPreference(knowledgeDefaultTeamId)
+    if (!cachedPreference?.modelName) {
+      return
+    }
+
+    // Find matching model in the models list
+    const matchedModel = models.find(model => {
+      // Match by modelName (required)
+      if (model.name !== cachedPreference.modelName) {
+        return false
+      }
+      // If modelType is specified in preference, also match by type
+      if (cachedPreference.modelType && model.type !== cachedPreference.modelType) {
+        return false
+      }
+      return true
+    })
+
+    if (matchedModel) {
+      // Auto-select the matched model
+      onChange({
+        name: matchedModel.name,
+        namespace: matchedModel.namespace || 'default',
+        type: matchedModel.type,
+      })
+    }
+  }, [models, value, loading, knowledgeDefaultTeamId, onChange])
 
   // Find selected model
   const selectedModel = useMemo(() => {
@@ -97,11 +152,11 @@ export function SummaryModelSelector({
   const getTypeLabel = (type: string) => {
     switch (type) {
       case 'public':
-        return t('common:model.typePublic', 'Public')
+        return t('common:models.public')
       case 'user':
-        return t('common:model.typePersonal', 'Personal')
+        return t('common:models.my_models')
       case 'group':
-        return t('common:model.typeGroup', 'Group')
+        return t('common:models.group')
       default:
         return type
     }

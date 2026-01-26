@@ -1132,5 +1132,16 @@
     "supported_types": "PDF, Word, Excel, TXT, Markdown, Images, Code files",
     "characters": "chars",
     "upload_tooltip": "Supported file types: Documents (PDF, Word, PPT, Excel), Images, Code files and text files\nMax file size: {{size}} MB"
+  },
+  "editor": {
+    "vim": {
+      "toggle": "Toggle Vim Mode",
+      "enable": "Enable Vim Mode",
+      "disable": "Disable Vim Mode",
+      "saved": "Content saved",
+      "hint_toast": "Vim Mode Enabled",
+      "hint_description": "Use hjkl to navigate, i for insert mode, Esc for normal mode. :w to save, :q to close.",
+      "commands_hint": ":w save | :q close | :wq save & close"
+    }
   }
 }
