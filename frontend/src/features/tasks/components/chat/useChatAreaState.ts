@@ -460,6 +460,18 @@ export function useChatAreaState({
     }
   }, [selectedRepo])
 
+  // Sync requiresWorkspaceOverride from task detail when loading an existing task
+  // This ensures user's manual repository selection is preserved across page refreshes
+  useEffect(() => {
+    if (selectedTaskDetail) {
+      // If task has git_repo, user selected a repository (requires workspace)
+      // If task has no git_repo, user selected "no workspace needed"
+      const taskHasRepo = Boolean(selectedTaskDetail.git_repo)
+      setRequiresWorkspaceOverride(taskHasRepo)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTaskDetail?.id]) // Only trigger when task changes, not on every detail update
+
   // Handle external team selection for new tasks
   useEffect(() => {
     if (selectedTeamForNewTask && !selectedTaskDetail) {
