@@ -214,7 +214,11 @@ export default function Workbench({
   }, [workbenchData, cachedWorkbenchData])
 
   const loadDiffData = async () => {
-    if (!cachedWorkbenchData || !cachedWorkbenchData.git_info.target_branch) {
+    if (
+      !cachedWorkbenchData ||
+      !cachedWorkbenchData.git_info.source_branch ||
+      !cachedWorkbenchData.git_info.target_branch
+    ) {
       return
     }
 
@@ -245,6 +249,7 @@ export default function Workbench({
   useEffect(() => {
     if (
       cachedWorkbenchData?.status === 'completed' &&
+      cachedWorkbenchData.git_info.source_branch &&
       cachedWorkbenchData.git_info.target_branch &&
       !diffData &&
       !isDiffLoading &&
@@ -255,6 +260,7 @@ export default function Workbench({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     cachedWorkbenchData?.status,
+    cachedWorkbenchData?.git_info.source_branch,
     cachedWorkbenchData?.git_info.target_branch,
     diffData,
     isDiffLoading,
@@ -273,20 +279,28 @@ export default function Workbench({
     )
   }
 
+  // Check if task has a git repository
+  const hasRepository = Boolean(displayData?.repository)
+
   const navigation = [
     {
       name: t('tasks:workbench.overview'),
       value: 'overview' as const,
       current: activeTab === 'overview',
     },
-    {
-      name: t('tasks:workbench.files_changed'),
-      value: 'files' as const,
-      current: activeTab === 'files',
-      badge: shouldShowDiffData()
-        ? diffData?.files?.length || 0
-        : displayData?.file_changes?.length || 0,
-    },
+    // Files Changed tab - only shown when task has a repository
+    ...(hasRepository
+      ? [
+          {
+            name: t('tasks:workbench.files_changed'),
+            value: 'files' as const,
+            current: activeTab === 'files',
+            badge: shouldShowDiffData()
+              ? diffData?.files?.length || 0
+              : displayData?.file_changes?.length || 0,
+          },
+        ]
+      : []),
     // Preview tab - only shown when app data is available
     ...(app
       ? [
