@@ -528,6 +528,33 @@ def set_request_context(request_id: Optional[str] = None) -> None:
         set_span_attributes(attributes)
 
 
+def init_request_context() -> str:
+    """
+    Initialize request context with a new UUID for log correlation.
+
+    Generates an 8-character short UUID and sets it as the request_id.
+    This is useful for background tasks, scheduled jobs, and other
+    entry points that don't have an incoming request_id.
+
+    Returns:
+        The generated request_id (8-char short UUID)
+
+    Example:
+        ```python
+        from shared.telemetry.context import init_request_context
+
+        def my_background_task():
+            init_request_context()  # All subsequent logs will have this trace_id
+            # ... do work ...
+        ```
+    """
+    import uuid
+
+    request_id = str(uuid.uuid4())[:8]
+    set_request_context(request_id)
+    return request_id
+
+
 def set_repository_context(
     repository_url: Optional[str] = None, branch_name: Optional[str] = None
 ) -> None:

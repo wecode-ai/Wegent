@@ -170,6 +170,18 @@ class CallbackClient:
 
         # Prepare headers with trace context for distributed tracing
         headers = {"Content-Type": "application/json"}
+
+        # Inject X-Request-ID for log correlation
+        try:
+            from shared.telemetry.context import get_request_id
+
+            request_id = get_request_id()
+            if request_id:
+                headers["X-Request-ID"] = request_id
+        except Exception:
+            pass
+
+        # Inject OpenTelemetry trace context if enabled
         otel_config = get_otel_config()
         if otel_config.enabled:
             from shared.telemetry.context import inject_trace_context_to_headers

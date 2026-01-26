@@ -211,17 +211,17 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/yixiangxx">
+            <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+            <br />
+            <sub><b>Yi Xiang</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/junbaor">
             <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
             <br />
             <sub><b>Junbaor</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/FicoHu">
-            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
-            <br />
-            <sub><b>FicoHu</b></sub>
         </a>
     </td>
     <td align="center">
@@ -232,6 +232,13 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/FicoHu">
+            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
+            <br />
+            <sub><b>FicoHu</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/maquan0927">
             <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
             <br />
@@ -239,10 +246,10 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/yixiangxx">
-            <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+        <a href="https://github.com/fingki">
+            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
             <br />
-            <sub><b>Yi Xiang</b></sub>
+            <sub><b>Fingki</b></sub>
         </a>
     </td>
     <td align="center">
@@ -251,20 +258,34 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
             <br />
             <sub><b>Parabala</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/fengkuizhi">
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
             <br />
             <sub><b>Fengkuizhi</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/jolestar">
             <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
             <br />
             <sub><b>Jolestar</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/qwertyerge">
+            <img src="https://avatars.githubusercontent.com/u/13088125?v=4" width="80;" alt="qwertyerge"/>
+            <br />
+            <sub><b>Erdawang</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/sunnights">
+            <img src="https://avatars.githubusercontent.com/u/1886887?v=4" width="80;" alt="sunnights"/>
+            <br />
+            <sub><b>Jake Zhang</b></sub>
         </a>
     </td>
     <td align="center">
@@ -282,13 +303,6 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/fingki">
-            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
-            <br />
-            <sub><b>Fingki</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/graindt">
             <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
             <br />
@@ -299,7 +313,7 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         <a href="https://github.com/salt-hai">
             <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>
             <br />
-            <sub><b>salt-hai</b></sub>
+            <sub><b>Salt-hai</b></sub>
         </a>
     </td></tr>
 </table>
