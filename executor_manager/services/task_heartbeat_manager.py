@@ -416,12 +416,16 @@ class RunningTaskTracker:
         )
 
         # Step 2: Handle based on container status
-        if container_status["exists"] and container_status["status"] == "running":
-            # Container is still running - likely a network issue with heartbeat
+        # Protect both running and pending pods - pending pods are still starting up
+        if container_status["exists"] and container_status["status"] in (
+            "running",
+            "pending",
+        ):
+            # Container is still running or starting up - likely a network issue with heartbeat
             # Don't mark as failed, just log a warning
             logger.warning(
-                f"[RunningTaskTracker] Container {executor_name} is still running but "
-                f"heartbeat timed out. Possible network issue, skipping failure marking."
+                f"[RunningTaskTracker] Container {executor_name} is in '{container_status['status']}' state but "
+                f"heartbeat timed out. Possible network issue or startup delay, skipping failure marking."
             )
             return
 

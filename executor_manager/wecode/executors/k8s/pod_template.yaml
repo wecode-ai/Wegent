@@ -77,7 +77,7 @@ spec:
         - name: DEBUG_RUN
           value: DEBUG
         - name: CALLBACK_URL
-          value: http://wegent-executor-manager-web.wb-plat-ide:8080/executor-manager/callback
+          value: {{ callback_url }}
         - name: ENABLE_CODE_REVIEW_PROCESSING
           value: enable
         - name: CUSTOM_CONFIG

@@ -15,6 +15,8 @@ from executor_manager.wecode.config.config import (EXECUTOR_CUSTOM_CONFIG,
 from executor_manager.wecode.executors.k8s.binary_extractor import (
     get_init_container_config, should_use_init_container)
 
+executor_manager_host = os.getenv("EXECUTOR_MANAGER_URL", "http://wegent-executor-manager-web.wb-plat-ide:8080")
+callback_url = executor_manager_host + "/executor-manager/callback"
 
 def to_nice_yaml(value, indent=2):
     """
@@ -139,6 +141,7 @@ def build_pod_configuration(
         "task_api_domain": os.getenv(
             "TASK_API_DOMAIN", "http://wegent-backend-web.wb-plat-ide:8080"
         ),
+        "callback_url": callback_url,
         # Sandbox/Subagent support for e2b protocol
         "is_sandbox": is_sandbox,
         "sandbox_id": sandbox_id,
