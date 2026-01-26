@@ -320,7 +320,14 @@ export default function UnifiedRepositorySelector({
 
   return (
     <div className={cn('flex items-center min-w-0', className)} data-tour="unified-repo-selector">
-      <Popover open={isOpen} onOpenChange={setIsOpen}>
+      <Popover
+        open={isOpen}
+        onOpenChange={open => {
+          // Prevent opening when disabled
+          if (disabled && open) return
+          setIsOpen(open)
+        }}
+      >
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
