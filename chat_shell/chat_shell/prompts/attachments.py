@@ -43,7 +43,6 @@ def build_binary_attachment_prompt(binary_attachments: list[dict]) -> str:
         filename = att.get("filename", "unknown")
         mime_type = att.get("mime_type", "application/octet-stream")
         download_url = att.get("download_url", f"/api/attachments/{att_id}/download")
-        file_ext = att.get("file_extension", "")
 
         attachments_info.append(
             f"- **{filename}** (ID: {att_id}, Type: {mime_type})\n"

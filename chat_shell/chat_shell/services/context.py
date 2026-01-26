@@ -112,6 +112,19 @@ class ChatContext:
                 skill_configs=self._request.skill_configs,
             )
 
+        # Auto-preload sandbox skill if binary attachments are present
+        # This must happen BEFORE asyncio.gather so _prepare_skill_tools sees the update
+        if self._request.binary_attachments and self._request.skill_names:
+            if "sandbox" in self._request.skill_names:
+                if "sandbox" not in (self._request.preload_skills or []):
+                    logger.info(
+                        "[CHAT_CONTEXT] Auto-preloading sandbox skill for binary attachment processing"
+                    )
+                    self._request.preload_skills = [
+                        *(self._request.preload_skills or []),
+                        "sandbox",
+                    ]
+
         # Use context manager for database session
         async with get_db_context() as db:
             self._db_session = db
@@ -165,7 +178,6 @@ class ChatContext:
 
             # Process binary attachments
             # If binary attachments are present, inject attachment prompt into system prompt
-            # and auto-preload sandbox skill if available
             if self._request.binary_attachments:
                 from chat_shell.prompts.attachments import (
                     append_binary_attachment_prompt,
@@ -178,20 +190,6 @@ class ChatContext:
                     "[CHAT_CONTEXT] Injected binary attachment prompt for %d attachment(s)",
                     len(self._request.binary_attachments),
                 )
-
-                # Auto-preload sandbox skill if available and not already preloaded
-                if self._request.skill_names and "sandbox" in self._request.skill_names:
-                    # Check if sandbox is not already in preload_skills
-                    if "sandbox" not in (self._request.preload_skills or []):
-                        logger.info(
-                            "[CHAT_CONTEXT] Auto-preloading sandbox skill for binary attachment processing"
-                        )
-                        # Add sandbox to preload_skills by modifying the request
-                        if self._request.preload_skills is None:
-                            self._request.preload_skills = []
-                        self._request.preload_skills = list(
-                            self._request.preload_skills
-                        ) + ["sandbox"]
 
             add_span_event(
                 "context_prepare_completed",
