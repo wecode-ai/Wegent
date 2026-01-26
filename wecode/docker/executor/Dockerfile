@@ -90,9 +90,13 @@ RUN dnf install -y --setopt=install_weak_deps=False --setopt=tsflags=nodocs \
 COPY wegent-skills/cc-skills/skills /root/.claude/plugins/marketplaces/anthropic-agent-skills/skills
 
 # Install npm packages for document generation (using China mirror for faster download)
-RUN npm install -g pptxgenjs playwright sharp react react-dom react-icons docx pdf-lib --registry=https://registry.npmmirror.com \
-    && PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright npx playwright install chromium \
-    && npm cache clean --force
+RUN set -eux; \
+    npm install -g pptxgenjs playwright@1.57.0 sharp react react-dom react-icons docx pdf-lib --registry=https://registry.npmmirror.com; \
+    if ! PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright npx playwright install chromium; then \
+        echo "Mirror download failed, falling back to official Playwright CDN"; \
+        npx playwright install chromium; \
+    fi; \
+    npm cache clean --force
 
 # Install Python packages for document generation (using China mirror)
 # These are commonly used by document skills
