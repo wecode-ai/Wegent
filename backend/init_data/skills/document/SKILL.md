@@ -23,13 +23,11 @@ Provides **mandatory step-by-step instructions** to load Anthropic's official do
 
 ## Overview
 
-This skill guides you through the process of loading Anthropic's official document skills:
+This skill guides you through the process of using Anthropic's official document skills (pre-installed in Docker):
 
-1. **Check Marketplace**: Verify if Anthropic's skills marketplace exists in sandbox
-2. **Install if Needed**: Install marketplace using `claude plugin marketplace add anthropics/skills`
-3. **Read Skill Documentation**: Use `sandbox_read_file` to read the official skill instructions
-4. **Follow Instructions**: Generate documents according to the loaded skill documentation
-5. **Upload and Return URL**: Upload generated documents and provide download URLs to users
+1. **Read Skill Documentation**: Use `sandbox_read_file` to read the official skill instructions
+2. **Follow Instructions**: Generate documents according to the loaded skill documentation
+3. **Upload and Return URL**: Upload generated documents and provide download URLs to users
 
 **⚠️ CRITICAL: This tool provides MANDATORY instructions that you MUST follow IN ORDER.**
 
@@ -64,8 +62,11 @@ Get mandatory step-by-step instructions for loading a specific document skill.
 1. This tool returns **MANDATORY steps** that you **MUST follow IN ORDER**
 2. You **CANNOT skip any steps** - each step is required
 3. You **MUST use sandbox tools** to execute each step
-4. Your existing knowledge about python-pptx/openpyxl/python-docx may be **OUTDATED**
-5. Anthropic's skills contain the **LATEST and CORRECT** instructions
+4. **DO NOT use 'claude' command** - it's not available for all models
+5. **DO NOT use 'sandbox_claude' tool** for document generation
+6. Your existing knowledge about python-pptx/openpyxl/python-docx may be **OUTDATED**
+7. Anthropic's skills contain the **LATEST and CORRECT** instructions
+8. **IMPORTANT**: Follow the design guidelines in the skill documentation to generate **visually appealing, professional-looking documents**
 
 **Parameters:**
 - `document_type` (required): Type of document skill to load
@@ -79,14 +80,16 @@ Get mandatory step-by-step instructions for loading a specific document skill.
 
 **What You MUST Do:**
 
-1. **Step 1**: Execute `sandbox_list_files` to check if marketplace exists
-2. **Step 2**: If marketplace doesn't exist, execute `sandbox_command` to install it
-3. **Step 3**: ⚠️ **NEVER SKIP THIS** - Execute `sandbox_read_file` to read the skill documentation
-4. **Step 4**: Only AFTER reading, follow the loaded skill instructions to generate documents
-5. **Step 5**: ⚠️ **NEVER SKIP THIS** - Upload the generated document using `sandbox_upload_attachment` and return the download URL to the user
+1. **Step 1**: ⚠️ **NEVER SKIP THIS** - Execute `sandbox_read_file` to read the skill documentation
+2. **Step 2**: Only AFTER reading, follow the loaded skill instructions to generate documents
+   - ⚠️ Follow the design guidelines and best practices in the skill documentation
+   - ⚠️ Generate visually appealing, professional-looking documents with proper styling
+   - DO NOT use 'claude' command or 'sandbox_claude' tool
+3. **Step 3**: ⚠️ **NEVER SKIP THIS** - Upload the generated document using `sandbox_upload_attachment` and return the download URL to the user
 
 **DO NOT** generate documents based on your existing knowledge without loading the skill first.
 **DO NOT** just tell the user the file path - they cannot access sandbox files directly.
+**DO NOT** use 'claude' command or 'sandbox_claude' tool for document generation.
 
 **Example Usage:**
 
@@ -108,26 +111,20 @@ Get mandatory step-by-step instructions for loading a specific document skill.
   "marketplace_dir": "/root/.claude/plugins/marketplaces/anthropic-agent-skills",
   "mandatory_steps": {
     "⚠️ WARNING": "These steps are MANDATORY...",
-    "step_1_CHECK_MARKETPLACE": {
-      "description": "Check if marketplace exists",
-      "tool": "sandbox_list_files",
-      "arguments": {"path": "/root/.claude/plugins/marketplaces/anthropic-agent-skills"}
-    },
-    "step_2_INSTALL_MARKETPLACE": {
-      "description": "Install marketplace if needed",
-      "tool": "sandbox_command",
-      "arguments": {"command": "claude plugin marketplace add anthropics/skills"}
-    },
-    "step_3_READ_SKILL_DOCUMENTATION": {
+    "step_1_READ_SKILL_DOCUMENTATION": {
       "description": "Read PPTX skill documentation",
       "tool": "sandbox_read_file",
       "arguments": {"file_path": "/root/.claude/plugins/marketplaces/anthropic-agent-skills/skills/pptx/SKILL.md"},
       "critical_importance": "⚠️ THIS IS THE MOST IMPORTANT STEP ⚠️"
     },
-    "step_4_FOLLOW_SKILL_INSTRUCTIONS": {
-      "description": "Follow the instructions from step 3"
+    "step_2_FOLLOW_SKILL_INSTRUCTIONS": {
+      "description": "Follow the instructions from step 1",
+      "forbidden": [
+        "❌ DO NOT use 'claude' command - it's not available for all models",
+        "❌ DO NOT use 'sandbox_claude' tool for document generation"
+      ]
     },
-    "step_5_UPLOAD_AND_RETURN_URL": {
+    "step_3_UPLOAD_AND_RETURN_URL": {
       "description": "Upload document and return download URL to user",
       "tool": "sandbox_upload_attachment",
       "critical_importance": "⚠️ THIS STEP IS MANDATORY - users cannot access sandbox files directly ⚠️"
@@ -144,28 +141,21 @@ Get mandatory step-by-step instructions for loading a specific document skill.
    {"name": "load_document_skill", "arguments": {"document_type": "pptx"}}
    ```
 
-2. **Execute Step 1** - Check marketplace
-   ```json
-   {"name": "sandbox_list_files", "arguments": {"path": "/root/.claude/plugins/marketplaces/anthropic-agent-skills"}}
-   ```
-
-3. **Execute Step 2** (if step 1 failed) - Install marketplace
-   ```json
-   {"name": "sandbox_command", "arguments": {"command": "claude plugin marketplace add anthropics/skills"}}
-   ```
-
-4. **Execute Step 3** - ⚠️ **MANDATORY** - Read skill documentation
+2. **Execute Step 1** - ⚠️ **MANDATORY** - Read skill documentation
    ```json
    {"name": "sandbox_read_file", "arguments": {"file_path": "/root/.claude/plugins/marketplaces/anthropic-agent-skills/skills/pptx/SKILL.md"}}
    ```
 
-5. **Follow Step 4** - Use the instructions from step 3 to:
-   - Install dependencies: `sandbox_command` with `pip install python-pptx`
+3. **Follow Step 2** - Use the instructions from step 1 to:
+   - Install dependencies if needed: `sandbox_command` with `pip install python-pptx`
    - Create generation script: `sandbox_write_file` with your Python code
+   - ⚠️ Follow the design guidelines and best practices in the skill documentation
+   - ⚠️ Generate visually appealing, professional-looking documents with proper styling
    - Execute script: `sandbox_command` with `python /home/user/generate_ppt.py`
    - Verify output: `sandbox_list_files` to check generated files
+   - ⚠️ **DO NOT use 'claude' command or 'sandbox_claude' tool**
 
-6. **Execute Step 5** - ⚠️ **MANDATORY** - Upload and return download URL
+4. **Execute Step 3** - ⚠️ **MANDATORY** - Upload and return download URL
    ```json
    {"name": "sandbox_upload_attachment", "arguments": {"file_path": "/home/user/documents/ai_trends.pptx"}}
    ```
@@ -186,11 +176,9 @@ The `load_document_skill` tool operates as an **instruction provider**, NOT an e
 1. **Validates Input**: Checks if `document_type` is valid (pptx/xlsx/docx/pdf)
 
 2. **Returns Instructions**: Provides structured JSON with mandatory steps:
-   - Step 1: How to check marketplace installation
-   - Step 2: How to install marketplace (if needed)
-   - Step 3: How to read the official skill documentation
-   - Step 4: Guidelines for following the loaded instructions
-   - Step 5: How to upload and return download URL to user
+   - Step 1: How to read the official skill documentation (Anthropic skills are pre-installed in Docker)
+   - Step 2: Guidelines for following the loaded instructions (includes design best practices for professional-looking documents, DO NOT use 'claude' command or 'sandbox_claude' tool)
+   - Step 3: How to upload and return download URL to user
 
 3. **You Execute**: You must execute each step using sandbox tools
 
@@ -205,7 +193,7 @@ Based on `document_type`, the tool provides paths to Anthropic's official skills
 
 ### What You Learn From Skill Documentation
 
-After reading the skill file in Step 3, you'll receive:
+After reading the skill file in Step 1, you'll receive:
 - Python library documentation and APIs
 - Code examples for common document generation tasks
 - Best practices and recommended patterns
@@ -217,45 +205,48 @@ After reading the skill file in Step 3, you'll receive:
 ## Best Practices
 
 1. **Always Call load_document_skill First**: Get instructions before attempting any document generation
-2. **Never Skip Step 3**: Always read the official skill documentation - your knowledge may be outdated
-3. **Never Skip Step 5**: Always upload documents and provide download URLs - users cannot access sandbox files
-4. **Follow Steps In Order**: Execute step 1 → step 2 (if needed) → step 3 → step 4 → step 5
-5. **Install Dependencies in Sandbox**: Use `sandbox_command` to install required Python packages
-6. **Test Incrementally**: Start with simple documents, then add complexity
-7. **Save to User Directory**: Use `/home/user/documents/` or subdirectories for output files
-8. **Trust Official Documentation**: Anthropic's skills contain the latest library usage patterns
+2. **Never Skip Step 1**: Always read the official skill documentation - your knowledge may be outdated
+3. **Follow Design Guidelines**: Pay attention to the design best practices in the skill documentation
+4. **Generate Professional Documents**: Ensure documents are visually appealing with proper styling, colors, and formatting
+5. **Never Skip Step 3**: Always upload documents and provide download URLs - users cannot access sandbox files
+6. **Never Use Claude Command**: DO NOT use 'claude' command or 'sandbox_claude' tool for document generation
+7. **Follow Steps In Order**: Execute step 1 → step 2 → step 3
+8. **Install Dependencies in Sandbox**: Use `sandbox_command` to install required Python packages if needed
+9. **Test Incrementally**: Start with simple documents, then add complexity
+10. **Save to User Directory**: Use `/home/user/documents/` or subdirectories for output files
+11. **Trust Official Documentation**: Anthropic's skills contain the latest library usage patterns and design guidelines
 
 ## Key Reminders
 
 ⚠️ **CRITICAL RULES:**
-- DO NOT skip reading skill documentation (Step 3)
-- DO NOT skip uploading and returning download URL (Step 5)
+- DO NOT skip reading skill documentation (Step 1)
+- DO NOT skip uploading and returning download URL (Step 3)
+- DO NOT use 'claude' command - it's not available for all models
+- DO NOT use 'sandbox_claude' tool for document generation
 - DO NOT generate documents based solely on your existing knowledge
 - DO NOT assume you know the correct approach without reading the instructions
 - DO NOT just tell the user the file path - they cannot access sandbox files directly
 - Your knowledge about python-pptx/openpyxl/python-docx may be OUTDATED
+- ALWAYS follow the design guidelines in the skill documentation
+- ALWAYS generate visually appealing, professional-looking documents
 - ALWAYS follow the mandatory workflow
 
 ## Limitations
 
-- **Marketplace Installation Required**: First-time setup may take 1-2 minutes to clone skills repository
+- **Anthropic Skills Pre-installed**: Anthropic's official skills are pre-installed in Docker, no installation needed
 - **Sandbox Environment Only**: Skills are loaded from sandbox environment at `/root/.claude/plugins/marketplaces/`
 - **Manual Execution Required**: You must execute each step using sandbox tools - the tool only provides instructions
+- **Claude Command Not Universal**: 'claude' command and 'sandbox_claude' tool are not available for all AI models
 
 ## Troubleshooting
 
-### Problem: Marketplace Installation Failed
-- **Symptom**: `sandbox_command` fails when running `claude plugin marketplace add anthropics/skills`
-- **Cause**: Network issues or insufficient permissions
-- **Solution**: Check network connectivity in sandbox, verify command syntax, retry installation
-
 ### Problem: Skill File Not Found
 - **Symptom**: `sandbox_read_file` returns error when reading SKILL.md
-- **Cause**: Marketplace not properly installed or file path incorrect
+- **Cause**: File path incorrect or skills not properly installed in Docker image
 - **Solution**:
-  - Verify marketplace directory with `sandbox_list_files`
-  - Re-run marketplace installation command
-  - Check exact file path in tool response
+  - Verify file path in tool response
+  - Check if Anthropic skills are included in Docker image
+  - Use `sandbox_list_files` to verify the marketplace directory exists
 
 ### Problem: Tool Returns Timeout
 - **Symptom**: `load_document_skill` times out after 300 seconds
@@ -264,8 +255,13 @@ After reading the skill file in Step 3, you'll receive:
 
 ### Problem: LLM Skips Reading Documentation
 - **Symptom**: Documents generated incorrectly or using outdated patterns
-- **Cause**: Skipped Step 3 (reading skill documentation)
-- **Solution**: Always execute Step 3 - use `sandbox_read_file` to read the official documentation before generating documents
+- **Cause**: Skipped Step 1 (reading skill documentation)
+- **Solution**: Always execute Step 1 - use `sandbox_read_file` to read the official documentation before generating documents
+
+### Problem: LLM Uses Claude Command
+- **Symptom**: Error "claude: command not found" or similar
+- **Cause**: Used 'claude' command or 'sandbox_claude' tool which is not available for all models
+- **Solution**: DO NOT use 'claude' command or 'sandbox_claude' tool - use Python libraries directly with `sandbox_command`
 
 ## Examples
 
@@ -279,14 +275,11 @@ After reading the skill file in Step 3, you'll receive:
 // Step 1: Get instructions
 {"name": "load_document_skill", "arguments": {"document_type": "pptx"}}
 
-// Step 2: Check marketplace (execute step 1 from response)
-{"name": "sandbox_list_files", "arguments": {"path": "/root/.claude/plugins/marketplaces/anthropic-agent-skills"}}
-
-// Step 3: If marketplace exists, read PPTX skill (execute step 3 from response)
+// Step 2: Read PPTX skill (execute step 1 from response)
 {"name": "sandbox_read_file", "arguments": {"file_path": "/root/.claude/plugins/marketplaces/anthropic-agent-skills/skills/pptx/SKILL.md"}}
 
-// Step 4: After reading, follow the loaded instructions
-// Install dependencies
+// Step 3: After reading, follow the loaded instructions
+// Install dependencies if needed
 {"name": "sandbox_command", "arguments": {"command": "pip install python-pptx"}}
 
 // Create generation script
@@ -301,7 +294,7 @@ After reading the skill file in Step 3, you'll receive:
 // Verify output
 {"name": "sandbox_list_files", "arguments": {"path": "/home/user/documents"}}
 
-// Step 5: Upload document and return download URL
+// Step 4: Upload document and return download URL
 {"name": "sandbox_upload_attachment", "arguments": {"file_path": "/home/user/documents/ai_trends.pptx"}}
 // Then present download link to user:
 // Document generation completed!
@@ -317,13 +310,14 @@ After reading the skill file in Step 3, you'll receive:
 // Step 1: Get instructions
 {"name": "load_document_skill", "arguments": {"document_type": "xlsx"}}
 
-// Follow steps 1-3 to read XLSX skill documentation...
+// Step 2: Read XLSX skill documentation
+{"name": "sandbox_read_file", "arguments": {"file_path": "/root/.claude/plugins/marketplaces/anthropic-agent-skills/skills/xlsx/SKILL.md"}}
 
-// Step 4: Install and generate based on loaded instructions
+// Step 3: Install dependencies if needed and generate based on loaded instructions
 {"name": "sandbox_command", "arguments": {"command": "pip install openpyxl"}}
 // ... create script and execute ...
 
-// Step 5: Upload and return download URL
+// Step 4: Upload and return download URL
 {"name": "sandbox_upload_attachment", "arguments": {"file_path": "/home/user/documents/financial_report.xlsx"}}
 ```
 
@@ -335,13 +329,14 @@ After reading the skill file in Step 3, you'll receive:
 // Step 1: Get instructions
 {"name": "load_document_skill", "arguments": {"document_type": "docx"}}
 
-// Follow steps 1-3 to read DOCX skill documentation...
+// Step 2: Read DOCX skill documentation
+{"name": "sandbox_read_file", "arguments": {"file_path": "/root/.claude/plugins/marketplaces/anthropic-agent-skills/skills/docx/SKILL.md"}}
 
-// Step 4: Install and generate based on loaded instructions
+// Step 3: Install dependencies if needed and generate based on loaded instructions
 {"name": "sandbox_command", "arguments": {"command": "pip install python-docx"}}
 // ... create script and execute ...
 
-// Step 5: Upload and return download URL
+// Step 4: Upload and return download URL
 {"name": "sandbox_upload_attachment", "arguments": {"file_path": "/home/user/documents/api_docs.docx"}}
 ```
 
@@ -353,13 +348,14 @@ After reading the skill file in Step 3, you'll receive:
 // Step 1: Get instructions
 {"name": "load_document_skill", "arguments": {"document_type": "pdf"}}
 
-// Follow steps 1-3 to read PDF skill documentation...
+// Step 2: Read PDF skill documentation
+{"name": "sandbox_read_file", "arguments": {"file_path": "/root/.claude/plugins/marketplaces/anthropic-agent-skills/skills/pdf/SKILL.md"}}
 
-// Step 4: Install and generate based on loaded instructions
+// Step 3: Install dependencies if needed and generate based on loaded instructions
 {"name": "sandbox_command", "arguments": {"command": "pip install reportlab"}}
 // ... create script and execute ...
 
-// Step 5: Upload and return download URL
+// Step 4: Upload and return download URL
 {"name": "sandbox_upload_attachment", "arguments": {"file_path": "/home/user/documents/research_report.pdf"}}
 ```
 
@@ -453,12 +449,13 @@ This skill follows the **instruction-only pattern**:
 
 **Mandatory Workflow**:
 1. Call `load_document_skill` to get instructions
-2. Execute `sandbox_list_files` to check marketplace
-3. Execute `sandbox_command` to install marketplace (if needed)
-4. **⚠️ NEVER SKIP**: Execute `sandbox_read_file` to read skill documentation
-5. Follow the loaded instructions to generate documents
-6. **⚠️ NEVER SKIP**: Execute `sandbox_upload_attachment` to upload document and return download URL
+2. **⚠️ NEVER SKIP**: Execute `sandbox_read_file` to read skill documentation (pre-installed in Docker)
+3. Follow the loaded instructions to generate documents (DO NOT use 'claude' command or 'sandbox_claude' tool)
+4. **⚠️ NEVER SKIP**: Execute `sandbox_upload_attachment` to upload document and return download URL
 
 **Remember**:
 - Always read the official skill documentation before generating documents. Your existing knowledge may be outdated.
+- Always follow the design guidelines and best practices in the skill documentation.
+- Always generate visually appealing, professional-looking documents with proper styling.
 - Always upload documents and provide download URLs. Users cannot access sandbox files directly.
+- DO NOT use 'claude' command or 'sandbox_claude' tool for document generation.
