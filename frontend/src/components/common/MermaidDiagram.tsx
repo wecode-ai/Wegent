@@ -363,7 +363,8 @@ export function MermaidDiagram({ code, className = '', onRequestFix }: MermaidDi
         if (isMounted) {
           console.error('Mermaid render error:', errorMessage)
 
-          // Store original error on first failure
+          // Store original error on first failure (used for displaying after all retries)
+          const currentOriginalError = retryCount === 0 ? errorMessage : originalError
           if (retryCount === 0) {
             setOriginalError(errorMessage)
           }
@@ -387,8 +388,8 @@ export function MermaidDiagram({ code, className = '', onRequestFix }: MermaidDi
             setIsFixing(false)
           }
 
-          // Show error (use original error message)
-          setError(originalError || errorMessage)
+          // Show error (use original error message to not expose retry details)
+          setError(currentOriginalError || errorMessage)
           setIsLoading(false)
         }
       }
