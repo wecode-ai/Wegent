@@ -325,21 +325,16 @@ export default function UnifiedRepositorySelector({
           <Tooltip>
             <TooltipTrigger asChild>
               <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  role="combobox"
-                  aria-expanded={isOpen}
-                  aria-controls="unified-repo-selector-popover"
-                  disabled={disabled || isLoading}
+                <div
                   className={cn(
                     'flex items-center gap-1.5 min-w-0 rounded-full pl-2.5 pr-3 py-2.5 h-9',
-                    'transition-colors',
+                    'transition-colors cursor-pointer',
                     isNotSelected
                       ? 'border border-dashed border-border bg-muted/30 text-text-muted'
                       : 'border border-border bg-base text-text-primary hover:bg-hover',
                     isLoading ? 'animate-pulse' : '',
                     'focus:outline-none focus:ring-0',
-                    'disabled:cursor-not-allowed disabled:opacity-50'
+                    (disabled || isLoading) && 'cursor-not-allowed opacity-50'
                   )}
                 >
                   {requiresWorkspace ? (
@@ -352,13 +347,34 @@ export default function UnifiedRepositorySelector({
                   ) : (
                     <FolderX className="w-4 h-4 flex-shrink-0 text-text-muted" />
                   )}
+                  {/* Embedded Toggle - show when onRequiresWorkspaceChange is provided (new chat) */}
+                  {!compact && onRequiresWorkspaceChange && (
+                    <>
+                      <span className="text-xs text-text-primary whitespace-nowrap">
+                        {t('common:repos.repository')}
+                      </span>
+                      <Switch
+                        checked={requiresWorkspace}
+                        onCheckedChange={handleRequiresWorkspaceToggle}
+                        className="scale-75"
+                        disabled={disabled}
+                        onClick={e => e.stopPropagation()}
+                      />
+                    </>
+                  )}
+                  {/* Repository/Branch display text and chevron */}
                   {!compact && (
                     <>
-                      <span className="truncate text-xs min-w-0">{getDisplayText()}</span>
+                      {/* Show repo/branch text only when:
+                          1. Has selected repo (show repo/branch name)
+                          2. Or no toggle (hasMessages), show current state text */}
+                      {(selectedRepo || !onRequiresWorkspaceChange) && (
+                        <span className="truncate text-xs min-w-0">{getDisplayText()}</span>
+                      )}
                       <ChevronDown className="h-2.5 w-2.5 flex-shrink-0 opacity-60" />
                     </>
                   )}
-                </button>
+                </div>
               </PopoverTrigger>
             </TooltipTrigger>
             <TooltipContent side="top">
@@ -386,23 +402,6 @@ export default function UnifiedRepositorySelector({
               className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden"
               shouldFilter={false}
             >
-              {/* Requires Workspace Toggle */}
-              {onRequiresWorkspaceChange && (
-                <div className="flex items-center justify-between border-b border-border px-3 py-2.5 bg-surface/50">
-                  <div className="flex items-center gap-2">
-                    <FolderGit2 className="w-4 h-4 text-text-muted" />
-                    <span className="text-sm text-text-primary">
-                      {t('common:repos.requires_workspace')}
-                    </span>
-                  </div>
-                  <Switch
-                    checked={requiresWorkspace}
-                    onCheckedChange={handleRequiresWorkspaceToggle}
-                    className="scale-90"
-                  />
-                </div>
-              )}
-
               {/* Repository Selection - only show when workspace is required */}
               {requiresWorkspace ? (
                 <>

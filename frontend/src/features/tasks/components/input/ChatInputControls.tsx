@@ -319,22 +319,6 @@ export function ChatInputControls({
           />
         )}
 
-        {/* Model Selector */}
-        {selectedTeam && (
-          <ModelSelector
-            selectedModel={selectedModel}
-            setSelectedModel={setSelectedModel}
-            forceOverride={forceOverride}
-            setForceOverride={setForceOverride}
-            selectedTeam={selectedTeam}
-            disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
-            compact={shouldCollapseSelectors}
-            teamId={teamId}
-            taskId={taskId}
-            taskModelId={taskModelId}
-          />
-        )}
-
         {/* Repository and Branch Unified Selector - show when repository selector is enabled */}
         {/* Always show when showRepositorySelector is true, let component handle the display */}
         {showRepositorySelector && (
@@ -348,6 +332,22 @@ export function ChatInputControls({
             compact={shouldCollapseSelectors}
             requiresWorkspace={effectiveRequiresWorkspace}
             onRequiresWorkspaceChange={hasMessages ? undefined : onRequiresWorkspaceChange}
+          />
+        )}
+
+        {/* Model Selector */}
+        {selectedTeam && (
+          <ModelSelector
+            selectedModel={selectedModel}
+            setSelectedModel={setSelectedModel}
+            forceOverride={forceOverride}
+            setForceOverride={setForceOverride}
+            selectedTeam={selectedTeam}
+            disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
+            compact={shouldCollapseSelectors}
+            teamId={teamId}
+            taskId={taskId}
+            taskModelId={taskModelId}
           />
         )}
       </div>
