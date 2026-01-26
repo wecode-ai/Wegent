@@ -431,15 +431,18 @@ export function useChatAreaState({
       setExternalApiParams({})
       setAppMode(undefined)
 
-      // Reset workspace override to use new team's default setting
-      setRequiresWorkspaceOverride(null)
+      // Only reset workspace override when there's no selected task (new chat scenario)
+      // When loading an existing task, preserve the task's repository setting
+      if (!selectedTaskDetail) {
+        setRequiresWorkspaceOverride(null)
 
-      // Clear repository and branch if the new team doesn't require a workspace
-      // This handles switching from code agents (ClaudeCode, Agno) to chat-only agents (Chat, Dify)
-      if (team && !teamRequiresWorkspace(team)) {
-        console.log('[ChatArea] Team does not require workspace, clearing repo and branch')
-        setSelectedRepo(null)
-        setSelectedBranch(null)
+        // Clear repository and branch if the new team doesn't require a workspace
+        // This handles switching from code agents (ClaudeCode, Agno) to chat-only agents (Chat, Dify)
+        if (team && !teamRequiresWorkspace(team)) {
+          console.log('[ChatArea] Team does not require workspace, clearing repo and branch')
+          setSelectedRepo(null)
+          setSelectedBranch(null)
+        }
       }
 
       // Check if the selected team is the same as the default team
@@ -450,7 +453,7 @@ export function useChatAreaState({
         setIsUsingDefaultTeam(false)
       }
     },
-    [defaultTeam]
+    [defaultTeam, selectedTaskDetail]
   )
 
   // Save repository preference when it changes
@@ -459,6 +462,18 @@ export function useChatAreaState({
       saveLastRepo(selectedRepo.git_repo_id, selectedRepo.git_repo)
     }
   }, [selectedRepo])
+
+  // Sync requiresWorkspaceOverride from task detail when loading an existing task
+  // This ensures user's manual repository selection is preserved across page refreshes
+  useEffect(() => {
+    if (selectedTaskDetail) {
+      // If task has git_repo, user selected a repository (requires workspace)
+      // If task has no git_repo, user selected "no workspace needed"
+      const taskHasRepo = Boolean(selectedTaskDetail.git_repo)
+      setRequiresWorkspaceOverride(taskHasRepo)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTaskDetail?.id]) // Only trigger when task changes, not on every detail update
 
   // Handle external team selection for new tasks
   useEffect(() => {
