@@ -333,7 +333,7 @@ class TestContextServiceFormatting:
         assert "ID: 12345" in prefix
         assert "Type: application/pdf" in prefix
         assert "Size: 2.5 MB" in prefix
-        assert "URL: /api/adapter/attachments/12345/download" in prefix
+        assert "URL: /api/attachments/12345/download" in prefix
         assert "This is the extracted PDF content." in prefix
 
     def test_build_document_text_prefix_with_truncation(self):
@@ -373,7 +373,7 @@ class TestContextServiceFormatting:
         assert "ID: 100" in prefix
         assert "Type: application/pdf" in prefix
         assert "Size: 5.0 MB" in prefix
-        assert "URL: /api/adapter/attachments/100/download" in prefix
+        assert "URL: /api/attachments/100/download" in prefix
         assert "truncated" in prefix.lower()
 
     def test_build_message_with_image_attachment(self):
@@ -447,7 +447,7 @@ class TestContextServiceFormatting:
         assert "ID: 123" in result
         assert "Type: application/pdf" in result
         assert "Size: 1.0 KB" in result
-        assert "URL: /api/adapter/attachments/123/download" in result
+        assert "URL: /api/attachments/123/download" in result
         assert "PDF content here" in result
         assert "[User Question]:" in result
         assert "Summarize this document" in result
