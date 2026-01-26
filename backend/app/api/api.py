@@ -30,6 +30,7 @@ from app.api.endpoints.adapter import (
     chat,
     dify,
     executors,
+    im,
     models,
     retrievers,
     shells,
@@ -66,6 +67,7 @@ api_router.include_router(models.router, prefix="/models", tags=["public-models"
 api_router.include_router(shells.router, prefix="/shells", tags=["shells"])
 api_router.include_router(agents.router, prefix="/agents", tags=["public-shell"])
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
+api_router.include_router(im.router, prefix="/im", tags=["im"])
 api_router.include_router(
     subscriptions.router, prefix="/subscriptions", tags=["subscriptions"]
 )

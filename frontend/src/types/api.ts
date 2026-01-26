@@ -143,9 +143,29 @@ export interface Team {
   bind_mode?: ('chat' | 'code' | 'knowledge')[] // Allowed modes for this team
   icon?: string // Icon ID from preset icon library
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
+  im_integrations?: IMIntegrationConfig[] // IM platform integrations (Telegram, Slack, etc.)
   user?: {
     user_name: string
   }
+}
+
+/** IM Platform types */
+export type IMPlatform = 'telegram' | 'slack' | 'discord' | 'feishu' | 'dingtalk' | 'wechat'
+
+/** IM Integration Configuration */
+export interface IMIntegrationConfig {
+  provider: IMPlatform
+  enabled: boolean
+  config: Record<string, string>
+}
+
+/** IM Integration Status (from API response) */
+export interface IMIntegrationStatus {
+  provider: IMPlatform
+  enabled: boolean
+  connected: boolean
+  bot_username?: string
+  error?: string
 }
 
 /** Bot summary with only necessary fields for team list */

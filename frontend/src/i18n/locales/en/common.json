@@ -39,7 +39,8 @@
     "upload": "Upload",
     "view": "View",
     "copy": "Copy",
-    "copied": "Copied"
+    "copied": "Copied",
+    "remove": "Remove"
   },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"
@@ -352,6 +353,24 @@
     "route": "A central agent acts as a message router, directing communication between agents without them talking directiy.",
     "coordinate": "A network pattern is the structure that defines how agents connect, exchange information, and coordinate with each other.",
     "collaborate": "Multiple agents work simultaneously on tasks, often sharing results to speed up processing."
+  },
+  "im": {
+    "title": "IM Integrations",
+    "description": "Connect your agent to instant messaging platforms like Telegram, allowing users to interact with your agent through chat apps.",
+    "add_platform": "Add Platform",
+    "validate_config": "Validate",
+    "validation_success": "Connection successful",
+    "validation_failed": "Connection failed",
+    "telegram": "Telegram",
+    "slack": "Slack",
+    "discord": "Discord",
+    "feishu": "Feishu",
+    "dingtalk": "DingTalk",
+    "wechat": "WeChat",
+    "coming_soon": "Coming Soon",
+    "bot_token": "Bot Token",
+    "bot_token_placeholder": "Enter your bot token",
+    "connected_as": "Connected as"
   },
   "integrations": {
     "title": "Integrations",

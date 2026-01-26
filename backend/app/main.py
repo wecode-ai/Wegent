@@ -232,6 +232,13 @@ async def lifespan(app: FastAPI):
     await get_pending_request_registry()
     logger.info("✓ PendingRequestRegistry initialized")
 
+    # Initialize IM integrations (Telegram, Slack, etc.)
+    logger.info("Initializing IM integrations...")
+    from app.services.im.startup import init_im_integrations
+
+    await init_im_integrations()
+    logger.info("✓ IM integrations initialized")
+
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
     logger.info("=" * 60)
@@ -297,7 +304,13 @@ async def lifespan(app: FastAPI):
     await shutdown_pending_request_registry()
     logger.info("✓ PendingRequestRegistry shutdown completed")
 
-    # Step 6: Shutdown OpenTelemetry
+    # Step 6: Shutdown IM integrations
+    from app.services.im.startup import shutdown_im_integrations
+
+    await shutdown_im_integrations()
+    logger.info("✓ IM integrations shutdown completed")
+
+    # Step 7: Shutdown OpenTelemetry
     from shared.telemetry.config import get_otel_config
     from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 
