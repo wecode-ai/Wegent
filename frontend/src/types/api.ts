@@ -142,6 +142,7 @@ export interface Team {
   recommended_mode?: 'chat' | 'code' | 'both' // Recommended usage mode (for QuickAccess)
   bind_mode?: ('chat' | 'code' | 'knowledge')[] // Allowed modes for this team
   icon?: string // Icon ID from preset icon library
+  requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
   user?: {
     user_name: string
   }
