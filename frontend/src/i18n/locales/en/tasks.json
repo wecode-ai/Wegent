@@ -57,7 +57,8 @@
     "changes": "Changes",
     "loading_diff_message": "Loading diff...",
     "no_changes_between_branches": "No changes found between branches",
-    "execution_timeline": "Execution Timeline"
+    "execution_timeline": "Execution Timeline",
+    "no_repository": "This task is not associated with a code repository"
   },
   "thinking": {
     "execution_completed": "Execution Completed",

@@ -288,19 +288,16 @@ export default function Workbench({
       value: 'overview' as const,
       current: activeTab === 'overview',
     },
-    // Files Changed tab - only shown when task has a repository
-    ...(hasRepository
-      ? [
-          {
-            name: t('tasks:workbench.files_changed'),
-            value: 'files' as const,
-            current: activeTab === 'files',
-            badge: shouldShowDiffData()
-              ? diffData?.files?.length || 0
-              : displayData?.file_changes?.length || 0,
-          },
-        ]
-      : []),
+    // Files Changed tab - always shown for code tasks
+    {
+      name: t('tasks:workbench.files_changed'),
+      value: 'files' as const,
+      current: activeTab === 'files',
+      badge:
+        hasRepository && shouldShowDiffData()
+          ? diffData?.files?.length || 0
+          : displayData?.file_changes?.length || 0,
+    },
     // Preview tab - only shown when app data is available
     ...(app
       ? [
@@ -882,7 +879,12 @@ export default function Workbench({
                 ) : activeTab === 'files' ? (
                   // Files Changed Tab - with integrated diff support
                   <>
-                    {isDiffLoading ? (
+                    {!hasRepository ? (
+                      // No repository - show friendly message
+                      <div className="rounded-lg border border-border bg-surface p-8 text-center">
+                        <p className="text-text-muted">{t('tasks:workbench.no_repository')}</p>
+                      </div>
+                    ) : isDiffLoading ? (
                       // Loading diff data
                       <div className="flex items-center justify-center h-64">
                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
