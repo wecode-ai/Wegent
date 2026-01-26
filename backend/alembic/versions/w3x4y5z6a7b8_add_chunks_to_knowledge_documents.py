@@ -45,15 +45,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # Add chunks column to knowledge_documents table
-    # Using JSON type for MySQL/MariaDB compatibility
-    op.add_column(
-        "knowledge_documents",
-        sa.Column(
-            "chunks",
-            sa.JSON(),
-            nullable=True,
-            comment="Document chunk metadata including content and position info",
-        ),
+    # Using DEFAULT ('{}') for production compatibility with existing data
+    op.execute(
+        """
+        ALTER TABLE knowledge_documents
+        ADD COLUMN chunks JSON NOT NULL DEFAULT ('{}')
+        COMMENT 'Document chunk metadata including content and position info'
+        """
     )
 
 
