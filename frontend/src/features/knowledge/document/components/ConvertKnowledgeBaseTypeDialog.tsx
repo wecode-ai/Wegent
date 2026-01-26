@@ -56,6 +56,9 @@ export function ConvertKnowledgeBaseTypeDialog({
         description: t('document.knowledgeBase.convertSuccess'),
       })
       onOpenChange(false)
+      // Call onSuccess to notify parent components to refresh
+      // The parent page.tsx will re-fetch knowledge base data and re-route
+      // to the appropriate layout component based on the new kb_type
       onSuccess?.(updatedKb)
     } catch (error) {
       const errorMessage =
