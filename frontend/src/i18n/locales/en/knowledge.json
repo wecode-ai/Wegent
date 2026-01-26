@@ -379,5 +379,54 @@
     "createTaskError": "Failed to create conversation",
     "bindKnowledgeBaseError": "Failed to bind knowledge base",
     "newNote": "New Note"
+  },
+  "aiAssist": {
+    "toolbar": {
+      "rewrite": "Rewrite",
+      "expand": "Expand",
+      "summarize": "Summarize",
+      "fixGrammar": "Fix Grammar",
+      "custom": "Custom",
+      "sendToChat": "Send to Chat"
+    },
+    "commandPalette": {
+      "placeholder": "Describe what you want AI to generate...",
+      "continueWriting": "Continue writing",
+      "generateOutline": "Generate outline",
+      "searchAndExpand": "Search and expand with sources",
+      "customPromptHint": "Press Enter to generate with your prompt",
+      "hintNavigate": "↑↓ navigate",
+      "hintSelect": "↵ select",
+      "hintClose": "esc close"
+    },
+    "customPrompt": {
+      "placeholder": "Enter your custom instruction...",
+      "submit": "Submit"
+    },
+    "diff": {
+      "accept": "Accept",
+      "reject": "Reject",
+      "regenerate": "Regenerate",
+      "acceptSuccess": "Changes accepted"
+    },
+    "status": {
+      "thinking": "AI is thinking...",
+      "searching": "Searching for information...",
+      "generating": "Generating content..."
+    },
+    "chat": {
+      "insertToDoc": "Insert to Document",
+      "inserted": "Inserted to document",
+      "sendPrefix": "Please help me with the following content:"
+    },
+    "errors": {
+      "noSelection": "Please select some text first",
+      "processingFailed": "AI processing failed",
+      "cancelled": "Operation cancelled"
+    },
+    "shortcut": {
+      "hint": "Press {{shortcut}} to open AI assistant"
+    },
+    "sources": "Sources:"
   }
 }

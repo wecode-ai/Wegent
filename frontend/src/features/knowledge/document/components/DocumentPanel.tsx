@@ -55,6 +55,8 @@ interface DocumentPanelProps {
   onDocumentSelectionChange?: (documentIds: number[]) => void
   /** Callback when new chat button is clicked */
   onNewChat?: () => void
+  /** Callback when content should be sent to chat (for AI assist integration) */
+  onSendToChat?: (content: string) => void
 }
 
 const MIN_WIDTH = 280
@@ -77,6 +79,7 @@ export function DocumentPanel({
   canManage = true,
   onDocumentSelectionChange,
   onNewChat,
+  onSendToChat,
 }: DocumentPanelProps) {
   const { t } = useTranslation('knowledge')
 
@@ -257,6 +260,7 @@ export function DocumentPanel({
           canManage={canManage}
           compact={true}
           onSelectionChange={onDocumentSelectionChange}
+          onSendToChat={onSendToChat}
           // No onBack in panel mode - always show document list
         />
       </div>

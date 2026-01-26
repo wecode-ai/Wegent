@@ -57,6 +57,8 @@ interface ChatAreaProps {
   knowledgeBaseId?: number
   /** Selected document IDs from DocumentPanel (for notebook mode context injection) */
   selectedDocumentIds?: number[]
+  /** Ref to expose quote setting function for external use (e.g., AI assist send to chat) */
+  quoteSetterRef?: React.MutableRefObject<((text: string) => void) | null>
 }
 
 /**
@@ -75,13 +77,28 @@ function ChatAreaContent({
   onTaskCreated,
   knowledgeBaseId,
   selectedDocumentIds,
+  quoteSetterRef,
 }: ChatAreaProps) {
   const { t } = useTranslation()
   const router = useRouter()
 
   // Pipeline stage info state - shared between PipelineStageIndicator and MessagesArea
   const [pipelineStageInfo, setPipelineStageInfo] = useState<PipelineStageInfo | null>(null)
-  const { quote, clearQuote, formatQuoteForMessage } = useQuote()
+  const { quote, clearQuote, formatQuoteForMessage, setQuote } = useQuote()
+
+  // Expose quote setter for external use (AI assist send to chat)
+  useEffect(() => {
+    if (quoteSetterRef) {
+      quoteSetterRef.current = (text: string) => {
+        setQuote({ text })
+      }
+    }
+    return () => {
+      if (quoteSetterRef) {
+        quoteSetterRef.current = null
+      }
+    }
+  }, [quoteSetterRef, setQuote])
 
   // Task context
   const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext()

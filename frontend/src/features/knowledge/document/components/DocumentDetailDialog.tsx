@@ -60,6 +60,19 @@ const WysiwygEditor = dynamic(
   }
 )
 
+// Dynamically import the AI Assist WYSIWYG editor
+const AIAssistWysiwygEditor = dynamic(
+  () => import('./ai-assist/AIAssistWysiwygEditor').then(mod => mod.AIAssistWysiwygEditor),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="min-h-[300px] animate-pulse rounded-lg bg-surface flex items-center justify-center">
+        <Spinner />
+      </div>
+    ),
+  }
+)
+
 // Dynamically import EnhancedMarkdown for markdown preview
 const EnhancedMarkdown = dynamic(() => import('@/components/common/EnhancedMarkdown'), {
   ssr: false,
@@ -119,6 +132,8 @@ interface DocumentDetailDialogProps {
   knowledgeBaseId: number
   /** Knowledge base type - edit is only available for 'notebook' type */
   kbType?: 'notebook' | 'classic'
+  /** Callback when content should be sent to chat */
+  onSendToChat?: (content: string) => void
 }
 
 export function DocumentDetailDialog({
@@ -127,6 +142,7 @@ export function DocumentDetailDialog({
   document,
   knowledgeBaseId,
   kbType,
+  onSendToChat,
 }: DocumentDetailDialogProps) {
   const { t, getCurrentLanguage } = useTranslation('knowledge')
   const { theme } = useTheme()
@@ -542,12 +558,24 @@ export function DocumentDetailDialog({
                           isFullscreen ? 'h-full mt-3' : 'mt-3'
                         )}
                       >
-                        <WysiwygEditor
-                          initialContent={editedContent}
-                          onChange={handleContentChange}
-                          onSave={handleVimSave}
-                          className={cn(isFullscreen ? 'flex-1' : 'min-h-[400px]')}
-                        />
+                        {/* Use AI Assist editor for notebook type, regular editor otherwise */}
+                        {kbType === 'notebook' && onSendToChat ? (
+                          <AIAssistWysiwygEditor
+                            initialContent={editedContent}
+                            onChange={handleContentChange}
+                            onSave={handleVimSave}
+                            knowledgeBaseId={knowledgeBaseId}
+                            onSendToChat={onSendToChat}
+                            className={cn(isFullscreen ? 'flex-1' : 'min-h-[400px]')}
+                          />
+                        ) : (
+                          <WysiwygEditor
+                            initialContent={editedContent}
+                            onChange={handleContentChange}
+                            onSave={handleVimSave}
+                            className={cn(isFullscreen ? 'flex-1' : 'min-h-[400px]')}
+                          />
+                        )}
                       </div>
                     ) : detail.content ? (
                       <div className="p-4 bg-white rounded-lg border border-border">

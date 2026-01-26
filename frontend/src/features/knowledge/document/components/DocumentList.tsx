@@ -43,6 +43,8 @@ interface DocumentListProps {
   compact?: boolean
   /** Callback when document selection changes (for notebook mode context injection) */
   onSelectionChange?: (documentIds: number[]) => void
+  /** Callback when content should be sent to chat (for AI assist integration) */
+  onSendToChat?: (content: string) => void
 }
 
 type SortField = 'name' | 'size' | 'date'
@@ -54,6 +56,7 @@ export function DocumentList({
   canManage = true,
   compact = false,
   onSelectionChange,
+  onSendToChat,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
@@ -601,6 +604,7 @@ export function DocumentList({
         document={viewingDoc}
         knowledgeBaseId={knowledgeBase.id}
         kbType={knowledgeBase.kb_type}
+        onSendToChat={onSendToChat}
       />
 
       <DocumentUpload

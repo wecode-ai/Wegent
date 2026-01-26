@@ -379,5 +379,54 @@
     "createTaskError": "创建对话失败",
     "bindKnowledgeBaseError": "绑定知识库失败",
     "newNote": "新笔记"
+  },
+  "aiAssist": {
+    "toolbar": {
+      "rewrite": "改写",
+      "expand": "扩展",
+      "summarize": "总结",
+      "fixGrammar": "语法修正",
+      "custom": "自定义",
+      "sendToChat": "发送到聊天"
+    },
+    "commandPalette": {
+      "placeholder": "输入你想让 AI 生成的内容...",
+      "continueWriting": "继续写作",
+      "generateOutline": "生成大纲",
+      "searchAndExpand": "搜索资料并补充",
+      "customPromptHint": "按 Enter 键使用您的提示生成",
+      "hintNavigate": "↑↓ 导航",
+      "hintSelect": "↵ 选择",
+      "hintClose": "esc 关闭"
+    },
+    "customPrompt": {
+      "placeholder": "输入你的自定义指令...",
+      "submit": "提交"
+    },
+    "diff": {
+      "accept": "接受",
+      "reject": "拒绝",
+      "regenerate": "重新生成",
+      "acceptSuccess": "已应用更改"
+    },
+    "status": {
+      "thinking": "AI 正在思考...",
+      "searching": "正在搜索资料...",
+      "generating": "正在生成内容..."
+    },
+    "chat": {
+      "insertToDoc": "插入到文档",
+      "inserted": "已插入到文档",
+      "sendPrefix": "请帮我分析以下内容："
+    },
+    "errors": {
+      "noSelection": "请先选中一些文本",
+      "processingFailed": "AI 处理失败",
+      "cancelled": "操作已取消"
+    },
+    "shortcut": {
+      "hint": "按 {{shortcut}} 打开 AI 助手"
+    },
+    "sources": "来源："
   }
 }
