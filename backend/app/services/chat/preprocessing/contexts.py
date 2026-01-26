@@ -867,18 +867,9 @@ async def _process_attachment_contexts_for_message(
             logger.exception(f"Error processing attachment context {context.id}: {e}")
             continue
 
-    # If we have images, return a multi-vision structure
+    # If we have images, return a multi-vision structure with image metadata headers
     if image_contents:
-        combined_text = ""
-        if text_contents:
-            combined_text = "\n".join(text_contents) + "\n\n"
-        combined_text += f"[User Question]:\n{message}"
-
-        return {
-            "type": "multi_vision",
-            "text": combined_text,
-            "images": image_contents,
-        }
+        return _build_vision_structure(text_contents, image_contents, message)
 
     # If only text contents, combine them
     if text_contents:
