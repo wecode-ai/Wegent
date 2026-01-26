@@ -7,8 +7,11 @@
 import React from 'react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TeamIconPicker } from '../teams/TeamIconPicker'
+import { HelpCircle } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 interface TeamBasicInfoFormProps {
   name: string
@@ -19,6 +22,8 @@ interface TeamBasicInfoFormProps {
   setBindMode: (bindMode: ('chat' | 'code' | 'knowledge')[]) => void
   icon?: string | null
   setIcon?: (icon: string) => void
+  requiresWorkspace?: boolean | null
+  setRequiresWorkspace?: (value: boolean | null) => void
 }
 
 export default function TeamBasicInfoForm({
@@ -30,8 +35,13 @@ export default function TeamBasicInfoForm({
   setBindMode,
   icon,
   setIcon,
+  requiresWorkspace,
+  setRequiresWorkspace,
 }: TeamBasicInfoFormProps) {
   const { t } = useTranslation()
+
+  // Show requires_workspace toggle only when 'code' mode is selected
+  const showRequiresWorkspace = bindMode.includes('code') && setRequiresWorkspace
 
   return (
     <div className="space-y-4">
@@ -101,6 +111,32 @@ export default function TeamBasicInfoForm({
           className="bg-base"
         />
       </div>
+
+      {/* Requires Workspace Toggle - Only show when code mode is selected */}
+      {showRequiresWorkspace && (
+        <div className="flex items-center justify-between py-2">
+          <div className="flex items-center gap-2">
+            <Label htmlFor="requiresWorkspace" className="text-sm font-medium">
+              {t('common:team.requires_workspace')}
+            </Label>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <HelpCircle className="h-4 w-4 text-text-muted cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs">
+                  <p className="text-xs">{t('common:team.requires_workspace_hint')}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+          <Switch
+            id="requiresWorkspace"
+            checked={requiresWorkspace === true}
+            onCheckedChange={checked => setRequiresWorkspace(checked)}
+          />
+        </div>
+      )}
     </div>
   )
 }

@@ -110,7 +110,13 @@ class TaskProcessor:
             tuple: (result dict, success bool)
         """
         task_id = task.get("task_id", -1)
+        subtask_id = task.get("subtask_id", -1)
         bot_config = task.get("bot") or []
+
+        # Set request context for log correlation
+        from shared.telemetry.context import init_request_context
+
+        init_request_context()
 
         try:
             executor_type = task.get("executor_type", config.EXECUTOR_DISPATCHER_MODE)

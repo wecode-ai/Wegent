@@ -391,6 +391,10 @@
     "notFound": "Knowledge base not found",
     "createTaskError": "Failed to create conversation",
     "bindKnowledgeBaseError": "Failed to bind knowledge base",
-    "newNote": "New Note"
+    "newNote": "New Note",
+    "summaryFailed": "Summary generation failed",
+    "summaryFailedHint": "Click retry to regenerate summary",
+    "summaryRetry": "Retry",
+    "summaryRetrying": "Retrying..."
   }
 }

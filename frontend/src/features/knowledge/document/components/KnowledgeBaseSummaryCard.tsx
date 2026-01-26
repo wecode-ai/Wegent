@@ -4,12 +4,19 @@
 
 'use client'
 
-import { BookOpen, FileText, Info } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { BookOpen, FileText, Info, AlertTriangle, RefreshCw } from 'lucide-react'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
+import { toast } from '@/hooks/use-toast'
 
 interface KnowledgeBaseSummaryCardProps {
   knowledgeBase: KnowledgeBase
+  /** Callback to refresh knowledge base details after retry */
+  onRefresh?: () => void
 }
 
 /**
@@ -20,15 +27,63 @@ interface KnowledgeBaseSummaryCardProps {
  * - Knowledge base name and description
  * - Document count
  * - AI-generated summary (if available)
+ * - Summary failure warning with retry button (if failed)
  *
  * Styled as a system message without avatar/sender info
  */
-export function KnowledgeBaseSummaryCard({ knowledgeBase }: KnowledgeBaseSummaryCardProps) {
+export function KnowledgeBaseSummaryCard({
+  knowledgeBase,
+  onRefresh,
+}: KnowledgeBaseSummaryCardProps) {
   const { t } = useTranslation('knowledge')
+  const [isRetrying, setIsRetrying] = useState(false)
+
+  // Track component mounted state to prevent updates after unmount
+  const isMountedRef = useRef(true)
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
 
   const longSummary = knowledgeBase.summary?.long_summary
   const shortSummary = knowledgeBase.summary?.short_summary
   const topics = knowledgeBase.summary?.topics
+  const summaryStatus = knowledgeBase.summary?.status
+  const summaryError = knowledgeBase.summary?.error
+
+  // Check if summary generation failed
+  const isSummaryFailed = summaryStatus === 'failed'
+
+  // Handle retry summary generation
+  const handleRetry = async () => {
+    setIsRetrying(true)
+    try {
+      await refreshKnowledgeBaseSummary(knowledgeBase.id)
+      toast({
+        description: t('chatPage.summaryRetrying'),
+      })
+      // Refresh knowledge base details after a short delay
+      if (onRefresh) {
+        setTimeout(() => {
+          if (isMountedRef.current) {
+            onRefresh()
+          }
+        }, 2000)
+      }
+    } catch (error) {
+      console.error('Failed to refresh summary:', error)
+      toast({
+        variant: 'destructive',
+        description: t('chatPage.summaryFailed'),
+      })
+    } finally {
+      if (isMountedRef.current) {
+        setIsRetrying(false)
+      }
+    }
+  }
 
   return (
     <div className="w-full max-w-3xl mx-auto mb-6">
@@ -64,7 +119,7 @@ export function KnowledgeBaseSummaryCard({ knowledgeBase }: KnowledgeBaseSummary
         </div>
 
         {/* Summary Section */}
-        {(longSummary || shortSummary) && (
+        {(longSummary || shortSummary) && !isSummaryFailed && (
           <div className="pt-3 border-t border-border/50">
             <div className="flex items-center gap-2 mb-2">
               <Info className="w-4 h-4 text-text-muted" />
@@ -78,8 +133,41 @@ export function KnowledgeBaseSummaryCard({ knowledgeBase }: KnowledgeBaseSummary
           </div>
         )}
 
+        {/* Summary Failed Warning */}
+        {isSummaryFailed && (
+          <div className="pt-3 border-t border-border/50">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <AlertTriangle className="w-4 h-4 text-amber-500 cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="max-w-xs">{summaryError || t('chatPage.summaryFailedHint')}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <span className="text-sm text-amber-500 font-medium">
+                  {t('chatPage.summaryFailed')}
+                </span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRetry}
+                disabled={isRetrying}
+                className="h-8 text-xs"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isRetrying ? 'animate-spin' : ''}`} />
+                {isRetrying ? t('chatPage.summaryRetrying') : t('chatPage.summaryRetry')}
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Topics */}
-        {topics && topics.length > 0 && (
+        {topics && topics.length > 0 && !isSummaryFailed && (
           <div className="flex flex-wrap gap-2">
             {topics.slice(0, 5).map((topic, index) => (
               <span

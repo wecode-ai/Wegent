@@ -6,28 +6,38 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { Eye, Edit3, Columns } from 'lucide-react'
+import { Eye, Edit3, Columns, Terminal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import EnhancedMarkdown from './EnhancedMarkdown'
 import { useTheme } from '@/features/theme/ThemeProvider'
+import { CodeMirrorEditor, VimModeIndicator, VimMode } from './CodeMirrorEditor'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { toast } from 'sonner'
+
+const VIM_MODE_STORAGE_KEY = 'editor-vim-mode'
 
 interface WysiwygEditorProps {
   initialContent: string
   onChange?: (content: string) => void
+  onSave?: (content: string) => void
+  onClose?: () => void
   className?: string
   readOnly?: boolean
+  defaultVimMode?: boolean
 }
 
 type ViewMode = 'edit' | 'preview' | 'split'
 
 /**
- * Markdown Editor component with Enhanced Markdown preview
+ * Markdown Editor component with Enhanced Markdown preview and Vim mode support
  *
  * Features:
  * - Real-time Markdown editing with live preview
  * - Three view modes: Edit only, Preview only, Split view
  * - CommonMark and GFM (GitHub Flavored Markdown) support via EnhancedMarkdown
  * - Syntax highlighting, Mermaid diagrams, and LaTeX math support in preview
+ * - Vim mode with full keybinding support (via CodeMirror 6 + @replit/codemirror-vim)
  * - Content change callback
  *
  * @example
@@ -35,27 +45,73 @@ type ViewMode = 'edit' | 'preview' | 'split'
  * <WysiwygEditor
  *   initialContent="# Hello World"
  *   onChange={(markdown) => console.log(markdown)}
+ *   onClose={() => console.log('Editor closed')}
  * />
  * ```
  */
 export function WysiwygEditor({
   initialContent,
   onChange,
+  onSave: _onSave,
+  onClose,
   className,
   readOnly = false,
+  defaultVimMode,
 }: WysiwygEditorProps) {
   const [content, setContent] = useState(initialContent)
   const [viewMode, setViewMode] = useState<ViewMode>(readOnly ? 'preview' : 'split')
+  const [vimEnabled, setVimEnabled] = useState<boolean>(() => {
+    // Initialize from localStorage first, then prop, then default to false
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem(VIM_MODE_STORAGE_KEY)
+      if (stored !== null) return stored === 'true'
+    }
+    if (typeof defaultVimMode === 'boolean') return defaultVimMode
+    return false
+  })
+  const [vimMode, setVimMode] = useState<VimMode>('normal')
+  const [hasShownVimHint, setHasShownVimHint] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('editor-vim-hint-shown') === 'true'
+    }
+    return false
+  })
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const { theme } = useTheme()
+  const { t } = useTranslation('common')
 
   // Update content when initialContent changes (e.g., when switching documents)
   useEffect(() => {
     setContent(initialContent)
   }, [initialContent])
 
-  // Handle content change
-  const handleChange = useCallback(
+  // Persist vim mode preference
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(VIM_MODE_STORAGE_KEY, String(vimEnabled))
+    }
+  }, [vimEnabled])
+
+  // Handle vim mode toggle
+  const handleVimToggle = useCallback(() => {
+    const newValue = !vimEnabled
+    setVimEnabled(newValue)
+
+    // Show hint toast on first enable
+    if (newValue && !hasShownVimHint) {
+      toast.info(t('editor.vim.hint_toast'), {
+        description: t('editor.vim.hint_description'),
+        duration: 5000,
+      })
+      setHasShownVimHint(true)
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('editor-vim-hint-shown', 'true')
+      }
+    }
+  }, [vimEnabled, hasShownVimHint, t])
+
+  // Handle content change from textarea
+  const handleTextareaChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const newContent = e.target.value
       setContent(newContent)
@@ -64,7 +120,30 @@ export function WysiwygEditor({
     [onChange]
   )
 
-  // Handle keyboard shortcuts
+  // Handle content change from CodeMirror
+  const handleCodeMirrorChange = useCallback(
+    (newContent: string) => {
+      setContent(newContent)
+      onChange?.(newContent)
+    },
+    [onChange]
+  )
+
+  // Handle save from Vim :w command
+  // Only shows toast notification, does not trigger actual save to backend
+  // The actual save should be done via the Save button or :wq command
+  const handleVimSave = useCallback(() => {
+    // Sync content to parent via onChange (in-memory update only)
+    onChange?.(content)
+    toast.success(t('editor.vim.saved'))
+  }, [content, onChange, t])
+
+  // Handle close from Vim :q command
+  const handleVimClose = useCallback(() => {
+    onClose?.()
+  }, [onClose])
+
+  // Handle keyboard shortcuts for textarea
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       // Tab key inserts spaces instead of changing focus
@@ -91,11 +170,42 @@ export function WysiwygEditor({
   // Render the editor toolbar
   const renderToolbar = () => (
     <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-surface-hover/50">
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-2">
         <span className="text-xs font-medium text-text-secondary">Markdown</span>
+        {vimEnabled && viewMode !== 'preview' && <VimModeIndicator mode={vimMode} />}
       </div>
       {!readOnly && (
         <div className="flex items-center gap-1">
+          {/* Vim mode toggle */}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={vimEnabled ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={handleVimToggle}
+                  className={cn(
+                    'h-7 px-2',
+                    vimEnabled && 'bg-primary/10 text-primary hover:bg-primary/20'
+                  )}
+                  title={t('editor.vim.toggle')}
+                >
+                  <Terminal className="w-3.5 h-3.5" />
+                  <span className="ml-1 text-xs font-mono">Vim</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>{vimEnabled ? t('editor.vim.disable') : t('editor.vim.enable')}</p>
+                {vimEnabled && (
+                  <p className="text-xs text-text-muted mt-1">{t('editor.vim.commands_hint')}</p>
+                )}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          <div className="w-px h-4 bg-border mx-1" />
+
+          {/* View mode buttons */}
           <Button
             variant={viewMode === 'edit' ? 'secondary' : 'ghost'}
             size="sm"
@@ -128,7 +238,7 @@ export function WysiwygEditor({
     </div>
   )
 
-  // Render the editor textarea
+  // Render the editor (textarea or CodeMirror based on vim mode)
   const renderEditor = () => (
     <div className={cn('flex flex-col', viewMode === 'split' ? 'w-1/2' : 'w-full')}>
       {viewMode === 'split' && (
@@ -136,22 +246,37 @@ export function WysiwygEditor({
           Edit
         </div>
       )}
-      <textarea
-        ref={textareaRef}
-        value={content}
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
-        className={cn(
-          'flex-1 w-full p-4 resize-none outline-none',
-          'font-mono text-sm leading-relaxed',
-          'text-text-primary bg-white',
-          'placeholder:text-text-muted',
-          readOnly && 'cursor-default'
-        )}
-        placeholder="Enter markdown content..."
-        readOnly={readOnly}
-        spellCheck={false}
-      />
+      {vimEnabled ? (
+        <CodeMirrorEditor
+          value={content}
+          onChange={handleCodeMirrorChange}
+          onSave={handleVimSave}
+          onClose={handleVimClose}
+          theme={theme}
+          vimEnabled={true}
+          readOnly={readOnly}
+          onVimModeChange={setVimMode}
+          className="flex-1"
+          placeholder="Enter markdown content..."
+        />
+      ) : (
+        <textarea
+          ref={textareaRef}
+          value={content}
+          onChange={handleTextareaChange}
+          onKeyDown={handleKeyDown}
+          className={cn(
+            'flex-1 w-full p-4 resize-none outline-none',
+            'font-mono text-sm leading-relaxed',
+            'text-text-primary bg-white dark:bg-gray-900',
+            'placeholder:text-text-muted',
+            readOnly && 'cursor-default'
+          )}
+          placeholder="Enter markdown content..."
+          readOnly={readOnly}
+          spellCheck={false}
+        />
+      )}
     </div>
   )
 
@@ -174,7 +299,7 @@ export function WysiwygEditor({
             Preview
           </div>
         )}
-        <div className="flex-1 p-4 overflow-y-auto bg-white">
+        <div className="flex-1 p-4 overflow-y-auto bg-white dark:bg-gray-900">
           {normalizedResult ? (
             <EnhancedMarkdown source={normalizedResult} theme={theme} />
           ) : (
@@ -192,7 +317,7 @@ export function WysiwygEditor({
         // Base styling - flex to fill container
         'flex flex-col min-h-[300px] h-full w-full',
         // Border and background
-        'rounded-lg border border-border bg-white overflow-hidden',
+        'rounded-lg border border-border bg-white dark:bg-gray-900 overflow-hidden',
         // Focus styling
         'focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary',
         className

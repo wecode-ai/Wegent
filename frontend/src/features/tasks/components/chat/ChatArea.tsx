@@ -286,6 +286,7 @@ function ChatAreaContent({
     selectedRepo: chatState.selectedRepo,
     selectedBranch: chatState.selectedBranch,
     showRepositorySelector,
+    effectiveRequiresWorkspace: chatState.effectiveRequiresWorkspace,
     taskInputMessage: chatState.taskInputMessage,
     setTaskInputMessage: chatState.setTaskInputMessage,
     setIsLoading: chatState.setIsLoading,
@@ -566,6 +567,10 @@ function ChatAreaContent({
     selectedBranch: chatState.selectedBranch,
     setSelectedBranch: chatState.setSelectedBranch,
     selectedTaskDetail,
+    effectiveRequiresWorkspace: chatState.effectiveRequiresWorkspace,
+    onRequiresWorkspaceChange: (value: boolean) => {
+      chatState.setRequiresWorkspaceOverride(value)
+    },
     enableDeepThinking: chatState.enableDeepThinking,
     setEnableDeepThinking: chatState.setEnableDeepThinking,
     enableClarification: chatState.enableClarification,

@@ -228,6 +228,30 @@ export function DocumentDetailDialog({
     }
   }
 
+  // Handle save from Vim :w command - receives content from WysiwygEditor
+  const handleVimSave = useCallback(
+    async (content: string) => {
+      if (!document) return
+
+      setIsSaving(true)
+      try {
+        await knowledgeBaseApi.updateDocumentContent(document.id, content)
+        // Update local state to match saved content
+        setEditedContent(content)
+        toast.success(t('document.document.detail.saveSuccess'))
+        // Refresh to get the updated content
+        refresh()
+      } catch (err) {
+        const errorMessage =
+          err instanceof Error ? err.message : t('document.document.detail.saveFailed')
+        toast.error(errorMessage)
+      } finally {
+        setIsSaving(false)
+      }
+    },
+    [document, t, refresh]
+  )
+
   const handleCancel = useCallback(() => {
     if (hasChanges) {
       setShowDiscardDialog(true)
@@ -259,6 +283,8 @@ export function DocumentDetailDialog({
               : 'max-w-4xl max-h-[85vh]'
           )}
           hideCloseButton={isFullscreen}
+          preventEscapeClose={isEditing}
+          preventOutsideClick={true}
         >
           {/* Header - hidden in fullscreen mode */}
           {!isFullscreen && (
@@ -525,6 +551,7 @@ export function DocumentDetailDialog({
                         <WysiwygEditor
                           initialContent={editedContent}
                           onChange={handleContentChange}
+                          onSave={handleVimSave}
                           className={cn(isFullscreen ? 'flex-1' : 'min-h-[400px]')}
                         />
                       </div>

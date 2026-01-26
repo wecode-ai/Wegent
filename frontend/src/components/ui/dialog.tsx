@@ -89,6 +89,18 @@ const DialogContent = React.forwardRef<
     // Handle ESC key press
     const handleEscapeKeyDown = React.useCallback(
       (event: KeyboardEvent) => {
+        // Check if the event originated from a CodeMirror editor
+        // If so, let CodeMirror/Vim handle the ESC key first
+        const target = event.target as HTMLElement
+        const isFromCodeMirror = target.closest('.cm-editor') !== null
+
+        if (isFromCodeMirror) {
+          // Don't prevent default or close dialog - let Vim handle ESC
+          console.log('[Dialog] ESC from CodeMirror, not preventing')
+          event.preventDefault() // Prevent dialog close but don't stop Vim
+          return
+        }
+
         if (preventEscapeClose) {
           event.preventDefault()
           return
