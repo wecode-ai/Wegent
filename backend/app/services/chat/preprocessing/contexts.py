@@ -651,7 +651,7 @@ async def prepare_contexts_for_chat(
     message: str,
     base_system_prompt: str,
     task_id: Optional[int] = None,
-) -> Tuple[str, str, List[BaseTool], bool, List[dict]]:
+) -> Tuple[str, str, List[BaseTool], bool, List[dict], List[dict]]:
     """
     Unified context processing based on user_subtask_id.
 
@@ -659,6 +659,7 @@ async def prepare_contexts_for_chat(
     1. Processes attachment contexts - injects content into the message
     2. Processes knowledge base contexts - creates KnowledgeBaseTool for RAG
     3. Processes table contexts - injects table info into system prompt
+    4. Extracts binary attachments - returns metadata for sandbox download
 
     This eliminates the need to pass separate attachment_ids and knowledge_base_ids
     through the call chain.
@@ -672,7 +673,8 @@ async def prepare_contexts_for_chat(
         task_id: Optional task ID for fetching historical KB meta
 
     Returns:
-        Tuple of (final_message, enhanced_system_prompt, extra_tools, has_table_context, table_contexts)
+        Tuple of (final_message, enhanced_system_prompt, extra_tools, has_table_context,
+                  table_contexts, binary_attachments)
     """
     from .tables import parse_table_url
 
@@ -694,7 +696,7 @@ async def prepare_contexts_for_chat(
             task_id=task_id,
             user_subtask_id=user_subtask_id,
         )
-        return message, enhanced_prompt, extra_tools, False, []
+        return message, enhanced_prompt, extra_tools, False, [], []
 
     # Separate contexts by type
     attachment_contexts = [
@@ -728,9 +730,40 @@ async def prepare_contexts_for_chat(
         f"{len(table_contexts)} tables, {len(selected_docs_contexts)} selected_documents"
     )
 
-    # 1. Process attachment contexts - inject into message
+    # Separate binary attachments from text/image attachments
+    # Binary attachments need sandbox download for full analysis
+    binary_attachments: List[dict] = []
+    text_image_attachments: List[SubtaskContext] = []
+
+    for ctx in attachment_contexts:
+        if context_service.is_binary_attachment(ctx):
+            # Extract binary attachment metadata for sandbox download
+            binary_attachments.append(
+                {
+                    "id": ctx.id,
+                    "filename": ctx.original_filename or ctx.name,
+                    "mime_type": ctx.mime_type or "application/octet-stream",
+                    "download_url": f"/api/attachments/{ctx.id}/download",
+                    "file_extension": ctx.file_extension,
+                }
+            )
+            logger.info(
+                f"[prepare_contexts_for_chat] Binary attachment detected: "
+                f"id={ctx.id}, filename={ctx.original_filename}, extension={ctx.file_extension}"
+            )
+        else:
+            # Text/image attachments processed normally
+            text_image_attachments.append(ctx)
+
+    if binary_attachments:
+        logger.info(
+            f"[prepare_contexts_for_chat] Found {len(binary_attachments)} binary attachment(s) "
+            f"for sandbox download: {[a['filename'] for a in binary_attachments]}"
+        )
+
+    # 1. Process text/image attachment contexts - inject into message
     final_message = await _process_attachment_contexts_for_message(
-        attachment_contexts, message
+        text_image_attachments, message
     )
 
     # 2. Process knowledge base contexts - create tools
@@ -815,6 +848,7 @@ async def prepare_contexts_for_chat(
         extra_tools,
         has_table_context,
         parsed_tables,
+        binary_attachments,
     )
 
 

@@ -504,6 +504,7 @@ async def _stream_chat_response(
 
         has_table_context = False
         table_contexts = []
+        binary_attachments = []
         if user_subtask_id:
             from app.services.chat.preprocessing import prepare_contexts_for_chat
 
@@ -513,6 +514,7 @@ async def _stream_chat_response(
                 extra_tools,
                 has_table_context,
                 table_contexts,
+                binary_attachments,
             ) = await prepare_contexts_for_chat(
                 db=db,
                 user_subtask_id=user_subtask_id,
@@ -528,7 +530,8 @@ async def _stream_chat_response(
                 f"extra_tools={[t.name for t in extra_tools]}, "
                 f"has_table_context={has_table_context}, "
                 f"table_contexts_count={len(table_contexts)}, "
-                f"table_contexts={table_contexts}"
+                f"table_contexts={table_contexts}, "
+                f"binary_attachments_count={len(binary_attachments)}"
             )
         else:
             logger.warning(
@@ -664,6 +667,7 @@ async def _stream_chat_response(
                 knowledge_base_ids=knowledge_base_ids,
                 document_ids=document_ids,
                 table_contexts=table_contexts,
+                binary_attachments=binary_attachments,
                 event_emitter=emitter,
                 is_user_selected_kb=is_user_selected_kb,
                 preload_skills=chat_config.preload_skills,  # Use resolved from ChatConfig
@@ -733,6 +737,7 @@ async def _stream_with_http_adapter(
     knowledge_base_ids: list = None,
     document_ids: list = None,
     table_contexts: list = None,
+    binary_attachments: list = None,
     event_emitter: Optional["ChatEventEmitter"] = None,
     is_user_selected_kb: bool = True,
     preload_skills: list = None,
@@ -761,6 +766,8 @@ async def _stream_with_http_adapter(
         knowledge_base_ids: List of knowledge base IDs to search
         document_ids: List of document IDs to filter retrieval
         table_contexts: List of table context dicts for DataTableTool
+        binary_attachments: List of binary attachment metadata dicts for sandbox download
+            Each dict contains: id, filename, mime_type, download_url, file_extension
         event_emitter: Optional event emitter for chat events. If None, uses WebSocketEventEmitter.
             Pass NoOpEventEmitter for background tasks without WebSocket (e.g., Subscription Scheduler).
         is_user_selected_kb: Whether KB is explicitly selected by user (strict mode)
@@ -877,6 +884,8 @@ async def _stream_with_http_adapter(
         document_ids=document_ids,
         is_user_selected_kb=is_user_selected_kb,
         table_contexts=table_contexts or [],
+        binary_attachments=binary_attachments
+        or [],  # Binary attachments for sandbox download
         task_data=task_data,
         mcp_servers=mcp_servers,
         history_limit=history_limit,  # Pass history limit for subscription tasks
@@ -887,7 +896,8 @@ async def _stream_with_http_adapter(
     logger.info(
         "[HTTP_ADAPTER] ChatRequest built: task_id=%d, subtask_id=%d, user_subtask_id=%s, "
         "skill_names=%s, table_contexts_count=%d, table_contexts=%s, "
-        "skill_configs_count=%d, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s",
+        "skill_configs_count=%d, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s, "
+        "binary_attachments_count=%d",
         task_id,
         subtask_id,
         user_subtask_id,
@@ -898,6 +908,7 @@ async def _stream_with_http_adapter(
         preload_skills,
         knowledge_base_ids,
         document_ids,
+        len(binary_attachments) if binary_attachments else 0,
     )
 
     # Record chat request details to trace

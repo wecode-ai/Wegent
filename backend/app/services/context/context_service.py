@@ -61,6 +61,32 @@ class ContextService:
     # Image file extensions supported for vision models
     IMAGE_EXTENSIONS = frozenset([".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"])
 
+    # Binary file extensions that require sandbox download for full processing
+    # These files cannot be fully analyzed by text extraction alone
+    # When these files are uploaded, they should be made available for
+    # sandbox download so that AI can use pandas/openpyxl etc. to analyze them
+    BINARY_EXTENSIONS = frozenset(
+        [
+            ".xlsx",
+            ".xls",  # Excel files
+            ".pdf",  # PDF documents (complex formatting)
+            ".docx",
+            ".doc",  # Word documents
+            ".pptx",
+            ".ppt",  # PowerPoint files
+            ".zip",
+            ".tar",
+            ".gz",
+            ".rar",
+            ".7z",  # Archives
+            ".csv",  # CSV (better analyzed programmatically)
+            ".parquet",
+            ".json",  # Data files
+            ".sqlite",
+            ".db",  # Database files
+        ]
+    )
+
     # ==================== Attachment Operations ====================
 
     def upload_attachment(
@@ -313,6 +339,25 @@ class ContextService:
         if context.context_type != ContextType.ATTACHMENT.value:
             return False
         return context.file_extension.lower() in self.IMAGE_EXTENSIONS
+
+    def is_binary_attachment(self, context: SubtaskContext) -> bool:
+        """
+        Check if context is a binary attachment that requires sandbox download.
+
+        Binary attachments are files that cannot be fully analyzed by text
+        extraction alone, such as Excel files, PDFs, archives, etc.
+        These files should be made available for download in the sandbox
+        so that AI can use appropriate tools (pandas, openpyxl, etc.) to analyze them.
+
+        Args:
+            context: SubtaskContext record
+
+        Returns:
+            True if the context is a binary attachment requiring sandbox download
+        """
+        if context.context_type != ContextType.ATTACHMENT.value:
+            return False
+        return context.file_extension.lower() in self.BINARY_EXTENSIONS
 
     def build_vision_content_block(
         self,

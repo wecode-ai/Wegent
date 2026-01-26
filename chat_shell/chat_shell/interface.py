@@ -91,6 +91,10 @@ class ChatRequest:
         default_factory=list
     )  # Table contexts for DataTableTool
 
+    # Binary attachments for sandbox download
+    # Each item: {id, filename, mime_type, download_url, file_extension}
+    binary_attachments: list = field(default_factory=list)
+
     # Task data for MCP tools
     task_data: Optional[dict] = None
 

@@ -163,11 +163,44 @@ class ChatContext:
             _, mcp_clients = mcp_result
             self._mcp_clients = mcp_clients
 
+            # Process binary attachments
+            # If binary attachments are present, inject attachment prompt into system prompt
+            # and auto-preload sandbox skill if available
+            if self._request.binary_attachments:
+                from chat_shell.prompts.attachments import (
+                    append_binary_attachment_prompt,
+                )
+
+                system_prompt = append_binary_attachment_prompt(
+                    system_prompt, self._request.binary_attachments
+                )
+                logger.info(
+                    "[CHAT_CONTEXT] Injected binary attachment prompt for %d attachment(s)",
+                    len(self._request.binary_attachments),
+                )
+
+                # Auto-preload sandbox skill if available and not already preloaded
+                if self._request.skill_names and "sandbox" in self._request.skill_names:
+                    # Check if sandbox is not already in preload_skills
+                    if "sandbox" not in (self._request.preload_skills or []):
+                        logger.info(
+                            "[CHAT_CONTEXT] Auto-preloading sandbox skill for binary attachment processing"
+                        )
+                        # Add sandbox to preload_skills by modifying the request
+                        if self._request.preload_skills is None:
+                            self._request.preload_skills = []
+                        self._request.preload_skills = list(
+                            self._request.preload_skills
+                        ) + ["sandbox"]
+
             add_span_event(
                 "context_prepare_completed",
                 {
                     "total_extra_tools": len(extra_tools),
                     "mcp_clients_count": len(mcp_clients),
+                    "binary_attachments_count": len(
+                        self._request.binary_attachments or []
+                    ),
                 },
             )
 

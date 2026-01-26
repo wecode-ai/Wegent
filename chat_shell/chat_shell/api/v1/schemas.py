@@ -230,6 +230,12 @@ class Metadata(BaseModel):
     table_contexts: Optional[list[dict]] = Field(
         None, description="Table contexts for DataTableTool"
     )
+    # Binary attachments for sandbox download
+    # Each item: {id, filename, mime_type, download_url, file_extension}
+    binary_attachments: Optional[list[dict]] = Field(
+        None,
+        description="Binary attachments available for sandbox download (Excel, PDF, etc.)",
+    )
     # Task data for MCP tools
     task_data: Optional[dict] = Field(None, description="Task data for MCP tools")
     # Authentication

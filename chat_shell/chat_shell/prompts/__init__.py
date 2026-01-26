@@ -9,9 +9,14 @@ This module provides system prompt building utilities:
 - Deep thinking mode prompt
 - Skill metadata prompt
 - Knowledge base prompts (strict/relaxed modes)
+- Binary attachment prompts (for sandbox download)
 - Unified system prompt builder
 """
 
+from .attachments import (
+    append_binary_attachment_prompt,
+    build_binary_attachment_prompt,
+)
 from .builder import (
     CLARIFICATION_PROMPT,
     DEEP_THINKING_PROMPT,
@@ -42,4 +47,7 @@ __all__ = [
     "append_deep_thinking_prompt",
     "append_skill_metadata_prompt",
     "build_system_prompt",
+    # Binary attachment functions
+    "build_binary_attachment_prompt",
+    "append_binary_attachment_prompt",
 ]

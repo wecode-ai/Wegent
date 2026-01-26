@@ -154,6 +154,7 @@ class HTTPAdapter(ChatInterface):
             "document_ids": request.document_ids,
             "is_user_selected_kb": request.is_user_selected_kb,
             "table_contexts": request.table_contexts,
+            "binary_attachments": request.binary_attachments,  # Binary attachments for sandbox download
             "task_data": request.task_data,
             # Authentication
             "auth_token": request.auth_token,

@@ -221,6 +221,7 @@ async def _stream_response(
         document_ids = None
         is_user_selected_kb = True  # Default to strict mode for backward compatibility
         table_contexts = []
+        binary_attachments = []  # Binary attachments for sandbox download
         task_data = None
         history_limit = None  # For subscription tasks
         auth_token = ""  # JWT token for API authentication
@@ -251,6 +252,9 @@ async def _stream_response(
             if is_user_selected_kb is None:
                 is_user_selected_kb = True  # Ensure it's never None
             table_contexts = getattr(request.metadata, "table_contexts", None) or []
+            binary_attachments = (
+                getattr(request.metadata, "binary_attachments", None) or []
+            )
             task_data = getattr(request.metadata, "task_data", None)
             history_limit = getattr(request.metadata, "history_limit", None)
             auth_token = getattr(request.metadata, "auth_token", None) or ""
@@ -297,6 +301,7 @@ async def _stream_response(
             document_ids=document_ids,
             is_user_selected_kb=is_user_selected_kb,
             table_contexts=table_contexts,
+            binary_attachments=binary_attachments,
             task_data=task_data,
             mcp_servers=mcp_servers,
             auth_token=auth_token,
@@ -307,7 +312,7 @@ async def _stream_response(
             "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, user_subtask_id=%s, "
             "enable_web_search=%s, mcp_servers=%d, skills=%d, "
             "skill_names=%s, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s, "
-            "table_contexts_count=%d, table_contexts=%s",
+            "table_contexts_count=%d, table_contexts=%s, binary_attachments_count=%d",
             task_id,
             subtask_id,
             user_subtask_id,
@@ -320,6 +325,7 @@ async def _stream_response(
             document_ids,
             len(table_contexts),
             table_contexts,  # Log the actual content
+            len(binary_attachments),
         )
 
         # Record request details to trace
