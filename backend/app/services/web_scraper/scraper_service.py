@@ -11,13 +11,17 @@ Uses Crawl4AI library which provides:
 - Automatic content extraction
 - SSRF protection
 - Proxy support with direct and fallback modes
+
+Also supports direct PDF file extraction using PyPDF2.
 """
 
+import io
 import logging
 from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
 
+import httpx
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -25,8 +29,8 @@ from app.services.url_metadata import _validate_url_for_ssrf
 
 logger = logging.getLogger(__name__)
 
-# Request timeout (10 seconds - use domcontentloaded instead of networkidle for faster response)
-WEB_SCRAPER_TIMEOUT = 10000  # milliseconds for Crawl4AI
+# Request timeout (20 seconds - use domcontentloaded instead of networkidle for faster response)
+WEB_SCRAPER_TIMEOUT = 20000  # milliseconds for Crawl4AI
 
 
 class ScrapedContent(BaseModel):
