@@ -119,6 +119,8 @@ export function ChatInputCard({
   selectedBranch,
   setSelectedBranch,
   selectedTaskDetail,
+  effectiveRequiresWorkspace,
+  onRequiresWorkspaceChange,
   enableDeepThinking,
   setEnableDeepThinking,
   enableClarification,
@@ -260,6 +262,8 @@ export function ChatInputCard({
             selectedBranch={selectedBranch}
             setSelectedBranch={setSelectedBranch}
             selectedTaskDetail={selectedTaskDetail}
+            effectiveRequiresWorkspace={effectiveRequiresWorkspace}
+            onRequiresWorkspaceChange={onRequiresWorkspaceChange}
             enableDeepThinking={enableDeepThinking}
             setEnableDeepThinking={setEnableDeepThinking}
             enableClarification={enableClarification}

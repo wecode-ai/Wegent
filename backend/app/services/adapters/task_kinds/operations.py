@@ -8,6 +8,7 @@ Task CRUD operations.
 This module contains methods for creating, updating, deleting, and canceling tasks.
 """
 
+import asyncio
 import json as json_lib
 import logging
 from datetime import datetime
@@ -89,6 +90,11 @@ class TaskOperationsMixin:
 
         db.commit()
         db.refresh(task)
+
+        # Push mode: dispatch task to executor_manager immediately after commit
+        from app.services.task_dispatcher import task_dispatcher
+
+        task_dispatcher.schedule_dispatch(task.id)
 
         return convert_to_task_dict(task, db, user.id)
 

@@ -106,6 +106,9 @@ services:
       CHAT_SHELL_URL: ${CHAT_SHELL_URL:-http://chat_shell:8100}
       # CHAT_SHELL_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
       # INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
+      # Task Dispatch Configuration
+      # Mode: 'pull' (default, executor_manager polls) or 'push' (backend pushes)
+      TASK_DISPATCH_MODE: ${TASK_DISPATCH_MODE:-pull}
       # OpenTelemetry Configuration (uncomment to enable)
       # OTEL_ENABLED: "true"
       # OTEL_SERVICE_NAME: "wegent-backend"
@@ -225,6 +228,16 @@ services:
       # Set to 'false' to disable seccomp (add --security-opt seccomp=unconfined)
       # Leave empty to auto-detect based on kernel version
       - ENABLE_SECCOMP=${ENABLE_SECCOMP:-true}
+      # Task Dispatch Configuration
+      # Mode: 'pull' (default) or 'push' (receive tasks from backend)
+      - TASK_DISPATCH_MODE=${TASK_DISPATCH_MODE:-pull}
+      # Service pool name for this instance (used for queue isolation)
+      - SERVICE_POOL=${SERVICE_POOL:-default}
+      # JWT secret for verifying backend tokens (must match backend SECRET_KEY)
+      - JWT_SECRET_KEY=${BACKEND_SECRET_KEY:-your-secret-key-here}
+      - JWT_ALGORITHM=${BACKEND_ALGORITHM:-HS256}
+      # Set to 'true' to require JWT authentication on /tasks/receive
+      - TASK_RECEIVE_AUTH_REQUIRED=${TASK_RECEIVE_AUTH_REQUIRED:-false}
       # OpenTelemetry Configuration (uncomment to enable)
       # - OTEL_ENABLED=true
       # - OTEL_SERVICE_NAME=wegent-executor-manager

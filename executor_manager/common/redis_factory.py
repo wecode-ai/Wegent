@@ -8,8 +8,10 @@ This module provides a factory for creating and managing Redis clients,
 eliminating duplicate connection logic across service classes.
 """
 
+import asyncio
 import threading
-from typing import Optional
+import time
+from typing import Callable, Optional, TypeVar
 
 import redis
 import redis.asyncio as aioredis
@@ -18,6 +20,8 @@ from executor_manager.common.config import RedisConfig, get_config
 from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+T = TypeVar("T", redis.Redis, aioredis.Redis)
 
 
 class RedisClientFactory:
@@ -43,8 +47,134 @@ class RedisClientFactory:
         return cls._config
 
     @classmethod
+    def _create_sync_client(cls, config: RedisConfig) -> redis.Redis:
+        """Create a synchronous Redis client instance."""
+        return redis.from_url(
+            config.url,
+            encoding=config.encoding,
+            decode_responses=config.decode_responses,
+            socket_timeout=config.socket_timeout,
+            socket_connect_timeout=config.connect_timeout,
+        )
+
+    @classmethod
+    def _create_async_client(cls, config: RedisConfig) -> aioredis.Redis:
+        """Create an async Redis client instance."""
+        return aioredis.from_url(
+            config.url,
+            encoding=config.encoding,
+            decode_responses=config.decode_responses,
+        )
+
+    @classmethod
+    def _retry_sync(
+        cls,
+        create_fn: Callable[[], T],
+        verify_fn: Callable[[T], None],
+        verify_connection: bool,
+        client_type: str,
+    ) -> Optional[T]:
+        """Execute sync client creation with retry logic.
+
+        Args:
+            create_fn: Function to create the client
+            verify_fn: Function to verify the connection (e.g., ping)
+            verify_connection: Whether to verify the connection
+            client_type: Client type name for logging
+
+        Returns:
+            Client if successful, None if all retries failed
+        """
+        config = cls._get_config()
+        last_error: Optional[Exception] = None
+
+        for attempt in range(config.max_retries):
+            try:
+                client = create_fn()
+
+                if verify_connection:
+                    verify_fn(client)
+
+                if attempt > 0:
+                    logger.info(
+                        f"[RedisClientFactory] {client_type} Redis connected after {attempt + 1} attempts"
+                    )
+                else:
+                    logger.info(
+                        f"[RedisClientFactory] {client_type} Redis connection established"
+                    )
+                return client
+
+            except Exception as e:
+                last_error = e
+                if attempt < config.max_retries - 1:
+                    logger.warning(
+                        f"[RedisClientFactory] {client_type} connection attempt {attempt + 1}/{config.max_retries} "
+                        f"failed: {e}, retrying in {config.retry_delay}s..."
+                    )
+                    time.sleep(config.retry_delay)
+
+        logger.error(
+            f"[RedisClientFactory] Failed to connect {client_type} after {config.max_retries} attempts: {last_error}"
+        )
+        return None
+
+    @classmethod
+    async def _retry_async(
+        cls,
+        create_fn: Callable[[], T],
+        verify_fn: Callable[[T], any],
+        verify_connection: bool,
+        client_type: str,
+    ) -> Optional[T]:
+        """Execute async client creation with retry logic.
+
+        Args:
+            create_fn: Function to create the client
+            verify_fn: Async function to verify the connection (e.g., ping)
+            verify_connection: Whether to verify the connection
+            client_type: Client type name for logging
+
+        Returns:
+            Client if successful, None if all retries failed
+        """
+        config = cls._get_config()
+        last_error: Optional[Exception] = None
+
+        for attempt in range(config.max_retries):
+            try:
+                client = create_fn()
+
+                if verify_connection:
+                    await verify_fn(client)
+
+                if attempt > 0:
+                    logger.info(
+                        f"[RedisClientFactory] {client_type} Redis connected after {attempt + 1} attempts"
+                    )
+                else:
+                    logger.info(
+                        f"[RedisClientFactory] {client_type} Redis connection established"
+                    )
+                return client
+
+            except Exception as e:
+                last_error = e
+                if attempt < config.max_retries - 1:
+                    logger.warning(
+                        f"[RedisClientFactory] {client_type} connection attempt {attempt + 1}/{config.max_retries} "
+                        f"failed: {e}, retrying in {config.retry_delay}s..."
+                    )
+                    await asyncio.sleep(config.retry_delay)
+
+        logger.error(
+            f"[RedisClientFactory] Failed to connect {client_type} after {config.max_retries} attempts: {last_error}"
+        )
+        return None
+
+    @classmethod
     def get_sync_client(cls, verify_connection: bool = True) -> Optional[redis.Redis]:
-        """Get or create a synchronous Redis client.
+        """Get or create a synchronous Redis client with retry on failure.
 
         Args:
             verify_connection: If True, verify the connection is working
@@ -52,8 +182,16 @@ class RedisClientFactory:
         Returns:
             Redis client if successful, None if connection failed
         """
+        # Check if existing client is still connected
         if cls._sync_client is not None:
-            return cls._sync_client
+            try:
+                cls._sync_client.ping()
+                return cls._sync_client
+            except Exception:
+                logger.warning(
+                    "[RedisClientFactory] Connection lost, attempting reconnect..."
+                )
+                cls._sync_client = None
 
         with cls._lock:
             # Double-check after acquiring lock
@@ -61,31 +199,23 @@ class RedisClientFactory:
                 return cls._sync_client
 
             config = cls._get_config()
-            try:
-                client = redis.from_url(
-                    config.url,
-                    encoding=config.encoding,
-                    decode_responses=config.decode_responses,
-                    socket_timeout=config.socket_timeout,
-                    socket_connect_timeout=config.connect_timeout,
-                )
+            client = cls._retry_sync(
+                create_fn=lambda: cls._create_sync_client(config),
+                verify_fn=lambda c: c.ping(),
+                verify_connection=verify_connection,
+                client_type="Sync",
+            )
 
-                if verify_connection:
-                    client.ping()
-
+            if client is not None:
                 cls._sync_client = client
-                logger.info("[RedisClientFactory] Sync Redis connection established")
-                return client
 
-            except Exception as e:
-                logger.error(f"[RedisClientFactory] Failed to connect to Redis: {e}")
-                return None
+            return client
 
     @classmethod
     async def get_async_client(
         cls, verify_connection: bool = True
     ) -> Optional[aioredis.Redis]:
-        """Get or create an async Redis client.
+        """Get or create an async Redis client with retry on failure.
 
         Args:
             verify_connection: If True, verify the connection is working
@@ -93,29 +223,29 @@ class RedisClientFactory:
         Returns:
             Async Redis client if successful, None if connection failed
         """
+        # Check if existing client is still connected
         if cls._async_client is not None:
-            return cls._async_client
+            try:
+                await cls._async_client.ping()
+                return cls._async_client
+            except Exception:
+                logger.warning(
+                    "[RedisClientFactory] Async connection lost, attempting reconnect..."
+                )
+                cls._async_client = None
 
         config = cls._get_config()
-        try:
-            client = aioredis.from_url(
-                config.url,
-                encoding=config.encoding,
-                decode_responses=config.decode_responses,
-            )
+        client = await cls._retry_async(
+            create_fn=lambda: cls._create_async_client(config),
+            verify_fn=lambda c: c.ping(),
+            verify_connection=verify_connection,
+            client_type="Async",
+        )
 
-            if verify_connection:
-                await client.ping()
-
+        if client is not None:
             cls._async_client = client
-            logger.info("[RedisClientFactory] Async Redis connection established")
-            return client
 
-        except Exception as e:
-            logger.error(
-                f"[RedisClientFactory] Failed to create async Redis client: {e}"
-            )
-            return None
+        return client
 
     @classmethod
     def create_client(cls, verify_connection: bool = True) -> Optional[redis.Redis]:
@@ -131,23 +261,12 @@ class RedisClientFactory:
             New Redis client if successful, None if connection failed
         """
         config = cls._get_config()
-        try:
-            client = redis.from_url(
-                config.url,
-                encoding=config.encoding,
-                decode_responses=config.decode_responses,
-                socket_timeout=config.socket_timeout,
-                socket_connect_timeout=config.connect_timeout,
-            )
-
-            if verify_connection:
-                client.ping()
-
-            return client
-
-        except Exception as e:
-            logger.error(f"[RedisClientFactory] Failed to create Redis client: {e}")
-            return None
+        return cls._retry_sync(
+            create_fn=lambda: cls._create_sync_client(config),
+            verify_fn=lambda c: c.ping(),
+            verify_connection=verify_connection,
+            client_type="New",
+        )
 
     @classmethod
     def reset(cls) -> None:

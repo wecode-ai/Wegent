@@ -80,6 +80,10 @@ class TaskScheduler:
     )
     def fetch_online_and_process_tasks(self):
         """Fetch and process online tasks"""
+        from shared.telemetry.context import init_request_context
+
+        init_request_context()
+
         executor_count_result = ExecutorDispatcher.get_executor(
             EXECUTOR_DISPATCHER_MODE
         ).get_executor_count("aigc.weibo.com/task-type=online")
@@ -131,6 +135,10 @@ class TaskScheduler:
     )
     def fetch_offline_and_process_tasks(self):
         """Fetch and process offline tasks"""
+        from shared.telemetry.context import init_request_context
+
+        init_request_context()
+
         executor_count_result = ExecutorDispatcher.get_executor(
             EXECUTOR_DISPATCHER_MODE
         ).get_executor_count("aigc.weibo.com/task-type=offline")
@@ -184,6 +192,10 @@ class TaskScheduler:
     )
     def fetch_subtasks(self):
         """Fetch subtasks for pipeline tasks"""
+        from shared.telemetry.context import init_request_context
+
+        init_request_context()
+
         current_tasks = ExecutorDispatcher.get_executor(
             EXECUTOR_DISPATCHER_MODE
         ).get_current_task_ids("aigc.weibo.com/team-mode=pipeline")

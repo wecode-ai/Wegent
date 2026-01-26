@@ -378,6 +378,10 @@
     "notFound": "知识库未找到",
     "createTaskError": "创建对话失败",
     "bindKnowledgeBaseError": "绑定知识库失败",
-    "newNote": "新笔记"
+    "newNote": "新笔记",
+    "summaryFailed": "摘要生成失败",
+    "summaryFailedHint": "点击重试按钮重新生成摘要",
+    "summaryRetry": "重试",
+    "summaryRetrying": "重试中..."
   }
 }

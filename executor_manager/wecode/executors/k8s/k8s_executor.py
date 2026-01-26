@@ -5,6 +5,7 @@
 import json
 import os
 import threading
+import time
 from typing import Any, Dict, Optional
 
 import requests
@@ -551,6 +552,7 @@ class K8sExecutor(Executor):
     def get_executor_count(
         self, label_selector: Optional[str] = None
     ) -> Dict[str, Any]:
+        start_time = time.time()
         try:
             core_v1 = self._get_core_v1_api()
             if core_v1 is None:
@@ -560,11 +562,29 @@ class K8sExecutor(Executor):
                     "count": 0,
                 }
 
-            pods = core_v1.list_namespaced_pod(
-                namespace=K8S_NAMESPACE, label_selector=label_selector
+            # Use default label selector if not provided to only count wegent pods
+            if label_selector is None:
+                label_selector = "aigc.weibo.com/executor=wegent"
+
+            # Use _preload_content=False to skip SDK deserialization of V1PodList
+            # This significantly improves performance when listing many pods
+            # (SDK deserialization can take 17+ seconds for 300+ pods)
+            response = core_v1.list_namespaced_pod(
+                namespace=K8S_NAMESPACE,
+                label_selector=label_selector,
+                _preload_content=False,
             )
-            logger.info(f"Found {len(pods.items)} pods in namespace {K8S_NAMESPACE}")
-            return {"status": "success", "running": len(pods.items)}
+
+            # Parse JSON manually to get count only
+            data = json.loads(response.data.decode("utf-8"))
+            pod_count = len(data.get("items", []))
+
+            elapsed = time.time() - start_time
+            logger.info(
+                f"Found {pod_count} pods in namespace {K8S_NAMESPACE} "
+                f"(label_selector={label_selector}, took {elapsed:.2f}s)"
+            )
+            return {"status": "success", "running": pod_count}
         except ApiException as e:
             logger.error(f"Kubernetes API error listing pods: {e}")
             return {

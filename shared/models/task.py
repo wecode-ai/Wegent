@@ -8,10 +8,14 @@ from pydantic import BaseModel, Field
 
 
 class User(BaseModel):
-    id: int
-    name: str
+    id: Optional[int] = None
+    name: Optional[str] = None
     git_domain: Optional[str] = None
     git_token: Optional[str] = None
+    git_id: Optional[str] = None  # Git user ID
+    git_login: Optional[str] = None  # Git username/login
+    git_email: Optional[str] = None  # Git email
+    user_name: Optional[str] = None  # User display name
 
 
 class Attachment(BaseModel):
@@ -32,10 +36,14 @@ class Attachment(BaseModel):
 class Bot(BaseModel):
     id: int
     name: str
-    agent_name: str
+    shell_type: Optional[str] = None  # Shell type (e.g., "ClaudeCode", "Agno")
+    agent_name: Optional[str] = None  # Legacy field, use shell_type instead
     agent_config: Optional[Dict[str, Any]] = None
     system_prompt: Optional[str] = None
     mcp_servers: Optional[Dict[str, Any]] = None
+    skills: Optional[List[str]] = None  # List of skill names
+    role: Optional[str] = None  # Bot's role in the team
+    base_image: Optional[str] = None  # Custom base image for executor
 
 
 class Task(BaseModel):
@@ -45,18 +53,28 @@ class Task(BaseModel):
     subtask_title: Optional[str] = None
     task_title: Optional[str] = None
     user: User
-    bot: Bot
+    bot: List[Bot] = []  # List of bots for this task (supports multi-bot teams)
     team_id: int
-    git_domain: str
-    git_repo: str
-    git_repo_id: int
-    branch_name: str
-    git_url: str
-    prompt: str
-    status: str
-    progress: int
+    team_namespace: Optional[str] = None  # Team namespace for skill lookup
+    mode: Optional[str] = None  # Collaboration mode (e.g., "coordinate", "collaborate")
+    git_domain: Optional[str] = None
+    git_repo: Optional[str] = None
+    git_repo_id: Optional[int] = None
+    branch_name: Optional[str] = None
+    git_url: Optional[str] = None
+    prompt: Optional[str] = None
+    status: Optional[str] = None
+    progress: Optional[int] = None
     attachments: List[Attachment] = []  # Attachments for this subtask
     auth_token: Optional[str] = None  # JWT token for authenticated API calls
+    type: Optional[str] = None  # Task type: "online" or "offline"
+    executor_name: Optional[str] = None  # Executor name for tracking
+    executor_namespace: Optional[str] = None  # Executor namespace
+    new_session: Optional[bool] = (
+        None  # Flag to start new session (no conversation history)
+    )
+    created_at: Optional[str] = None  # ISO format datetime
+    updated_at: Optional[str] = None  # ISO format datetime
 
 
 class ThinkingStep(BaseModel):

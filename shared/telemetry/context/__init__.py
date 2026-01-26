@@ -41,6 +41,7 @@ from shared.telemetry.context.span import (
     get_current_span,
     get_request_id,
     get_server_ip,
+    init_request_context,
     is_websocket_context,
     record_stream_error,
     restore_context_vars,

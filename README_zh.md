@@ -26,23 +26,70 @@
 
 ---
 
-## ✨ 核心模式
+## ✨ 核心功能
 
-| 💬 对话模式 | 💻 编码模式 | 📚 知识模式 |
-|:------------|:------------|:-----------------------|
-| **LLM**: 支持Claude / OpenAI / Gemini 等主流模型<br>**多模态**: 支持图片 / PPT / Word / PDF / Excel 文件自动解析<br>**联网搜索**: 支持对接各类搜索引擎<br>**深度调研**: 支持深度调研模式，可自动搜索、整理、生成调研报告<br>**纠错模式**: 由多个AI自动检测并修正回答中的错误<br>**追问模式**: AI 主动追问澄清需求，确保理解准确<br>**扩展能力**: 支持 Skill 技能包 / MCP 工具 / 自定义工具 | **多平台集成**: 支持GitHub / GitLab / Gitea / Gitee / Gerrit平台<br>**自动化AI工作流**: 分支 → 编码 → 提交 → PR 流程自动化<br>**需求澄清**: AI 主动追问，确保理解准确<br>**Wiki 生成**: 自动生成代码库文档 | **RAG 检索**: 向量 / 关键词 / 混合检索<br>**存储后端**: Elasticsearch / Qdrant<br>**文档解析**: PDF / Markdown / DOCX / 代码文件<br>**Wiki**: 代码库文档自动生成 |
+### 💬 对话模式
+
+一个完全开源的聊天 Agent，具备以下能力：
+
+- **多模型支持**：兼容 Claude、OpenAI、Gemini、DeepSeek、GLM 等主流模型
+- **对话历史**：支持新建对话和多轮对话，支持对话历史的保存和分享
+- **多人对话**：支持 AI 群聊，AI 可以根据群聊历史通过 @提及 进行回复
+- **附件解析**：可在单聊、群聊中给 AI 发送 txt、pdf、ppt、doc、图片格式的附件
+- **追问模式**：模型通过启发式问题帮你澄清思路
+- **纠错模式**：自动调用多个模型矫正回答
+- **长期记忆**：支持集成 mem0 实现对话的长期记忆
+- **运行沙箱**：支持通过沙箱执行命令或修改文件，兼容 E2B 协议
+- **扩展能力**：可通过配置的方式自定义提示词、MCP 和 Skill（自带绘制图表技能）
+
+### 💻 编码模式
+
+一个云端的 Claude Code 编码执行引擎：
+
+- **多模型配置**：配置各种兼容 Claude 协议的模型
+- **并发执行**：可在云端同时执行多个编码任务
+- **需求澄清**：AI 会结合代码和提问，帮你梳理需求后生成规格文档
+- **Git 集成**：支持与 GitHub/GitLab/Gitea/Gerrit 进行集成，直接从代码仓库克隆、修改后创建 PR
+- **MCP/Skill 支持**：支持通过配置为 Agent 集成 MCP/Skill
+- **多轮对话**：支持多轮对话追问
+
+### 📡 关注模式
+
+一个云端的 AI 任务触发器：
+
+- **全能力访问**：任务可以使用对话和编码的全部能力
+- **定时/事件触发**：设定定时或基于事件执行 AI 任务，如每天 9 点汇总今天的 AI 新闻
+- **信息流展示**：展示基于 AI 任务生成的信息流
+- **事件过滤**：支持事件过滤，如"只有明天要下雨了才通知我"
+
+### 📚 知识模式
+
+一个云端 AI 文档仓库：
+
+- **文档管理**：上传、管理 txt/doc/ppt/xls 等等格式的文档到知识库
+- **网页导入**：支持导入网页、钉钉多维表到知识库
+- **NotebookLM 模式**：支持在笔记本里直接选择文档进行提问
+- **在线编辑**：笔记本模式支持在线编辑文本文件
+- **对话集成**：支持在单聊、群聊中让 AI 引用知识库进行回答
+
+### 🔧 定制化
+
+上面的所有功能都是可定制的：
+
+- **自定义智能体**：支持在网页中创建自定义智能体，可直接在页面上配置提示词、MCP、Skill 和多智能体协作
+- **智能体创建向导**：4 步创建：描述需求 → AI 追问 → 实时微调 → 一键创建
+- **组织管理**：支持人员创建和加入组，组内可共享智能体、模型、Skill 等等
 
 ---
 
 ## 🔧 扩展能力
-
 - **智能体生成向导**: 4 步创建: 描述需求 → AI 追问 → 实时微调 → 一键创建
-- **协作模式**: 支持开箱即用的 4 种多Agent协作模式（顺序/并行/路由/循环），灵活组合多个 Bot
-- **支持Skill**: 动态加载技能包，提升 Token 效率
-- **MCP 工具**: Model Context Protocol，调用外部工具和服务
-- **执行引擎**: 支持ClaudeCode / Agno 沙箱隔离执行，Dify API 代理，Chat 直连模式4个执行引擎
-- **YAML 配置**: Kubernetes 风格 CRD，定义 Ghost / Bot / Team / Skill
-- **API**: 对外提供 OpenAI 兼容接口，方便与其他系统集成
+- **协作模式**：支持开箱即用的 4 种多 Agent 协作模式（顺序/并行/路由/循环）
+- **支持 Skill**：动态加载技能包，提升 Token 效率
+- **MCP 工具**：Model Context Protocol，调用外部工具和服务
+- **执行引擎**：支持 ClaudeCode / Agno 沙箱隔离执行，Dify API 代理，Chat 直连模式
+- **YAML 配置**：Kubernetes 风格 CRD，定义 Ghost / Bot / Team / Skill
+- **API**：对外提供 OpenAI 兼容接口，方便与其他系统集成
 
 ---
 
@@ -72,7 +119,7 @@ curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | 
 ## 🏗️ 架构
 
 ```
-Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (ClaudeCode/Agno)
+Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (ClaudeCode/Agno/Dify/Chat)
 ```
 
 **核心概念：**
@@ -164,17 +211,17 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/yixiangxx">
+            <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+            <br />
+            <sub><b>Yi Xiang</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/junbaor">
             <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
             <br />
             <sub><b>Junbaor</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/FicoHu">
-            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
-            <br />
-            <sub><b>FicoHu</b></sub>
         </a>
     </td>
     <td align="center">
@@ -185,6 +232,13 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/FicoHu">
+            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
+            <br />
+            <sub><b>FicoHu</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/maquan0927">
             <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
             <br />
@@ -192,10 +246,10 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/yixiangxx">
-            <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+        <a href="https://github.com/fingki">
+            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
             <br />
-            <sub><b>Yi Xiang</b></sub>
+            <sub><b>Fingki</b></sub>
         </a>
     </td>
     <td align="center">
@@ -204,20 +258,34 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
             <br />
             <sub><b>Parabala</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/fengkuizhi">
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
             <br />
             <sub><b>Fengkuizhi</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/jolestar">
             <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
             <br />
             <sub><b>Jolestar</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/qwertyerge">
+            <img src="https://avatars.githubusercontent.com/u/13088125?v=4" width="80;" alt="qwertyerge"/>
+            <br />
+            <sub><b>Erdawang</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/sunnights">
+            <img src="https://avatars.githubusercontent.com/u/1886887?v=4" width="80;" alt="sunnights"/>
+            <br />
+            <sub><b>Jake Zhang</b></sub>
         </a>
     </td>
     <td align="center">
@@ -235,13 +303,6 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/fingki">
-            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
-            <br />
-            <sub><b>Fingki</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/graindt">
             <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
             <br />
@@ -252,7 +313,7 @@ Frontend (Next.js) → Backend (FastAPI) → Executor Manager → Executors (Cla
         <a href="https://github.com/salt-hai">
             <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>
             <br />
-            <sub><b>salt-hai</b></sub>
+            <sub><b>Salt-hai</b></sub>
         </a>
     </td></tr>
 </table>

@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { BookOpen, FolderOpen } from 'lucide-react'
 import {
   Dialog,
@@ -44,6 +44,8 @@ interface CreateKnowledgeBaseDialogProps {
   groupName?: string
   /** Knowledge base type selected from dropdown menu (read-only in dialog) */
   kbType?: KnowledgeBaseType
+  /** Optional team ID for reading cached model preference */
+  knowledgeDefaultTeamId?: number | null
 }
 
 export function CreateKnowledgeBaseDialog({
@@ -54,11 +56,13 @@ export function CreateKnowledgeBaseDialog({
   scope,
   groupName,
   kbType = 'notebook',
+  knowledgeDefaultTeamId,
 }: CreateKnowledgeBaseDialogProps) {
   const { t } = useTranslation()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [summaryEnabled, setSummaryEnabled] = useState(false)
+  // Default enable summary for notebook type, disable for classic type
+  const [summaryEnabled, setSummaryEnabled] = useState(kbType === 'notebook')
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   const [summaryModelError, setSummaryModelError] = useState('')
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({
@@ -72,6 +76,15 @@ export function CreateKnowledgeBaseDialog({
   })
   const [error, setError] = useState('')
   const [accordionValue, setAccordionValue] = useState<string>('')
+
+  // Reset summaryEnabled when dialog opens based on kbType
+  // This is necessary because useState initial value only applies on first mount,
+  // but the dialog component persists and kbType can change between opens
+  useEffect(() => {
+    if (open) {
+      setSummaryEnabled(kbType === 'notebook')
+    }
+  }, [open, kbType])
 
   // Note: Auto-selection of retriever and embedding model is handled by RetrievalSettingsSection
 
@@ -119,7 +132,8 @@ export function CreateKnowledgeBaseDialog({
       })
       setName('')
       setDescription('')
-      setSummaryEnabled(false)
+      // Reset summaryEnabled based on kbType: enabled for notebook, disabled for classic
+      setSummaryEnabled(kbType === 'notebook')
       setSummaryModelRef(null)
       setRetrievalConfig({
         retrieval_mode: 'vector',
@@ -139,7 +153,8 @@ export function CreateKnowledgeBaseDialog({
     if (!newOpen) {
       setName('')
       setDescription('')
-      setSummaryEnabled(false)
+      // Reset summaryEnabled based on kbType: enabled for notebook, disabled for classic
+      setSummaryEnabled(kbType === 'notebook')
       setSummaryModelRef(null)
       setSummaryModelError('')
       setRetrievalConfig({
@@ -259,6 +274,7 @@ export function CreateKnowledgeBaseDialog({
                       setSummaryModelError('')
                     }}
                     error={summaryModelError}
+                    knowledgeDefaultTeamId={knowledgeDefaultTeamId}
                   />
                 </div>
               )}
