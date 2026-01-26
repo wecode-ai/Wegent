@@ -113,6 +113,16 @@ class KnowledgeBaseUpdate(BaseModel):
     )
 
 
+class KnowledgeBaseTypeUpdate(BaseModel):
+    """Schema for updating knowledge base type (notebook <-> classic conversion)."""
+
+    kb_type: str = Field(
+        ...,
+        pattern="^(notebook|classic)$",
+        description="New knowledge base type: 'notebook' or 'classic'",
+    )
+
+
 class KnowledgeBaseResponse(BaseModel):
     """Schema for knowledge base response."""
 

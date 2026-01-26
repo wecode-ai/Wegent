@@ -48,6 +48,7 @@ export function KnowledgeBaseClassicPageDesktop() {
     knowledgeBase,
     loading: kbLoading,
     error: kbError,
+    refresh: refreshKnowledgeBase,
   } = useKnowledgeBaseDetail({
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
@@ -191,7 +192,12 @@ export function KnowledgeBaseClassicPageDesktop() {
 
         {/* Content area - Document List */}
         <div className="flex-1 overflow-auto p-4 sm:p-6">
-          <DocumentList knowledgeBase={knowledgeBase} onBack={handleBack} canManage={canManageKb} />
+          <DocumentList
+            knowledgeBase={knowledgeBase}
+            onBack={handleBack}
+            canManage={canManageKb}
+            onTypeConverted={() => refreshKnowledgeBase()}
+          />
         </div>
       </div>
 

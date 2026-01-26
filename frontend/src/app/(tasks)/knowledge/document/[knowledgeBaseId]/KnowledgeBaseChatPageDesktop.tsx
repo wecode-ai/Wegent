@@ -60,7 +60,7 @@ export function KnowledgeBaseChatPageDesktop() {
     knowledgeBase,
     loading: kbLoading,
     error: kbError,
-    refresh: _refreshKb,
+    refresh: refreshKb,
   } = useKnowledgeBaseDetail({
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
@@ -314,6 +314,7 @@ export function KnowledgeBaseChatPageDesktop() {
             canManage={canManageKb}
             onDocumentSelectionChange={setSelectedDocumentIds}
             onNewChat={handleNewTask}
+            onTypeConverted={() => refreshKb()}
           />
         </div>
       </div>

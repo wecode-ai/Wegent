@@ -57,7 +57,15 @@
       "cannotDeleteWithDocuments": "该知识库包含文档，无法删除。请先删除所有文档。",
       "deleteWarning": "该知识库包含 {{count}} 个文档，请先删除所有文档后再删除知识库。",
       "search": "搜索知识库...",
-      "noResults": "没有匹配的知识库"
+      "noResults": "没有匹配的知识库",
+      "convertType": "转换类型",
+      "convertToNotebook": "转为笔记本",
+      "convertToClassic": "转为知识库",
+      "convertToNotebookDisabled": "文档数超过 50 个限制，无法转为笔记本模式",
+      "convertToClassicConfirm": "转换后将不再支持笔记本内直接对话功能，但文档数量将不受限制。确定转换吗？",
+      "convertToNotebookConfirm": "转换为笔记本后，可直接在知识库内上传文件并开启对话，但文档数量将限制为最多 50 个。确定转换吗？",
+      "convertSuccess": "知识库类型转换成功",
+      "convertFailed": "知识库类型转换失败"
     },
     "document": {
       "title": "文档",
