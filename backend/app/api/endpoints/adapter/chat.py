@@ -38,6 +38,7 @@ from app.services.chat.correction import (
     evaluate_and_save_correction,
     get_existing_correction,
 )
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -510,6 +511,7 @@ class FixMermaidResponse(BaseModel):
 
 
 @router.post("/fix-mermaid")
+@trace_async("fix_mermaid_code", "mermaid_fix")
 async def fix_mermaid_code(
     request: FixMermaidRequest,
     db: Session = Depends(get_db),
@@ -550,9 +552,7 @@ async def fix_mermaid_code(
     # Find the model
     model_spec = _find_model(db, model_id, current_user.id)
     if not model_spec:
-        return FixMermaidResponse(
-            success=False, error=f"Model '{model_id}' not found"
-        )
+        return FixMermaidResponse(success=False, error=f"Model '{model_id}' not found")
 
     # Extract and process model config
     model_config = extract_and_process_model_config(
@@ -596,6 +596,7 @@ Important rules:
         return FixMermaidResponse(success=False, error=str(e))
 
 
+@trace_async("call_llm_for_mermaid_fix", "mermaid_fix")
 async def _call_llm_for_mermaid_fix(model_config: dict, prompt: str) -> Optional[str]:
     """
     Call LLM to fix Mermaid code.

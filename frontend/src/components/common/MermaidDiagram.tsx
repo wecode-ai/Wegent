@@ -372,20 +372,19 @@ export function MermaidDiagram({ code, className = '', onRequestFix }: MermaidDi
           // Attempt auto-fix if callback is available and within retry limit
           if (retryCount < MAX_RETRIES && onRequestFix && !isFixing) {
             setIsFixing(true)
+            setRetryCount(prev => prev + 1) // Increment retry count before attempting fix
             try {
               const fixedCode = await onRequestFix(currentCode, errorMessage)
               if (fixedCode && fixedCode !== currentCode) {
-                // Update code and increment retry count
-                // The useEffect will re-run with the new code
+                // Update code; the effect will re-run with the new code
                 setCurrentCode(fixedCode)
-                setRetryCount(prev => prev + 1)
-                setIsFixing(false)
-                return // Let the effect re-run with new code
+                return
               }
             } catch {
               // Fix request failed, fall through to show error
+            } finally {
+              setIsFixing(false)
             }
-            setIsFixing(false)
           }
 
           // Show error (use original error message to not expose retry details)
@@ -537,8 +536,9 @@ export function MermaidDiagram({ code, className = '', onRequestFix }: MermaidDi
     setRetryCount(0) // Reset retry count for manual fix
 
     try {
-      const fixedCode = await onRequestFix(code, originalError || error)
-      if (fixedCode && fixedCode !== code) {
+      // Use currentCode (the latest attempted code) instead of original code prop
+      const fixedCode = await onRequestFix(currentCode, originalError || error)
+      if (fixedCode && fixedCode !== currentCode) {
         setCurrentCode(fixedCode)
         setError('') // Clear error to trigger re-render
       }
@@ -547,7 +547,7 @@ export function MermaidDiagram({ code, className = '', onRequestFix }: MermaidDi
     } finally {
       setIsFixing(false)
     }
-  }, [onRequestFix, isFixing, code, originalError, error])
+  }, [onRequestFix, isFixing, currentCode, originalError, error])
 
   // Toggle code view modal
   const toggleCodeView = useCallback(() => {
@@ -717,9 +717,11 @@ export function MermaidDiagram({ code, className = '', onRequestFix }: MermaidDi
             {t('chat:mermaid.renderError') || 'Mermaid render failed'}: {error}
           </span>
         </div>
-        {/* Raw code display */}
+        {/* Raw code display - show currentCode (latest attempted code) */}
         <div className="p-4 bg-surface overflow-auto">
-          <pre className="text-sm font-mono text-text-primary whitespace-pre-wrap">{code}</pre>
+          <pre className="text-sm font-mono text-text-primary whitespace-pre-wrap">
+            {currentCode}
+          </pre>
         </div>
         {/* Action buttons for error state */}
         <div className="flex justify-end gap-2 px-4 py-2 border-t border-red-200 dark:border-red-800">
