@@ -41,6 +41,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { useDocumentDetail } from '../hooks/useDocumentDetail'
+import { ChunksSection } from './ChunksSection'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -377,6 +378,11 @@ export function DocumentDetailDialog({
                       </div>
                     )}
                   </div>
+                )}
+
+                {/* Chunks Section - only show when not editing */}
+                {!isEditing && document && (
+                  <ChunksSection documentId={document.id} enabled={open && !loading} />
                 )}
 
                 {/* Content Section */}
