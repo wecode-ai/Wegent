@@ -39,7 +39,8 @@
     "upload": "上传",
     "view": "查看",
     "copy": "复制",
-    "copied": "已复制"
+    "copied": "已复制",
+    "remove": "移除"
   },
   "errors": {
     "request_failed": "请求大模型接口失败，请点击重试"
@@ -352,6 +353,24 @@
     "route": "由一个中枢智能体作为路由，根据上下文把消息分发给合适的智能体，彼此不直接通信。",
     "coordinate": "网络式协作结构，定义智能体之间如何连接、交换信息并进行协调。",
     "collaborate": "多个智能体并行处理任务，并共享中间结果以加速产出。"
+  },
+  "im": {
+    "title": "即时通讯集成",
+    "description": "将您的智能体连接到 Telegram 等即时通讯平台，让用户可以通过聊天应用与您的智能体交互。",
+    "add_platform": "添加平台",
+    "validate_config": "验证",
+    "validation_success": "连接成功",
+    "validation_failed": "连接失败",
+    "telegram": "Telegram",
+    "slack": "Slack",
+    "discord": "Discord",
+    "feishu": "飞书",
+    "dingtalk": "钉钉",
+    "wechat": "微信",
+    "coming_soon": "即将推出",
+    "bot_token": "机器人令牌",
+    "bot_token_placeholder": "输入您的机器人令牌",
+    "connected_as": "已连接为"
   },
   "integrations": {
     "title": "集成",

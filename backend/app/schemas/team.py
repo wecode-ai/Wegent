@@ -8,6 +8,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel
 
 from app.schemas.bot import BotInDB
+from app.schemas.im import IMIntegrationConfig, IMIntegrationStatus
 from app.schemas.user import UserInDB
 
 
@@ -52,6 +53,9 @@ class TeamBase(BaseModel):
     requires_workspace: Optional[bool] = (
         None  # Whether this team requires a workspace/repository (None = auto-infer)
     )
+    im_integrations: Optional[List[IMIntegrationConfig]] = (
+        None  # IM platform integrations (Telegram, Slack, etc.)
+    )
 
 
 class TeamCreate(TeamBase):
@@ -75,6 +79,9 @@ class TeamUpdate(BaseModel):
     icon: Optional[str] = None  # Icon ID from preset icon library
     requires_workspace: Optional[bool] = (
         None  # Whether this team requires a workspace/repository (None = auto-infer)
+    )
+    im_integrations: Optional[List[IMIntegrationConfig]] = (
+        None  # IM platform integrations (Telegram, Slack, etc.)
     )
 
 
@@ -111,6 +118,9 @@ class TeamDetail(BaseModel):
     updated_at: datetime
     user: Optional[UserInDB] = None
     share_status: int = 0  # 0-private, 1-sharing, 2-shared from others
+    im_integrations: Optional[List[IMIntegrationStatus]] = (
+        None  # IM integration status (includes connection status)
+    )
 
     class Config:
         from_attributes = True
