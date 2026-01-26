@@ -291,9 +291,11 @@ class TaskQueueConsumer:
         if now - self._last_capacity_check < self._capacity_cache_ttl:
             return self._cached_capacity
 
+        start_time = time.time()
         try:
             executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
             result = executor.get_executor_count()
+            elapsed = time.time() - start_time
             running = result.get("running", 0)
             has_capacity = running < self.max_concurrent_tasks
 
@@ -301,10 +303,10 @@ class TaskQueueConsumer:
             self._last_capacity_check = now
             self._cached_capacity = has_capacity
 
-            if not has_capacity:
-                logger.debug(
-                    f"[TaskQueueConsumer] No capacity: {running}/{self.max_concurrent_tasks}"
-                )
+            logger.info(
+                f"[TaskQueueConsumer] Capacity check: {running}/{self.max_concurrent_tasks} "
+                f"(took {elapsed:.2f}s, has_capacity={has_capacity})"
+            )
 
             return has_capacity
 
