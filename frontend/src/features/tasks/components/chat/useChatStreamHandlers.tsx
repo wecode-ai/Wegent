@@ -13,7 +13,7 @@ import { useUser } from '@/features/common/UserContext'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
 import { taskApis } from '@/apis/tasks'
-import { isChatShell } from '../../service/messageService'
+import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
 import type { Model } from '../selector/ModelSelector'
@@ -29,6 +29,8 @@ export interface UseChatStreamHandlersOptions {
   selectedRepo: GitRepoInfo | null
   selectedBranch: GitBranch | null
   showRepositorySelector: boolean
+  /** Effective requires workspace value (considering user override) */
+  effectiveRequiresWorkspace?: boolean
 
   // Input
   taskInputMessage: string
@@ -139,6 +141,7 @@ export function useChatStreamHandlers({
   selectedRepo,
   selectedBranch,
   showRepositorySelector,
+  effectiveRequiresWorkspace,
   taskInputMessage,
   setTaskInputMessage,
   setIsLoading,
@@ -405,7 +408,12 @@ export function useChatStreamHandlers({
             }
           : null)
 
-      if (taskType === 'code' && showRepositorySelector && !effectiveRepo?.git_repo) {
+      if (
+        taskType === 'code' &&
+        showRepositorySelector &&
+        (effectiveRequiresWorkspace ?? teamRequiresWorkspace(selectedTeam)) &&
+        !effectiveRepo?.git_repo
+      ) {
         toast({
           variant: 'destructive',
           title: 'Please select a repository for code tasks',
@@ -680,7 +688,12 @@ export function useChatStreamHandlers({
             }
           : null)
 
-      if (taskType === 'code' && showRepositorySelector && !effectiveRepo?.git_repo) {
+      if (
+        taskType === 'code' &&
+        showRepositorySelector &&
+        (effectiveRequiresWorkspace ?? teamRequiresWorkspace(selectedTeam)) &&
+        !effectiveRepo?.git_repo
+      ) {
         toast({
           variant: 'destructive',
           title: t('common:selector.repository') || 'Please select a repository for code tasks',

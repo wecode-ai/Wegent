@@ -7,8 +7,7 @@
 import React from 'react'
 import { CircleStop } from 'lucide-react'
 import ModelSelector, { Model } from '../selector/ModelSelector'
-import RepositorySelector from '../selector/RepositorySelector'
-import BranchSelector from '../selector/BranchSelector'
+import UnifiedRepositorySelector from '../selector/UnifiedRepositorySelector'
 import ClarificationToggle from '../clarification/ClarificationToggle'
 import CorrectionModeToggle from '../CorrectionModeToggle'
 import ChatContextInput from '../chat/ChatContextInput'
@@ -54,6 +53,10 @@ export interface ChatInputControlsProps {
   selectedBranch: GitBranch | null
   setSelectedBranch: (branch: GitBranch | null) => void
   selectedTaskDetail: TaskDetail | null
+  /** Effective requires workspace value (considering user override) */
+  effectiveRequiresWorkspace?: boolean
+  /** Callback when user toggles the requires workspace switch */
+  onRequiresWorkspaceChange?: (value: boolean) => void
 
   // Deep Thinking and Clarification
   enableDeepThinking: boolean
@@ -129,6 +132,8 @@ export function ChatInputControls({
   selectedBranch,
   setSelectedBranch,
   selectedTaskDetail,
+  effectiveRequiresWorkspace,
+  onRequiresWorkspaceChange,
   enableClarification,
   setEnableClarification,
   enableCorrectionMode = false,
@@ -245,6 +250,8 @@ export function ChatInputControls({
         selectedBranch={selectedBranch}
         setSelectedBranch={setSelectedBranch}
         selectedTaskDetail={selectedTaskDetail}
+        effectiveRequiresWorkspace={effectiveRequiresWorkspace}
+        onRequiresWorkspaceChange={hasMessages ? undefined : onRequiresWorkspaceChange}
         enableClarification={enableClarification}
         setEnableClarification={setEnableClarification}
         enableCorrectionMode={enableCorrectionMode}
@@ -312,6 +319,22 @@ export function ChatInputControls({
           />
         )}
 
+        {/* Repository and Branch Unified Selector - show when repository selector is enabled */}
+        {/* Always show when showRepositorySelector is true, let component handle the display */}
+        {showRepositorySelector && (
+          <UnifiedRepositorySelector
+            selectedRepo={selectedRepo}
+            selectedBranch={selectedBranch}
+            onRepoChange={setSelectedRepo}
+            onBranchChange={setSelectedBranch}
+            disabled={hasMessages}
+            taskDetail={selectedTaskDetail}
+            compact={shouldCollapseSelectors}
+            requiresWorkspace={effectiveRequiresWorkspace}
+            onRequiresWorkspaceChange={hasMessages ? undefined : onRequiresWorkspaceChange}
+          />
+        )}
+
         {/* Model Selector */}
         {selectedTeam && (
           <ModelSelector
@@ -326,29 +349,6 @@ export function ChatInputControls({
             taskId={taskId}
             taskModelId={taskModelId}
           />
-        )}
-
-        {/* Repository and Branch Selectors - inside input box */}
-        {showRepositorySelector && (
-          <>
-            <RepositorySelector
-              selectedRepo={selectedRepo}
-              handleRepoChange={setSelectedRepo}
-              disabled={hasMessages}
-              selectedTaskDetail={selectedTaskDetail}
-              compact={shouldCollapseSelectors}
-            />
-
-            {selectedRepo && (
-              <BranchSelector
-                selectedRepo={selectedRepo}
-                selectedBranch={selectedBranch}
-                handleBranchChange={setSelectedBranch}
-                disabled={hasMessages}
-                compact={shouldCollapseSelectors}
-              />
-            )}
-          </>
         )}
       </div>
 

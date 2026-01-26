@@ -239,6 +239,10 @@ class ShellSpec(BaseModel):
     baseShellRef: Optional[str] = (
         None  # Reference to base public shell (e.g., "ClaudeCode")
     )
+    requiresWorkspace: Optional[bool] = Field(
+        default=None,
+        description="Whether this shell requires a workspace/repository. Defaults to True for local_engine types (ClaudeCode, Agno), False for external_api types (Dify, Chat).",
+    )
 
 
 class ShellStatus(Status):
@@ -339,6 +343,12 @@ class TeamSpec(BaseModel):
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
     description: Optional[str] = None  # Team description
     icon: Optional[str] = None  # Icon ID from preset icon library
+    requiresWorkspace: Optional[bool] = Field(
+        default=None,
+        description="Whether this team requires a workspace/repository. "
+        "If not set (None), it will be inferred from the underlying shell types. "
+        "Set to True to always require workspace, False to never require workspace.",
+    )
 
 
 class TeamStatus(Status):

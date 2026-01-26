@@ -43,6 +43,9 @@ class UnifiedShell(BaseModel):
         None  # 'local_engine' or 'external_api' (from labels)
     )
     namespace: Optional[str] = None  # Resource namespace (group name or 'default')
+    requiresWorkspace: Optional[bool] = (
+        None  # Whether this shell requires a workspace. Defaults based on executionType.
+    )
 
 
 class ShellCreateRequest(BaseModel):
@@ -131,6 +134,7 @@ def _public_shell_to_unified(shell: Kind) -> UnifiedShell:
         supportModel=shell_crd.spec.supportModel,
         executionType=labels.get("type"),
         namespace=shell.namespace,
+        requiresWorkspace=shell_crd.spec.requiresWorkspace,
     )
 
 
@@ -152,6 +156,7 @@ def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
         supportModel=shell_crd.spec.supportModel,
         executionType=labels.get("type"),
         namespace=kind.namespace,
+        requiresWorkspace=shell_crd.spec.requiresWorkspace,
     )
 
 

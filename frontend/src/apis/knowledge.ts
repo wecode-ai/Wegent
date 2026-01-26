@@ -213,3 +213,26 @@ export async function refreshWebDocument(documentId: number): Promise<WebDocumen
     document_id: documentId,
   })
 }
+
+// ============== Summary Refresh APIs ==============
+
+/**
+ * Response type for knowledge base summary refresh
+ */
+export interface KnowledgeBaseSummaryRefreshResponse {
+  message: string
+  status: string
+}
+
+/**
+ * Refresh knowledge base summary by re-aggregating document summaries
+ * @param kbId The knowledge base ID to refresh summary for
+ * @returns Refresh result with status
+ */
+export async function refreshKnowledgeBaseSummary(
+  kbId: number
+): Promise<KnowledgeBaseSummaryRefreshResponse> {
+  return apiClient.post<KnowledgeBaseSummaryRefreshResponse>(
+    `/knowledge-bases/${kbId}/summary/refresh`
+  )
+}
