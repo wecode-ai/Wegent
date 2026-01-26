@@ -515,7 +515,7 @@ def _format_file_size(size_bytes: int) -> str:
 
 def _build_attachment_url(attachment_id: int) -> str:
     """Build the download URL for an attachment."""
-    return f"/api/adapter/attachments/{attachment_id}/download"
+    return f"/api/attachments/{attachment_id}/download"
 
 
 def _build_image_metadata_header(context) -> str:

@@ -294,12 +294,9 @@ class TestContextServiceFormatting:
 
         assert (
             context_service.build_attachment_url(12345)
-            == "/api/adapter/attachments/12345/download"
+            == "/api/attachments/12345/download"
         )
-        assert (
-            context_service.build_attachment_url(1)
-            == "/api/adapter/attachments/1/download"
-        )
+        assert context_service.build_attachment_url(1) == "/api/attachments/1/download"
 
     def test_build_document_text_prefix(self):
         """Test building document text prefix with attachment metadata"""

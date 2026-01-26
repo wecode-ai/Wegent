@@ -92,7 +92,7 @@ class ContextService:
         Returns:
             Relative URL path for downloading the attachment
         """
-        return f"/api/adapter/attachments/{attachment_id}/download"
+        return f"/api/attachments/{attachment_id}/download"
 
     # ==================== Attachment Operations ====================
 
