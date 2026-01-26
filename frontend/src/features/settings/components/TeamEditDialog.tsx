@@ -190,7 +190,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       })
       setRequireConfirmationMap(confirmMap)
       // Initialize requiresWorkspace from existing team data
-      setRequiresWorkspace(formTeam.requires_workspace ?? null)
+      // Default to true for legacy data that doesn't have this field
+      setRequiresWorkspace(formTeam.requires_workspace ?? true)
     } else {
       setName('')
       setDescription('')
