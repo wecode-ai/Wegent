@@ -392,12 +392,16 @@ def _build_history_message(
         # Process attachments first (they have priority)
         vision_parts: list[dict[str, Any]] = []
         attachment_text_parts: list[str] = []
+        image_metadata_headers: list[str] = []
         total_attachment_text_length = 0
 
         for attachment in attachments:
             vision_block = _build_vision_content_block(attachment)
             if vision_block:
                 vision_parts.append(vision_block)
+                # Add image metadata header for reference in text content
+                image_header = _build_image_metadata_header(attachment)
+                image_metadata_headers.append(image_header)
                 logger.info(
                     f"[history] Loaded image attachment: id={attachment.id}, "
                     f"name={attachment.name}, mime_type={attachment.mime_type}"
@@ -461,6 +465,10 @@ def _build_history_message(
             text_content = f"{combined_prefix}{text_content}"
 
         if vision_parts:
+            # Add image metadata headers to text content for reference
+            if image_metadata_headers:
+                headers_text = "\n\n".join(image_metadata_headers) + "\n\n"
+                text_content = f"{headers_text}{text_content}"
             return {
                 "role": "user",
                 "content": [{"type": "text", "text": text_content}, *vision_parts],
@@ -495,13 +503,54 @@ def _build_vision_content_block(context) -> dict[str, Any] | None:
     }
 
 
+def _format_file_size(size_bytes: int) -> str:
+    """Format file size in bytes to human-readable format."""
+    if size_bytes >= 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    elif size_bytes >= 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    else:
+        return f"{size_bytes} bytes"
+
+
+def _build_attachment_url(attachment_id: int) -> str:
+    """Build the download URL for an attachment."""
+    return f"/api/adapter/attachments/{attachment_id}/download"
+
+
+def _build_image_metadata_header(context) -> str:
+    """Build image attachment metadata header string."""
+    attachment_id = context.id
+    filename = context.name or "image"
+    mime_type = context.mime_type or "unknown"
+    file_size = context.file_size if hasattr(context, "file_size") else 0
+    formatted_size = _format_file_size(file_size)
+    url = _build_attachment_url(attachment_id)
+
+    return (
+        f"[Image Attachment: {filename} | ID: {attachment_id} | "
+        f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]"
+    )
+
+
 def _build_document_text_prefix(context) -> str:
-    """Build a text prefix for a document context."""
+    """Build a text prefix for a document context with attachment metadata."""
     if not context.extracted_text:
         return ""
 
-    name = context.name or "document"
-    return f"[Document: {name}]\n{context.extracted_text}\n\n"
+    # Build attachment metadata
+    attachment_id = context.id
+    filename = context.name or "document"
+    mime_type = context.mime_type if hasattr(context, "mime_type") else "unknown"
+    file_size = context.file_size if hasattr(context, "file_size") else 0
+    formatted_size = _format_file_size(file_size)
+    url = _build_attachment_url(attachment_id)
+
+    return (
+        f"[Attachment: {filename} | ID: {attachment_id} | "
+        f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
+        f"{context.extracted_text}\n\n"
+    )
 
 
 def _build_knowledge_base_text_prefix(context) -> str:

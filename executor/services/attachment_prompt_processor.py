@@ -33,6 +33,37 @@ class AttachmentPromptProcessor:
     # Pattern to match [attachment:123] format references
     ATTACHMENT_REF_PATTERN = re.compile(r"\[attachment:(\d+)\]")
 
+    @staticmethod
+    def format_file_size(size_bytes: int) -> str:
+        """
+        Format file size in bytes to human-readable format.
+
+        Args:
+            size_bytes: File size in bytes
+
+        Returns:
+            Formatted string like "2.5 MB", "156.3 KB", or "512 bytes"
+        """
+        if size_bytes >= 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+        elif size_bytes >= 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        else:
+            return f"{size_bytes} bytes"
+
+    @staticmethod
+    def build_attachment_url(attachment_id: int) -> str:
+        """
+        Build the download URL for an attachment.
+
+        Args:
+            attachment_id: Attachment ID
+
+        Returns:
+            Relative URL path for downloading the attachment
+        """
+        return f"/api/adapter/attachments/{attachment_id}/download"
+
     @classmethod
     def process_prompt(
         cls,
@@ -95,6 +126,8 @@ class AttachmentPromptProcessor:
         """
         Build context information about available attachments.
 
+        Includes attachment metadata (id, filename, mime_type, file_size, url).
+
         Args:
             success_attachments: Successfully downloaded attachments
 
@@ -106,21 +139,20 @@ class AttachmentPromptProcessor:
 
         context_lines = ["\n\n📎 Available attachments:"]
         for att in success_attachments:
+            att_id = att.get("id", 0)
             filename = att.get("original_filename", "unknown")
             local_path = att.get("local_path", "")
             file_size = att.get("file_size", 0)
             mime_type = att.get("mime_type", "unknown")
 
             # Format file size for display
-            if file_size >= 1024 * 1024:
-                size_str = f"{file_size / (1024 * 1024):.1f} MB"
-            elif file_size >= 1024:
-                size_str = f"{file_size / 1024:.1f} KB"
-            else:
-                size_str = f"{file_size} bytes"
+            formatted_size = cls.format_file_size(file_size)
+            url = cls.build_attachment_url(att_id)
 
             context_lines.append(
-                f"- {filename} ({mime_type}, {size_str}): {local_path}"
+                f"[Attachment: {filename} | ID: {att_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
+                f"  Local path: {local_path}"
             )
 
         return "\n".join(context_lines)
