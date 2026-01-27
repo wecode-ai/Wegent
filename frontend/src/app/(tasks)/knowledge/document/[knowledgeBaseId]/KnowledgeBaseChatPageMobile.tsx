@@ -34,6 +34,10 @@ import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import { listGroups } from '@/apis/groups'
 import type { Team } from '@/types/api'
 import type { GroupRole } from '@/types/group'
+interface KnowledgeBaseChatPageMobileProps {
+  /** Callback when knowledge base type is changed (notebook <-> classic) */
+  onKbTypeChanged?: () => void
+}
 
 /**
  * Mobile-specific implementation of Knowledge Base Chat Page
@@ -44,7 +48,7 @@ import type { GroupRole } from '@/types/group'
  * - Touch-friendly controls (min 44px targets)
  * - Full-screen chat area
  */
-export function KnowledgeBaseChatPageMobile() {
+export function KnowledgeBaseChatPageMobile({ onKbTypeChanged }: KnowledgeBaseChatPageMobileProps) {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const params = useParams()
@@ -60,7 +64,6 @@ export function KnowledgeBaseChatPageMobile() {
     knowledgeBase,
     loading: kbLoading,
     error: kbError,
-    refresh: _refreshKb,
   } = useKnowledgeBaseDetail({
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
@@ -165,7 +168,7 @@ export function KnowledgeBaseChatPageMobile() {
 
   // Handle back to knowledge list
   const handleBack = () => {
-    router.push('/knowledge')
+    router.back()
   }
 
   // Check if user can manage this KB
@@ -311,7 +314,14 @@ export function KnowledgeBaseChatPageMobile() {
             </DrawerClose>
           </DrawerHeader>
           <div className="p-4 overflow-auto flex-1">
-            <DocumentList knowledgeBase={knowledgeBase} canManage={canManageKb} />
+            <DocumentList
+              knowledgeBase={knowledgeBase}
+              canManage={canManageKb}
+              onTypeConverted={() => {
+                // Notify parent page.tsx to refresh and re-route based on new kb_type
+                onKbTypeChanged?.()
+              }}
+            />
           </div>
         </DrawerContent>
       </Drawer>

@@ -93,7 +93,12 @@ export default function KnowledgeBaseChatPage() {
     : null
 
   // Fetch knowledge base details to determine type
-  const { knowledgeBase, loading } = useKnowledgeBaseDetail({
+  // This hook is the single source of truth for kb_type routing
+  const {
+    knowledgeBase,
+    loading,
+    refresh: refreshKnowledgeBase,
+  } = useKnowledgeBaseDetail({
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
   })
@@ -114,7 +119,11 @@ export default function KnowledgeBaseChatPage() {
         <Suspense>
           <TaskParamSync />
         </Suspense>
-        {isMobile ? <KnowledgeBaseClassicPageMobile /> : <KnowledgeBaseClassicPageDesktop />}
+        {isMobile ? (
+          <KnowledgeBaseClassicPageMobile onKbTypeChanged={refreshKnowledgeBase} />
+        ) : (
+          <KnowledgeBaseClassicPageDesktop onKbTypeChanged={refreshKnowledgeBase} />
+        )}
       </>
     )
   }
@@ -126,7 +135,11 @@ export default function KnowledgeBaseChatPage() {
       <Suspense>
         <TaskParamSync />
       </Suspense>
-      {isMobile ? <KnowledgeBaseChatPageMobile /> : <KnowledgeBaseChatPageDesktop />}
+      {isMobile ? (
+        <KnowledgeBaseChatPageMobile onKbTypeChanged={refreshKnowledgeBase} />
+      ) : (
+        <KnowledgeBaseChatPageDesktop onKbTypeChanged={refreshKnowledgeBase} />
+      )}
     </>
   )
 }

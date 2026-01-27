@@ -222,6 +222,8 @@ def _build_user_message_content(
     """
     import base64
 
+    from app.services.context import context_service
+
     # Build text content
     text_content = subtask.prompt or ""
     if is_group_chat and sender_username:
@@ -257,33 +259,49 @@ def _build_user_message_content(
     attachment_text_parts: list[str] = []
     total_attachment_text_length = 0
 
-    for attachment in attachments:
+    for idx, attachment in enumerate(attachments, start=1):
         # Check if it's an image
-        if attachment.mime_type and attachment.mime_type.startswith("image/"):
-            # Use stored image_base64 if available (preferred, already decoded)
-            # This is generated at upload time from the original unencrypted binary data
-            if attachment.image_base64:
-                vision_parts.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{attachment.mime_type};base64,{attachment.image_base64}",
-                        },
-                    }
-                )
-                logger.debug(
-                    f"[history] Loaded image attachment from image_base64: id={attachment.id}, "
-                    f"name={attachment.name}, mime_type={attachment.mime_type}"
-                )
+        if context_service.is_image_context(attachment) and attachment.image_base64:
+            # Build image attachment metadata header
+            attachment_id = attachment.id
+            filename = attachment.original_filename or attachment.name
+            mime_type = attachment.mime_type or "unknown"
+            file_size = attachment.file_size or 0
+            formatted_size = context_service.format_file_size(file_size)
+            url = context_service.build_attachment_url(attachment_id)
+
+            # Build image metadata header
+            image_header = (
+                f"[Image Attachment: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]"
+            )
+
+            # Add text header to content
+            attachment_text_parts.append(f"{image_header}\n")
+            total_attachment_text_length += len(image_header) + 1
+
+            # Add vision part for image rendering
+            vision_parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{attachment.image_base64}",
+                    },
+                }
+            )
+            logger.debug(
+                f"[history] Loaded image attachment with metadata: id={attachment.id}, "
+                f"name={filename}, mime_type={mime_type}"
+            )
         else:
-            # Document attachment
-            if attachment.extracted_text:
-                doc_prefix = f"[Document: {attachment.name or 'document'}]\n{attachment.extracted_text}\n\n"
+            # Document attachment - use context_service to build metadata-rich prefix
+            doc_prefix = context_service.build_document_text_prefix(attachment)
+            if doc_prefix:
                 attachment_text_parts.append(doc_prefix)
                 total_attachment_text_length += len(doc_prefix)
                 logger.debug(
-                    f"[history] Loaded attachment: id={attachment.id}, "
-                    f"name={attachment.name}, text_len={len(attachment.extracted_text)}"
+                    f"[history] Loaded document attachment with metadata: id={attachment.id}, "
+                    f"name={attachment.name}, text_len={len(attachment.extracted_text or '')}"
                 )
 
     # Calculate remaining token space for knowledge base content

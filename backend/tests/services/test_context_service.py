@@ -263,8 +263,43 @@ class TestContextServiceVision:
 class TestContextServiceFormatting:
     """Test message formatting functionality"""
 
+    def test_format_file_size_bytes(self):
+        """Test file size formatting for bytes"""
+        from app.services.context import context_service
+
+        assert context_service.format_file_size(512) == "512 bytes"
+        assert context_service.format_file_size(0) == "0 bytes"
+        assert context_service.format_file_size(1023) == "1023 bytes"
+
+    def test_format_file_size_kb(self):
+        """Test file size formatting for KB"""
+        from app.services.context import context_service
+
+        assert context_service.format_file_size(1024) == "1.0 KB"
+        assert context_service.format_file_size(1536) == "1.5 KB"
+        # 160000 / 1024 = 156.25, rounds to 156.2
+        assert context_service.format_file_size(160000) == "156.2 KB"
+
+    def test_format_file_size_mb(self):
+        """Test file size formatting for MB"""
+        from app.services.context import context_service
+
+        assert context_service.format_file_size(1024 * 1024) == "1.0 MB"
+        assert context_service.format_file_size(2621440) == "2.5 MB"
+        assert context_service.format_file_size(10 * 1024 * 1024) == "10.0 MB"
+
+    def test_build_attachment_url(self):
+        """Test attachment URL generation"""
+        from app.services.context import context_service
+
+        assert (
+            context_service.build_attachment_url(12345)
+            == "/api/attachments/12345/download"
+        )
+        assert context_service.build_attachment_url(1) == "/api/attachments/1/download"
+
     def test_build_document_text_prefix(self):
-        """Test building document text prefix for messages"""
+        """Test building document text prefix with attachment metadata"""
         from app.models.subtask_context import (
             ContextStatus,
             ContextType,
@@ -281,16 +316,65 @@ class TestContextServiceFormatting:
             status=ContextStatus.READY.value,
             extracted_text="This is the extracted PDF content.",
             text_length=35,
-            type_data={"original_filename": "test.pdf"},
+            type_data={
+                "original_filename": "test.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 2621440,  # 2.5 MB
+            },
         )
+        context.id = 12345
 
         # Act
         prefix = context_service.build_document_text_prefix(context)
 
         # Assert
         assert prefix is not None
-        assert "[File Content - test.pdf]:" in prefix
+        assert "[Attachment: test.pdf |" in prefix
+        assert "ID: 12345" in prefix
+        assert "Type: application/pdf" in prefix
+        assert "Size: 2.5 MB" in prefix
+        assert "URL: /api/attachments/12345/download" in prefix
         assert "This is the extracted PDF content." in prefix
+
+    def test_build_document_text_prefix_with_truncation(self):
+        """Test building document text prefix with truncation notice"""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.attachment.parser import DocumentParser
+        from app.services.context import context_service
+
+        # Arrange - set text_length >= max to trigger truncation notice
+        max_text_length = DocumentParser.get_max_text_length()
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="large.pdf",
+            status=ContextStatus.READY.value,
+            extracted_text="Content...",
+            text_length=max_text_length,  # At max length
+            type_data={
+                "original_filename": "large.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 5242880,  # 5 MB
+            },
+        )
+        context.id = 100
+
+        # Act
+        prefix = context_service.build_document_text_prefix(context)
+
+        # Assert
+        assert prefix is not None
+        assert "[Attachment: large.pdf |" in prefix
+        assert "ID: 100" in prefix
+        assert "Type: application/pdf" in prefix
+        assert "Size: 5.0 MB" in prefix
+        assert "URL: /api/attachments/100/download" in prefix
+        assert "truncated" in prefix.lower()
 
     def test_build_message_with_image_attachment(self):
         """Test building message with image attachment"""
@@ -344,8 +428,14 @@ class TestContextServiceFormatting:
             status=ContextStatus.READY.value,
             extracted_text="PDF content here",
             text_length=16,  # Add text_length to avoid None comparison error
-            type_data={"file_extension": ".pdf", "original_filename": "test.pdf"},
+            type_data={
+                "file_extension": ".pdf",
+                "original_filename": "test.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 1024,  # 1 KB
+            },
         )
+        context.id = 123
         message = "Summarize this document"
 
         # Act
@@ -353,7 +443,11 @@ class TestContextServiceFormatting:
 
         # Assert
         assert isinstance(result, str)
-        assert "[File Content - test.pdf]:" in result
+        assert "[Attachment: test.pdf |" in result
+        assert "ID: 123" in result
+        assert "Type: application/pdf" in result
+        assert "Size: 1.0 KB" in result
+        assert "URL: /api/attachments/123/download" in result
         assert "PDF content here" in result
         assert "[User Question]:" in result
         assert "Summarize this document" in result
