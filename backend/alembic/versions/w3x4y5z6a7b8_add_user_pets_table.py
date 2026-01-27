@@ -40,7 +40,6 @@ def upgrade() -> None:
             "appearance_traits",
             sa.JSON(),
             nullable=False,
-            server_default=sa.text("'{}'"),
         ),
         sa.Column("svg_seed", sa.String(64), nullable=False, server_default=""),
         sa.Column("is_visible", sa.Boolean(), nullable=False, server_default="1"),
