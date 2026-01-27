@@ -134,37 +134,32 @@ Example (read from middle):
     ) -> tuple[str, bool]:
         """Smart truncate large files by reading head + tail.
 
+        Note: This method is only called for text files. Binary files that exceed
+        the limit are rejected before reaching this method.
+
         Args:
             sandbox: E2B sandbox instance
             file_path: Path to file
             file_size: Total file size
-            format: Read format ('text' or 'bytes')
+            format: Read format ('text' only, 'bytes' are rejected earlier)
 
         Returns:
             Tuple of (content, is_truncated)
         """
-        # Use different limits for text vs binary files
-        if format == "bytes":
-            max_size = self.max_size_bytes
-            truncate_head = self.smart_truncate_head_bytes
-            truncate_tail = self.smart_truncate_tail_bytes
-        else:
-            max_size = self.max_size
-            truncate_head = self.smart_truncate_head
-            truncate_tail = self.smart_truncate_tail
+        # Use text file limits (binary files are rejected earlier)
+        max_size = self.max_size
+        truncate_head = self.smart_truncate_head
+        truncate_tail = self.smart_truncate_tail
 
         if file_size <= max_size:
             # File is small enough, read entirely
             content = await sandbox.files.read(file_path, format=format)
-            if format == "bytes":
-                content = base64.b64encode(content).decode("ascii")
             return content, False
 
         # File is too large, read head + tail
         logger.warning(
-            f"[SandboxReadFileTool] File too large ({file_size} bytes), "
-            f"applying smart truncation (format={format}, head: {truncate_head}, "
-            f"tail: {truncate_tail})"
+            f"[SandboxReadFileTool] Text file too large ({file_size} bytes), "
+            f"applying smart truncation (head: {truncate_head}, tail: {truncate_tail})"
         )
 
         # Read head
@@ -179,12 +174,7 @@ Example (read from middle):
         )
 
         # Combine with truncation marker
-        if format == "bytes":
-            truncation_marker = base64.b64encode(b"\n\n... [TRUNCATED] ...\n\n").decode(
-                "ascii"
-            )
-        else:
-            truncation_marker = f"\n\n... [TRUNCATED {file_size - truncate_head - truncate_tail} bytes] ...\n\n"
+        truncation_marker = f"\n\n... [TRUNCATED {file_size - truncate_head - truncate_tail} bytes] ...\n\n"
 
         content = f"{head_content}{truncation_marker}{tail_content}"
         return content, True
@@ -204,17 +194,19 @@ Example (read from middle):
         Returns:
             File content as string (or base64 for bytes)
         """
-        # E2B SDK doesn't support offset/limit directly, so we need to use process execution
+        # E2B SDK doesn't support offset/limit directly, so we need to use command execution
         if format == "bytes":
-            # Use dd to read specific byte range
-            result = await sandbox.process.start_and_wait(
-                f"dd if={file_path} bs=1 skip={offset} count={limit} 2>/dev/null | base64"
+            # Use dd to read specific byte range and encode to base64
+            result = await sandbox.commands.run(
+                cmd=f"dd if={file_path} bs=1 skip={offset} count={limit} 2>/dev/null | base64",
+                cwd="/home/user",
             )
             return result.stdout.strip() if result.stdout else ""
         else:
             # Use dd to read specific byte range as text
-            result = await sandbox.process.start_and_wait(
-                f"dd if={file_path} bs=1 skip={offset} count={limit} 2>/dev/null"
+            result = await sandbox.commands.run(
+                cmd=f"dd if={file_path} bs=1 skip={offset} count={limit} 2>/dev/null",
+                cwd="/home/user",
             )
             return result.stdout if result.stdout else ""
 
@@ -324,6 +316,24 @@ Example (read from middle):
             )
             bytes_to_read = limit if limit is not None else max_size_for_format
 
+            # Check if binary file exceeds limit (reject completely, no range reading allowed)
+            if format == "bytes" and file_size > self.max_size_bytes:
+                max_size_kb = self.max_size_bytes / 1024
+                file_size_kb = file_size / 1024
+                error_msg = (
+                    f"Binary file too large: {file_size} bytes ({file_size_kb:.1f} KB). "
+                    f"Maximum allowed size for binary files: {self.max_size_bytes} bytes ({max_size_kb:.0f} KB). "
+                    f"Binary files that exceed the limit cannot be read (including range reading)."
+                )
+                result = self._format_error(
+                    error_message=error_msg,
+                    content="",
+                    size=file_size,
+                    path=file_path,
+                )
+                await self._emit_tool_status("failed", error_msg)
+                return result
+
             # Handle offset/limit reading or smart truncation
             is_truncated = False
             if offset > 0 or limit is not None:
@@ -359,17 +369,13 @@ Example (read from middle):
                 is_truncated = False
 
             else:
-                # File is too large, apply smart truncation
+                # File is too large, apply smart truncation (text files only)
+                # Note: Binary files are rejected earlier if they exceed limit
                 content_str, is_truncated = await self._smart_truncate_file(
                     sandbox, file_path, file_size, format
                 )
-                # Calculate bytes read based on format
-                if format == "bytes":
-                    bytes_read = (
-                        self.smart_truncate_head_bytes + self.smart_truncate_tail_bytes
-                    )
-                else:
-                    bytes_read = self.smart_truncate_head + self.smart_truncate_tail
+                # Calculate bytes read (only for text files at this point)
+                bytes_read = self.smart_truncate_head + self.smart_truncate_tail
 
             response = {
                 "success": True,
