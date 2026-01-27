@@ -40,6 +40,7 @@ export function PetSettings() {
   const [isVisible, setIsVisible] = useState(pet?.is_visible ?? true)
   const [isSaving, setIsSaving] = useState(false)
   const [isResetting, setIsResetting] = useState(false)
+  const trimmedName = petName.trim()
 
   // Sync state when pet data changes
   React.useEffect(() => {
@@ -51,10 +52,11 @@ export function PetSettings() {
 
   const handleSave = async () => {
     if (!pet) return
+    if (!trimmedName) return
     setIsSaving(true)
     try {
       await updatePet({
-        pet_name: petName !== pet.pet_name ? petName : undefined,
+        pet_name: trimmedName !== pet.pet_name ? trimmedName : undefined,
         is_visible: isVisible !== pet.is_visible ? isVisible : undefined,
       })
     } finally {
@@ -71,7 +73,7 @@ export function PetSettings() {
     }
   }
 
-  const hasChanges = pet && (petName !== pet.pet_name || isVisible !== pet.is_visible)
+  const hasChanges = pet && (trimmedName !== pet.pet_name || isVisible !== pet.is_visible)
 
   if (isLoading && !pet) {
     return (
@@ -82,11 +84,7 @@ export function PetSettings() {
   }
 
   if (!pet) {
-    return (
-      <div className="text-center py-12 text-text-secondary">
-        {t('settings.no_pet')}
-      </div>
-    )
+    return <div className="text-center py-12 text-text-secondary">{t('settings.no_pet')}</div>
   }
 
   const stageName = STAGE_NAMES[pet.stage]
@@ -115,11 +113,7 @@ export function PetSettings() {
           {/* Visibility toggle */}
           <div className="flex items-center justify-between">
             <Label htmlFor="pet-visible">{t('settings.enable')}</Label>
-            <Switch
-              id="pet-visible"
-              checked={isVisible}
-              onCheckedChange={setIsVisible}
-            />
+            <Switch id="pet-visible" checked={isVisible} onCheckedChange={setIsVisible} />
           </div>
         </div>
       </div>
@@ -146,11 +140,7 @@ export function PetSettings() {
 
       {/* Action buttons */}
       <div className="flex flex-col sm:flex-row gap-3">
-        <Button
-          onClick={handleSave}
-          disabled={!hasChanges || isSaving}
-          className="flex-1"
-        >
+        <Button onClick={handleSave} disabled={!hasChanges || isSaving} className="flex-1">
           {isSaving ? (
             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
           ) : (
@@ -169,16 +159,12 @@ export function PetSettings() {
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>{t('settings.reset')}</AlertDialogTitle>
-              <AlertDialogDescription>
-                {t('settings.reset_confirm')}
-              </AlertDialogDescription>
+              <AlertDialogDescription>{t('settings.reset_confirm')}</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
               <AlertDialogAction onClick={handleReset} disabled={isResetting}>
-                {isResetting ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : null}
+                {isResetting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 {t('settings.reset')}
               </AlertDialogAction>
             </AlertDialogFooter>

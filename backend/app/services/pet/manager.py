@@ -5,6 +5,7 @@
 """Pet service manager for handling pet business logic using Kind table."""
 
 import logging
+import math
 import re
 import secrets
 from collections import Counter
@@ -631,7 +632,7 @@ class PetService:
 
         # Calculate experience with multiplier
         multiplier = self._get_streak_multiplier(spec.get("currentStreak", 0))
-        exp_gained = int(self.EXP_PER_CHAT * multiplier)
+        exp_gained = math.ceil(self.EXP_PER_CHAT * multiplier)
 
         # Update stats
         spec["totalChats"] = spec.get("totalChats", 0) + 1
