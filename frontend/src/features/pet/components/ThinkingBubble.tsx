@@ -48,9 +48,18 @@ export function ThinkingBubble({ className }: ThinkingBubbleProps) {
       <div className="flex items-center gap-1">
         {showDots ? (
           <>
-            <span className="w-2 h-2 rounded-full bg-primary animate-thinking-dot" />
-            <span className="w-2 h-2 rounded-full bg-primary animate-thinking-dot animation-delay-200" />
-            <span className="w-2 h-2 rounded-full bg-primary animate-thinking-dot animation-delay-400" />
+            <span
+              className="w-2 h-2 rounded-full bg-primary animate-thinking-dot"
+              style={{ animationDelay: '0s' }}
+            />
+            <span
+              className="w-2 h-2 rounded-full bg-primary animate-thinking-dot"
+              style={{ animationDelay: '0.2s' }}
+            />
+            <span
+              className="w-2 h-2 rounded-full bg-primary animate-thinking-dot"
+              style={{ animationDelay: '0.4s' }}
+            />
           </>
         ) : (
           <>

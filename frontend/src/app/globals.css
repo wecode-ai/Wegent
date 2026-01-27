@@ -791,6 +791,7 @@ button:focus-visible {
 
 .animate-thinking-dot {
   animation: thinking-dot 1s ease-in-out infinite;
+  animation-fill-mode: both;
 }
 
 /* Pet feature appearance animations */

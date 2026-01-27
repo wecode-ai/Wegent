@@ -452,7 +452,7 @@ class PetService:
 
     def _build_pet_spec(
         self,
-        pet_name: str = "Buddy",
+        pet_name: str = "Wegi",
         stage: int = 1,
         experience: int = 0,
         total_chats: int = 0,
@@ -535,7 +535,7 @@ class PetService:
             pet = self.create_pet(db, user_id)
         return pet
 
-    def create_pet(self, db: Session, user_id: int, pet_name: str = "Buddy") -> Kind:
+    def create_pet(self, db: Session, user_id: int, pet_name: str = "Wegi") -> Kind:
         """Create a new pet for a user."""
         spec = self._build_pet_spec(pet_name=pet_name)
         resource = self._build_pet_resource(spec)
@@ -829,7 +829,7 @@ class PetService:
         return PetResponse(
             id=pet.id,
             user_id=pet.user_id,
-            pet_name=spec.get("petName", "Buddy"),
+            pet_name=spec.get("petName", "Wegi"),
             stage=stage,
             experience=experience,
             total_chats=spec.get("totalChats", 0),

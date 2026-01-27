@@ -35,7 +35,7 @@ class PetBase(BaseModel):
     """Base pet model with common fields."""
 
     pet_name: str = Field(
-        default="Buddy",
+        default="Wegi",
         min_length=1,
         max_length=50,
         description="Pet name",
