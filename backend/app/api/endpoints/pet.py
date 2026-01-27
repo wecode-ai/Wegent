@@ -12,10 +12,12 @@ from app.core import security
 from app.models.user import User
 from app.schemas.pet import PetResponse, PetUpdate
 from app.services.pet import pet_service
+from shared.telemetry.decorators import trace_async
 
 router = APIRouter()
 
 
+@trace_async()
 @router.get("", response_model=PetResponse)
 async def get_current_user_pet(
     db: Session = Depends(get_db),
@@ -29,6 +31,7 @@ async def get_current_user_pet(
     return pet_service.to_response(pet)
 
 
+@trace_async()
 @router.put("", response_model=PetResponse)
 async def update_current_user_pet(
     pet_update: PetUpdate,
@@ -48,6 +51,7 @@ async def update_current_user_pet(
     return pet_service.to_response(pet)
 
 
+@trace_async()
 @router.post("/reset", response_model=PetResponse)
 async def reset_current_user_pet(
     db: Session = Depends(get_db),

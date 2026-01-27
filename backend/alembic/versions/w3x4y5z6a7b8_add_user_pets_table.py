@@ -36,8 +36,13 @@ def upgrade() -> None:
         sa.Column("current_streak", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("longest_streak", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("last_active_date", sa.Date(), nullable=True),
-        sa.Column("appearance_traits", sa.JSON(), nullable=False),
-        sa.Column("svg_seed", sa.String(64), nullable=False),
+        sa.Column(
+            "appearance_traits",
+            sa.JSON(),
+            nullable=False,
+            server_default=sa.text("'{}'"),
+        ),
+        sa.Column("svg_seed", sa.String(64), nullable=False, server_default=""),
         sa.Column("is_visible", sa.Boolean(), nullable=False, server_default="1"),
         sa.Column(
             "created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()
