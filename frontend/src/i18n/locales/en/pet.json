@@ -1,0 +1,29 @@
+{
+  "title": "My Pet",
+  "stages": {
+    "baby": "Baby",
+    "growing": "Growing",
+    "mature": "Mature"
+  },
+  "stats": {
+    "experience": "Experience",
+    "chats": "Chats",
+    "memories": "Memories",
+    "streak": "Streak",
+    "days": "days",
+    "stage": "Stage"
+  },
+  "settings": {
+    "enable": "Show Pet",
+    "name": "Pet Name",
+    "name_placeholder": "Enter pet name",
+    "reset": "Reset Pet",
+    "reset_confirm": "Are you sure you want to reset your pet? All growth data will be cleared.",
+    "save": "Save Changes",
+    "no_pet": "No pet data available"
+  },
+  "notifications": {
+    "evolved": "Congratulations! Your pet evolved to {{stage}}!",
+    "streak_milestone": "{{days}} day streak! Keep it up!"
+  }
+}
