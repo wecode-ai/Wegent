@@ -1246,7 +1246,7 @@ export function DocumentUpload({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-2xl overflow-hidden">{renderContent()}</DialogContent>
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">{renderContent()}</DialogContent>
     </Dialog>
   )
 }

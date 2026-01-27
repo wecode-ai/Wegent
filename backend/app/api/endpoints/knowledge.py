@@ -31,6 +31,7 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
+    KnowledgeBaseTypeUpdate,
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
     KnowledgeDocumentListResponse,
@@ -260,6 +261,44 @@ def delete_knowledge_base(
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
+
+
+@router.patch("/{knowledge_base_id}/type", response_model=KnowledgeBaseResponse)
+def update_knowledge_base_type(
+    knowledge_base_id: int,
+    data: KnowledgeBaseTypeUpdate,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Update the knowledge base type (notebook <-> classic conversion).
+
+    - Converting to 'notebook': Requires document count <= 50
+    - Converting to 'classic': No restrictions
+    """
+    try:
+        knowledge_base = KnowledgeService.update_knowledge_base_type(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=current_user.id,
+            new_type=data.kb_type,
+        )
+
+        if not knowledge_base:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Knowledge base not found or access denied",
+            )
+
+        return KnowledgeBaseResponse.from_kind(
+            knowledge_base,
+            KnowledgeService.get_document_count(db, knowledge_base.id),
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
 

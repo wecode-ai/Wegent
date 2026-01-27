@@ -203,7 +203,6 @@ def _build_vision_structure(
     Args:
         text_contents: List of text content strings
         image_contents: List of image content dictionaries
-        message: Original user message
 
     Returns:
         Vision structure dictionary
@@ -211,6 +210,12 @@ def _build_vision_structure(
     combined_text = ""
     if text_contents:
         combined_text = "\n".join(text_contents) + "\n\n"
+
+    # Add image metadata headers to text
+    for img in image_contents:
+        if "image_header" in img:
+            combined_text += img["image_header"] + "\n\n"
+
     combined_text += f"[User Question]:\n{message}"
 
     return {
@@ -252,11 +257,28 @@ def _process_attachment_context(
     """
     # Check if it's an image attachment
     if context_service.is_image_context(context) and context.image_base64:
+        # Build image attachment metadata
+        attachment_id = context.id
+        filename = context.original_filename
+        mime_type = context.mime_type or "unknown"
+        file_size = context.file_size or 0
+        formatted_size = context_service.format_file_size(file_size)
+        url = context_service.build_attachment_url(attachment_id)
+
+        # Build image metadata header
+        image_header = (
+            f"[Image Attachment: {filename} | ID: {attachment_id} | "
+            f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]"
+        )
+
         image_contents.append(
             {
                 "image_base64": context.image_base64,
                 "mime_type": context.mime_type,
                 "filename": context.original_filename,
+                "id": attachment_id,
+                "url": url,
+                "image_header": image_header,
             }
         )
     else:
@@ -859,18 +881,9 @@ async def _process_attachment_contexts_for_message(
             logger.exception(f"Error processing attachment context {context.id}: {e}")
             continue
 
-    # If we have images, return a multi-vision structure
+    # If we have images, return a multi-vision structure with image metadata headers
     if image_contents:
-        combined_text = ""
-        if text_contents:
-            combined_text = "\n".join(text_contents) + "\n\n"
-        combined_text += f"[User Question]:\n{message}"
-
-        return {
-            "type": "multi_vision",
-            "text": combined_text,
-            "images": image_contents,
-        }
+        return _build_vision_structure(text_contents, image_contents, message)
 
     # If only text contents, combine them
     if text_contents:

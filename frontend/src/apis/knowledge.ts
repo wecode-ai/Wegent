@@ -69,6 +69,19 @@ export async function deleteKnowledgeBase(id: number): Promise<void> {
   return apiClient.delete(`/knowledge-bases/${id}`)
 }
 
+/**
+ * Update the knowledge base type (notebook <-> classic conversion)
+ * @param id Knowledge base ID
+ * @param kbType New type: 'notebook' or 'classic'
+ * @returns Updated knowledge base
+ */
+export async function updateKnowledgeBaseType(
+  id: number,
+  kbType: 'notebook' | 'classic'
+): Promise<KnowledgeBase> {
+  return apiClient.patch<KnowledgeBase>(`/knowledge-bases/${id}/type`, { kb_type: kbType })
+}
+
 // ============== Knowledge Document APIs ==============
 
 /**

@@ -33,6 +33,11 @@ import { listGroups } from '@/apis/groups'
 import type { Team } from '@/types/api'
 import type { GroupRole } from '@/types/group'
 
+interface KnowledgeBaseChatPageDesktopProps {
+  /** Callback when knowledge base type is changed (notebook <-> classic) */
+  onKbTypeChanged?: () => void
+}
+
 /**
  * Desktop-specific implementation of Knowledge Base Chat Page
  *
@@ -41,7 +46,9 @@ import type { GroupRole } from '@/types/group'
  * - Center: Chat area with KB summary
  * - Right: Document management panel (resizable, collapsible)
  */
-export function KnowledgeBaseChatPageDesktop() {
+export function KnowledgeBaseChatPageDesktop({
+  onKbTypeChanged,
+}: KnowledgeBaseChatPageDesktopProps) {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const params = useParams()
@@ -60,7 +67,6 @@ export function KnowledgeBaseChatPageDesktop() {
     knowledgeBase,
     loading: kbLoading,
     error: kbError,
-    refresh: _refreshKb,
   } = useKnowledgeBaseDetail({
     knowledgeBaseId: knowledgeBaseId || 0,
     autoLoad: !!knowledgeBaseId,
@@ -186,7 +192,7 @@ export function KnowledgeBaseChatPageDesktop() {
 
   // Handle back to knowledge list
   const handleBack = () => {
-    router.push('/knowledge')
+    router.back()
   }
 
   // Check if user can manage this knowledge base
@@ -314,6 +320,10 @@ export function KnowledgeBaseChatPageDesktop() {
             canManage={canManageKb}
             onDocumentSelectionChange={setSelectedDocumentIds}
             onNewChat={handleNewTask}
+            onTypeConverted={() => {
+              // Notify parent page.tsx to refresh and re-route based on new kb_type
+              onKbTypeChanged?.()
+            }}
           />
         </div>
       </div>
