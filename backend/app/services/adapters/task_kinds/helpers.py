@@ -682,6 +682,8 @@ def build_lite_task_list(
                 "git_repo": git_repo,
                 "is_group_chat": is_group_chat,
                 "knowledge_base_id": knowledge_base_id,
+                "is_pinned": task.is_pinned,
+                "pinned_at": task.pinned_at,
             }
         )
 

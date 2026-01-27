@@ -366,6 +366,8 @@ export interface Task {
   completed_at: string
   is_group_chat?: boolean // Whether this task is a group chat
   knowledge_base_id?: number // Knowledge base ID for knowledge type tasks
+  is_pinned?: boolean // Whether this task is pinned to top
+  pinned_at?: string // Time when the task was pinned (ISO string)
 }
 
 /** GitHub repository new structure */

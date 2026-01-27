@@ -75,6 +75,19 @@ class TaskResource(Base):
         index=True,
         comment="Project ID for task grouping",
     )
+    is_pinned = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        index=True,
+        comment="Whether the task is pinned to top",
+    )
+    pinned_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime(1970, 1, 1, 0, 0, 0),
+        comment="Time when the task was pinned",
+    )
 
     __table_args__ = (
         UniqueConstraint(

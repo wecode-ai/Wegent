@@ -36,6 +36,7 @@ from app.schemas.task import (
     TaskDetail,
     TaskInDB,
     TaskListResponse,
+    TaskLite,
     TaskLiteListResponse,
     TaskUpdate,
 )
@@ -665,3 +666,227 @@ def delete_task_services(
     db.refresh(task)
 
     return {"app": app_data}
+
+
+# Pin task functionality constants
+MAX_PINNED_TASKS = 5
+
+
+@router.post("/{task_id}/pin", response_model=TaskLite)
+def pin_task(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Pin a task to the top of the task list.
+
+    Constraints:
+    - Only the task owner can pin their tasks
+    - Group chat tasks cannot be pinned
+    - Maximum 5 tasks can be pinned at a time
+    """
+    from app.models.task import TaskResource
+
+    # Get the task
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == task_id,
+            TaskResource.user_id == current_user.id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Check if task is a group chat (from JSON spec)
+    task_json = task.json or {}
+    is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+
+    if is_group_chat:
+        raise HTTPException(status_code=400, detail="Group chat tasks cannot be pinned")
+
+    # Check if already pinned
+    if task.is_pinned:
+        raise HTTPException(status_code=400, detail="Task is already pinned")
+
+    # Count current pinned tasks
+    pinned_count = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.user_id == current_user.id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active.is_(True),
+            TaskResource.is_pinned.is_(True),
+        )
+        .count()
+    )
+
+    if pinned_count >= MAX_PINNED_TASKS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Pin limit reached (max {MAX_PINNED_TASKS})",
+        )
+
+    # Pin the task
+    task.is_pinned = True
+    task.pinned_at = datetime.now()
+    db.commit()
+    db.refresh(task)
+
+    # Return TaskLite response
+    return _convert_task_to_lite(task, db, current_user.id)
+
+
+@router.delete("/{task_id}/pin", response_model=TaskLite)
+def unpin_task(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Unpin a task from the top of the task list.
+    """
+    from app.models.task import TaskResource
+
+    # Get the task
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == task_id,
+            TaskResource.user_id == current_user.id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Check if already unpinned
+    if not task.is_pinned:
+        raise HTTPException(status_code=400, detail="Task is not pinned")
+
+    # Unpin the task
+    task.is_pinned = False
+    task.pinned_at = None
+    db.commit()
+    db.refresh(task)
+
+    # Return TaskLite response
+    return _convert_task_to_lite(task, db, current_user.id)
+
+
+def _convert_task_to_lite(task, db: Session, user_id: int) -> dict:
+    """Convert a TaskResource to TaskLite dict format."""
+    from sqlalchemy import text
+
+    from app.schemas.kind import Task
+
+    task_crd = Task.model_validate(task.json)
+
+    task_type = (
+        task_crd.metadata.labels and task_crd.metadata.labels.get("taskType") or "chat"
+    )
+    type_value = (
+        task_crd.metadata.labels and task_crd.metadata.labels.get("type") or "online"
+    )
+    status = task_crd.status.status if task_crd.status else "PENDING"
+
+    # Parse timestamps
+    created_at = task.created_at
+    updated_at = task.updated_at
+    completed_at = None
+    if task_crd.status:
+        try:
+            if task_crd.status.createdAt:
+                created_at = task_crd.status.createdAt
+            if task_crd.status.updatedAt:
+                updated_at = task_crd.status.updatedAt
+            if task_crd.status.completedAt:
+                completed_at = task_crd.status.completedAt
+        except Exception:
+            pass
+
+    # Get team_id
+    team_name = task_crd.spec.teamRef.name
+    team_namespace = task_crd.spec.teamRef.namespace
+    team_result = db.execute(
+        text(
+            """
+            SELECT id FROM kinds
+            WHERE user_id = :user_id
+            AND kind = 'Team'
+            AND name = :name
+            AND namespace = :namespace
+            AND is_active = true
+            LIMIT 1
+        """
+        ),
+        {"user_id": user_id, "name": team_name, "namespace": team_namespace},
+    ).fetchone()
+
+    team_id = team_result[0] if team_result else None
+
+    # Get git_repo
+    workspace_name = task_crd.spec.workspaceRef.name
+    workspace_namespace = task_crd.spec.workspaceRef.namespace
+    workspace_result = db.execute(
+        text(
+            """
+            SELECT JSON_EXTRACT(json, '$.spec.repository.gitRepo') as git_repo
+            FROM tasks
+            WHERE user_id = :user_id
+            AND kind = 'Workspace'
+            AND name = :name
+            AND namespace = :namespace
+            AND is_active = true
+            LIMIT 1
+        """
+        ),
+        {
+            "user_id": user_id,
+            "name": workspace_name,
+            "namespace": workspace_namespace,
+        },
+    ).fetchone()
+
+    git_repo = None
+    if workspace_result and workspace_result[0]:
+        git_repo = (
+            workspace_result[0].strip('"')
+            if isinstance(workspace_result[0], str)
+            else workspace_result[0]
+        )
+
+    # Check if group chat
+    task_json = task.json or {}
+    is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+
+    # Extract knowledge_base_id
+    knowledge_base_id = None
+    if task_type == "knowledge" and task_crd.spec.knowledgeBaseRefs:
+        first_kb_ref = task_crd.spec.knowledgeBaseRefs[0]
+        knowledge_base_id = first_kb_ref.id
+
+    return {
+        "id": task.id,
+        "title": task_crd.spec.title,
+        "status": status,
+        "task_type": task_type,
+        "type": type_value,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "completed_at": completed_at,
+        "team_id": team_id,
+        "git_repo": git_repo,
+        "is_group_chat": is_group_chat,
+        "knowledge_base_id": knowledge_base_id,
+        "is_pinned": task.is_pinned,
+        "pinned_at": task.pinned_at,
+    }
