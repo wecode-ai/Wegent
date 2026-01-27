@@ -14,82 +14,78 @@ mcpServers:
     transport: "streamable_http"
     url: "http://mcp.intra.weibo.com/2/mcp/internal/server/status"
     headers:
-      Authorization: "mcp_eyJhbGciOiJIUzI1NiJ9.eyJhcGlfa2V5IjoiMiIsInNlcnZlciI6InN0YXR1cyIsInVzZXJfaWQiOiIxIiwiaWF0IjoxNzQxNzY1OTYxLCJleHAiOjE3NDY5NDk5NjF9.wbqKZi-kxgslrZPVJz0_xemWWLDk-o2sPMbQ2OCZJFI"
+      Authorization: "Bearer mcp_eyJhbGciOiJIUzI1NiJ9.eyJjYSI6MTc2NTc3MDgyMiwibyI6ImppYW5neWFuZzcifQ._P5D-A7eF2ahUmZJtb1K2Qmll6I-kyKJcJPQBUvxRng"
       mcp-proxy-wegent-user: "${{user.name}}"
   commentsServer:
     type: "streamable-http"
     transport: "streamable_http"
     url: "http://mcp.intra.weibo.com/2/mcp/internal/server/comments"
     headers:
-      Authorization: "mcp_eyJhbGciOiJIUzI1NiJ9.eyJhcGlfa2V5IjoiMiIsInNlcnZlciI6ImNvbW1lbnRzIiwidXNlcl9pZCI6IjEiLCJpYXQiOjE3NDE3NjU5NjEsImV4cCI6MTc0Njk0OTk2MX0.8zsDWPPq5cG_xjzRrYq4LoAKJ6YEhKiSA5PVfPJKzLQ"
+      Authorization: "Bearer mcp_eyJhbGciOiJIUzI1NiJ9.eyJjYSI6MTc2NTc3MDgyMiwibyI6ImppYW5neWFuZzcifQ._P5D-A7eF2ahUmZJtb1K2Qmll6I-kyKJcJPQBUvxRng"
       mcp-proxy-wegent-user: "${{user.name}}"
   userServer:
     type: "streamable-http"
     transport: "streamable_http"
     url: "http://mcp.intra.weibo.com/2/mcp/internal/server/user"
     headers:
-      Authorization: "mcp_eyJhbGciOiJIUzI1NiJ9.eyJhcGlfa2V5IjoiMiIsInNlcnZlciI6InVzZXIiLCJ1c2VyX2lkIjoiMSIsImlhdCI6MTc0MTc2NTk2MSwiZXhwIjoxNzQ2OTQ5OTYxfQ.3Z0-XjxL6zIvBq3qY-vTqS2a1cHG6z5qZ0-DWwL3Y8M"
+      Authorization: "Bearer mcp_eyJhbGciOiJIUzI1NiJ9.eyJjYSI6MTc2NTc3MDgyMiwibyI6ImppYW5neWFuZzcifQ._P5D-A7eF2ahUmZJtb1K2Qmll6I-kyKJcJPQBUvxRng"
       mcp-proxy-wegent-user: "${{user.name}}"
   searchServer:
     type: "streamable-http"
     transport: "streamable_http"
     url: "http://mcp.intra.weibo.com/2/mcp/internal/server/search"
     headers:
-      Authorization: "mcp_eyJhbGciOiJIUzI1NiJ9.eyJhcGlfa2V5IjoiMiIsInNlcnZlciI6InNlYXJjaCIsInVzZXJfaWQiOiIxIiwiaWF0IjoxNzQxNzY1OTYxLCJleHAiOjE3NDY5NDk5NjF9.9XjL6vBq3qY-vT1a2cHG6z5qZ0-WwL3Y8MkxgslrZPV"
+      Authorization: "Bearer mcp_eyJhbGciOiJIUzI1NiJ9.eyJjYSI6MTc2NTc3MDgyMiwibyI6ImppYW5neWFuZzcifQ._P5D-A7eF2ahUmZJtb1K2Qmll6I-kyKJcJPQBUvxRng"
       mcp-proxy-wegent-user: "${{user.name}}"
   fetchServer:
     type: "streamable-http"
     transport: "streamable_http"
     url: "http://mcp.intra.weibo.com/2/mcp/internal/server/wegent-fetch"
     headers:
-      Authorization: "mcp_eyJhbGciOiJIUzI1NiJ9.eyJhcGlfa2V5IjoiMiIsInNlcnZlciI6IndlZ2VudC1mZXRjaCIsInVzZXJfaWQiOiIxIiwiaWF0IjoxNzQxNzY1OTYxLCJleHAiOjE3NDY5NDk5NjF9.Jz0_xemWWLDk-o2sPMbQ2OCZJFI"
+      Authorization: "Bearer mcp_eyJhbGciOiJIUzI1NiJ9.eyJjYSI6MTc2NTc3MDgyMiwibyI6ImppYW5neWFuZzcifQ._P5D-A7eF2ahUmZJtb1K2Qmll6I-kyKJcJPQBUvxRng"
       mcp-proxy-wegent-user: "${{user.name}}"
 ---
 
 # 微博工具技能
 
-微博平台数据查询工具集，支持查询微博内容、用户信息、评论、热搜等数据。
+微博平台数据查询工具集，提供对微博平台各类数据的访问能力。
 
-## MCP 服务器配置
+## 重要提示
 
-本技能通过配置 MCP 服务器来提供微博数据查询能力。系统会自动连接配置的 MCP 服务器并加载相关工具。
+**当用户询问微博相关内容时，请优先使用本技能提供的 MCP 工具，而不是通用的网页搜索工具。** 本技能的工具可以直接访问微博平台数据，获取更准确、更实时的信息。
 
-### 可用的 MCP 服务器
+## 功能概述
 
-| 服务器名 | 功能 | 适用场景 |
-|----------|------|----------|
-| statusServer | 微博内容查询 | 查看微博正文、获取用户微博列表 |
-| userServer | 用户信息查询 | 获取用户资料、粉丝数据 |
-| commentsServer | 评论数据查询 | 查看评论、分析评论 |
-| searchServer | 搜索和热搜 | 获取热搜榜、搜索话题 |
-| fetchServer | 链接解析 | 通过URL获取微博内容 |
+本技能通过 MCP 服务器提供以下能力：
 
-## 使用示例
+### 微博内容查询
+- 按微博 ID 获取详细内容
+- 按用户 ID 或昵称查询其最新发布的微博
+- 根据微博链接 URL 直接获取对应内容
 
-### 查询微博内容
+### 用户信息查询
+- 获取指定用户的基本信息（ID、昵称、头像、简介等）
+- 支持通过用户 ID 或用户昵称进行精确查询
 
-用户问: "帮我看看某某的最新微博"
+### 评论数据查询
+- 批量查询评论内容
+- 查询某条微博的评论列表
+- 查询我发出的评论与我收到的评论
 
-AI 会自动使用 statusServer 提供的工具来查询用户的微博列表。
+### 热搜信息查询
+- 获取当前微博热搜词列表
+- 获取指定热搜词下的微博数据
+- 实时获取最新的热搜信息，了解当前热点话题
 
-### 获取热搜
+## 使用建议
 
-用户问: "现在的热搜是什么"
+1. **查询特定微博内容**：如果用户提供了微博链接或微博 ID，使用相应的工具直接获取内容
+2. **了解用户动态**：查询某个用户的最新微博或用户资料时，使用用户相关工具
+3. **追踪热点话题**：需要了解当前热门话题或热搜内容时，使用热搜相关工具
+4. **查看互动数据**：需要查看微博评论或互动情况时，使用评论相关工具
 
-AI 会自动使用 searchServer 提供的工具来获取当前热搜榜单。
+## 注意事项
 
-### 解析微博链接
-
-用户问: "帮我看看这条微博 https://weibo.com/..."
-
-AI 会自动使用 fetchServer 提供的工具来解析微博链接并获取内容。
-
-## 变量替换
-
-MCP 服务器配置支持以下变量替换：
-
-- `${{user.name}}` - 当前用户的用户名
-- `${{user.id}}` - 当前用户的 ID
-- `${{task.id}}` - 当前任务的 ID
-
-这些变量会在运行时自动替换为实际值。
+- 工具返回的数据为实时数据，可能随时间变化
+- 部分查询可能需要用户授权才能获取完整数据
+- 请尊重用户隐私，合理使用查询功能

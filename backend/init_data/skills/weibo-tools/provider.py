@@ -7,15 +7,17 @@
 This module provides the WeiboToolProvider class for the Weibo skill.
 
 Note: This skill primarily uses MCP servers configured in SKILL.md to provide
-tools for accessing Weibo platform data. The skill system automatically
-connects to the MCP servers and loads their tools.
+tools for accessing Weibo platform data. The MCP servers include:
 
-Supported Weibo MCP Services (configured in SKILL.md mcpServers):
 - statusServer: Query weibo content by ID or user
-- userServer: Get user profile information
 - commentsServer: Query comments data
-- searchServer: Get hot search list and topics
+- userServer: Get user profile information
+- searchServer: Get hot search topics and related weibos
 - fetchServer: Fetch weibo content by URL
+
+The provider itself does not create custom tools since all functionality
+is provided through the MCP servers. This is a placeholder provider that
+allows the skill to be properly loaded by the system.
 """
 
 from typing import Any, Optional
@@ -26,17 +28,18 @@ from chat_shell.skills import SkillToolContext, SkillToolProvider
 
 
 class WeiboToolProvider(SkillToolProvider):
-    """Skill provider for Weibo Tools.
+    """Tool provider for Weibo skill.
 
-    This is a minimal provider class required by the skill system.
-    The actual tools are provided by MCP servers configured in SKILL.md's
-    mcpServers section. The skill system automatically handles:
-    - Connecting to MCP servers
-    - Loading tools from each server
-    - Variable substitution (e.g., ${{user.name}})
+    This provider serves as a placeholder for the Weibo skill. All actual
+    tools are provided by MCP servers configured in SKILL.md, not through
+    this provider's create_tool method.
 
-    No custom tool implementations are needed since all functionality
-    is provided by the MCP servers.
+    The MCP servers provide comprehensive access to Weibo platform data:
+    - Weibo content (posts) querying
+    - User profile information
+    - Comments data
+    - Hot search topics
+    - URL-based content fetching
     """
 
     @property
@@ -44,16 +47,19 @@ class WeiboToolProvider(SkillToolProvider):
         """Return the provider name used in SKILL.md.
 
         Returns:
-            The string "weibo-tools"
+            The string "weibo_tools"
         """
-        return "weibo-tools"
+        return "weibo_tools"
 
     @property
     def supported_tools(self) -> list[str]:
         """Return the list of tools this provider can create.
 
+        This provider does not create custom tools - all tools come from
+        MCP servers. Returns an empty list.
+
         Returns:
-            Empty list since all tools come from MCP servers
+            Empty list (tools are provided by MCP servers)
         """
         return []
 
@@ -65,16 +71,16 @@ class WeiboToolProvider(SkillToolProvider):
     ) -> BaseTool:
         """Create a tool instance.
 
-        This method should not be called since this skill uses MCP servers
-        instead of custom tools.
+        This method is not used for the Weibo skill since all tools are
+        provided by MCP servers configured in SKILL.md.
 
         Args:
             tool_name: Name of the tool to create
-            context: Context with dependencies
+            context: Context with dependencies (task_id, subtask_id, etc.)
             tool_config: Optional configuration
 
         Raises:
-            ValueError: Always, since tools come from MCP servers
+            ValueError: Always raises since no custom tools are supported
         """
         raise ValueError(
             f"Unknown tool: {tool_name}. "
@@ -88,6 +94,6 @@ class WeiboToolProvider(SkillToolProvider):
             tool_config: Configuration to validate
 
         Returns:
-            True (no custom configuration needed)
+            True (no custom tools, so any config is valid)
         """
         return True
