@@ -15,7 +15,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useToast } from '@/hooks/useToast'
+import { useToast } from '@/hooks/use-toast'
 
 interface ShareKnowledgeBaseButtonProps {
   kbId: number
