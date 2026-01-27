@@ -1586,12 +1586,13 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
       try {
         // Join task room and check for active streaming
-        // NOTE: We don't use forceRefresh=true here because:
-        // 1. If already joined, we don't need to send another task:join request
-        // 2. The streaming status is returned on first join, and we can check local state
-        // 3. Using forceRefresh causes duplicate task:join requests
+        // KEY FIX: Use forceRefresh=true to always get streaming status from backend
+        // This is necessary because:
+        // 1. If already joined (e.g., from previous page load), joinTask returns {} without streaming info
+        // 2. We need the streaming info to display AI message bubble and load cached content
+        // 3. The backend will return cached_content from Redis which may have more content than DB
         console.log('[ChatStreamContext] joinTask called from resumeStream, taskId:', taskId)
-        const response = await joinTask(taskId)
+        const response = await joinTask(taskId, true) // forceRefresh=true to get streaming status
 
         if (response.error) {
           console.error('[ChatStreamContext] Failed to join task:', response.error)

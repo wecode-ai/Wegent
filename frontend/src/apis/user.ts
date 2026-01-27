@@ -44,6 +44,14 @@ export interface SearchUsersResponse {
   total: number
 }
 
+/**
+ * System-level feature flags from backend configuration
+ */
+export interface FeatureFlags {
+  /** Whether long-term memory service (mem0) is available */
+  memory_enabled: boolean
+}
+
 const TOKEN_KEY = 'auth_token'
 const TOKEN_EXPIRE_KEY = 'auth_token_expire'
 const TOKEN_COOKIE_NAME = 'auth_token'
@@ -172,6 +180,14 @@ export const userApis = {
 
   async searchUsers(query: string): Promise<SearchUsersResponse> {
     return apiClient.get(`/users/search?q=${encodeURIComponent(query)}`)
+  },
+
+  /**
+   * Get system-level feature flags
+   * These flags indicate which features are available based on backend configuration
+   */
+  async getFeatureFlags(): Promise<FeatureFlags> {
+    return apiClient.get('/users/features')
   },
 
   isAuthenticated(): boolean {

@@ -146,28 +146,7 @@ Example:
                     "Your knowledge about python-pptx/openpyxl/python-docx may be OUTDATED. "
                     "Anthropic's skills contain the LATEST instructions that you MUST follow."
                 ),
-                "step_1_CHECK_MARKETPLACE": {
-                    "description": "Check if Anthropic skills marketplace exists",
-                    "mandatory": True,
-                    "tool": "sandbox_list_files",
-                    "arguments": {"path": self.MARKETPLACE_DIR},
-                    "expected_outcome": "success=true means marketplace exists, success=false means need step 2",
-                    "next_step": "If success=false, proceed to step 2. If success=true, proceed to step 3.",
-                },
-                "step_2_INSTALL_MARKETPLACE": {
-                    "description": "Install marketplace (ONLY if step 1 returned success=false)",
-                    "mandatory": "conditional - required if step 1 failed",
-                    "tool": "sandbox_command",
-                    "arguments": {
-                        "command": "claude plugin marketplace add anthropics/skills",
-                        "working_dir": "/home/user",
-                        "timeout_seconds": 300,
-                    },
-                    "expected_outcome": "exit_code=0 and success=true",
-                    "validation": "Verify the command completed without errors",
-                    "next_step": "After successful installation, proceed to step 3",
-                },
-                "step_3_READ_SKILL_DOCUMENTATION": {
+                "step_1_READ_SKILL_DOCUMENTATION": {
                     "description": f"Read the {document_type.upper()} skill documentation file",
                     "mandatory": True,
                     "critical_importance": (
@@ -182,8 +161,8 @@ Example:
                     "validation": "Verify content is not empty and contains skill instructions",
                     "next_step": "After reading, follow the instructions in the 'content' field to generate documents",
                 },
-                "step_4_FOLLOW_SKILL_INSTRUCTIONS": {
-                    "description": "Follow the instructions from step 3's content field",
+                "step_2_FOLLOW_SKILL_INSTRUCTIONS": {
+                    "description": "Follow the instructions from step 1's content field",
                     "mandatory": True,
                     "pre_installed_dependencies": {
                         "note": "Most common dependencies are already installed in the Docker image",
@@ -221,6 +200,9 @@ Example:
                     },
                     "guidelines": [
                         "Read the skill documentation carefully",
+                        "⚠️ IMPORTANT: Follow the design guidelines and best practices in the skill documentation",
+                        "⚠️ IMPORTANT: Generate visually appealing, professional-looking documents with proper styling",
+                        "Use the color schemes, fonts, and layouts recommended in the skill documentation",
                         "Check if dependencies are already installed (most common ones are pre-installed)",
                         "Only install additional dependencies if explicitly required by the documentation",
                         "Follow the code patterns and examples in the documentation",
@@ -229,12 +211,14 @@ Example:
                         "Use sandbox_list_files to verify output files",
                     ],
                     "forbidden": [
+                        "❌ DO NOT use 'claude' command - it's not available for all models",
+                        "❌ DO NOT use 'sandbox_claude' tool for document generation",
                         "❌ DO NOT skip reading the documentation and generate based on your knowledge",
                         "❌ DO NOT use outdated patterns not specified in the documentation",
                         "❌ DO NOT assume you know the correct approach without reading",
                     ],
                 },
-                "step_5_UPLOAD_AND_RETURN_URL": {
+                "step_3_UPLOAD_AND_RETURN_URL": {
                     "description": "Upload the generated document and return download URL to user",
                     "mandatory": True,
                     "tool": "sandbox_upload_attachment",
@@ -266,44 +250,32 @@ Example:
                     ),
                 },
             },
-            "critical_reminder": {
-                "importance": "HIGHEST PRIORITY",
-                "rules": [
-                    "1. Execute ALL steps in order - no skipping allowed",
-                    "2. Step 3 (reading skill documentation) is MANDATORY - never skip it",
-                    "3. Your existing knowledge may be OUTDATED - trust Anthropic's documentation",
-                    "4. Generate documents ONLY after completing step 3",
-                    "5. Follow the EXACT patterns from the loaded skill documentation",
-                    "6. Step 5 (upload and return URL) is MANDATORY - users cannot access sandbox files directly",
-                ],
-            },
             "message": (
                 f"🔴 MANDATORY INSTRUCTIONS FOR {document_type.upper()} GENERATION 🔴\n\n"
                 f"You MUST execute these steps IN ORDER:\n\n"
-                f"1️⃣ STEP 1: Check marketplace\n"
-                f"   → Call: sandbox_list_files(path='{self.MARKETPLACE_DIR}')\n"
-                f"   → If fails, proceed to step 2. If succeeds, skip to step 3.\n\n"
-                f"2️⃣ STEP 2: Install marketplace (only if step 1 failed)\n"
-                f"   → Call: sandbox_command(command='claude plugin marketplace add anthropics/skills')\n"
-                f"   → Wait for completion\n\n"
-                f"3️⃣ STEP 3: ⚠️ READ SKILL DOCUMENTATION ⚠️ (NEVER SKIP THIS)\n"
+                f"1️⃣ STEP 1: ⚠️ READ SKILL DOCUMENTATION ⚠️ (NEVER SKIP THIS)\n"
                 f"   → Call: sandbox_read_file(file_path='{skill_path}')\n"
                 f"   → Read the 'content' field - this contains Anthropic's LATEST instructions\n"
                 f"   → This is MANDATORY - your knowledge may be outdated\n\n"
-                f"4️⃣ STEP 4: Follow the loaded instructions\n"
-                f"   → Use the patterns from step 3's content\n"
+                f"2️⃣ STEP 2: Follow the loaded instructions\n"
+                f"   → Use the patterns from step 1's content\n"
+                f"   → ⚠️ Follow the design guidelines and best practices in the skill documentation\n"
+                f"   → ⚠️ Generate visually appealing, professional-looking documents with proper styling\n"
                 f"   → Most common dependencies are already pre-installed (python-pptx, openpyxl, pandas, python-docx, reportlab, pandoc, docx, LibreOffice, Chromium, etc.)\n"
                 f"   → Only install additional dependencies if explicitly required\n"
+                f"   → ⚠️ DO NOT use 'claude' command - it's not available for all models\n"
+                f"   → ⚠️ DO NOT use 'sandbox_claude' tool for document generation\n"
                 f"   → Generate the document following the loaded instructions\n\n"
-                f"5️⃣ STEP 5: ⚠️ UPLOAD AND RETURN URL ⚠️ (MANDATORY)\n"
+                f"3️⃣ STEP 3: ⚠️ UPLOAD AND RETURN URL ⚠️ (MANDATORY)\n"
                 f"   → Call: sandbox_upload_attachment(file_path='{{generated_file_path}}')\n"
                 f"   → Get the 'download_url' from response\n"
                 f"   → ⚠️ CRITICAL: Put the download link on its own line with no other text\n"
                 f"   → ✅ Correct format: 'Document generated!\\n\\n[Click to Download]({{download_url}})'\n"
                 f"   → ❌ Wrong format: 'Document generated![Click to Download]({{download_url}})' (link not on separate line)\n"
                 f"   → Frontend will automatically render the link as an interactive card\n\n"
-                f"⚠️ DO NOT generate {document_type.upper()} files before completing step 3!\n"
-                f"⚠️ DO NOT skip step 5 - users cannot access sandbox files directly!\n"
+                f"⚠️ DO NOT generate {document_type.upper()} files before completing step 1!\n"
+                f"⚠️ DO NOT skip step 3 - users cannot access sandbox files directly!\n"
+                f"⚠️ DO NOT use 'claude' command or 'sandbox_claude' tool for document generation!\n"
                 f"⚠️ Your existing knowledge may be OUTDATED - trust the loaded documentation!"
             ),
         }

@@ -497,6 +497,10 @@ class ChatConfigBuilder:
                 # Include config if present in skill spec
                 if skill_crd.spec.config:
                     skill_data["config"] = skill_crd.spec.config
+                # Include mcpServers if present in skill spec
+                # MCP servers will be loaded when the skill is loaded
+                if skill_crd.spec.mcpServers:
+                    skill_data["mcpServers"] = skill_crd.spec.mcpServers
                 # Include tools configuration if present in skill spec
                 # Convert SkillToolDeclaration objects to dicts for serialization
                 if skill_crd.spec.tools:
