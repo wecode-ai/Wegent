@@ -233,7 +233,7 @@ function generateAccessories(
   centerY: number,
   size: number,
   palette: { primary: string; secondary: string; accent: string },
-  random: () => number
+  _random: () => number
 ): string {
   // Only show accessories in stage 2+ and limit based on stage
   if (stage < 2) return ''
@@ -242,7 +242,7 @@ function generateAccessories(
   const activeAccessories = accessories.slice(0, maxAccessories)
 
   return activeAccessories
-    .map((accessory, index) => {
+    .map(accessory => {
       switch (accessory) {
         case 'glasses':
           return `
