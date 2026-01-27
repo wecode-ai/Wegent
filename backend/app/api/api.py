@@ -124,6 +124,11 @@ api_router.include_router(
     prefix="/knowledge-bases",
     tags=["knowledge-summary"],
 )
+api_router.include_router(
+    knowledge.permission_router,
+    prefix="/knowledge-bases",
+    tags=["knowledge-permission"],
+)
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])

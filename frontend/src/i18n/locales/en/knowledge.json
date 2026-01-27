@@ -9,6 +9,18 @@
   "documents": "documents",
   "document_count": "{{count}} document",
   "documents_count": "{{count}} documents",
+  "share": {
+    "title": "Share Knowledge Base",
+    "copy_link": "Copy Link",
+    "link_copied": "Link copied to clipboard",
+    "manage_permissions": "Manage Permissions",
+    "no_permission": {
+      "title": "No Access",
+      "description": "You don't have permission to access this knowledge base. Please contact the administrator.",
+      "group_hint": "This is a group knowledge base. Please join the group first.",
+      "owner": "Owner"
+    }
+  },
   "modules": {
     "title": "Knowledge Space",
     "code": "Code Knowledge",
@@ -238,7 +250,52 @@
       }
     },
     "permission": {
-      "noAccess": "You do not have permission to perform this action"
+      "noAccess": "You do not have permission to perform this action",
+      "title": "Permission Management",
+      "tabs": {
+        "users": "Authorized Users",
+        "add": "Add Users"
+      },
+      "type": {
+        "read": "Read",
+        "download": "Download",
+        "write": "Write",
+        "manage": "Manage"
+      },
+      "source": {
+        "owner": "Owner",
+        "group_role": "Group Role",
+        "explicit_grant": "Explicit Grant",
+        "organization_member": "Organization Member",
+        "system_admin": "System Admin"
+      },
+      "columns": {
+        "user": "User",
+        "permission": "Permission",
+        "granted_by": "Granted By",
+        "actions": "Actions"
+      },
+      "no_users": "No authorized users",
+      "actions": {
+        "revoke": "Revoke Permission",
+        "revoke_confirm": "Are you sure you want to revoke this user's access?",
+        "modify": "Modify Permission"
+      },
+      "add_users": {
+        "search_placeholder": "Search username...",
+        "selected": "{{count}} selected",
+        "add": "Add",
+        "select_permission": "Select permission type"
+      },
+      "messages": {
+        "load_failed": "Failed to load permissions",
+        "permission_added": "Permissions added: {{success}} succeeded, {{skipped}} skipped",
+        "add_failed": "Failed to add permissions",
+        "permission_updated": "Permission updated successfully",
+        "update_failed": "Failed to update permission",
+        "permission_revoked": "Permission revoked successfully",
+        "revoke_failed": "Failed to revoke permission"
+      }
     },
     "advancedSettings": {
       "title": "Advanced Settings",

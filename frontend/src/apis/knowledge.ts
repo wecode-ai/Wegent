@@ -249,3 +249,93 @@ export async function refreshKnowledgeBaseSummary(
     `/knowledge-bases/${kbId}/summary/refresh`
   )
 }
+
+// ============== Permission Management APIs ==============
+
+import type {
+  KnowledgeShareInfoResponse,
+  MyPermissionResponse,
+  PermissionBatchResult,
+  PermissionCreate,
+  PermissionListResponse,
+  PermissionUpdate,
+} from '@/types/knowledge'
+
+/**
+ * Get knowledge base share info (for share page)
+ * @param kbId Knowledge base ID
+ * @returns Share info with permission status
+ */
+export async function getKnowledgeShareInfo(kbId: number): Promise<KnowledgeShareInfoResponse> {
+  return apiClient.get<KnowledgeShareInfoResponse>(`/knowledge-bases/${kbId}/share-info`)
+}
+
+/**
+ * Get list of users with explicit permissions on a knowledge base
+ * Requires manage permission
+ * @param kbId Knowledge base ID
+ * @returns List of permission records
+ */
+export async function getKnowledgePermissions(kbId: number): Promise<PermissionListResponse> {
+  return apiClient.get<PermissionListResponse>(`/knowledge-bases/${kbId}/permissions`)
+}
+
+/**
+ * Add permissions for multiple users to a knowledge base
+ * Requires manage permission
+ * @param kbId Knowledge base ID
+ * @param data User IDs and permission type
+ * @returns Batch operation result
+ */
+export async function addKnowledgePermissions(
+  kbId: number,
+  data: PermissionCreate
+): Promise<PermissionBatchResult> {
+  return apiClient.post<PermissionBatchResult>(`/knowledge-bases/${kbId}/permissions`, data)
+}
+
+/**
+ * Update a user's permission for a knowledge base
+ * Requires manage permission
+ * @param kbId Knowledge base ID
+ * @param userId User ID to update
+ * @param data New permission type
+ */
+export async function updateKnowledgePermission(
+  kbId: number,
+  userId: number,
+  data: PermissionUpdate
+): Promise<{ message: string }> {
+  return apiClient.put<{ message: string }>(`/knowledge-bases/${kbId}/permissions/${userId}`, data)
+}
+
+/**
+ * Revoke a user's permission for a knowledge base
+ * Requires manage permission
+ * @param kbId Knowledge base ID
+ * @param userId User ID to revoke
+ */
+export async function deleteKnowledgePermission(
+  kbId: number,
+  userId: number
+): Promise<{ message: string }> {
+  return apiClient.delete<{ message: string }>(`/knowledge-bases/${kbId}/permissions/${userId}`)
+}
+
+/**
+ * Get current user's permission for a knowledge base
+ * @param kbId Knowledge base ID
+ * @returns Current user's permission info
+ */
+export async function getMyKnowledgePermission(kbId: number): Promise<MyPermissionResponse> {
+  return apiClient.get<MyPermissionResponse>(`/knowledge-bases/${kbId}/my-permission`)
+}
+
+/**
+ * Get the organization knowledge base
+ * Creates it if doesn't exist and user is admin
+ * @returns Organization knowledge base
+ */
+export async function getOrganizationKnowledgeBase(): Promise<KnowledgeBase> {
+  return apiClient.get<KnowledgeBase>('/knowledge-bases/organization')
+}

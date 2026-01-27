@@ -47,6 +47,7 @@ class ResourceScope(str, Enum):
     PERSONAL = "personal"
     GROUP = "group"
     ALL = "all"
+    EXTERNAL = "external"
 
 
 # ============== Knowledge Base Schemas ==============
@@ -405,3 +406,104 @@ class WebScrapeResponse(BaseModel):
     success: bool = Field(True, description="Whether scraping succeeded")
     error_code: Optional[str] = Field(None, description="Error code if failed")
     error_message: Optional[str] = Field(None, description="Error message if failed")
+
+
+# ============== Permission Management Schemas ==============
+
+
+class KnowledgeShareInfoResponse(BaseModel):
+    """Schema for knowledge base share info response (used for share page)."""
+
+    kb_id: int = Field(..., description="Knowledge base ID")
+    name: str = Field(..., description="Knowledge base name")
+    description: Optional[str] = Field(None, description="Knowledge base description")
+    namespace: str = Field(
+        ..., description="Knowledge base namespace (default/organization/group_name)"
+    )
+    kb_type: Optional[str] = Field(
+        "notebook", description="Knowledge base type: 'notebook' or 'classic'"
+    )
+    owner_user_id: int = Field(..., description="Owner user ID")
+    owner_username: str = Field(..., description="Owner username")
+    has_permission: bool = Field(
+        ..., description="Whether current user has access permission"
+    )
+    permission_type: Optional[str] = Field(
+        None, description="User's permission type if has access"
+    )
+    permission_source: str = Field(
+        ...,
+        description="Permission source: owner/group_role/explicit_grant/organization_member/system_admin/none",
+    )
+
+
+class PermissionCreate(BaseModel):
+    """Schema for batch permission creation."""
+
+    user_ids: list[int] = Field(
+        ..., min_length=1, description="List of user IDs to grant permission"
+    )
+    permission_type: str = Field(
+        ...,
+        pattern="^(read|download|write|manage)$",
+        description="Permission type: read, download, write, or manage",
+    )
+
+
+class PermissionUpdate(BaseModel):
+    """Schema for updating a permission."""
+
+    permission_type: str = Field(
+        ...,
+        pattern="^(read|download|write|manage)$",
+        description="New permission type",
+    )
+
+
+class PermissionResponse(BaseModel):
+    """Schema for permission record response."""
+
+    id: int = Field(..., description="Permission record ID")
+    user_id: int = Field(..., description="User ID")
+    username: str = Field(..., description="Username")
+    permission_type: str = Field(..., description="Permission type")
+    granted_by_user_id: int = Field(..., description="Granting user ID")
+    granted_by_username: str = Field(..., description="Granting username")
+    granted_at: datetime = Field(..., description="When permission was granted")
+
+    class Config:
+        from_attributes = True
+
+
+class PermissionListResponse(BaseModel):
+    """Schema for permission list response."""
+
+    total: int = Field(..., description="Total number of permissions")
+    items: list[PermissionResponse] = Field(..., description="List of permissions")
+
+
+class PermissionBatchResult(BaseModel):
+    """Schema for batch permission operation result."""
+
+    success_count: int = Field(
+        ..., description="Number of successfully processed permissions"
+    )
+    skipped_count: int = Field(
+        ..., description="Number of skipped permissions (already exists)"
+    )
+    skipped_user_ids: list[int] = Field(
+        default_factory=list, description="List of skipped user IDs"
+    )
+
+
+class MyPermissionResponse(BaseModel):
+    """Schema for current user's permission response."""
+
+    has_permission: bool = Field(..., description="Whether user has permission")
+    permission_type: Optional[str] = Field(
+        None, description="Permission type if has access"
+    )
+    permission_source: str = Field(
+        ...,
+        description="Permission source: owner/group_role/explicit_grant/organization_member/system_admin/none",
+    )

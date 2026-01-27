@@ -10,7 +10,7 @@ export type DocumentStatus = 'enabled' | 'disabled'
 
 export type DocumentSourceType = 'file' | 'text' | 'table' | 'web'
 
-export type KnowledgeResourceScope = 'personal' | 'group' | 'all'
+export type KnowledgeResourceScope = 'personal' | 'group' | 'all' | 'external'
 
 // Retrieval Config types
 export interface RetrievalConfig {
@@ -269,4 +269,72 @@ export interface WebScrapeResponse {
     | 'CONTENT_TOO_LARGE'
     | 'NOT_HTML'
   error_message?: string
+}
+
+// ============== Permission Management Types ==============
+
+export type PermissionType = 'read' | 'download' | 'write' | 'manage'
+
+export type PermissionSource =
+  | 'owner'
+  | 'group_role'
+  | 'explicit_grant'
+  | 'organization_member'
+  | 'system_admin'
+  | 'none'
+
+// Share info for share page
+export interface KnowledgeShareInfoResponse {
+  kb_id: number
+  name: string
+  description: string | null
+  namespace: string
+  kb_type: string | null
+  owner_user_id: number
+  owner_username: string
+  has_permission: boolean
+  permission_type: PermissionType | null
+  permission_source: PermissionSource
+}
+
+// Permission creation
+export interface PermissionCreate {
+  user_ids: number[]
+  permission_type: PermissionType
+}
+
+// Permission update
+export interface PermissionUpdate {
+  permission_type: PermissionType
+}
+
+// Permission record
+export interface PermissionResponse {
+  id: number
+  user_id: number
+  username: string
+  permission_type: PermissionType
+  granted_by_user_id: number
+  granted_by_username: string
+  granted_at: string
+}
+
+// Permission list
+export interface PermissionListResponse {
+  total: number
+  items: PermissionResponse[]
+}
+
+// Batch permission result
+export interface PermissionBatchResult {
+  success_count: number
+  skipped_count: number
+  skipped_user_ids: number[]
+}
+
+// Current user's permission
+export interface MyPermissionResponse {
+  has_permission: boolean
+  permission_type: PermissionType | null
+  permission_source: PermissionSource
 }

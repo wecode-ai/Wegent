@@ -9,6 +9,18 @@
   "documents": "文档",
   "document_count": "{{count}} 篇文档",
   "documents_count": "{{count}} 篇文档",
+  "share": {
+    "title": "分享知识库",
+    "copy_link": "复制链接",
+    "link_copied": "链接已复制到剪贴板",
+    "manage_permissions": "管理权限",
+    "no_permission": {
+      "title": "无访问权限",
+      "description": "您没有访问此知识库的权限，请联系管理员",
+      "group_hint": "这是群组内部知识库，请先加入群组",
+      "owner": "所有者"
+    }
+  },
   "modules": {
     "title": "我的知识",
     "code": "代码知识",
@@ -238,7 +250,52 @@
       }
     },
     "permission": {
-      "noAccess": "您没有操作权限"
+      "noAccess": "您没有操作权限",
+      "title": "权限管理",
+      "tabs": {
+        "users": "已授权用户",
+        "add": "添加用户"
+      },
+      "type": {
+        "read": "查看",
+        "download": "下载",
+        "write": "编辑",
+        "manage": "管理"
+      },
+      "source": {
+        "owner": "创建者",
+        "group_role": "群组角色",
+        "explicit_grant": "显式授权",
+        "organization_member": "公司成员",
+        "system_admin": "系统管理员"
+      },
+      "columns": {
+        "user": "用户",
+        "permission": "权限",
+        "granted_by": "授权人",
+        "actions": "操作"
+      },
+      "no_users": "暂无授权用户",
+      "actions": {
+        "revoke": "撤销权限",
+        "revoke_confirm": "确定撤销该用户的访问权限？",
+        "modify": "修改权限"
+      },
+      "add_users": {
+        "search_placeholder": "搜索用户名...",
+        "selected": "已选择 {{count}} 人",
+        "add": "添加",
+        "select_permission": "选择权限类型"
+      },
+      "messages": {
+        "load_failed": "加载权限列表失败",
+        "permission_added": "权限添加成功，成功 {{success}} 人，跳过 {{skipped}} 人",
+        "add_failed": "添加权限失败",
+        "permission_updated": "权限修改成功",
+        "update_failed": "修改权限失败",
+        "permission_revoked": "权限已撤销",
+        "revoke_failed": "撤销权限失败"
+      }
     },
     "advancedSettings": {
       "title": "高级设置",
