@@ -27,6 +27,35 @@ from app.services.user import user_service
 router = APIRouter()
 
 
+# ==================== Feature Flags ====================
+
+
+class FeatureFlags(BaseModel):
+    """System-level feature flags for the frontend"""
+
+    memory_enabled: bool = False  # Whether long-term memory service is available
+
+
+@router.get("/features", response_model=FeatureFlags)
+async def get_feature_flags(
+    _current_user: User = Depends(security.get_current_user),  # noqa: ARG001
+):
+    """
+    Get system-level feature flags.
+
+    These flags indicate which features are available based on backend configuration.
+    Used by frontend to conditionally enable/show features.
+    """
+    from app.services.memory import get_memory_manager
+
+    # Check if memory service is actually available
+    memory_manager = get_memory_manager()
+
+    return FeatureFlags(
+        memory_enabled=memory_manager.is_enabled,
+    )
+
+
 @router.get("/me", response_model=UserInDB)
 async def read_current_user(current_user: User = Depends(security.get_current_user)):
     """Get current user information"""
