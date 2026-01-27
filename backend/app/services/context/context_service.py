@@ -61,6 +61,39 @@ class ContextService:
     # Image file extensions supported for vision models
     IMAGE_EXTENSIONS = frozenset([".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"])
 
+    # ==================== Helper Methods ====================
+
+    @staticmethod
+    def format_file_size(size_bytes: int) -> str:
+        """
+        Format file size in bytes to human-readable format.
+
+        Args:
+            size_bytes: File size in bytes
+
+        Returns:
+            Formatted string like "2.5 MB", "156.3 KB", or "512 bytes"
+        """
+        if size_bytes >= 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+        elif size_bytes >= 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        else:
+            return f"{size_bytes} bytes"
+
+    @staticmethod
+    def build_attachment_url(attachment_id: int) -> str:
+        """
+        Build the download URL for an attachment.
+
+        Args:
+            attachment_id: Attachment ID
+
+        Returns:
+            Relative URL path for downloading the attachment
+        """
+        return f"/api/attachments/{attachment_id}/download"
+
     # ==================== Attachment Operations ====================
 
     def upload_attachment(
@@ -344,6 +377,8 @@ class ContextService:
         """
         Build a text prefix containing document content for prepending to messages.
 
+        Includes attachment metadata (id, filename, mime_type, file_size, url).
+
         Args:
             context: SubtaskContext record with extracted_text
 
@@ -357,8 +392,19 @@ class ContextService:
         max_text_length = DocumentParser.get_max_text_length()
         is_truncated = context.text_length >= max_text_length
 
-        # Build the prefix with optional truncation notice
-        prefix = f"[File Content - {context.original_filename}]:\n"
+        # Build attachment metadata header
+        attachment_id = context.id
+        filename = context.original_filename
+        mime_type = context.mime_type or "unknown"
+        file_size = context.file_size or 0
+        formatted_size = self.format_file_size(file_size)
+        url = self.build_attachment_url(attachment_id)
+
+        # Build the prefix with metadata and optional truncation notice
+        prefix = (
+            f"[Attachment: {filename} | ID: {attachment_id} | "
+            f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
+        )
 
         if is_truncated:
             prefix += (
