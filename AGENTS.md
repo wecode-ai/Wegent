@@ -22,6 +22,7 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - **AGENTS.md**: Core concepts, coding principles, and quick reference only
 - **docs/**: Detailed architecture, design documents, and comprehensive guides
 - When adding new features, put detailed docs in `docs/en/` and `docs/zh/`, reference from AGENTS.md
+  - External knowledge import guide: `docs/en/guides/external-import.md` / `docs/zh/guides/external-import.md`
 
 **📚 Detailed Documentation:** See `docs/en/` or `docs/zh/` for comprehensive guides on setup, testing, architecture, and user guides.
 
@@ -515,4 +516,3 @@ cd backend && uv run alembic revision --autogenerate -m "msg" && uv run alembic 
 ```
 
 **Ports:** 3000 (frontend), 8000 (backend), 8001 (chat shell), 3306 (MySQL), 6379 (Redis)
-
