@@ -498,6 +498,7 @@ class K8sExecutor(Executor):
     def get_current_task_ids(
         self, label_selector: Optional[str] = None
     ) -> Dict[str, Any]:
+        start_time = time.time()
         try:
             # If no label selector is provided, use the default label selector
             if label_selector is None:
@@ -513,26 +514,36 @@ class K8sExecutor(Executor):
                     "task_ids": [],
                 }
 
-            pods = core_v1.list_namespaced_pod(
-                namespace=K8S_NAMESPACE, label_selector=label_selector
+            # Use _preload_content=False to skip SDK deserialization of V1PodList
+            # This significantly improves performance when listing many pods
+            # (SDK deserialization can take 17+ seconds for 300+ pods)
+            response = core_v1.list_namespaced_pod(
+                namespace=K8S_NAMESPACE,
+                label_selector=label_selector,
+                _preload_content=False,
             )
 
+            # Parse JSON manually to extract task IDs
+            data = json.loads(response.data.decode("utf-8"))
+            items = data.get("items", [])
+
             task_ids = set()
-            for pod in pods.items:
+            for pod in items:
                 # Extract task ID from pod labels using the correct label name
-                if (
-                    pod.metadata.labels
-                    and "aigc.weibo.com/executor-task-id" in pod.metadata.labels
-                ):
-                    task_ids.add(pod.metadata.labels["aigc.weibo.com/executor-task-id"])
-                # If no explicit task ID label exists, try to extract from pod name
+                labels = pod.get("metadata", {}).get("labels", {})
+                if labels and "aigc.weibo.com/executor-task-id" in labels:
+                    task_ids.add(labels["aigc.weibo.com/executor-task-id"])
+                # If no explicit task ID label exists, log warning
                 else:
-                    logger.warning(f"Pod {pod.metadata.name} has no task ID label.")
+                    pod_name = pod.get("metadata", {}).get("name", "unknown")
+                    logger.warning(f"Pod {pod_name} has no task ID label.")
 
             task_ids = list(task_ids)
 
+            elapsed = time.time() - start_time
             logger.info(
-                f"Found {len(task_ids)} task IDs with label selector '{label_selector}'"
+                f"Found {len(task_ids)} task IDs with label selector '{label_selector}' "
+                f"(took {elapsed:.2f}s)"
             )
             return {
                 "status": "success",
@@ -606,10 +617,14 @@ class K8sExecutor(Executor):
             label_selector = (
                 f"aigc.weibo.com/executor=wegent,aigc.weibo.com/proxy-user={user_name}"
             )
-            pods = core_v1.list_namespaced_pod(
-                namespace=K8S_NAMESPACE, label_selector=label_selector
+            # Use _preload_content=False to skip SDK deserialization
+            response = core_v1.list_namespaced_pod(
+                namespace=K8S_NAMESPACE,
+                label_selector=label_selector,
+                _preload_content=False,
             )
-            return len(pods.items)
+            data = json.loads(response.data.decode("utf-8"))
+            return len(data.get("items", []))
         except Exception as e:
             logger.error(f"Error listing Kubernetes pods: {e}")
         return 0
