@@ -38,7 +38,7 @@ class FeatureFlags(BaseModel):
 
 @router.get("/features", response_model=FeatureFlags)
 async def get_feature_flags(
-    _current_user: User = Depends(security.get_current_user),  # noqa: ARG001
+    _current_user: User = Depends(security.get_current_user),
 ):
     """
     Get system-level feature flags.

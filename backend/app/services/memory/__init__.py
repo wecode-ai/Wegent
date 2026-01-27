@@ -78,7 +78,9 @@ def is_memory_enabled_for_user(user: User) -> bool:
         if "memory_enabled" not in prefs:
             return True  # Default ON when service is available
 
-        return prefs.get("memory_enabled", True)
+        # Normalize the value to boolean to ensure consistent return type
+        value = prefs.get("memory_enabled", True)
+        return value if isinstance(value, bool) else True
     except (json.JSONDecodeError, AttributeError, TypeError) as e:
         logger.warning(
             "Failed to parse user preferences for memory check: %s", e, exc_info=True

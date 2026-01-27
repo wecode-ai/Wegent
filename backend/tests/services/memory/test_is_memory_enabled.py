@@ -125,3 +125,26 @@ class TestIsMemoryEnabledForUser:
             # Non-dict type
             mock_user.preferences = 12345
             assert is_memory_enabled_for_user(mock_user) is False
+
+    def test_normalizes_non_boolean_memory_enabled_values(self, mock_user):
+        """Should normalize non-boolean memory_enabled values to True."""
+        with patch(
+            "app.services.memory.settings.MEMORY_ENABLED", True
+        ):
+            from app.services.memory import is_memory_enabled_for_user
+
+            # String value should be normalized to True
+            mock_user.preferences = json.dumps({"memory_enabled": "true"})
+            assert is_memory_enabled_for_user(mock_user) is True
+
+            # Integer value should be normalized to True
+            mock_user.preferences = json.dumps({"memory_enabled": 1})
+            assert is_memory_enabled_for_user(mock_user) is True
+
+            # None value should be normalized to True
+            mock_user.preferences = json.dumps({"memory_enabled": None})
+            assert is_memory_enabled_for_user(mock_user) is True
+
+            # Dict preferences with non-bool value
+            mock_user.preferences = {"memory_enabled": "yes"}
+            assert is_memory_enabled_for_user(mock_user) is True
