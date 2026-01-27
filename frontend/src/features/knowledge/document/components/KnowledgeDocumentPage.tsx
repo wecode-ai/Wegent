@@ -4,8 +4,8 @@
 
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Users,
   User,
@@ -71,7 +71,20 @@ const tabs: DocumentTab[] = [
 export function KnowledgeDocumentPage() {
   const { t } = useTranslation()
   const router = useRouter()
-  const [activeTab, setActiveTab] = useState<DocumentTabType>('personal')
+  const searchParams = useSearchParams()
+
+  // Get initial tab from URL parameter
+  const getInitialTab = useCallback((): DocumentTabType => {
+    const tab = searchParams.get('tab')
+    if (tab === 'group') return 'group'
+    if (tab === 'external') return 'external'
+    return 'personal' // default
+  }, [searchParams])
+
+  // Get initial group name from URL parameter
+  const initialGroupName = searchParams.get('group')
+
+  const [activeTab, setActiveTab] = useState<DocumentTabType>(getInitialTab)
   const [groups, setGroups] = useState<Group[]>([])
   const [loadingGroups, setLoadingGroups] = useState(true)
 
@@ -228,6 +241,28 @@ export function KnowledgeDocumentPage() {
     router.push(`/knowledge/document/${kb.id}`)
   }
 
+  // Handle tab change with URL update
+  const handleTabChange = useCallback(
+    (tab: DocumentTabType) => {
+      setActiveTab(tab)
+      // Update URL without adding to browser history, preserve type=document
+      router.replace(`?type=document&tab=${tab}`)
+    },
+    [router]
+  )
+
+  // Handle group selection change (for URL sync)
+  const handleGroupSelect = useCallback(
+    (groupName: string | null) => {
+      if (groupName) {
+        router.replace(`?type=document&tab=group&group=${encodeURIComponent(groupName)}`)
+      } else {
+        router.replace(`?type=document&tab=group`)
+      }
+    },
+    [router]
+  )
+
   return (
     <div className="space-y-4">
       {/* Tab navigation - left aligned */}
@@ -237,7 +272,7 @@ export function KnowledgeDocumentPage() {
           return (
             <button
               key={tab.id}
-              onClick={() => !tab.disabled && setActiveTab(tab.id)}
+              onClick={() => !tab.disabled && handleTabChange(tab.id)}
               disabled={tab.disabled}
               className={`
                 relative flex items-center gap-2 px-4 py-2 text-sm font-medium whitespace-nowrap rounded-md transition-colors duration-200
@@ -280,6 +315,8 @@ export function KnowledgeDocumentPage() {
             groups={groups}
             loadingGroups={loadingGroups}
             refreshKey={groupRefreshKey}
+            initialGroupName={initialGroupName}
+            onGroupSelect={handleGroupSelect}
             onSelectKb={handleSelectKb}
             onEditKb={setEditingKb}
             onDeleteKb={setDeletingKb}
@@ -519,6 +556,8 @@ interface GroupKnowledgeContentProps {
   groups: Group[]
   loadingGroups: boolean
   refreshKey: number
+  initialGroupName: string | null
+  onGroupSelect: (groupName: string | null) => void
   onSelectKb: (kb: KnowledgeBase) => void
   onEditKb: (kb: KnowledgeBase) => void
   onDeleteKb: (kb: KnowledgeBase) => void
@@ -529,6 +568,8 @@ function GroupKnowledgeContent({
   groups,
   loadingGroups,
   refreshKey,
+  initialGroupName,
+  onGroupSelect,
   onSelectKb,
   onEditKb,
   onDeleteKb,
@@ -536,6 +577,45 @@ function GroupKnowledgeContent({
 }: GroupKnowledgeContentProps) {
   const { t } = useTranslation()
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+
+  // Filter groups based on search query
+  const filteredGroups = useMemo(() => {
+    if (!searchQuery.trim()) return groups
+    const query = searchQuery.toLowerCase()
+    return groups.filter(
+      group =>
+        group.name.toLowerCase().includes(query) ||
+        group.display_name?.toLowerCase().includes(query)
+    )
+  }, [groups, searchQuery])
+
+  // Sync selected group with URL parameter
+  useEffect(() => {
+    if (initialGroupName && groups.length > 0) {
+      // URL has group parameter - select the group if different from current
+      const foundGroup = groups.find(g => g.name === initialGroupName)
+      if (foundGroup && selectedGroup?.name !== foundGroup.name) {
+        setSelectedGroup(foundGroup)
+      }
+    } else if (!initialGroupName && selectedGroup) {
+      // URL no longer has group parameter - reset to group list
+      setSelectedGroup(null)
+    }
+  }, [initialGroupName, groups, selectedGroup])
+
+  // Handle group selection - only update URL, let useEffect sync state
+  const handleGroupSelect = useCallback(
+    (group: Group) => {
+      onGroupSelect(group.name)
+    },
+    [onGroupSelect]
+  )
+
+  // Handle back to group list - only update URL, let useEffect sync state
+  const handleBack = useCallback(() => {
+    onGroupSelect(null)
+  }, [onGroupSelect])
 
   if (loadingGroups) {
     return (
@@ -560,7 +640,7 @@ function GroupKnowledgeContent({
       <GroupKnowledgeBaseList
         group={selectedGroup}
         refreshKey={refreshKey}
-        onBack={() => setSelectedGroup(null)}
+        onBack={handleBack}
         onSelectKb={onSelectKb}
         onEditKb={onEditKb}
         onDeleteKb={onDeleteKb}
@@ -572,11 +652,33 @@ function GroupKnowledgeContent({
   // Show group cards grid - centered
   return (
     <div className="flex flex-col items-center">
+      {/* Search bar */}
+      <div className="mb-4 w-full max-w-4xl">
+        <div className="relative w-full max-w-md mx-auto">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+          <input
+            type="text"
+            className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+            placeholder={t('knowledge:document.searchGroups')}
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
       <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {groups.map(group => (
-          <GroupCard key={group.name} group={group} onClick={() => setSelectedGroup(group)} />
+        {filteredGroups.map(group => (
+          <GroupCard key={group.name} group={group} onClick={() => handleGroupSelect(group)} />
         ))}
       </div>
+
+      {/* No results message */}
+      {searchQuery && filteredGroups.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
+          <Users className="w-12 h-12 mb-4 opacity-50" />
+          <p>{t('knowledge:document.noGroupResults')}</p>
+        </div>
+      )}
     </div>
   )
 }
