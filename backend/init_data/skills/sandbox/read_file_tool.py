@@ -31,6 +31,14 @@ class SandboxReadFileInput(BaseModel):
         default="text",
         description="Format to read the file: 'text' (default) or 'bytes'",
     )
+    offset: Optional[int] = Field(
+        default=0,
+        description="Starting byte position to read from (default: 0)",
+    )
+    limit: Optional[int] = Field(
+        default=None,
+        description="Maximum number of bytes to read (default: None, uses max_size)",
+    )
 
 
 # Import base class here - use try/except to handle both direct and dynamic loading
@@ -66,38 +74,143 @@ Use this tool to read files stored in the sandbox filesystem.
 Parameters:
 - file_path (required): Path to the file (absolute or relative to /home/user)
 - format (optional): Read format - 'text' (default) or 'bytes'
+- offset (optional): Starting byte position (default: 0)
+- limit (optional): Maximum bytes to read (default: uses max_size)
 
 Returns:
 - success: Whether the file was read successfully
 - content: File contents as string (or base64 for bytes)
-- size: File size in bytes
+- size: Total file size in bytes
+- bytes_read: Number of bytes actually read
+- truncated: Whether content was truncated
 - path: Absolute path to the file
 - format: Format used for reading
 
-Example:
+Example (read entire file):
 {
   "file_path": "/home/user/data.txt",
   "format": "text"
+}
+
+Example (read first 1000 bytes):
+{
+  "file_path": "/home/user/large.log",
+  "format": "text",
+  "offset": 0,
+  "limit": 1000
+}
+
+Example (read from middle):
+{
+  "file_path": "/home/user/large.log",
+  "format": "text",
+  "offset": 5000,
+  "limit": 1000
 }"""
 
     args_schema: type[BaseModel] = SandboxReadFileInput
 
     # Configuration
-    max_size: int = 1048576  # 1MB default
+    max_size: int = 65536  # 64KB default (reduced from 1MB to avoid context overflow)
+    smart_truncate_head: int = 28672  # 28KB from start
+    smart_truncate_tail: int = 28672  # 28KB from end
 
     def _run(
         self,
         file_path: str,
         format: Optional[str] = "text",
+        offset: Optional[int] = 0,
+        limit: Optional[int] = None,
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Synchronous run - not implemented."""
         raise NotImplementedError("SandboxReadFileTool only supports async execution")
 
+    async def _smart_truncate_file(
+        self, sandbox, file_path: str, file_size: int, format: str
+    ) -> tuple[str, bool]:
+        """Smart truncate large files by reading head + tail.
+
+        Args:
+            sandbox: E2B sandbox instance
+            file_path: Path to file
+            file_size: Total file size
+            format: Read format ('text' or 'bytes')
+
+        Returns:
+            Tuple of (content, is_truncated)
+        """
+        if file_size <= self.max_size:
+            # File is small enough, read entirely
+            content = await sandbox.files.read(file_path, format=format)
+            if format == "bytes":
+                content = base64.b64encode(content).decode("ascii")
+            return content, False
+
+        # File is too large, read head + tail
+        logger.warning(
+            f"[SandboxReadFileTool] File too large ({file_size} bytes), "
+            f"applying smart truncation (head: {self.smart_truncate_head}, "
+            f"tail: {self.smart_truncate_tail})"
+        )
+
+        # Read head
+        head_content = await self._read_file_range(
+            sandbox, file_path, 0, self.smart_truncate_head, format
+        )
+
+        # Read tail
+        tail_offset = max(0, file_size - self.smart_truncate_tail)
+        tail_content = await self._read_file_range(
+            sandbox, file_path, tail_offset, self.smart_truncate_tail, format
+        )
+
+        # Combine with truncation marker
+        if format == "bytes":
+            truncation_marker = base64.b64encode(b"\n\n... [TRUNCATED] ...\n\n").decode(
+                "ascii"
+            )
+        else:
+            truncation_marker = f"\n\n... [TRUNCATED {file_size - self.smart_truncate_head - self.smart_truncate_tail} bytes] ...\n\n"
+
+        content = f"{head_content}{truncation_marker}{tail_content}"
+        return content, True
+
+    async def _read_file_range(
+        self, sandbox, file_path: str, offset: int, limit: int, format: str
+    ) -> str:
+        """Read a specific byte range from file.
+
+        Args:
+            sandbox: E2B sandbox instance
+            file_path: Path to file
+            offset: Starting byte position
+            limit: Maximum bytes to read
+            format: Read format ('text' or 'bytes')
+
+        Returns:
+            File content as string (or base64 for bytes)
+        """
+        # E2B SDK doesn't support offset/limit directly, so we need to use process execution
+        if format == "bytes":
+            # Use dd to read specific byte range
+            result = await sandbox.process.start_and_wait(
+                f"dd if={file_path} bs=1 skip={offset} count={limit} 2>/dev/null | base64"
+            )
+            return result.stdout.strip() if result.stdout else ""
+        else:
+            # Use dd to read specific byte range as text
+            result = await sandbox.process.start_and_wait(
+                f"dd if={file_path} bs=1 skip={offset} count={limit} 2>/dev/null"
+            )
+            return result.stdout if result.stdout else ""
+
     async def _arun(
         self,
         file_path: str,
         format: Optional[str] = "text",
+        offset: Optional[int] = 0,
+        limit: Optional[int] = None,
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Read file from E2B sandbox.
@@ -105,12 +218,17 @@ Example:
         Args:
             file_path: Path to file to read
             format: Format to read ('text' or 'bytes')
+            offset: Starting byte position
+            limit: Maximum bytes to read
             run_manager: Callback manager
 
         Returns:
             JSON string with file contents and metadata
         """
-        logger.info(f"[SandboxReadFileTool] Reading file: {file_path}, format={format}")
+        logger.info(
+            f"[SandboxReadFileTool] Reading file: {file_path}, format={format}, "
+            f"offset={offset}, limit={limit}"
+        )
 
         # Emit status update via WebSocket if available
         if self.ws_emitter:
@@ -121,6 +239,8 @@ Example:
                     tool_input={
                         "file_path": file_path,
                         "format": format,
+                        "offset": offset,
+                        "limit": limit,
                     },
                     status="running",
                 )
@@ -184,45 +304,80 @@ Example:
                 await self._emit_tool_status("failed", error_msg)
                 return result
 
-            # Check size before reading
-            if file_info.size > self.max_size:
-                error_msg = f"File too large: {file_info.size} bytes (max: {self.max_size} bytes)"
-                result = self._format_error(
-                    error_message=error_msg,
-                    content="",
-                    size=file_info.size,
-                    path=file_path,
-                )
-                await self._emit_tool_status("failed", error_msg)
-                return result
+            # Determine bytes to read
+            file_size = file_info.size
+            bytes_to_read = limit if limit is not None else self.max_size
 
-            # Read file with specified format using native async API
-            if format == "bytes":
-                content = await sandbox.files.read(file_path, format="bytes")
-                # Convert bytes to base64 for JSON serialization
-                content_str = base64.b64encode(content).decode("ascii")
+            # Handle offset/limit reading or smart truncation
+            is_truncated = False
+            if offset > 0 or limit is not None:
+                # User specified offset/limit - do range read
+                if offset >= file_size:
+                    error_msg = f"Offset {offset} exceeds file size {file_size}"
+                    result = self._format_error(
+                        error_message=error_msg,
+                        content="",
+                        size=file_size,
+                        path=file_path,
+                    )
+                    await self._emit_tool_status("failed", error_msg)
+                    return result
+
+                # Read the specified range
+                actual_limit = min(bytes_to_read, file_size - offset)
+                content_str = await self._read_file_range(
+                    sandbox, file_path, offset, actual_limit, format
+                )
+                is_truncated = (offset + actual_limit) < file_size
+                bytes_read = actual_limit
+
+            elif file_size <= self.max_size:
+                # File is small enough, read entirely
+                if format == "bytes":
+                    content = await sandbox.files.read(file_path, format="bytes")
+                    content_str = base64.b64encode(content).decode("ascii")
+                else:
+                    content = await sandbox.files.read(file_path, format="text")
+                    content_str = content
+                bytes_read = file_size
+                is_truncated = False
+
             else:
-                content = await sandbox.files.read(file_path, format="text")
-                content_str = content
+                # File is too large, apply smart truncation
+                content_str, is_truncated = await self._smart_truncate_file(
+                    sandbox, file_path, file_size, format
+                )
+                bytes_read = self.smart_truncate_head + self.smart_truncate_tail
 
             response = {
                 "success": True,
                 "content": content_str,
-                "size": file_info.size,
+                "size": file_size,
+                "bytes_read": bytes_read,
+                "truncated": is_truncated,
                 "path": file_path,
                 "format": format,
+                "offset": offset,
                 "modified_time": file_info.modified_time.isoformat(),
                 "sandbox_id": sandbox.sandbox_id,
             }
 
+            if is_truncated:
+                response["truncation_info"] = (
+                    f"File was truncated. Total size: {file_size} bytes, "
+                    f"Read: {bytes_read} bytes. "
+                    f"Use offset/limit parameters to read specific ranges."
+                )
+
             logger.info(
-                f"[SandboxReadFileTool] File read successfully: {file_info.size} bytes"
+                f"[SandboxReadFileTool] File read successfully: {bytes_read}/{file_size} bytes "
+                f"(truncated: {is_truncated})"
             )
 
             # Emit success status
             await self._emit_tool_status(
                 "completed",
-                f"File read successfully ({file_info.size} bytes)",
+                f"File read successfully ({bytes_read} bytes{', truncated' if is_truncated else ''})",
                 response,
             )
 
