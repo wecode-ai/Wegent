@@ -7,7 +7,12 @@
     "repository": "Select Repository",
     "branch": "Select Branch",
     "repository_tooltip": "Select code repository",
-    "branch_tooltip": "Select branch"
+    "branch_tooltip": "Select branch",
+    "select_repository": "Select repository",
+    "unified_selector_placeholder": "Select repo / branch",
+    "requires_workspace": "Requires Repository",
+    "no_workspace_needed": "No repository needed",
+    "no_workspace_description": "This task will run without a code repository"
   },
   "actions": {
     "save": "Save",
@@ -330,7 +335,9 @@
     "bind_mode_chat": "Chat",
     "bind_mode_code": "Code",
     "bind_mode_required": "Please select at least one bind mode (Chat or Code)",
-    "require_confirmation_tooltip": "When enabled, the task will pause after this stage completes, waiting for user confirmation before proceeding to the next stage"
+    "require_confirmation_tooltip": "When enabled, the task will pause after this stage completes, waiting for user confirmation before proceeding to the next stage",
+    "requires_workspace": "Requires Repository",
+    "requires_workspace_hint": "When enabled, this agent requires a code repository to be selected in code mode before starting a task. When disabled, tasks can start without selecting a repository."
   },
   "team_model": {
     "solo": "Solo",
@@ -953,7 +960,9 @@
     "software_requirements_hint": "The following software must be pre-installed in your base image and meet minimum version requirements",
     "required": "Required",
     "optional": "Optional",
-    "copy_command": "Copy command"
+    "copy_command": "Copy command",
+    "requires_workspace": "Requires Workspace",
+    "requires_workspace_hint": "When enabled, this shell requires selecting a code repository to run tasks"
   },
   "inAppBrowser": {
     "title": "Open in Default Browser",
@@ -1123,5 +1132,16 @@
     "supported_types": "PDF, Word, Excel, TXT, Markdown, Images, Code files",
     "characters": "chars",
     "upload_tooltip": "Supported file types: Documents (PDF, Word, PPT, Excel), Images, Code files and text files\nMax file size: {{size}} MB"
+  },
+  "editor": {
+    "vim": {
+      "toggle": "Toggle Vim Mode",
+      "enable": "Enable Vim Mode",
+      "disable": "Disable Vim Mode",
+      "saved": "Content saved",
+      "hint_toast": "Vim Mode Enabled",
+      "hint_description": "Use hjkl to navigate, i for insert mode, Esc for normal mode. :w to save, :q to close.",
+      "commands_hint": ":w save | :q close | :wq save & close"
+    }
   }
 }

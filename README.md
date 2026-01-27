@@ -26,23 +26,70 @@ English | [简体中文](README_zh.md)
 
 ---
 
-## ✨ Core Modes
+## ✨ Core Features
 
-| 💬 Chat Mode | 💻 Code Mode | 📚 Knowledge Mode |
-|:-------------|:-------------|:-----------------------------------|
-| **LLM**: Supports Claude / OpenAI / Gemini and other mainstream models<br>**Multimodal**: Supports automatic parsing of images / PPT / Word / PDF / Excel files<br>**Web Search**: Supports integration with various search engines<br>**Deep Research**: Supports deep research mode with automatic search, organization, and report generation<br>**Error Correction**: Multiple AIs automatically detect and correct errors in responses<br>**Follow-up Mode**: AI proactively asks clarifying questions to ensure accurate understanding<br>**Extensions**: Supports Skill packages / MCP tools / Custom tools | **Multi-platform Integration**: Supports GitHub / GitLab / Gitea / Gitee / Gerrit platforms<br>**Automated AI Workflow**: Branch → Code → Commit → PR automation<br>**Requirement Clarification**: AI proactively asks questions to ensure accurate understanding<br>**Wiki Generation**: Automatic codebase documentation generation | **RAG Retrieval**: Vector / Keyword / Hybrid retrieval<br>**Storage Backends**: Elasticsearch / Qdrant<br>**Document Parsing**: PDF / Markdown / DOCX / Code files<br>**Wiki**: Automatic codebase documentation generation |
+### 💬 Chat Mode
+
+A fully open-source chat agent with powerful capabilities:
+
+- **Multi-Model Support**: Compatible with Claude, OpenAI, Gemini, DeepSeek, GLM and other mainstream models
+- **Conversation History**: Create new conversations, multi-turn dialogues, save and share chat history
+- **Group Chat**: AI group chat where AI responds based on conversation context with @mentions
+- **Attachment Parsing**: Send txt, pdf, ppt, doc, images and other file formats in single/group chats
+- **Follow-up Mode**: AI asks clarifying questions to help refine your requirements
+- **Error Correction Mode**: Multiple AI models automatically detect and correct response errors
+- **Long-term Memory**: Supports mem0 integration for conversation memory persistence
+- **Sandbox Execution**: Execute commands or modify files via sandbox, E2B protocol compatible
+- **Extensions**: Customize prompts, MCP tools and Skills (includes chart drawing skill)
+
+### 💻 Code Mode
+
+A cloud-based Claude Code execution engine:
+
+- **Multi-Model Configuration**: Configure various Claude-compatible models
+- **Concurrent Execution**: Run multiple coding tasks simultaneously in the cloud
+- **Requirement Clarification**: AI analyzes code and asks questions to generate specification documents
+- **Git Integration**: Integrate with GitHub/GitLab/Gitea/Gerrit to clone, modify and create PRs
+- **MCP/Skill Support**: Configure MCP tools and Skills for agents
+- **Multi-turn Conversations**: Continue conversations with follow-up questions
+
+### 📡 Feed Mode
+
+A cloud-based AI task trigger system:
+
+- **Full Capability Access**: Tasks can use all Chat and Code mode capabilities
+- **Scheduled/Event Triggers**: Set up cron schedules or event-based AI task execution
+- **Information Feed**: Display AI-generated content as an information stream
+- **Event Filtering**: Filter conditions like "only notify me if it will rain tomorrow"
+
+### 📚 Knowledge Mode
+
+A cloud-based AI document repository:
+
+- **Document Management**: Upload and manage txt/doc/ppt/xls and other document formats
+- **Web Import**: Import web pages and DingTalk multi-dimensional tables
+- **NotebookLM Mode**: Select documents directly in notebooks for Q&A
+- **Online Editing**: Edit text files directly in notebook mode
+- **Chat Integration**: Reference knowledge bases in single/group chats for AI responses
+
+### 🔧 Customization
+
+All features above are fully customizable:
+
+- **Custom Agents**: Create custom agents in the web UI, configure prompts, MCP, Skills and multi-agent collaboration
+- **Agent Creation Wizard**: 4-step creation: Describe requirements → AI asks questions → Real-time fine-tuning → One-click create
+- **Organization Management**: Create and join groups, share agents, models, Skills within groups
 
 ---
 
 ## 🔧 Extensibility
-
 - **Agent Creation Wizard**: 4-step creation: Describe requirements → AI asks questions → Real-time fine-tuning → One-click create
-- **Collaboration Modes**: 4 out-of-the-box multi-Agent collaboration modes (Sequential/Parallel/Router/Loop), flexible combination of multiple Bots
+- **Collaboration Modes**: 4 out-of-the-box multi-Agent collaboration modes (Sequential/Parallel/Router/Loop)
 - **Skill Support**: Dynamically load skill packages to improve Token efficiency
 - **MCP Tools**: Model Context Protocol for calling external tools and services
-- **Execution Engines**: Supports ClaudeCode / Agno sandboxed isolation, Dify API proxy, Chat direct mode - 4 execution engines
+- **Execution Engines**: ClaudeCode / Agno sandboxed isolation, Dify API proxy, Chat direct mode
 - **YAML Config**: Kubernetes-style CRD for defining Ghost / Bot / Team / Skill
-- **API**: Provides OpenAI-compatible interface for easy integration with other systems
+- **API**: OpenAI-compatible interface for easy integration with other systems
 
 ---
 
@@ -164,17 +211,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/yixiangxx">
+            <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+            <br />
+            <sub><b>Yi Xiang</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/junbaor">
             <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
             <br />
             <sub><b>Junbaor</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/FicoHu">
-            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
-            <br />
-            <sub><b>FicoHu</b></sub>
         </a>
     </td>
     <td align="center">
@@ -185,6 +232,13 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/FicoHu">
+            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
+            <br />
+            <sub><b>FicoHu</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/maquan0927">
             <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
             <br />
@@ -192,10 +246,10 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/yixiangxx">
-            <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+        <a href="https://github.com/fingki">
+            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
             <br />
-            <sub><b>Yi Xiang</b></sub>
+            <sub><b>Fingki</b></sub>
         </a>
     </td>
     <td align="center">
@@ -204,20 +258,34 @@ Thanks to the following developers for their contributions and efforts to make t
             <br />
             <sub><b>Parabala</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/fengkuizhi">
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
             <br />
             <sub><b>Fengkuizhi</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/jolestar">
             <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
             <br />
             <sub><b>Jolestar</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/qwertyerge">
+            <img src="https://avatars.githubusercontent.com/u/13088125?v=4" width="80;" alt="qwertyerge"/>
+            <br />
+            <sub><b>Erdawang</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/sunnights">
+            <img src="https://avatars.githubusercontent.com/u/1886887?v=4" width="80;" alt="sunnights"/>
+            <br />
+            <sub><b>Jake Zhang</b></sub>
         </a>
     </td>
     <td align="center">
@@ -235,13 +303,6 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/fingki">
-            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
-            <br />
-            <sub><b>Fingki</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/graindt">
             <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
             <br />
@@ -252,7 +313,7 @@ Thanks to the following developers for their contributions and efforts to make t
         <a href="https://github.com/salt-hai">
             <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>
             <br />
-            <sub><b>salt-hai</b></sub>
+            <sub><b>Salt-hai</b></sub>
         </a>
     </td></tr>
 </table>

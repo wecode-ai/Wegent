@@ -49,6 +49,9 @@ class TeamBase(BaseModel):
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
     is_active: bool = True
     icon: Optional[str] = None  # Icon ID from preset icon library
+    requires_workspace: Optional[bool] = (
+        None  # Whether this team requires a workspace/repository (None = auto-infer)
+    )
 
 
 class TeamCreate(TeamBase):
@@ -70,6 +73,9 @@ class TeamUpdate(BaseModel):
     is_active: Optional[bool] = None
     namespace: Optional[str] = None  # Group namespace
     icon: Optional[str] = None  # Icon ID from preset icon library
+    requires_workspace: Optional[bool] = (
+        None  # Whether this team requires a workspace/repository (None = auto-infer)
+    )
 
 
 class TeamInDB(TeamBase):

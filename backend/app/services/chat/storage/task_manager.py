@@ -848,8 +848,10 @@ async def create_chat_task(
         # Executor path - use task_kinds_service.create_task_or_append
         logger.debug("[create_chat_task] Using Executor path")
 
-        # Auto-detect task type based on git_url presence
-        task_type = "code" if params.git_url else "chat"
+        # Use provided task_type, or auto-detect based on git_url presence
+        task_type = params.task_type
+        if not task_type:
+            task_type = "code" if params.git_url else "chat"
 
         # Build TaskCreate object
         task_create = TaskCreate(

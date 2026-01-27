@@ -1221,3 +1221,66 @@ class DockerExecutor(Executor):
         from executor_manager.executors.docker.utils import get_container_task_id
 
         return get_container_task_id(executor_name)
+
+    def delete_executor_by_task_id(self, task_id: str) -> Dict[str, Any]:
+        """Delete a Docker container by task_id label (fallback method).
+
+        This is used when the container name is not known or the container
+        was not found by name. It searches for containers with the matching
+        task_id label and deletes them.
+
+        Args:
+            task_id: Task ID to search for
+
+        Returns:
+            Dict with status and error_msg if failed
+        """
+        try:
+            # Find containers with the matching task_id label
+            result = get_running_task_details(label_selector=f"task_id={task_id}")
+            if result.get("status") != "success":
+                return {
+                    "status": "failed",
+                    "error_msg": result.get("error_msg", "Failed to query containers"),
+                }
+
+            containers = result.get("containers", [])
+            if not containers:
+                logger.warning(f"No container found with task_id label '{task_id}'")
+                return {
+                    "status": "not_found",
+                    "error_msg": f"No container found with task_id '{task_id}'",
+                }
+
+            # Delete all matching containers (should typically be one)
+            deleted_containers = []
+            for container in containers:
+                container_name = container.get("container_name")
+                if container_name:
+                    try:
+                        delete_result = delete_container(container_name)
+                        if delete_result.get("status") == "success":
+                            deleted_containers.append(container_name)
+                            logger.info(
+                                f"Deleted Docker container '{container_name}' "
+                                f"found by task_id label '{task_id}'"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to delete container '{container_name}': {e}"
+                        )
+
+            if deleted_containers:
+                return {
+                    "status": "success",
+                    "deleted_containers": deleted_containers,
+                }
+            else:
+                return {
+                    "status": "not_found",
+                    "error_msg": f"Failed to delete any containers for task_id '{task_id}'",
+                }
+
+        except Exception as e:
+            logger.error(f"Error deleting containers by task_id '{task_id}': {e}")
+            return {"status": "failed", "error_msg": f"Error: {e}"}

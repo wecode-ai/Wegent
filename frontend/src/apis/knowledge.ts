@@ -69,6 +69,19 @@ export async function deleteKnowledgeBase(id: number): Promise<void> {
   return apiClient.delete(`/knowledge-bases/${id}`)
 }
 
+/**
+ * Update the knowledge base type (notebook <-> classic conversion)
+ * @param id Knowledge base ID
+ * @param kbType New type: 'notebook' or 'classic'
+ * @returns Updated knowledge base
+ */
+export async function updateKnowledgeBaseType(
+  id: number,
+  kbType: 'notebook' | 'classic'
+): Promise<KnowledgeBase> {
+  return apiClient.patch<KnowledgeBase>(`/knowledge-bases/${id}/type`, { kb_type: kbType })
+}
+
 // ============== Knowledge Document APIs ==============
 
 /**
@@ -212,4 +225,27 @@ export async function refreshWebDocument(documentId: number): Promise<WebDocumen
   return apiClient.post<WebDocumentRefreshResponse>('/web-scraper/refresh-document', {
     document_id: documentId,
   })
+}
+
+// ============== Summary Refresh APIs ==============
+
+/**
+ * Response type for knowledge base summary refresh
+ */
+export interface KnowledgeBaseSummaryRefreshResponse {
+  message: string
+  status: string
+}
+
+/**
+ * Refresh knowledge base summary by re-aggregating document summaries
+ * @param kbId The knowledge base ID to refresh summary for
+ * @returns Refresh result with status
+ */
+export async function refreshKnowledgeBaseSummary(
+  kbId: number
+): Promise<KnowledgeBaseSummaryRefreshResponse> {
+  return apiClient.post<KnowledgeBaseSummaryRefreshResponse>(
+    `/knowledge-bases/${kbId}/summary/refresh`
+  )
 }

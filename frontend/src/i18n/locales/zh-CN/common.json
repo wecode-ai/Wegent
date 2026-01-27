@@ -7,7 +7,12 @@
     "repository": "选择仓库",
     "branch": "选择分支",
     "repository_tooltip": "选择代码仓库",
-    "branch_tooltip": "选择分支"
+    "branch_tooltip": "选择分支",
+    "select_repository": "选择仓库",
+    "unified_selector_placeholder": "选择仓库 / 分支",
+    "requires_workspace": "需要仓库",
+    "no_workspace_needed": "无需仓库",
+    "no_workspace_description": "此任务将在不使用代码仓库的情况下运行"
   },
   "actions": {
     "save": "保存",
@@ -330,7 +335,9 @@
     "bind_mode_chat": "聊天",
     "bind_mode_code": "编码",
     "bind_mode_required": "请至少选择一个绑定模式（聊天或编码）",
-    "require_confirmation_tooltip": "启用后，该阶段完成时任务将暂停，等待用户确认后再继续执行下一阶段"
+    "require_confirmation_tooltip": "启用后，该阶段完成时任务将暂停，等待用户确认后再继续执行下一阶段",
+    "requires_workspace": "需要仓库",
+    "requires_workspace_hint": "启用后，该智能体在编码模式下必须选择代码仓库才能开始任务。关闭后，无需选择仓库即可开始。"
   },
   "team_model": {
     "solo": "独立",
@@ -953,7 +960,9 @@
     "software_requirements_hint": "以下软件需要在您的 Base Image 中预先安装并满足最低版本要求",
     "required": "必需",
     "optional": "可选",
-    "copy_command": "复制命令"
+    "copy_command": "复制命令",
+    "requires_workspace": "需要代码仓库",
+    "requires_workspace_hint": "启用后，此执行环境需要选择代码仓库才能运行任务"
   },
   "inAppBrowser": {
     "title": "默认浏览器打开",
@@ -1117,5 +1126,16 @@
     "supported_types": "PDF、Word、Excel、TXT、Markdown、图片、代码文件",
     "characters": "字符",
     "upload_tooltip": "支持的文件类型: 文档(PDF, Word, PPT, Excel), 图片, 代码文件及各类文本文件\n最大文件大小: {{size}} MB"
+  },
+  "editor": {
+    "vim": {
+      "toggle": "切换 Vim 模式",
+      "enable": "启用 Vim 模式",
+      "disable": "禁用 Vim 模式",
+      "saved": "内容已保存",
+      "hint_toast": "Vim 模式已启用",
+      "hint_description": "使用 hjkl 导航，i 进入插入模式，Esc 返回普通模式。:w 保存，:q 关闭。",
+      "commands_hint": ":w 保存 | :q 关闭 | :wq 保存并关闭"
+    }
   }
 }

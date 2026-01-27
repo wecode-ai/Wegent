@@ -75,4 +75,23 @@ export const knowledgeBaseApi = {
   refreshKnowledgeBaseSummary: async (kbId: number): Promise<void> => {
     await client.post(`/knowledge-bases/${kbId}/summary/refresh`)
   },
+
+  /**
+   * Update document content (TEXT type only)
+   * Updates the extracted_text field and triggers RAG re-indexing.
+   * @param docId Document ID
+   * @param content New Markdown content
+   * @returns Success status and message
+   */
+  updateDocumentContent: async (
+    docId: number,
+    content: string
+  ): Promise<{ success: boolean; document_id: number; message: string }> => {
+    const response = await client.put<{
+      success: boolean
+      document_id: number
+      message: string
+    }>(`/knowledge-documents/${docId}/content`, { content })
+    return response
+  },
 }

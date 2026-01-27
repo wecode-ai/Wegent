@@ -507,6 +507,9 @@ async def _stream_chat_response(
         if user_subtask_id:
             from app.services.chat.preprocessing import prepare_contexts_for_chat
 
+            # Get context_window from model_config for selected_documents injection threshold
+            model_context_window = chat_config.model_config.get("context_window")
+
             (
                 final_message,
                 enhanced_system_prompt,
@@ -520,6 +523,7 @@ async def _stream_chat_response(
                 message=message,
                 base_system_prompt=base_system_prompt_with_memory,  # Use prompt with memories
                 task_id=stream_data.task_id,
+                context_window=model_context_window,  # Pass model's context_window from Model spec
             )
             logger.info(
                 f"[ai_trigger] Unified context processing completed: "

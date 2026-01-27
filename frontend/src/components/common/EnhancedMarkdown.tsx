@@ -232,7 +232,10 @@ function CodeBlock({ language, code, theme }: CodeBlockProps) {
       shell: 'bash',
       zsh: 'bash',
       yml: 'yaml',
-      md: 'markdown',
+      // Map markdown to text to avoid syntax highlighting issues with table tokens
+      // The Prism markdown highlighter creates table-related CSS classes that cause display problems
+      md: 'text',
+      markdown: 'text',
       dockerfile: 'docker',
       plaintext: 'text',
       txt: 'text',
@@ -425,6 +428,28 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
         <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
           {children}
         </a>
+      ),
+      // Restore list styles that Tailwind preflight resets
+      ul: ({ children, ...props }) => (
+        <ul
+          style={{ listStyleType: 'disc', paddingLeft: '1.5em', marginBottom: '0.75em' }}
+          {...props}
+        >
+          {children}
+        </ul>
+      ),
+      ol: ({ children, ...props }) => (
+        <ol
+          style={{ listStyleType: 'decimal', paddingLeft: '1.5em', marginBottom: '0.75em' }}
+          {...props}
+        >
+          {children}
+        </ol>
+      ),
+      li: ({ children, ...props }) => (
+        <li style={{ marginBottom: '0.25em' }} {...props}>
+          {children}
+        </li>
       ),
       // Custom code block rendering with syntax highlighting
       code: ({ className, children, ...props }) => {

@@ -113,6 +113,16 @@ class KnowledgeBaseUpdate(BaseModel):
     )
 
 
+class KnowledgeBaseTypeUpdate(BaseModel):
+    """Schema for updating knowledge base type (notebook <-> classic conversion)."""
+
+    kb_type: str = Field(
+        ...,
+        pattern="^(notebook|classic)$",
+        description="New knowledge base type: 'notebook' or 'classic'",
+    )
+
+
 class KnowledgeBaseResponse(BaseModel):
     """Schema for knowledge base response."""
 
@@ -364,6 +374,14 @@ class DocumentDetailResponse(BaseModel):
     )
     truncated: Optional[bool] = Field(None, description="Whether content was truncated")
     summary: Optional[dict] = Field(None, description="Document summary object")
+
+
+class DocumentContentUpdate(BaseModel):
+    """Schema for updating document content (TEXT type only)."""
+
+    content: str = Field(
+        ..., min_length=1, max_length=500000, description="New Markdown content"
+    )
 
 
 # ============== Web Scraper Schemas ==============

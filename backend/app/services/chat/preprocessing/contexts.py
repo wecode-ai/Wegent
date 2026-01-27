@@ -651,6 +651,7 @@ async def prepare_contexts_for_chat(
     message: str,
     base_system_prompt: str,
     task_id: Optional[int] = None,
+    context_window: Optional[int] = None,
 ) -> Tuple[str, str, List[BaseTool], bool, List[dict]]:
     """
     Unified context processing based on user_subtask_id.
@@ -670,6 +671,9 @@ async def prepare_contexts_for_chat(
         message: Original user message
         base_system_prompt: Base system prompt to enhance
         task_id: Optional task ID for fetching historical KB meta
+        context_window: Optional model context window size from Model spec.
+            Used for selected_documents injection threshold calculation.
+            If None, uses default value (128000).
 
     Returns:
         Tuple of (final_message, enhanced_system_prompt, extra_tools, has_table_context, table_contexts)
@@ -796,16 +800,26 @@ async def prepare_contexts_for_chat(
     if selected_docs_contexts:
         from .selected_documents import process_selected_documents_contexts
 
-        final_message, enhanced_system_prompt, extra_tools = (
-            process_selected_documents_contexts(
-                db=db,
-                selected_docs_contexts=selected_docs_contexts,
-                user_id=user_id,
-                message=final_message,
-                base_system_prompt=enhanced_system_prompt,
-                extra_tools=extra_tools,
-                user_subtask_id=user_subtask_id,
+        # Build kwargs for process_selected_documents_contexts
+        # Only pass context_window if explicitly provided (from Model spec)
+        kwargs = {
+            "db": db,
+            "selected_docs_contexts": selected_docs_contexts,
+            "user_id": user_id,
+            "message": final_message,
+            "base_system_prompt": enhanced_system_prompt,
+            "extra_tools": extra_tools,
+            "user_subtask_id": user_subtask_id,
+        }
+        if context_window is not None:
+            kwargs["context_window"] = context_window
+            logger.info(
+                f"[prepare_contexts_for_chat] Using model context_window={context_window} "
+                f"for selected_documents injection threshold"
             )
+
+        final_message, enhanced_system_prompt, extra_tools = (
+            process_selected_documents_contexts(**kwargs)
         )
 
     has_table_context = len(table_contexts) > 0

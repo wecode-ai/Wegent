@@ -8,6 +8,7 @@ import React, { useCallback, useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -74,6 +75,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
   const [baseShellRef, setBaseShellRef] = useState('')
   const [baseImage, setBaseImage] = useState('')
   const [originalBaseImage, setOriginalBaseImage] = useState('')
+  const [requiresWorkspace, setRequiresWorkspace] = useState(true)
   const [saving, setSaving] = useState(false)
   const [validating, setValidating] = useState(false)
   const [_validationId, setValidationId] = useState<string | null>(null)
@@ -109,6 +111,12 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
         setBaseShellRef(shell.baseShellRef || '')
         setBaseImage(shell.baseImage || '')
         setOriginalBaseImage(shell.baseImage || '')
+        // Default requiresWorkspace based on executionType if not explicitly set
+        setRequiresWorkspace(
+          shell.requiresWorkspace !== undefined
+            ? shell.requiresWorkspace
+            : shell.executionType !== 'external_api'
+        )
       } else {
         // Reset for new shell
         setName('')
@@ -116,6 +124,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
         setBaseShellRef('')
         setBaseImage('')
         setOriginalBaseImage('')
+        setRequiresWorkspace(true) // Default to true for new shells
       }
       setValidationStatus(null)
       setValidationId(null)
@@ -397,6 +406,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
         await shellApis.updateShell(shell.name, {
           displayName: displayName.trim() || undefined,
           baseImage: baseImage.trim() || undefined,
+          requiresWorkspace,
         })
         toast({
           title: t('common:shells.update_success'),
@@ -408,6 +418,7 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
             displayName: displayName.trim() || undefined,
             baseShellRef,
             baseImage: baseImage.trim(),
+            requiresWorkspace,
           },
           groupName
         )
@@ -540,6 +551,31 @@ const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
                 ) : null
               })()}
           </div>
+
+          {/* Requires Workspace Toggle - only show for local_engine shells */}
+          {baseShellRef &&
+            (() => {
+              const selectedShell = baseShells.find(s => s.name === baseShellRef)
+              // Only show for local_engine shells (ClaudeCode, Agno)
+              if (selectedShell?.executionType !== 'local_engine') return null
+              return (
+                <div className="flex items-center justify-between py-3 px-1">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="requiresWorkspace" className="text-sm font-medium">
+                      {t('common:shells.requires_workspace')}
+                    </Label>
+                    <p className="text-xs text-text-muted">
+                      {t('common:shells.requires_workspace_hint')}
+                    </p>
+                  </div>
+                  <Switch
+                    id="requiresWorkspace"
+                    checked={requiresWorkspace}
+                    onCheckedChange={setRequiresWorkspace}
+                  />
+                </div>
+              )
+            })()}
 
           {/* Base Image */}
           <div className="space-y-2">

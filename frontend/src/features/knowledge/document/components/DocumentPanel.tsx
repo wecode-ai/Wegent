@@ -55,6 +55,8 @@ interface DocumentPanelProps {
   onDocumentSelectionChange?: (documentIds: number[]) => void
   /** Callback when new chat button is clicked */
   onNewChat?: () => void
+  /** Callback when knowledge base type is converted */
+  onTypeConverted?: (updatedKb: KnowledgeBase) => void
 }
 
 const MIN_WIDTH = 280
@@ -77,6 +79,7 @@ export function DocumentPanel({
   canManage = true,
   onDocumentSelectionChange,
   onNewChat,
+  onTypeConverted,
 }: DocumentPanelProps) {
   const { t } = useTranslation('knowledge')
 
@@ -257,6 +260,7 @@ export function DocumentPanel({
           canManage={canManage}
           compact={true}
           onSelectionChange={onDocumentSelectionChange}
+          onTypeConverted={onTypeConverted}
           // No onBack in panel mode - always show document list
         />
       </div>

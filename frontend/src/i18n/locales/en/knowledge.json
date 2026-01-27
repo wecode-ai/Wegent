@@ -59,7 +59,15 @@
       "cannotDeleteWithDocuments": "This knowledge base contains documents and cannot be deleted. Please delete all documents first.",
       "deleteWarning": "This knowledge base contains {{count}} document(s). Please delete all documents before deleting the knowledge base.",
       "search": "Search knowledge bases...",
-      "noResults": "No matching knowledge bases"
+      "noResults": "No matching knowledge bases",
+      "convertType": "Convert Type",
+      "convertToNotebook": "Convert to Notebook",
+      "convertToClassic": "Convert to Knowledge Base",
+      "convertToNotebookDisabled": "Document count exceeds 50 file limit, cannot convert to notebook mode",
+      "convertToClassicConfirm": "After conversion, you will no longer be able to chat directly in the knowledge base, but there will be no document limit. Are you sure you want to convert?",
+      "convertToNotebookConfirm": "After conversion to notebook, you can upload files and chat directly in the knowledge base, but the document limit will be 50 files. Are you sure you want to convert?",
+      "convertSuccess": "Knowledge base type converted successfully",
+      "convertFailed": "Failed to convert knowledge base type"
     },
     "document": {
       "title": "Documents",
@@ -135,7 +143,19 @@
         "copyError": "Failed to copy",
         "contentLength": "Content Length",
         "characters": "characters",
-        "noContent": "No content available"
+        "noContent": "No content available",
+        "edit": "Edit",
+        "save": "Save",
+        "cancel": "Cancel",
+        "saving": "Saving...",
+        "saveSuccess": "Save successful",
+        "saveFailed": "Save failed",
+        "unsavedChanges": "You have unsaved changes. Are you sure you want to discard them?",
+        "discardChanges": "Discard changes",
+        "viewRaw": "View raw content",
+        "viewPreview": "View rendered preview",
+        "fullscreen": "Fullscreen",
+        "exitFullscreen": "Exit fullscreen"
       }
     },
     "upload": {
@@ -368,6 +388,10 @@
     "notFound": "Knowledge base not found",
     "createTaskError": "Failed to create conversation",
     "bindKnowledgeBaseError": "Failed to bind knowledge base",
-    "newNote": "New Note"
+    "newNote": "New Note",
+    "summaryFailed": "Summary generation failed",
+    "summaryFailedHint": "Click retry to regenerate summary",
+    "summaryRetry": "Retry",
+    "summaryRetrying": "Retrying..."
   }
 }
