@@ -575,6 +575,13 @@ class SkillSpec(BaseModel):
         description="Provider configuration for dynamic loading. "
         "If specified, the provider will be loaded from the skill .",
     )
+    mcpServers: Optional[Dict[str, Any]] = Field(
+        None,
+        description="MCP servers configuration for this skill. "
+        "When the skill is loaded, these MCP servers will be connected "
+        "and their tools will be available to the AI. "
+        "Format follows the standard MCP server configuration schema.",
+    )
 
 
 class SkillStatus(Status):
