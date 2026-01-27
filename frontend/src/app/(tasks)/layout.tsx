@@ -8,7 +8,7 @@ import { UserProvider } from '@/features/common/UserContext'
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
 import { SocketProvider } from '@/contexts/SocketContext'
-import { PetProvider, PetWidget } from '@/features/pet'
+import { PetProvider, PetWidget, PetStreamingBridge } from '@/features/pet'
 
 /**
  * Shared layout for chat and code pages to reuse TaskContextProvider and ChatStreamProvider
@@ -17,6 +17,7 @@ import { PetProvider, PetWidget } from '@/features/pet'
  *
  * SocketProvider is added for real-time WebSocket communication
  * PetProvider and PetWidget are added for the pet nurturing feature
+ * PetStreamingBridge syncs AI streaming state with pet animation
  */
 export default function TasksLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -26,6 +27,7 @@ export default function TasksLayout({ children }: { children: React.ReactNode })
           <TaskContextProvider>
             <ChatStreamProvider>
               {children}
+              <PetStreamingBridge />
               <PetWidget />
             </ChatStreamProvider>
           </TaskContextProvider>

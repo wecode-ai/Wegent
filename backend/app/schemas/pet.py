@@ -22,7 +22,7 @@ class AppearanceTraits(BaseModel):
         description="Secondary domain detected from user memories",
     )
     color_tone: Optional[str] = Field(
-        default="teal",
+        default="gray",
         description="Color tone based on primary domain",
     )
     accessories: Optional[list[str]] = Field(
@@ -88,10 +88,6 @@ class PetResponse(PetBase):
         ge=0,
         description="Total chat messages sent",
     )
-    total_memories: int = Field(
-        ge=0,
-        description="Total long-term memories stored",
-    )
     current_streak: int = Field(
         ge=0,
         description="Current consecutive usage days",
@@ -130,7 +126,6 @@ class PetStatsResponse(BaseModel):
     """Response schema for pet statistics."""
 
     total_chats: int
-    total_memories: int
     current_streak: int
     longest_streak: int
     experience: int
@@ -149,7 +144,7 @@ class ExperienceGainedEvent(BaseModel):
     total: int = Field(
         description="Total experience after gain",
     )
-    source: Literal["chat", "memory", "streak_bonus"] = Field(
+    source: Literal["chat", "streak_bonus"] = Field(
         description="Source of experience gain",
     )
     multiplier: float = Field(
@@ -214,7 +209,7 @@ DOMAIN_APPEARANCE_MAP = {
         "accessories": ["book", "graduation_cap"],
     },
     "general": {
-        "color_tone": "teal",
+        "color_tone": "gray",
         "accessories": [],
     },
 }

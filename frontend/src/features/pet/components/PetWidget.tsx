@@ -10,15 +10,17 @@
  * Floating pet widget that appears in the bottom-right corner.
  * Shows pet avatar with animations and hover status.
  * Can be dragged (desktop) or fixed (mobile).
+ * Shows thinking bubble when AI is generating output.
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { X } from 'lucide-react'
 import { usePet } from '@/features/pet/contexts/PetContext'
 import { PetAvatar } from './PetAvatar'
-import { PetStatusBar } from './PetStatusBar'
+import { PetNotificationPanel } from './PetNotificationPanel'
 import { ExpGainAnimation } from './ExpGainAnimation'
 import { EvolutionAnimation } from './EvolutionAnimation'
+import { ThinkingBubble } from './ThinkingBubble'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
 
@@ -31,13 +33,26 @@ interface Position {
 }
 
 export function PetWidget() {
-  const { pet, animationState, pendingExpGain, pendingEvolution, updatePet, clearPendingExpGain, clearPendingEvolution } = usePet()
+  const {
+    pet,
+    animationState,
+    pendingExpGain,
+    pendingEvolution,
+    updatePet,
+    clearPendingExpGain,
+    clearPendingEvolution,
+  } = usePet()
   const isMobile = useIsMobile()
   const [isHovered, setIsHovered] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const [position, setPosition] = useState<Position>(DEFAULT_POSITION)
   const widgetRef = useRef<HTMLDivElement>(null)
-  const dragStartRef = useRef<{ mouseX: number; mouseY: number; posX: number; posY: number } | null>(null)
+  const dragStartRef = useRef<{
+    mouseX: number
+    mouseY: number
+    posX: number
+    posY: number
+  } | null>(null)
 
   // Load saved position from localStorage
   useEffect(() => {
@@ -62,17 +77,20 @@ export function PetWidget() {
   }, [])
 
   // Handle mouse down for dragging (desktop only)
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (isMobile) return
-    e.preventDefault()
-    setIsDragging(true)
-    dragStartRef.current = {
-      mouseX: e.clientX,
-      mouseY: e.clientY,
-      posX: position.x,
-      posY: position.y,
-    }
-  }, [isMobile, position])
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (isMobile) return
+      e.preventDefault()
+      setIsDragging(true)
+      dragStartRef.current = {
+        mouseX: e.clientX,
+        mouseY: e.clientY,
+        posX: position.x,
+        posY: position.y,
+      }
+    },
+    [isMobile, position]
+  )
 
   // Handle mouse move for dragging
   useEffect(() => {
@@ -84,8 +102,14 @@ export function PetWidget() {
       const deltaX = dragStartRef.current.mouseX - e.clientX
       const deltaY = dragStartRef.current.mouseY - e.clientY
 
-      const newX = Math.max(0, Math.min(window.innerWidth - 100, dragStartRef.current.posX + deltaX))
-      const newY = Math.max(0, Math.min(window.innerHeight - 100, dragStartRef.current.posY + deltaY))
+      const newX = Math.max(
+        0,
+        Math.min(window.innerWidth - 100, dragStartRef.current.posX + deltaX)
+      )
+      const newY = Math.max(
+        0,
+        Math.min(window.innerHeight - 100, dragStartRef.current.posY + deltaY)
+      )
 
       setPosition({ x: newX, y: newY })
     }
@@ -106,14 +130,17 @@ export function PetWidget() {
   }, [isDragging, position, savePosition])
 
   // Handle close button click
-  const handleClose = useCallback(async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    try {
-      await updatePet({ is_visible: false })
-    } catch {
-      // Error handled in context
-    }
-  }, [updatePet])
+  const handleClose = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation()
+      try {
+        await updatePet({ is_visible: false })
+      } catch {
+        // Error handled in context
+      }
+    },
+    [updatePet]
+  )
 
   // Don't render if no pet or not visible
   if (!pet || !pet.is_visible) {
@@ -155,19 +182,19 @@ export function PetWidget() {
         <div className="relative">
           <PetAvatar pet={pet} animationState={animationState} isMobile={isMobile} />
 
+          {/* Thinking bubble when AI is generating */}
+          {animationState === 'busy' && <ThinkingBubble />}
+
           {/* Experience gain animation */}
           {pendingExpGain && (
-            <ExpGainAnimation
-              amount={pendingExpGain.amount}
-              onComplete={clearPendingExpGain}
-            />
+            <ExpGainAnimation amount={pendingExpGain.amount} onComplete={clearPendingExpGain} />
           )}
         </div>
 
-        {/* Status bar on hover */}
+        {/* Notification panel on hover */}
         {isHovered && !isDragging && (
           <div className="absolute bottom-full right-0 mb-2">
-            <PetStatusBar pet={pet} />
+            <PetNotificationPanel pet={pet} />
           </div>
         )}
       </div>

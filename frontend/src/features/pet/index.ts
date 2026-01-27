@@ -7,7 +7,7 @@
  */
 
 export { PetProvider, usePet } from './contexts/PetContext'
-export { PetWidget, PetAvatar, PetStatusBar, PetSettings } from './components'
+export { PetWidget, PetAvatar, PetStatusBar, PetSettings, PetStreamingBridge } from './components'
 export type {
   Pet,
   PetUpdate,

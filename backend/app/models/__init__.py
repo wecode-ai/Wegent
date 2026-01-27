@@ -13,7 +13,6 @@ from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
-from app.models.pet import UserPet
 from app.models.project import Project
 from app.models.shared_task import SharedTask
 from app.models.shared_team import SharedTeam
@@ -51,5 +50,4 @@ __all__ = [
     "Project",
     "SubscriptionFollow",
     "SubscriptionShareNamespace",
-    "UserPet",
 ]

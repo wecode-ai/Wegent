@@ -8,7 +8,6 @@
   "stats": {
     "experience": "Experience",
     "chats": "Chats",
-    "memories": "Memories",
     "streak": "Streak",
     "days": "days",
     "stage": "Stage"
@@ -25,5 +24,20 @@
   "notifications": {
     "evolved": "Congratulations! Your pet evolved to {{stage}}!",
     "streak_milestone": "{{days}} day streak! Keep it up!"
+  },
+  "panel": {
+    "greeting": {
+      "morning": "Good morning!",
+      "afternoon": "Good afternoon!",
+      "evening": "Good evening!"
+    },
+    "exp": {
+      "total": "Total EXP: {{exp}}"
+    },
+    "tasks": {
+      "running": "{{count}} task(s) running",
+      "unread": "{{count}} unread message(s)"
+    },
+    "allClear": "All tasks completed!"
   }
 }

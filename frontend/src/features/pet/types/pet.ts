@@ -24,7 +24,6 @@ export interface Pet {
   stage: PetStage
   experience: number
   total_chats: number
-  total_memories: number
   current_streak: number
   longest_streak: number
   last_active_date: string | null
@@ -45,7 +44,7 @@ export interface PetUpdate {
 export interface ExperienceGainedEvent {
   amount: number
   total: number
-  source: 'chat' | 'memory' | 'streak_bonus'
+  source: 'chat' | 'streak_bonus'
   multiplier: number
 }
 
@@ -63,39 +62,37 @@ export interface TraitsUpdatedEvent {
 export type PetAnimationState = 'idle' | 'busy' | 'evolving' | 'gaining_exp'
 
 // Domain to appearance mapping
-export const DOMAIN_APPEARANCE_MAP: Record<
-  string,
-  { color_tone: string; accessories: string[] }
-> = {
-  legal: {
-    color_tone: 'navy',
-    accessories: ['bowtie', 'briefcase', 'scales'],
-  },
-  tech: {
-    color_tone: 'teal',
-    accessories: ['glasses', 'code_symbol', 'gear'],
-  },
-  design: {
-    color_tone: 'purple',
-    accessories: ['paintbrush', 'palette'],
-  },
-  finance: {
-    color_tone: 'gold',
-    accessories: ['tie', 'chart'],
-  },
-  medical: {
-    color_tone: 'blue',
-    accessories: ['stethoscope', 'heart'],
-  },
-  education: {
-    color_tone: 'green',
-    accessories: ['book', 'graduation_cap'],
-  },
-  general: {
-    color_tone: 'teal',
-    accessories: [],
-  },
-}
+export const DOMAIN_APPEARANCE_MAP: Record<string, { color_tone: string; accessories: string[] }> =
+  {
+    legal: {
+      color_tone: 'navy',
+      accessories: ['bowtie', 'briefcase', 'scales'],
+    },
+    tech: {
+      color_tone: 'teal',
+      accessories: ['glasses', 'code_symbol', 'gear'],
+    },
+    design: {
+      color_tone: 'purple',
+      accessories: ['paintbrush', 'palette'],
+    },
+    finance: {
+      color_tone: 'gold',
+      accessories: ['tie', 'chart'],
+    },
+    medical: {
+      color_tone: 'blue',
+      accessories: ['stethoscope', 'heart'],
+    },
+    education: {
+      color_tone: 'green',
+      accessories: ['book', 'graduation_cap'],
+    },
+    general: {
+      color_tone: 'gray',
+      accessories: [],
+    },
+  }
 
 // Stage thresholds
 export const STAGE_THRESHOLDS: Record<PetStage, number> = {

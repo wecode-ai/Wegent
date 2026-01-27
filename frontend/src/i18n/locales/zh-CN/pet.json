@@ -8,7 +8,6 @@
   "stats": {
     "experience": "经验值",
     "chats": "对话次数",
-    "memories": "记忆数量",
     "streak": "连续使用",
     "days": "天",
     "stage": "阶段"
@@ -25,5 +24,20 @@
   "notifications": {
     "evolved": "恭喜！你的宠物进化到了{{stage}}！",
     "streak_milestone": "连续使用{{days}}天！继续保持！"
+  },
+  "panel": {
+    "greeting": {
+      "morning": "早上好！",
+      "afternoon": "下午好！",
+      "evening": "晚上好！"
+    },
+    "exp": {
+      "total": "总经验：{{exp}}"
+    },
+    "tasks": {
+      "running": "{{count}} 个任务进行中",
+      "unread": "{{count}} 条未读消息"
+    },
+    "allClear": "所有任务已完成！"
   }
 }

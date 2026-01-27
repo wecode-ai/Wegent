@@ -11,7 +11,14 @@
  * Provides pet data and methods to update pet settings.
  */
 
-import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react'
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  ReactNode,
+} from 'react'
 import { petApis } from '@/apis/pet'
 import type {
   Pet,
@@ -48,7 +55,7 @@ interface PetContextType {
   /** Clear pending evolution */
   clearPendingEvolution: () => void
   /** Simulate experience gain (for testing/demo) */
-  simulateExpGain: (amount: number, source: 'chat' | 'memory') => void
+  simulateExpGain: (amount: number) => void
 }
 
 const PetContext = createContext<PetContextType | undefined>(undefined)
@@ -121,30 +128,32 @@ export function PetProvider({ children }: PetProviderProps) {
   }, [])
 
   // Simulate experience gain (for demo/testing)
-  const simulateExpGain = useCallback((amount: number, source: 'chat' | 'memory') => {
-    if (!pet) return
+  const simulateExpGain = useCallback(
+    (amount: number) => {
+      if (!pet) return
 
-    const event: ExperienceGainedEvent = {
-      amount,
-      total: pet.experience + amount,
-      source,
-      multiplier: pet.streak_multiplier,
-    }
-
-    setPendingExpGain(event)
-    setAnimationState('gaining_exp')
-
-    // Update local pet state
-    setPet(prev => {
-      if (!prev) return prev
-      return {
-        ...prev,
-        experience: prev.experience + amount,
-        total_chats: source === 'chat' ? prev.total_chats + 1 : prev.total_chats,
-        total_memories: source === 'memory' ? prev.total_memories + 1 : prev.total_memories,
+      const event: ExperienceGainedEvent = {
+        amount,
+        total: pet.experience + amount,
+        source: 'chat',
+        multiplier: pet.streak_multiplier,
       }
-    })
-  }, [pet])
+
+      setPendingExpGain(event)
+      setAnimationState('gaining_exp')
+
+      // Update local pet state
+      setPet(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          experience: prev.experience + amount,
+          total_chats: prev.total_chats + 1,
+        }
+      })
+    },
+    [pet]
+  )
 
   // Register WebSocket event handlers
   useEffect(() => {
@@ -163,7 +172,6 @@ export function PetProvider({ children }: PetProviderProps) {
           ...prev,
           experience: data.total,
           total_chats: data.source === 'chat' ? prev.total_chats + 1 : prev.total_chats,
-          total_memories: data.source === 'memory' ? prev.total_memories + 1 : prev.total_memories,
         }
       })
     }
