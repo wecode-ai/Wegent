@@ -88,6 +88,7 @@ class SkillKindsService:
                 "config": metadata.get("config"),
                 "tools": metadata.get("tools"),
                 "provider": metadata.get("provider"),
+                "mcpServers": metadata.get("mcpServers"),
                 "preload": metadata.get("preload", False),
             },
             "status": {
@@ -379,6 +380,7 @@ class SkillKindsService:
                 "config": metadata.get("config"),
                 "tools": metadata.get("tools"),
                 "provider": metadata.get("provider"),
+                "mcpServers": metadata.get("mcpServers"),
                 "preload": metadata.get("preload", False),
             }
         )
