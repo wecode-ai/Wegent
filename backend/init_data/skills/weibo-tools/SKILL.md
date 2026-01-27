@@ -1,122 +1,95 @@
 ---
 description: "微博平台数据查询工具集。当用户需要查询微博内容、用户信息、评论、热搜等微博相关数据时使用此技能。支持：查询微博内容（按ID或用户）、获取用户资料、查看评论、获取热搜榜单、根据微博链接获取内容等。"
 displayName: "微博工具"
-version: "1.1.0"
+version: "1.2.0"
 author: "Wegent Team"
 tags: ["weibo", "微博", "social-media", "热搜", "用户", "评论"]
 bindShells: ["Chat"]
 provider:
   module: provider
   class: WeiboToolProvider
-tools:
-  - name: list_weibo_mcps
-    provider: weibo-tools
-  - name: load_weibo_mcp_tools
-    provider: weibo-tools
-    config:
-      timeout: 60
-  - name: invoke_weibo_tool
-    provider: weibo-tools
+mcpServers:
+  statusServer:
+    type: "streamable-http"
+    transport: "streamable_http"
+    url: "http://mcp.intra.weibo.com/2/mcp/internal/server/status"
+    headers:
+      Authorization: "mcp_eyJhbGciOiJIUzI1NiJ9.eyJhcGlfa2V5IjoiMiIsInNlcnZlciI6InN0YXR1cyIsInVzZXJfaWQiOiIxIiwiaWF0IjoxNzQxNzY1OTYxLCJleHAiOjE3NDY5NDk5NjF9.wbqKZi-kxgslrZPVJz0_xemWWLDk-o2sPMbQ2OCZJFI"
+      mcp-proxy-wegent-user: "${{user.name}}"
+  commentsServer:
+    type: "streamable-http"
+    transport: "streamable_http"
+    url: "http://mcp.intra.weibo.com/2/mcp/internal/server/comments"
+    headers:
+      Authorization: "mcp_eyJhbGciOiJIUzI1NiJ9.eyJhcGlfa2V5IjoiMiIsInNlcnZlciI6ImNvbW1lbnRzIiwidXNlcl9pZCI6IjEiLCJpYXQiOjE3NDE3NjU5NjEsImV4cCI6MTc0Njk0OTk2MX0.8zsDWPPq5cG_xjzRrYq4LoAKJ6YEhKiSA5PVfPJKzLQ"
+      mcp-proxy-wegent-user: "${{user.name}}"
+  userServer:
+    type: "streamable-http"
+    transport: "streamable_http"
+    url: "http://mcp.intra.weibo.com/2/mcp/internal/server/user"
+    headers:
+      Authorization: "mcp_eyJhbGciOiJIUzI1NiJ9.eyJhcGlfa2V5IjoiMiIsInNlcnZlciI6InVzZXIiLCJ1c2VyX2lkIjoiMSIsImlhdCI6MTc0MTc2NTk2MSwiZXhwIjoxNzQ2OTQ5OTYxfQ.3Z0-XjxL6zIvBq3qY-vTqS2a1cHG6z5qZ0-DWwL3Y8M"
+      mcp-proxy-wegent-user: "${{user.name}}"
+  searchServer:
+    type: "streamable-http"
+    transport: "streamable_http"
+    url: "http://mcp.intra.weibo.com/2/mcp/internal/server/search"
+    headers:
+      Authorization: "mcp_eyJhbGciOiJIUzI1NiJ9.eyJhcGlfa2V5IjoiMiIsInNlcnZlciI6InNlYXJjaCIsInVzZXJfaWQiOiIxIiwiaWF0IjoxNzQxNzY1OTYxLCJleHAiOjE3NDY5NDk5NjF9.9XjL6vBq3qY-vT1a2cHG6z5qZ0-WwL3Y8MkxgslrZPV"
+      mcp-proxy-wegent-user: "${{user.name}}"
+  fetchServer:
+    type: "streamable-http"
+    transport: "streamable_http"
+    url: "http://mcp.intra.weibo.com/2/mcp/internal/server/wegent-fetch"
+    headers:
+      Authorization: "mcp_eyJhbGciOiJIUzI1NiJ9.eyJhcGlfa2V5IjoiMiIsInNlcnZlciI6IndlZ2VudC1mZXRjaCIsInVzZXJfaWQiOiIxIiwiaWF0IjoxNzQxNzY1OTYxLCJleHAiOjE3NDY5NDk5NjF9.Jz0_xemWWLDk-o2sPMbQ2OCZJFI"
+      mcp-proxy-wegent-user: "${{user.name}}"
 ---
 
 # 微博工具技能
 
 微博平台数据查询工具集，支持查询微博内容、用户信息、评论、热搜等数据。
 
-## 三阶段懒加载设计
+## MCP 服务器配置
 
-为了减少 Token 消耗，本技能采用三阶段懒加载设计：
+本技能通过配置 MCP 服务器来提供微博数据查询能力。系统会自动连接配置的 MCP 服务器并加载相关工具。
 
-### 阶段 1: 发现可用服务 (list_weibo_mcps)
+### 可用的 MCP 服务器
 
-列出可用的微博 MCP 服务，无需网络连接：
+| 服务器名 | 功能 | 适用场景 |
+|----------|------|----------|
+| statusServer | 微博内容查询 | 查看微博正文、获取用户微博列表 |
+| userServer | 用户信息查询 | 获取用户资料、粉丝数据 |
+| commentsServer | 评论数据查询 | 查看评论、分析评论 |
+| searchServer | 搜索和热搜 | 获取热搜榜、搜索话题 |
+| fetchServer | 链接解析 | 通过URL获取微博内容 |
 
-```json
-{
-  "name": "list_weibo_mcps"
-}
-```
+## 使用示例
 
-返回可用服务列表，帮助选择合适的服务。
-
-### 阶段 2: 加载服务工具 (load_weibo_mcp_tools)
-
-连接到特定的 MCP 服务并获取其工具列表：
-
-```json
-{
-  "name": "load_weibo_mcp_tools",
-  "arguments": {
-    "server_name": "weibo-status"
-  }
-}
-```
-
-只加载指定服务的工具，避免加载无关工具。
-
-### 阶段 3: 调用工具 (invoke_weibo_tool)
-
-调用已加载服务中的特定工具：
-
-```json
-{
-  "name": "invoke_weibo_tool",
-  "arguments": {
-    "server_name": "weibo-status",
-    "tool_name": "get_weibo_by_id",
-    "arguments": {
-      "weibo_id": "1234567890"
-    }
-  }
-}
-```
-
-## 支持的微博服务
-
-| 服务名 | 功能 | 适用场景 |
-|--------|------|----------|
-| weibo-status | 微博内容查询 | 查看微博正文、获取用户微博列表 |
-| weibo-user | 用户信息查询 | 获取用户资料、粉丝数据 |
-| weibo-comments | 评论数据查询 | 查看评论、分析评论 |
-| weibo-search | 搜索和热搜 | 获取热搜榜、搜索话题 |
-| wegent-fetch | 链接解析 | 通过URL获取微博内容 |
-
-## 使用流程示例
+### 查询微博内容
 
 用户问: "帮我看看某某的最新微博"
 
-AI 处理流程:
-1. 识别到这是微博用户内容查询
-2. 调用 `list_weibo_mcps` 查看可用服务
-3. 选择 `weibo-status` 服务
-4. 调用 `load_weibo_mcp_tools(server_name='weibo-status')` 加载工具
-5. 调用 `invoke_weibo_tool(server_name='weibo-status', tool_name='get_user_weibos', arguments={...})`
-6. 返回该用户的微博内容
+AI 会自动使用 statusServer 提供的工具来查询用户的微博列表。
 
-## Token 效率
+### 获取热搜
 
-- **阶段 1**: ~200 tokens (静态服务目录)
-- **阶段 2**: ~50-100 tokens/服务 (单个服务的工具列表)
-- **阶段 3**: 只传递调用参数
+用户问: "现在的热搜是什么"
 
-相比一次性加载所有服务所有工具，可节省 70-80% 的 Token 消耗。
+AI 会自动使用 searchServer 提供的工具来获取当前热搜榜单。
 
-## 配置要求
+### 解析微博链接
 
-需要配置 `CHAT_MCP_SERVERS` 环境变量，包含微博 MCP 服务的连接信息。
+用户问: "帮我看看这条微博 https://weibo.com/..."
 
-示例配置:
-```json
-{
-  "mcpServers": {
-    "weibo-status": {
-      "command": "node",
-      "args": ["path/to/weibo-status-mcp"]
-    },
-    "weibo-user": {
-      "command": "node",
-      "args": ["path/to/weibo-user-mcp"]
-    }
-  }
-}
-```
+AI 会自动使用 fetchServer 提供的工具来解析微博链接并获取内容。
+
+## 变量替换
+
+MCP 服务器配置支持以下变量替换：
+
+- `${{user.name}}` - 当前用户的用户名
+- `${{user.id}}` - 当前用户的 ID
+- `${{task.id}}` - 当前任务的 ID
+
+这些变量会在运行时自动替换为实际值。
