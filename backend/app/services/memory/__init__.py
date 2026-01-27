@@ -26,16 +26,39 @@ Default behavior:
 
 import json
 import logging
+from typing import Any
 
 from app.core.config import settings
 from app.models.user import User
 from app.services.memory.client import LongTermMemoryClient
 from app.services.memory.manager import MemoryManager, get_memory_manager
 from app.services.memory.utils import build_context_messages
+from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
 
 
+def _normalize_to_bool(value: Any, default: bool = True) -> bool:
+    """Normalize a value to boolean.
+
+    Args:
+        value: The value to normalize (can be bool, str, int, or other types)
+        default: Default value to return for unrecognized types
+
+    Returns:
+        Boolean representation of the value
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ("true", "1", "yes", "on")
+    if isinstance(value, (int, float)):
+        return value != 0
+    # For None or other types, return default
+    return default
+
+
+@trace_sync("memory.is_memory_enabled_for_user")
 def is_memory_enabled_for_user(user: User) -> bool:
     """Check if long-term memory is enabled for the given user.
 
@@ -79,8 +102,8 @@ def is_memory_enabled_for_user(user: User) -> bool:
             return True  # Default ON when service is available
 
         # Normalize the value to boolean to ensure consistent return type
-        value = prefs.get("memory_enabled", True)
-        return value if isinstance(value, bool) else True
+        value = prefs.get("memory_enabled")
+        return _normalize_to_bool(value, default=True)
     except (json.JSONDecodeError, AttributeError, TypeError) as e:
         logger.warning(
             "Failed to parse user preferences for memory check: %s", e, exc_info=True

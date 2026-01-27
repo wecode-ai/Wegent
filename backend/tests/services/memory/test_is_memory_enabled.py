@@ -127,24 +127,56 @@ class TestIsMemoryEnabledForUser:
             assert is_memory_enabled_for_user(mock_user) is False
 
     def test_normalizes_non_boolean_memory_enabled_values(self, mock_user):
-        """Should normalize non-boolean memory_enabled values to True."""
+        """Should normalize non-boolean memory_enabled values correctly."""
         with patch(
             "app.services.memory.settings.MEMORY_ENABLED", True
         ):
             from app.services.memory import is_memory_enabled_for_user
 
-            # String value should be normalized to True
+            # String "true" should be normalized to True
             mock_user.preferences = json.dumps({"memory_enabled": "true"})
             assert is_memory_enabled_for_user(mock_user) is True
 
-            # Integer value should be normalized to True
+            # String "TRUE" (uppercase) should be normalized to True
+            mock_user.preferences = json.dumps({"memory_enabled": "TRUE"})
+            assert is_memory_enabled_for_user(mock_user) is True
+
+            # String "yes" should be normalized to True
+            mock_user.preferences = json.dumps({"memory_enabled": "yes"})
+            assert is_memory_enabled_for_user(mock_user) is True
+
+            # String "1" should be normalized to True
+            mock_user.preferences = json.dumps({"memory_enabled": "1"})
+            assert is_memory_enabled_for_user(mock_user) is True
+
+            # String "on" should be normalized to True
+            mock_user.preferences = json.dumps({"memory_enabled": "on"})
+            assert is_memory_enabled_for_user(mock_user) is True
+
+            # String "false" should be normalized to False
+            mock_user.preferences = json.dumps({"memory_enabled": "false"})
+            assert is_memory_enabled_for_user(mock_user) is False
+
+            # String "no" should be normalized to False
+            mock_user.preferences = json.dumps({"memory_enabled": "no"})
+            assert is_memory_enabled_for_user(mock_user) is False
+
+            # Integer 1 should be normalized to True
             mock_user.preferences = json.dumps({"memory_enabled": 1})
             assert is_memory_enabled_for_user(mock_user) is True
 
-            # None value should be normalized to True
+            # Integer 0 should be normalized to False
+            mock_user.preferences = json.dumps({"memory_enabled": 0})
+            assert is_memory_enabled_for_user(mock_user) is False
+
+            # None value should be normalized to True (default)
             mock_user.preferences = json.dumps({"memory_enabled": None})
             assert is_memory_enabled_for_user(mock_user) is True
 
-            # Dict preferences with non-bool value
+            # Dict preferences with non-bool string value
             mock_user.preferences = {"memory_enabled": "yes"}
             assert is_memory_enabled_for_user(mock_user) is True
+
+            # Dict preferences with "false" string
+            mock_user.preferences = {"memory_enabled": "false"}
+            assert is_memory_enabled_for_user(mock_user) is False
