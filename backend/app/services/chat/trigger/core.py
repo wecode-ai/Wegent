@@ -1182,6 +1182,13 @@ async def _stream_with_http_adapter(
                     result=result,
                 )
 
+                # Publish event for pet experience update (decoupled from pet module)
+                from app.core.events import ChatCompletedEvent, get_event_bus
+
+                await get_event_bus().publish(
+                    ChatCompletedEvent(user_id=stream_data.user_id)
+                )
+
             elif event.type == ChatEventType.ERROR:
                 # Error - emit error event
                 error_msg = event.data.get("error", "Unknown error")
@@ -1528,6 +1535,11 @@ async def _stream_with_bridge(
                 content=state.full_response,
                 result=result,
             )
+
+        # Publish event for pet experience update (decoupled from pet module)
+        from app.core.events import ChatCompletedEvent, get_event_bus
+
+        await get_event_bus().publish(ChatCompletedEvent(user_id=stream_data.user_id))
 
     except Exception as e:
         logger.exception("[BRIDGE] subtask=%s error", subtask_id)

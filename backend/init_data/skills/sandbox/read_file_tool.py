@@ -67,6 +67,11 @@ Parameters:
 - file_path (required): Path to the file (absolute or relative to /home/user)
 - format (optional): Read format - 'text' (default) or 'bytes'
 
+Size Limits:
+- Text files: Maximum 100KB (102400 bytes)
+- Binary files: Maximum 32KB (32768 bytes)
+- Files exceeding limits will be rejected
+
 Returns:
 - success: Whether the file was read successfully
 - content: File contents as string (or base64 for bytes)
@@ -83,7 +88,8 @@ Example:
     args_schema: type[BaseModel] = SandboxReadFileInput
 
     # Configuration
-    max_size: int = 1048576  # 1MB default
+    max_size: int = 102400  # 100KB for text files
+    max_size_bytes: int = 32768  # 32KB for binary files
 
     def _run(
         self,
@@ -184,22 +190,37 @@ Example:
                 await self._emit_tool_status("failed", error_msg)
                 return result
 
-            # Check size before reading
-            if file_info.size > self.max_size:
-                error_msg = f"File too large: {file_info.size} bytes (max: {self.max_size} bytes)"
+            # Check file size against limits
+            file_size = file_info.size
+            max_size_for_format = (
+                self.max_size_bytes if format == "bytes" else self.max_size
+            )
+
+            # Reject files that exceed the limit
+            if file_size > max_size_for_format:
+                max_size_kb = max_size_for_format / 1024
+                file_size_kb = file_size / 1024
+                file_type = "Binary" if format == "bytes" else "Text"
+                error_msg = (
+                    f"{file_type} file too large: {file_size} bytes ({file_size_kb:.1f} KB). "
+                    f"Maximum allowed size for {file_type.lower()} files: {max_size_for_format} bytes ({max_size_kb:.0f} KB)."
+                )
                 result = self._format_error(
                     error_message=error_msg,
                     content="",
-                    size=file_info.size,
+                    size=file_size,
                     path=file_path,
                 )
                 await self._emit_tool_status("failed", error_msg)
                 return result
 
-            # Read file with specified format using native async API
+            # Read file entirely
+            logger.info(
+                f"[SandboxReadFileTool] Reading file in sandbox {sandbox.sandbox_id}"
+            )
+
             if format == "bytes":
                 content = await sandbox.files.read(file_path, format="bytes")
-                # Convert bytes to base64 for JSON serialization
                 content_str = base64.b64encode(content).decode("ascii")
             else:
                 content = await sandbox.files.read(file_path, format="text")
@@ -208,7 +229,7 @@ Example:
             response = {
                 "success": True,
                 "content": content_str,
-                "size": file_info.size,
+                "size": file_size,
                 "path": file_path,
                 "format": format,
                 "modified_time": file_info.modified_time.isoformat(),
@@ -216,13 +237,13 @@ Example:
             }
 
             logger.info(
-                f"[SandboxReadFileTool] File read successfully: {file_info.size} bytes"
+                f"[SandboxReadFileTool] File read successfully: {file_size} bytes"
             )
 
             # Emit success status
             await self._emit_tool_status(
                 "completed",
-                f"File read successfully ({file_info.size} bytes)",
+                f"File read successfully ({file_size} bytes)",
                 response,
             )
 

@@ -299,8 +299,14 @@ class MemoryManager:
             if result:
                 # mem0 returns {"results": [{"id": ..., "memory": ..., "event": ...}]}
                 memory_count = 0
+                memory_texts: List[str] = []
                 if isinstance(result, dict) and "results" in result:
-                    memory_count = len(result.get("results", []))
+                    results_list = result.get("results", [])
+                    memory_count = len(results_list)
+                    # Extract memory texts for domain detection
+                    for mem_result in results_list:
+                        if isinstance(mem_result, dict) and "memory" in mem_result:
+                            memory_texts.append(mem_result["memory"])
                 logger.info(
                     "Stored %d memories for user %s, task %s, subtask %s, project %s (from %d context messages)",
                     memory_count,
@@ -310,6 +316,18 @@ class MemoryManager:
                     project_id or "None",
                     len(messages),
                 )
+
+                # Publish event for pet experience update (decoupled from pet module)
+                if memory_count > 0:
+                    from app.core.events import MemoryCreatedEvent, get_event_bus
+
+                    await get_event_bus().publish(
+                        MemoryCreatedEvent(
+                            user_id=int(user_id),
+                            memory_count=memory_count,
+                            memory_texts=memory_texts,
+                        )
+                    )
             else:
                 logger.warning(
                     "Failed to store memory for user %s, task %s, subtask %s",

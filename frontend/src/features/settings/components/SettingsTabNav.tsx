@@ -42,6 +42,7 @@ export type SettingsTabId =
   | 'general'
   | 'integrations'
   | 'api-keys'
+  | 'pet'
 
 // Scope type for resource tabs
 type ResourceScope = 'personal' | 'group'
@@ -75,7 +76,7 @@ export function SettingsTabNav({
   onGroupChange,
   refreshTrigger,
 }: SettingsTabNavProps) {
-  const { t } = useTranslation(['common', 'groups'])
+  const { t } = useTranslation(['common', 'groups', 'pet'])
   const isMobile = useIsMobile()
   const indicatorContainerRef = useRef<HTMLDivElement | null>(null)
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
@@ -140,13 +141,14 @@ export function SettingsTabNav({
     [t]
   )
 
-  // Other tabs (not resource-based) - order: general, integrations, api-keys
+  // Other tabs (not resource-based) - order: general, integrations, api-keys, pet
   // Note: group-manager is now accessed via the group dropdown menu
   const otherTabs: TabItem[] = useMemo(
     () => [
       { id: 'general', label: t('settings.sections.general'), category: 'other' },
       { id: 'integrations', label: t('settings.integrations'), category: 'other' },
       { id: 'api-keys', label: t('settings.api_keys'), category: 'other' },
+      { id: 'pet', label: t('pet:title'), category: 'other' },
     ],
     [t]
   )
