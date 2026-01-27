@@ -143,6 +143,9 @@ class SkillValidator:
                     "provider": metadata.get(
                         "provider"
                     ),  # Provider config for dynamic loading
+                    "mcpServers": metadata.get(
+                        "mcpServers"
+                    ),  # MCP servers for skill-level tools
                     "preload": preload,  # Whether to preload into system prompt
                     "file_size": file_size,
                     "file_hash": file_hash,
