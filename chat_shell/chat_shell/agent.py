@@ -8,7 +8,11 @@ This module provides the ChatAgent class which handles:
 - LangGraph agent creation and configuration
 - Tool registry management
 - Agent execution (both streaming and non-streaming)
-- Automatic message compression when context limits are exceeded
+
+Message compression is handled automatically by LangGraphAgentBuilder's
+pre_model_hook, which compresses messages before each LLM call during
+tool loops. This ensures context window limits are respected even when
+tool results accumulate.
 
 The ChatAgent is decoupled from streaming infrastructure, making it easier
 to test and maintain. Streaming is handled by the streaming module.
@@ -22,7 +26,6 @@ from typing import Any, Callable
 
 from langchain_core.tools.base import BaseTool
 
-from chat_shell.core.config import settings
 from shared.telemetry.decorators import (
     add_span_event,
     trace_async_generator,
@@ -30,7 +33,7 @@ from shared.telemetry.decorators import (
 )
 
 from .agents import LangGraphAgentBuilder
-from .compression import MessageCompressor
+from .core.config import settings
 from .messages import MessageConverter
 from .models import LangChainModelFactory
 from .tools import ToolRegistry
@@ -164,14 +167,19 @@ class ChatAgent:
             "tool_registry_built",
             {"total_tools": len(tool_registry.get_all())},
         )
+        # Extract model_id for compression configuration
+        model_id = config.model_config.get("model_id")
 
         # Create agent builder - it will auto-detect PromptModifierTool from registry
+        # and set up pre_model_hook for message compression during tool loops
         add_span_event("creating_langgraph_agent_builder")
         builder = LangGraphAgentBuilder(
             llm=llm,
             tool_registry=tool_registry,
             max_iterations=config.max_iterations,
             enable_checkpointing=self.enable_checkpointing,
+            model_id=model_id,
+            model_config=config.model_config,
         )
         add_span_event("langgraph_agent_builder_created")
         return builder
@@ -343,13 +351,18 @@ class ChatAgent:
     ) -> list[dict[str, Any]]:
         """Build messages for agent execution.
 
+        Note: Message compression is now handled automatically by LangGraphAgentBuilder's
+        pre_model_hook, which compresses messages before each LLM call. This ensures
+        compression happens during tool loops when context grows, not just at the start.
+        The model_id parameter is kept for backward compatibility but is no longer used.
+
         Args:
             history: Chat history
             current_message: Current user message
             system_prompt: Base system prompt (will be enhanced if config is provided)
             username: Optional username for group chat
             config: Optional AgentConfig for prompt enhancements
-            model_id: Optional model ID for compression configuration
+            model_id: Deprecated - compression is now handled by LangGraphAgentBuilder
             inject_datetime: Whether to inject current datetime into user message.
                             If None, uses config.enable_deep_thinking value.
                             If config is also None, defaults to True for backward compatibility.
@@ -387,27 +400,9 @@ class ChatAgent:
             inject_datetime=inject_datetime,
         )
 
-        # Apply message compression if enabled and model_id is provided
-        compression_enabled = getattr(settings, "MESSAGE_COMPRESSION_ENABLED", True)
-        if model_id and compression_enabled:
-            # Pass model_config to compressor for context window configuration
-            model_config_for_compression = config.model_config if config else None
-            compressor = MessageCompressor(
-                model_id,
-                model_config=model_config_for_compression,
-            )
-            result = compressor.compress_if_needed(messages)
-
-            if result.was_compressed:
-                logger.info(
-                    "[ChatAgent] Messages compressed: %d -> %d tokens (saved %d), "
-                    "strategies: %s",
-                    result.original_tokens,
-                    result.compressed_tokens,
-                    result.tokens_saved,
-                    ", ".join(result.strategies_applied),
-                )
-                messages = result.messages
+        # Note: Message compression is now handled by LangGraphAgentBuilder's pre_model_hook
+        # This ensures compression happens before each LLM call during tool loops,
+        # not just at the start of the conversation.
 
         return messages
 
