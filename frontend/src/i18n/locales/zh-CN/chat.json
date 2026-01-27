@@ -418,7 +418,9 @@
     "resetZoom": "重置缩放",
     "renderError": "Mermaid 渲染失败",
     "copied": "已复制到剪贴板",
-    "exportSuccess": "图片已导出"
+    "exportSuccess": "图片已导出",
+    "tryFix": "尝试修复",
+    "fixing": "修复中..."
   },
   "correction": {
     "enable": "启用 AI 交叉验证",

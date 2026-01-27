@@ -340,6 +340,65 @@ export async function getSearchEngines(): Promise<SearchEnginesResponse> {
 }
 
 /**
+ * Request parameters for fixing Mermaid diagram code
+ */
+export interface FixMermaidRequest {
+  /** The original Mermaid code that failed to render */
+  code: string
+  /** The error message from the Mermaid renderer */
+  error: string
+  /** Model ID to use for fixing (optional, uses default if not provided) */
+  model_id?: string
+}
+
+/**
+ * Response from fix Mermaid API
+ */
+export interface FixMermaidResponse {
+  /** Whether the fix was successful */
+  success: boolean
+  /** The fixed Mermaid code (if successful) */
+  fixed_code?: string
+  /** Error message if fix failed */
+  error?: string
+}
+
+/**
+ * Request AI to fix Mermaid diagram code that failed to render.
+ *
+ * @param request - Fix request parameters
+ * @returns Fixed Mermaid code or error
+ */
+export async function fixMermaidCode(request: FixMermaidRequest): Promise<FixMermaidResponse> {
+  const token = getToken()
+
+  const response = await fetch(`${getApiUrl()}/chat/fix-mermaid`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+    body: JSON.stringify(request),
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    let errorMsg = errorText
+    try {
+      const json = JSON.parse(errorText)
+      if (json && typeof json.detail === 'string') {
+        errorMsg = json.detail
+      }
+    } catch {
+      // Not JSON
+    }
+    return { success: false, error: errorMsg }
+  }
+
+  return response.json()
+}
+
+/**
  * Chat API exports
  */
 export const chatApis = {
@@ -348,4 +407,5 @@ export const chatApis = {
   getStreamingContent,
   getSearchEngines,
   resumeStreamWithOffset,
+  fixMermaidCode,
 }

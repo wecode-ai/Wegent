@@ -38,6 +38,7 @@ from app.services.chat.correction import (
     evaluate_and_save_correction,
     get_existing_correction,
 )
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -490,3 +491,178 @@ async def apply_correction(
     apply_correction_to_subtask(db, subtask, request.improved_answer)
 
     return {"message": "Correction applied", "subtask_id": subtask_id}
+
+
+# Mermaid Diagram Fix Feature
+class FixMermaidRequest(BaseModel):
+    """Request body for fixing Mermaid diagram code."""
+
+    code: str  # The original Mermaid code that failed to render
+    error: str  # The error message from the Mermaid renderer
+    model_id: Optional[str] = None  # Optional model ID (uses default if not provided)
+
+
+class FixMermaidResponse(BaseModel):
+    """Response body for Mermaid diagram fix."""
+
+    success: bool
+    fixed_code: Optional[str] = None
+    error: Optional[str] = None
+
+
+@router.post("/fix-mermaid")
+@trace_async("fix_mermaid_code", "mermaid_fix")
+async def fix_mermaid_code(
+    request: FixMermaidRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Fix Mermaid diagram code that failed to render.
+
+    This endpoint:
+    1. Takes the original Mermaid code and error message
+    2. Sends to LLM to fix the syntax/semantic errors
+    3. Returns the fixed Mermaid code
+
+    Returns:
+        {"success": bool, "fixed_code": str, "error": str}
+    """
+    from app.services.chat.config.model_resolver import (
+        _find_model,
+        extract_and_process_model_config,
+    )
+
+    # Use provided model_id or default to a sensible default model
+    model_id = request.model_id
+    if not model_id:
+        # Try to find a default model - prefer GPT-4o or Claude
+        for default_name in ["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet", "gpt-4"]:
+            model_spec = _find_model(db, default_name, current_user.id)
+            if model_spec:
+                model_id = default_name
+                break
+
+    if not model_id:
+        return FixMermaidResponse(
+            success=False,
+            error="No model available for Mermaid fix. Please configure a model.",
+        )
+
+    # Find the model
+    model_spec = _find_model(db, model_id, current_user.id)
+    if not model_spec:
+        return FixMermaidResponse(success=False, error=f"Model '{model_id}' not found")
+
+    # Extract and process model config
+    model_config = extract_and_process_model_config(
+        model_spec=model_spec,
+        user_id=current_user.id,
+        user_name=current_user.user_name or "",
+    )
+
+    # Build the fix prompt
+    fix_prompt = f"""Please fix the following Mermaid diagram code that has a render error.
+
+Error message: {request.error}
+
+Original Mermaid code:
+```mermaid
+{request.code}
+```
+
+Please analyze the error and fix the Mermaid code. Output ONLY the corrected Mermaid code in a mermaid code block, without any explanation or additional text. The output must be a valid Mermaid diagram that will render correctly.
+
+Important rules:
+1. Preserve the original diagram structure and intent
+2. Fix only the syntax/semantic errors that caused the render failure
+3. Use proper Mermaid syntax for the diagram type (flowchart, sequence, etc.)
+4. Do not add any explanations, just output the fixed code in a mermaid code block"""
+
+    try:
+        # Call LLM to fix the code
+        fixed_code = await _call_llm_for_mermaid_fix(model_config, fix_prompt)
+
+        if fixed_code:
+            return FixMermaidResponse(success=True, fixed_code=fixed_code)
+        else:
+            return FixMermaidResponse(
+                success=False,
+                error="Failed to extract fixed Mermaid code from LLM response",
+            )
+
+    except Exception as e:
+        logger.error(f"Mermaid fix failed: {e}", exc_info=True)
+        return FixMermaidResponse(success=False, error=str(e))
+
+
+@trace_async("call_llm_for_mermaid_fix", "mermaid_fix")
+async def _call_llm_for_mermaid_fix(model_config: dict, prompt: str) -> Optional[str]:
+    """
+    Call LLM to fix Mermaid code.
+
+    Args:
+        model_config: Model configuration dict
+        prompt: The fix prompt
+
+    Returns:
+        Fixed Mermaid code or None
+    """
+    import re
+
+    from langchain_anthropic import ChatAnthropic
+    from langchain_core.messages import HumanMessage
+    from langchain_openai import ChatOpenAI
+
+    model_type = model_config.get("model", "openai")
+    api_key = model_config.get("api_key", "")
+    base_url = model_config.get("base_url", "")
+    model_id = model_config.get("model_id", "gpt-4o-mini")
+    default_headers = model_config.get("default_headers", {})
+
+    # Create LLM client based on model type
+    if model_type == "claude":
+        llm = ChatAnthropic(
+            model=model_id,
+            api_key=api_key,
+            base_url=base_url if base_url else None,
+            max_tokens=4096,
+            timeout=60,
+            default_headers=default_headers if default_headers else None,
+        )
+    else:
+        # Default to OpenAI-compatible
+        llm = ChatOpenAI(
+            model=model_id,
+            api_key=api_key,
+            base_url=base_url if base_url else None,
+            max_tokens=4096,
+            timeout=60,
+            default_headers=default_headers if default_headers else None,
+        )
+
+    # Call LLM
+    messages = [HumanMessage(content=prompt)]
+    response = await llm.ainvoke(messages)
+
+    # Extract Mermaid code from response
+    content = response.content
+    if isinstance(content, str):
+        # Try to extract code from mermaid code block
+        mermaid_match = re.search(r"```mermaid\s*([\s\S]*?)```", content, re.IGNORECASE)
+        if mermaid_match:
+            return mermaid_match.group(1).strip()
+
+        # Fallback: try to extract from any code block
+        code_match = re.search(r"```\s*([\s\S]*?)```", content)
+        if code_match:
+            return code_match.group(1).strip()
+
+        # Last resort: return the entire content if it looks like Mermaid code
+        if any(
+            keyword in content.lower()
+            for keyword in ["graph", "flowchart", "sequencediagram", "classdiagram"]
+        ):
+            return content.strip()
+
+    return None

@@ -418,7 +418,9 @@
     "resetZoom": "Reset Zoom",
     "renderError": "Mermaid render failed",
     "copied": "Copied to clipboard",
-    "exportSuccess": "Image exported"
+    "exportSuccess": "Image exported",
+    "tryFix": "Try to Fix",
+    "fixing": "Fixing..."
   },
   "correction": {
     "enable": "Enable AI correction mode",

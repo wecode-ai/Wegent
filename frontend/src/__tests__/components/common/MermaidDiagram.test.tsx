@@ -168,8 +168,8 @@ describe('MermaidDiagram', () => {
   })
 
   it('renders error state for invalid mermaid code', async () => {
-    // Mock mermaid to throw an error for this test
-    mockRender.mockRejectedValueOnce(new Error('Syntax error'))
+    // Mock mermaid to always throw an error for this test
+    mockRender.mockImplementation(() => Promise.reject(new Error('Syntax error')))
 
     await act(async () => {
       renderWithProviders(<MermaidDiagram code="invalid mermaid code" />)
@@ -181,6 +181,11 @@ describe('MermaidDiagram', () => {
 
     // Check that raw code is displayed
     expect(screen.getByText('invalid mermaid code')).toBeInTheDocument()
+
+    // Reset mock for other tests
+    mockRender.mockResolvedValue({
+      svg: '<svg width="100" height="100"><rect width="100" height="100" fill="blue"></rect></svg>',
+    })
   })
 
   it('applies custom className', async () => {
