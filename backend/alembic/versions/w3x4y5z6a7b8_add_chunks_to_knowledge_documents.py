@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+# SPDX-FileCopyrightText: 2025 WeCode, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -32,7 +32,6 @@ The chunks column stores:
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from sqlalchemy.dialects import mysql
 
 from alembic import op
 
@@ -43,18 +42,39 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def column_exists(table_name: str, column_name: str) -> bool:
+    """Check if a column exists in a table."""
+    conn = op.get_bind()
+    result = conn.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM information_schema.columns "
+            "WHERE table_name = :table_name AND column_name = :column_name"
+        ),
+        {"table_name": table_name, "column_name": column_name},
+    )
+    return result.scalar() > 0
+
+
 def upgrade() -> None:
-    # Add chunks column to knowledge_documents table
-    # Using DEFAULT ('{}') for production compatibility with existing data
-    op.execute(
-        """
-        ALTER TABLE knowledge_documents
-        ADD COLUMN chunks JSON NOT NULL DEFAULT ('{}')
-        COMMENT 'Document chunk metadata including content and position info'
-        """
+    """Add chunks column to knowledge_documents table."""
+
+    # Check if column already exists (handles case where DB was modified manually)
+    if column_exists("knowledge_documents", "chunks"):
+        return
+
+    # Add chunks JSON column for storing document chunk metadata
+    op.add_column(
+        "knowledge_documents",
+        sa.Column(
+            "chunks",
+            sa.JSON(),
+            nullable=True,
+            comment="Document chunk metadata including content and position info",
+        ),
     )
 
 
 def downgrade() -> None:
-    # Remove chunks column
+    """Remove chunks column from knowledge_documents table."""
+
     op.drop_column("knowledge_documents", "chunks")
