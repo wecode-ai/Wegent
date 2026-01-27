@@ -285,6 +285,9 @@ class ChatConfigBuilder:
         Prompt enhancements (clarification, deep thinking, skills) are handled
         internally by chat_shell based on the enable_* flags in ChatConfig.
 
+        For shared teams, this method also resolves input parameter placeholders
+        using the values stored in the SharedTeam record.
+
         Args:
             bot: Bot Kind object
             team_member_prompt: Optional additional prompt from team member
@@ -299,12 +302,26 @@ class ChatConfigBuilder:
             team_member_prompt = self._team_crd.spec.members[0].prompt
 
         # Get base system prompt (no enhancements applied here)
-        return get_bot_system_prompt(
+        system_prompt = get_bot_system_prompt(
             self.db,
             bot,
             self.team.user_id,
             team_member_prompt,
         )
+
+        # For shared teams, resolve input parameter placeholders
+        # Check if current user is not the team owner (i.e., using shared team)
+        if self.user_id != self.team.user_id:
+            from app.services.shared_team import shared_team_service
+            from app.services.subscription.helpers import resolve_input_parameters
+
+            input_params = shared_team_service.get_shared_team_input_parameters(
+                self.db, self.user_id, self.team.id
+            )
+            if input_params:
+                system_prompt = resolve_input_parameters(system_prompt, input_params)
+
+        return system_prompt
 
     def get_first_member_prompt(self) -> str | None:
         """Get the prompt from the first team member.

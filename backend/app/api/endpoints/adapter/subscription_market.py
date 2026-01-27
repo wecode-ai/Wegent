@@ -151,3 +151,23 @@ def get_rental_count(
         db,
         subscription_id=subscription_id,
     )
+
+
+@router.get("/subscriptions/{subscription_id}/input-parameters")
+def get_subscription_input_parameters(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get custom placeholder parameters from the subscription's promptTemplate.
+
+    Returns a list of input parameters parsed from {{name:label:type}} syntax
+    in the promptTemplate. These parameters can be filled by users when
+    renting the subscription.
+    """
+    return subscription_market_service.get_subscription_input_parameters(
+        db,
+        subscription_id=subscription_id,
+        user_id=current_user.id,
+    )

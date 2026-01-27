@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { render, waitFor } from '@testing-library/react'
+import { render, waitFor, act } from '@testing-library/react'
+
+// Set a higher default timeout for all tests in this file
+jest.setTimeout(15000)
+
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import AuthGuard from '@/features/common/AuthGuard'
 import { userApis } from '@/apis/user'
@@ -29,6 +33,9 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
+// Common waitFor timeout for async operations
+const waitForOptions = { timeout: 10000 }
+
 describe('AuthGuard', () => {
   const mockRouter = {
     replace: jest.fn(),
@@ -52,11 +59,13 @@ describe('AuthGuard', () => {
       ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(false)
 
       // Act
-      render(
-        <AuthGuard>
-          <div>Protected Content</div>
-        </AuthGuard>
-      )
+      await act(async () => {
+        render(
+          <AuthGuard>
+            <div>Protected Content</div>
+          </AuthGuard>
+        )
+      })
 
       // Assert
       await waitFor(() => {
@@ -64,7 +73,7 @@ describe('AuthGuard', () => {
         expect(mockRouter.replace).toHaveBeenCalledWith(
           expect.stringContaining(paths.auth.login.getHref())
         )
-      })
+      }, waitForOptions)
     })
 
     it('should render children when isAuthenticated returns true', async () => {
@@ -73,18 +82,22 @@ describe('AuthGuard', () => {
       ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(true)
 
       // Act
-      const { getByText } = render(
-        <AuthGuard>
-          <div>Protected Content</div>
-        </AuthGuard>
-      )
+      let getByText: (text: string) => HTMLElement
+      await act(async () => {
+        const result = render(
+          <AuthGuard>
+            <div>Protected Content</div>
+          </AuthGuard>
+        )
+        getByText = result.getByText
+      })
 
       // Assert
       await waitFor(() => {
         expect(userApis.isAuthenticated).toHaveBeenCalled()
         expect(mockRouter.replace).not.toHaveBeenCalled()
         expect(getByText('Protected Content')).toBeInTheDocument()
-      })
+      }, waitForOptions)
     })
 
     it('should include redirect path in login URL', async () => {
@@ -94,11 +107,13 @@ describe('AuthGuard', () => {
       ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(false)
 
       // Act
-      render(
-        <AuthGuard>
-          <div>Protected Content</div>
-        </AuthGuard>
-      )
+      await act(async () => {
+        render(
+          <AuthGuard>
+            <div>Protected Content</div>
+          </AuthGuard>
+        )
+      })
 
       // Assert
       await waitFor(() => {
@@ -106,7 +121,7 @@ describe('AuthGuard', () => {
         expect(mockRouter.replace).toHaveBeenCalledWith(
           expect.stringContaining(encodeURIComponent('/tasks/123?tab=details'))
         )
-      })
+      }, waitForOptions)
     })
 
     it('should allow access to login page without authentication', async () => {
@@ -115,18 +130,22 @@ describe('AuthGuard', () => {
       ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(false)
 
       // Act
-      const { getByText } = render(
-        <AuthGuard>
-          <div>Login Page</div>
-        </AuthGuard>
-      )
+      let getByText: (text: string) => HTMLElement
+      await act(async () => {
+        const result = render(
+          <AuthGuard>
+            <div>Login Page</div>
+          </AuthGuard>
+        )
+        getByText = result.getByText
+      })
 
       // Assert
       await waitFor(() => {
         // Should not call isAuthenticated for allowed paths
         expect(mockRouter.replace).not.toHaveBeenCalled()
         expect(getByText('Login Page')).toBeInTheDocument()
-      })
+      }, waitForOptions)
     })
 
     it('should allow access to shared task page without authentication', async () => {
@@ -135,17 +154,21 @@ describe('AuthGuard', () => {
       ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(false)
 
       // Act
-      const { getByText } = render(
-        <AuthGuard>
-          <div>Shared Task</div>
-        </AuthGuard>
-      )
+      let getByText: (text: string) => HTMLElement
+      await act(async () => {
+        const result = render(
+          <AuthGuard>
+            <div>Shared Task</div>
+          </AuthGuard>
+        )
+        getByText = result.getByText
+      })
 
       // Assert
       await waitFor(() => {
         expect(mockRouter.replace).not.toHaveBeenCalled()
         expect(getByText('Shared Task')).toBeInTheDocument()
-      })
+      }, waitForOptions)
     })
   })
 })

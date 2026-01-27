@@ -189,6 +189,24 @@ def get_team_input_parameters(
     )
 
 
+@router.get("/{team_id}/placeholder-parameters")
+def get_team_placeholder_parameters(
+    team_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get custom placeholder parameters from the team's Ghost systemPrompt.
+
+    Returns a list of input parameters parsed from {{name:label:type}} syntax
+    in the Ghost's systemPrompt. These parameters can be filled by users when
+    joining a shared team.
+    """
+    return team_kinds_service.get_team_placeholder_parameters(
+        db=db, team_id=team_id, user_id=current_user.id
+    )
+
+
 @router.get("/share/info")
 def get_share_info(
     share_token: str = Query(..., description="Share token"),
@@ -206,5 +224,8 @@ def join_shared_team(
 ):
     """Join a shared team"""
     return shared_team_service.join_shared_team(
-        db=db, share_token=request.share_token, user_id=current_user.id
+        db=db,
+        share_token=request.share_token,
+        user_id=current_user.id,
+        input_parameters=request.input_parameters,
     )

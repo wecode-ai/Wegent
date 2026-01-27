@@ -336,6 +336,7 @@ export interface RentSubscriptionRequest {
   trigger_type: SubscriptionTriggerType
   trigger_config: Record<string, unknown>
   model_ref?: SubscriptionModelRef
+  input_parameters?: Record<string, string>
 }
 
 // Rental subscription response

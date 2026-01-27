@@ -1143,5 +1143,11 @@
       "hint_description": "Use hjkl to navigate, i for insert mode, Esc for normal mode. :w to save, :q to close.",
       "commands_hint": ":w save | :q close | :wq save & close"
     }
+  },
+  "input_parameters": {
+    "title": "Parameter Settings",
+    "description": "Please fill in the following parameters to personalize your experience",
+    "required": "Required",
+    "optional": "Optional"
   }
 }

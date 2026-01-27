@@ -15,13 +15,15 @@ This module contains utility functions for:
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.task import TaskResource
+from app.schemas.input_parameter import InputParameter, InputParameterType
 from app.schemas.subscription import (
     CronTriggerConfig,
     EventTriggerConfig,
@@ -501,3 +503,107 @@ def extract_result_summary(result: Optional[Dict[str, Any]]) -> Optional[str]:
 
     # Return full content - database column is TEXT type which can store large content
     return value
+
+
+# Input parameter placeholder regex pattern
+# Matches {{name:label:type}} or {{name:label:select:option1|option2|...}}
+INPUT_PARAMETER_PATTERN = re.compile(
+    r"\{\{([a-zA-Z_][a-zA-Z0-9_]*):([^:}]+):(text|textarea|select)(?::([^}]+))?\}\}"
+)
+
+
+def parse_input_parameters(template: str) -> List[InputParameter]:
+    """
+    Parse input parameters from a template string.
+
+    Supports the following syntax:
+    - {{name:label:text}} - Single line text input
+    - {{name:label:textarea}} - Multi-line text input
+    - {{name:label:select:option1|option2|option3}} - Dropdown select
+
+    Args:
+        template: Template string containing input parameter placeholders
+
+    Returns:
+        List of InputParameter objects parsed from the template
+
+    Examples:
+        >>> parse_input_parameters("Hello {{email:Your Email:text}}")
+        [InputParameter(name='email', label='Your Email', type='text', options=None)]
+
+        >>> parse_input_parameters("Focus: {{focus:Focus Area:select:AI|Blockchain|Web3}}")
+        [InputParameter(name='focus', label='Focus Area', type='select', options=['AI', 'Blockchain', 'Web3'])]
+    """
+    if not template:
+        return []
+
+    parameters = []
+    seen_names = set()
+
+    for match in INPUT_PARAMETER_PATTERN.finditer(template):
+        name = match.group(1)
+        label = match.group(2)
+        param_type = match.group(3)
+        options_str = match.group(4)
+
+        # Skip duplicates (same parameter name)
+        if name in seen_names:
+            continue
+        seen_names.add(name)
+
+        # Parse options for select type
+        options = None
+        if param_type == "select" and options_str:
+            options = [opt.strip() for opt in options_str.split("|") if opt.strip()]
+
+        parameters.append(
+            InputParameter(
+                name=name,
+                label=label,
+                type=InputParameterType(param_type),
+                options=options,
+            )
+        )
+
+    return parameters
+
+
+def resolve_input_parameters(
+    template: str,
+    parameters: Optional[Dict[str, str]] = None,
+) -> str:
+    """
+    Replace input parameter placeholders with provided values.
+
+    For each placeholder matching the pattern {{name:label:type}}, replaces it
+    with the corresponding value from the parameters dict. If a parameter is not
+    provided, the placeholder is left unchanged.
+
+    Args:
+        template: Template string containing input parameter placeholders
+        parameters: Dict mapping parameter names to their values
+
+    Returns:
+        Template with placeholders replaced by values
+
+    Examples:
+        >>> resolve_input_parameters(
+        ...     "Email: {{email:Your Email:text}}",
+        ...     {"email": "user@example.com"}
+        ... )
+        "Email: user@example.com"
+    """
+    if not template:
+        return template
+
+    if not parameters:
+        return template
+
+    def replace_match(match: re.Match) -> str:
+        name = match.group(1)
+        if name in parameters:
+            return parameters[name]
+        # Keep original placeholder if no value provided
+        return match.group(0)
+
+    return INPUT_PARAMETER_PATTERN.sub(replace_match, template)

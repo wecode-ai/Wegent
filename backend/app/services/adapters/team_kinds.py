@@ -2058,5 +2058,102 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             # has_parameters is true as long as external API bot exists, even if API call fails
             return {"has_parameters": True, "parameters": []}
 
+    def get_team_placeholder_parameters(
+        self, db: Session, *, team_id: int, user_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get custom placeholder parameters from the team's Ghost systemPrompt.
+
+        This parses the Ghost's systemPrompt for custom placeholders using the
+        {{name:label:type}} syntax and returns them as a list of InputParameter objects.
+
+        Supported syntax:
+        - {{name:label:text}} - Single line text input
+        - {{name:label:textarea}} - Multi-line text input
+        - {{name:label:select:option1|option2|option3}} - Dropdown select
+
+        Args:
+            db: Database session
+            team_id: Team ID
+            user_id: Current user ID
+
+        Returns:
+            Dict with "parameters" list containing InputParameter objects
+        """
+        from app.schemas.input_parameter import InputParametersResponse
+        from app.services.subscription.helpers import parse_input_parameters
+
+        # Get team details
+        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        # Check if user has access to this team
+        is_author = team.user_id == user_id
+        shared_team = None
+
+        if not is_author:
+            shared_team = sharedTeamReader.get_by_team_and_user(db, team_id, user_id)
+            if not shared_team:
+                raise HTTPException(
+                    status_code=403, detail="Access denied to this team"
+                )
+
+        # Get original user context
+        original_user_id = team.user_id if is_author else shared_team.original_user_id
+
+        # Parse Team CRD
+        team_crd = Team.model_validate(team.json)
+        all_parameters = []
+
+        # Iterate through all bots to get their Ghost's systemPrompt
+        for member in team_crd.spec.members or []:
+            bot_ref = member.botRef
+            if not bot_ref:
+                continue
+
+            # Get bot using kindReader (handles public fallback)
+            bot = kindReader.get_by_name_and_namespace(
+                db, original_user_id, KindType.BOT, bot_ref.namespace, bot_ref.name
+            )
+
+            if not bot:
+                continue
+
+            bot_crd = Bot.model_validate(bot.json)
+            ghost_ref = bot_crd.spec.ghostRef
+            if not ghost_ref:
+                continue
+
+            # Get ghost using kindReader (handles public fallback)
+            ghost = kindReader.get_by_name_and_namespace(
+                db,
+                original_user_id,
+                KindType.GHOST,
+                ghost_ref.namespace,
+                ghost_ref.name,
+            )
+
+            if not ghost:
+                continue
+
+            ghost_crd = Ghost.model_validate(ghost.json)
+            system_prompt = ghost_crd.spec.systemPrompt or ""
+
+            # Parse input parameters from system prompt
+            params = parse_input_parameters(system_prompt)
+            all_parameters.extend(params)
+
+        # Deduplicate by parameter name
+        seen_names = set()
+        unique_parameters = []
+        for param in all_parameters:
+            if param.name not in seen_names:
+                seen_names.add(param.name)
+                unique_parameters.append(param)
+
+        return InputParametersResponse(parameters=unique_parameters).model_dump()
+
 
 team_kinds_service = TeamKindsService(Kind)

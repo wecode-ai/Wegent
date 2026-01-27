@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
-from typing import Optional
+from typing import Dict, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SharedTeamCreate(BaseModel):
@@ -14,6 +14,7 @@ class SharedTeamCreate(BaseModel):
     user_id: int
     original_user_id: int
     team_id: int
+    input_parameters: Optional[Dict[str, str]] = None
 
 
 class SharedTeamInDB(BaseModel):
@@ -24,6 +25,7 @@ class SharedTeamInDB(BaseModel):
     original_user_id: int
     team_id: int
     is_active: bool
+    input_parameters: Optional[Dict[str, str]] = None
     created_at: datetime
     updated_at: datetime
 
@@ -57,6 +59,11 @@ class JoinSharedTeamRequest(BaseModel):
     """Join shared team request model"""
 
     share_token: str
+    input_parameters: Optional[Dict[str, str]] = Field(
+        None,
+        description="Input parameters to fill in the template placeholders. "
+        "Keys are parameter names, values are the user-provided values.",
+    )
 
 
 class JoinSharedTeamResponse(BaseModel):

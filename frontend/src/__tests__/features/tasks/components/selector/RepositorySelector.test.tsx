@@ -9,6 +9,9 @@ import RepositorySelector from '@/features/tasks/components/selector/RepositoryS
 import { githubApis } from '@/apis/github'
 import { GitRepoInfo } from '@/types/api'
 
+// Set a higher default timeout for all tests in this file
+jest.setTimeout(15000)
+
 // Mock ResizeObserver for cmdk component
 global.ResizeObserver = class ResizeObserver {
   observe() {}

@@ -670,6 +670,11 @@ class RentSubscriptionRequest(BaseModel):
     model_ref: Optional[Dict[str, str]] = Field(
         None, description="Optional model reference (name, namespace)"
     )
+    input_parameters: Optional[Dict[str, str]] = Field(
+        None,
+        description="Input parameters to fill in the template placeholders. "
+        "Keys are parameter names, values are the user-provided values.",
+    )
 
 
 class RentalSubscriptionResponse(BaseModel):

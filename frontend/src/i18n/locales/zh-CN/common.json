@@ -1137,5 +1137,11 @@
       "hint_description": "使用 hjkl 导航，i 进入插入模式，Esc 返回普通模式。:w 保存，:q 关闭。",
       "commands_hint": ":w 保存 | :q 关闭 | :wq 保存并关闭"
     }
+  },
+  "input_parameters": {
+    "title": "参数设置",
+    "description": "请填写以下参数以个性化您的使用体验",
+    "required": "必填",
+    "optional": "选填"
   }
 }

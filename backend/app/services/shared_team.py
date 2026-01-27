@@ -8,7 +8,7 @@ import logging
 import os
 import urllib.parse
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
@@ -169,7 +169,12 @@ class SharedTeamService:
         return f"{settings.TEAM_SHARE_BASE_URL}?{settings.TEAM_SHARE_QUERY_PARAM}={share_token}"
 
     def create_share_relationship(
-        self, db: Session, user_id: int, original_user_id: int, team_id: int
+        self,
+        db: Session,
+        user_id: int,
+        original_user_id: int,
+        team_id: int,
+        input_parameters: Optional[Dict[str, str]] = None,
     ) -> SharedTeamInDB:
         """Create shared team relationship"""
         # Check if relationship already exists
@@ -194,6 +199,7 @@ class SharedTeamService:
             original_user_id=original_user_id,
             team_id=team_id,
             is_active=True,
+            input_parameters=input_parameters,
         )
 
         db.add(shared_team)
@@ -339,7 +345,11 @@ class SharedTeamService:
         return share_info
 
     def join_shared_team(
-        self, db: Session, share_token: str, user_id: int
+        self,
+        db: Session,
+        share_token: str,
+        user_id: int,
+        input_parameters: Optional[Dict[str, str]] = None,
     ) -> JoinSharedTeamResponse:
         """Join a shared team"""
         # Decode share token
@@ -371,17 +381,47 @@ class SharedTeamService:
                 status_code=404, detail="Team not found or no longer available"
             )
 
-        # Create share relationship
+        # Create share relationship with input parameters
         self.create_share_relationship(
             db=db,
             user_id=user_id,
             original_user_id=share_info.user_id,
             team_id=share_info.team_id,
+            input_parameters=input_parameters,
         )
 
         return JoinSharedTeamResponse(
             message="Successfully joined shared team", team_id=share_info.team_id
         )
+
+    def get_shared_team_input_parameters(
+        self, db: Session, user_id: int, team_id: int
+    ) -> Optional[Dict[str, str]]:
+        """
+        Get input parameters for a user's shared team.
+
+        Args:
+            db: Database session
+            user_id: User ID who joined the shared team
+            team_id: Team ID
+
+        Returns:
+            Input parameters dict or None
+        """
+        shared_team = (
+            db.query(SharedTeam)
+            .filter(
+                SharedTeam.user_id == user_id,
+                SharedTeam.team_id == team_id,
+                SharedTeam.is_active == True,
+            )
+            .first()
+        )
+
+        if shared_team:
+            return shared_team.input_parameters
+
+        return None
 
 
 shared_team_service = SharedTeamService()

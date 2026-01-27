@@ -35,6 +35,7 @@ from app.services.subscription.helpers import (
     build_trigger_config,
     calculate_next_execution_time,
     extract_trigger_config,
+    parse_input_parameters,
 )
 
 logger = logging.getLogger(__name__)
@@ -414,6 +415,8 @@ class SubscriptionMarketService:
             "source_subscription_name": source.name,
             "source_subscription_display_name": source_crd.spec.displayName,
             "source_owner_username": source_owner_username,
+            # Input parameters filled by renter
+            "input_parameters": request.input_parameters,
         }
 
         # Create rental subscription
@@ -651,6 +654,61 @@ class SubscriptionMarketService:
                 return sub
 
         return None
+
+    def get_subscription_input_parameters(
+        self,
+        db: Session,
+        *,
+        subscription_id: int,
+        user_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Get custom placeholder parameters from the subscription's promptTemplate.
+
+        Parses the subscription's promptTemplate for custom placeholders using the
+        {{name:label:type}} syntax and returns them as a list of InputParameter objects.
+
+        Args:
+            db: Database session
+            subscription_id: Subscription ID
+            user_id: Current user ID (for access checking)
+
+        Returns:
+            Dict with "parameters" list containing InputParameter objects
+
+        Raises:
+            HTTPException: If subscription not found or not market visibility
+        """
+        from app.schemas.input_parameter import InputParametersResponse
+
+        subscription = (
+            db.query(Kind)
+            .filter(
+                Kind.id == subscription_id,
+                Kind.kind == "Subscription",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not subscription:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+
+        subscription_crd = Subscription.model_validate(subscription.json)
+        visibility = getattr(
+            subscription_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
+        )
+
+        if visibility != SubscriptionVisibility.MARKET:
+            raise HTTPException(
+                status_code=404, detail="Subscription not found in market"
+            )
+
+        # Parse input parameters from promptTemplate
+        prompt_template = subscription_crd.spec.promptTemplate or ""
+        parameters = parse_input_parameters(prompt_template)
+
+        return InputParametersResponse(parameters=parameters).model_dump()
 
 
 # Singleton instance
