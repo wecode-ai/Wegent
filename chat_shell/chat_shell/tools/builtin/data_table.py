@@ -18,6 +18,7 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from chat_shell.core.config import settings
+from chat_shell.tools.auth_utils import get_backend_auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -160,15 +161,19 @@ class DataTableTool(BaseTool):
             "max_records": max_records,
         }
 
-        # Call backend internal API (no authentication required for internal endpoints)
+        # Call backend internal API with JWT authentication
         async with httpx.AsyncClient(timeout=60.0) as client:
             try:
                 # Use internal API endpoint for service-to-service communication
                 url = f"{backend_url}/api/internal/tables/query"
+
+                # Get authentication headers
+                headers = get_backend_auth_headers()
+
                 logger.info(f"[DataTableTool] Calling backend internal API: {url}")
                 logger.debug(f"[DataTableTool] Request data: {request_data}")
 
-                response = await client.post(url, json=request_data)
+                response = await client.post(url, json=request_data, headers=headers)
                 response.raise_for_status()
 
                 result = response.json()

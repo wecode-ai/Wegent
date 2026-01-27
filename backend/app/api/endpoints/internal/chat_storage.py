@@ -9,8 +9,9 @@ Provides internal API for chat_shell's RemoteStore to access chat history.
 These endpoints are intended for service-to-service communication, not user access.
 
 Authentication:
-- Uses Internal Service Token (X-Service-Name header)
-- In production, should be protected by network-level security
+- Uses JWT token verification for all endpoints
+- JWT token should be passed in Authorization header: "Bearer <token>"
+- Token verification ensures user is authenticated and active
 """
 
 import logging
@@ -20,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
+from app.api.dependencies import get_db, verify_internal_jwt
 from app.core.config import settings
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
@@ -342,11 +343,18 @@ def _build_user_message_content(
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
-    """Health check endpoint for internal chat storage API."""
+    """Health check endpoint for internal chat storage API.
+
+    Note: This endpoint does not require authentication for monitoring purposes.
+    """
     return HealthResponse(status="ok")
 
 
-@router.get("/history/{session_id}", response_model=HistoryResponse)
+@router.get(
+    "/history/{session_id}",
+    response_model=HistoryResponse,
+    dependencies=[Depends(verify_internal_jwt)],
+)
 async def get_chat_history(
     session_id: str,
     limit: Optional[int] = Query(
@@ -412,7 +420,11 @@ async def get_chat_history(
     return HistoryResponse(session_id=session_id, messages=messages)
 
 
-@router.post("/history/{session_id}/messages", response_model=MessageIdResponse)
+@router.post(
+    "/history/{session_id}/messages",
+    response_model=MessageIdResponse,
+    dependencies=[Depends(verify_internal_jwt)],
+)
 async def append_message(
     session_id: str,
     message: MessageCreate,
@@ -497,7 +509,9 @@ async def append_message(
 
 
 @router.post(
-    "/history/{session_id}/messages/batch", response_model=BatchMessageIdsResponse
+    "/history/{session_id}/messages/batch",
+    response_model=BatchMessageIdsResponse,
+    dependencies=[Depends(verify_internal_jwt)],
 )
 async def append_messages_batch(
     session_id: str,
@@ -579,7 +593,9 @@ async def append_messages_batch(
 
 
 @router.patch(
-    "/history/{session_id}/messages/{message_id}", response_model=SuccessResponse
+    "/history/{session_id}/messages/{message_id}",
+    response_model=SuccessResponse,
+    dependencies=[Depends(verify_internal_jwt)],
 )
 async def update_message(
     session_id: str,
@@ -625,7 +641,9 @@ async def update_message(
 
 
 @router.delete(
-    "/history/{session_id}/messages/{message_id}", response_model=SuccessResponse
+    "/history/{session_id}/messages/{message_id}",
+    response_model=SuccessResponse,
+    dependencies=[Depends(verify_internal_jwt)],
 )
 async def delete_message(
     session_id: str,
@@ -656,7 +674,11 @@ async def delete_message(
     return SuccessResponse(success=True)
 
 
-@router.delete("/history/{session_id}", response_model=SuccessResponse)
+@router.delete(
+    "/history/{session_id}",
+    response_model=SuccessResponse,
+    dependencies=[Depends(verify_internal_jwt)],
+)
 async def clear_history(
     session_id: str,
     db: Session = Depends(get_db),
@@ -683,7 +705,11 @@ async def clear_history(
     return SuccessResponse(success=True)
 
 
-@router.get("/sessions", response_model=SessionListResponse)
+@router.get(
+    "/sessions",
+    response_model=SessionListResponse,
+    dependencies=[Depends(verify_internal_jwt)],
+)
 async def list_sessions(
     limit: int = Query(100, description="Max number of sessions to return"),
     offset: int = Query(0, description="Offset for pagination"),
@@ -716,7 +742,11 @@ async def list_sessions(
 # ==================== Tool Result Endpoints (Optional) ====================
 
 
-@router.post("/tool-results/{session_id}", response_model=SuccessResponse)
+@router.post(
+    "/tool-results/{session_id}",
+    response_model=SuccessResponse,
+    dependencies=[Depends(verify_internal_jwt)],
+)
 async def save_tool_result(
     session_id: str,
     data: ToolResultCreate,
@@ -744,7 +774,10 @@ async def save_tool_result(
     return SuccessResponse(success=True)
 
 
-@router.get("/tool-results/{session_id}/{tool_call_id}")
+@router.get(
+    "/tool-results/{session_id}/{tool_call_id}",
+    dependencies=[Depends(verify_internal_jwt)],
+)
 async def get_tool_result(
     session_id: str,
     tool_call_id: str,
@@ -763,7 +796,9 @@ async def get_tool_result(
     return {"result": result}
 
 
-@router.get("/pending-tool-calls/{session_id}")
+@router.get(
+    "/pending-tool-calls/{session_id}", dependencies=[Depends(verify_internal_jwt)]
+)
 async def get_pending_tool_calls(
     session_id: str,
     db: Session = Depends(get_db),
@@ -779,7 +814,11 @@ async def get_pending_tool_calls(
     return {"tool_calls": tool_calls or []}
 
 
-@router.post("/pending-tool-calls/{session_id}", response_model=SuccessResponse)
+@router.post(
+    "/pending-tool-calls/{session_id}",
+    response_model=SuccessResponse,
+    dependencies=[Depends(verify_internal_jwt)],
+)
 async def save_pending_tool_call(
     session_id: str,
     tool_call: ToolCallCreate,
@@ -800,7 +839,11 @@ async def save_pending_tool_call(
     return SuccessResponse(success=True)
 
 
-@router.delete("/pending-tool-calls/{session_id}", response_model=SuccessResponse)
+@router.delete(
+    "/pending-tool-calls/{session_id}",
+    response_model=SuccessResponse,
+    dependencies=[Depends(verify_internal_jwt)],
+)
 async def clear_pending_tool_calls(
     session_id: str,
     db: Session = Depends(get_db),

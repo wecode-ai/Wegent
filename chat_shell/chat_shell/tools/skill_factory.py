@@ -17,6 +17,7 @@ from typing import Any, Optional
 import httpx
 
 from chat_shell.core.config import settings
+from chat_shell.tools.auth_utils import get_backend_auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -89,14 +90,8 @@ async def _download_skill_binary(download_url: str, skill_name: str) -> Optional
         Binary data or None if download failed
     """
     try:
-        # Get service token from settings
-        service_token = getattr(settings, "INTERNAL_SERVICE_TOKEN", None)
-        if not service_token:
-            service_token = getattr(settings, "REMOTE_STORAGE_TOKEN", "")
-
-        headers = {}
-        if service_token:
-            headers["Authorization"] = f"Bearer {service_token}"
+        # Get authentication headers
+        headers = get_backend_auth_headers()
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(download_url, headers=headers)

@@ -7,6 +7,10 @@ Internal Bot API endpoints for chat_shell service.
 
 Provides endpoints to query bot configurations for chat_shell HTTP mode.
 These endpoints are intended for service-to-service communication.
+
+Authentication:
+- Uses JWT token verification for all endpoints
+- JWT token should be passed in Authorization header: "Bearer <token>"
 """
 
 import logging
@@ -16,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
+from app.api.dependencies import get_db, verify_internal_jwt
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Ghost
 
@@ -35,7 +39,11 @@ class MCPServersResponse(BaseModel):
     )
 
 
-@router.get("/{bot_name}/mcp", response_model=MCPServersResponse)
+@router.get(
+    "/{bot_name}/mcp",
+    response_model=MCPServersResponse,
+    dependencies=[Depends(verify_internal_jwt)],
+)
 async def get_bot_mcp_servers(
     bot_name: str,
     namespace: str = Query(default="default", description="Bot namespace"),
