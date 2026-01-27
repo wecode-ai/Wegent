@@ -4,6 +4,7 @@
 
 """Pet service manager for handling pet business logic."""
 
+import math
 import secrets
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, Optional, Tuple
@@ -189,7 +190,7 @@ class PetService:
 
         # Calculate experience with multiplier
         multiplier = self._get_streak_multiplier(pet.current_streak)
-        exp_gained = int(self.EXP_PER_CHAT * multiplier)
+        exp_gained = math.ceil(self.EXP_PER_CHAT * multiplier)
 
         # Update stats
         pet.total_chats += 1
@@ -224,7 +225,7 @@ class PetService:
 
         # Calculate experience with multiplier
         multiplier = self._get_streak_multiplier(pet.current_streak)
-        exp_gained = int(self.EXP_PER_MEMORY * multiplier)
+        exp_gained = math.ceil(self.EXP_PER_MEMORY * multiplier)
 
         # Update stats
         pet.total_memories += 1

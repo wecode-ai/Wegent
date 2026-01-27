@@ -140,6 +140,9 @@ export function PetWidget() {
       >
         {/* Close button */}
         <button
+          type="button"
+          aria-label="Close pet widget"
+          onMouseDown={e => e.stopPropagation()}
           onClick={handleClose}
           className={cn(
             'absolute -top-2 -right-2 z-10 w-6 h-6 rounded-full bg-surface border border-border',

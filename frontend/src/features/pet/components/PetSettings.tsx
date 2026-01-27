@@ -40,6 +40,7 @@ export function PetSettings() {
   const [isVisible, setIsVisible] = useState(pet?.is_visible ?? true)
   const [isSaving, setIsSaving] = useState(false)
   const [isResetting, setIsResetting] = useState(false)
+  const trimmedName = petName.trim()
 
   // Sync state when pet data changes
   React.useEffect(() => {
@@ -51,10 +52,11 @@ export function PetSettings() {
 
   const handleSave = async () => {
     if (!pet) return
+    if (!trimmedName) return
     setIsSaving(true)
     try {
       await updatePet({
-        pet_name: petName !== pet.pet_name ? petName : undefined,
+        pet_name: trimmedName !== pet.pet_name ? trimmedName : undefined,
         is_visible: isVisible !== pet.is_visible ? isVisible : undefined,
       })
     } finally {
@@ -71,7 +73,7 @@ export function PetSettings() {
     }
   }
 
-  const hasChanges = pet && (petName !== pet.pet_name || isVisible !== pet.is_visible)
+  const hasChanges = pet && (trimmedName !== pet.pet_name || isVisible !== pet.is_visible)
 
   if (isLoading && !pet) {
     return (
