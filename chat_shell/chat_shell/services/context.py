@@ -373,6 +373,7 @@ class ChatContext:
             preload_skills=self._request.preload_skills,
             user_name=self._request.user_name,
             auth_token=self._request.auth_token,
+            task_data=self._request.task_data,
         )
         add_span_event(
             "skill_tools_prepared",
@@ -410,7 +411,7 @@ class ChatContext:
             if auth:
                 server_config[server_name]["headers"] = auth
 
-            client = MCPClient(server_config)
+            client = MCPClient(server_config, task_data=self._request.task_data)
             await client.connect()
             if client.is_connected:
                 tools = client.get_tools()
@@ -508,7 +509,7 @@ class ChatContext:
         mcp_summary = []
 
         try:
-            client = MCPClient(unified_config)
+            client = MCPClient(unified_config, task_data=self._request.task_data)
             add_span_event("mcp_client_created")
 
             await client.connect()
