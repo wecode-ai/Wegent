@@ -482,7 +482,8 @@ async def _handle_sandbox_callback(request: CallbackRequest):
         )
 
     # Save updated execution state to Redis
-    manager._repository.save_execution(execution)
+    # Set update_activity=True because callback indicates the sandbox is actively being used
+    manager._repository.save_execution(execution, update_activity=True)
 
     logger.info(
         f"[SandboxCallback] Execution updated: "
@@ -490,20 +491,87 @@ async def _handle_sandbox_callback(request: CallbackRequest):
     )
 
 
+def _verify_task_token(auth_header: Optional[str]) -> bool:
+    """Verify JWT token from Authorization header.
+
+    The token should be created by backend using the same SECRET_KEY.
+    This verification ensures the request is from a trusted source.
+
+    Args:
+        auth_header: Authorization header value (e.g., "Bearer xxx")
+
+    Returns:
+        True if token is valid, False otherwise
+    """
+    if not auth_header:
+        return False
+
+    if not auth_header.startswith("Bearer "):
+        return False
+
+    token = auth_header[7:]  # Remove "Bearer " prefix
+    secret_key = os.getenv("JWT_SECRET_KEY", "your-secret-key-here")
+    algorithm = os.getenv("JWT_ALGORITHM", "HS256")
+
+    try:
+        from jose import JWTError, jwt
+
+        # Just verify the token is valid, no need to check specific claims
+        jwt.decode(token, secret_key, algorithms=[algorithm])
+        return True
+    except Exception as e:
+        logger.warning(f"JWT verification failed: {e}")
+        return False
+
+
 @api_router.post("/tasks/receive")
-async def receive_tasks(request: TasksRequest, http_request: Request):
+async def receive_tasks(
+    request: TasksRequest,
+    http_request: Request,
+    queue_type: str = "online",
+):
     """
     Receive tasks in batch via POST.
+
+    This endpoint supports two modes controlled by TASK_DISPATCH_MODE:
+    - pull (default): Process tasks directly via TaskProcessor
+    - push: Enqueue tasks to Redis for async processing with backpressure
+
+    In push mode, tasks are routed to either online or offline queue:
+    - online (default): Processed immediately by online consumer
+    - offline: Processed during night hours (21:00-08:00) by offline consumer
+
+    Authentication is optional, controlled by TASK_RECEIVE_AUTH_REQUIRED env var.
+
     Args:
         request: TasksRequest containing a list of tasks.
+        queue_type: Queue type ('online' or 'offline'), default is 'online'.
     Returns:
         dict: result code
     """
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
         logger.info(
-            f"Received {len(request.tasks)} tasks, first task: {request.tasks[0].task_title if request.tasks else 'None'} from {client_ip}"
+            f"Received {len(request.tasks)} tasks (queue_type={queue_type}), "
+            f"first task: {request.tasks[0].task_title if request.tasks else 'None'} from {client_ip}"
         )
+
+        # Validate queue_type
+        if queue_type not in ("online", "offline"):
+            logger.warning(f"Invalid queue_type '{queue_type}', defaulting to 'online'")
+            queue_type = "online"
+
+        # Optional JWT authentication
+        auth_required = (
+            os.getenv("TASK_RECEIVE_AUTH_REQUIRED", "false").lower() == "true"
+        )
+        if auth_required:
+            auth_header = http_request.headers.get("Authorization")
+            if not _verify_task_token(auth_header):
+                logger.warning(f"Unauthorized task receive request from {client_ip}")
+                raise HTTPException(
+                    status_code=401, detail="Invalid or missing authorization token"
+                )
 
         # Set task context for tracing (use first task's context)
         # Functions handle OTEL enabled check internally
@@ -516,9 +584,30 @@ async def receive_tasks(request: TasksRequest, http_request: Request):
                 user_id=str(first_task.user.id), user_name=first_task.user.name
             )
 
-        # Call the task processor to handle the tasks
-        task_processor.process_tasks([task.dict() for task in request.tasks])
+        # Check dispatch mode
+        dispatch_mode = os.getenv("TASK_DISPATCH_MODE", "pull")
+
+        if dispatch_mode == "push":
+            # Push mode: enqueue to Redis for async processing with backpressure
+            from executor_manager.services.task_queue_service import TaskQueueService
+
+            service_pool = os.getenv("SERVICE_POOL", "default")
+            queue_service = TaskQueueService(service_pool, queue_type)
+
+            tasks_data = [task.dict() for task in request.tasks]
+            enqueued = queue_service.enqueue_tasks(tasks_data)
+
+            logger.info(
+                f"Push mode: enqueued {enqueued}/{len(request.tasks)} tasks to "
+                f"pool '{service_pool}' queue '{queue_type}'"
+            )
+        else:
+            # Pull mode (default): process tasks directly
+            task_processor.process_tasks([task.dict() for task in request.tasks])
+
         return {"code": 0}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error processing tasks: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -17,6 +17,7 @@ export interface UnifiedShell {
   supportModel?: string[] | null
   executionType?: 'local_engine' | 'external_api' | null // Shell execution type
   namespace?: string // Resource namespace (group name or 'default')
+  requiresWorkspace?: boolean // Whether this shell requires a workspace (default: true for local_engine)
 }
 
 export interface UnifiedShellListResponse {
@@ -28,11 +29,13 @@ export interface ShellCreateRequest {
   displayName?: string
   baseShellRef: string // Required: base public shell name (e.g., "ClaudeCode")
   baseImage: string // Required: custom base image address
+  requiresWorkspace?: boolean // Whether this shell requires a workspace
 }
 
 export interface ShellUpdateRequest {
   displayName?: string
   baseImage?: string
+  requiresWorkspace?: boolean // Whether this shell requires a workspace
 }
 
 // Image Validation Types

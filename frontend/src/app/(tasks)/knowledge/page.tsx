@@ -4,8 +4,8 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useState, useEffect, useCallback } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
@@ -23,6 +23,7 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { paths } from '@/config/paths'
+import { Spinner } from '@/components/ui/spinner'
 import {
   WikiProjectList,
   AddRepoModal,
@@ -34,13 +35,22 @@ import {
   KnowledgeDocumentPage,
 } from '@/features/knowledge'
 
-export default function KnowledgePage() {
+// Main knowledge page content with URL parameter support
+function KnowledgePageContent() {
   const { t } = useTranslation()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { user } = useUser()
   const { clearAllStreams } = useChatStreamContext()
   const { setSelectedTask } = useTaskContext()
   const isMobile = useIsMobile()
+
+  // Get initial knowledge type tab from URL parameter
+  const getInitialKnowledgeTab = useCallback((): KnowledgeTabType => {
+    const type = searchParams.get('type')
+    if (type === 'code') return 'code'
+    return 'document' // default
+  }, [searchParams])
 
   // Use shared Hook to manage all state and logic
   const {
@@ -69,8 +79,8 @@ export default function KnowledgePage() {
     setPendingCancelProjectId,
   } = useWikiProjects()
 
-  // Active knowledge tab
-  const [activeTab, setActiveTab] = useState<KnowledgeTabType>('document')
+  // Active knowledge tab - initialized from URL
+  const [activeTab, setActiveTab] = useState<KnowledgeTabType>(getInitialKnowledgeTab)
 
   // Search term for project list
   const [mainSearchTerm, setMainSearchTerm] = useState('')
@@ -80,6 +90,21 @@ export default function KnowledgePage() {
 
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
+
+  // Handle knowledge type tab change with URL update
+  const handleTabChange = useCallback(
+    (tab: KnowledgeTabType) => {
+      setActiveTab(tab)
+      // Update URL - preserve other params like tab and group for document type
+      if (tab === 'code') {
+        router.replace('?type=code')
+      } else {
+        // For document tab, just set type=document (sub-tab state is managed by KnowledgeDocumentPage)
+        router.replace('?type=document')
+      }
+    },
+    [router]
+  )
 
   const navigateToKnowledgeDetail = (projectId: number) => {
     router.push(`/knowledge/${projectId}`)
@@ -170,7 +195,7 @@ export default function KnowledgePage() {
         </TopNavigation>
 
         {/* Knowledge type tabs */}
-        <KnowledgeTabs activeTab={activeTab} onTabChange={setActiveTab} />
+        <KnowledgeTabs activeTab={activeTab} onTabChange={handleTabChange} />
 
         {/* Content area based on active tab */}
         <div className="flex-1 overflow-auto p-6">
@@ -228,5 +253,20 @@ export default function KnowledgePage() {
         onConfirm={confirmCancelGeneration}
       />
     </div>
+  )
+}
+
+// Page component with Suspense wrapper for useSearchParams
+export default function KnowledgePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex smart-h-screen bg-base text-text-primary items-center justify-center">
+          <Spinner />
+        </div>
+      }
+    >
+      <KnowledgePageContent />
+    </Suspense>
   )
 }

@@ -92,7 +92,14 @@ export default function MobileRepositorySelector({
   }, [repos, selectedRepo])
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={newOpen => {
+        // Prevent opening when disabled
+        if ((disabled || loading) && newOpen) return
+        setOpen(newOpen)
+      }}
+    >
       <PopoverTrigger asChild>
         <button
           type="button"

@@ -46,6 +46,15 @@
     "view_error_details": "查看错误详情",
     "error_details": "错误详情",
     "retry": "重试",
+    "diff_error": {
+      "title": "无法加载代码差异",
+      "branch_not_found": "未找到该分支，可能已被删除或重命名。",
+      "access_denied": "访问被拒绝，请检查您的仓库权限。",
+      "server_error": "Git 服务器暂时不可用，请稍后重试。",
+      "network_error": "网络错误，请检查网络连接后重试。",
+      "unknown_error": "加载差异时发生意外错误。",
+      "hint_file_list": "您仍然可以查看下方的文件变更列表。"
+    },
     "additions": "添加",
     "deletions": "删除",
     "expand_all": "全部展开",
@@ -53,7 +62,8 @@
     "changes": "变更",
     "loading_diff_message": "加载中...",
     "no_changes_between_branches": "分支之间未发现变更",
-    "execution_timeline": "执行时间线"
+    "execution_timeline": "执行时间线",
+    "no_repository": "该任务未关联代码仓库"
   },
   "thinking": {
     "execution_completed": "执行完成",

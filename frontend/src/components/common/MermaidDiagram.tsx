@@ -423,16 +423,17 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
       ctx.fillStyle = theme === 'dark' ? '#0f172a' : '#ffffff'
       ctx.fillRect(0, 0, width, height)
 
-      // Convert SVG to data URL
+      // Convert SVG to base64 data URL to avoid cross-origin/tainted canvas issues
       const svgData = new XMLSerializer().serializeToString(svgElement)
-      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
-      const svgUrl = URL.createObjectURL(svgBlob)
+      const base64Svg = btoa(unescape(encodeURIComponent(svgData)))
+      const svgDataUrl = `data:image/svg+xml;base64,${base64Svg}`
 
       // Load image and draw to canvas
       const img = new Image()
+      img.crossOrigin = 'anonymous'
+
       img.onload = async () => {
         ctx.drawImage(img, 20, 20, width - 40, height - 40)
-        URL.revokeObjectURL(svgUrl)
 
         // Copy to clipboard as PNG
         canvas.toBlob(async blob => {
@@ -451,7 +452,12 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
           }
         }, 'image/png')
       }
-      img.src = svgUrl
+
+      img.onerror = () => {
+        console.error('Failed to load SVG image for clipboard copy')
+      }
+
+      img.src = svgDataUrl
     } catch (err) {
       console.error('Failed to copy image:', err)
     }
@@ -515,16 +521,17 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
       ctx.fillStyle = theme === 'dark' ? '#0f172a' : '#ffffff'
       ctx.fillRect(0, 0, width, height)
 
-      // Convert SVG to data URL
+      // Convert SVG to base64 data URL to avoid cross-origin/tainted canvas issues
       const svgData = new XMLSerializer().serializeToString(svgElement)
-      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
-      const svgUrl = URL.createObjectURL(svgBlob)
+      const base64Svg = btoa(unescape(encodeURIComponent(svgData)))
+      const svgDataUrl = `data:image/svg+xml;base64,${base64Svg}`
 
       // Load image and draw to canvas
       const img = new Image()
+      img.crossOrigin = 'anonymous'
+
       img.onload = () => {
         ctx.drawImage(img, 20, 20, width - 40, height - 40)
-        URL.revokeObjectURL(svgUrl)
 
         // Download as PNG
         canvas.toBlob(blob => {
@@ -540,7 +547,12 @@ export function MermaidDiagram({ code, className = '' }: MermaidDiagramProps) {
           }
         }, 'image/png')
       }
-      img.src = svgUrl
+
+      img.onerror = () => {
+        console.error('Failed to load SVG image for PNG export')
+      }
+
+      img.src = svgDataUrl
     } catch (err) {
       console.error('Failed to export PNG:', err)
     }

@@ -152,3 +152,50 @@ export async function sendMessage(params: {
     return { error: (error as Error)?.message || 'Failed to send message', newTask: null }
   }
 }
+
+/**
+ * Check if a team requires workspace (code repository).
+ * Teams that use local_engine execution type (ClaudeCode, Agno) typically require a workspace.
+ * Teams that use external_api execution type (Dify) or Chat Shell typically do not.
+ *
+ * This function determines requiresWorkspace based on:
+ * 1. team.requires_workspace - explicit Team-level configuration (highest priority)
+ * 2. team.agent_type - 'chat' or 'dify' do not require workspace
+ * 3. bot.shell_type - If ANY bot has shell_type that is not 'chat'/'dify', require workspace
+ *
+ * @param team - Team to check
+ * @returns true if the team requires a workspace
+ */
+export function teamRequiresWorkspace(team: Team | null): boolean {
+  if (!team) return false
+
+  // Priority 1: Check explicit Team-level configuration
+  // If requires_workspace is explicitly set (true or false), use that value
+  if (team.requires_workspace !== undefined && team.requires_workspace !== null) {
+    return team.requires_workspace
+  }
+
+  // Priority 2: Infer from agent_type and shell_type
+  // Chat Shell and Dify agent types do not require workspace
+  const agentType = team.agent_type?.toLowerCase()
+  if (agentType === 'chat' || agentType === 'dify') {
+    return false
+  }
+
+  // Check all bots in the team - if any bot requires workspace, the team requires workspace
+  // This handles mixed teams correctly
+  if (team.bots && team.bots.length > 0) {
+    for (const teamBot of team.bots) {
+      const shellType = teamBot.bot?.shell_type?.toLowerCase()
+      // If shellType is undefined/null or not 'chat'/'dify', it requires workspace
+      if (!shellType || (shellType !== 'chat' && shellType !== 'dify')) {
+        return true
+      }
+    }
+    // All bots are chat/dify, no workspace required
+    return false
+  }
+
+  // Default: if no bots info available, assume local_engine types require workspace
+  return true
+}
