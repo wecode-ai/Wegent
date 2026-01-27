@@ -53,7 +53,7 @@ class TestGitUtil:
     def test_clone_repo_with_token_gerrit_url_encoding(
         self, mock_setup_hooks, mock_subprocess
     ):
-        """Test that Gerrit URLs get URL encoded credentials"""
+        """Test that Gerrit URLs get URL encoded credentials (URL heuristics)"""
         # Mock successful subprocess.run
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -67,7 +67,7 @@ class TestGitUtil:
         branch = "main"
         project_path = "/tmp/test-repo"
         username = "test_user"
-        token = "test/password/with/slashes"
+        token = "test/token/with/slashes"
 
         success, error = clone_repo_with_token(
             project_url, branch, project_path, username, token
@@ -91,7 +91,53 @@ class TestGitUtil:
         # Verify that the URL contains encoded characters for Gerrit
         assert "%2F" in auth_url  # / should be encoded
         assert (
-            "test/password/with/slashes" not in auth_url
+            "test/token/with/slashes" not in auth_url
+        )  # Raw token should not appear
+
+    @patch("shared.utils.git_util.subprocess.run")
+    @patch("shared.utils.git_util.setup_git_hooks")
+    def test_clone_repo_with_token_gerrit_repo_type_encoding(
+        self, mock_setup_hooks, mock_subprocess
+    ):
+        """Test that repo_type='gerrit' forces URL encoding even for non-gerrit URLs"""
+        # Mock successful subprocess.run
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_subprocess.return_value = mock_result
+
+        # Mock setup_git_hooks to return success
+        mock_setup_hooks.return_value = (True, None)
+
+        # Test with non-gerrit URL but repo_type='gerrit'
+        # This simulates a Gerrit server without 'gerrit' in the URL
+        project_url = "https://review.company.com/project"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        username = "test_user"
+        token = "test/token/with/slashes"
+
+        success, error = clone_repo_with_token(
+            project_url, branch, project_path, username, token, repo_type="gerrit"
+        )
+
+        # Verify success
+        assert success is True
+        assert error is None
+
+        # Verify subprocess.run was called
+        assert mock_subprocess.called
+
+        # Get the actual command that was passed to subprocess.run
+        call_args = mock_subprocess.call_args
+        cmd = call_args[0][0]  # First positional argument
+
+        # Extract the URL from the command
+        auth_url = cmd[5]
+
+        # Verify that the URL contains encoded characters because repo_type='gerrit'
+        assert "%2F" in auth_url  # / should be encoded
+        assert (
+            "test/token/with/slashes" not in auth_url
         )  # Raw token should not appear
 
     @patch("shared.utils.git_util.subprocess.run")
@@ -117,6 +163,47 @@ class TestGitUtil:
 
         success, error = clone_repo_with_token(
             project_url, branch, project_path, username, token
+        )
+
+        # Verify success
+        assert success is True
+        assert error is None
+
+        # Verify subprocess.run was called
+        assert mock_subprocess.called
+
+        # Get the actual command
+        call_args = mock_subprocess.call_args
+        cmd = call_args[0][0]
+        auth_url = cmd[5]
+
+        # Verify credentials are used as-is for GitHub (no URL encoding)
+        assert "normaluser" in auth_url
+        assert "ghp_simpletoken123" in auth_url
+
+    @patch("shared.utils.git_util.subprocess.run")
+    @patch("shared.utils.git_util.setup_git_hooks")
+    def test_clone_repo_with_token_github_with_repo_type_no_encoding(
+        self, mock_setup_hooks, mock_subprocess
+    ):
+        """Test that GitHub URLs with repo_type='github' don't get URL encoded"""
+        # Mock successful subprocess.run
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_subprocess.return_value = mock_result
+
+        # Mock setup_git_hooks to return success
+        mock_setup_hooks.return_value = (True, None)
+
+        # Test with GitHub URL and explicit repo_type
+        project_url = "https://github.com/test/repo.git"
+        branch = "main"
+        project_path = "/tmp/test-repo"
+        username = "normaluser"
+        token = "ghp_simpletoken123"
+
+        success, error = clone_repo_with_token(
+            project_url, branch, project_path, username, token, repo_type="github"
         )
 
         # Verify success
