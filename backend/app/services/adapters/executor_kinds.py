@@ -973,8 +973,10 @@ class ExecutorKindsService(
 
             # Build user git information - query user by user_id
             user = db.query(User).filter(User.id == subtask.user_id).first()
-            git_info = (
-                next(
+            git_info = None
+            if user and user.git_info and git_domain:
+                # First try exact match
+                git_info = next(
                     (
                         info
                         for info in user.git_info
@@ -982,9 +984,16 @@ class ExecutorKindsService(
                     ),
                     None,
                 )
-                if user and user.git_info
-                else None
-            )
+                # If no exact match, try contains match
+                if git_info is None:
+                    git_info = next(
+                        (
+                            info
+                            for info in user.git_info
+                            if git_domain in info.get("git_domain", "")
+                        ),
+                        None,
+                    )
 
             # Get team information from kinds table
             team = (
