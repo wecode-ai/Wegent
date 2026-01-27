@@ -2,18 +2,26 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Load MCP tools dynamically.
+"""Load Weibo MCP tools dynamically.
 
-This module provides the LoadMCPToolsTool class that enables on-demand
-loading of MCP (Model Context Protocol) tools from configured servers.
+This module provides the LoadWeiboToolsTool class that enables on-demand
+loading of Weibo MCP (Model Context Protocol) tools from configured servers.
 
-The key design principle is "lazy loading" - MCP tools are only connected
-and loaded when the LLM determines they are needed, avoiding the overhead
+The key design principle is "lazy loading" - Weibo MCP tools are only connected
+and loaded when the LLM determines they are needed (e.g., when user asks about
+Weibo content, hot search, user info, comments, etc.), avoiding the overhead
 of sending all tool schemas to the LLM upfront.
 
+Supported Weibo MCP Services:
+- Weibo Status: Query weibo content by ID or user
+- Weibo User: Get user profile information
+- Weibo Comments: Query comments data
+- Weibo Search: Get hot search list and topics
+- Wegent Fetch: Fetch weibo content by URL
+
 Architecture:
-1. load_mcp_tools: Connects to MCP servers and loads available tools
-2. invoke_mcp_tool: Proxy tool to call loaded MCP tools by name
+1. load_weibo_tools: Connects to Weibo MCP servers and loads available tools
+2. invoke_weibo_tool: Proxy tool to call loaded Weibo tools by name
 3. PromptModifierTool: Injects loaded tool descriptions into system prompt
 """
 
@@ -31,37 +39,44 @@ from chat_shell.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-class LoadMCPToolsInput(BaseModel):
-    """Input schema for load_mcp_tools tool."""
+class LoadWeiboToolsInput(BaseModel):
+    """Input schema for load_weibo_tools tool."""
 
     server_names: Optional[list[str]] = Field(
         default=None,
-        description="Optional list of specific MCP server names to load. "
-        "If not provided, loads tools from all configured servers.",
+        description="可选的微博服务列表。不提供则加载所有已配置的微博服务。"
+        "可用服务包括: weibo-status, weibo-user, weibo-comments, weibo-search, wegent-fetch",
     )
 
 
-class InvokeMCPToolInput(BaseModel):
-    """Input schema for invoke_mcp_tool tool."""
+class InvokeWeiboToolInput(BaseModel):
+    """Input schema for invoke_weibo_tool tool."""
 
-    tool_name: str = Field(description="The name of the MCP tool to invoke")
+    tool_name: str = Field(description="要调用的微博工具名称")
     arguments: dict[str, Any] = Field(
         default_factory=dict,
-        description="Arguments to pass to the MCP tool",
+        description="传递给微博工具的参数",
     )
 
 
-class LoadMCPToolsTool(BaseTool):
-    """Tool to dynamically load MCP tools from configured servers.
+class LoadWeiboToolsTool(BaseTool):
+    """Tool to dynamically load Weibo MCP tools from configured servers.
 
-    This tool implements on-demand MCP tool loading:
-    1. Connects to MCP servers configured in CHAT_MCP_SERVERS
+    This tool implements on-demand Weibo MCP tool loading:
+    1. Connects to Weibo MCP servers configured in CHAT_MCP_SERVERS
     2. Discovers available tools from each server
-    3. Makes tools available for invocation via invoke_mcp_tool
+    3. Makes tools available for invocation via invoke_weibo_tool
 
     The tool also implements PromptModifierTool protocol to inject
     loaded tool descriptions into the system prompt, enabling the LLM
     to understand what tools are available after loading.
+
+    Supported Weibo services:
+    - Weibo Status: Query weibo content by ID or user
+    - Weibo User: Get user profile information
+    - Weibo Comments: Query comments data
+    - Weibo Search: Get hot search list and topics
+    - Wegent Fetch: Fetch weibo content by URL
 
     Session-level state:
     - Tools are loaded once per conversation turn
@@ -69,15 +84,13 @@ class LoadMCPToolsTool(BaseTool):
     - State is managed at the tool instance level
     """
 
-    name: str = "load_mcp_tools"
-    display_name: str = "Load MCP Tools"
+    name: str = "load_weibo_tools"
+    display_name: str = "加载微博工具"
     description: str = (
-        "Load external MCP tools from configured servers. "
-        "Call this tool when you need specialized capabilities like web search, "
-        "database access, or other external integrations. "
-        "After loading, use invoke_mcp_tool to call the loaded tools."
+        "加载微博平台数据查询工具。当需要查询微博内容、用户信息、评论、热搜等数据时调用此工具。"
+        "加载后，使用 invoke_weibo_tool 调用具体的微博工具。"
     )
-    args_schema: type[BaseModel] = LoadMCPToolsInput
+    args_schema: type[BaseModel] = LoadWeiboToolsInput
 
     # Configuration
     task_id: int
@@ -104,7 +117,7 @@ class LoadMCPToolsTool(BaseTool):
         server_names: Optional[list[str]] = None,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        """Synchronous wrapper for async MCP loading."""
+        """Synchronous wrapper for async Weibo MCP loading."""
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -119,45 +132,46 @@ class LoadMCPToolsTool(BaseTool):
             else:
                 return loop.run_until_complete(self._async_load(server_names))
         except Exception as e:
-            logger.exception("[LoadMCPToolsTool] Error loading MCP tools")
-            return f"Error loading MCP tools: {e}"
+            logger.exception("[LoadWeiboToolsTool] Error loading Weibo tools")
+            return f"加载微博工具时出错: {e}"
 
     async def _arun(
         self,
         server_names: Optional[list[str]] = None,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        """Load MCP tools asynchronously."""
+        """Load Weibo MCP tools asynchronously."""
         return await self._async_load(server_names)
 
     async def _async_load(self, server_names: Optional[list[str]] = None) -> str:
-        """Core async logic for loading MCP tools."""
+        """Core async logic for loading Weibo MCP tools."""
         # Check if already loaded
         if self._is_loaded and self._loaded_tools:
             tool_list = self._format_tool_list()
             return (
-                f"MCP tools are already loaded. Available tools:\n\n{tool_list}\n\n"
-                "Use invoke_mcp_tool to call these tools."
+                f"微博工具已加载。可用工具:\n\n{tool_list}\n\n"
+                "使用 invoke_weibo_tool 调用这些工具。"
             )
 
         # Parse MCP servers configuration
         mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "")
         if not mcp_servers_config:
-            logger.warning("[LoadMCPToolsTool] No CHAT_MCP_SERVERS configured")
+            logger.warning("[LoadWeiboToolsTool] No CHAT_MCP_SERVERS configured")
             return (
-                "No MCP servers are configured. Please ensure the CHAT_MCP_SERVERS "
-                "environment variable is set with valid server configurations."
+                "未配置微博 MCP 服务。请确保 CHAT_MCP_SERVERS 环境变量已正确设置。"
             )
 
         try:
             config_data = json.loads(mcp_servers_config)
             servers = config_data.get("mcpServers", config_data)
         except json.JSONDecodeError as e:
-            logger.error("[LoadMCPToolsTool] Failed to parse CHAT_MCP_SERVERS: %s", e)
-            return f"Error parsing MCP server configuration: {e}"
+            logger.error(
+                "[LoadWeiboToolsTool] Failed to parse CHAT_MCP_SERVERS: %s", e
+            )
+            return f"解析微博服务配置时出错: {e}"
 
         if not servers:
-            return "No MCP servers found in configuration."
+            return "配置中未找到微博 MCP 服务。"
 
         # Filter servers if specific names requested
         if server_names:
@@ -165,12 +179,12 @@ class LoadMCPToolsTool(BaseTool):
             if not servers:
                 available = list(config_data.get("mcpServers", config_data).keys())
                 return (
-                    f"None of the requested servers ({server_names}) are configured. "
-                    f"Available servers: {available}"
+                    f"请求的服务 ({server_names}) 未配置。"
+                    f"可用服务: {available}"
                 )
 
         logger.info(
-            "[LoadMCPToolsTool] Loading MCP tools from servers: %s",
+            "[LoadWeiboToolsTool] Loading Weibo tools from servers: %s",
             list(servers.keys()),
         )
 
@@ -187,8 +201,8 @@ class LoadMCPToolsTool(BaseTool):
 
             if not tools:
                 return (
-                    "Connected to MCP servers but no tools were found. "
-                    "The servers may not expose any tools."
+                    "已连接到微博服务但未发现可用工具。"
+                    "服务可能未正确配置或暂时不可用。"
                 )
 
             # Store tools for later invocation
@@ -196,7 +210,7 @@ class LoadMCPToolsTool(BaseTool):
                 tool_name = getattr(tool, "name", "unknown")
                 self._loaded_tools[tool_name] = tool
                 self._tool_descriptions[tool_name] = getattr(
-                    tool, "description", "No description available"
+                    tool, "description", "无描述"
                 )
 
             self._is_loaded = True
@@ -204,29 +218,29 @@ class LoadMCPToolsTool(BaseTool):
             tool_list = self._format_tool_list()
 
             logger.info(
-                "[LoadMCPToolsTool] Successfully loaded %d MCP tools: %s",
+                "[LoadWeiboToolsTool] Successfully loaded %d Weibo tools: %s",
                 len(self._loaded_tools),
                 list(self._loaded_tools.keys()),
             )
 
             return (
-                f"Successfully loaded {len(self._loaded_tools)} MCP tools:\n\n"
+                f"成功加载 {len(self._loaded_tools)} 个微博工具:\n\n"
                 f"{tool_list}\n\n"
-                "Use invoke_mcp_tool to call these tools with the appropriate arguments."
+                "使用 invoke_weibo_tool 并传入工具名称和参数来调用这些工具。"
             )
 
         except asyncio.TimeoutError:
             logger.error(
-                "[LoadMCPToolsTool] Timeout connecting to MCP servers (timeout=%s)",
+                "[LoadWeiboToolsTool] Timeout connecting to Weibo MCP servers "
+                "(timeout=%s)",
                 self.timeout,
             )
             return (
-                f"Timeout connecting to MCP servers after {self.timeout} seconds. "
-                "Please check server availability."
+                f"连接微博服务超时（{self.timeout}秒）。请检查服务可用性。"
             )
         except Exception as e:
-            logger.exception("[LoadMCPToolsTool] Error connecting to MCP servers")
-            return f"Error connecting to MCP servers: {e}"
+            logger.exception("[LoadWeiboToolsTool] Error connecting to Weibo MCP servers")
+            return f"连接微博服务时出错: {e}"
 
     def _format_tool_list(self) -> str:
         """Format loaded tools as a readable list."""
@@ -246,7 +260,7 @@ class LoadMCPToolsTool(BaseTool):
         information into the system prompt.
 
         Returns:
-            String content describing available MCP tools, or empty string if none loaded
+            String content describing available Weibo tools, or empty string if none loaded
         """
         if not self._is_loaded or not self._loaded_tools:
             return ""
@@ -255,24 +269,24 @@ class LoadMCPToolsTool(BaseTool):
 
         return f"""
 
-# Loaded MCP Tools
+# 已加载的微博工具
 
-The following external tools have been loaded and are available for use:
+以下微博工具已加载，可供使用:
 
 {tool_list}
 
-## How to Use
+## 使用方法
 
-Call `invoke_mcp_tool` with the tool name and arguments to use these tools.
+调用 `invoke_weibo_tool` 并传入工具名称和参数来使用这些工具。
 
-Example:
+示例:
 ```json
 {{
-  "name": "invoke_mcp_tool",
+  "name": "invoke_weibo_tool",
   "arguments": {{
-    "tool_name": "tool_name_here",
+    "tool_name": "工具名称",
     "arguments": {{
-      "param1": "value1"
+      "参数名": "参数值"
     }}
   }}
 }}
@@ -280,7 +294,7 @@ Example:
 """
 
     async def invoke_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
-        """Invoke a loaded MCP tool.
+        """Invoke a loaded Weibo MCP tool.
 
         Args:
             tool_name: Name of the tool to invoke
@@ -290,14 +304,14 @@ Example:
             Tool execution result as string
         """
         if not self._is_loaded:
-            return "Error: MCP tools not loaded. Call load_mcp_tools first."
+            return "错误: 微博工具未加载。请先调用 load_weibo_tools。"
 
         tool = self._loaded_tools.get(tool_name)
         if not tool:
             available = list(self._loaded_tools.keys())
             return (
-                f"Error: Tool '{tool_name}' not found. "
-                f"Available tools: {available}"
+                f"错误: 工具 '{tool_name}' 未找到。"
+                f"可用工具: {available}"
             )
 
         try:
@@ -313,9 +327,9 @@ Example:
 
         except Exception as e:
             logger.exception(
-                "[LoadMCPToolsTool] Error invoking MCP tool '%s'", tool_name
+                "[LoadWeiboToolsTool] Error invoking Weibo tool '%s'", tool_name
             )
-            return f"Error invoking tool '{tool_name}': {e}"
+            return f"调用工具 '{tool_name}' 时出错: {e}"
 
     def get_tool_schema(self, tool_name: str) -> Optional[dict[str, Any]]:
         """Get the schema for a specific loaded tool.
@@ -336,25 +350,24 @@ Example:
         return None
 
 
-class InvokeMCPToolTool(BaseTool):
-    """Proxy tool to invoke loaded MCP tools.
+class InvokeWeiboToolTool(BaseTool):
+    """Proxy tool to invoke loaded Weibo MCP tools.
 
-    This tool acts as a gateway to call any MCP tool that was previously
-    loaded via load_mcp_tools. It enables the LLM to use MCP tools without
+    This tool acts as a gateway to call any Weibo MCP tool that was previously
+    loaded via load_weibo_tools. It enables the LLM to use Weibo tools without
     requiring them to be pre-registered in the agent's tool list.
     """
 
-    name: str = "invoke_mcp_tool"
-    display_name: str = "Invoke MCP Tool"
+    name: str = "invoke_weibo_tool"
+    display_name: str = "调用微博工具"
     description: str = (
-        "Invoke a previously loaded MCP tool. "
-        "You must call load_mcp_tools first to load available tools. "
-        "Use this tool to call any of the loaded MCP tools by name with appropriate arguments."
+        "调用已加载的微博工具。必须先调用 load_weibo_tools 加载可用工具。"
+        "传入工具名称和参数来执行微博数据查询操作。"
     )
-    args_schema: type[BaseModel] = InvokeMCPToolInput
+    args_schema: type[BaseModel] = InvokeWeiboToolInput
 
-    # Reference to the load_mcp_tools instance
-    load_mcp_tools_ref: LoadMCPToolsTool
+    # Reference to the load_weibo_tools instance
+    load_weibo_tools_ref: LoadWeiboToolsTool
 
     def _run(
         self,
@@ -371,16 +384,20 @@ class InvokeMCPToolTool(BaseTool):
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(
                         asyncio.run,
-                        self.load_mcp_tools_ref.invoke_tool(tool_name, arguments or {}),
+                        self.load_weibo_tools_ref.invoke_tool(
+                            tool_name, arguments or {}
+                        ),
                     )
                     return future.result(timeout=60.0)
             else:
                 return loop.run_until_complete(
-                    self.load_mcp_tools_ref.invoke_tool(tool_name, arguments or {})
+                    self.load_weibo_tools_ref.invoke_tool(tool_name, arguments or {})
                 )
         except Exception as e:
-            logger.exception("[InvokeMCPToolTool] Error invoking tool '%s'", tool_name)
-            return f"Error invoking tool: {e}"
+            logger.exception(
+                "[InvokeWeiboToolTool] Error invoking tool '%s'", tool_name
+            )
+            return f"调用工具时出错: {e}"
 
     async def _arun(
         self,
@@ -388,5 +405,5 @@ class InvokeMCPToolTool(BaseTool):
         arguments: dict[str, Any] | None = None,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        """Invoke MCP tool asynchronously."""
-        return await self.load_mcp_tools_ref.invoke_tool(tool_name, arguments or {})
+        """Invoke Weibo MCP tool asynchronously."""
+        return await self.load_weibo_tools_ref.invoke_tool(tool_name, arguments or {})

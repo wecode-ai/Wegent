@@ -2,11 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for MCP Tools skill components.
+"""Tests for Weibo Tools skill components.
 
 This module tests:
-- LoadMCPToolsTool input schema
-- InvokeMCPToolTool input schema
+- LoadWeiboToolsTool input schema
+- InvokeWeiboToolTool input schema
 - PromptModifierTool integration
 - Tool configuration validation
 """
@@ -26,7 +26,7 @@ SKILL_DIR = (
     / "backend"
     / "init_data"
     / "skills"
-    / "mcp-tools"
+    / "weibo-tools"
 )
 sys.path.insert(0, str(SKILL_DIR))
 
@@ -52,8 +52,8 @@ class TestSKILLMDFormat:
         assert "tools:" in content
 
         # Check tool definitions
-        assert "load_mcp_tools" in content
-        assert "invoke_mcp_tool" in content
+        assert "load_weibo_tools" in content
+        assert "invoke_weibo_tool" in content
 
     def test_skill_md_has_correct_provider_config(self):
         """Test that SKILL.md has correct provider configuration."""
@@ -62,8 +62,8 @@ class TestSKILLMDFormat:
 
         # Check provider configuration
         assert "module: provider" in content
-        assert "class: MCPToolProvider" in content
-        assert "provider: mcp-tools" in content
+        assert "class: WeiboToolProvider" in content
+        assert "provider: weibo-tools" in content
 
     def test_skill_md_binds_to_chat_shell(self):
         """Test that SKILL.md is bound to Chat shell type."""
@@ -99,82 +99,90 @@ class TestSKILLMDFormat:
                 assert len(tools) == 2
 
                 tool_names = [t["name"] for t in tools]
-                assert "load_mcp_tools" in tool_names
-                assert "invoke_mcp_tool" in tool_names
+                assert "load_weibo_tools" in tool_names
+                assert "invoke_weibo_tool" in tool_names
+
+    def test_skill_md_has_weibo_description(self):
+        """Test that SKILL.md has Weibo-specific description."""
+        skill_md_path = SKILL_DIR / "SKILL.md"
+        content = skill_md_path.read_text()
+
+        # Check for Weibo-specific content
+        assert "微博" in content
 
 
-class TestLoadMCPToolsInput:
-    """Tests for LoadMCPToolsInput schema."""
+class TestLoadWeiboToolsInput:
+    """Tests for LoadWeiboToolsInput schema."""
 
     def test_input_with_no_arguments(self):
         """Test that input with no arguments is valid."""
-        from load_mcp_tools import LoadMCPToolsInput
+        from load_weibo_tools import LoadWeiboToolsInput
 
-        input_obj = LoadMCPToolsInput()
+        input_obj = LoadWeiboToolsInput()
         assert input_obj.server_names is None
 
     def test_input_with_server_names(self):
         """Test that input with server_names is valid."""
-        from load_mcp_tools import LoadMCPToolsInput
+        from load_weibo_tools import LoadWeiboToolsInput
 
-        input_obj = LoadMCPToolsInput(server_names=["server1", "server2"])
-        assert input_obj.server_names == ["server1", "server2"]
+        input_obj = LoadWeiboToolsInput(server_names=["weibo-status", "weibo-user"])
+        assert input_obj.server_names == ["weibo-status", "weibo-user"]
 
     def test_input_with_empty_server_names(self):
         """Test that input with empty server_names list is valid."""
-        from load_mcp_tools import LoadMCPToolsInput
+        from load_weibo_tools import LoadWeiboToolsInput
 
-        input_obj = LoadMCPToolsInput(server_names=[])
+        input_obj = LoadWeiboToolsInput(server_names=[])
         assert input_obj.server_names == []
 
 
-class TestInvokeMCPToolInput:
-    """Tests for InvokeMCPToolInput schema."""
+class TestInvokeWeiboToolInput:
+    """Tests for InvokeWeiboToolInput schema."""
 
     def test_input_with_required_tool_name(self):
         """Test that input with required tool_name is valid."""
-        from load_mcp_tools import InvokeMCPToolInput
+        from load_weibo_tools import InvokeWeiboToolInput
 
-        input_obj = InvokeMCPToolInput(tool_name="web_search")
-        assert input_obj.tool_name == "web_search"
+        input_obj = InvokeWeiboToolInput(tool_name="get_weibo_status")
+        assert input_obj.tool_name == "get_weibo_status"
         assert input_obj.arguments == {}
 
     def test_input_with_arguments(self):
         """Test that input with arguments is valid."""
-        from load_mcp_tools import InvokeMCPToolInput
+        from load_weibo_tools import InvokeWeiboToolInput
 
-        input_obj = InvokeMCPToolInput(
-            tool_name="search", arguments={"query": "test"}
+        input_obj = InvokeWeiboToolInput(
+            tool_name="get_weibo_status", arguments={"weibo_id": "12345"}
         )
-        assert input_obj.tool_name == "search"
-        assert input_obj.arguments == {"query": "test"}
+        assert input_obj.tool_name == "get_weibo_status"
+        assert input_obj.arguments == {"weibo_id": "12345"}
 
 
-class TestLoadMCPToolsToolBasic:
-    """Basic tests for LoadMCPToolsTool without MCP connection."""
+class TestLoadWeiboToolsToolBasic:
+    """Basic tests for LoadWeiboToolsTool without MCP connection."""
 
     def test_tool_has_required_attributes(self):
-        """Test that LoadMCPToolsTool has required attributes."""
-        from load_mcp_tools import LoadMCPToolsTool
+        """Test that LoadWeiboToolsTool has required attributes."""
+        from load_weibo_tools import LoadWeiboToolsTool
 
-        tool = LoadMCPToolsTool(
+        tool = LoadWeiboToolsTool(
             task_id=1,
             subtask_id=1,
             user_id=1,
             timeout=60.0,
         )
 
-        assert tool.name == "load_mcp_tools"
+        assert tool.name == "load_weibo_tools"
         assert tool.task_id == 1
         assert tool.subtask_id == 1
         assert tool.user_id == 1
         assert tool.timeout == 60.0
 
     def test_tool_has_prompt_modification_method(self):
-        """Test that LoadMCPToolsTool has get_prompt_modification method."""
-        from load_mcp_tools import LoadMCPToolsTool
+        """Test that LoadWeiboToolsTool has get_prompt_modification method."""
+        from load_weibo_tools import LoadWeiboToolsTool
 
-        tool = LoadMCPToolsTool(
+        tool = LoadWeiboToolsTool(
             task_id=1,
             subtask_id=1,
             user_id=1,
@@ -187,9 +195,9 @@ class TestLoadMCPToolsToolBasic:
 
     def test_format_tool_list_empty(self):
         """Test _format_tool_list when no tools loaded."""
-        from load_mcp_tools import LoadMCPToolsTool
+        from load_weibo_tools import LoadWeiboToolsTool
 
-        tool = LoadMCPToolsTool(
+        tool = LoadWeiboToolsTool(
             task_id=1,
             subtask_id=1,
             user_id=1,
@@ -201,9 +209,9 @@ class TestLoadMCPToolsToolBasic:
 
     def test_format_tool_list_with_tools(self):
         """Test _format_tool_list with loaded tools."""
-        from load_mcp_tools import LoadMCPToolsTool
+        from load_weibo_tools import LoadWeiboToolsTool
 
-        tool = LoadMCPToolsTool(
+        tool = LoadWeiboToolsTool(
             task_id=1,
             subtask_id=1,
             user_id=1,
@@ -211,60 +219,60 @@ class TestLoadMCPToolsToolBasic:
         )
 
         # Manually set tool descriptions
-        tool._tool_descriptions["web_search"] = "Search the web for information"
-        tool._tool_descriptions["database_query"] = "Query a database"
+        tool._tool_descriptions["get_weibo_status"] = "Query weibo content by ID"
+        tool._tool_descriptions["get_weibo_user"] = "Get user profile information"
 
         result = tool._format_tool_list()
 
-        assert "web_search" in result
-        assert "database_query" in result
-        assert "Search the web" in result
-        assert "Query a database" in result
+        assert "get_weibo_status" in result
+        assert "get_weibo_user" in result
+        assert "Query weibo content" in result
+        assert "user profile" in result
 
 
-class TestInvokeMCPToolToolBasic:
-    """Basic tests for InvokeMCPToolTool."""
+class TestInvokeWeiboToolToolBasic:
+    """Basic tests for InvokeWeiboToolTool."""
 
     def test_tool_has_required_attributes(self):
-        """Test that InvokeMCPToolTool has required attributes."""
-        from load_mcp_tools import InvokeMCPToolTool, LoadMCPToolsTool
+        """Test that InvokeWeiboToolTool has required attributes."""
+        from load_weibo_tools import InvokeWeiboToolTool, LoadWeiboToolsTool
 
-        load_tool = LoadMCPToolsTool(
+        load_tool = LoadWeiboToolsTool(
             task_id=1,
             subtask_id=1,
             user_id=1,
             timeout=60.0,
         )
 
-        invoke_tool = InvokeMCPToolTool(load_mcp_tools_ref=load_tool)
+        invoke_tool = InvokeWeiboToolTool(load_weibo_tools_ref=load_tool)
 
-        assert invoke_tool.name == "invoke_mcp_tool"
-        assert invoke_tool.load_mcp_tools_ref == load_tool
+        assert invoke_tool.name == "invoke_weibo_tool"
+        assert invoke_tool.load_weibo_tools_ref == load_tool
 
 
-class TestMCPToolProviderBasic:
-    """Basic tests for MCPToolProvider."""
+class TestWeiboToolProviderBasic:
+    """Basic tests for WeiboToolProvider."""
 
     def test_provider_name(self):
         """Test that provider_name returns correct value."""
-        from provider import MCPToolProvider
+        from provider import WeiboToolProvider
 
-        provider = MCPToolProvider()
-        assert provider.provider_name == "mcp-tools"
+        provider = WeiboToolProvider()
+        assert provider.provider_name == "weibo-tools"
 
     def test_supported_tools(self):
         """Test that supported_tools returns both tools."""
-        from provider import MCPToolProvider
+        from provider import WeiboToolProvider
 
-        provider = MCPToolProvider()
-        assert "load_mcp_tools" in provider.supported_tools
-        assert "invoke_mcp_tool" in provider.supported_tools
+        provider = WeiboToolProvider()
+        assert "load_weibo_tools" in provider.supported_tools
+        assert "invoke_weibo_tool" in provider.supported_tools
 
     def test_validate_config_accepts_valid_timeout(self):
         """Test that validate_config accepts valid timeout values."""
-        from provider import MCPToolProvider
+        from provider import WeiboToolProvider
 
-        provider = MCPToolProvider()
+        provider = WeiboToolProvider()
 
         # Test valid configs
         assert provider.validate_config({}) is True
@@ -274,9 +282,9 @@ class TestMCPToolProviderBasic:
 
     def test_validate_config_rejects_invalid_timeout(self):
         """Test that validate_config rejects invalid timeout values."""
-        from provider import MCPToolProvider
+        from provider import WeiboToolProvider
 
-        provider = MCPToolProvider()
+        provider = WeiboToolProvider()
 
         # Test invalid configs
         assert provider.validate_config({"timeout": "invalid"}) is False
@@ -289,9 +297,9 @@ class TestPromptModifierIntegration:
 
     def test_prompt_modification_empty_when_not_loaded(self):
         """Test that get_prompt_modification returns empty string when no tools loaded."""
-        from load_mcp_tools import LoadMCPToolsTool
+        from load_weibo_tools import LoadWeiboToolsTool
 
-        tool = LoadMCPToolsTool(
+        tool = LoadWeiboToolsTool(
             task_id=1,
             subtask_id=1,
             user_id=1,
@@ -303,9 +311,9 @@ class TestPromptModifierIntegration:
 
     def test_prompt_modification_has_content_when_loaded(self):
         """Test that get_prompt_modification returns content when tools are loaded."""
-        from load_mcp_tools import LoadMCPToolsTool
+        from load_weibo_tools import LoadWeiboToolsTool
 
-        tool = LoadMCPToolsTool(
+        tool = LoadWeiboToolsTool(
             task_id=1,
             subtask_id=1,
             user_id=1,
@@ -314,18 +322,18 @@ class TestPromptModifierIntegration:
 
         # Simulate loaded tools
         tool._is_loaded = True
-        tool._loaded_tools = {"web_search": MagicMock()}
-        tool._tool_descriptions = {"web_search": "Search the web"}
+        tool._loaded_tools = {"get_weibo_status": MagicMock()}
+        tool._tool_descriptions = {"get_weibo_status": "Query weibo content"}
 
         result = tool.get_prompt_modification()
 
         assert len(result) > 0
-        assert "MCP Tools" in result
-        assert "web_search" in result
-        assert "invoke_mcp_tool" in result
+        assert "微博工具" in result
+        assert "get_weibo_status" in result
+        assert "invoke_weibo_tool" in result
 
 
-class TestAsyncLoadMCPTools:
+class TestAsyncLoadWeiboTools:
     """Tests for async loading functionality."""
 
     @pytest.mark.asyncio
@@ -334,9 +342,9 @@ class TestAsyncLoadMCPTools:
         with patch("chat_shell.core.config.settings") as mock_settings:
             mock_settings.CHAT_MCP_SERVERS = ""
 
-            from load_mcp_tools import LoadMCPToolsTool
+            from load_weibo_tools import LoadWeiboToolsTool
 
-            tool = LoadMCPToolsTool(
+            tool = LoadWeiboToolsTool(
                 task_id=1,
                 subtask_id=1,
                 user_id=1,
@@ -345,8 +353,8 @@ class TestAsyncLoadMCPTools:
 
             result = await tool._async_load()
 
-            # Should return an error message about no servers
-            assert "No MCP servers" in result or "not configured" in result
+            # Should return an error message about no servers (in Chinese)
+            assert "未配置" in result or "MCP" in result
 
     @pytest.mark.asyncio
     async def test_async_load_invalid_json_config(self):
@@ -354,9 +362,9 @@ class TestAsyncLoadMCPTools:
         with patch("chat_shell.core.config.settings") as mock_settings:
             mock_settings.CHAT_MCP_SERVERS = "invalid json {"
 
-            from load_mcp_tools import LoadMCPToolsTool
+            from load_weibo_tools import LoadWeiboToolsTool
 
-            tool = LoadMCPToolsTool(
+            tool = LoadWeiboToolsTool(
                 task_id=1,
                 subtask_id=1,
                 user_id=1,
@@ -365,15 +373,15 @@ class TestAsyncLoadMCPTools:
 
             result = await tool._async_load()
 
-            # Should return an error about parsing or configuration
-            assert "Error" in result or "No MCP servers" in result
+            # Should return an error about parsing or configuration (in Chinese)
+            assert "出错" in result or "未配置" in result or "未找到" in result
 
     @pytest.mark.asyncio
     async def test_async_load_returns_cached_when_already_loaded(self):
         """Test that async load returns cached info when already loaded."""
-        from load_mcp_tools import LoadMCPToolsTool
+        from load_weibo_tools import LoadWeiboToolsTool
 
-        tool = LoadMCPToolsTool(
+        tool = LoadWeiboToolsTool(
             task_id=1,
             subtask_id=1,
             user_id=1,
@@ -382,13 +390,13 @@ class TestAsyncLoadMCPTools:
 
         # Simulate already loaded state
         tool._is_loaded = True
-        tool._loaded_tools = {"test_tool": MagicMock()}
-        tool._tool_descriptions = {"test_tool": "A test tool"}
+        tool._loaded_tools = {"get_weibo_status": MagicMock()}
+        tool._tool_descriptions = {"get_weibo_status": "Query weibo content"}
 
         result = await tool._async_load()
 
-        assert "already loaded" in result
-        assert "test_tool" in result
+        assert "已加载" in result
+        assert "get_weibo_status" in result
 
 
 class TestInvokeTool:
@@ -397,25 +405,25 @@ class TestInvokeTool:
     @pytest.mark.asyncio
     async def test_invoke_tool_not_loaded_error(self):
         """Test that invoke_tool returns error when not loaded."""
-        from load_mcp_tools import LoadMCPToolsTool
+        from load_weibo_tools import LoadWeiboToolsTool
 
-        tool = LoadMCPToolsTool(
+        tool = LoadWeiboToolsTool(
             task_id=1,
             subtask_id=1,
             user_id=1,
             timeout=60.0,
         )
 
-        result = await tool.invoke_tool("web_search", {"query": "test"})
+        result = await tool.invoke_tool("get_weibo_status", {"weibo_id": "12345"})
 
-        assert "MCP tools not loaded" in result
+        assert "未加载" in result
 
     @pytest.mark.asyncio
     async def test_invoke_tool_not_found_error(self):
         """Test that invoke_tool returns error when tool not found."""
-        from load_mcp_tools import LoadMCPToolsTool
+        from load_weibo_tools import LoadWeiboToolsTool
 
-        tool = LoadMCPToolsTool(
+        tool = LoadWeiboToolsTool(
             task_id=1,
             subtask_id=1,
             user_id=1,
@@ -426,17 +434,17 @@ class TestInvokeTool:
         tool._is_loaded = True
         tool._loaded_tools = {"other_tool": MagicMock()}
 
-        result = await tool.invoke_tool("web_search", {"query": "test"})
+        result = await tool.invoke_tool("get_weibo_status", {"weibo_id": "12345"})
 
-        assert "not found" in result
+        assert "未找到" in result
         assert "other_tool" in result
 
     @pytest.mark.asyncio
     async def test_invoke_tool_success(self):
         """Test successful tool invocation."""
-        from load_mcp_tools import LoadMCPToolsTool
+        from load_weibo_tools import LoadWeiboToolsTool
 
-        tool = LoadMCPToolsTool(
+        tool = LoadWeiboToolsTool(
             task_id=1,
             subtask_id=1,
             user_id=1,
@@ -445,13 +453,13 @@ class TestInvokeTool:
 
         # Create mock MCP tool
         mock_mcp_tool = MagicMock()
-        mock_mcp_tool._arun = AsyncMock(return_value="Search results")
+        mock_mcp_tool._arun = AsyncMock(return_value="Weibo content result")
 
         # Simulate loaded state
         tool._is_loaded = True
-        tool._loaded_tools = {"web_search": mock_mcp_tool}
+        tool._loaded_tools = {"get_weibo_status": mock_mcp_tool}
 
-        result = await tool.invoke_tool("web_search", {"query": "test"})
+        result = await tool.invoke_tool("get_weibo_status", {"weibo_id": "12345"})
 
-        assert result == "Search results"
-        mock_mcp_tool._arun.assert_called_once_with(query="test")
+        assert result == "Weibo content result"
+        mock_mcp_tool._arun.assert_called_once_with(weibo_id="12345")
