@@ -7,10 +7,12 @@
 Responsible for:
 - Creating LoadSkillTool
 - Dynamically creating skill tools
+- Loading MCP servers from skill configurations
 
 In HTTP mode, skill binaries are downloaded from backend API.
 """
 
+import asyncio
 import logging
 from typing import Any, Optional
 
@@ -138,13 +140,17 @@ async def prepare_skill_tools(
     preload_skills: Optional[list[str]] = None,
     user_name: str = "",
     auth_token: str = "",
-) -> list[Any]:
+    task_data: dict[str, Any] | None = None,
+) -> tuple[list[Any], list[Any]]:
     """
     Prepare skill tools dynamically using SkillToolRegistry.
 
     This function creates tool instances for all skills that have tool declarations
     in their SKILL.md configuration. It uses the plugin-based SkillToolRegistry
     to dynamically load and create tools.
+
+    Additionally, if a skill has mcpServers configured, the MCP servers will be
+    connected and their tools will be included in the returned tools list.
 
     Skill binaries are downloaded from backend API using REMOTE_STORAGE_URL.
 
@@ -158,20 +164,24 @@ async def prepare_skill_tools(
         user_id: User ID for access control
         skill_configs: List of skill configurations from ChatConfig.skill_configs
             Each config contains: {"name": "...", "description": "...", "tools": [...],
-                                   "provider": {...}, "skill_id": int}
+                                   "provider": {...}, "skill_id": int, "mcpServers": {...}}
         ws_emitter: Optional WebSocket emitter for real-time communication
         load_skill_tool: Optional LoadSkillTool instance to preload skill prompts
         preload_skills: Optional list of skill names to preload into system prompt.
                        Skills in this list will have their prompts injected automatically.
         user_name: Username for identifying the user
         auth_token: JWT token for API authentication (e.g., attachment upload/download)
+        task_data: Optional task data for MCP variable substitution
 
     Returns:
-        List of tool instances created from skill configurations
+        Tuple of (tools, mcp_clients) where:
+        - tools: List of tool instances created from skill configurations and MCP servers
+        - mcp_clients: List of MCPClient instances that need to be cleaned up
     """
     from chat_shell.skills import SkillToolContext, SkillToolRegistry
 
     tools: list[Any] = []
+    mcp_clients: list[Any] = []
 
     if not ws_emitter:
         # In HTTP mode, WebSocket is not used, so this is expected
@@ -185,6 +195,9 @@ async def prepare_skill_tools(
     # Get base URL for skill binary downloads
     remote_url = getattr(settings, "REMOTE_STORAGE_URL", "").rstrip("/")
 
+    # Collect all skill MCP server configs for batch loading
+    skill_mcp_configs: dict[str, dict[str, Any]] = {}
+
     # Process each skill configuration
     for skill_config in skill_configs:
         skill_name = skill_config.get("name", "unknown")
@@ -192,9 +205,23 @@ async def prepare_skill_tools(
         provider_config = skill_config.get("provider")
         skill_id = skill_config.get("skill_id")
         skill_user_id = skill_config.get("skill_user_id")
+        mcp_servers = skill_config.get("mcpServers")
+
+        # Collect MCP servers from skill config
+        if mcp_servers:
+            logger.info(
+                "[skill_factory] Skill '%s' has %d MCP server(s) configured",
+                skill_name,
+                len(mcp_servers),
+            )
+            # Prefix MCP server names with skill name to avoid conflicts
+            for server_name, server_config in mcp_servers.items():
+                prefixed_name = f"{skill_name}_{server_name}"
+                skill_mcp_configs[prefixed_name] = server_config
 
         if not tool_declarations:
-            # No tools declared for this skill, skip
+            # No tools declared for this skill, skip tool creation
+            # but MCP servers may still be loaded above
             continue
 
         logger.debug(
@@ -295,13 +322,125 @@ async def prepare_skill_tools(
                     skill_name,
                 )
 
+    # Load MCP tools from all skills if any MCP servers are configured
+    if skill_mcp_configs:
+        mcp_tools, skill_mcp_clients = await _load_skill_mcp_tools(
+            skill_mcp_configs, task_id, task_data
+        )
+        tools.extend(mcp_tools)
+        mcp_clients.extend(skill_mcp_clients)
+
     # Log summary of all skills loaded
     if tools:
         tool_names = [t.name for t in tools]
         logger.info(
-            "[skill_factory] Loaded %d skill tools: %s",
+            "[skill_factory] Loaded %d skill tools (including MCP): %s",
             len(tools),
             tool_names,
         )
 
-    return tools
+    return tools, mcp_clients
+
+
+async def _load_skill_mcp_tools(
+    mcp_configs: dict[str, dict[str, Any]],
+    task_id: int,
+    task_data: dict[str, Any] | None = None,
+) -> tuple[list[Any], list[Any]]:
+    """
+    Load MCP tools from skill-level MCP server configurations.
+
+    This function connects to MCP servers specified in skill configurations
+    and returns the tools provided by those servers.
+
+    Args:
+        mcp_configs: Merged MCP server configurations from all skills
+        task_id: Task ID for logging
+        task_data: Optional task data for variable substitution
+
+    Returns:
+        Tuple of (mcp_tools, mcp_clients)
+    """
+    from chat_shell.tools.mcp import MCPClient
+
+    if not mcp_configs:
+        return [], []
+
+    logger.info(
+        "[skill_factory] Loading MCP tools from %d skill MCP server(s): %s",
+        len(mcp_configs),
+        list(mcp_configs.keys()),
+    )
+
+    mcp_tools: list[Any] = []
+    mcp_clients: list[Any] = []
+    client: Any = None
+
+    try:
+        # Create MCPClient with all skill MCP servers
+        client = MCPClient(mcp_configs, task_data=task_data)
+
+        try:
+            await asyncio.wait_for(client.connect(), timeout=30.0)
+            if client.is_connected:
+                tools = client.get_tools()
+                mcp_tools.extend(tools)
+                mcp_clients.append(client)
+                logger.info(
+                    "[skill_factory] Loaded %d MCP tools from skill servers for task %d",
+                    len(tools),
+                    task_id,
+                )
+            else:
+                # Connection succeeded but client not ready, clean up
+                logger.warning(
+                    "[skill_factory] Failed to connect to skill MCP servers for task %d",
+                    task_id,
+                )
+                await _safe_disconnect_client(client, task_id)
+        except asyncio.TimeoutError:
+            logger.error(
+                "[skill_factory] Timeout connecting to skill MCP servers for task %d",
+                task_id,
+            )
+            await _safe_disconnect_client(client, task_id)
+        except Exception as e:
+            logger.error(
+                "[skill_factory] Failed to connect to skill MCP servers for task %d: %s",
+                task_id,
+                str(e),
+            )
+            await _safe_disconnect_client(client, task_id)
+
+    except Exception:
+        logger.exception(
+            "[skill_factory] Unexpected error loading skill MCP tools for task %d",
+            task_id,
+        )
+        # Clean up client if it was created before the exception
+        if client is not None:
+            await _safe_disconnect_client(client, task_id)
+
+    return mcp_tools, mcp_clients
+
+
+async def _safe_disconnect_client(client: Any, task_id: int) -> None:
+    """
+    Safely disconnect an MCP client, handling any exceptions.
+
+    Args:
+        client: The MCPClient instance to disconnect
+        task_id: Task ID for logging
+    """
+    try:
+        await client.disconnect()
+        logger.debug(
+            "[skill_factory] Disconnected MCP client for task %d after failure",
+            task_id,
+        )
+    except Exception as e:
+        logger.warning(
+            "[skill_factory] Error disconnecting MCP client for task %d: %s",
+            task_id,
+            str(e),
+        )
