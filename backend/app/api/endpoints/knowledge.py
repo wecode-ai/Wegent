@@ -37,6 +37,13 @@ from app.schemas.knowledge import (
     KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
     KnowledgeDocumentUpdate,
+    KnowledgeShareInfoResponse,
+    MyPermissionResponse,
+    PermissionBatchResult,
+    PermissionCreate,
+    PermissionListResponse,
+    PermissionResponse,
+    PermissionUpdate,
     ResourceScope,
 )
 from app.schemas.knowledge_qa_history import QAHistoryResponse
@@ -1568,7 +1575,6 @@ def get_knowledge_share_info(
     Returns basic KB info and current user's permission status.
     Used when user accesses a share link.
     """
-    from app.schemas.knowledge import KnowledgeShareInfoResponse
     from app.services.knowledge.permission_service import (
         can_access_knowledge_base,
         get_permission_source,
@@ -1623,7 +1629,6 @@ def get_knowledge_permissions(
     Requires manage permission.
     """
     from app.models.permission import Permission
-    from app.schemas.knowledge import PermissionListResponse, PermissionResponse
     from app.services.knowledge.permission_service import can_manage_knowledge_base
 
     kb = (
@@ -1686,7 +1691,7 @@ def get_knowledge_permissions(
 @permission_router.post("/{kb_id}/permissions")
 async def add_knowledge_permissions(
     kb_id: int,
-    data: "PermissionCreate",
+    data: PermissionCreate,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1696,10 +1701,7 @@ async def add_knowledge_permissions(
     Requires manage permission.
     Skips users who already have permissions or are the owner.
     """
-    from datetime import datetime
-
     from app.models.permission import Permission
-    from app.schemas.knowledge import PermissionBatchResult, PermissionCreate
     from app.schemas.knowledge_notification import KnowledgeNotificationType
     from app.services.knowledge.notification_service import (
         send_knowledge_permission_notification,
@@ -1792,7 +1794,7 @@ async def add_knowledge_permissions(
 async def update_knowledge_permission(
     kb_id: int,
     user_id: int,
-    data: "PermissionUpdate",
+    data: PermissionUpdate,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1801,10 +1803,7 @@ async def update_knowledge_permission(
 
     Requires manage permission.
     """
-    from datetime import datetime
-
     from app.models.permission import Permission
-    from app.schemas.knowledge import PermissionUpdate
     from app.schemas.knowledge_notification import KnowledgeNotificationType
     from app.services.knowledge.notification_service import (
         send_knowledge_permission_notification,
@@ -1960,7 +1959,6 @@ def get_my_knowledge_permission(
     """
     Get current user's permission for a knowledge base.
     """
-    from app.schemas.knowledge import MyPermissionResponse
     from app.services.knowledge.permission_service import (
         can_access_knowledge_base,
         get_permission_source,
