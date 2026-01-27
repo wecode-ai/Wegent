@@ -111,9 +111,12 @@ Example (read from middle):
     args_schema: type[BaseModel] = SandboxReadFileInput
 
     # Configuration
-    max_size: int = 65536  # 64KB default (reduced from 1MB to avoid context overflow)
-    smart_truncate_head: int = 28672  # 28KB from start
-    smart_truncate_tail: int = 28672  # 28KB from end
+    max_size: int = 102400  # 100KB for text files
+    max_size_bytes: int = 32768  # 32KB for binary files (base64 encoded is larger)
+    smart_truncate_head: int = 45056  # 44KB from start (text)
+    smart_truncate_tail: int = 45056  # 44KB from end (text)
+    smart_truncate_head_bytes: int = 14336  # 14KB from start (binary)
+    smart_truncate_tail_bytes: int = 14336  # 14KB from end (binary)
 
     def _run(
         self,
@@ -140,7 +143,17 @@ Example (read from middle):
         Returns:
             Tuple of (content, is_truncated)
         """
-        if file_size <= self.max_size:
+        # Use different limits for text vs binary files
+        if format == "bytes":
+            max_size = self.max_size_bytes
+            truncate_head = self.smart_truncate_head_bytes
+            truncate_tail = self.smart_truncate_tail_bytes
+        else:
+            max_size = self.max_size
+            truncate_head = self.smart_truncate_head
+            truncate_tail = self.smart_truncate_tail
+
+        if file_size <= max_size:
             # File is small enough, read entirely
             content = await sandbox.files.read(file_path, format=format)
             if format == "bytes":
@@ -150,19 +163,19 @@ Example (read from middle):
         # File is too large, read head + tail
         logger.warning(
             f"[SandboxReadFileTool] File too large ({file_size} bytes), "
-            f"applying smart truncation (head: {self.smart_truncate_head}, "
-            f"tail: {self.smart_truncate_tail})"
+            f"applying smart truncation (format={format}, head: {truncate_head}, "
+            f"tail: {truncate_tail})"
         )
 
         # Read head
         head_content = await self._read_file_range(
-            sandbox, file_path, 0, self.smart_truncate_head, format
+            sandbox, file_path, 0, truncate_head, format
         )
 
         # Read tail
-        tail_offset = max(0, file_size - self.smart_truncate_tail)
+        tail_offset = max(0, file_size - truncate_tail)
         tail_content = await self._read_file_range(
-            sandbox, file_path, tail_offset, self.smart_truncate_tail, format
+            sandbox, file_path, tail_offset, truncate_tail, format
         )
 
         # Combine with truncation marker
@@ -171,7 +184,7 @@ Example (read from middle):
                 "ascii"
             )
         else:
-            truncation_marker = f"\n\n... [TRUNCATED {file_size - self.smart_truncate_head - self.smart_truncate_tail} bytes] ...\n\n"
+            truncation_marker = f"\n\n... [TRUNCATED {file_size - truncate_head - truncate_tail} bytes] ...\n\n"
 
         content = f"{head_content}{truncation_marker}{tail_content}"
         return content, True
@@ -304,9 +317,12 @@ Example (read from middle):
                 await self._emit_tool_status("failed", error_msg)
                 return result
 
-            # Determine bytes to read
+            # Determine bytes to read (use different limits for text vs binary)
             file_size = file_info.size
-            bytes_to_read = limit if limit is not None else self.max_size
+            max_size_for_format = (
+                self.max_size_bytes if format == "bytes" else self.max_size
+            )
+            bytes_to_read = limit if limit is not None else max_size_for_format
 
             # Handle offset/limit reading or smart truncation
             is_truncated = False
@@ -331,7 +347,7 @@ Example (read from middle):
                 is_truncated = (offset + actual_limit) < file_size
                 bytes_read = actual_limit
 
-            elif file_size <= self.max_size:
+            elif file_size <= max_size_for_format:
                 # File is small enough, read entirely
                 if format == "bytes":
                     content = await sandbox.files.read(file_path, format="bytes")
@@ -347,7 +363,13 @@ Example (read from middle):
                 content_str, is_truncated = await self._smart_truncate_file(
                     sandbox, file_path, file_size, format
                 )
-                bytes_read = self.smart_truncate_head + self.smart_truncate_tail
+                # Calculate bytes read based on format
+                if format == "bytes":
+                    bytes_read = (
+                        self.smart_truncate_head_bytes + self.smart_truncate_tail_bytes
+                    )
+                else:
+                    bytes_read = self.smart_truncate_head + self.smart_truncate_tail
 
             response = {
                 "success": True,
