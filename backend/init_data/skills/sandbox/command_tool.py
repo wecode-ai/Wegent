@@ -90,6 +90,9 @@ Example:
     # Default command timeout (5 minutes)
     default_command_timeout: int = 300
 
+    # Maximum output size to return (64KB per stream to avoid context overflow)
+    max_output_size: int = 65536  # 64KB
+
     def _run(
         self,
         command: str,
@@ -183,14 +186,44 @@ Example:
 
             execution_time = time.time() - start_time
 
+            # Truncate output if too large
+            stdout = result.stdout or ""
+            stderr = result.stderr or ""
+            stdout_truncated = False
+            stderr_truncated = False
+
+            if len(stdout) > self.max_output_size:
+                stdout = stdout[: self.max_output_size]
+                stdout_truncated = True
+                logger.warning(
+                    f"[SandboxCommandTool] stdout truncated (original size: {len(result.stdout)} bytes)"
+                )
+
+            if len(stderr) > self.max_output_size:
+                stderr = stderr[: self.max_output_size]
+                stderr_truncated = True
+                logger.warning(
+                    f"[SandboxCommandTool] stderr truncated (original size: {len(result.stderr)} bytes)"
+                )
+
             response = {
                 "success": result.exit_code == 0,
-                "stdout": result.stdout or "",
-                "stderr": result.stderr or "",
+                "stdout": stdout,
+                "stderr": stderr,
                 "exit_code": result.exit_code,
                 "execution_time": execution_time,
                 "sandbox_id": sandbox.sandbox_id,
             }
+
+            # Add truncation info if output was truncated
+            if stdout_truncated or stderr_truncated:
+                response["truncated"] = True
+                response["truncation_info"] = {
+                    "stdout_truncated": stdout_truncated,
+                    "stderr_truncated": stderr_truncated,
+                    "max_output_size": self.max_output_size,
+                    "message": f"Output truncated to {self.max_output_size} bytes per stream to avoid context overflow",
+                }
 
             logger.info(
                 f"[SandboxCommandTool] Command completed: exit_code={result.exit_code}, "
