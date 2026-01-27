@@ -374,6 +374,7 @@ async def _load_skill_mcp_tools(
 
     mcp_tools: list[Any] = []
     mcp_clients: list[Any] = []
+    client: Any = None
 
     try:
         # Create MCPClient with all skill MCP servers
@@ -391,26 +392,55 @@ async def _load_skill_mcp_tools(
                     task_id,
                 )
             else:
+                # Connection succeeded but client not ready, clean up
                 logger.warning(
                     "[skill_factory] Failed to connect to skill MCP servers for task %d",
                     task_id,
                 )
+                await _safe_disconnect_client(client, task_id)
         except asyncio.TimeoutError:
             logger.error(
                 "[skill_factory] Timeout connecting to skill MCP servers for task %d",
                 task_id,
             )
+            await _safe_disconnect_client(client, task_id)
         except Exception as e:
             logger.error(
                 "[skill_factory] Failed to connect to skill MCP servers for task %d: %s",
                 task_id,
                 str(e),
             )
+            await _safe_disconnect_client(client, task_id)
 
     except Exception:
         logger.exception(
             "[skill_factory] Unexpected error loading skill MCP tools for task %d",
             task_id,
         )
+        # Clean up client if it was created before the exception
+        if client is not None:
+            await _safe_disconnect_client(client, task_id)
 
     return mcp_tools, mcp_clients
+
+
+async def _safe_disconnect_client(client: Any, task_id: int) -> None:
+    """
+    Safely disconnect an MCP client, handling any exceptions.
+
+    Args:
+        client: The MCPClient instance to disconnect
+        task_id: Task ID for logging
+    """
+    try:
+        await client.disconnect()
+        logger.debug(
+            "[skill_factory] Disconnected MCP client for task %d after failure",
+            task_id,
+        )
+    except Exception as e:
+        logger.warning(
+            "[skill_factory] Error disconnecting MCP client for task %d: %s",
+            task_id,
+            str(e),
+        )

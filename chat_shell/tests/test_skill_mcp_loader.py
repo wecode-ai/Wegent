@@ -67,12 +67,15 @@ class TestLoadSkillMcpTools:
         mock_client = MagicMock()
         mock_client.is_connected = False
         mock_client.connect = AsyncMock()
+        mock_client.disconnect = AsyncMock()
 
         with patch("chat_shell.tools.mcp.MCPClient", return_value=mock_client):
             tools, clients = await _load_skill_mcp_tools(mcp_configs, task_id=1)
 
             assert tools == []
             assert clients == []
+            # Verify disconnect was called for cleanup
+            mock_client.disconnect.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_mcp_connection_timeout_returns_empty(self):
@@ -88,12 +91,37 @@ class TestLoadSkillMcpTools:
 
         mock_client = MagicMock()
         mock_client.connect = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_client.disconnect = AsyncMock()
 
         with patch("chat_shell.tools.mcp.MCPClient", return_value=mock_client):
             tools, clients = await _load_skill_mcp_tools(mcp_configs, task_id=1)
 
             assert tools == []
             assert clients == []
+            # Verify disconnect was called for cleanup
+            mock_client.disconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_mcp_connection_exception_cleans_up(self):
+        """Test that connection exception triggers proper cleanup."""
+        mcp_configs = {
+            "test_skill_server1": {
+                "type": "stdio",
+                "command": "python",
+            }
+        }
+
+        mock_client = MagicMock()
+        mock_client.connect = AsyncMock(side_effect=Exception("Connection error"))
+        mock_client.disconnect = AsyncMock()
+
+        with patch("chat_shell.tools.mcp.MCPClient", return_value=mock_client):
+            tools, clients = await _load_skill_mcp_tools(mcp_configs, task_id=1)
+
+            assert tools == []
+            assert clients == []
+            # Verify disconnect was called for cleanup
+            mock_client.disconnect.assert_called_once()
 
 
 class TestPrepareSkillToolsWithMcp:
