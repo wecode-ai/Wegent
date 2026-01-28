@@ -14,7 +14,7 @@ import { truncateOutput, formatMatchCount } from '../utils'
  */
 export function GlobToolRenderer(props: ToolRendererProps<GlobToolInput>): ToolRenderResult {
   const { t } = useTranslation('chat')
-  const { toolName, input, output, metadata, isLoading } = props
+  const { toolName, input, output, metadata, isLoading, isError } = props
 
   const pattern = input?.pattern
   const matchCount = metadata?.match_count
@@ -23,7 +23,7 @@ export function GlobToolRenderer(props: ToolRendererProps<GlobToolInput>): ToolR
       ? `${formatMatchCount(matchCount)} ${t('thinking.units.files') || 'files'}`
       : undefined
 
-  const { data: truncatedOutput, isTruncated, originalLength } = truncateOutput(output)
+  const { data: truncatedOutput, isTruncated, originalLineCount } = truncateOutput(output)
 
   return {
     key: `${toolName}-${props.itemIndex}`,
@@ -34,6 +34,7 @@ export function GlobToolRenderer(props: ToolRendererProps<GlobToolInput>): ToolR
         stats={stats}
         duration={metadata?.duration_ms}
         isLoading={isLoading}
+        isError={isError}
       />
     ),
     children: (
@@ -57,7 +58,7 @@ export function GlobToolRenderer(props: ToolRendererProps<GlobToolInput>): ToolR
             <pre className="whitespace-pre-wrap break-words font-mono text-xs text-text-tertiary overflow-x-auto max-h-60 overflow-y-auto rounded-md bg-muted/30 p-2">
               {truncatedOutput}
             </pre>
-            {isTruncated && <TruncatedIndicator originalLength={originalLength} unit="lines" />}
+            {isTruncated && <TruncatedIndicator originalLength={originalLineCount} unit="lines" />}
           </div>
         ) : isLoading ? (
           <SkeletonValue value={null} width="100%" height="80px" />

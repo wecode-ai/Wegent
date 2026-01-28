@@ -14,11 +14,11 @@ import { truncateOutput, formatFileSize, formatLineCount, extractFileName } from
  */
 export function ReadToolRenderer(props: ToolRendererProps<ReadToolInput>): ToolRenderResult {
   const { t } = useTranslation('chat')
-  const { toolName, input, output, metadata, isLoading } = props
+  const { toolName, input, output, metadata, isLoading, isError } = props
 
   const fileName = metadata?.file_name || extractFileName(input?.file_path) || input?.file_path
   const stats =
-    metadata?.line_count && metadata?.file_size
+    metadata?.line_count != null && metadata?.file_size != null
       ? `${formatLineCount(metadata.line_count)} ${t('messages.lines') || 'lines'}, ${formatFileSize(metadata.file_size)}`
       : undefined
 
@@ -33,6 +33,7 @@ export function ReadToolRenderer(props: ToolRendererProps<ReadToolInput>): ToolR
         stats={stats}
         duration={metadata?.duration_ms}
         isLoading={isLoading}
+        isError={isError}
       />
     ),
     children: (
