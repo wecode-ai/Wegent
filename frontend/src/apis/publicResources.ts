@@ -43,7 +43,7 @@ export function transformPublicBotToBot(publicBot: AdminPublicBot): Bot {
     name: publicBot.name,
     namespace: publicBot.namespace,
     shell_name: publicBot.shell_name || (spec?.shellRef as string) || '',
-    shell_type: publicBot.shell_name || (spec?.shellRef as string) || '',
+    shell_type: (spec?.shellType as string) || publicBot.shell_name || '',
     agent_config: agentConfig,
     system_prompt: systemPrompt,
     mcp_servers: mcpServers,

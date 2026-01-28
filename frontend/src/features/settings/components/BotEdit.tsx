@@ -38,7 +38,7 @@ import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models'
 import { shellApis, UnifiedShell } from '@/apis/shells'
 import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill } from '@/apis/skills'
 import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter'
 
 /** Agent types supported by the system */
