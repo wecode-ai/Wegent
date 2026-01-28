@@ -9,6 +9,7 @@ This module provides a simplified LangGraph agent implementation using:
 - LangChain's convert_to_messages for message format conversion
 - Streaming support with cancellation
 - State checkpointing for resumability
+- Automatic message compression via pre_model_hook
 """
 
 import asyncio
@@ -28,6 +29,8 @@ from opentelemetry import trace as otel_trace
 
 from shared.telemetry.decorators import add_span_event, trace_sync
 
+from ..compression import MessageCompressor
+from ..core.config import settings
 from ..tools.base import ToolRegistry
 from ..tools.builtin.silent_exit import SilentExitException
 
@@ -48,6 +51,8 @@ class LangGraphAgentBuilder:
         tool_registry: ToolRegistry | None = None,
         max_iterations: int = 10,
         enable_checkpointing: bool = False,
+        model_id: str | None = None,
+        model_config: dict[str, Any] | None = None,
     ):
         """Initialize agent builder.
 
@@ -56,12 +61,32 @@ class LangGraphAgentBuilder:
             tool_registry: Registry of available tools (optional)
             max_iterations: Maximum tool loop iterations
             enable_checkpointing: Enable state checkpointing for resumability
+            model_id: Model identifier for compression configuration
+            model_config: Model configuration from Model CRD spec for compression
         """
         self.llm = llm
         self.tool_registry = tool_registry
         self.max_iterations = max_iterations
         self.enable_checkpointing = enable_checkpointing
+        self.model_id = model_id
+        self.model_config = model_config
         self._agent = None
+
+        # Initialize message compressor if model_id is provided and compression is enabled
+        compression_enabled = getattr(settings, "MESSAGE_COMPRESSION_ENABLED", True)
+        self._compressor: MessageCompressor | None = None
+        if model_id and compression_enabled:
+            self._compressor = MessageCompressor(
+                model_id,
+                model_config=model_config,
+            )
+            logger.debug(
+                "[LangGraphAgentBuilder] Message compression enabled for model=%s, "
+                "trigger_limit=%d, target_limit=%d",
+                model_id,
+                self._compressor.trigger_limit,
+                self._compressor.target_limit,
+            )
 
         # Get all LangChain tools from registry
         self.tools: list[BaseTool] = []
@@ -156,6 +181,97 @@ class LangGraphAgentBuilder:
 
         return prompt_modifier
 
+    def _create_pre_model_hook(self) -> Callable | None:
+        """Create a pre_model_hook function for message compression.
+
+        This function is called before each model invocation to compress
+        messages if they exceed the context window limit. This is the
+        standard LangGraph approach for managing context window limits
+        during tool loops.
+
+        Returns:
+            A callable that compresses messages, or None if compression is disabled
+        """
+        if not self._compressor:
+            return None
+
+        compressor = self._compressor
+
+        def pre_model_hook(state: dict[str, Any]) -> dict[str, Any]:
+            """Compress messages before sending to LLM.
+
+            This function is called by LangGraph's create_react_agent before each
+            model invocation. It checks if messages exceed the context window limit
+            and compresses them if needed.
+
+            The compressed messages are returned under 'llm_input_messages' key
+            to keep the original message history unmodified in the graph state.
+            This ensures tool results and conversation history are preserved
+            while the LLM receives a compressed version.
+            """
+            messages = state.get("messages", [])
+            if not messages:
+                return {}
+
+            # Convert LangChain messages to OpenAI format for compression
+            openai_messages = []
+            for msg in messages:
+                if isinstance(msg, SystemMessage):
+                    openai_messages.append({"role": "system", "content": msg.content})
+                elif isinstance(msg, HumanMessage):
+                    openai_messages.append({"role": "user", "content": msg.content})
+                elif isinstance(msg, AIMessage):
+                    msg_dict: dict[str, Any] = {
+                        "role": "assistant",
+                        "content": msg.content,
+                    }
+                    # Preserve tool_calls if present
+                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                        msg_dict["tool_calls"] = msg.tool_calls
+                    openai_messages.append(msg_dict)
+                else:
+                    # Handle ToolMessage and other message types
+                    from langchain_core.messages import ToolMessage
+
+                    if isinstance(msg, ToolMessage):
+                        openai_messages.append(
+                            {
+                                "role": "tool",
+                                "content": msg.content,
+                                "tool_call_id": msg.tool_call_id,
+                            }
+                        )
+                    else:
+                        # Fallback for unknown message types
+                        openai_messages.append(
+                            {"role": "user", "content": str(msg.content)}
+                        )
+
+            # Apply compression
+            result = compressor.compress_if_needed(openai_messages)
+
+            if result.was_compressed:
+                logger.info(
+                    "[pre_model_hook] Messages compressed: %d -> %d tokens (saved %d), "
+                    "strategies: %s",
+                    result.original_tokens,
+                    result.compressed_tokens,
+                    result.tokens_saved,
+                    ", ".join(result.strategies_applied),
+                )
+
+                # Convert compressed messages back to LangChain format
+                compressed_lc_messages = convert_to_messages(result.messages)
+
+                # Return compressed messages under llm_input_messages
+                # This keeps original state.messages unmodified
+                return {"llm_input_messages": compressed_lc_messages}
+
+            # No compression needed, return empty dict (use original messages)
+            return {}
+
+        return pre_model_hook
+
     @trace_sync(
         span_name="agent_builder.build_agent",
         tracer_name="chat_shell.agents",
@@ -163,6 +279,7 @@ class LangGraphAgentBuilder:
             "agent.tools_count": len(self.tools),
             "agent.max_iterations": self.max_iterations,
             "agent.enable_checkpointing": self.enable_checkpointing,
+            "agent.compression_enabled": self._compressor is not None,
         },
     )
     def _build_agent(self):
@@ -186,12 +303,23 @@ class LangGraphAgentBuilder:
             {"has_modifier": prompt_modifier is not None},
         )
 
-        # Build agent with optional prompt modifier for dynamic system prompt updates
+        # Create pre_model_hook for message compression
+        # This is called before each LLM invocation to compress messages if needed
+        pre_model_hook = self._create_pre_model_hook()
+        add_span_event(
+            "pre_model_hook_created",
+            {"has_hook": pre_model_hook is not None},
+        )
+
+        # Build agent with optional prompt modifier and pre_model_hook
+        # - prompt: modifies system prompt with skill injections
+        # - pre_model_hook: compresses messages before each LLM call
         self._agent = create_react_agent(
             model=self.llm,
             tools=self.tools,
             checkpointer=checkpointer,
             prompt=prompt_modifier,
+            pre_model_hook=pre_model_hook,
         )
         add_span_event("react_agent_created")
 
