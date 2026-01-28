@@ -359,6 +359,10 @@ class AllChunksRequest(BaseModel):
         default=10000,
         description="Maximum number of chunks to retrieve (safety limit)",
     )
+    query: Optional[str] = Field(
+        default=None,
+        description="Optional query string for logging purposes",
+    )
 
 
 class ChunkInfo(BaseModel):
@@ -405,6 +409,7 @@ async def get_all_chunks(
             knowledge_base_id=request.knowledge_base_id,
             db=db,
             max_chunks=request.max_chunks,
+            query=request.query,
         )
 
         # Calculate total content size for logging
