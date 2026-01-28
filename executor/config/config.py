@@ -40,6 +40,32 @@ CUSTOM_INSTRUCTION_FILES = os.getenv(
 CUSTOM_CONFIG = load_custom_config()
 
 # ============ Local Mode Configuration ============
+# Default values for local mode configuration
+DEFAULT_LOCAL_HEARTBEAT_INTERVAL = 30
+DEFAULT_LOCAL_HEARTBEAT_TIMEOUT = 90
+DEFAULT_LOCAL_RECONNECT_DELAY = 1
+DEFAULT_LOCAL_RECONNECT_MAX_DELAY = 30
+
+
+def _get_int_env(name: str, default: int) -> int:
+    """Safely parse an integer from environment variable.
+
+    Args:
+        name: Environment variable name.
+        default: Default value if not set or invalid.
+
+    Returns:
+        The parsed integer or default value.
+    """
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 # Deployment mode: 'local' for local deployment via WebSocket, empty/other for Docker mode
 EXECUTOR_MODE = os.environ.get("EXECUTOR_MODE", "")
 
@@ -47,12 +73,21 @@ EXECUTOR_MODE = os.environ.get("EXECUTOR_MODE", "")
 WEGENT_AUTH_TOKEN = os.environ.get("WEGENT_AUTH_TOKEN", "")  # WebSocket auth token
 WEGENT_BACKEND_URL = os.environ.get(
     "WEGENT_BACKEND_URL", ""
-)  # Backend WebSocket URL (e.g., wss://api.example.com)
+)  # Backend WebSocket URL (e.g., http://localhost:8000)
 
 # Local mode heartbeat configuration
-LOCAL_HEARTBEAT_INTERVAL = int(os.environ.get("LOCAL_HEARTBEAT_INTERVAL", "30"))
-LOCAL_HEARTBEAT_TIMEOUT = int(os.environ.get("LOCAL_HEARTBEAT_TIMEOUT", "90"))
+# Only parse from env when in local mode to avoid unnecessary overhead
+LOCAL_HEARTBEAT_INTERVAL = _get_int_env(
+    "LOCAL_HEARTBEAT_INTERVAL", DEFAULT_LOCAL_HEARTBEAT_INTERVAL
+)
+LOCAL_HEARTBEAT_TIMEOUT = _get_int_env(
+    "LOCAL_HEARTBEAT_TIMEOUT", DEFAULT_LOCAL_HEARTBEAT_TIMEOUT
+)
 
 # Local mode reconnection configuration
-LOCAL_RECONNECT_DELAY = int(os.environ.get("LOCAL_RECONNECT_DELAY", "1"))
-LOCAL_RECONNECT_MAX_DELAY = int(os.environ.get("LOCAL_RECONNECT_MAX_DELAY", "30"))
+LOCAL_RECONNECT_DELAY = _get_int_env(
+    "LOCAL_RECONNECT_DELAY", DEFAULT_LOCAL_RECONNECT_DELAY
+)
+LOCAL_RECONNECT_MAX_DELAY = _get_int_env(
+    "LOCAL_RECONNECT_MAX_DELAY", DEFAULT_LOCAL_RECONNECT_MAX_DELAY
+)

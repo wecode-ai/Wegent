@@ -98,6 +98,9 @@ class WebSocketProgressReporter:
             status: Final status (e.g., 'completed', 'failed').
             result: Result data dictionary.
             message: Optional result message.
+
+        Raises:
+            Exception: If the emit fails, re-raised after logging.
         """
         try:
             await self.client.emit(
@@ -114,7 +117,8 @@ class WebSocketProgressReporter:
             )
             logger.info(f"Result reported: task_id={self.task_id}, status={status}")
         except Exception as e:
-            logger.error(f"Failed to report result for task {self.task_id}: {e}")
+            logger.exception(f"Failed to report result for task {self.task_id}: {e}")
+            raise
 
     async def send_chat_start(
         self,

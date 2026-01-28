@@ -60,7 +60,7 @@ class TaskHandler:
             data: Cancel data containing task_id.
         """
         task_id = data.get("task_id")
-        if task_id:
+        if task_id is not None:
             logger.info(f"Received task cancel request: task_id={task_id}")
             await self.runner.cancel_task(task_id)
         else:

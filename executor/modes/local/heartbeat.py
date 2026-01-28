@@ -31,24 +31,23 @@ class LocalHeartbeatService:
     - Indicate executor is alive
     - Allow Backend to detect executor failures
     - Maintain connection health
+
+    Note: The heartbeat timeout is managed by the Backend, not the client.
     """
 
     def __init__(
         self,
         websocket_client: "WebSocketClient",
         interval: Optional[int] = None,
-        timeout: Optional[int] = None,
     ):
         """Initialize the heartbeat service.
 
         Args:
             websocket_client: WebSocket client for sending heartbeats.
             interval: Heartbeat interval in seconds. Defaults to config value.
-            timeout: Heartbeat timeout in seconds. Defaults to config value.
         """
         self.client = websocket_client
         self.interval = interval or config.LOCAL_HEARTBEAT_INTERVAL
-        self.timeout = timeout or config.LOCAL_HEARTBEAT_TIMEOUT
 
         self._running = False
         self._task: Optional[asyncio.Task] = None
@@ -71,9 +70,7 @@ class LocalHeartbeatService:
 
         self._running = True
         self._task = asyncio.create_task(self._heartbeat_loop())
-        logger.info(
-            f"Heartbeat service started: interval={self.interval}s, timeout={self.timeout}s"
-        )
+        logger.info(f"Heartbeat service started: interval={self.interval}s")
 
     async def stop(self) -> None:
         """Stop the heartbeat service.
