@@ -11,7 +11,10 @@ import { modelApis, UnifiedModel } from '@/apis/models'
  * @param scope - Resource scope: 'personal', 'group', or 'all'
  * @param groupName - Group name (required when scope is 'group')
  */
-export function useEmbeddingModels(scope?: 'personal' | 'group' | 'all', groupName?: string) {
+export function useEmbeddingModels(
+  scope?: 'personal' | 'group' | 'all' | 'organization',
+  groupName?: string
+) {
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
@@ -19,11 +22,13 @@ export function useEmbeddingModels(scope?: 'personal' | 'group' | 'all', groupNa
   const fetchModels = useCallback(async () => {
     try {
       setLoading(true)
+      // For organization scope, use 'all' to get system-configured public embedding models
+      const apiScope = scope === 'organization' ? 'all' : scope || 'all'
       // Use modelApis.getUnifiedModels with scope support and filter by embedding type
       const response = await modelApis.getUnifiedModels(
         undefined, // shellType
         false, // includeConfig
-        scope || 'all', // scope - default to 'all' to include personal + group + public models
+        apiScope, // scope - default to 'all' to include personal + group + public models
         groupName, // groupName
         'embedding' // modelCategoryType - filter by embedding models
       )

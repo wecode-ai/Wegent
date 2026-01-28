@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
-import { Check, Database, ArrowRight, Users, Table2 } from 'lucide-react'
+import { Check, Database, ArrowRight, Users, Table2, Building2 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import Link from 'next/link'
 import {
@@ -115,7 +115,8 @@ export default function ContextSelector({
   excludeKnowledgeBaseId,
 }: ContextSelectorProps) {
   const { t } = useTranslation()
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
+  const [personalKnowledgeBases, setPersonalKnowledgeBases] = useState<KnowledgeBase[]>([])
+  const [organizationKnowledgeBases, setOrganizationKnowledgeBases] = useState<KnowledgeBase[]>([])
   const [boundKnowledgeBases, setBoundKnowledgeBases] = useState<BoundKnowledgeBaseDetail[]>([])
   const [tables, setTables] = useState<TableDocument[]>([])
   const [loading, setLoading] = useState(false)
@@ -125,19 +126,42 @@ export default function ContextSelector({
   const [searchValue, setSearchValue] = useState('')
   const [activeTab, setActiveTab] = useState('knowledge')
 
+  // Fetch personal knowledge bases
+  const fetchPersonalKnowledgeBases = useCallback(async () => {
+    try {
+      const response = await knowledgeBaseApi.list({ scope: 'personal' })
+      setPersonalKnowledgeBases(response.items)
+    } catch (error) {
+      console.error('Failed to fetch personal knowledge bases:', error)
+      throw error
+    }
+  }, [])
+
+  // Fetch organization knowledge bases
+  const fetchOrganizationKnowledgeBases = useCallback(async () => {
+    try {
+      const response = await knowledgeBaseApi.list({ scope: 'organization' })
+      setOrganizationKnowledgeBases(response.items)
+    } catch (error) {
+      console.error('Failed to fetch organization knowledge bases:', error)
+      // Don't throw - organization KBs are optional
+      setOrganizationKnowledgeBases([])
+    }
+  }, [])
+
+  // Fetch all knowledge bases
   const fetchKnowledgeBases = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const response = await knowledgeBaseApi.list({ scope: 'all' })
-      setKnowledgeBases(response.items)
+      await Promise.all([fetchPersonalKnowledgeBases(), fetchOrganizationKnowledgeBases()])
     } catch (error) {
       console.error('Failed to fetch knowledge bases:', error)
       setError(t('knowledge:fetch_error'))
     } finally {
       setLoading(false)
     }
-  }, [t])
+  }, [t, fetchPersonalKnowledgeBases, fetchOrganizationKnowledgeBases])
 
   // Fetch bound knowledge bases for group chat
   const fetchBoundKnowledgeBases = useCallback(async () => {
@@ -185,14 +209,29 @@ export default function ContextSelector({
     fetchTables()
   }, [fetchTables])
 
-  // Sort knowledge bases by name and exclude bound ones and current notebook KB from user list
-  const sortedKnowledgeBases = useMemo(() => {
+  // Sort personal knowledge bases by name and exclude bound ones and current notebook KB
+  const sortedPersonalKnowledgeBases = useMemo(() => {
     const boundIds = new Set(boundKnowledgeBases.map(kb => kb.id))
-    return [...knowledgeBases]
+    return [...personalKnowledgeBases]
       .filter(kb => !boundIds.has(kb.id))
       .filter(kb => excludeKnowledgeBaseId === undefined || kb.id !== excludeKnowledgeBaseId)
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [knowledgeBases, boundKnowledgeBases, excludeKnowledgeBaseId])
+  }, [personalKnowledgeBases, boundKnowledgeBases, excludeKnowledgeBaseId])
+
+  // Sort organization knowledge bases by name and exclude bound ones and current notebook KB
+  const sortedOrganizationKnowledgeBases = useMemo(() => {
+    const boundIds = new Set(boundKnowledgeBases.map(kb => kb.id))
+    return [...organizationKnowledgeBases]
+      .filter(kb => !boundIds.has(kb.id))
+      .filter(kb => excludeKnowledgeBaseId === undefined || kb.id !== excludeKnowledgeBaseId)
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [organizationKnowledgeBases, boundKnowledgeBases, excludeKnowledgeBaseId])
+
+  // Check if there are any knowledge bases to show
+  const hasAnyKnowledgeBases =
+    sortedPersonalKnowledgeBases.length > 0 ||
+    sortedOrganizationKnowledgeBases.length > 0 ||
+    boundKnowledgeBases.length > 0
 
   // Check if a context item is selected
   const isSelected = (id: number | string) => {
@@ -335,7 +374,7 @@ export default function ContextSelector({
                       {t('common:actions.retry')}
                     </button>
                   </div>
-                ) : sortedKnowledgeBases.length === 0 && boundKnowledgeBases.length === 0 ? (
+                ) : !hasAnyKnowledgeBases ? (
                   <div className="py-6 px-4 text-center">
                     <p className="text-sm text-text-muted mb-3">
                       {t('knowledge:no_knowledge_bases')}
@@ -417,22 +456,49 @@ export default function ContextSelector({
                             )
                           })}
                         </CommandGroup>
-                        {sortedKnowledgeBases.length > 0 && <CommandSeparator />}
+                        {(sortedOrganizationKnowledgeBases.length > 0 ||
+                          sortedPersonalKnowledgeBases.length > 0) && <CommandSeparator />}
                       </>
                     )}
 
-                    {/* User's Knowledge Bases */}
-                    {sortedKnowledgeBases.length > 0 && (
+                    {/* Organization Knowledge Bases */}
+                    {sortedOrganizationKnowledgeBases.length > 0 && (
+                      <>
+                        <CommandGroup
+                          heading={
+                            <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
+                              <Building2 className="w-3 h-3" />
+                              {t('knowledge:document.company.title')}
+                            </div>
+                          }
+                        >
+                          {sortedOrganizationKnowledgeBases.map(kb => (
+                            <KnowledgeBaseItem
+                              key={kb.id}
+                              kb={kb}
+                              isSelected={isSelected(kb.id)}
+                              onSelect={() => handleSelect(kb)}
+                            />
+                          ))}
+                        </CommandGroup>
+                        {sortedPersonalKnowledgeBases.length > 0 && <CommandSeparator />}
+                      </>
+                    )}
+
+                    {/* Personal Knowledge Bases */}
+                    {sortedPersonalKnowledgeBases.length > 0 && (
                       <CommandGroup
                         heading={
-                          boundKnowledgeBases.length > 0 ? (
-                            <span className="text-xs font-medium text-text-muted">
-                              {t('chat:groupChat.knowledge.otherKnowledgeBases')}
-                            </span>
+                          boundKnowledgeBases.length > 0 ||
+                          sortedOrganizationKnowledgeBases.length > 0 ? (
+                            <div className="flex items-center gap-1.5 text-xs font-medium text-text-muted">
+                              <Database className="w-3 h-3" />
+                              {t('knowledge:document.tabs.personal')}
+                            </div>
                           ) : undefined
                         }
                       >
-                        {sortedKnowledgeBases.map(kb => (
+                        {sortedPersonalKnowledgeBases.map(kb => (
                           <KnowledgeBaseItem
                             key={kb.id}
                             kb={kb}

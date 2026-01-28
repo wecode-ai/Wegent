@@ -5,7 +5,10 @@
 import { useEffect, useState, useCallback } from 'react'
 import { retrieverApis, type UnifiedRetriever } from '@/apis/retrievers'
 
-export function useRetrievers(scope?: 'personal' | 'group' | 'all', groupName?: string) {
+export function useRetrievers(
+  scope?: 'personal' | 'group' | 'all' | 'organization',
+  groupName?: string
+) {
   const [retrievers, setRetrievers] = useState<UnifiedRetriever[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
@@ -13,7 +16,9 @@ export function useRetrievers(scope?: 'personal' | 'group' | 'all', groupName?: 
   const fetchRetrievers = useCallback(async () => {
     try {
       setLoading(true)
-      const response = await retrieverApis.getUnifiedRetrievers(scope, groupName)
+      // For organization scope, use 'all' to get system-configured public retrievers
+      const apiScope = scope === 'organization' ? 'all' : scope
+      const response = await retrieverApis.getUnifiedRetrievers(apiScope, groupName)
       const data = response.data || []
       // Sort by type priority based on scope, then by name
       // - Personal scope: user > public

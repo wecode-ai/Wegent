@@ -68,6 +68,87 @@ class KnowledgeService:
     # ============== Knowledge Base Operations ==============
 
     @staticmethod
+    def _create_knowledge_base_internal(
+        db: Session,
+        user_id: int,
+        kb_name: str,
+        namespace: str,
+        display_name: str,
+        description: str = "",
+        kb_type: str = "notebook",
+        retrieval_config: Optional[dict] = None,
+        summary_enabled: bool = False,
+        summary_model_ref: Optional[dict] = None,
+    ) -> int:
+        """
+        Internal method to create a knowledge base record.
+
+        This is the core creation logic shared by all KB creation methods.
+        It does NOT perform permission checks - callers must handle permissions.
+
+        Args:
+            db: Database session
+            user_id: Creator user ID
+            kb_name: Unique name for the Kind record (e.g., "kb-1-default-myname")
+            namespace: Namespace for the KB (default/organization/group_name)
+            display_name: Human-readable name shown in UI
+            description: KB description
+            kb_type: Knowledge base type ('notebook' or 'classic')
+            retrieval_config: Retrieval configuration dict
+            summary_enabled: Enable automatic summary generation
+            summary_model_ref: Model reference for summary generation
+
+        Returns:
+            Created KnowledgeBase ID
+        """
+        from datetime import datetime
+
+        # Build CRD structure
+        spec_kwargs = {
+            "name": display_name,
+            "description": description,
+            "kbType": kb_type,
+            "summaryEnabled": summary_enabled,
+        }
+        # Add retrievalConfig if provided
+        if retrieval_config:
+            spec_kwargs["retrievalConfig"] = retrieval_config
+        # Add summaryModelRef if provided
+        if summary_model_ref:
+            spec_kwargs["summaryModelRef"] = summary_model_ref
+
+        kb_crd = KnowledgeBaseCRD(
+            apiVersion="agent.wecode.io/v1",
+            kind="KnowledgeBase",
+            metadata=ObjectMeta(
+                name=kb_name,
+                namespace=namespace,
+            ),
+            spec=KnowledgeBaseSpec(**spec_kwargs),
+        )
+
+        # Build resource data
+        resource_data = kb_crd.model_dump()
+        if "status" not in resource_data or resource_data["status"] is None:
+            resource_data["status"] = {"state": "Available"}
+
+        # Create Kind record directly using the passed db session
+        db_resource = Kind(
+            user_id=user_id,
+            kind="KnowledgeBase",
+            name=kb_name,
+            namespace=namespace,
+            json=resource_data,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+
+        db.add(db_resource)
+        db.flush()  # Flush to get the ID without committing
+
+        return db_resource.id
+
+    @staticmethod
     def create_knowledge_base(
         db: Session,
         user_id: int,
@@ -87,10 +168,18 @@ class KnowledgeService:
         Raises:
             ValueError: If validation fails or permission denied
         """
-        from datetime import datetime
+        from app.models.user import User
 
-        # Check permission for team knowledge base
-        if data.namespace != "default":
+        # Check permission based on namespace type
+        if data.namespace == "organization":
+            # Organization knowledge base: only admin users can create
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or user.role != "admin":
+                raise ValueError(
+                    "Only admin users can create organization knowledge base"
+                )
+        elif data.namespace != "default":
+            # Team knowledge base: check group permission
             role = get_effective_role_in_group(db, user_id, data.namespace)
             if role is None:
                 raise ValueError(
@@ -141,49 +230,71 @@ class KnowledgeService:
                     f"Knowledge base with name '{data.name}' already exists"
                 )
 
-        # Build CRD structure
-        spec_kwargs = {
-            "name": data.name,
-            "description": data.description or "",
-            "kbType": data.kb_type
-            or "notebook",  # Default to 'notebook' if not provided
-            "retrievalConfig": data.retrieval_config,
-            "summaryEnabled": data.summary_enabled,
-        }
-        # Add summaryModelRef if provided
-        if data.summary_model_ref:
-            spec_kwargs["summaryModelRef"] = data.summary_model_ref
+        # Convert retrieval_config to dict if provided
+        retrieval_config_dict = None
+        if data.retrieval_config:
+            retrieval_config_dict = data.retrieval_config.model_dump()
 
-        kb_crd = KnowledgeBaseCRD(
-            apiVersion="agent.wecode.io/v1",
-            kind="KnowledgeBase",
-            metadata=ObjectMeta(
-                name=kb_name,
-                namespace=data.namespace,
-            ),
-            spec=KnowledgeBaseSpec(**spec_kwargs),
-        )
-
-        # Build resource data
-        resource_data = kb_crd.model_dump()
-        if "status" not in resource_data or resource_data["status"] is None:
-            resource_data["status"] = {"state": "Available"}
-
-        # Create Kind record directly using the passed db session
-        db_resource = Kind(
+        return KnowledgeService._create_knowledge_base_internal(
+            db=db,
             user_id=user_id,
-            kind="KnowledgeBase",
-            name=kb_name,
+            kb_name=kb_name,
             namespace=data.namespace,
-            json=resource_data,
-            created_at=datetime.now(),
-            updated_at=datetime.now(),
+            display_name=data.name,
+            description=data.description or "",
+            kb_type=data.kb_type or "notebook",
+            retrieval_config=retrieval_config_dict,
+            summary_enabled=data.summary_enabled,
+            summary_model_ref=data.summary_model_ref,
         )
 
-        db.add(db_resource)
-        db.flush()  # Flush to get the ID without committing
+    @staticmethod
+    def create_organization_knowledge_base(
+        db: Session,
+        admin_user_id: int,
+        display_name: str = "公司知识库",
+        description: str = "公司级别的共享知识库，所有员工可访问",
+    ) -> Optional[int]:
+        """
+        Create the organization knowledge base if it doesn't exist.
 
-        return db_resource.id
+        This method is used during system initialization to ensure the company KB
+        is always available for all users.
+
+        Args:
+            db: Database session
+            admin_user_id: Admin user ID to use as the creator
+            display_name: Display name for the KB (default: "公司知识库")
+            description: Description for the KB
+
+        Returns:
+            Created KnowledgeBase ID if created, None if already exists
+        """
+        # Check if organization KB already exists
+        existing = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "KnowledgeBase",
+                Kind.namespace == "organization",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if existing:
+            return None
+
+        # Create organization KB using internal method
+        return KnowledgeService._create_knowledge_base_internal(
+            db=db,
+            user_id=admin_user_id,
+            kb_name="organization-knowledge-base",
+            namespace="organization",
+            display_name=display_name,
+            description=description,
+            kb_type="classic",
+            summary_enabled=False,
+        )
 
     @staticmethod
     def get_knowledge_base(
@@ -202,6 +313,8 @@ class KnowledgeService:
         Returns:
             Kind if found and accessible, None otherwise
         """
+        from app.services.knowledge.permission_service import can_access_knowledge_base
+
         kb = (
             db.query(Kind)
             .filter(
@@ -215,14 +328,9 @@ class KnowledgeService:
         if not kb:
             return None
 
-        # Check access permission
-        if kb.namespace == "default":
-            if kb.user_id != user_id:
-                return None
-        else:
-            role = get_effective_role_in_group(db, user_id, kb.namespace)
-            if role is None:
-                return None
+        # Use unified permission check that handles all KB types
+        if not can_access_knowledge_base(db, user_id, kb):
+            return None
 
         return kb
 
@@ -239,7 +347,7 @@ class KnowledgeService:
         Args:
             db: Database session
             user_id: Requesting user ID
-            scope: Resource scope (personal, group, all)
+            scope: Resource scope (personal, group, organization, all)
             group_name: Group name (required when scope is GROUP)
 
         Returns:
@@ -272,6 +380,20 @@ class KnowledgeService:
                 .filter(
                     Kind.kind == "KnowledgeBase",
                     Kind.namespace == group_name,
+                    Kind.is_active == True,
+                )
+                .order_by(Kind.updated_at.desc())
+                .all()
+            )
+
+        elif scope == ResourceScope.ORGANIZATION:
+            # Return all organization knowledge bases
+            # All authenticated users can access organization KBs
+            return (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "KnowledgeBase",
+                    Kind.namespace == "organization",
                     Kind.is_active == True,
                 )
                 .order_by(Kind.updated_at.desc())
@@ -331,18 +453,21 @@ class KnowledgeService:
         Raises:
             ValueError: If validation fails or permission denied
         """
+        from app.models.user import User
+        from app.services.knowledge.permission_service import can_manage_knowledge_base
+
         kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
         if not kb:
             return None
 
-        # Check permission for team knowledge base
-        if kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can update knowledge base in this group"
-                )
+        # Get user object for permission check
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return None
+
+        # Check management permission using unified permission service
+        if not can_manage_knowledge_base(db, user, kb):
+            raise ValueError("You don't have permission to update this knowledge base")
 
         # Get current spec
         kb_json = kb.json
@@ -433,18 +558,21 @@ class KnowledgeService:
         Raises:
             ValueError: If permission denied or knowledge base has documents
         """
+        from app.models.user import User
+        from app.services.knowledge.permission_service import can_manage_knowledge_base
+
         kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
         if not kb:
             return False
 
-        # Check permission for team knowledge base
-        if kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can delete knowledge base in this group"
-                )
+        # Get user object for permission check
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return False
+
+        # Check management permission using unified permission service
+        if not can_manage_knowledge_base(db, user, kb):
+            raise ValueError("You don't have permission to delete this knowledge base")
 
         # Check if knowledge base has documents - prevent deletion if documents exist
         document_count = KnowledgeService.get_document_count(db, knowledge_base_id)
@@ -453,6 +581,13 @@ class KnowledgeService:
                 f"Cannot delete knowledge base with {document_count} document(s). "
                 "Please delete all documents first."
             )
+
+        # Expire all pending permission requests for this knowledge base
+        from app.services.knowledge.permission_request_service import (
+            permission_request_service,
+        )
+
+        permission_request_service.expire_requests_for_deleted_kb(db, knowledge_base_id)
 
         # Physically delete the knowledge base
         db.delete(kb)
@@ -481,18 +616,23 @@ class KnowledgeService:
         Raises:
             ValueError: If validation fails or permission denied
         """
+        from app.models.user import User
+        from app.services.knowledge.permission_service import can_manage_knowledge_base
+
         kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
         if not kb:
             return None
 
-        # Check permission for team knowledge base
-        if kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can update knowledge base type in this group"
-                )
+        # Get user object for permission check
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return None
+
+        # Check management permission using unified permission service
+        if not can_manage_knowledge_base(db, user, kb):
+            raise ValueError(
+                "You don't have permission to update this knowledge base type"
+            )
 
         # Validate new_type
         if new_type not in ("notebook", "classic"):
@@ -638,18 +778,23 @@ class KnowledgeService:
         Raises:
             ValueError: If validation fails or permission denied
         """
+        from app.models.user import User
+        from app.services.knowledge.permission_service import can_write_knowledge_base
+
         kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
         if not kb:
             raise ValueError("Knowledge base not found or access denied")
 
-        # Check permission for team knowledge base
-        if kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can add documents to this knowledge base"
-                )
+        # Get user object for permission check
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise ValueError("User not found")
+
+        # Check write permission using unified permission service
+        if not can_write_knowledge_base(db, user, kb):
+            raise ValueError(
+                "You don't have permission to add documents to this knowledge base"
+            )
 
         # Check document limit for notebook mode knowledge base
         kb_spec = kb.json.get("spec", {})
@@ -769,22 +914,24 @@ class KnowledgeService:
         Raises:
             ValueError: If permission denied
         """
+        from app.models.user import User
+        from app.services.knowledge.permission_service import can_write_knowledge_base
+
         doc = KnowledgeService.get_document(db, document_id, user_id)
         if not doc:
             return None
 
-        # Check permission for team knowledge base
+        # Check write permission using unified permission service
         kb = (
             db.query(Kind)
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb and kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
+        if kb:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user and not can_write_knowledge_base(db, user, kb):
                 raise ValueError(
-                    "Only Owner or Maintainer can update documents in this knowledge base"
+                    "You don't have permission to update documents in this knowledge base"
                 )
 
         if data.name is not None:
@@ -848,22 +995,24 @@ class KnowledgeService:
                     future = executor.submit(asyncio.run, coro)
                     return future.result()
 
+        from app.models.user import User
+        from app.services.knowledge.permission_service import can_write_knowledge_base
+
         doc = KnowledgeService.get_document(db, document_id, user_id)
         if not doc:
             return DocumentDeleteResult(success=False, kb_id=None)
 
-        # Check permission for team knowledge base
+        # Check write permission using unified permission service
         kb = (
             db.query(Kind)
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb and kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
+        if kb:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user and not can_write_knowledge_base(db, user, kb):
                 raise ValueError(
-                    "Only Owner or Maintainer can delete documents from this knowledge base"
+                    "You don't have permission to delete documents from this knowledge base"
                 )
 
         # Store document_id (used as doc_ref in RAG), kind_id, and attachment_id before deletion for cleanup
@@ -1006,18 +1155,20 @@ class KnowledgeService:
                 "Only TEXT type documents or plain text files (txt, md) can be edited"
             )
 
-        # Check permission for team knowledge base
+        # Check write permission using unified permission service
+        from app.models.user import User
+        from app.services.knowledge.permission_service import can_write_knowledge_base
+
         kb = (
             db.query(Kind)
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb and kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
+        if kb:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user and not can_write_knowledge_base(db, user, kb):
                 raise ValueError(
-                    "Only Owner or Maintainer can edit documents in this knowledge base"
+                    "You don't have permission to edit documents in this knowledge base"
                 )
 
         # Update the extracted_text in SubtaskContext
@@ -1146,6 +1297,11 @@ class KnowledgeService:
         Returns:
             True if user has management permission
         """
+        from app.models.user import User
+        from app.services.knowledge.permission_service import (
+            can_manage_knowledge_base as can_manage_kb,
+        )
+
         kb = (
             db.query(Kind)
             .filter(
@@ -1159,12 +1315,13 @@ class KnowledgeService:
         if not kb:
             return False
 
-        if kb.namespace == "default":
-            return kb.user_id == user_id
-        else:
-            return check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            )
+        # Get user object for permission check
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return False
+
+        # Use unified permission service
+        return can_manage_kb(db, user, kb)
 
     # ============== Batch Document Operations ==============
 
