@@ -7,7 +7,7 @@
 /**
  * Subscription creation/edit form component.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Copy, Check, Terminal, Brain, ChevronDown, Eye, EyeOff } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
@@ -297,6 +297,7 @@ export function SubscriptionForm({
   const [modelsLoading, setModelsLoading] = useState(false)
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false)
   const [modelSearchValue, setModelSearchValue] = useState('')
+  const promptTemplateRef = useRef<HTMLTextAreaElement>(null)
 
   // Repository/Branch state for code-type teams
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
@@ -392,6 +393,16 @@ export function SubscriptionForm({
   // For rental subscriptions: model is REQUIRED (must select a model to use)
   // For non-rental: required only if team has no model configured
   const modelRequired = isRental ? !selectedModel : !teamHasModel && !selectedModel
+  const promptVariables = [
+    '{{date}}',
+    '{{time}}',
+    '{{datetime}}',
+    '{{subscription_name}}',
+    '{{webhook_data}}',
+  ]
+  const promptVariablesHint = t('prompt_variables_hint')
+  const promptVariablesLabel = promptVariablesHint.split(/[:：]/)[0]?.trim() || promptVariablesHint
+  const promptVariablesDelimiter = promptVariablesHint.includes('：') ? '：' : ':'
 
   // Handle repository change
   const handleRepoChange = useCallback((repo: GitRepoInfo | null) => {
@@ -402,6 +413,27 @@ export function SubscriptionForm({
   // Handle branch change
   const handleBranchChange = useCallback((branch: GitBranch | null) => {
     setSelectedBranch(branch)
+  }, [])
+
+  const handleInsertPromptVariable = useCallback((variable: string) => {
+    const textarea = promptTemplateRef.current
+    if (!textarea) {
+      setPromptTemplate(prevValue => `${prevValue}${variable}`)
+      return
+    }
+
+    const currentValue = textarea.value
+    const selectionStart = textarea.selectionStart ?? currentValue.length
+    const selectionEnd = textarea.selectionEnd ?? currentValue.length
+    const nextValue =
+      currentValue.slice(0, selectionStart) + variable + currentValue.slice(selectionEnd)
+
+    setPromptTemplate(nextValue)
+    requestAnimationFrame(() => {
+      textarea.focus()
+      const caretPosition = selectionStart + variable.length
+      textarea.setSelectionRange(caretPosition, caretPosition)
+    })
   }, [])
 
   // Handle team change - reset repo/branch when team changes
@@ -1208,13 +1240,31 @@ export function SubscriptionForm({
                   {t('prompt_template')} <span className="text-destructive">*</span>
                 </Label>
                 <Textarea
+                  ref={promptTemplateRef}
                   value={promptTemplate}
                   onChange={e => setPromptTemplate(e.target.value)}
                   placeholder={t('prompt_template_placeholder')}
                   rows={5}
                   className="resize-none"
                 />
-                <p className="text-xs text-text-muted">{t('prompt_variables_hint')}</p>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
+                  <span>
+                    {promptVariablesLabel}
+                    {promptVariablesDelimiter}
+                  </span>
+                  {promptVariables.map(variable => (
+                    <Button
+                      key={variable}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => handleInsertPromptVariable(variable)}
+                    >
+                      {variable}
+                    </Button>
+                  ))}
+                </div>
               </div>
             </div>
           )}
