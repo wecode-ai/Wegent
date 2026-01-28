@@ -655,6 +655,15 @@ class ChatContext:
             else:
                 backend_url = base_url
 
+        # Extract model_name and model_namespace from model_config for subscription
+        model_name = None
+        model_namespace = "default"
+        if self._request.model_config:
+            model_name = self._request.model_config.get("model_name")
+            model_namespace = self._request.model_config.get(
+                "model_namespace", "default"
+            )
+
         create_subscription_tool = CreateSubscriptionTool(
             user_id=self._request.user_id,
             team_id=self._request.team_id,
@@ -662,12 +671,17 @@ class ChatContext:
             team_namespace=self._request.bot_namespace or "default",
             timezone=self._request.timezone,
             backend_url=backend_url,
+            model_name=model_name,
+            model_namespace=model_namespace,
         )
         extra_tools.append(create_subscription_tool)
         logger.debug(
-            "[CHAT_CONTEXT] Added CreateSubscriptionTool: team_id=%d, team_name=%s, backend_url=%s",
+            "[CHAT_CONTEXT] Added CreateSubscriptionTool: team_id=%d, team_name=%s, "
+            "model_name=%s, model_namespace=%s, backend_url=%s",
             self._request.team_id,
             self._request.team_name,
+            model_name,
+            model_namespace,
             backend_url,
         )
 

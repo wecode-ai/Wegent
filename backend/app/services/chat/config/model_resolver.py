@@ -365,7 +365,9 @@ def get_model_config_for_bot(
             "api_key": "sk-xxx",
             "base_url": "https://api.openai.com/v1",
             "model_id": "gpt-4",
-            "model": "openai"  # or "claude"
+            "model": "openai",  # or "claude"
+            "model_name": "my-model",  # Model CRD name for subscription
+            "model_namespace": "default"  # Model CRD namespace for subscription
         }
 
     Raises:
@@ -373,6 +375,7 @@ def get_model_config_for_bot(
     """
     bot_crd = Bot.model_validate(bot.json)
     model_name = None
+    model_namespace = "default"
 
     # Priority 1: Force override from task
     if force_override and override_model_name:
@@ -385,15 +388,22 @@ def get_model_config_for_bot(
         spec = bot_json.get("spec", {})
         agent_config = spec.get("agent_config", {})
         bind_model = agent_config.get("bind_model")
+        bind_model_namespace = agent_config.get("bind_model_namespace", "default")
 
         if bind_model and isinstance(bind_model, str) and bind_model.strip():
             model_name = bind_model.strip()
-            logger.info(f"Using bot bound model: {model_name}")
+            model_namespace = bind_model_namespace
+            logger.info(
+                f"Using bot bound model: {model_name} (namespace: {model_namespace})"
+            )
 
         # Priority 3: Bot's modelRef (legacy)
         if not model_name and bot_crd.spec.modelRef:
             model_name = bot_crd.spec.modelRef.name
-            logger.info(f"Using bot modelRef: {model_name}")
+            model_namespace = bot_crd.spec.modelRef.namespace or "default"
+            logger.info(
+                f"Using bot modelRef: {model_name} (namespace: {model_namespace})"
+            )
 
         # Priority 4: Task-level override (fallback)
         if not model_name and override_model_name:
@@ -403,13 +413,20 @@ def get_model_config_for_bot(
     if not model_name:
         raise ValueError(f"Bot {bot.name} has no model configured")
 
-    # Find the model
-    model_spec = _find_model(db, model_name, user_id)
+    # Find the model and get its namespace
+    model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
     if not model_spec:
         raise ValueError(f"Model {model_name} not found")
 
-    # Extract and return configuration
-    return _extract_model_config(model_spec)
+    # Use the actual namespace from the found model
+    if model_kind:
+        model_namespace = model_kind.namespace or "default"
+
+    # Extract configuration and add model_name/model_namespace
+    config = _extract_model_config(model_spec)
+    config["model_name"] = model_name
+    config["model_namespace"] = model_namespace
+    return config
 
 
 def _find_model(db: Session, model_name: str, user_id: int) -> Optional[Dict[str, Any]]:
@@ -428,6 +445,28 @@ def _find_model(db: Session, model_name: str, user_id: int) -> Optional[Dict[str
     Returns:
         Model spec dictionary or None if not found
     """
+    model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
+    return model_spec
+
+
+def _find_model_with_namespace(
+    db: Session, model_name: str, user_id: int
+) -> tuple[Optional[Kind], Optional[Dict[str, Any]]]:
+    """
+    Find model by name and return both the Kind object and spec.
+
+    Search order:
+    1. User's private models (kinds table)
+    2. Public models (kinds table with user_id=0)
+
+    Args:
+        db: Database session
+        model_name: Model name to find
+        user_id: User ID for private model lookup
+
+    Returns:
+        Tuple of (Kind object, Model spec dictionary) or (None, None) if not found
+    """
     # Search user's private models first
     user_model = (
         db.query(Kind)
@@ -441,8 +480,10 @@ def _find_model(db: Session, model_name: str, user_id: int) -> Optional[Dict[str
     )
 
     if user_model and user_model.json:
-        logger.info(f"Found model '{model_name}' in user's private models")
-        return user_model.json.get("spec", {})
+        logger.info(
+            f"Found model '{model_name}' in user's private models (namespace: {user_model.namespace})"
+        )
+        return user_model, user_model.json.get("spec", {})
 
     # Search public models
     public_model = (
@@ -458,11 +499,13 @@ def _find_model(db: Session, model_name: str, user_id: int) -> Optional[Dict[str
     )
 
     if public_model and public_model.json:
-        logger.info(f"Found model '{model_name}' in public models")
-        return public_model.json.get("spec", {})
+        logger.info(
+            f"Found model '{model_name}' in public models (namespace: {public_model.namespace})"
+        )
+        return public_model, public_model.json.get("spec", {})
 
     logger.warning(f"Model '{model_name}' not found in any source")
-    return None
+    return None, None
 
 
 def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:

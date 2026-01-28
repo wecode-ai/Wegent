@@ -330,6 +330,37 @@ class TestCreateSubscriptionToolTriggerConfig:
 
         # Assert
         assert config["execute_at"] == "2025-01-20T09:00:00"
+        # Verify timezone is included for proper UTC conversion
+        assert config["timezone"] == "Asia/Shanghai"
+
+    def test_build_one_time_trigger_config_includes_timezone(self):
+        """Test that one-time trigger config includes user timezone for UTC conversion.
+
+        This is critical for correct time handling: when a user in Asia/Shanghai
+        sets execute_at='2025-01-20T09:00:00', the backend needs to know this is
+        Shanghai time (UTC+8) to correctly convert it to UTC (01:00:00).
+        """
+        # Arrange - Create tool with different timezone
+        tool_tokyo = CreateSubscriptionTool(
+            user_id=1,
+            team_id=10,
+            team_name="test-team",
+            team_namespace="default",
+            timezone="Asia/Tokyo",
+        )
+
+        # Act
+        config = tool_tokyo._build_trigger_config(
+            trigger_type="one_time",
+            cron_expression=None,
+            interval_value=None,
+            interval_unit=None,
+            execute_at="2025-01-20T09:00:00",
+        )
+
+        # Assert
+        assert config["execute_at"] == "2025-01-20T09:00:00"
+        assert config["timezone"] == "Asia/Tokyo"
 
 
 class TestCreateSubscriptionToolNameGeneration:

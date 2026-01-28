@@ -117,7 +117,7 @@ class CreateSubscriptionTool(BaseTool):
     name: str = "create_subscription"
     display_name: str = "创建订阅任务"
     description: str = (
-        "Create scheduled or periodic subscription tasks. Supports cron expressions, "
+        "Create scheduled or periodic tasks. Supports cron expressions, "
         "fixed intervals, and one-time executions. Use this tool when the user wants to "
         "set up automated recurring tasks or scheduled one-time tasks.\n\n"
         "Guidelines:\n"
@@ -134,6 +134,10 @@ class CreateSubscriptionTool(BaseTool):
     team_name: str  # Agent name
     team_namespace: str = "default"  # Agent namespace
     timezone: str = "Asia/Shanghai"  # User timezone (from request context)
+
+    # Model configuration for subscription (use current request's model)
+    model_name: Optional[str] = None  # Model CRD name
+    model_namespace: str = "default"  # Model CRD namespace
 
     # Backend API configuration (HTTP mode)
     backend_url: Optional[str] = None
@@ -311,6 +315,7 @@ class CreateSubscriptionTool(BaseTool):
         elif trigger_type == "one_time":
             return {
                 "execute_at": execute_at,
+                "timezone": self.timezone,
             }
         return {}
 
@@ -349,6 +354,19 @@ class CreateSubscriptionTool(BaseTool):
             return f"一次性执行于 {execute_at}"
         return ""
 
+    def _build_model_ref(self) -> Optional[dict[str, str]]:
+        """Build model_ref dict from model_name and model_namespace.
+
+        Returns:
+            Dict with 'name' and 'namespace' if model_name is set, None otherwise
+        """
+        if self.model_name:
+            return {
+                "name": self.model_name,
+                "namespace": self.model_namespace,
+            }
+        return None
+
     async def _create_via_backend(
         self,
         name: str,
@@ -367,9 +385,13 @@ class CreateSubscriptionTool(BaseTool):
         from app.schemas.subscription import SubscriptionCreate, SubscriptionTaskType
         from app.services.subscription.service import subscription_service
 
+        # Build model_ref from current request's model
+        model_ref = self._build_model_ref()
+
         logger.info(
             f"[CreateSubscriptionTool] Creating subscription via backend: "
-            f"name={name}, team_id={self.team_id}, user_id={self.user_id}"
+            f"name={name}, team_id={self.team_id}, user_id={self.user_id}, "
+            f"model_ref={model_ref}"
         )
 
         db = SessionLocal()
@@ -389,6 +411,7 @@ class CreateSubscriptionTool(BaseTool):
                 retry_count=retry_count,
                 timeout_seconds=timeout_seconds,
                 enabled=True,
+                model_ref=model_ref,
             )
 
             result = subscription_service.create_subscription(
@@ -448,9 +471,13 @@ class CreateSubscriptionTool(BaseTool):
                 ensure_ascii=False,
             )
 
+        # Build model_ref from current request's model
+        model_ref = self._build_model_ref()
+
         logger.info(
             f"[CreateSubscriptionTool] Creating subscription via HTTP: "
-            f"name={name}, team_id={self.team_id}, backend_url={self.backend_url}"
+            f"name={name}, team_id={self.team_id}, backend_url={self.backend_url}, "
+            f"model_ref={model_ref}"
         )
 
         try:
@@ -469,6 +496,7 @@ class CreateSubscriptionTool(BaseTool):
                 "retry_count": retry_count,
                 "timeout_seconds": timeout_seconds,
                 "enabled": True,
+                "model_ref": model_ref,
             }
 
             async with httpx.AsyncClient(timeout=30.0) as client:
