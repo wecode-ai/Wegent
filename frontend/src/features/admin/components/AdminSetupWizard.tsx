@@ -158,7 +158,14 @@ const AdminSetupWizard: React.FC<AdminSetupWizardProps> = ({ onComplete }) => {
 
   return (
     <>
-      <Dialog open={open} onOpenChange={() => setIsSkipDialogOpen(true)}>
+      <Dialog
+        open={open}
+        onOpenChange={nextOpen => {
+          if (!nextOpen && !completing) {
+            setIsSkipDialogOpen(true)
+          }
+        }}
+      >
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col bg-surface">
           <DialogHeader className="text-center pb-2">
             <div className="flex justify-center mb-4">

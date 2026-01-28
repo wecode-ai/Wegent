@@ -262,6 +262,12 @@ const SetupModelStep: React.FC = () => {
     }
   }
 
+  // Normalize provider type for API calls
+  const normalizeProviderType = (value: string): string => {
+    if (value === 'openai-responses') return 'openai'
+    return value
+  }
+
   const handleFetchModels = async () => {
     if (!apiKey.trim()) {
       toast({
@@ -276,10 +282,12 @@ const SetupModelStep: React.FC = () => {
       return
     }
 
+    const normalizedProvider = normalizeProviderType(providerType)
+
     setFetchingModels(true)
     try {
       const result = await modelApis.fetchAvailableModels({
-        provider_type: providerType as 'openai' | 'anthropic' | 'gemini' | 'custom',
+        provider_type: normalizedProvider as 'openai' | 'anthropic' | 'gemini' | 'custom',
         api_key: apiKey,
         base_url: baseUrl || undefined,
         custom_headers: Object.keys(parsedHeaders).length > 0 ? parsedHeaders : undefined,
@@ -323,10 +331,22 @@ const SetupModelStep: React.FC = () => {
       return
     }
 
+    const normalizedProvider = normalizeProviderType(providerType)
+
+    // Check if provider is supported for test connection
+    if (!['openai', 'anthropic', 'gemini'].includes(normalizedProvider)) {
+      toast({
+        variant: 'destructive',
+        title: t('common:models.test_failed'),
+        description: 'Test connection is not supported for this provider',
+      })
+      return
+    }
+
     setTesting(true)
     try {
       const result = await modelApis.testConnection({
-        provider_type: providerType as 'openai' | 'anthropic' | 'gemini',
+        provider_type: normalizedProvider as 'openai' | 'anthropic' | 'gemini',
         model_id: finalModelId,
         api_key: apiKey,
         base_url: baseUrl || undefined,
