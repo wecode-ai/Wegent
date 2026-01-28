@@ -1647,10 +1647,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           // Reload skills list when skills are changed
           const fetchSkills = async () => {
             try {
-              const skillsData = await fetchUnifiedSkillsList({
-                scope: scope,
-                groupName: groupName,
-              })
+              // For public scope, use fetchPublicSkillsList; otherwise use fetchUnifiedSkillsList
+              const skillsData =
+                scope === 'public'
+                  ? await fetchPublicSkillsList()
+                  : await fetchUnifiedSkillsList({
+                      scope: scope,
+                      groupName: groupName,
+                    })
               setAllSkills(skillsData)
               // Filter skills based on current shell type
               setAvailableSkills(filterSkillsByShellType(skillsData))
