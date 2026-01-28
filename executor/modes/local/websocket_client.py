@@ -153,12 +153,13 @@ class WebSocketClient:
         try:
             logger.info(f"Connecting to WebSocket: {self.backend_url}")
 
-            # Connect with authentication
+            # Connect with authentication to the /local-executor namespace
             await self.sio.connect(
                 self.backend_url,
                 auth={"token": self.auth_token},
                 transports=["websocket"],
                 wait_timeout=wait_timeout,
+                namespaces=["/local-executor"],
             )
 
             return self._connected
@@ -197,9 +198,11 @@ class WebSocketClient:
 
         try:
             if callback:
-                await self.sio.emit(event, data, callback=callback)
+                await self.sio.emit(
+                    event, data, namespace="/local-executor", callback=callback
+                )
             else:
-                await self.sio.emit(event, data)
+                await self.sio.emit(event, data, namespace="/local-executor")
             logger.debug(f"Emitted event: {event}")
         except Exception as e:
             logger.error(f"Failed to emit event {event}: {e}")
@@ -213,7 +216,7 @@ class WebSocketClient:
             handler: Async function to handle the event.
         """
         self._handlers[event] = handler
-        self.sio.on(event, handler)
+        self.sio.on(event, handler, namespace="/local-executor")
         logger.debug(f"Registered handler for event: {event}")
 
     def off(self, event: str) -> None:
