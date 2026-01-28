@@ -38,3 +38,21 @@ CUSTOM_INSTRUCTION_FILES = os.getenv(
 # All OTEL_* environment variables are read from there
 
 CUSTOM_CONFIG = load_custom_config()
+
+# ============ Local Mode Configuration ============
+# Deployment mode: 'local' for local deployment via WebSocket, empty/other for Docker mode
+EXECUTOR_MODE = os.environ.get("EXECUTOR_MODE", "")
+
+# Local mode WebSocket connection settings
+WEGENT_AUTH_TOKEN = os.environ.get("WEGENT_AUTH_TOKEN", "")  # WebSocket auth token
+WEGENT_BACKEND_URL = os.environ.get(
+    "WEGENT_BACKEND_URL", ""
+)  # Backend WebSocket URL (e.g., wss://api.example.com)
+
+# Local mode heartbeat configuration
+LOCAL_HEARTBEAT_INTERVAL = int(os.environ.get("LOCAL_HEARTBEAT_INTERVAL", "30"))
+LOCAL_HEARTBEAT_TIMEOUT = int(os.environ.get("LOCAL_HEARTBEAT_TIMEOUT", "90"))
+
+# Local mode reconnection configuration
+LOCAL_RECONNECT_DELAY = int(os.environ.get("LOCAL_RECONNECT_DELAY", "1"))
+LOCAL_RECONNECT_MAX_DELAY = int(os.environ.get("LOCAL_RECONNECT_MAX_DELAY", "30"))
