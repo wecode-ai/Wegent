@@ -26,6 +26,8 @@ from app.models.kind import Kind
 from app.models.system_config import SystemConfig
 from app.models.user import User
 from app.schemas.admin import (
+    AdminSetupCompleteResponse,
+    AdminSetupStatusResponse,
     AdminUserCreate,
     AdminUserListResponse,
     AdminUserResponse,
@@ -1933,4 +1935,76 @@ async def get_flow_monitor_errors(
         status_filter=status_filter,
         db=db,
         current_user=current_user,
+    )
+
+
+# ==================== Admin Setup Wizard Endpoints ====================
+
+# Config key for admin setup completion status
+ADMIN_SETUP_CONFIG_KEY = "admin_setup_completed"
+
+
+@router.get("/setup-status", response_model=AdminSetupStatusResponse)
+async def get_admin_setup_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Check if admin setup wizard has been completed.
+
+    Returns:
+        AdminSetupStatusResponse: Contains a boolean 'completed' field
+    """
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == ADMIN_SETUP_CONFIG_KEY)
+        .first()
+    )
+
+    if config:
+        config_value = config.config_value
+        completed = config_value.get("completed", False) if config_value else False
+    else:
+        completed = False
+
+    return AdminSetupStatusResponse(completed=completed)
+
+
+@router.post("/setup-complete", response_model=AdminSetupCompleteResponse)
+async def mark_admin_setup_complete(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Mark admin setup wizard as completed.
+    This will prevent the wizard from showing on subsequent admin logins.
+
+    Returns:
+        AdminSetupCompleteResponse: Contains success status and message
+    """
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == ADMIN_SETUP_CONFIG_KEY)
+        .first()
+    )
+
+    if config:
+        # Update existing config
+        config.config_value = {"completed": True}
+        config.updated_by = current_user.id
+        config.version += 1
+    else:
+        # Create new config
+        config = SystemConfig(
+            config_key=ADMIN_SETUP_CONFIG_KEY,
+            updated_by=current_user.id,
+        )
+        config.config_value = {"completed": True}
+        db.add(config)
+
+    db.commit()
+
+    return AdminSetupCompleteResponse(
+        success=True,
+        message="Admin setup wizard marked as completed",
     )

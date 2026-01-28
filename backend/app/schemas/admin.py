@@ -514,3 +514,17 @@ class PublicShellListResponse(BaseModel):
 
     total: int
     items: List[PublicShellResponse]
+
+
+# Admin Setup Wizard Schemas
+class AdminSetupStatusResponse(BaseModel):
+    """Admin setup status response model"""
+
+    completed: bool = Field(..., description="Whether admin setup has been completed")
+
+
+class AdminSetupCompleteResponse(BaseModel):
+    """Admin setup complete response model"""
+
+    success: bool = Field(..., description="Whether the operation was successful")
+    message: str = Field(..., description="Response message")
