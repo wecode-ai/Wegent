@@ -22,7 +22,6 @@ import { adminApis, AdminPublicBot, AdminPublicShell, AdminPublicModel } from '.
 export function transformPublicBotToBot(publicBot: AdminPublicBot): Bot {
   const json = publicBot.json as Record<string, unknown>
   const spec = (json?.spec as Record<string, unknown>) || {}
-  const metadata = (json?.metadata as Record<string, unknown>) || {}
 
   // Extract agent_config from spec
   const agentConfig = (spec?.agentConfig as Record<string, unknown>) || {}
@@ -53,7 +52,6 @@ export function transformPublicBotToBot(publicBot: AdminPublicBot): Bot {
     is_active: publicBot.is_active,
     created_at: publicBot.created_at,
     updated_at: publicBot.updated_at,
-    display_name: (metadata?.displayName as string) || publicBot.display_name || undefined,
   }
 }
 
