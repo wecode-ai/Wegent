@@ -38,6 +38,14 @@ class ClientEvents:
     # Generic Skill Events
     SKILL_RESPONSE = "skill:response"  # Client -> Server: skill response
 
+    # Device events (from wecode-cli)
+    DEVICE_REGISTER = "device:register"
+    DEVICE_HEARTBEAT = "device:heartbeat"
+    DEVICE_STREAM_START = "device:stream_start"
+    DEVICE_STREAM_CHUNK = "device:stream_chunk"
+    DEVICE_STREAM_DONE = "device:stream_done"
+    DEVICE_STREAM_ERROR = "device:stream_error"
+
 
 class ServerEvents:
     """Server -> Client event names."""
@@ -84,6 +92,13 @@ class ServerEvents:
     PET_EXPERIENCE_GAINED = "pet:experience_gained"
     PET_STAGE_EVOLVED = "pet:stage_evolved"
     PET_TRAITS_UPDATED = "pet:traits_updated"
+
+    # Device events (to browser and CLI)
+    DEVICE_CONNECTED = "device:connected"
+    DEVICE_DISCONNECTED = "device:disconnected"
+    DEVICE_STATUS_CHANGED = "device:status_changed"
+    DEVICE_MESSAGE = "device:message"  # Server -> CLI: send user message
+    DEVICE_CANCEL = "device:cancel"  # Server -> CLI: cancel operation
 
 
 # ============================================================
@@ -553,3 +568,83 @@ class AuthErrorPayload(BaseModel):
     code: Literal["TOKEN_EXPIRED", "INVALID_TOKEN"] = Field(
         ..., description="Error code for identifying the type of auth error"
     )
+
+
+# ============================================================
+# Device Event Payloads
+# ============================================================
+
+
+class DeviceRegisterPayload(BaseModel):
+    """Payload for device:register event (CLI -> Server)."""
+
+    device_id: str = Field(..., description="Unique device ID (UUID)")
+    name: str = Field(..., description="Device name")
+    device_type: str = Field("wecode-cli", description="Device type")
+    workspace_path: Optional[str] = Field(
+        None, description="Current workspace path on device"
+    )
+    metadata: Optional[Dict[str, Any]] = Field(
+        None, description="Device metadata (version, OS, etc.)"
+    )
+
+
+class DeviceHeartbeatPayload(BaseModel):
+    """Payload for device:heartbeat event (CLI -> Server)."""
+
+    device_id: str = Field(..., description="Device ID")
+    workspace_path: Optional[str] = Field(None, description="Current workspace path")
+    status: str = Field("online", description="Device status")
+
+
+class DeviceMessagePayload(BaseModel):
+    """Payload for device:message event (Server -> CLI)."""
+
+    request_id: str = Field(..., description="Unique request ID for correlation")
+    message: str = Field(..., description="User message content")
+    conversation_id: Optional[str] = Field(
+        None, description="Conversation ID for context"
+    )
+
+
+class DeviceStreamStartPayload(BaseModel):
+    """Payload for device:stream_start event (CLI -> Server)."""
+
+    device_id: str = Field(..., description="Device ID")
+    request_id: str = Field(..., description="Request ID for correlation")
+
+
+class DeviceStreamChunkPayload(BaseModel):
+    """Payload for device:stream_chunk event (CLI -> Server)."""
+
+    device_id: str = Field(..., description="Device ID")
+    request_id: str = Field(..., description="Request ID for correlation")
+    content: str = Field(..., description="Content chunk")
+    offset: int = Field(..., description="Content offset")
+
+
+class DeviceStreamDonePayload(BaseModel):
+    """Payload for device:stream_done event (CLI -> Server)."""
+
+    device_id: str = Field(..., description="Device ID")
+    request_id: str = Field(..., description="Request ID for correlation")
+    result: Optional[Dict[str, Any]] = Field(None, description="Final result data")
+
+
+class DeviceStreamErrorPayload(BaseModel):
+    """Payload for device:stream_error event (CLI -> Server)."""
+
+    device_id: str = Field(..., description="Device ID")
+    request_id: str = Field(..., description="Request ID for correlation")
+    error: str = Field(..., description="Error message")
+
+
+class DeviceStatusPayload(BaseModel):
+    """Payload for device status events (Server -> Browser)."""
+
+    device_id: str = Field(..., description="Device ID")
+    name: str = Field(..., description="Device name")
+    device_type: str = Field(..., description="Device type")
+    status: str = Field(..., description="Device status")
+    workspace_path: Optional[str] = Field(None, description="Current workspace path")
+    last_seen_at: Optional[str] = Field(None, description="Last seen timestamp")

@@ -9,6 +9,7 @@ Note: Import order matters for SQLAlchemy relationship resolution.
 Models with relationships should be imported after their related models.
 """
 from app.models.api_key import APIKey
+from app.models.device import Device
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.namespace import Namespace
@@ -35,6 +36,7 @@ from app.models.user import User
 __all__ = [
     "User",
     "Kind",
+    "Device",
     "TaskResource",
     "Subtask",
     "SubtaskContext",

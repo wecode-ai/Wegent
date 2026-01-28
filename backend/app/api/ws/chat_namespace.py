@@ -101,6 +101,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             "task:leave": "on_task_leave",
             "history:sync": "on_history_sync",
             "skill:response": "on_skill_response",
+            "device:send_message": "on_device_send_message",
         }
 
     async def _check_token_expiry(self, sid: str) -> bool:
@@ -1422,6 +1423,46 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         logger.info(f"[WS] skill:response resolved request {request_id}")
         return {"success": True}
+
+    # ============================================================
+    # Device Message Events
+    # ============================================================
+
+    async def on_device_send_message(self, sid: str, data: dict) -> dict:
+        """
+        Send a message to a connected device (wecode-cli).
+
+        Args:
+            sid: Browser Socket ID
+            data: {device_id: str, message: str, conversation_id?: str}
+
+        Returns:
+            {"success": true, "request_id": str} or {"error": "..."}
+        """
+        from app.api.ws.device_namespace import send_message_to_device
+
+        device_id = data.get("device_id")
+        message = data.get("message")
+        conversation_id = data.get("conversation_id")
+
+        if not device_id or not message:
+            return {"error": "Missing device_id or message"}
+
+        logger.info(
+            f"[WS] device:send_message device={device_id} msg={message[:50]}..."
+        )
+
+        request_id = await send_message_to_device(
+            device_id=device_id,
+            message=message,
+            browser_sid=sid,
+            conversation_id=conversation_id,
+        )
+
+        if not request_id:
+            return {"error": "Device not found or offline"}
+
+        return {"success": True, "request_id": request_id}
 
 
 def register_chat_namespace(sio: socketio.AsyncServer):

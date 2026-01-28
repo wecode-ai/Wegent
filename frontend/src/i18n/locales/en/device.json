@@ -1,0 +1,37 @@
+{
+  "title": "Devices",
+  "description": "Connect to your local Claude Code instances",
+  "no_devices": "No devices connected",
+  "no_devices_hint": "Run 'wecode device connect' on your local machine to connect",
+  "status": {
+    "online": "Online",
+    "offline": "Offline",
+    "busy": "Busy"
+  },
+  "connect_instructions": "To connect your local wecode-cli:",
+  "connect_command": "wecode start",
+  "workspace": "Workspace",
+  "last_seen": "Last seen",
+  "device_type": "Type",
+  "actions": {
+    "disconnect": "Disconnect",
+    "chat": "Start Chat",
+    "refresh": "Refresh"
+  },
+  "chat": {
+    "title": "Device Chat",
+    "placeholder": "Type a message to send to your local Claude Code...",
+    "input_placeholder": "Type a message...",
+    "send": "Send",
+    "cancel": "Cancel",
+    "thinking": "Thinking...",
+    "no_device": "No device selected",
+    "back_to_devices": "Back to Devices",
+    "device_offline": "Device is offline",
+    "device_offline_hint": "Please make sure your wecode-cli is running and connected",
+    "device_not_found": "Device not found",
+    "device_not_found_hint": "The device may have been removed or is no longer available",
+    "disconnected": "Disconnected",
+    "start_conversation": "Send a message to start chatting with your local Claude Code"
+  }
+}

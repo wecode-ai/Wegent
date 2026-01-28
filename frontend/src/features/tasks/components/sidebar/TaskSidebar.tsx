@@ -22,6 +22,7 @@ import {
   ChevronDown,
   ChevronUp,
   Settings2,
+  Monitor,
 } from 'lucide-react'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
@@ -43,7 +44,7 @@ import {
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
   setIsMobileSidebarOpen: (open: boolean) => void
-  pageType?: 'chat' | 'code' | 'flow' | 'knowledge'
+  pageType?: 'chat' | 'code' | 'flow' | 'knowledge' | 'device'
   isCollapsed?: boolean
   onToggleCollapsed?: () => void
   // Search dialog control from parent (for global shortcut support)
@@ -134,6 +135,12 @@ export default function TaskSidebar({
       icon: BookOpen,
       path: paths.wiki.getHref(),
       isActive: pageType === 'knowledge',
+    },
+    {
+      label: t('common:navigation.device'),
+      icon: Monitor,
+      path: paths.device.getHref(),
+      isActive: pageType === 'device',
     },
   ]
 

@@ -1,0 +1,37 @@
+{
+  "title": "设备",
+  "description": "连接到本地 Claude Code 实例",
+  "no_devices": "暂无设备连接",
+  "no_devices_hint": "在本地机器运行 'wecode start' 连接到 Wegent",
+  "status": {
+    "online": "在线",
+    "offline": "离线",
+    "busy": "忙碌"
+  },
+  "connect_instructions": "连接本地 wecode-cli：",
+  "connect_command": "wecode start",
+  "workspace": "工作目录",
+  "last_seen": "最后在线",
+  "device_type": "类型",
+  "actions": {
+    "disconnect": "断开连接",
+    "chat": "开始对话",
+    "refresh": "刷新"
+  },
+  "chat": {
+    "title": "设备对话",
+    "placeholder": "输入消息发送到本地 Claude Code...",
+    "input_placeholder": "输入消息...",
+    "send": "发送",
+    "cancel": "取消",
+    "thinking": "思考中...",
+    "no_device": "未选择设备",
+    "back_to_devices": "返回设备列表",
+    "device_offline": "设备已离线",
+    "device_offline_hint": "请确保您的 wecode-cli 正在运行并已连接",
+    "device_not_found": "设备未找到",
+    "device_not_found_hint": "该设备可能已被删除或不可用",
+    "disconnected": "已断开",
+    "start_conversation": "发送消息开始与本地 Claude Code 对话"
+  }
+}

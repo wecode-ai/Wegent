@@ -19,5 +19,8 @@ from shared.models.db import User
 User.shared_tasks = relationship(
     "SharedTask", foreign_keys="[SharedTask.user_id]", back_populates="user"
 )
+User.devices = relationship(
+    "Device", foreign_keys="[Device.user_id]", back_populates="user"
+)
 
 __all__ = ["User"]

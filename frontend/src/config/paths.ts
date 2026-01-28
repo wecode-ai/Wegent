@@ -35,6 +35,9 @@ export const paths = {
   feed: {
     getHref: () => '/feed',
   },
+  device: {
+    getHref: () => '/device',
+  },
   feedSubscriptions: {
     getHref: () => '/feed/subscriptions',
   },
