@@ -556,7 +556,12 @@ class DocumentParser:
         )
 
     def _parse_pdf(self, binary_data: bytes) -> str:
-        """Parse PDF file and extract text."""
+        """Parse PDF file and extract text.
+
+        First attempts to extract text using PyPDF2. If the extracted text
+        is empty or too short (likely a scanned/image-based PDF), falls back
+        to OCR using pytesseract.
+        """
         try:
             from PyPDF2 import PdfReader
 
@@ -576,7 +581,25 @@ class DocumentParser:
                 if page_text:
                     text_parts.append(page_text)
 
-            return "\n\n".join(text_parts)
+            extracted_text = "\n\n".join(text_parts)
+
+            # Check if extracted text is meaningful (not just page numbers or whitespace)
+            # If text is too short or mostly whitespace/numbers, try OCR
+            meaningful_text = "".join(
+                c
+                for c in extracted_text
+                if c.isalpha() or c in "，。、；：" "''（）【】"
+            )
+            if len(meaningful_text) < 100:
+                logger.info(
+                    f"PyPDF2 extracted only {len(meaningful_text)} meaningful characters, "
+                    "attempting OCR for scanned PDF"
+                )
+                ocr_text = self._parse_pdf_with_ocr(binary_data)
+                if ocr_text and len(ocr_text.strip()) > len(extracted_text.strip()):
+                    return ocr_text
+
+            return extracted_text
 
         except DocumentParseError:
             raise
@@ -586,6 +609,80 @@ class DocumentParser:
                 f"Failed to parse PDF: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
             ) from e
+
+    def _parse_pdf_with_ocr(self, binary_data: bytes) -> Optional[str]:
+        """Parse PDF using OCR for scanned/image-based PDFs.
+
+        Converts PDF pages to images and uses pytesseract for text extraction.
+        Supports both Chinese (simplified) and English text.
+
+        Args:
+            binary_data: PDF file binary data
+
+        Returns:
+            Extracted text from OCR, or None if OCR fails
+        """
+        try:
+            import pytesseract
+            from pdf2image import convert_from_bytes
+
+            # Convert PDF to images
+            # Use lower DPI for faster processing, 150 is usually sufficient for OCR
+            images = convert_from_bytes(binary_data, dpi=150)
+
+            if not images:
+                logger.warning("No images extracted from PDF for OCR")
+                return None
+
+            logger.info(f"Converting {len(images)} PDF pages to images for OCR")
+
+            # Check available languages
+            available_langs = pytesseract.get_languages()
+            # Prefer Chinese + English for better results with mixed content
+            if "chi_sim" in available_langs:
+                lang = "chi_sim+eng"
+            elif "eng" in available_langs:
+                lang = "eng"
+            else:
+                lang = available_langs[0] if available_langs else "eng"
+
+            logger.info(f"Using OCR language: {lang}")
+
+            text_parts = []
+            for i, image in enumerate(images):
+                try:
+                    # Use PSM 3 (fully automatic page segmentation) for document pages
+                    page_text = pytesseract.image_to_string(
+                        image, lang=lang, config="--psm 3"
+                    )
+                    if page_text and page_text.strip():
+                        text_parts.append(page_text.strip())
+                        logger.debug(
+                            f"OCR extracted {len(page_text)} chars from page {i + 1}"
+                        )
+                except Exception as e:
+                    logger.warning(f"OCR failed for page {i + 1}: {e}")
+                    continue
+
+            if text_parts:
+                result = "\n\n".join(text_parts)
+                logger.info(
+                    f"OCR successfully extracted {len(result)} characters "
+                    f"from {len(text_parts)} pages"
+                )
+                return result
+
+            return None
+
+        except ImportError as e:
+            logger.warning(
+                f"OCR dependencies not available: {e}. "
+                "Install pytesseract and pdf2image for OCR support."
+            )
+            return None
+        except Exception as e:
+            logger.warning(f"OCR processing failed: {e}")
+            return None
 
     def _parse_word(self, binary_data: bytes, extension: str) -> str:
         """Parse Word document and extract text."""
@@ -833,6 +930,7 @@ class DocumentParser:
         Parse PDF file with smart page-based truncation.
 
         Keeps first N pages + last M pages, omits middle pages.
+        Falls back to OCR if PyPDF2 extracts insufficient text.
         """
         try:
             from PyPDF2 import PdfReader
@@ -853,6 +951,26 @@ class DocumentParser:
                 if page_text:
                     pages_text.append(page_text)
 
+            # Check if extracted text is meaningful
+            all_text = "\n".join(pages_text)
+            meaningful_text = "".join(
+                c for c in all_text if c.isalpha() or c in "，。、；：" "''（）【】"
+            )
+
+            # If text is too short, try OCR
+            if len(meaningful_text) < 100:
+                logger.info(
+                    f"PyPDF2 extracted only {len(meaningful_text)} meaningful characters, "
+                    "attempting OCR for scanned PDF (smart mode)"
+                )
+                ocr_pages = self._parse_pdf_with_ocr_pages(binary_data)
+                if ocr_pages and len(ocr_pages) > 0:
+                    # Check if OCR result is better
+                    ocr_all_text = "\n".join(ocr_pages)
+                    if len(ocr_all_text.strip()) > len(all_text.strip()):
+                        pages_text = ocr_pages
+                        logger.info(f"Using OCR result with {len(ocr_pages)} pages")
+
             # Apply smart truncation
             text, smart_info = self.truncation_manager.truncate_pdf(
                 pages_text, max_length
@@ -872,6 +990,79 @@ class DocumentParser:
                 f"Failed to parse PDF: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
             ) from e
+
+    def _parse_pdf_with_ocr_pages(self, binary_data: bytes) -> Optional[List[str]]:
+        """Parse PDF using OCR and return text per page.
+
+        Similar to _parse_pdf_with_ocr but returns a list of page texts
+        for smart truncation support.
+
+        Args:
+            binary_data: PDF file binary data
+
+        Returns:
+            List of extracted text per page, or None if OCR fails
+        """
+        try:
+            import pytesseract
+            from pdf2image import convert_from_bytes
+
+            # Convert PDF to images
+            images = convert_from_bytes(binary_data, dpi=150)
+
+            if not images:
+                logger.warning("No images extracted from PDF for OCR")
+                return None
+
+            logger.info(f"Converting {len(images)} PDF pages to images for OCR")
+
+            # Check available languages
+            available_langs = pytesseract.get_languages()
+            if "chi_sim" in available_langs:
+                lang = "chi_sim+eng"
+            elif "eng" in available_langs:
+                lang = "eng"
+            else:
+                lang = available_langs[0] if available_langs else "eng"
+
+            logger.info(f"Using OCR language: {lang}")
+
+            pages_text = []
+            for i, image in enumerate(images):
+                try:
+                    page_text = pytesseract.image_to_string(
+                        image, lang=lang, config="--psm 3"
+                    )
+                    # Always append, even if empty, to maintain page count
+                    pages_text.append(page_text.strip() if page_text else "")
+                    if page_text and page_text.strip():
+                        logger.debug(
+                            f"OCR extracted {len(page_text)} chars from page {i + 1}"
+                        )
+                except Exception as e:
+                    logger.warning(f"OCR failed for page {i + 1}: {e}")
+                    pages_text.append("")  # Maintain page count
+
+            # Filter out empty pages for the result
+            non_empty_pages = [p for p in pages_text if p.strip()]
+            if non_empty_pages:
+                logger.info(
+                    f"OCR successfully extracted text from {len(non_empty_pages)} "
+                    f"of {len(pages_text)} pages"
+                )
+                return pages_text
+
+            return None
+
+        except ImportError as e:
+            logger.warning(
+                f"OCR dependencies not available: {e}. "
+                "Install pytesseract and pdf2image for OCR support."
+            )
+            return None
+        except Exception as e:
+            logger.warning(f"OCR processing failed: {e}")
+            return None
 
     def _parse_word_smart(
         self, binary_data: bytes, extension: str, max_length: int
