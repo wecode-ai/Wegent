@@ -1256,9 +1256,12 @@ export function SubscriptionForm({
                     <Button
                       key={variable}
                       type="button"
-                      variant="outline"
                       size="sm"
-                      className="h-7 px-2 text-xs"
+                      variant="outline"
+                      className={cn(
+                        'h-7 px-2 text-[11px] rounded-full border-border',
+                        'bg-surface text-text-secondary hover:text-text-primary hover:bg-hover'
+                      )}
                       onClick={() => handleInsertPromptVariable(variable)}
                     >
                       {variable}
