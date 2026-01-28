@@ -42,8 +42,8 @@ if TYPE_CHECKING:
 logger = setup_logger(__name__)
 
 # Container ready wait configuration from environment variables
-CONTAINER_READY_MAX_RETRIES = int(os.getenv("CONTAINER_READY_MAX_RETRIES", "180"))
-CONTAINER_READY_INTERVAL = float(os.getenv("CONTAINER_READY_INTERVAL", "1"))
+SANDBOX_READY_MAX_RETRIES = int(os.getenv("SANDBOX_READY_MAX_RETRIES", "180"))
+SANDBOX_READY_INTERVAL = float(os.getenv("SANDBOX_READY_INTERVAL", "1"))
 
 
 class SandboxManager(metaclass=SingletonMeta):
@@ -215,8 +215,8 @@ class SandboxManager(metaclass=SingletonMeta):
         self,
         executor,
         container_name: str,
-        max_retries: int = CONTAINER_READY_MAX_RETRIES,
-        interval: float = CONTAINER_READY_INTERVAL,
+        max_retries: int = SANDBOX_READY_MAX_RETRIES,
+        interval: float = SANDBOX_READY_INTERVAL,
     ) -> Optional[str]:
         """Wait for container to be ready and return base_url.
 
