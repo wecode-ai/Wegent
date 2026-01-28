@@ -41,7 +41,7 @@ interface ChatAreaProps {
   isTeamsLoading: boolean
   selectedTeamForNewTask?: Team | null
   showRepositorySelector?: boolean
-  taskType?: 'chat' | 'code' | 'knowledge'
+  taskType?: 'chat' | 'code' | 'knowledge' | 'device'
   onShareButtonRender?: (button: React.ReactNode) => void
   onRefreshTeams?: () => Promise<Team[]>
   /** Initial knowledge base to pre-select when starting a new chat from knowledge page */
@@ -127,6 +127,8 @@ function ChatAreaContent({
   const lastSyncedTaskIdRef = useRef<number | null>(null)
 
   // Filter teams by bind_mode based on current mode
+  // For 'device' taskType, also match teams that support 'code' mode
+  // since device execution is similar to code execution (both use executor)
   const filteredTeams = useMemo(() => {
     const teamsWithValidBindMode = teams.filter(team => {
       if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
@@ -134,7 +136,11 @@ function ChatAreaContent({
     })
     return teamsWithValidBindMode.filter(team => {
       if (!team.bind_mode) return true
-      return team.bind_mode.includes(taskType)
+      // Device mode uses the same teams as code mode
+      if (taskType === 'device') {
+        return team.bind_mode.includes('code')
+      }
+      return team.bind_mode.includes(taskType as 'chat' | 'code' | 'knowledge')
     })
   }, [teams, taskType])
 

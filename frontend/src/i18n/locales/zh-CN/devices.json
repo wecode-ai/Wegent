@@ -1,0 +1,23 @@
+{
+  "title": "我的设备",
+  "my_devices": "我的设备",
+  "device_name": "设备名称",
+  "status": "状态",
+  "status_online": "在线",
+  "status_offline": "离线",
+  "status_busy": "忙碌",
+  "last_heartbeat": "最后心跳",
+  "no_devices": "暂无在线设备",
+  "instructions": "设备需在本地启动并登录后自动出现在列表中",
+  "cloud_executor": "云端 Executor",
+  "select_device": "选择执行设备",
+  "select_device_hint": "从顶部选择一个在线设备开始发送任务",
+  "device_offline_hint": "设备已离线,请选择其他设备",
+  "device_busy_hint": "设备正在执行其他任务",
+  "select_another_device": "请选择其他设备或等待当前任务完成",
+  "refresh": "刷新",
+  "menu_title": "我的设备",
+  "start_chat": "开始对话",
+  "start_task": "开始任务",
+  "device_chat_title": "设备任务"
+}

@@ -242,6 +242,13 @@ async def lifespan(app: FastAPI):
     await get_pending_request_registry()
     logger.info("✓ PendingRequestRegistry initialized")
 
+    # Start device heartbeat monitor for local device support
+    logger.info("Starting device heartbeat monitor...")
+    from app.services.device_monitor import start_device_monitor
+
+    start_device_monitor()
+    logger.info("✓ Device heartbeat monitor started")
+
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
     logger.info("=" * 60)
@@ -307,7 +314,13 @@ async def lifespan(app: FastAPI):
     await shutdown_pending_request_registry()
     logger.info("✓ PendingRequestRegistry shutdown completed")
 
-    # Step 6: Shutdown OpenTelemetry
+    # Step 6: Stop device heartbeat monitor
+    from app.services.device_monitor import stop_device_monitor_async
+
+    await stop_device_monitor_async()
+    logger.info("✓ Device heartbeat monitor stopped")
+
+    # Step 7: Shutdown OpenTelemetry
     from shared.telemetry.config import get_otel_config
     from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 
@@ -583,6 +596,7 @@ def create_socketio_asgi_app():
     and everything else to FastAPI.
     """
     from app.api.ws import register_chat_namespace
+    from app.api.ws.device_namespace import register_device_namespace
     from app.core.socketio import create_socketio_app, get_sio
 
     sio = get_sio()
@@ -591,6 +605,10 @@ def create_socketio_asgi_app():
     # This ensures the namespace is available when clients connect
     register_chat_namespace(sio)
     _logger.info("Chat namespace registered during ASGI app creation")
+
+    # Register device namespace for local device connections
+    register_device_namespace(sio)
+    _logger.info("Device namespace registered during ASGI app creation")
 
     socketio_app = create_socketio_app(sio)
 

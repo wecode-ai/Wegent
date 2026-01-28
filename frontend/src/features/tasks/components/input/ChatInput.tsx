@@ -18,7 +18,7 @@ interface ChatInputProps {
   handleSendMessage: () => void
   isLoading: boolean
   disabled?: boolean
-  taskType?: 'chat' | 'code' | 'knowledge'
+  taskType?: 'chat' | 'code' | 'knowledge' | 'device'
   autoFocus?: boolean
   // Controls whether the message can be submitted (e.g., model selection required)
   canSubmit?: boolean

@@ -34,7 +34,7 @@ export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskIn
   isUsingDefaultTeam?: boolean
 
   // Task type
-  taskType: 'chat' | 'code' | 'knowledge'
+  taskType: 'chat' | 'code' | 'knowledge' | 'device'
   autoFocus?: boolean
 
   // Knowledge base ID to exclude from context selector (used in notebook mode)

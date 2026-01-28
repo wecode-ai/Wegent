@@ -27,7 +27,7 @@ const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18
 
 export interface UseChatAreaStateOptions {
   teams: Team[]
-  taskType: 'chat' | 'code' | 'knowledge'
+  taskType: 'chat' | 'code' | 'knowledge' | 'device'
   selectedTeamForNewTask?: Team | null
   /**
    * Initial knowledge base to pre-select when starting a new chat from knowledge page.
@@ -338,7 +338,9 @@ export function useChatAreaState({
   const isTeamCompatibleWithMode = useCallback(
     (team: Team): boolean => {
       if (!team.bind_mode || team.bind_mode.length === 0) return false
-      return team.bind_mode.includes(taskType)
+      // Device mode uses 'code' bind_mode since device execution is code-type tasks
+      const modeToCheck = taskType === 'device' ? 'code' : taskType
+      return team.bind_mode.includes(modeToCheck)
     },
     [taskType]
   )

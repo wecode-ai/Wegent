@@ -174,7 +174,7 @@ export type TaskStatus =
   | 'CANCELLING'
   | 'DELETE'
   | 'PENDING_CONFIRMATION' // Pipeline stage completed, waiting for user confirmation
-export type TaskType = 'chat' | 'code' | 'knowledge'
+export type TaskType = 'chat' | 'code' | 'knowledge' | 'device'
 
 // Git commit statistics
 interface CommitStats {

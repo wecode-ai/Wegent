@@ -51,3 +51,11 @@ class ContextStatus(str, PyEnum):
     PARSING = "parsing"
     READY = "ready"
     FAILED = "failed"
+
+
+class DeviceStatus(str, PyEnum):
+    """Device connection status."""
+
+    ONLINE = "online"
+    OFFLINE = "offline"
+    BUSY = "busy"

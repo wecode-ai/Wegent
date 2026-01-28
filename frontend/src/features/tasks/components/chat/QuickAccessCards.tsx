@@ -36,7 +36,7 @@ interface QuickAccessCardsProps {
   teams: Team[]
   selectedTeam: Team | null
   onTeamSelect: (team: Team) => void
-  currentMode: 'chat' | 'code' | 'knowledge'
+  currentMode: 'chat' | 'code' | 'knowledge' | 'device'
   isLoading?: boolean
   isTeamsLoading?: boolean
   hideSelected?: boolean // Whether to hide the selected team from the cards
@@ -98,11 +98,16 @@ export function QuickAccessCards({
   }, [])
 
   // Filter teams by bind_mode based on current mode (same logic as TeamSelector)
+  // For 'device' mode, also match teams that support 'code' mode
   const filteredTeams = teams.filter(team => {
     // If bind_mode is not set or is an empty array, filter it out (team has no bound mode)
     if (!team.bind_mode || team.bind_mode.length === 0) return false
+    // Device mode uses the same teams as code mode
+    if (currentMode === 'device') {
+      return team.bind_mode.includes('code')
+    }
     // Otherwise, only show if current mode is in bind_mode
-    return team.bind_mode.includes(currentMode)
+    return team.bind_mode.includes(currentMode as 'chat' | 'code' | 'knowledge')
   })
 
   // Get display teams: quick access teams matched with full team data

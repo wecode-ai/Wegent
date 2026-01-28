@@ -1,0 +1,23 @@
+{
+  "title": "My Devices",
+  "my_devices": "My Devices",
+  "device_name": "Device Name",
+  "status": "Status",
+  "status_online": "Online",
+  "status_offline": "Offline",
+  "status_busy": "Busy",
+  "last_heartbeat": "Last Heartbeat",
+  "no_devices": "No devices online",
+  "instructions": "Devices will appear automatically after starting and logging in locally",
+  "cloud_executor": "Cloud Executor",
+  "select_device": "Select Device",
+  "select_device_hint": "Select a device from the top to start sending tasks",
+  "device_offline_hint": "Device is offline, please select another",
+  "device_busy_hint": "Device is busy with another task",
+  "select_another_device": "Please select another device or wait for current task to complete",
+  "refresh": "Refresh",
+  "menu_title": "My Devices",
+  "start_chat": "Start Chat",
+  "start_task": "Start Task",
+  "device_chat_title": "Device Task"
+}
