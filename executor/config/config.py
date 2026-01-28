@@ -33,6 +33,15 @@ CUSTOM_INSTRUCTION_FILES = os.getenv(
     "CUSTOM_INSTRUCTION_FILES", ".cursorrules,.windsurfrules"
 ).split(",")
 
+# Skill cache configuration
+# When True (default), the skills directory (~/.claude/skills/) is cleared before deploying new skills
+# When False, only replace skills with the same name, preserving other cached skills
+SKILL_CLEAR_CACHE = os.environ.get("SKILL_CLEAR_CACHE", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # OpenTelemetry configuration is centralized in shared/telemetry/config.py
 # Use: from shared.telemetry.config import get_otel_config
 # All OTEL_* environment variables are read from there

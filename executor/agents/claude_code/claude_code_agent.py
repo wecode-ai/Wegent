@@ -1531,12 +1531,26 @@ class ClaudeCodeAgent(Agent):
             # Prepare skills directory
             skills_dir = os.path.expanduser("~/.claude/skills")
 
-            # Clear existing skills directory
-            if os.path.exists(skills_dir):
-                import shutil
+            # Handle skills directory based on SKILL_CLEAR_CACHE config
+            if config.SKILL_CLEAR_CACHE:
+                # Clear existing skills directory (default behavior)
+                if os.path.exists(skills_dir):
+                    import shutil
 
-                shutil.rmtree(skills_dir)
-                logger.info(f"Cleared existing skills directory: {skills_dir}")
+                    shutil.rmtree(skills_dir)
+                    logger.info(f"Cleared existing skills directory: {skills_dir}")
+            else:
+                # Only clear skills that will be replaced
+                logger.info(
+                    f"Skill cache mode enabled, will only replace existing skills"
+                )
+                for skill_name in skills:
+                    skill_path = os.path.join(skills_dir, skill_name)
+                    if os.path.exists(skill_path):
+                        import shutil
+
+                        shutil.rmtree(skill_path)
+                        logger.info(f"Removed existing skill for replacement: {skill_name}")
 
             Path(skills_dir).mkdir(parents=True, exist_ok=True)
 
