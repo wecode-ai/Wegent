@@ -179,6 +179,7 @@ export default function BranchSelector({
         value: selectedBranch.name,
         label: selectedBranch.name,
         searchText: selectedBranch.name,
+        content: <span>{selectedBranch.name}</span>,
       })
     }
     return items
