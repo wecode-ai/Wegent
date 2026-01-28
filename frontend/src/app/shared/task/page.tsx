@@ -345,6 +345,7 @@ function SharedTaskContent() {
                     selectedBranch={null}
                     theme={theme}
                     t={t}
+                    shareToken={searchParams.get('token') || undefined}
                   />
                 )
               })}
