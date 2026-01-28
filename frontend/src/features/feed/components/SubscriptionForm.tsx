@@ -56,6 +56,7 @@ import { CronSchedulePicker } from './CronSchedulePicker'
 import { RepositorySelector, BranchSelector } from '@/features/tasks/components/selector'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { cn, parseUTCDate } from '@/lib/utils'
+import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
 
 // Model type for selector
 interface SubscriptionModel {
@@ -385,6 +386,8 @@ export function SubscriptionForm({
     })
   })()
 
+  const compatibleProvider = getCompatibleProviderFromAgentType(selectedTeam?.agent_type)
+
   // Determine if model selection is required
   // For rental subscriptions: model is REQUIRED (must select a model to use)
   // For non-rental: required only if team has no model configured
@@ -630,7 +633,11 @@ export function SubscriptionForm({
   ])
 
   // Filter models based on search
-  const filteredModels = models.filter(model => {
+  const compatibleModels = compatibleProvider
+    ? models.filter(model => model.provider === compatibleProvider)
+    : models
+
+  const filteredModels = compatibleModels.filter(model => {
     const searchLower = modelSearchValue.toLowerCase()
     return (
       model.name.toLowerCase().includes(searchLower) ||
@@ -638,6 +645,16 @@ export function SubscriptionForm({
       (model.provider && model.provider.toLowerCase().includes(searchLower))
     )
   })
+
+  // Clear incompatible model selection when team changes
+  useEffect(() => {
+    if (!selectedModel || !compatibleProvider) return
+    const matchedModel = models.find(model => model.name === selectedModel.name)
+    const resolvedProvider = matchedModel?.provider || selectedModel.provider
+    if (resolvedProvider && resolvedProvider !== compatibleProvider) {
+      setSelectedModel(null)
+    }
+  }, [compatibleProvider, models, selectedModel])
 
   const renderTriggerConfig = () => {
     switch (triggerType) {
