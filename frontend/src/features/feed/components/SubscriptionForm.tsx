@@ -975,14 +975,26 @@ export function SubscriptionForm({
                         <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-[400px] p-0" align="start">
-                      <Command>
+                    <PopoverContent
+                      className={cn(
+                        'w-[400px] p-0',
+                        'max-h-[var(--radix-popover-content-available-height,360px)]',
+                        'flex flex-col overflow-hidden'
+                      )}
+                      align="start"
+                    >
+                      <Command className="flex flex-col flex-1 min-h-0">
                         <CommandInput
                           placeholder={t('search_model')}
                           value={modelSearchValue}
                           onValueChange={setModelSearchValue}
                         />
-                        <CommandList>
+                        <CommandList
+                          className="min-h-[36px] max-h-[240px] overflow-y-auto flex-1"
+                          onWheel={event => {
+                            event.stopPropagation()
+                          }}
+                        >
                           <CommandEmpty>{t('no_model_found')}</CommandEmpty>
                           <CommandGroup>
                             {/* Option to clear selection */}
