@@ -8,6 +8,8 @@ RUN dnf upgrade -y \
  && dnf install -y epel-release curl-minimal vim gcc make git wget gnupg python3.12 python3.12-devel python3.12-pip which file file-libs \
     nspr nss nss-util atk at-spi2-atk cups-libs libxcb libxkbcommon at-spi2-core \
     libX11 libXcomposite libXdamage libXext libXfixes libXrandr mesa-libgbm cairo pango alsa-lib libdrm \
+    # OCR dependencies for scanned PDF support
+    tesseract tesseract-langpack-chi-sim tesseract-langpack-eng poppler-utils \
  && curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - \
  && dnf install -y nodejs gh tar gzip\
  && ln -sf /usr/bin/python3.12 /usr/bin/python \
