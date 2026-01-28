@@ -66,6 +66,30 @@ interface SubscriptionModel {
   type?: string
 }
 
+const resolveGitType = (gitDomain?: string): GitRepoInfo['type'] => {
+  if (!gitDomain) return 'github'
+  if (gitDomain.includes('gitlab')) return 'gitlab'
+  if (gitDomain.includes('gitee')) return 'gitee'
+  if (gitDomain.endsWith('github.com')) return 'github'
+  return 'github'
+}
+
+const buildRepoInfoFromSubscription = (subscription: Subscription): GitRepoInfo | null => {
+  if (!subscription.git_repo) return null
+  const gitDomain = subscription.git_domain || 'github.com'
+  const repoName = subscription.git_repo.split('/').pop() || subscription.git_repo
+
+  return {
+    git_repo_id: subscription.git_repo_id ?? 0,
+    name: repoName,
+    git_repo: subscription.git_repo,
+    git_url: `https://${gitDomain}/${subscription.git_repo}.git`,
+    git_domain: gitDomain,
+    private: false,
+    type: resolveGitType(gitDomain),
+  }
+}
+
 /**
  * Webhook API Usage Section Component
  * Shows API endpoint, secret, and example curl command for webhook-type subscriptions
@@ -401,10 +425,17 @@ export function SubscriptionForm({
       setEnabled(subscription.enabled)
       setPreserveHistory(subscription.preserve_history || false)
       setVisibility(subscription.visibility || 'private')
-      // Note: workspace_id restoration will be handled when we have workspace API
-      // For now, reset repo selection
-      setSelectedRepo(null)
-      setSelectedBranch(null)
+      const repoInfo = buildRepoInfoFromSubscription(subscription)
+      setSelectedRepo(repoInfo)
+      setSelectedBranch(
+        repoInfo && subscription.branch_name
+          ? {
+              name: subscription.branch_name,
+              protected: false,
+              default: false,
+            }
+          : null
+      )
       // Restore model selection from subscription
       if (subscription.model_ref) {
         setSelectedModel({
