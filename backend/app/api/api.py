@@ -45,6 +45,7 @@ from app.api.endpoints.adapter import (
 from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
     chat_storage_router,
+    local_executor_router,
     rag_router,
     services_router,
     skills_router,
@@ -146,4 +147,9 @@ api_router.include_router(
 )
 api_router.include_router(
     services_router, prefix="/internal", tags=["internal-services"]
+)
+api_router.include_router(
+    local_executor_router,
+    prefix="/internal/local-executor",
+    tags=["internal-local-executor"],
 )

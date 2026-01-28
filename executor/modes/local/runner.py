@@ -103,15 +103,23 @@ class LocalRunner:
 
         This is the main entry point that:
         1. Sets up signal handlers
-        2. Connects to Backend WebSocket
-        3. Registers the executor
-        4. Starts heartbeat service
-        5. Runs the task processing loop
+        2. Creates workspace directory
+        3. Connects to Backend WebSocket
+        4. Registers the executor
+        5. Starts heartbeat service
+        6. Runs the task processing loop
         """
         logger.info("Starting Local Executor Runner...")
         logger.info(f"Backend URL: {config.WEGENT_BACKEND_URL}")
         logger.info(f"Auth Token: {'***' if config.WEGENT_AUTH_TOKEN else 'NOT SET'}")
+        logger.info(f"Workspace Root: {config.LOCAL_WORKSPACE_ROOT}")
         self._running = True
+
+        # Ensure workspace directory exists
+        workspace_root = config.LOCAL_WORKSPACE_ROOT
+        if not os.path.exists(workspace_root):
+            os.makedirs(workspace_root, exist_ok=True)
+            logger.info(f"Created workspace directory: {workspace_root}")
 
         # Setup signal handlers in the event loop
         loop = asyncio.get_running_loop()
@@ -211,6 +219,7 @@ class LocalRunner:
             "capabilities": ["claude_code"],
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "hostname": platform.node(),
+            "workspace_root": config.LOCAL_WORKSPACE_ROOT,
         }
 
         await self.websocket_client.emit(

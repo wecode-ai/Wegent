@@ -91,3 +91,12 @@ LOCAL_RECONNECT_DELAY = _get_int_env(
 LOCAL_RECONNECT_MAX_DELAY = _get_int_env(
     "LOCAL_RECONNECT_MAX_DELAY", DEFAULT_LOCAL_RECONNECT_MAX_DELAY
 )
+
+# Local mode workspace root directory
+# This is where tasks will be executed and code will be cloned
+# Defaults to system temp directory if not set
+import tempfile
+
+LOCAL_WORKSPACE_ROOT = os.environ.get(
+    "LOCAL_WORKSPACE_ROOT", os.path.join(tempfile.gettempdir(), "wegent-local")
+)

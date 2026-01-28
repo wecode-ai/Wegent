@@ -608,6 +608,78 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
         """
         return list(self._executors.values())
 
+    async def dispatch_test_task(self, prompt: str, model_env: dict = None) -> dict:
+        """
+        Dispatch a test task to a connected local executor.
+
+        This is a convenience method for testing the local executor flow.
+
+        Args:
+            prompt: The task prompt to send
+            model_env: Optional environment variables for the model (e.g., ANTHROPIC_API_KEY)
+
+        Returns:
+            {"success": True, "task_id": ..., "executor_sid": ...} or {"success": False, "error": ...}
+        """
+        import time
+
+        # Generate test task IDs
+        task_id = int(time.time() * 1000) % 1000000
+        subtask_id = task_id + 1
+
+        # Create minimal bot configuration for ClaudeCode
+        bot_config = {
+            "name": "test-bot",
+            "shell": {"shellType": "ClaudeCode"},
+            "ghost": {
+                "systemPrompt": "You are a helpful assistant for testing.",
+            },
+            "agent_config": {
+                "env": model_env or {},
+            },
+        }
+
+        # Create test task data
+        task_data = {
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "task_title": "Test Task",
+            "subtask_title": "Test Subtask",
+            "prompt": prompt,
+            "bot": bot_config,
+            "team": {"name": "test-team", "members": [bot_config]},
+            "git_url": "",
+            "branch_name": "",
+            "attachments": [],
+            "auth_token": "test-token",
+        }
+
+        # Try to dispatch
+        dispatched = await self.dispatch_task(task_data)
+
+        if dispatched:
+            # Find the executor that received the task
+            executor_sid = None
+            for sid, info in self._executors.items():
+                if "claude_code" in info.get("capabilities", []):
+                    executor_sid = sid
+                    break
+
+            return {
+                "success": True,
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "executor_sid": executor_sid,
+                "message": f"Task dispatched to executor {executor_sid}",
+            }
+        else:
+            return {
+                "success": False,
+                "task_id": task_id,
+                "error": "No executor available, task queued",
+                "pending_tasks": len(self._pending_tasks),
+            }
+
 
 # Global namespace instance
 _local_executor_namespace: Optional[LocalExecutorNamespace] = None
