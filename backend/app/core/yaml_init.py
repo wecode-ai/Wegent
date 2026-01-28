@@ -611,6 +611,76 @@ def scan_and_apply_yaml_directory(
     }
 
 
+def ensure_organization_knowledge_base(db: Session, admin_user_id: int) -> bool:
+    """
+    Ensure the organization knowledge base exists.
+
+    Creates the organization knowledge base if it doesn't exist.
+    This is called during system initialization to ensure the company KB
+    is always available for all users.
+
+    Args:
+        db: Database session
+        admin_user_id: Admin user ID to use as the creator
+
+    Returns:
+        True if KB was created, False if it already exists
+    """
+    from datetime import datetime
+
+    from app.models.kind import Kind
+
+    # Check if organization KB already exists
+    existing = (
+        db.query(Kind)
+        .filter(
+            Kind.kind == "KnowledgeBase",
+            Kind.namespace == "organization",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if existing:
+        logger.info(
+            f"Organization knowledge base already exists with ID: {existing.id}"
+        )
+        return False
+
+    # Create organization KB
+    logger.info("Creating organization knowledge base...")
+    org_kb = Kind(
+        user_id=admin_user_id,
+        kind="KnowledgeBase",
+        name="organization-knowledge-base",
+        namespace="organization",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "KnowledgeBase",
+            "metadata": {
+                "name": "organization-knowledge-base",
+                "namespace": "organization",
+            },
+            "spec": {
+                "name": "公司知识库",
+                "description": "公司级别的共享知识库，所有员工可访问",
+                "kbType": "classic",
+                "summaryEnabled": False,
+            },
+            "status": {"state": "Available"},
+        },
+        is_active=True,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+    )
+
+    db.add(org_kb)
+    db.commit()
+    db.refresh(org_kb)
+    logger.info(f"Created organization knowledge base with ID: {org_kb.id}")
+    return True
+
+
 def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, Any]:
     """
     Main entry point for YAML initialization.
@@ -655,6 +725,17 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
     except Exception as e:
         logger.error(f"Failed to create default user: {e}", exc_info=True)
         return {"status": "error", "reason": "failed to create default user"}
+
+    # Ensure organization knowledge base exists
+    try:
+        logger.info("Ensuring organization knowledge base exists...")
+        org_kb_created = ensure_organization_knowledge_base(db, user_id)
+        logger.info(f"Organization knowledge base ready, created: {org_kb_created}")
+    except Exception as e:
+        logger.error(
+            f"Failed to create organization knowledge base: {e}", exc_info=True
+        )
+        # Don't fail initialization, just log the error
 
     # Scan and apply YAML resources
     init_dir = Path(settings.INIT_DATA_DIR)

@@ -41,9 +41,18 @@
     "noGroupHint": "You haven't joined any groups yet. Create or join a group to view group knowledge bases here.",
     "searchGroups": "Search groups...",
     "noGroupResults": "No matching groups",
+    "company": {
+      "title": "Company Knowledge Base",
+      "description": "Company-wide shared knowledge base accessible to all employees",
+      "empty": "No company knowledge base",
+      "emptyHint": "Company knowledge base has not been created yet",
+      "adminOnly": "Only administrators can manage company knowledge base",
+      "loadFailed": "Failed to load company knowledge base"
+    },
     "tabs": {
       "personal": "Personal",
       "group": "Group",
+      "company": "Company",
       "external": "External"
     },
     "knowledgeBase": {

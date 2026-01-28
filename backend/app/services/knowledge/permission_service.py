@@ -293,7 +293,9 @@ def get_permission_source(db: Session, user: User, kb: Kind) -> str:
     return "none"
 
 
-def get_or_create_organization_knowledge_base(db: Session, user: User) -> Kind:
+def get_or_create_organization_knowledge_base(
+    db: Session, user: User
+) -> Optional[Kind]:
     """
     Get or create the organization knowledge base.
 
@@ -305,10 +307,13 @@ def get_or_create_organization_knowledge_base(db: Session, user: User) -> Kind:
         user: User object (must be admin to create)
 
     Returns:
-        Organization knowledge base Kind object
+        Organization knowledge base Kind object, or None if KB doesn't exist
+        and user is not admin
 
-    Raises:
-        ValueError: If user is not admin and KB doesn't exist
+    Note:
+        The organization KB is typically created during system initialization.
+        If it doesn't exist and user is not admin, returns None instead of
+        raising an error to provide a better user experience.
     """
     from datetime import datetime
 
@@ -328,7 +333,9 @@ def get_or_create_organization_knowledge_base(db: Session, user: User) -> Kind:
 
     # Only system admin can create
     if user.role != "admin":
-        raise ValueError("Only system admin can create organization knowledge base")
+        # Return None instead of raising error for better UX
+        # The organization KB should be created during system initialization
+        return None
 
     # Create organization KB
     org_kb = Kind(
@@ -344,8 +351,8 @@ def get_or_create_organization_knowledge_base(db: Session, user: User) -> Kind:
                 "namespace": "organization",
             },
             "spec": {
-                "name": "Organization Knowledge Base",
-                "description": "Enterprise-wide public knowledge repository",
+                "name": "公司知识库",
+                "description": "公司级别的共享知识库，所有员工可访问",
                 "kbType": "classic",
                 "summaryEnabled": False,
             },

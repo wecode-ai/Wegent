@@ -41,9 +41,18 @@
     "noGroupHint": "您还没有加入任何组。创建或加入组后，可在此查看组知识库。",
     "searchGroups": "搜索组...",
     "noGroupResults": "没有匹配的组",
+    "company": {
+      "title": "公司知识库",
+      "description": "公司级别的共享知识库，所有员工可访问",
+      "empty": "暂无公司知识库",
+      "emptyHint": "公司知识库尚未创建",
+      "adminOnly": "仅管理员可管理公司知识库",
+      "loadFailed": "加载公司知识库失败"
+    },
     "tabs": {
       "personal": "个人知识",
       "group": "组知识",
+      "company": "公司知识库",
       "external": "外部知识库"
     },
     "knowledgeBase": {

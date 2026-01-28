@@ -107,6 +107,10 @@ export function KnowledgeBaseClassicPageMobile({
   // Check if user can manage this KB
   const canManageKb = useMemo(() => {
     if (!knowledgeBase || !user) return false
+    // Organization knowledge base - only admin can manage
+    if (knowledgeBase.namespace === 'organization') {
+      return user.role === 'admin'
+    }
     // Personal knowledge base - check user ownership
     if (knowledgeBase.namespace === 'default') {
       return knowledgeBase.user_id === user.id

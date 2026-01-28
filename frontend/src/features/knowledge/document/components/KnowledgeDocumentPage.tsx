@@ -16,7 +16,9 @@ import {
   Search,
   BookOpen,
   FolderOpen,
+  Building2,
 } from 'lucide-react'
+import { ApiError } from '@/apis/client'
 import { Spinner } from '@/components/ui/spinner'
 import { Card } from '@/components/ui/card'
 import {
@@ -36,11 +38,13 @@ import { userApis } from '@/apis/user'
 import { teamService } from '@/features/tasks/service/teamService'
 import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPreferences'
 import { useKnowledgeBases } from '../hooks/useKnowledgeBases'
+import { useUser } from '@/features/common/UserContext'
+import { getOrganizationKnowledgeBase } from '@/apis/knowledge'
 import type { Group } from '@/types/group'
 import type { KnowledgeBase, KnowledgeBaseType, SummaryModelRef } from '@/types/knowledge'
 import type { DefaultTeamsResponse, Team } from '@/types/api'
 
-type DocumentTabType = 'personal' | 'group' | 'external'
+type DocumentTabType = 'personal' | 'group' | 'company' | 'external'
 
 interface DocumentTab {
   id: DocumentTabType
@@ -61,6 +65,11 @@ const tabs: DocumentTab[] = [
     icon: <Users className="w-4 h-4" />,
   },
   {
+    id: 'company',
+    labelKey: 'knowledge:document.tabs.company',
+    icon: <Building2 className="w-4 h-4" />,
+  },
+  {
     id: 'external',
     labelKey: 'knowledge:document.tabs.external',
     icon: <Globe className="w-4 h-4" />,
@@ -77,6 +86,7 @@ export function KnowledgeDocumentPage() {
   const getInitialTab = useCallback((): DocumentTabType => {
     const tab = searchParams.get('tab')
     if (tab === 'group') return 'group'
+    if (tab === 'company') return 'company'
     if (tab === 'external') return 'external'
     return 'personal' // default
   }, [searchParams])
@@ -309,7 +319,6 @@ export function KnowledgeDocumentPage() {
             onCreateKb={kbType => handleCreateKb(null, kbType)}
           />
         )}
-
         {activeTab === 'group' && (
           <GroupKnowledgeContent
             groups={groups}
@@ -321,6 +330,18 @@ export function KnowledgeDocumentPage() {
             onEditKb={setEditingKb}
             onDeleteKb={setDeletingKb}
             onCreateKb={(groupName, kbType) => handleCreateKb(groupName, kbType)}
+          />
+        )}
+
+        {activeTab === 'company' && (
+          <CompanyKnowledgeContent
+            refreshKey={groupRefreshKey}
+            onSelectKb={handleSelectKb}
+            onEditKb={setEditingKb}
+            onDeleteKb={setDeletingKb}
+            onCreateKb={(kbType: KnowledgeBaseType) => handleCreateKb('organization', kbType)}
+            knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+            saveSummaryModelToPreference={saveSummaryModelToPreference}
           />
         )}
 
@@ -900,6 +921,175 @@ function GroupKnowledgeBaseList({
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// Company knowledge content component
+interface CompanyKnowledgeContentProps {
+  refreshKey: number
+  onSelectKb: (kb: KnowledgeBase) => void
+  onEditKb: (kb: KnowledgeBase) => void
+  onDeleteKb: (kb: KnowledgeBase) => void
+  onCreateKb: (kbType: KnowledgeBaseType) => void
+  knowledgeDefaultTeamId: number | null
+  saveSummaryModelToPreference: (summaryModelRef: SummaryModelRef | null | undefined) => void
+}
+function CompanyKnowledgeContent({
+  refreshKey,
+  onSelectKb,
+  onEditKb,
+  onDeleteKb,
+  onCreateKb,
+}: CompanyKnowledgeContentProps) {
+  const { t } = useTranslation()
+  const { user } = useUser()
+  const [knowledgeBase, setKnowledgeBase] = useState<KnowledgeBase | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  // Check if user is admin
+  const isAdmin = user?.role === 'admin'
+
+  // Load organization knowledge base
+  const loadOrganizationKb = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const kb = await getOrganizationKnowledgeBase()
+      setKnowledgeBase(kb)
+    } catch (err) {
+      // 404 means no organization KB exists yet, which is fine
+      if (err instanceof ApiError && err.status === 404) {
+        setKnowledgeBase(null)
+      } else {
+        setError(t('knowledge:document.company.loadFailed'))
+        console.error('Failed to load organization knowledge base:', err)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [t])
+
+  useEffect(() => {
+    loadOrganizationKb()
+  }, [loadOrganizationKb])
+
+  // Refresh when refreshKey changes
+  useEffect(() => {
+    if (refreshKey > 0) {
+      loadOrganizationKb()
+    }
+  }, [refreshKey, loadOrganizationKb])
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-12">
+        <Spinner />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
+        <FileText className="w-12 h-12 mb-4 opacity-50" />
+        <p>{error}</p>
+      </div>
+    )
+  }
+
+  // No knowledge base exists yet
+  if (!knowledgeBase) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16">
+        {isAdmin ? (
+          // Admin can create
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Card
+                padding="lg"
+                className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center w-64 h-48"
+              >
+                <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+                  <Plus className="w-8 h-8 text-primary" />
+                </div>
+                <h3 className="font-medium text-base mb-2 text-text-primary">
+                  {t('knowledge:document.knowledgeBase.create')}
+                </h3>
+                <p className="text-sm text-text-muted text-center">
+                  {t('knowledge:document.company.description')}
+                </p>
+              </Card>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="center" className="w-56">
+              <DropdownMenuItem
+                onClick={() => onCreateKb('notebook')}
+                className="flex items-start gap-3 py-3"
+              >
+                <BookOpen className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="font-medium">
+                    {t('knowledge:document.knowledgeBase.typeNotebook')}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {t('knowledge:document.knowledgeBase.notebookDesc')}
+                  </div>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => onCreateKb('classic')}
+                className="flex items-start gap-3 py-3"
+              >
+                <FolderOpen className="w-5 h-5 text-text-secondary mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="font-medium">
+                    {t('knowledge:document.knowledgeBase.typeClassic')}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {t('knowledge:document.knowledgeBase.classicDesc')}
+                  </div>
+                </div>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          // Non-admin sees empty state
+          <div className="flex flex-col items-center">
+            <Building2 className="w-12 h-12 mb-4 text-text-muted opacity-50" />
+            <p className="text-text-secondary mb-2">{t('knowledge:document.company.empty')}</p>
+            <p className="text-sm text-text-muted">{t('knowledge:document.company.emptyHint')}</p>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Knowledge base exists - show it
+  return (
+    <div className="flex flex-col items-center">
+      {/* Description */}
+      <div className="mb-4 w-full max-w-4xl">
+        <p className="text-sm text-text-secondary text-center">
+          {t('knowledge:document.company.description')}
+        </p>
+        {!isAdmin && (
+          <p className="text-xs text-text-muted text-center mt-1">
+            {t('knowledge:document.company.adminOnly')}
+          </p>
+        )}
+      </div>
+
+      <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <KnowledgeBaseCard
+          knowledgeBase={knowledgeBase}
+          onClick={() => onSelectKb(knowledgeBase)}
+          onEdit={isAdmin ? () => onEditKb(knowledgeBase) : undefined}
+          onDelete={isAdmin ? () => onDeleteKb(knowledgeBase) : undefined}
+          canEdit={isAdmin}
+          canDelete={isAdmin}
+        />
+      </div>
     </div>
   )
 }
