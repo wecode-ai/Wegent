@@ -13,11 +13,11 @@ import { useUser } from '@/features/common/UserContext'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
 import { taskApis } from '@/apis/tasks'
-import { isChatShell } from '../../service/messageService'
+import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
 import type { Model } from '../selector/ModelSelector'
-import type { Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api'
+import type { Team, GitRepoInfo, GitBranch, Attachment, SubtaskContextBrief } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 export interface UseChatStreamHandlersOptions {
   // Team and model
@@ -29,6 +29,8 @@ export interface UseChatStreamHandlersOptions {
   selectedRepo: GitRepoInfo | null
   selectedBranch: GitBranch | null
   showRepositorySelector: boolean
+  /** Effective requires workspace value (considering user override) */
+  effectiveRequiresWorkspace?: boolean
 
   // Input
   taskInputMessage: string
@@ -89,6 +91,17 @@ export interface ChatStreamHandlers {
 
   // Actions
   handleSendMessage: (overrideMessage?: string) => Promise<void>
+  /**
+   * Send a message with a temporary model override (used for regeneration).
+   * @param overrideMessage - The message content to send
+   * @param modelOverride - The model to use for this single request
+   * @param existingContexts - Optional existing contexts from original message (attachments, knowledge bases, tables)
+   */
+  handleSendMessageWithModel: (
+    overrideMessage: string,
+    modelOverride: Model,
+    existingContexts?: SubtaskContextBrief[]
+  ) => Promise<void>
   handleRetry: (message: {
     content: string
     type: string
@@ -128,6 +141,7 @@ export function useChatStreamHandlers({
   selectedRepo,
   selectedBranch,
   showRepositorySelector,
+  effectiveRequiresWorkspace,
   taskInputMessage,
   setTaskInputMessage,
   setIsLoading,
@@ -394,7 +408,12 @@ export function useChatStreamHandlers({
             }
           : null)
 
-      if (taskType === 'code' && showRepositorySelector && !effectiveRepo?.git_repo) {
+      if (
+        taskType === 'code' &&
+        showRepositorySelector &&
+        (effectiveRequiresWorkspace ?? teamRequiresWorkspace(selectedTeam)) &&
+        !effectiveRepo?.git_repo
+      ) {
         toast({
           variant: 'destructive',
           title: 'Please select a repository for code tasks',
@@ -526,6 +545,7 @@ export function useChatStreamHandlers({
             task_id: selectedTaskDetail?.id,
             model_id: modelId,
             force_override_bot_model: forceOverride,
+            force_override_bot_model_type: selectedModel?.type,
             attachment_ids: attachments.map(a => a.id),
             enable_deep_thinking: enableDeepThinking,
             enable_clarification: enableClarification,
@@ -605,6 +625,7 @@ export function useChatStreamHandlers({
       selectedContexts,
       resetContexts,
       selectedModel?.name,
+      selectedModel?.type,
       selectedTaskDetail,
       contextSendMessage,
       forceOverride,
@@ -627,6 +648,241 @@ export function useChatStreamHandlers({
       externalApiParams,
       onTaskCreated,
       selectedDocumentIds,
+    ]
+  )
+
+  /**
+   * Send a message with a temporary model override.
+   * This is used for regeneration where user selects a specific model for that single regeneration.
+   * The model override only affects this single call and does not change the session's model preference.
+   * @param overrideMessage - The message content to send
+   * @param modelOverride - The model to use for this single request
+   * @param existingContexts - Optional existing contexts from original message (for regeneration)
+   */
+  const handleSendMessageWithModel = useCallback(
+    async (
+      overrideMessage: string,
+      modelOverride: Model,
+      existingContexts?: SubtaskContextBrief[]
+    ) => {
+      const message = overrideMessage.trim()
+      if (!message && !shouldHideChatInput) return
+
+      if (!isAttachmentReadyToSend) {
+        toast({
+          variant: 'destructive',
+          title: t('chat:upload.wait_for_upload'),
+        })
+        return
+      }
+
+      // For code type tasks, repository is required
+      const effectiveRepo =
+        selectedRepo ||
+        (selectedTaskDetail
+          ? {
+              git_url: selectedTaskDetail.git_url,
+              git_repo: selectedTaskDetail.git_repo,
+              git_repo_id: selectedTaskDetail.git_repo_id,
+              git_domain: selectedTaskDetail.git_domain,
+            }
+          : null)
+
+      if (
+        taskType === 'code' &&
+        showRepositorySelector &&
+        (effectiveRequiresWorkspace ?? teamRequiresWorkspace(selectedTeam)) &&
+        !effectiveRepo?.git_repo
+      ) {
+        toast({
+          variant: 'destructive',
+          title: t('common:selector.repository') || 'Please select a repository for code tasks',
+        })
+        return
+      }
+
+      setIsLoading(true)
+
+      // Set local pending state immediately
+      setLocalPendingMessage(message)
+      setTaskInputMessage('')
+      // Note: Don't reset attachments/contexts for regeneration since we're reusing existing ones
+
+      // Use the override model instead of the selected model
+      const modelId = modelOverride.name === DEFAULT_MODEL_NAME ? undefined : modelOverride.name
+
+      // Prepare message with external API parameters
+      let finalMessage = message
+      if (Object.keys(externalApiParams).length > 0) {
+        const paramsJson = JSON.stringify(externalApiParams)
+        finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`
+      }
+
+      try {
+        const immediateTaskId = selectedTaskDetail?.id || -Date.now()
+
+        // Extract attachment IDs from existing contexts (for regeneration)
+        const attachmentIds =
+          existingContexts?.filter(ctx => ctx.context_type === 'attachment').map(ctx => ctx.id) ||
+          []
+
+        // Build context items for backend from existing contexts (knowledge bases, tables)
+        const contextItems: Array<{
+          type: 'knowledge_base' | 'table' | 'selected_documents'
+          data: Record<string, unknown>
+        }> = []
+
+        if (existingContexts) {
+          for (const ctx of existingContexts) {
+            if (ctx.context_type === 'knowledge_base') {
+              contextItems.push({
+                type: 'knowledge_base' as const,
+                data: {
+                  knowledge_id: ctx.id,
+                  name: ctx.name,
+                  document_count: ctx.document_count,
+                },
+              })
+            } else if (ctx.context_type === 'table') {
+              contextItems.push({
+                type: 'table' as const,
+                data: {
+                  document_id: ctx.id,
+                  name: ctx.name,
+                  source_config: ctx.source_config,
+                },
+              })
+            }
+          }
+        }
+
+        // Build pending contexts for immediate display from existing contexts
+        const pendingContexts: Array<{
+          id: number
+          context_type: 'attachment' | 'knowledge_base' | 'table'
+          name: string
+          status: 'pending' | 'ready'
+          file_extension?: string
+          file_size?: number
+          mime_type?: string
+          document_count?: number
+          source_config?: {
+            url?: string
+          }
+        }> =
+          existingContexts?.map(ctx => ({
+            id: ctx.id,
+            context_type: ctx.context_type,
+            name: ctx.name,
+            status: 'ready' as const,
+            file_extension: ctx.file_extension ?? undefined,
+            file_size: ctx.file_size ?? undefined,
+            mime_type: ctx.mime_type ?? undefined,
+            document_count: ctx.document_count ?? undefined,
+            source_config: ctx.source_config ?? undefined,
+          })) || []
+
+        const tempTaskId = await contextSendMessage(
+          {
+            message: finalMessage,
+            team_id: selectedTeam?.id ?? 0,
+            task_id: selectedTaskDetail?.id,
+            model_id: modelId,
+            force_override_bot_model: true, // Always force override when using model override
+            force_override_bot_model_type: modelOverride.type,
+            attachment_ids: attachmentIds,
+            enable_deep_thinking: enableDeepThinking,
+            enable_clarification: enableClarification,
+            is_group_chat: selectedTaskDetail?.is_group_chat || false,
+            git_url: showRepositorySelector ? effectiveRepo?.git_url : undefined,
+            git_repo: showRepositorySelector ? effectiveRepo?.git_repo : undefined,
+            git_repo_id: showRepositorySelector ? effectiveRepo?.git_repo_id : undefined,
+            git_domain: showRepositorySelector ? effectiveRepo?.git_domain : undefined,
+            branch_name: showRepositorySelector
+              ? selectedBranch?.name || selectedTaskDetail?.branch_name
+              : undefined,
+            task_type: taskType,
+            knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
+            contexts: contextItems.length > 0 ? contextItems : undefined,
+          },
+          {
+            pendingUserMessage: message,
+            pendingAttachments: [], // Attachments are already part of pendingContexts
+            pendingContexts: pendingContexts.length > 0 ? pendingContexts : undefined,
+            immediateTaskId: immediateTaskId,
+            currentUserId: user?.id,
+            onMessageSent: (
+              _localMessageId: string,
+              completedTaskId: number,
+              _subtaskId: number
+            ) => {
+              if (completedTaskId > 0) {
+                setPendingTaskId(completedTaskId)
+              }
+
+              // Call onTaskCreated callback when a new task is created
+              if (completedTaskId && !selectedTaskDetail?.id && onTaskCreated) {
+                onTaskCreated(completedTaskId)
+              }
+
+              if (completedTaskId && !selectedTaskDetail?.id) {
+                const params = new URLSearchParams(Array.from(searchParams.entries()))
+                params.set('taskId', String(completedTaskId))
+                router.push(`?${params.toString()}`)
+                refreshTasks()
+              }
+
+              if (selectedTaskDetail?.is_group_chat && completedTaskId) {
+                markTaskAsViewed(
+                  completedTaskId,
+                  selectedTaskDetail.status,
+                  new Date().toISOString()
+                )
+              }
+            },
+            onError: (error: Error) => {
+              handleSendError(error, message)
+            },
+          }
+        )
+
+        if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
+          setPendingTaskId(tempTaskId)
+        }
+
+        setTimeout(() => scrollToBottom(true), 0)
+      } catch (err) {
+        handleSendError(err as Error, message)
+      }
+
+      setIsLoading(false)
+    },
+    [
+      shouldHideChatInput,
+      isAttachmentReadyToSend,
+      toast,
+      selectedTeam,
+      selectedTaskDetail,
+      contextSendMessage,
+      enableDeepThinking,
+      enableClarification,
+      refreshTasks,
+      searchParams,
+      router,
+      showRepositorySelector,
+      selectedRepo,
+      selectedBranch,
+      taskType,
+      knowledgeBaseId,
+      markTaskAsViewed,
+      user?.id,
+      handleSendError,
+      scrollToBottom,
+      setIsLoading,
+      setTaskInputMessage,
+      externalApiParams,
+      onTaskCreated,
+      t,
     ]
   )
 
@@ -770,6 +1026,7 @@ export function useChatStreamHandlers({
 
     // Actions
     handleSendMessage,
+    handleSendMessageWithModel,
     handleRetry,
     handleCancelTask,
     stopStream,

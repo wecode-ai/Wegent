@@ -8,7 +8,6 @@ Implementation of specific Kind services
 import logging
 from typing import Any, Dict
 
-from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundException
@@ -18,6 +17,7 @@ from app.models.task import TaskResource
 from app.schemas.kind import Bot, Model, Retriever, Task, Team
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.kind_base import KindBaseService, TaskResourceBaseService
+from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
 
 logger = logging.getLogger(__name__)
 
@@ -474,6 +474,11 @@ class TaskKindService(TaskResourceBaseService):
             )
             db.commit()
 
+            # Push mode: dispatch task to executor_manager
+            from app.services.task_dispatcher import task_dispatcher
+
+            task_dispatcher.schedule_dispatch(db_resource.id)
+
         except Exception as e:
             # Log error but don't interrupt the process
             logger.error(f"Error creating subtasks: {str(e)}")
@@ -514,6 +519,11 @@ class TaskKindService(TaskResourceBaseService):
                 user_prompt=task_crd.spec.prompt,
             )
             db.commit()
+
+            # Push mode: dispatch task to executor_manager
+            from app.services.task_dispatcher import task_dispatcher
+
+            task_dispatcher.schedule_dispatch(db_resource.id)
 
         except Exception as e:
             # Log error but don't interrupt the process

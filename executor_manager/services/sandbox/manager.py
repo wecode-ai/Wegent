@@ -16,22 +16,25 @@ import os
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from shared.logger import setup_logger
-
 from executor_manager.common.config import get_config
 from executor_manager.common.distributed_lock import get_distributed_lock
 from executor_manager.common.singleton import SingletonMeta
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
-from executor_manager.models.sandbox import (Execution, ExecutionStatus,
-                                             Sandbox, SandboxStatus)
+from executor_manager.models.sandbox import (
+    Execution,
+    ExecutionStatus,
+    Sandbox,
+    SandboxStatus,
+)
 from executor_manager.services.heartbeat_manager import get_heartbeat_manager
-from executor_manager.services.sandbox.execution_runner import \
-    get_execution_runner
-from executor_manager.services.sandbox.health_checker import \
-    get_container_health_checker
+from executor_manager.services.sandbox.execution_runner import get_execution_runner
+from executor_manager.services.sandbox.health_checker import (
+    get_container_health_checker,
+)
 from executor_manager.services.sandbox.repository import get_sandbox_repository
 from executor_manager.utils.executor_name import generate_executor_name
+from shared.logger import setup_logger
 
 if TYPE_CHECKING:
     from executor_manager.services.sandbox.scheduler import SandboxScheduler
@@ -416,7 +419,16 @@ class SandboxManager(metaclass=SingletonMeta):
         try:
             executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
             result = executor.delete_executor(sandbox.container_name)
-            if result.get("status") != "success":
+
+            # Fallback: if pod not found by name, try to delete by task_id label
+            if result.get("status") == "not_found":
+                logger.info(
+                    f"[SandboxManager] Pod not found by name '{sandbox.container_name}', "
+                    f"trying to delete by task_id label: {sandbox_id}"
+                )
+                result = executor.delete_executor_by_task_id(sandbox_id)
+
+            if result.get("status") not in ("success", "not_found"):
                 logger.warning(
                     f"[SandboxManager] Failed to delete container: {result.get('error_msg')}"
                 )
@@ -534,8 +546,7 @@ class SandboxManager(metaclass=SingletonMeta):
 
         try:
             # Unpause the Docker container
-            from executor_manager.executors.docker.utils import \
-                unpause_container
+            from executor_manager.executors.docker.utils import unpause_container
 
             result = unpause_container(sandbox.container_name)
             if result.get("status") != "success":
@@ -613,7 +624,7 @@ class SandboxManager(metaclass=SingletonMeta):
         # Add to sandbox and save
         sandbox.add_execution(execution)
         self._repository.save_sandbox(sandbox)
-        save_result = self._repository.save_execution(execution)
+        save_result = self._repository.save_execution(execution, update_activity=True)
 
         logger.info(
             f"[SandboxManager] Created execution: execution_id={execution.execution_id}, "
@@ -781,8 +792,7 @@ class SandboxManager(metaclass=SingletonMeta):
             return
 
         # Import here to avoid circular imports
-        from executor_manager.services.sandbox.scheduler import \
-            SandboxScheduler
+        from executor_manager.services.sandbox.scheduler import SandboxScheduler
 
         self._scheduler = SandboxScheduler(self)
         await self._scheduler.start()

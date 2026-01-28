@@ -10,6 +10,9 @@
 // Subscription task type enumeration
 export type SubscriptionTaskType = 'execution' | 'collection'
 
+// Subscription visibility enumeration
+export type SubscriptionVisibility = 'public' | 'private' | 'market'
+
 // Subscription trigger type enumeration
 export type SubscriptionTriggerType = 'cron' | 'interval' | 'one_time' | 'event'
 
@@ -21,6 +24,7 @@ export type BackgroundExecutionStatus =
   | 'PENDING'
   | 'RUNNING'
   | 'COMPLETED'
+  | 'COMPLETED_SILENT'
   | 'FAILED'
   | 'RETRYING'
   | 'CANCELLED'
@@ -71,6 +75,7 @@ export interface Subscription {
   display_name: string
   description?: string
   task_type: SubscriptionTaskType
+  visibility: SubscriptionVisibility
   trigger_type: SubscriptionTriggerType
   trigger_config: Record<string, unknown>
   team_id: number
@@ -93,6 +98,17 @@ export interface Subscription {
   execution_count: number
   success_count: number
   failure_count: number
+  // Visibility and follow-related fields
+  followers_count: number
+  is_following: boolean
+  owner_username?: string
+  // Market rental fields
+  is_rental?: boolean
+  source_subscription_id?: number
+  source_subscription_name?: string
+  source_subscription_display_name?: string
+  source_owner_username?: string
+  rental_count?: number
   created_at: string
   updated_at: string
 }
@@ -104,6 +120,7 @@ export interface SubscriptionCreateRequest {
   display_name: string
   description?: string
   task_type: SubscriptionTaskType
+  visibility?: SubscriptionVisibility
   trigger_type: SubscriptionTriggerType
   trigger_config: Record<string, unknown>
   team_id: number
@@ -129,6 +146,7 @@ export interface SubscriptionUpdateRequest {
   display_name?: string
   description?: string
   task_type?: SubscriptionTaskType
+  visibility?: SubscriptionVisibility
   trigger_type?: SubscriptionTriggerType
   trigger_config?: Record<string, unknown>
   team_id?: number
@@ -177,6 +195,10 @@ export interface BackgroundExecution {
   subscription_display_name?: string
   team_name?: string
   task_type?: string
+  // Permission field - indicates if current user can delete this execution
+  can_delete?: boolean
+  // Silent execution flag - indicates if this execution completed silently
+  is_silent?: boolean
 }
 
 // Background execution list response
@@ -194,4 +216,159 @@ export interface SubscriptionTimelineFilter {
   subscription_ids?: number[]
   team_ids?: number[]
   task_types?: SubscriptionTaskType[]
+}
+
+// ========== Subscription Follow/Visibility Types ==========
+
+// Follow type enumeration
+export type FollowType = 'direct' | 'invited'
+
+// Invitation status enumeration
+export type InvitationStatus = 'pending' | 'accepted' | 'rejected'
+
+// Follower response
+export interface SubscriptionFollowerResponse {
+  user_id: number
+  username: string
+  follow_type: FollowType
+  followed_at: string
+}
+
+// Followers list response
+export interface SubscriptionFollowersListResponse {
+  total: number
+  items: SubscriptionFollowerResponse[]
+}
+
+// Following subscription response
+export interface FollowingSubscriptionResponse {
+  subscription: Subscription
+  follow_type: FollowType
+  followed_at: string
+}
+
+// Following subscriptions list response
+export interface FollowingSubscriptionsListResponse {
+  total: number
+  items: FollowingSubscriptionResponse[]
+}
+
+// Invite user request
+export interface InviteUserRequest {
+  user_id?: number
+  email?: string
+}
+
+// Invite namespace request
+export interface InviteNamespaceRequest {
+  namespace_id: number
+}
+
+// Subscription invitation response
+export interface SubscriptionInvitationResponse {
+  id: number
+  subscription_id: number
+  subscription_name: string
+  subscription_display_name: string
+  invited_by_user_id: number
+  invited_by_username: string
+  invitation_status: InvitationStatus
+  invited_at: string
+  owner_username: string
+}
+
+// Invitations list response
+export interface SubscriptionInvitationsListResponse {
+  total: number
+  items: SubscriptionInvitationResponse[]
+}
+
+// Discover subscription response
+export interface DiscoverSubscriptionResponse {
+  id: number
+  name: string
+  display_name: string
+  description?: string
+  task_type: SubscriptionTaskType
+  owner_user_id: number
+  owner_username: string
+  followers_count: number
+  is_following: boolean
+  created_at: string
+  updated_at: string
+}
+
+// Discover subscriptions list response
+export interface DiscoverSubscriptionsListResponse {
+  total: number
+  items: DiscoverSubscriptionResponse[]
+}
+
+// ========== Market/Rental Types ==========
+
+// Market subscription detail (hides sensitive information)
+export interface MarketSubscriptionDetail {
+  id: number
+  name: string
+  display_name: string
+  description?: string
+  task_type: SubscriptionTaskType
+  trigger_type: SubscriptionTriggerType
+  trigger_description: string
+  owner_user_id: number
+  owner_username: string
+  rental_count: number
+  is_rented: boolean
+  created_at: string
+  updated_at: string
+}
+
+// Market subscriptions list response
+export interface MarketSubscriptionsListResponse {
+  total: number
+  items: MarketSubscriptionDetail[]
+}
+
+// Rent subscription request
+export interface RentSubscriptionRequest {
+  name: string
+  display_name: string
+  trigger_type: SubscriptionTriggerType
+  trigger_config: Record<string, unknown>
+  model_ref?: SubscriptionModelRef
+}
+
+// Rental subscription response
+export interface RentalSubscriptionResponse {
+  id: number
+  name: string
+  display_name: string
+  namespace: string
+  source_subscription_id: number
+  source_subscription_name: string
+  source_subscription_display_name: string
+  source_owner_user_id: number
+  source_owner_username: string
+  trigger_type: SubscriptionTriggerType
+  trigger_config: Record<string, unknown>
+  model_ref?: SubscriptionModelRef
+  enabled: boolean
+  last_execution_time?: string
+  last_execution_status?: string
+  next_execution_time?: string
+  execution_count: number
+  created_at: string
+  updated_at: string
+}
+
+// Rental subscriptions list response
+export interface RentalSubscriptionsListResponse {
+  total: number
+  items: RentalSubscriptionResponse[]
+}
+
+// Rental count response
+export interface RentalCountResponse {
+  subscription_id: number
+  rental_count: number
 }

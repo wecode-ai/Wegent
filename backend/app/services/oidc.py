@@ -13,6 +13,7 @@ from authlib.integrations.httpx_client import AsyncOAuth2Client
 from authlib.jose import jwt
 from authlib.oidc.core import CodeIDToken
 from fastapi import HTTPException
+
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 from ..core.config import settings

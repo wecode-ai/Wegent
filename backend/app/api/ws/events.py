@@ -80,6 +80,11 @@ class ServerEvents:
     # Background execution events (to user room)
     BACKGROUND_EXECUTION_UPDATE = "background:execution_update"
 
+    # Pet events (to user room)
+    PET_EXPERIENCE_GAINED = "pet:experience_gained"
+    PET_STAGE_EVOLVED = "pet:stage_evolved"
+    PET_TRAITS_UPDATED = "pet:traits_updated"
+
 
 # ============================================================
 # Client -> Server Payloads

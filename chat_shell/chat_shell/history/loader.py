@@ -392,12 +392,16 @@ def _build_history_message(
         # Process attachments first (they have priority)
         vision_parts: list[dict[str, Any]] = []
         attachment_text_parts: list[str] = []
+        image_metadata_headers: list[str] = []
         total_attachment_text_length = 0
 
         for attachment in attachments:
             vision_block = _build_vision_content_block(attachment)
             if vision_block:
                 vision_parts.append(vision_block)
+                # Add image metadata header for reference in text content
+                image_header = _build_image_metadata_header(attachment)
+                image_metadata_headers.append(image_header)
                 logger.info(
                     f"[history] Loaded image attachment: id={attachment.id}, "
                     f"name={attachment.name}, mime_type={attachment.mime_type}"
@@ -461,6 +465,10 @@ def _build_history_message(
             text_content = f"{combined_prefix}{text_content}"
 
         if vision_parts:
+            # Add image metadata headers to text content for reference
+            if image_metadata_headers:
+                headers_text = "\n\n".join(image_metadata_headers) + "\n\n"
+                text_content = f"{headers_text}{text_content}"
             return {
                 "role": "user",
                 "content": [{"type": "text", "text": text_content}, *vision_parts],
@@ -495,13 +503,54 @@ def _build_vision_content_block(context) -> dict[str, Any] | None:
     }
 
 
+def _format_file_size(size_bytes: int) -> str:
+    """Format file size in bytes to human-readable format."""
+    if size_bytes >= 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    elif size_bytes >= 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    else:
+        return f"{size_bytes} bytes"
+
+
+def _build_attachment_url(attachment_id: int) -> str:
+    """Build the download URL for an attachment."""
+    return f"/api/attachments/{attachment_id}/download"
+
+
+def _build_image_metadata_header(context) -> str:
+    """Build image attachment metadata header string."""
+    attachment_id = context.id
+    filename = context.name or "image"
+    mime_type = context.mime_type or "unknown"
+    file_size = context.file_size if hasattr(context, "file_size") else 0
+    formatted_size = _format_file_size(file_size)
+    url = _build_attachment_url(attachment_id)
+
+    return (
+        f"[Image Attachment: {filename} | ID: {attachment_id} | "
+        f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]"
+    )
+
+
 def _build_document_text_prefix(context) -> str:
-    """Build a text prefix for a document context."""
+    """Build a text prefix for a document context with attachment metadata."""
     if not context.extracted_text:
         return ""
 
-    name = context.name or "document"
-    return f"[Document: {name}]\n{context.extracted_text}\n\n"
+    # Build attachment metadata
+    attachment_id = context.id
+    filename = context.name or "document"
+    mime_type = context.mime_type if hasattr(context, "mime_type") else "unknown"
+    file_size = context.file_size if hasattr(context, "file_size") else 0
+    formatted_size = _format_file_size(file_size)
+    url = _build_attachment_url(attachment_id)
+
+    return (
+        f"[Attachment: {filename} | ID: {attachment_id} | "
+        f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
+        f"{context.extracted_text}\n\n"
+    )
 
 
 def _build_knowledge_base_text_prefix(context) -> str:
@@ -525,12 +574,44 @@ def _truncate_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return history[:first_n] + history[-last_m:]
 
 
+def _get_summary_text(summary_data: dict, kb_count: int) -> str:
+    """
+    Get appropriate summary text based on KB count.
+
+    Args:
+        summary_data: Summary dict from KB spec
+        kb_count: Total number of KBs
+
+    Returns:
+        Summary text (long for ≤2 KBs, short for ≥3 KBs)
+    """
+    use_short = kb_count >= 3
+
+    if use_short:
+        summary_text = summary_data.get("short_summary")
+        # Fallback to long if short not available
+        if not summary_text:
+            summary_text = summary_data.get("long_summary")
+    else:
+        summary_text = summary_data.get("long_summary")
+        # Fallback to short if long not available
+        if not summary_text:
+            summary_text = summary_data.get("short_summary")
+
+    return summary_text or ""
+
+
 def get_knowledge_base_meta_prompt(
     db,
     task_id: int,
 ) -> str:
     """
     Build knowledge base meta information prompt for system prompt injection.
+
+    This function now includes KB summary information when available:
+    - For 1-2 KBs: Uses long_summary
+    - For 3+ KBs: Uses short_summary to save tokens
+    - Shows topics if available
 
     This is a synchronous function called from backend's preprocessing code.
     Only used in Package mode.
@@ -540,7 +621,8 @@ def get_knowledge_base_meta_prompt(
         task_id: Task ID
 
     Returns:
-        Formatted prompt string with knowledge base meta information,
+        Formatted prompt string with knowledge base meta information
+        (including inline summary sub-bullets when available),
         or empty string if no knowledge bases are found
     """
     kb_meta_list = get_knowledge_base_meta_for_task(db, task_id)
@@ -548,12 +630,46 @@ def get_knowledge_base_meta_prompt(
     if not kb_meta_list:
         return ""
 
-    # Build the prompt section
+    # Build KB list with inline summary sub-bullets
     kb_lines = []
+    kb_count = len(kb_meta_list)
+
     for kb_meta in kb_meta_list:
         kb_name = kb_meta.get("kb_name", "Unknown")
         kb_id = kb_meta.get("kb_id", "N/A")
+        kb_kind = kb_meta.get("kb_kind")
+
+        # Main KB line
         kb_lines.append(f"- KB Name: {kb_name}, KB ID: {kb_id}")
+
+        # Add summary sub-bullets if available
+        if kb_kind:
+            try:
+                kb_spec = kb_kind.json.get("spec", {})
+                summary_data = kb_spec.get("summary", {})
+
+                # Check if summary is available and completed
+                if (
+                    kb_spec.get("summaryEnabled")
+                    and summary_data.get("status") == "completed"
+                ):
+                    # Get appropriate summary text based on total KB count
+                    summary_text = _get_summary_text(summary_data, kb_count)
+                    topics = summary_data.get("topics", [])
+
+                    # Add summary sub-bullet
+                    if summary_text:
+                        kb_lines.append(f"  - Summary: {summary_text}")
+
+                    # Add topics sub-bullet
+                    if topics:
+                        topics_str = ", ".join(topics)
+                        kb_lines.append(f"  - Topics: {topics_str}")
+            except Exception as e:
+                # Log but don't break prompt generation
+                logger.warning(
+                    f"Failed to extract summary for KB {kb_id}: {e}", exc_info=True
+                )
 
     kb_list_str = "\n".join(kb_lines)
 
@@ -581,10 +697,13 @@ def get_knowledge_base_meta_for_task(
         task_id: Task ID
 
     Returns:
-        List of dicts with kb_name and kb_id
+        List of dicts with kb_name, kb_id, and kb_kind (Kind object)
     """
     from app.models.subtask import Subtask
     from app.models.subtask_context import ContextType, SubtaskContext
+    from app.services.knowledge.task_knowledge_base_service import (
+        task_knowledge_base_service,
+    )
 
     try:
         # Get all subtask IDs for this task
@@ -597,7 +716,6 @@ def get_knowledge_base_meta_for_task(
             return []
 
         # Get knowledge base contexts
-        # Note: knowledge_id is stored in type_data JSON, not a direct column
         contexts = (
             db.query(SubtaskContext)
             .filter(
@@ -607,23 +725,51 @@ def get_knowledge_base_meta_for_task(
             .all()
         )
 
-        kb_meta_list = []
+        # Extract unique KB IDs with metadata
+        kb_ids = []
         seen_kb_ids = set()
+        kb_name_map = {}  # Store context names for fallback
 
         for ctx in contexts:
-            # knowledge_id is a @property that extracts from type_data
             kb_id = ctx.knowledge_id
             if kb_id and kb_id not in seen_kb_ids:
                 seen_kb_ids.add(kb_id)
+                kb_ids.append(kb_id)
+                kb_name_map[kb_id] = ctx.name or "Unknown"
+
+        if not kb_ids:
+            return []
+
+        # Batch fetch KB Kind objects (single query, avoid N+1)
+        kb_map = task_knowledge_base_service.get_knowledge_bases_by_ids(db, kb_ids)
+
+        # Build meta list with KB Kind objects
+        kb_meta_list = []
+        for kb_id in kb_ids:  # Preserve order
+            kb_kind = kb_map.get(kb_id)
+            if kb_kind:
+                kb_spec = kb_kind.json.get("spec", {})
                 kb_meta_list.append(
                     {
-                        "kb_name": ctx.name or "Unknown",
                         "kb_id": kb_id,
+                        "kb_name": kb_spec.get(
+                            "name", kb_name_map.get(kb_id, "Unknown")
+                        ),
+                        "kb_kind": kb_kind,  # Include Kind object for summary extraction
+                    }
+                )
+            else:
+                # KB not found, use fallback name from context
+                kb_meta_list.append(
+                    {
+                        "kb_id": kb_id,
+                        "kb_name": kb_name_map.get(kb_id, "Unknown"),
+                        "kb_kind": None,
                     }
                 )
 
         return kb_meta_list
 
     except Exception as e:
-        logger.warning(f"[history] Failed to get KB meta for task {task_id}: {e}")
+        logger.exception(f"Failed to get KB meta for task {task_id}: {e}")
         return []

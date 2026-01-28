@@ -4,7 +4,7 @@ from typing import Optional
 
 import click
 
-from ..client import VALID_KINDS, WegentClient, APIError
+from ..client import VALID_KINDS, APIError, WegentClient
 from ..config import get_namespace
 from ..output import (
     format_resource_json,
@@ -16,8 +16,12 @@ from ..output import (
 @click.command("get")
 @click.argument("kind")
 @click.argument("name", required=False)
-@click.option("-n", "--namespace", default=None, help="Namespace (default: from config)")
-@click.option("-o", "--output", type=click.Choice(["wide", "yaml", "json"]), help="Output format")
+@click.option(
+    "-n", "--namespace", default=None, help="Namespace (default: from config)"
+)
+@click.option(
+    "-o", "--output", type=click.Choice(["wide", "yaml", "json"]), help="Output format"
+)
 @click.option("-A", "--all-namespaces", is_flag=True, help="List from all namespaces")
 @click.option("--filter", "name_filter", help="Filter by name (partial match)")
 @click.pass_context

@@ -19,6 +19,12 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from app.core.config import settings
+from app.db.session import SessionLocal
+from app.models.kind import Kind
+from app.models.subtask import Subtask
+from app.models.task import TaskResource
+from app.models.user import User
 from shared.telemetry.context import (
     SpanAttributes,
     SpanManager,
@@ -30,12 +36,6 @@ from shared.telemetry.context import (
     restore_context_vars,
     set_span_attributes,
 )
-
-from app.core.config import settings
-from app.db.session import SessionLocal
-from app.models.kind import Kind
-from app.models.subtask import Subtask
-from app.models.user import User
 
 if TYPE_CHECKING:
     from app.api.ws.chat_namespace import ChatNamespace
@@ -55,6 +55,7 @@ class StreamTaskData:
 
     # Task data
     task_id: int
+    project_id: Optional[int]  # Project ID for group conversations
 
     # Team data
     team_id: int
@@ -74,7 +75,7 @@ class StreamTaskData:
     @classmethod
     def from_orm(
         cls,
-        task: Kind,
+        task: "TaskResource",
         team: Kind,
         user: User,
         assistant_subtask: Subtask,
@@ -82,7 +83,7 @@ class StreamTaskData:
         """Extract data from ORM objects.
 
         Args:
-            task: Task Kind object
+            task: Task TaskResource object
             team: Team Kind object
             user: User object
             assistant_subtask: Assistant subtask (contains message_id and parent_id)
@@ -92,6 +93,7 @@ class StreamTaskData:
         """
         return cls(
             task_id=task.id,
+            project_id=task.project_id if task.project_id else None,
             team_id=team.id,
             team_user_id=team.user_id,
             team_name=team.name,
@@ -105,7 +107,7 @@ class StreamTaskData:
 
 
 async def trigger_ai_response(
-    task: Kind,
+    task: TaskResource,
     assistant_subtask: Subtask,
     team: Kind,
     user: User,
@@ -117,6 +119,8 @@ async def trigger_ai_response(
     user_subtask_id: Optional[int] = None,
     event_emitter: Optional["ChatEventEmitter"] = None,
     history_limit: Optional[int] = None,
+    auth_token: str = "",
+    is_subscription: bool = False,
 ) -> None:
     """
     Trigger AI response for a chat message.
@@ -133,7 +137,7 @@ async def trigger_ai_response(
     - AI response is handled by executor_manager (no action needed here)
 
     Args:
-        task: Task Kind object
+        task: Task TaskResource object
         assistant_subtask: Assistant subtask for AI response
         team: Team Kind object
         user: User object
@@ -148,6 +152,9 @@ async def trigger_ai_response(
             Pass SubscriptionEventEmitter for Subscription tasks to update BackgroundExecution status.
         history_limit: Optional limit on number of history messages to include.
             Used by Subscription tasks with preserveHistory enabled.
+        auth_token: JWT token from user's request for downstream API authentication
+        is_subscription: Whether this is a subscription task. When True, SilentExitTool
+            will be added in chat_shell for silent task completion.
     """
     logger.info(
         "[ai_trigger] Triggering AI response: task_id=%d, "
@@ -172,6 +179,8 @@ async def trigger_ai_response(
             user_subtask_id=user_subtask_id,
             event_emitter=event_emitter,
             history_limit=history_limit,
+            auth_token=auth_token,
+            is_subscription=is_subscription,
         )
     else:
         # Executor-based (ClaudeCode, Agno, etc.)
@@ -183,7 +192,7 @@ async def trigger_ai_response(
 
 
 async def _trigger_direct_chat(
-    task: Kind,
+    task: TaskResource,
     assistant_subtask: Subtask,
     team: Kind,
     user: User,
@@ -194,6 +203,8 @@ async def _trigger_direct_chat(
     user_subtask_id: Optional[int] = None,
     event_emitter: Optional["ChatEventEmitter"] = None,
     history_limit: Optional[int] = None,
+    auth_token: str = "",
+    is_subscription: bool = False,
 ) -> None:
     """
     Trigger direct chat (Chat Shell) AI response using ChatService.
@@ -201,7 +212,7 @@ async def _trigger_direct_chat(
     Emits chat:start event and starts streaming in background task.
 
     Args:
-        task: Task Kind object
+        task: Task TaskResource object
         assistant_subtask: Assistant subtask (contains message_id and parent_id for ordering)
         team: Team Kind object
         user: User object
@@ -215,6 +226,9 @@ async def _trigger_direct_chat(
             Pass SubscriptionEventEmitter for Subscription tasks to update BackgroundExecution status.
         history_limit: Optional limit on number of history messages to include.
             Used by Subscription tasks with preserveHistory enabled.
+        auth_token: JWT token from user's request for downstream API authentication
+        is_subscription: Whether this is a subscription task. When True, SilentExitTool
+            will be added in chat_shell for silent task completion.
     """
     # Extract data from ORM objects before starting background task
     # This prevents DetachedInstanceError when the session is closed
@@ -256,6 +270,8 @@ async def _trigger_direct_chat(
             user_subtask_id=user_subtask_id,
             event_emitter=event_emitter,
             history_limit=history_limit,
+            auth_token=auth_token,
+            is_subscription=is_subscription,
         )
         logger.info(
             "[ai_trigger] Flow task mode: stream task completed (subtask_id=%d)",
@@ -276,6 +292,8 @@ async def _trigger_direct_chat(
                 user_subtask_id=user_subtask_id,
                 event_emitter=event_emitter,
                 history_limit=history_limit,
+                auth_token=auth_token,
+                is_subscription=is_subscription,
             )
         )
 
@@ -297,6 +315,8 @@ async def _stream_chat_response(
     user_subtask_id: Optional[int] = None,
     event_emitter: Optional["ChatEventEmitter"] = None,
     history_limit: Optional[int] = None,
+    auth_token: str = "",
+    is_subscription: bool = False,
 ) -> None:
     """
     Stream chat response using ChatService.
@@ -322,6 +342,8 @@ async def _stream_chat_response(
             Pass NoOpEventEmitter for background tasks without WebSocket (e.g., Flow Scheduler).
         history_limit: Optional limit on number of history messages to include.
             Used by Subscription tasks with preserveHistory enabled.
+        is_subscription: Whether this is a subscription task. When True, SilentExitTool
+            will be added in chat_shell for silent task completion.
     """
     # Import here to avoid circular imports
     from app.services.chat.trigger.emitter import (
@@ -350,10 +372,9 @@ async def _stream_chat_response(
     span_manager.create_span()
     span_manager.enter_span()
 
-    from chat_shell.agent import ChatAgent
-
     from app.services.chat.config import ChatConfigBuilder, WebSocketStreamConfig
     from app.services.chat.streaming import WebSocketBridge, WebSocketStreamingHandler
+    from chat_shell.agent import ChatAgent
 
     db = SessionLocal()
 
@@ -419,10 +440,61 @@ async def _stream_chat_response(
         # Add model info to span
         span_manager.set_model_attributes(chat_config.model_config)
 
+        # Search for relevant memories (with timeout, graceful degradation)
+        # WebSocket chat (web) respects user preference for memory
+        # This runs before context processing to inject memory context
+        from app.services.memory import get_memory_manager, is_memory_enabled_for_user
+
+        memory_manager = get_memory_manager()
+        relevant_memories = []
+
+        # Fetch user from database to check memory preference
+        user = db.query(User).filter(User.id == stream_data.user_id).first()
+
+        # Check user preference first
+        if user is None or not is_memory_enabled_for_user(user):
+            logger.info(
+                "[ai_trigger] Long-term memory disabled by user preference: user_id=%d",
+                stream_data.user_id,
+            )
+        elif memory_manager.is_enabled:
+            try:
+                logger.info(
+                    "[ai_trigger] Searching for relevant memories: user_id=%d, project_id=%s",
+                    stream_data.user_id,
+                    stream_data.project_id or "None",
+                )
+                relevant_memories = await memory_manager.search_memories(
+                    user_id=str(stream_data.user_id),
+                    query=message,
+                    project_id=(
+                        str(stream_data.project_id) if stream_data.project_id else None
+                    ),
+                )
+                logger.info(
+                    "[ai_trigger] Found %d relevant memories", len(relevant_memories)
+                )
+            except Exception as e:
+                logger.error(
+                    "[ai_trigger] Failed to search memories: %s", e, exc_info=True
+                )
+
+        # Inject memories into system prompt if any found
+        # This happens before context processing to ensure memories are included
+        base_system_prompt_with_memory = chat_config.system_prompt
+        if relevant_memories:
+            base_system_prompt_with_memory = memory_manager.inject_memories_to_prompt(
+                base_prompt=chat_config.system_prompt, memories=relevant_memories
+            )
+            logger.info(
+                "[ai_trigger] Injected %d memories into system prompt",
+                len(relevant_memories),
+            )
+
         # Unified context processing: process both attachments and knowledge bases
         # from the user subtask's associated contexts
         final_message = message
-        enhanced_system_prompt = chat_config.system_prompt
+        enhanced_system_prompt = base_system_prompt_with_memory
         extra_tools = []
 
         logger.info(
@@ -435,6 +507,9 @@ async def _stream_chat_response(
         if user_subtask_id:
             from app.services.chat.preprocessing import prepare_contexts_for_chat
 
+            # Get context_window from model_config for selected_documents injection threshold
+            model_context_window = chat_config.model_config.get("context_window")
+
             (
                 final_message,
                 enhanced_system_prompt,
@@ -446,8 +521,9 @@ async def _stream_chat_response(
                 user_subtask_id=user_subtask_id,
                 user_id=stream_data.user_id,
                 message=message,
-                base_system_prompt=chat_config.system_prompt,
+                base_system_prompt=base_system_prompt_with_memory,  # Use prompt with memories
                 task_id=stream_data.task_id,
+                context_window=model_context_window,  # Pass model's context_window from Model spec
             )
             logger.info(
                 f"[ai_trigger] Unified context processing completed: "
@@ -597,6 +673,8 @@ async def _stream_chat_response(
                 preload_skills=chat_config.preload_skills,  # Use resolved from ChatConfig
                 user_subtask_id=user_subtask_id,  # Pass user subtask ID for RAG persistence
                 history_limit=history_limit,  # Pass history limit for subscription tasks
+                auth_token=auth_token,  # Pass auth token from WebSocket session
+                is_subscription=is_subscription,  # Pass subscription flag for SilentExitTool
             )
         elif streaming_mode == "bridge":
             # New architecture: StreamingCore publishes to Redis, WebSocketBridge forwards
@@ -664,6 +742,8 @@ async def _stream_with_http_adapter(
     preload_skills: list = None,
     user_subtask_id: Optional[int] = None,
     history_limit: Optional[int] = None,
+    auth_token: str = "",
+    is_subscription: bool = False,
 ) -> None:
     """Stream using HTTP adapter to call remote chat_shell service.
 
@@ -694,6 +774,9 @@ async def _stream_with_http_adapter(
             stream_data.subtask_id which is AI response's subtask)
         history_limit: Optional limit on number of history messages to include.
             Used by Subscription tasks with preserveHistory enabled.
+        auth_token: JWT token from user's request for downstream API authentication
+        is_subscription: Whether this is a subscription task. When True, SilentExitTool
+            will be added in chat_shell for silent task completion.
     """
     # Import here to avoid circular imports
     from app.core.config import settings
@@ -801,6 +884,8 @@ async def _stream_with_http_adapter(
         task_data=task_data,
         mcp_servers=mcp_servers,
         history_limit=history_limit,  # Pass history limit for subscription tasks
+        auth_token=auth_token,  # JWT token for API authentication
+        is_subscription=is_subscription,  # Pass subscription flag for SilentExitTool
     )
 
     logger.info(
@@ -1097,6 +1182,13 @@ async def _stream_with_http_adapter(
                     result=result,
                 )
 
+                # Publish event for pet experience update (decoupled from pet module)
+                from app.core.events import ChatCompletedEvent, get_event_bus
+
+                await get_event_bus().publish(
+                    ChatCompletedEvent(user_id=stream_data.user_id)
+                )
+
             elif event.type == ChatEventType.ERROR:
                 # Error - emit error event
                 error_msg = event.data.get("error", "Unknown error")
@@ -1229,6 +1321,11 @@ async def _stream_with_bridge(
         ws_config: WebSocket stream configuration
         namespace: ChatNamespace instance (required for bridge mode)
     """
+    from langchain_core.tools.base import BaseTool
+
+    from app.core.shutdown import shutdown_manager
+    from app.services.chat.streaming import WebSocketBridge
+    from app.services.chat.ws_emitter import get_ws_emitter
     from chat_shell.agent import AgentConfig, ChatAgent
     from chat_shell.history import get_chat_history
     from chat_shell.services.streaming import (
@@ -1240,11 +1337,6 @@ async def _stream_with_bridge(
     from chat_shell.tools import WebSearchTool
     from chat_shell.tools.events import create_tool_event_handler
     from chat_shell.tools.mcp import load_mcp_tools
-    from langchain_core.tools.base import BaseTool
-
-    from app.core.shutdown import shutdown_manager
-    from app.services.chat.streaming import WebSocketBridge
-    from app.services.chat.ws_emitter import get_ws_emitter
 
     subtask_id = ws_config.subtask_id
     task_id = ws_config.task_id
@@ -1443,6 +1535,11 @@ async def _stream_with_bridge(
                 content=state.full_response,
                 result=result,
             )
+
+        # Publish event for pet experience update (decoupled from pet module)
+        from app.core.events import ChatCompletedEvent, get_event_bus
+
+        await get_event_bus().publish(ChatCompletedEvent(user_id=stream_data.user_id))
 
     except Exception as e:
         logger.exception("[BRIDGE] subtask=%s error", subtask_id)

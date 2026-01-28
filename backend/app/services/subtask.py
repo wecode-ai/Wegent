@@ -7,12 +7,13 @@ from datetime import datetime
 from typing import List, Optional, Tuple
 
 from fastapi import HTTPException
-from shared.models.db.subtask_context import SubtaskContext
 from sqlalchemy.orm import Session, load_only, subqueryload, undefer
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.schemas.subtask import SubtaskCreate, SubtaskUpdate
 from app.services.base import BaseService
+from shared.models.db.enums import ContextType
+from shared.models.db.subtask_context import SubtaskContext
 
 logger = logging.getLogger(__name__)
 
@@ -410,9 +411,18 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         deleted_count = len(subtasks_to_delete)
         subtask_ids_to_delete = [s.id for s in subtasks_to_delete]
 
-        # Delete associated SubtaskContexts first
+        # Handle SubtaskContexts:
+        # - Preserve attachment contexts (reset subtask_id to 0 so they can be re-linked)
+        # - Delete non-attachment contexts (knowledge_base, table, etc.)
+        # This allows attachments to be reused when regenerating responses
         db.query(SubtaskContext).filter(
-            SubtaskContext.subtask_id.in_(subtask_ids_to_delete)
+            SubtaskContext.subtask_id.in_(subtask_ids_to_delete),
+            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+        ).update({"subtask_id": 0}, synchronize_session=False)
+
+        db.query(SubtaskContext).filter(
+            SubtaskContext.subtask_id.in_(subtask_ids_to_delete),
+            SubtaskContext.context_type != ContextType.ATTACHMENT.value,
         ).delete(synchronize_session="fetch")
 
         # Delete the subtasks
@@ -466,9 +476,18 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         deleted_count = len(subtasks_to_delete)
         subtask_ids_to_delete = [s.id for s in subtasks_to_delete]
 
-        # Delete associated SubtaskContexts first
+        # Handle SubtaskContexts:
+        # - Preserve attachment contexts (reset subtask_id to 0 so they can be re-linked)
+        # - Delete non-attachment contexts (knowledge_base, table, etc.)
+        # This allows attachments to be reused when regenerating responses
         db.query(SubtaskContext).filter(
-            SubtaskContext.subtask_id.in_(subtask_ids_to_delete)
+            SubtaskContext.subtask_id.in_(subtask_ids_to_delete),
+            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+        ).update({"subtask_id": 0}, synchronize_session=False)
+
+        db.query(SubtaskContext).filter(
+            SubtaskContext.subtask_id.in_(subtask_ids_to_delete),
+            SubtaskContext.context_type != ContextType.ATTACHMENT.value,
         ).delete(synchronize_session="fetch")
 
         # Delete the subtasks

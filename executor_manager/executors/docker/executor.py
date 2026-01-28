@@ -19,23 +19,34 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import requests
-from shared.logger import setup_logger
-from shared.status import TaskStatus
-from shared.telemetry.config import get_otel_config
 
 from executor_manager.config.config import EXECUTOR_ENV
 from executor_manager.executors.base import Executor
 from executor_manager.executors.docker.constants import (
-    CONTAINER_OWNER, DEFAULT_API_ENDPOINT, DEFAULT_DOCKER_HOST, DEFAULT_LOCALE,
-    DEFAULT_PROGRESS_COMPLETE, DEFAULT_PROGRESS_RUNNING, DEFAULT_TASK_ID,
-    DEFAULT_TIMEZONE, DOCKER_SOCKET_PATH, WORKSPACE_MOUNT_PATH)
-from executor_manager.executors.docker.utils import (build_callback_url,
-                                                     check_container_ownership,
-                                                     delete_container,
-                                                     find_available_port,
-                                                     get_container_ports,
-                                                     get_running_task_details)
+    CONTAINER_OWNER,
+    DEFAULT_API_ENDPOINT,
+    DEFAULT_DOCKER_HOST,
+    DEFAULT_LOCALE,
+    DEFAULT_PROGRESS_COMPLETE,
+    DEFAULT_PROGRESS_RUNNING,
+    DEFAULT_TASK_ID,
+    DEFAULT_TIMEZONE,
+    DOCKER_SOCKET_PATH,
+    WORKSPACE_MOUNT_PATH,
+)
+from executor_manager.executors.docker.utils import (
+    build_callback_url,
+    check_container_ownership,
+    delete_container,
+    find_available_port,
+    get_container_ports,
+    get_container_status,
+    get_running_task_details,
+)
 from executor_manager.utils.executor_name import generate_executor_name
+from shared.logger import setup_logger
+from shared.status import TaskStatus
+from shared.telemetry.config import get_otel_config
 
 logger = setup_logger(__name__)
 
@@ -228,10 +239,24 @@ class DockerExecutor(Executor):
         # Send HTTP request to container
         response = self._send_task_to_container(task, DEFAULT_DOCKER_HOST, port_info)
 
-        # Process response
-        if response.json()["status"] == "success":
+        # Process response - check HTTP status code for success
+        if response.status_code == 200:
             status["progress"] = DEFAULT_PROGRESS_COMPLETE
             status["error_msg"] = response.json().get("error_msg", "")
+
+            # Task sent successfully to existing container, register for heartbeat monitoring
+            # This handles re-execution cases where Redis keys were cleaned up after first completion
+            task_id = task.get("task_id")
+            subtask_id = task.get("subtask_id")
+            task_type = task.get("type", "online")
+
+            self.register_task_for_heartbeat(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                executor_name=executor_name,
+                task_type=task_type,
+                context=f"existing container: {executor_name}",
+            )
 
     def _get_container_port(
         self, executor_name: str
@@ -276,7 +301,9 @@ class DockerExecutor(Executor):
         headers = {}
         try:
             from shared.telemetry.context import (
-                get_request_id, inject_trace_context_to_headers)
+                get_request_id,
+                inject_trace_context_to_headers,
+            )
 
             # Inject W3C Trace Context headers for distributed tracing
             headers = inject_trace_context_to_headers(headers)
@@ -331,26 +358,12 @@ class DockerExecutor(Executor):
 
             # Register regular tasks to RunningTaskTracker for heartbeat monitoring
             # This enables OOM detection for non-sandbox tasks
-            is_sandbox_task = task.get("type") == "sandbox"
-            if not is_validation_task and not is_sandbox_task:
-                try:
-                    from executor_manager.services.task_heartbeat_manager import \
-                        get_running_task_tracker
-
-                    tracker = get_running_task_tracker()
-                    tracker.add_running_task(
-                        task_id=task_id,
-                        subtask_id=task_info["subtask_id"],
-                        executor_name=executor_name,
-                        task_type=task.get("type", "online"),
-                    )
-                    logger.debug(
-                        f"Registered task {task_id} to RunningTaskTracker for heartbeat monitoring"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to register task to RunningTaskTracker: {e}"
-                    )
+            self.register_task_for_heartbeat(
+                task_id=task_id,
+                subtask_id=task_info["subtask_id"],
+                executor_name=executor_name,
+                task_type=task.get("type", "online"),
+            )
 
             # For validation tasks, report starting_container stage
             if is_validation_task:
@@ -945,12 +958,15 @@ class DockerExecutor(Executor):
                 }
 
             # Get container port
-            port = self._get_container_port(container_name)
+            port, error_msg = self._get_container_port(container_name)
             if not port:
-                logger.error(f"Could not find port for container {container_name}")
+                logger.error(
+                    f"Could not find port for container {container_name}: {error_msg}"
+                )
                 return {
                     "status": "failed",
-                    "error_msg": f"Could not find port for container {container_name}",
+                    "error_msg": error_msg
+                    or f"Could not find port for container {container_name}",
                 }
 
             # Call the executor's cancel API
@@ -964,7 +980,9 @@ class DockerExecutor(Executor):
                 headers = {}
                 try:
                     from shared.telemetry.context import (
-                        get_request_id, inject_trace_context_to_headers)
+                        get_request_id,
+                        inject_trace_context_to_headers,
+                    )
 
                     # Inject W3C Trace Context headers for distributed tracing
                     headers = inject_trace_context_to_headers(headers)
@@ -1059,11 +1077,12 @@ class DockerExecutor(Executor):
             Dict with status and base_url (e.g., http://localhost:8080)
         """
         try:
-            port = self._get_container_port(executor_name)
+            port, error_msg = self._get_container_port(executor_name)
             if not port:
                 return {
                     "status": "failed",
-                    "error_msg": f"Container {executor_name} port not available",
+                    "error_msg": error_msg
+                    or f"Container {executor_name} port not available",
                 }
 
             return {
@@ -1170,3 +1189,98 @@ class DockerExecutor(Executor):
                     )
         except Exception as e:
             logger.error(f"Error reporting validation stage: {e}")
+
+    def get_container_status(self, executor_name: str) -> Dict[str, Any]:
+        """Get detailed status information for a Docker container.
+
+        This is a wrapper around the utils.get_container_status function
+        to implement the Executor interface.
+
+        Args:
+            executor_name: Name of the container to check
+
+        Returns:
+            Dict with the following fields:
+                - exists (bool): Whether container exists
+                - status (str): Container status (running/exited/paused/etc)
+                - oom_killed (bool): Whether container was killed due to OOM
+                - exit_code (int): Container exit code (0 = success, 137 = SIGKILL, etc)
+                - error_msg (str): Error message if any
+        """
+        return get_container_status(executor_name)
+
+    def get_executor_task_id(self, executor_name: str) -> Optional[str]:
+        """Get task_id from container label.
+
+        Args:
+            executor_name: Name of the container
+
+        Returns:
+            task_id string if found, None otherwise
+        """
+        from executor_manager.executors.docker.utils import get_container_task_id
+
+        return get_container_task_id(executor_name)
+
+    def delete_executor_by_task_id(self, task_id: str) -> Dict[str, Any]:
+        """Delete a Docker container by task_id label (fallback method).
+
+        This is used when the container name is not known or the container
+        was not found by name. It searches for containers with the matching
+        task_id label and deletes them.
+
+        Args:
+            task_id: Task ID to search for
+
+        Returns:
+            Dict with status and error_msg if failed
+        """
+        try:
+            # Find containers with the matching task_id label
+            result = get_running_task_details(label_selector=f"task_id={task_id}")
+            if result.get("status") != "success":
+                return {
+                    "status": "failed",
+                    "error_msg": result.get("error_msg", "Failed to query containers"),
+                }
+
+            containers = result.get("containers", [])
+            if not containers:
+                logger.warning(f"No container found with task_id label '{task_id}'")
+                return {
+                    "status": "not_found",
+                    "error_msg": f"No container found with task_id '{task_id}'",
+                }
+
+            # Delete all matching containers (should typically be one)
+            deleted_containers = []
+            for container in containers:
+                container_name = container.get("container_name")
+                if container_name:
+                    try:
+                        delete_result = delete_container(container_name)
+                        if delete_result.get("status") == "success":
+                            deleted_containers.append(container_name)
+                            logger.info(
+                                f"Deleted Docker container '{container_name}' "
+                                f"found by task_id label '{task_id}'"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to delete container '{container_name}': {e}"
+                        )
+
+            if deleted_containers:
+                return {
+                    "status": "success",
+                    "deleted_containers": deleted_containers,
+                }
+            else:
+                return {
+                    "status": "not_found",
+                    "error_msg": f"Failed to delete any containers for task_id '{task_id}'",
+                }
+
+        except Exception as e:
+            logger.error(f"Error deleting containers by task_id '{task_id}': {e}")
+            return {"status": "failed", "error_msg": f"Error: {e}"}

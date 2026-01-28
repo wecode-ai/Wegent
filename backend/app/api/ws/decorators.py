@@ -13,6 +13,8 @@ from typing import Any, Callable, Optional
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+
+from app.core.config import settings
 from shared.telemetry.context import (
     SpanNames,
     set_request_context,
@@ -20,8 +22,7 @@ from shared.telemetry.context import (
     set_websocket_context,
 )
 from shared.telemetry.core import is_telemetry_enabled
-
-from app.core.config import settings
+from shared.utils.ip_util import get_host_ip
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,23 @@ def _set_event_data_attributes(span, event_data: dict) -> None:
     _safe_set_attribute(span, "task.id", event_data.get("task_id"))
     _safe_set_attribute(span, "team_id", event_data.get("team_id"))
     _safe_set_attribute(span, "subtask.id", event_data.get("subtask_id"))
+
+    # Add server IP address
+    try:
+        server_ip = get_host_ip()
+        _safe_set_attribute(span, "server.ip", server_ip)
+    except Exception as e:
+        logger.debug(f"Failed to get server IP: {e}")
+
+    # For chat:send event, add the complete request body as JSON
+    # This helps with debugging and understanding client requests
+    import json
+
+    try:
+        request_body_json = json.dumps(event_data, ensure_ascii=False)
+        _safe_set_attribute(span, "websocket.request_body", request_body_json)
+    except Exception as e:
+        logger.debug(f"Failed to serialize request body to JSON: {e}")
 
 
 def _safe_set_attribute(span, key: str, value: Any) -> None:

@@ -19,7 +19,7 @@ import { Switch } from '@/components/ui/switch'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Label } from '@/components/ui/label'
 import { useUser } from '@/features/common/UserContext'
-import { userApis } from '@/apis/user'
+import { userApis, type FeatureFlags } from '@/apis/user'
 import type { UserPreferences } from '@/types/api'
 
 export default function NotificationSettings() {
@@ -31,24 +31,51 @@ export default function NotificationSettings() {
   const [supported, setSupported] = useState(true)
   const [sendKey, setSendKey] = useState<'enter' | 'cmd_enter'>('enter')
   const [searchKey, setSearchKey] = useState<'cmd_k' | 'cmd_f' | 'disabled'>('cmd_k')
+  const [memoryEnabled, setMemoryEnabled] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  // Feature flags from backend
+  const [featureFlags, setFeatureFlags] = useState<FeatureFlags | null>(null)
+  const [featureFlagsLoading, setFeatureFlagsLoading] = useState(true)
 
   useEffect(() => {
     setSupported(isNotificationSupported())
     setEnabled(isNotificationEnabled())
+
+    // Fetch feature flags from backend
+    const fetchFeatureFlags = async () => {
+      try {
+        const flags = await userApis.getFeatureFlags()
+        setFeatureFlags(flags)
+      } catch (error) {
+        console.error('Failed to fetch feature flags:', error)
+        // Default to memory disabled if fetch fails
+        setFeatureFlags({ memory_enabled: false })
+      } finally {
+        setFeatureFlagsLoading(false)
+      }
+    }
+    fetchFeatureFlags()
   }, [])
 
   useEffect(() => {
     // Only update sendKey and searchKey when user data is loaded and has preferences
     // Use 'enter' as default if send_key is not set
     // Use 'cmd_k' as default if search_key is not set
-    if (user) {
+    if (user && featureFlags) {
       const userSendKey = user.preferences?.send_key || 'enter'
       const userSearchKey = user.preferences?.search_key || 'cmd_k'
+      // Memory default: true when backend has memory service enabled, false otherwise
+      // If user has explicitly set memory_enabled, use their preference
+      // If not set (undefined), use the backend's memory_enabled as default
+      const userMemoryEnabled =
+        user.preferences?.memory_enabled !== undefined
+          ? user.preferences.memory_enabled
+          : featureFlags.memory_enabled
       setSendKey(userSendKey)
       setSearchKey(userSearchKey)
+      setMemoryEnabled(userMemoryEnabled)
     }
-  }, [user])
+  }, [user, featureFlags])
 
   const handleToggle = async () => {
     if (!supported) {
@@ -124,6 +151,37 @@ export default function NotificationSettings() {
       })
       // Revert to previous value
       setSearchKey(user?.preferences?.search_key || 'cmd_k')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleMemoryToggle = async (checked: boolean) => {
+    setMemoryEnabled(checked)
+    setIsSaving(true)
+    try {
+      const preferences: UserPreferences = {
+        send_key: user?.preferences?.send_key || 'enter',
+        search_key: user?.preferences?.search_key || 'cmd_k',
+        memory_enabled: checked,
+      }
+      await userApis.updateUser({ preferences })
+      await refresh()
+      toast({
+        title: t('common:memory.save_success'),
+      })
+    } catch (error) {
+      console.error('Failed to save memory preference:', error)
+      toast({
+        variant: 'destructive',
+        title: t('common:memory.save_failed'),
+      })
+      // Revert to previous value - use same logic as initial load
+      const revertValue =
+        user?.preferences?.memory_enabled !== undefined
+          ? user.preferences.memory_enabled
+          : (featureFlags?.memory_enabled ?? false)
+      setMemoryEnabled(revertValue)
     } finally {
       setIsSaving(false)
     }
@@ -224,6 +282,21 @@ export default function NotificationSettings() {
           </div>
         </RadioGroup>
       </div>
+
+      {/* Long-term Memory Setting - Only show when backend has memory service enabled */}
+      {featureFlags?.memory_enabled && (
+        <div className="flex items-center justify-between p-4 bg-base border border-border rounded-lg">
+          <div className="flex-1">
+            <h3 className="text-sm font-medium text-text-primary">{t('common:memory.title')}</h3>
+            <p className="text-xs text-text-muted mt-1">{t('common:memory.description')}</p>
+          </div>
+          <Switch
+            checked={memoryEnabled}
+            onCheckedChange={handleMemoryToggle}
+            disabled={isSaving || featureFlagsLoading}
+          />
+        </div>
+      )}
 
       {/* Restart Onboarding Button */}
       <div className="flex items-center justify-between p-4 bg-base border border-border rounded-lg">

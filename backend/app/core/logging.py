@@ -25,7 +25,7 @@ class RequestIdFilter(logging.Filter):
             True (always allow the record to be logged)
         """
         try:
-            from shared.telemetry.context import get_request_id
+            from shared.telemetry.context.span import get_request_id
 
             request_id = get_request_id()
             record.request_id = request_id if request_id else "-"

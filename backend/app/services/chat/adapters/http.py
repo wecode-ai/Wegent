@@ -13,6 +13,7 @@ import logging
 from typing import AsyncIterator, Optional
 
 import httpx
+
 from shared.telemetry.context.propagation import inject_trace_context_to_headers
 
 from .interface import ChatEvent, ChatEventType, ChatInterface, ChatRequest
@@ -154,7 +155,18 @@ class HTTPAdapter(ChatInterface):
             "is_user_selected_kb": request.is_user_selected_kb,
             "table_contexts": request.table_contexts,
             "task_data": request.task_data,
+            # Authentication
+            "auth_token": request.auth_token,
+            # Subscription flag for SilentExitTool injection
+            "is_subscription": request.is_subscription,
         }
+
+        logger.info(
+            "[HTTP_ADAPTER] Building metadata: is_subscription=%s, task_id=%d, subtask_id=%d",
+            request.is_subscription,
+            request.task_id,
+            request.subtask_id,
+        )
 
         payload = {
             "model_config": model_config,
@@ -458,14 +470,20 @@ class HTTPAdapter(ChatInterface):
                     if text:
                         event_data["content"] = text
                 elif event_type == ChatEventType.DONE:
-                    # Done event - chat_shell's ResponseDone has {id, usage, stop_reason, sources}
+                    # Done event - chat_shell's ResponseDone has {id, usage, stop_reason, sources, silent_exit}
                     # The actual response content is NOT in this event, it's accumulated from CHUNK events
-                    # We pass through the metadata (usage, stop_reason, sources) and let the caller set 'value'
+                    # We pass through the metadata (usage, stop_reason, sources, silent_exit) and let the caller set 'value'
                     event_data["result"] = {
                         "usage": data.get("usage"),
                         "stop_reason": data.get("stop_reason"),
                         "id": data.get("id"),
                         "sources": data.get("sources"),  # Knowledge base citations
+                        "silent_exit": data.get(
+                            "silent_exit"
+                        ),  # Silent exit flag for subscription tasks
+                        "silent_exit_reason": data.get(
+                            "silent_exit_reason"
+                        ),  # Reason for silent exit
                     }
                 elif event_type in (
                     ChatEventType.TOOL_START,

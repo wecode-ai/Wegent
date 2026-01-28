@@ -11,6 +11,7 @@ Unit tests for executor/utils/mcp_utils.py
 """
 
 import pytest
+
 from executor.utils.mcp_utils import (
     _get_nested_value,
     _replace_placeholders_in_string,

@@ -17,10 +17,8 @@ from typing import Optional, Sequence
 
 from opentelemetry import metrics, trace
 from opentelemetry.context import Context
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import \
-    OTLPMetricExporter
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import \
-    OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.propagators.composite import CompositePropagator
 from opentelemetry.sdk.metrics import MeterProvider as SDKMeterProvider
@@ -29,12 +27,14 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor
 from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.sdk.trace.sampling import (Decision,
-                                              ParentBasedTraceIdRatio, Sampler,
-                                              SamplingResult)
+from opentelemetry.sdk.trace.sampling import (
+    Decision,
+    ParentBasedTraceIdRatio,
+    Sampler,
+    SamplingResult,
+)
 from opentelemetry.trace import Link, SpanKind
-from opentelemetry.trace.propagation.tracecontext import \
-    TraceContextTextMapPropagator
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.util.types import Attributes
 
 logger = logging.getLogger(__name__)

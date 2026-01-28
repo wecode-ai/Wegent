@@ -14,14 +14,13 @@ import os
 import re
 import socket
 import subprocess
-from typing import Set
+from typing import Optional, Set
 from urllib.parse import urlparse
-
-from shared.logger import setup_logger
-from shared.utils.ip_util import get_host_ip, is_ip_address
 
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import PORT_RANGE_MAX, PORT_RANGE_MIN
+from shared.logger import setup_logger
+from shared.utils.ip_util import get_host_ip, is_ip_address
 
 logger = setup_logger(__name__)
 
@@ -566,6 +565,36 @@ def get_container_status(container_name: str) -> dict:
             "exit_code": -1,
             "error_msg": str(e),
         }
+
+
+def get_container_task_id(container_name: str) -> Optional[str]:
+    """
+    Get task_id from container label.
+
+    Args:
+        container_name: Name of the container
+
+    Returns:
+        task_id string if found, None otherwise
+    """
+    try:
+        cmd = [
+            "docker",
+            "inspect",
+            "--format",
+            '{{index .Config.Labels "task_id"}}',
+            container_name,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode == 0:
+            task_id = result.stdout.strip()
+            if task_id and task_id != "<no value>":
+                return task_id
+        return None
+    except Exception as e:
+        logger.warning(f"Error getting task_id for container '{container_name}': {e}")
+        return None
 
 
 if __name__ == "__main__":

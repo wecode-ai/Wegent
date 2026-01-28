@@ -25,6 +25,7 @@ async def prepare_knowledge_base_tools(
     is_user_selected: bool = True,
     document_ids: Optional[list[int]] = None,
     context_window: Optional[int] = None,
+    skip_prompt_enhancement: bool = False,
 ) -> tuple[list, str]:
     """
     Prepare knowledge base tools and enhanced system prompt.
@@ -46,6 +47,8 @@ async def prepare_knowledge_base_tools(
             When set, only chunks from these specific documents will be returned.
         context_window: Optional context window size from Model CRD.
             Used by KnowledgeBaseTool for injection strategy decisions.
+        skip_prompt_enhancement: If True, skip adding KB prompt instructions to system prompt.
+            Used in HTTP mode when Backend has already added KB prompts to avoid duplication.
 
     Returns:
         Tuple of (extra_tools list, enhanced_system_prompt string)
@@ -55,7 +58,8 @@ async def prepare_knowledge_base_tools(
 
     if not knowledge_base_ids:
         # Even without current knowledge bases, check for historical KB meta
-        if task_id:
+        # Skip if in HTTP mode with prompt enhancement already done by Backend
+        if task_id and not skip_prompt_enhancement:
             kb_meta_prompt = await _build_historical_kb_meta_prompt(db, task_id)
             if kb_meta_prompt:
                 enhanced_system_prompt = f"{base_system_prompt}{kb_meta_prompt}"
@@ -87,6 +91,13 @@ async def prepare_knowledge_base_tools(
         context_window=context_window,
     )
     extra_tools.append(kb_tool)
+
+    # Skip prompt enhancement if Backend has already added KB prompts (HTTP mode)
+    if skip_prompt_enhancement:
+        logger.info(
+            "[knowledge_factory] Skipping KB prompt enhancement (already done by Backend)"
+        )
+        return extra_tools, enhanced_system_prompt
 
     # Import shared prompt constants from chat_shell prompts module
     from chat_shell.prompts import KB_PROMPT_RELAXED, KB_PROMPT_STRICT

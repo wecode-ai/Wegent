@@ -4,8 +4,10 @@
 
 import { Skill, SkillList } from '@/types/api'
 import { getToken } from './user'
+import { getApiBaseUrl } from '@/lib/runtime-config'
 
-const API_BASE_URL = '/api'
+// Use dynamic API base URL from runtime config
+const getApiUrl = () => getApiBaseUrl()
 
 /**
  * Fetch all skills for the current user
@@ -23,7 +25,7 @@ export async function fetchSkillsList(params?: {
   if (params?.limit !== undefined) queryParams.append('limit', params.limit.toString())
   if (params?.namespace) queryParams.append('namespace', params.namespace)
 
-  const url = `${API_BASE_URL}/v1/kinds/skills?${queryParams.toString()}`
+  const url = `${getApiUrl()}/v1/kinds/skills?${queryParams.toString()}`
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -53,7 +55,7 @@ export async function fetchSkillByName(
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
-  const url = `${API_BASE_URL}/v1/kinds/skills?name=${encodeURIComponent(name)}&namespace=${encodeURIComponent(namespace)}&exact_match=${exactMatch}`
+  const url = `${getApiUrl()}/v1/kinds/skills?name=${encodeURIComponent(name)}&namespace=${encodeURIComponent(namespace)}&exact_match=${exactMatch}`
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -74,7 +76,7 @@ export async function getSkill(skillId: number): Promise<Skill> {
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/${skillId}`
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}`
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -104,7 +106,7 @@ export async function uploadSkill(
   formData.append('name', name)
   formData.append('namespace', namespace)
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/upload`
+  const url = `${getApiUrl()}/v1/kinds/skills/upload`
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -161,7 +163,7 @@ export async function updateSkill(
   const formData = new FormData()
   formData.append('file', file)
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/${skillId}`
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}`
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -210,7 +212,7 @@ export async function deleteSkill(skillId: number): Promise<void> {
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/${skillId}`
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}`
   const response = await fetch(url, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
@@ -229,12 +231,23 @@ export async function deleteSkill(skillId: number): Promise<void> {
 
 /**
  * Download a skill ZIP file
+ * @param skillId - Skill ID
+ * @param skillName - Skill name (used for the downloaded file name)
+ * @param namespace - Namespace for group skill lookup (optional; when omitted, backend uses 'default')
  */
-export async function downloadSkill(skillId: number, skillName: string): Promise<void> {
+export async function downloadSkill(
+  skillId: number,
+  skillName: string,
+  namespace?: string
+): Promise<void> {
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/${skillId}/download`
+  const queryParams = new URLSearchParams()
+  if (namespace) queryParams.append('namespace', namespace)
+
+  const queryString = queryParams.toString()
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}/download${queryString ? `?${queryString}` : ''}`
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -287,6 +300,7 @@ export interface UnifiedSkill {
   bindShells?: string[]
   is_active: boolean
   is_public: boolean
+  user_id: number // ID of the user who uploaded this skill
   created_at?: string
   updated_at?: string
 }
@@ -309,7 +323,7 @@ export async function fetchUnifiedSkillsList(params?: {
   if (params?.scope) queryParams.append('scope', params.scope)
   if (params?.groupName) queryParams.append('group_name', params.groupName)
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/unified?${queryParams.toString()}`
+  const url = `${getApiUrl()}/v1/kinds/skills/unified?${queryParams.toString()}`
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -336,7 +350,7 @@ export async function fetchPublicSkillsList(params?: {
   if (params?.skip !== undefined) queryParams.append('skip', params.skip.toString())
   if (params?.limit !== undefined) queryParams.append('limit', params.limit.toString())
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/public/list?${queryParams.toString()}`
+  const url = `${getApiUrl()}/v1/kinds/skills/public/list?${queryParams.toString()}`
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -356,7 +370,7 @@ export async function invokeSkill(skillName: string): Promise<{ prompt: string }
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/invoke`
+  const url = `${getApiUrl()}/v1/kinds/skills/invoke`
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -398,7 +412,7 @@ export async function uploadPublicSkill(
   formData.append('file', file)
   formData.append('name', name)
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/public/upload`
+  const url = `${getApiUrl()}/v1/kinds/skills/public/upload`
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -454,7 +468,7 @@ export async function updatePublicSkillWithUpload(
   const formData = new FormData()
   formData.append('file', file)
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/public/${skillId}/upload`
+  const url = `${getApiUrl()}/v1/kinds/skills/public/${skillId}/upload`
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
@@ -503,7 +517,7 @@ export async function deletePublicSkill(skillId: number): Promise<void> {
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/public/${skillId}`
+  const url = `${getApiUrl()}/v1/kinds/skills/public/${skillId}`
   const response = await fetch(url, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
@@ -527,7 +541,7 @@ export async function downloadPublicSkill(skillId: number, skillName: string): P
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/public/${skillId}/download`
+  const url = `${getApiUrl()}/v1/kinds/skills/public/${skillId}/download`
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -555,7 +569,7 @@ export async function getPublicSkillContent(skillId: number): Promise<{ content:
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/public/${skillId}/content`
+  const url = `${getApiUrl()}/v1/kinds/skills/public/${skillId}/content`
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -620,7 +634,7 @@ export async function removeSkillReferences(skillId: number): Promise<RemoveRefe
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/${skillId}/remove-references`
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}/remove-references`
   const response = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
@@ -649,7 +663,7 @@ export async function removeSingleSkillReference(
   const token = getToken()
   if (!token) throw new Error('No authentication token')
 
-  const url = `${API_BASE_URL}/v1/kinds/skills/${skillId}/remove-reference/${ghostId}`
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}/remove-reference/${ghostId}`
   const response = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },

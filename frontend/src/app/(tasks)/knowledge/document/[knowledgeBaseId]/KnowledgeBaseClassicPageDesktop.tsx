@@ -25,6 +25,10 @@ import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { DocumentList } from '@/features/knowledge/document/components'
 import { listGroups } from '@/apis/groups'
 import type { GroupRole } from '@/types/group'
+interface KnowledgeBaseClassicPageDesktopProps {
+  /** Callback when knowledge base type is changed (notebook <-> classic) */
+  onKbTypeChanged?: () => void
+}
 
 /**
  * Desktop-specific implementation of Knowledge Base Classic Page
@@ -33,7 +37,9 @@ import type { GroupRole } from '@/types/group'
  * - Left: TaskSidebar (resizable)
  * - Center: Document list with full management capabilities
  */
-export function KnowledgeBaseClassicPageDesktop() {
+export function KnowledgeBaseClassicPageDesktop({
+  onKbTypeChanged,
+}: KnowledgeBaseClassicPageDesktopProps) {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const params = useParams()
@@ -115,7 +121,7 @@ export function KnowledgeBaseClassicPageDesktop() {
 
   // Handle back to knowledge list
   const handleBack = () => {
-    router.push('/knowledge')
+    router.back()
   }
 
   // Check if user can manage this knowledge base
@@ -191,7 +197,15 @@ export function KnowledgeBaseClassicPageDesktop() {
 
         {/* Content area - Document List */}
         <div className="flex-1 overflow-auto p-4 sm:p-6">
-          <DocumentList knowledgeBase={knowledgeBase} onBack={handleBack} canManage={canManageKb} />
+          <DocumentList
+            knowledgeBase={knowledgeBase}
+            onBack={handleBack}
+            canManage={canManageKb}
+            onTypeConverted={() => {
+              // Notify parent page.tsx to refresh and re-route based on new kb_type
+              onKbTypeChanged?.()
+            }}
+          />
         </div>
       </div>
 

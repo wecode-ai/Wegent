@@ -11,6 +11,7 @@ from app.api.endpoints import (
     knowledge,
     oidc,
     openapi_responses,
+    pet,
     projects,
     quota,
     rag,
@@ -33,6 +34,8 @@ from app.api.endpoints.adapter import (
     models,
     retrievers,
     shells,
+    subscription_follows,
+    subscription_market,
     subscriptions,
     task_knowledge_bases,
     task_members,
@@ -56,6 +59,7 @@ api_router.include_router(health.router, tags=["health"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(oidc.router, prefix="/auth/oidc", tags=["auth", "oidc"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
+api_router.include_router(pet.router, prefix="/users/me/pet", tags=["pet"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
@@ -67,6 +71,22 @@ api_router.include_router(agents.router, prefix="/agents", tags=["public-shell"]
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 api_router.include_router(
     subscriptions.router, prefix="/subscriptions", tags=["subscriptions"]
+)
+# Subscription follow endpoints (follow, unfollow, invitations)
+api_router.include_router(
+    subscription_follows.router, prefix="/subscriptions", tags=["subscription-follows"]
+)
+api_router.include_router(
+    subscription_follows.user_router, prefix="/users/me", tags=["user-subscriptions"]
+)
+api_router.include_router(
+    subscription_follows.invitation_router,
+    prefix="/subscription-invitations",
+    tags=["subscription-invitations"],
+)
+# Subscription market endpoints (browse, rent, rentals)
+api_router.include_router(
+    subscription_market.router, prefix="/market", tags=["subscription-market"]
 )
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])

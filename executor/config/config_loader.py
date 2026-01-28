@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-import os
-import json
 import importlib
-from typing import Dict, Any
+import json
+import os
+from typing import Any, Dict
 
 from shared.logger import setup_logger
 

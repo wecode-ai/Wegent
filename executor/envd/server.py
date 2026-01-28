@@ -12,13 +12,18 @@ from typing import AsyncIterator
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 from google.protobuf.json_format import MessageToDict, ParseDict, ParseError
+
 from shared.logger import setup_logger
 
 logger = setup_logger("envd_server")
 
 # Import service handlers
-from .service import (ConnectError, FilesystemConnectError,
-                      FilesystemServiceHandler, ProcessServiceHandler)
+from .service import (
+    ConnectError,
+    FilesystemConnectError,
+    FilesystemServiceHandler,
+    ProcessServiceHandler,
+)
 
 # Global handlers
 _process_handler: ProcessServiceHandler = None

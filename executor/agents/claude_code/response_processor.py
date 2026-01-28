@@ -1,30 +1,32 @@
 #!/usr/bin/env python
 import json
 from dataclasses import asdict
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Union
+
+from claude_agent_sdk import ClaudeSDKClient
+from claude_agent_sdk.types import (
+    AssistantMessage,
+    Message,
+    ResultMessage,
+    SystemMessage,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    UserMessage,
+)
+
+from shared.logger import setup_logger
+from shared.models.task import ExecutionResult
+from shared.status import TaskStatus
+from shared.utils.sensitive_data_masker import mask_sensitive_data
+
 # SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
 # -*- coding: utf-8 -*-
 
-from typing import Dict, Any, List, Union, Optional
-from datetime import datetime
-
-from claude_agent_sdk import ClaudeSDKClient
-from shared.status import TaskStatus
-from shared.logger import setup_logger
-from shared.models.task import ExecutionResult
-from shared.utils.sensitive_data_masker import mask_sensitive_data
-from claude_agent_sdk.types import (
-    Message,
-    SystemMessage,
-    AssistantMessage,
-    UserMessage,
-    ResultMessage,
-    ToolUseBlock,
-    TextBlock,
-    ToolResultBlock,
-)
 
 logger = setup_logger("claude_response_processor")
 
@@ -44,8 +46,11 @@ def contains_api_error(text: str) -> bool:
 
 
 async def process_response(
-    client: ClaudeSDKClient, state_manager, thinking_manager=None, task_state_manager=None,
-    session_id: str = None
+    client: ClaudeSDKClient,
+    state_manager,
+    thinking_manager=None,
+    task_state_manager=None,
+    session_id: str = None,
 ) -> TaskStatus:
     """
     Process the response messages from Claude
@@ -62,22 +67,31 @@ async def process_response(
     """
     index = 0
     api_error_retry_count = 0  # Track retry count for this session
+    # Track silent exit detection from UserMessage tool results
+    silent_exit_detected = False
+    silent_exit_reason = ""
     try:
         while True:
             retry_requested = False
 
             async for msg in client.receive_response():
                 index += 1
-                
+
                 # Check for cancellation before processing each message
                 if task_state_manager:
-                    task_id = state_manager.task_data.get("task_id") if state_manager else None
+                    task_id = (
+                        state_manager.task_data.get("task_id")
+                        if state_manager
+                        else None
+                    )
                     if task_id and task_state_manager.is_cancelled(task_id):
-                        logger.info(f"Task {task_id} cancelled during response processing")
+                        logger.info(
+                            f"Task {task_id} cancelled during response processing"
+                        )
                         if state_manager:
                             state_manager.update_workbench_status("completed")
                         return TaskStatus.COMPLETED
-                
+
                 # Log the number of messages received
                 logger.info(f"claude message index: {index}, received: {msg}")
 
@@ -86,8 +100,14 @@ async def process_response(
                     _handle_system_message(msg, state_manager, thinking_manager)
 
                 elif isinstance(msg, UserMessage):
-                    # Handle UserMessage
-                    _handle_user_message(msg, thinking_manager)
+                    # Handle UserMessage and check for silent_exit in tool results
+                    is_silent, reason = _handle_user_message(msg, thinking_manager)
+                    if is_silent:
+                        silent_exit_detected = True
+                        silent_exit_reason = reason
+                        logger.info(
+                            f"🔇 Silent exit detected in UserMessage, will propagate to result: reason={reason}"
+                        )
 
                 elif isinstance(msg, AssistantMessage):
                     # Handle assistant message and detect API errors
@@ -108,6 +128,8 @@ async def process_response(
                         current_session_id,
                         api_error_retry_count,
                         MAX_API_ERROR_RETRIES,
+                        silent_exit_detected,
+                        silent_exit_reason,
                     )
                     if result_status == "RETRY":
                         # Increment retry count and restart response stream for retry
@@ -130,24 +152,23 @@ async def process_response(
             return TaskStatus.RUNNING
     except Exception as e:
         logger.exception(f"Error processing response: {str(e)}")
-        
+
         # Add thinking step for error
         if thinking_manager:
             thinking_manager.add_thinking_step_by_key(
-                title_key="thinking.response_processing_error",
-                report_immediately=False
+                title_key="thinking.response_processing_error", report_immediately=False
             )
-        
+
         # Update workbench status to failed
         if state_manager:
             state_manager.update_workbench_status("failed")
-            
+
             # Report error using state manager
             state_manager.report_progress(
                 progress=100,
                 status=TaskStatus.FAILED.value,
                 message=f"Error processing response: {str(e)}",
-                extra_result={"error": str(e)}
+                extra_result={"error": str(e)},
             )
         return TaskStatus.FAILED
 
@@ -159,7 +180,7 @@ def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=N
     system_detail = {
         "type": "system",
         "subtype": msg.subtype,
-        **msg.data  # 包含原有的系统消息数据
+        **msg.data,  # 包含原有的系统消息数据
     }
 
     # Mask sensitive data in system details before sending
@@ -168,20 +189,35 @@ def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=N
     # Log with masked data
     msg_dict = asdict(msg)
     masked_msg_dict = mask_sensitive_data(msg_dict)
-    logger.info(f"SystemMessage: subtype = {msg.subtype}. msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}")
+    logger.info(
+        f"SystemMessage: subtype = {msg.subtype}. msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}"
+    )
 
     if thinking_manager:
         thinking_manager.add_thinking_step(
             title="thinking.system_message_received",
             report_immediately=True,
             use_i18n_keys=True,
-            details=masked_system_detail
+            details=masked_system_detail,
         )
 
 
-def _handle_user_message(msg: UserMessage, thinking_manager=None):
-    """处理用户消息，提取详细信息"""
-    
+def _handle_user_message(msg: UserMessage, thinking_manager=None) -> tuple[bool, str]:
+    """处理用户消息，提取详细信息
+
+    Args:
+        msg: UserMessage to process
+        thinking_manager: Optional ThinkingStepManager instance
+
+    Returns:
+        Tuple of (silent_exit_detected, silent_exit_reason)
+    """
+    from executor.tools.silent_exit import detect_silent_exit
+
+    # Track silent exit detection
+    silent_exit_detected = False
+    silent_exit_reason = ""
+
     # 构建用户消息的详细信息，符合目标格式
     message_details = {
         "type": "user",
@@ -189,75 +225,102 @@ def _handle_user_message(msg: UserMessage, thinking_manager=None):
             "type": "message",
             "role": "user",
             "content": [],
-            "parent_tool_use_id": msg.parent_tool_use_id
-        }
+            "parent_tool_use_id": msg.parent_tool_use_id,
+        },
     }
-    
+
     # 处理内容（可能是字符串或内容块列表）
     if isinstance(msg.content, str):
         # 如果是字符串，直接作为文本内容
-        text_detail = {
-            "type": "text",
-            "text": msg.content
-        }
+        text_detail = {"type": "text", "text": msg.content}
         message_details["message"]["content"].append(text_detail)
         logger.info(f"UserMessage: text content, length = {len(msg.content)}")
     else:
         # 如果是内容块列表，处理每个块
         logger.info(f"UserMessage: {len(msg.content)} content blocks")
-        
+
         for block in msg.content:
             # 添加调试日志：打印 block 的类型和内容
-            logger.info(f"Processing UserMessage block type: {type(block).__name__}, isinstance checks: "
-                       f"ToolUseBlock={isinstance(block, ToolUseBlock)}, "
-                       f"TextBlock={isinstance(block, TextBlock)}, "
-                       f"ToolResultBlock={isinstance(block, ToolResultBlock)}")
+            logger.info(
+                f"Processing UserMessage block type: {type(block).__name__}, isinstance checks: "
+                f"ToolUseBlock={isinstance(block, ToolUseBlock)}, "
+                f"TextBlock={isinstance(block, TextBlock)}, "
+                f"ToolResultBlock={isinstance(block, ToolResultBlock)}"
+            )
 
             # Mask sensitive data in block content for logging
-            block_dict = asdict(block) if hasattr(block, '__dataclass_fields__') else block
+            block_dict = (
+                asdict(block) if hasattr(block, "__dataclass_fields__") else block
+            )
             masked_block_dict = mask_sensitive_data(block_dict)
             logger.info(f"UserMessage Block content: {masked_block_dict}")
-            
+
             if isinstance(block, ToolUseBlock):
                 # 工具使用详情，符合目标格式
                 tool_detail = {
                     "type": "tool_use",
                     "id": block.id,
                     "name": block.name,
-                    "input": block.input
+                    "input": block.input,
                 }
                 message_details["message"]["content"].append(tool_detail)
-                
+
                 logger.info(f"UserMessage ToolUseBlock: tool = {block.name}")
-                    
+
             elif isinstance(block, TextBlock):
                 # 文本内容详情，符合目标格式
-                text_detail = {
-                    "type": "text",
-                    "text": block.text
-                }
+                text_detail = {"type": "text", "text": block.text}
                 message_details["message"]["content"].append(text_detail)
-                
+
                 logger.info(f"UserMessage TextBlock: {len(block.text)} chars")
-            
+
             elif isinstance(block, ToolResultBlock):
                 # 工具结果详情，符合目标格式
                 result_detail = {
                     "type": "tool_result",
                     "tool_use_id": block.tool_use_id,
                     "content": block.content,
-                    "is_error": block.is_error
+                    "is_error": block.is_error,
                 }
                 message_details["message"]["content"].append(result_detail)
-                
-                logger.info(f"UserMessage ToolResultBlock: tool_use_id = {block.tool_use_id}, is_error = {block.is_error}")
-            
+
+                logger.info(
+                    f"UserMessage ToolResultBlock: tool_use_id = {block.tool_use_id}, is_error = {block.is_error}"
+                )
+
+                # Check for silent_exit marker in tool result content
+                # The content can be a string or a list of content blocks
+                content_to_check = block.content
+                if isinstance(content_to_check, list):
+                    # If it's a list, extract text from each block
+                    for item in content_to_check:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            text_content = item.get("text", "")
+                            is_silent, reason = detect_silent_exit(text_content)
+                            if is_silent:
+                                silent_exit_detected = True
+                                silent_exit_reason = reason
+                                logger.info(
+                                    f"🔇 Silent exit detected in ToolResultBlock: reason={reason}"
+                                )
+                                break
+                elif isinstance(content_to_check, str):
+                    is_silent, reason = detect_silent_exit(content_to_check)
+                    if is_silent:
+                        silent_exit_detected = True
+                        silent_exit_reason = reason
+                        logger.info(
+                            f"🔇 Silent exit detected in ToolResultBlock: reason={reason}"
+                        )
+
             else:
                 # 未知块类型，符合目标格式
                 unknown_detail = {
                     "type": "unknown",
                     "block_type": type(block).__name__,
-                    "block_data": asdict(block) if hasattr(block, '__dict__') else str(block)
+                    "block_data": (
+                        asdict(block) if hasattr(block, "__dict__") else str(block)
+                    ),
                 }
                 message_details["message"]["content"].append(unknown_detail)
 
@@ -272,41 +335,49 @@ def _handle_user_message(msg: UserMessage, thinking_manager=None):
             title="thinking.user_message_received",
             report_immediately=True,
             use_i18n_keys=True,
-            details=masked_message_details
+            details=masked_message_details,
         )
 
+    return silent_exit_detected, silent_exit_reason
 
-def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_manager=None) -> bool:
+
+def _handle_assistant_message(
+    msg: AssistantMessage, state_manager, thinking_manager=None
+) -> bool:
     """处理助手消息，提取详细信息
-    
+
     Args:
         msg: AssistantMessage to process
         state_manager: ProgressStateManager instance
         thinking_manager: Optional ThinkingStepManager instance
-        
+
     Returns:
         bool: True if API error detected and retry is needed, False otherwise
     """
-    
+
     # 收集所有内容块的详细信息，符合目标格式
     message_details = {
         "type": "assistant",
         "message": {
-            "id": getattr(msg, 'id', ''),
+            "id": getattr(msg, "id", ""),
             "type": "message",
             "role": "assistant",
             "model": msg.model,
             "content": [],
-            "parent_tool_use_id": msg.parent_tool_use_id
-        }
+            "parent_tool_use_id": msg.parent_tool_use_id,
+        },
     }
-    
+
     # Convert content blocks to dict format for JSON serialization
     content_dicts = []
     for block in msg.content:
         content_dicts.append(asdict(block))
-    msg_dict = {"content": content_dicts, "model": msg.model, "parent_tool_use_id": msg.parent_tool_use_id}
-    
+    msg_dict = {
+        "content": content_dicts,
+        "model": msg.model,
+        "parent_tool_use_id": msg.parent_tool_use_id,
+    }
+
     # Check if the message contains API error that needs retry
     msg_json_str = json.dumps(msg_dict, ensure_ascii=False)
     needs_retry = contains_api_error(msg_json_str)
@@ -315,57 +386,60 @@ def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_man
 
     # Mask sensitive data in message for logging
     masked_msg_dict = mask_sensitive_data(msg_dict)
-    logger.info(f"AssistantMessage: {len(msg.content)} content blocks, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}")
+    logger.info(
+        f"AssistantMessage: {len(msg.content)} content blocks, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}"
+    )
 
     # 处理每个内容块
     for block in msg.content:
         # Mask sensitive data in block for logging
-        block_dict = asdict(block) if hasattr(block, '__dataclass_fields__') else block
+        block_dict = asdict(block) if hasattr(block, "__dataclass_fields__") else block
         masked_block_dict = mask_sensitive_data(block_dict)
         logger.info(f"Block content: {masked_block_dict}")
-        
+
         if isinstance(block, ToolUseBlock):
             # 工具使用详情，符合目标格式
             tool_detail = {
                 "type": "tool_use",
                 "id": block.id,
                 "name": block.name,
-                "input": block.input
+                "input": block.input,
             }
             message_details["message"]["content"].append(tool_detail)
-            
+
             logger.info(f"ToolUseBlock: tool = {block.name}")
-                
+
         elif isinstance(block, TextBlock):
             # 文本内容详情，符合目标格式
-            text_detail = {
-                "type": "text",
-                "text": block.text
-            }
+            text_detail = {"type": "text", "text": block.text}
             message_details["message"]["content"].append(text_detail)
 
             state_manager.update_workbench_status("running", block.text)
-            
+
             logger.info(f"TextBlock: {len(block.text)} chars")
-        
+
         elif isinstance(block, ToolResultBlock):
             # 工具结果详情，符合目标格式
             result_detail = {
                 "type": "tool_result",
                 "tool_use_id": block.tool_use_id,
                 "content": block.content,
-                "is_error": block.is_error
+                "is_error": block.is_error,
             }
             message_details["message"]["content"].append(result_detail)
-            
-            logger.info(f"ToolResultBlock: tool_use_id = {block.tool_use_id}, is_error = {block.is_error}")
-        
+
+            logger.info(
+                f"ToolResultBlock: tool_use_id = {block.tool_use_id}, is_error = {block.is_error}"
+            )
+
         else:
             # 未知块类型，符合目标格式
             unknown_detail = {
                 "type": "unknown",
                 "block_type": type(block).__name__,
-                "block_data": asdict(block) if hasattr(block, '__dict__') else str(block)
+                "block_data": (
+                    asdict(block) if hasattr(block, "__dict__") else str(block)
+                ),
             }
             message_details["message"]["content"].append(unknown_detail)
 
@@ -380,9 +454,9 @@ def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_man
             title="thinking.assistant_message_received",
             report_immediately=True,
             use_i18n_keys=True,
-            details=masked_message_details
+            details=masked_message_details,
         )
-    
+
     return needs_retry
 
 
@@ -391,7 +465,9 @@ def _handle_legacy_message(msg: Dict[str, Any], thinking_manager=None):
 
     # Mask sensitive data in legacy message for logging
     masked_msg = mask_sensitive_data(msg)
-    logger.info(f"Legacy Message: type = {msg_type}. msg = {json.dumps(masked_msg, ensure_ascii=False)}")
+    logger.info(
+        f"Legacy Message: type = {msg_type}. msg = {json.dumps(masked_msg, ensure_ascii=False)}"
+    )
 
     if msg_type == "tool_use":
         tool_name = msg.get("tool", {}).get("name", "unknown")
@@ -400,7 +476,7 @@ def _handle_legacy_message(msg: Dict[str, Any], thinking_manager=None):
             thinking_manager.add_thinking_step(
                 title="thinking.legacy_tool_use",
                 report_immediately=False,
-                use_i18n_keys=True
+                use_i18n_keys=True,
             )
 
     elif msg_type == "content":
@@ -410,7 +486,7 @@ def _handle_legacy_message(msg: Dict[str, Any], thinking_manager=None):
             thinking_manager.add_thinking_step(
                 title="thinking.legacy_content",
                 report_immediately=False,
-                use_i18n_keys=True
+                use_i18n_keys=True,
             )
 
     else:
@@ -419,13 +495,20 @@ def _handle_legacy_message(msg: Dict[str, Any], thinking_manager=None):
             thinking_manager.add_thinking_step(
                 title="thinking.unknown_legacy_message",
                 report_immediately=False,
-                use_i18n_keys=True
+                use_i18n_keys=True,
             )
 
 
 async def _process_result_message(
-    msg: ResultMessage, state_manager, thinking_manager=None, client=None,
-    session_id: str = None, api_error_retry_count: int = 0, max_retries: int = 3
+    msg: ResultMessage,
+    state_manager,
+    thinking_manager=None,
+    client=None,
+    session_id: str = None,
+    api_error_retry_count: int = 0,
+    max_retries: int = 3,
+    propagated_silent_exit: bool = False,
+    propagated_silent_exit_reason: str = "",
 ) -> Union[TaskStatus, str, None]:
     """
     Process a ResultMessage from Claude
@@ -438,13 +521,15 @@ async def _process_result_message(
         session_id: Session ID for retry operations
         api_error_retry_count: Current retry count
         max_retries: Maximum retry attempts
+        propagated_silent_exit: Silent exit flag propagated from UserMessage tool results
+        propagated_silent_exit_reason: Silent exit reason propagated from UserMessage tool results
 
     Returns:
         TaskStatus: Processing status (COMPLETED if successful, otherwise None)
         str: "RETRY" if retry was initiated
     """
-    
-    # 构建详细的结果信息，符合目标格式
+
+    # Construct detailed result info, matching target format
     result_details = {
         "type": "result",
         "subtype": msg.subtype,
@@ -455,7 +540,7 @@ async def _process_result_message(
         "duration_api_ms": msg.duration_api_ms,
         "total_cost_usd": msg.total_cost_usd,
         "usage": msg.usage,
-        "result": msg.result
+        "result": msg.result,
     }
 
     # Mask sensitive data in result details
@@ -464,21 +549,48 @@ async def _process_result_message(
     # Mask sensitive data in message for logging
     msg_dict = asdict(msg)
     masked_msg_dict = mask_sensitive_data(msg_dict)
-    logger.info(f"Result message received: subtype={msg.subtype}, is_error={msg.is_error}, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}")
+    logger.info(
+        f"Result message received: subtype={msg.subtype}, is_error={msg.is_error}, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}"
+    )
+
+    # Check for silent exit marker in result
+    # First use propagated values from UserMessage tool results (more reliable)
+    silent_exit_detected = propagated_silent_exit
+    silent_exit_reason = propagated_silent_exit_reason
+
+    # Also check in msg.result as fallback (for backward compatibility)
+    if not silent_exit_detected and msg.result:
+        from executor.tools.silent_exit import detect_silent_exit
+
+        # Handle dict/list results by converting to JSON string
+        if isinstance(msg.result, (dict, list)):
+            result_str = json.dumps(msg.result, ensure_ascii=False)
+        else:
+            result_str = str(msg.result) if msg.result is not None else ""
+        silent_exit_detected, silent_exit_reason = detect_silent_exit(result_str)
+        if silent_exit_detected:
+            logger.info(
+                f"🔇 Silent exit detected in Claude Code result: reason={silent_exit_reason}"
+            )
+
+    if silent_exit_detected:
+        logger.info(
+            f"🔇 Silent exit will be added to result: reason={silent_exit_reason}"
+        )
 
     # If it's a successful result message, send the result back via callback
     if msg.subtype == "success" and not msg.is_error:
         # Ensure result is string type
         result_str = str(msg.result) if msg.result is not None else "No result"
         logger.info(f"Sending successful result via callback: {result_str}")
-        
+
         # Add thinking step for successful result
         if thinking_manager:
             thinking_manager.add_thinking_step(
                 title="thinking.task_execution_success",
                 report_immediately=False,
                 use_i18n_keys=True,
-                details=masked_result_details
+                details=masked_result_details,
             )
 
         # If there's a result, pass it as result parameter to report_progress
@@ -492,6 +604,15 @@ async def _process_result_message(
                     result_dict = {"value": msg.result}
                     result_value = msg.result
 
+                # Add silent_exit flag if detected
+                if silent_exit_detected:
+                    result_dict["silent_exit"] = True
+                    if silent_exit_reason:
+                        result_dict["silent_exit_reason"] = silent_exit_reason
+                    logger.info(
+                        f"🔇 Adding silent_exit flag to result: reason={silent_exit_reason}"
+                    )
+
                 # Update workbench status to completed
                 state_manager.update_workbench_status("completed")
 
@@ -500,7 +621,7 @@ async def _process_result_message(
                     progress=100,
                     status=TaskStatus.COMPLETED.value,
                     message=result_str,
-                    extra_result=result_dict
+                    extra_result=result_dict,
                 )
             except Exception as e:
                 logger.error(f"Failed to parse result as dict: {e}")
@@ -508,41 +629,42 @@ async def _process_result_message(
                     thinking_manager.add_thinking_step(
                         title="thinking.result_parsing_error",
                         report_immediately=False,
-                        use_i18n_keys=True
+                        use_i18n_keys=True,
                     )
-                
+
                 # Update workbench status to failed
                 state_manager.update_workbench_status("failed")
-                
+
                 # Report error using state manager
                 state_manager.report_progress(
-                    progress=100,
-                    status=TaskStatus.FAILED.value,
-                    message=result_str
+                    progress=100, status=TaskStatus.FAILED.value, message=result_str
                 )
         else:
             # Update workbench status to completed
             state_manager.update_workbench_status("completed")
-            
+
             # Report progress using state manager
             state_manager.report_progress(
-                progress=100,
-                status=TaskStatus.COMPLETED.value,
-                message=result_str
+                progress=100, status=TaskStatus.COMPLETED.value, message=result_str
             )
         return TaskStatus.COMPLETED
 
     if msg.is_error:
         logger.error(f"Received error from Claude SDK: {msg.result}")
         result_str = str(msg.result) if msg.result is not None else "No result"
-        
+
         # Check if this is an API error that can be retried
-        if contains_api_error(result_str) and client and session_id and api_error_retry_count < max_retries:
+        if (
+            contains_api_error(result_str)
+            and client
+            and session_id
+            and api_error_retry_count < max_retries
+        ):
             logger.warning(
                 f"Detected retryable API error in ResultMessage for session {session_id}, "
                 f"retry {api_error_retry_count + 1}/{max_retries}"
             )
-            
+
             if thinking_manager:
                 thinking_manager.add_thinking_step(
                     title="thinking.api_error_retry",
@@ -552,19 +674,21 @@ async def _process_result_message(
                         "retry_count": api_error_retry_count + 1,
                         "max_retries": max_retries,
                         "session_id": session_id,
-                        "error": result_str
-                    }
+                        "error": result_str,
+                    },
                 )
-            
+
             # Send retry message to continue the session
             try:
                 await client.query("Retry to proceed", session_id=session_id)
-                logger.info(f"Sent retry message for session {session_id} from ResultMessage handler")
+                logger.info(
+                    f"Sent retry message for session {session_id} from ResultMessage handler"
+                )
                 return "RETRY"  # Signal to continue processing
             except Exception as retry_error:
                 logger.error(f"Failed to send retry message: {retry_error}")
                 # Fall through to fail the task
-        
+
         elif contains_api_error(result_str) and api_error_retry_count >= max_retries:
             logger.error(
                 f"Max API error retries ({max_retries}) reached for session {session_id}"
@@ -577,29 +701,29 @@ async def _process_result_message(
                     details={
                         "retry_count": api_error_retry_count,
                         "max_retries": max_retries,
-                        "session_id": session_id
-                    }
+                        "session_id": session_id,
+                    },
                 )
-        
+
         # Add thinking step for error result
         if thinking_manager:
             thinking_manager.add_thinking_step(
                 title="thinking.task_execution_failed",
                 report_immediately=False,
                 use_i18n_keys=True,
-                details=masked_result_details
+                details=masked_result_details,
             )
-        
+
         # Update workbench status to failed
         state_manager.update_workbench_status("failed")
-        
+
         # Report error using state manager
         state_manager.report_progress(
-            progress=100,
-            status=TaskStatus.FAILED.value,
-            message=result_str
+            progress=100, status=TaskStatus.FAILED.value, message=result_str
         )
-        return TaskStatus.FAILED  # CRITICAL FIX: Return FAILED status to stop task execution
+        return (
+            TaskStatus.FAILED
+        )  # CRITICAL FIX: Return FAILED status to stop task execution
 
     # If it's not a successful result message, return None to let caller continue processing
     return None

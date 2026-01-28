@@ -6,35 +6,52 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Plus } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
-import { SubscriptionList, SubscriptionForm } from '@/features/feed/components'
+import {
+  SubscriptionList,
+  SubscriptionForm,
+  FollowingSubscriptionList,
+  RentalSubscriptionList,
+} from '@/features/feed/components'
 import {
   SubscriptionProvider,
   useSubscriptionContext,
 } from '@/features/feed/contexts/subscriptionContext'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTranslation } from '@/hooks/useTranslation'
-import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import type { Subscription } from '@/types/subscription'
+
+/**
+ * Tab type for subscription management
+ */
+type SubscriptionTabValue = 'my_created' | 'my_following' | 'shared_to_me' | 'my_rentals'
 
 /**
  * Flow Subscriptions Management Page
  *
- * Page for managing flow subscriptions (我的订阅).
+ * Page for managing all types of subscriptions:
+ * - My Created: Subscriptions created by the user
+ * - My Following: Public subscriptions the user follows directly
+ * - Shared to Me: Subscriptions shared to the user via invitation
+ * - My Rentals: Subscriptions rented from the market
  */
 function SubscriptionsPageContent() {
   const { t } = useTranslation('feed')
   const router = useRouter()
   const { refreshSubscriptions, refreshExecutions } = useSubscriptionContext()
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<SubscriptionTabValue>('my_created')
 
   // Form state
   const [formOpen, setFormOpen] = useState(false)
@@ -62,24 +79,68 @@ function SubscriptionsPageContent() {
   return (
     <div className="flex h-full flex-col bg-base">
       {/* Back button header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-base">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" className="h-9 w-9" onClick={handleBack}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h1 className="text-lg font-semibold">{t('my_subscriptions')}</h1>
+          <h1 className="text-lg font-semibold">{t('feed.manage')}</h1>
         </div>
-        <Button onClick={handleCreateSubscription} size="sm">
-          {t('create_subscription')}
-        </Button>
+        {activeTab === 'my_created' && (
+          <Button onClick={handleCreateSubscription} size="sm">
+            <Plus className="h-4 w-4 mr-1.5" />
+            {t('create_subscription')}
+          </Button>
+        )}
       </div>
 
-      {/* Subscription list */}
+      {/* Tab navigation */}
+      <div className="border-b border-border bg-base">
+        <Tabs
+          value={activeTab}
+          onValueChange={value => setActiveTab(value as SubscriptionTabValue)}
+          className="w-full"
+        >
+          <TabsList className="w-full justify-start bg-transparent p-0 h-auto gap-0 rounded-none">
+            <TabsTrigger
+              value="my_created"
+              className="px-4 py-3 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-transparent"
+            >
+              {t('tabs_my_created')}
+            </TabsTrigger>
+            <TabsTrigger
+              value="my_following"
+              className="px-4 py-3 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-transparent"
+            >
+              {t('tabs_my_following')}
+            </TabsTrigger>
+            <TabsTrigger
+              value="shared_to_me"
+              className="px-4 py-3 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-transparent"
+            >
+              {t('tabs_shared_to_me')}
+            </TabsTrigger>
+            <TabsTrigger
+              value="my_rentals"
+              className="px-4 py-3 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:bg-transparent"
+            >
+              {t('tabs_my_rentals')}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+
+      {/* Tab content */}
       <div className="flex-1 overflow-hidden">
-        <SubscriptionList
-          onCreateSubscription={handleCreateSubscription}
-          onEditSubscription={handleEditSubscription}
-        />
+        {activeTab === 'my_created' && (
+          <SubscriptionList
+            onCreateSubscription={handleCreateSubscription}
+            onEditSubscription={handleEditSubscription}
+          />
+        )}
+        {activeTab === 'my_following' && <FollowingSubscriptionList followType="direct" />}
+        {activeTab === 'shared_to_me' && <FollowingSubscriptionList followType="invited" />}
+        {activeTab === 'my_rentals' && <RentalSubscriptionList />}
       </div>
 
       {/* Form Dialog */}
@@ -154,9 +215,7 @@ export default function SubscriptionsPage() {
             title={t('common:navigation.flow')}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
             isSidebarCollapsed={isCollapsed}
-          >
-            <ThemeToggle />
-          </TopNavigation>
+          />
 
           {/* Main content area - Subscriptions page content */}
           <div className="flex-1 overflow-hidden">

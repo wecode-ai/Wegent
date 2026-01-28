@@ -10,15 +10,6 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import HTTPException
-from shared.telemetry.context import (
-    SpanAttributes,
-    set_task_context,
-    set_user_context,
-)
-
-# Import telemetry utilities
-from shared.telemetry.core import get_tracer, is_telemetry_enabled
-from shared.utils.crypto import decrypt_api_key
 from sqlalchemy import and_, func, text
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.attributes import flag_modified
@@ -33,6 +24,15 @@ from app.schemas.subtask import SubtaskExecutorUpdate
 from app.services.base import BaseService
 from app.services.context import context_service
 from app.services.webhook_notification import Notification, webhook_notification_service
+from shared.telemetry.context import (
+    SpanAttributes,
+    set_task_context,
+    set_user_context,
+)
+
+# Import telemetry utilities
+from shared.telemetry.core import get_tracer, is_telemetry_enabled
+from shared.utils.crypto import decrypt_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -656,7 +656,7 @@ class ExecutorKindsService(
         model_name: str,
         bind_model_type: Optional[str],
         bind_model_namespace: str,
-        bot_user_id: int,
+        model_user_id: int,
     ) -> Optional[Kind]:
         """
         Resolve model by bind_model_type.
@@ -666,7 +666,7 @@ class ExecutorKindsService(
             model_name: Model name to resolve
             bind_model_type: Model type ('public', 'user', 'group', or None)
             bind_model_namespace: Model namespace
-            bot_user_id: Bot's user_id for personal resource lookup
+            model_user_id: User ID for model lookup (chat user for force_override, bot user otherwise)
 
         Returns:
             Model Kind object or None
@@ -697,11 +697,13 @@ class ExecutorKindsService(
                 .first()
             )
         elif bind_model_type == "user":
-            # User's private model - query with bot's user_id
+            # User's private model - query with the provided user_id
+            # When force_override is true, this is the chat user's ID
+            # Otherwise, this is the bot's user_id
             return (
                 db.query(Kind)
                 .filter(
-                    Kind.user_id == bot_user_id,
+                    Kind.user_id == model_user_id,
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == bind_model_namespace,
@@ -715,7 +717,7 @@ class ExecutorKindsService(
             model_kind = (
                 db.query(Kind)
                 .filter(
-                    Kind.user_id == bot_user_id,
+                    Kind.user_id == model_user_id,
                     Kind.kind == "Model",
                     Kind.name == model_name,
                     Kind.namespace == "default",
@@ -744,6 +746,7 @@ class ExecutorKindsService(
         agent_config: Dict[str, Any],
         task_crd: Task,
         bot_user_id: int,
+        chat_user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Resolve model configuration with support for bind_model and task-level override.
@@ -752,7 +755,8 @@ class ExecutorKindsService(
             db: Database session
             agent_config: Current agent configuration
             task_crd: Task CRD for task-level model info
-            bot_user_id: Bot's user_id for model lookup
+            bot_user_id: Bot's user_id for model lookup (used when not force_override)
+            chat_user_id: Chat user's ID for model lookup (used when force_override is true)
 
         Returns:
             Resolved agent configuration
@@ -795,17 +799,31 @@ class ExecutorKindsService(
 
             # 3. Query kinds table for Model CRD and replace config
             if model_name_to_use:
-                bind_model_type = agent_config.get("bind_model_type")
-                bind_model_namespace = agent_config.get(
-                    "bind_model_namespace", "default"
-                )
+                # When force_override is true, get model type from task labels
+                # This is the type specified by the user when sending the message
+                if force_override and task_model_name:
+                    bind_model_type = task_crd.metadata.labels.get(
+                        "forceOverrideBotModelType"
+                    )
+                    bind_model_namespace = "default"
+                    # Use chat_user_id for force_override (the user who sent the message)
+                    model_user_id = (
+                        chat_user_id if chat_user_id is not None else bot_user_id
+                    )
+                else:
+                    bind_model_type = agent_config.get("bind_model_type")
+                    bind_model_namespace = agent_config.get(
+                        "bind_model_namespace", "default"
+                    )
+                    # Use bot_user_id for normal model lookup
+                    model_user_id = bot_user_id
 
                 model_kind = self._resolve_model_by_type(
                     db,
                     model_name_to_use,
                     bind_model_type,
                     bind_model_namespace,
-                    bot_user_id,
+                    model_user_id,
                 )
 
                 if model_kind and model_kind.json:
@@ -955,8 +973,10 @@ class ExecutorKindsService(
 
             # Build user git information - query user by user_id
             user = db.query(User).filter(User.id == subtask.user_id).first()
-            git_info = (
-                next(
+            git_info = None
+            if user and user.git_info and git_domain:
+                # First try exact match
+                git_info = next(
                     (
                         info
                         for info in user.git_info
@@ -964,9 +984,16 @@ class ExecutorKindsService(
                     ),
                     None,
                 )
-                if user and user.git_info
-                else None
-            )
+                # If no exact match, try contains match
+                if git_info is None:
+                    git_info = next(
+                        (
+                            info
+                            for info in user.git_info
+                            if git_domain in info.get("git_domain", "")
+                        ),
+                        None,
+                    )
 
             # Get team information from kinds table
             team = (
@@ -1086,8 +1113,9 @@ class ExecutorKindsService(
                     bot_prompt += f"\n{team_member_info.prompt}"
 
                 # Resolve model config using helper method
+                # Pass subtask.user_id as chat_user_id for force_override model lookup
                 agent_config_data = self._resolve_model_config(
-                    db, agent_config, task_crd, bot.user_id
+                    db, agent_config, task_crd, bot.user_id, subtask.user_id
                 )
 
                 bots.append(
@@ -1108,6 +1136,14 @@ class ExecutorKindsService(
                 task_crd.metadata.labels
                 and task_crd.metadata.labels.get("type")
                 or "online"
+            )
+
+            # Check if this is a subscription task for silent exit support
+            is_subscription = type == "subscription"
+            logger.info(
+                f"[EXECUTOR_DISPATCH] task_id={subtask.task_id}, subtask_id={subtask.id}, "
+                f"type={type}, is_subscription={is_subscription}, "
+                f"labels={task_crd.metadata.labels}"
             )
 
             # Generate auth token for skills download
@@ -1174,6 +1210,7 @@ class ExecutorKindsService(
                     "subtask_next_id": next_subtask.id if next_subtask else None,
                     "task_id": subtask.task_id,
                     "type": type,
+                    "is_subscription": is_subscription,  # For silent exit tool injection
                     "executor_name": subtask.executor_name,
                     "executor_namespace": subtask.executor_namespace,
                     "subtask_title": subtask.title,
@@ -1202,8 +1239,12 @@ class ExecutorKindsService(
                     "attachments": attachments_data,
                     "status": subtask.status,
                     "progress": subtask.progress,
-                    "created_at": subtask.created_at,
-                    "updated_at": subtask.updated_at,
+                    "created_at": (
+                        subtask.created_at.isoformat() if subtask.created_at else None
+                    ),
+                    "updated_at": (
+                        subtask.updated_at.isoformat() if subtask.updated_at else None
+                    ),
                     # Flag to indicate this subtask should start a new session (no conversation history)
                     # Used in pipeline mode when user confirms a stage and proceeds to next bot
                     "new_session": new_session,
@@ -1219,6 +1260,10 @@ class ExecutorKindsService(
         # Start a new trace for each dispatched task
         # This creates a root span for the task execution lifecycle
         self._start_dispatch_traces(formatted_subtasks)
+
+        # Note: Push mode dispatch is handled by task_dispatcher.schedule_dispatch()
+        # which is called after task/subtask creation. Do NOT dispatch here to avoid
+        # duplicate dispatches (schedule_dispatch already calls dispatch_tasks internally).
 
         return {"tasks": formatted_subtasks}
 
@@ -1240,6 +1285,7 @@ class ExecutorKindsService(
 
         try:
             from opentelemetry import trace
+
             from shared.telemetry.context import get_trace_context_for_propagation
 
             tracer = get_tracer("backend.dispatch")
@@ -1926,6 +1972,26 @@ class ExecutorKindsService(
             f"(bot={bot.name}, message_id={next_message_id})"
         )
 
+        # Push mode: dispatch the new pipeline subtask to executor_manager
+        # This ensures pipeline tasks work correctly in push mode
+        try:
+            from app.services.task_dispatcher import task_dispatcher
+
+            if task_dispatcher.enabled:
+                # Dispatch the pending subtask for this specific task
+                import asyncio
+
+                asyncio.create_task(
+                    task_dispatcher.dispatch_pending_tasks(
+                        db, task_ids=[task.id], limit=1
+                    )
+                )
+                logger.info(
+                    f"Pipeline task {task.id}: dispatching next stage subtask {new_subtask.id} in push mode"
+                )
+        except Exception as e:
+            logger.warning(f"Pipeline push mode dispatch failed: {e}")
+
         return True
 
     def _emit_task_status_ws_event(
@@ -2457,11 +2523,14 @@ class ExecutorKindsService(
                 )
                 return
 
-            # Use subscription_service.update_execution_status for unified status update and WebSocket emission
+            # Use BackgroundExecutionManager directly for status update
+            # This avoids circular dependency with subscription_service
             from app.schemas.subscription import BackgroundExecutionStatus
-            from app.services.subscription import subscription_service
+            from app.services.subscription.execution import background_execution_manager
+            from app.services.subscription.helpers import extract_result_summary
 
             # Map task status to BackgroundExecutionStatus
+            # For COMPLETED status, check if silent_exit flag is set in result
             status_map = {
                 "COMPLETED": BackgroundExecutionStatus.COMPLETED,
                 "FAILED": BackgroundExecutionStatus.FAILED,
@@ -2474,18 +2543,33 @@ class ExecutorKindsService(
                 )
                 return
 
+            # Check for silent_exit flag in result when task is COMPLETED
+            # This handles Executor-type tasks (Claude Code, Agno) that call silent_exit tool
+            if task_crd.status.status == "COMPLETED":
+                is_silent_exit = False
+                if task_crd.status.result and isinstance(task_crd.status.result, dict):
+                    is_silent_exit = task_crd.status.result.get("silent_exit", False)
+
+                if is_silent_exit:
+                    new_status = BackgroundExecutionStatus.COMPLETED_SILENT
+                    logger.info(
+                        f"Detected silent_exit in task {task_id} result, "
+                        f"setting BackgroundExecution {execution_id} status to COMPLETED_SILENT"
+                    )
+
             # Prepare result_summary and error_message
             result_summary = None
             error_message = None
             if task_crd.status.status == "COMPLETED":
-                result_summary = "Task completed successfully"
+                # Extract actual model output from task result using shared helper
+                result_summary = extract_result_summary(task_crd.status.result)
             elif task_crd.status.status == "FAILED":
                 error_message = task_crd.status.errorMessage or "Task failed"
             elif task_crd.status.status == "CANCELLED":
                 error_message = "Task was cancelled"
 
-            # Call subscription_service to update status (this will also emit WebSocket event)
-            success = subscription_service.update_execution_status(
+            # Use BackgroundExecutionManager to update status (this will also emit WebSocket event)
+            success = background_execution_manager.update_execution_status(
                 db=db,
                 execution_id=execution_id,
                 status=new_status,
@@ -2496,7 +2580,7 @@ class ExecutorKindsService(
             if success:
                 logger.info(
                     f"Updated BackgroundExecution {execution_id} status to {new_status.value} "
-                    f"for task {task_id} via subscription_service"
+                    f"for task {task_id} via background_execution_manager"
                 )
             else:
                 logger.warning(

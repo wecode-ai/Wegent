@@ -20,23 +20,24 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+
+from executor.agents.agno.thinking_step_manager import ThinkingStepManager
+from executor.agents.base import Agent
+from executor.agents.claude_code.progress_state_manager import ProgressStateManager
+from executor.agents.claude_code.response_processor import process_response
+from executor.config import config
+from executor.tasks.resource_manager import ResourceManager
+from executor.tasks.task_state_manager import TaskState, TaskStateManager
+from executor.utils.mcp_utils import (
+    extract_mcp_servers_config,
+    replace_mcp_server_variables,
+)
 from shared.logger import setup_logger
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
 from shared.utils.crypto import decrypt_git_token, is_token_encrypted
 from shared.utils.sensitive_data_masker import mask_sensitive_data
-
-from executor.agents.agno.thinking_step_manager import ThinkingStepManager
-from executor.agents.base import Agent
-from executor.agents.claude_code.progress_state_manager import \
-    ProgressStateManager
-from executor.agents.claude_code.response_processor import process_response
-from executor.config import config
-from executor.tasks.resource_manager import ResourceManager
-from executor.tasks.task_state_manager import TaskState, TaskStateManager
-from executor.utils.mcp_utils import (extract_mcp_servers_config,
-                                      replace_mcp_server_variables)
 
 logger = setup_logger("claude_code_agent")
 
@@ -192,6 +193,10 @@ class ClaudeCodeAgent(Agent):
 
         # Set initial task state to RUNNING
         self.task_state_manager.set_state(self.task_id, TaskState.RUNNING)
+
+        # Silent exit tracking for subscription tasks
+        self.is_silent_exit: bool = False
+        self.silent_exit_reason: str = ""
 
     def _set_git_env_variables(self, task_data: Dict[str, Any]) -> None:
         """
@@ -664,6 +669,24 @@ class ClaudeCodeAgent(Agent):
                 logger.info(f"Detected MCP servers configuration: {mcp_servers}")
                 bot_config["mcp_servers"] = mcp_servers
 
+            # Add wegent MCP server for subscription tasks (provides silent_exit tool via HTTP)
+            if task_data.get("is_subscription"):
+                from executor.mcp_servers.wegent.server import get_wegent_mcp_url
+
+                wegent_mcp_url = get_wegent_mcp_url()
+                wegent_mcp = {
+                    "wegent": {
+                        "type": "http",
+                        "url": wegent_mcp_url,
+                    }
+                }
+                if "mcp_servers" not in bot_config:
+                    bot_config["mcp_servers"] = {}
+                bot_config["mcp_servers"].update(wegent_mcp)
+                logger.info(
+                    f"Added wegent MCP server (HTTP) for subscription task at {wegent_mcp_url}"
+                )
+
             for key in valid_options:
                 if key in bot_config and bot_config[key] is not None:
                     options[key] = bot_config[key]
@@ -755,6 +778,11 @@ class ClaudeCodeAgent(Agent):
             self.state_manager.report_progress(
                 progress, TaskStatus.RUNNING.value, "${{thinking.initialize_agent}}"
             )
+
+            # Check if this is a subscription task - subscription tasks need to wait for completion
+            # so the container can exit properly after task finishes
+            is_subscription = self.task_data.get("is_subscription", False)
+
             # Check if currently running in coroutine
             try:
                 # Try to get current running event loop
@@ -764,12 +792,39 @@ class ClaudeCodeAgent(Agent):
                 logger.info(
                     "Detected running in an async context, calling execute_async"
                 )
-                # Create async task to run in background, but return PENDING instead of task object
-                asyncio.create_task(self.execute_async())
-                logger.info(
-                    "Created async task for execution, returning RUNNING status"
-                )
-                return TaskStatus.RUNNING
+
+                if is_subscription:
+                    # For subscription tasks, we need to wait for completion
+                    # so the container can exit with proper status
+                    logger.info(
+                        "Subscription task detected, waiting for async execution to complete"
+                    )
+                    # Run in a new event loop in a separate thread to avoid blocking
+                    # the current async context while still waiting for completion
+                    import concurrent.futures
+
+                    def run_async_task():
+                        new_loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(new_loop)
+                        try:
+                            return new_loop.run_until_complete(self._async_execute())
+                        finally:
+                            new_loop.close()
+
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(run_async_task)
+                        result = future.result()
+                        logger.info(
+                            f"Subscription task async execution completed with status: {result}"
+                        )
+                        return result
+                else:
+                    # For non-subscription tasks, create background task and return immediately
+                    asyncio.create_task(self.execute_async())
+                    logger.info(
+                        "Created async task for execution, returning RUNNING status"
+                    )
+                    return TaskStatus.RUNNING
             except RuntimeError:
                 # No running event loop, can safely use run_until_complete
                 logger.info("No running event loop detected, using new event loop")
@@ -782,8 +837,10 @@ class ClaudeCodeAgent(Agent):
                 # Copy ContextVars before creating new event loop
                 # ContextVars don't automatically propagate to new event loops
                 try:
-                    from shared.telemetry.context import (copy_context_vars,
-                                                          restore_context_vars)
+                    from shared.telemetry.context import (
+                        copy_context_vars,
+                        restore_context_vars,
+                    )
 
                     saved_context = copy_context_vars()
                 except ImportError:
@@ -1196,7 +1253,9 @@ class ClaudeCodeAgent(Agent):
                     # Copy ContextVars before creating new event loop
                     try:
                         from shared.telemetry.context import (
-                            copy_context_vars, restore_context_vars)
+                            copy_context_vars,
+                            restore_context_vars,
+                        )
 
                         saved_context = copy_context_vars()
                     except ImportError:
@@ -1394,10 +1453,10 @@ class ClaudeCodeAgent(Agent):
             workspace = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
 
             # Import and use attachment downloader
-            from executor.services.attachment_downloader import \
-                AttachmentDownloader
-            from executor.services.attachment_prompt_processor import \
-                AttachmentPromptProcessor
+            from executor.services.attachment_downloader import AttachmentDownloader
+            from executor.services.attachment_prompt_processor import (
+                AttachmentPromptProcessor,
+            )
 
             downloader = AttachmentDownloader(
                 workspace=workspace,

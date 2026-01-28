@@ -14,8 +14,6 @@ This service handles:
 import logging
 from typing import AsyncIterator
 
-from shared.telemetry.decorators import add_span_event, trace_async_generator
-
 from chat_shell.core.config import settings
 from chat_shell.interface import ChatEvent, ChatEventType, ChatInterface, ChatRequest
 from chat_shell.services.context import ChatContext
@@ -26,7 +24,9 @@ from chat_shell.services.streaming.core import (
     StreamingState,
 )
 from chat_shell.services.streaming.emitters import SSEEmitter
+from chat_shell.tools.builtin.silent_exit import SilentExitException
 from chat_shell.tools.events import create_tool_event_handler
+from shared.telemetry.decorators import add_span_event, trace_async_generator
 
 logger = logging.getLogger(__name__)
 
@@ -243,29 +243,45 @@ class ChatService(ChatInterface):
             # Stream tokens from agent, reusing the agent_builder we already created
             add_span_event("streaming_started")
             token_count = 0
-            async for token in agent.stream(
-                messages=messages,
-                config=agent_config,
-                cancel_event=core.cancel_event,
-                on_tool_event=on_tool_event,
-                agent_builder=agent_builder,  # Reuse to avoid duplicate creation
-            ):
-                if core.is_cancelled():
-                    add_span_event(
-                        "streaming_cancelled", {"tokens_processed": token_count}
-                    )
-                    break
+            try:
+                async for token in agent.stream(
+                    messages=messages,
+                    config=agent_config,
+                    cancel_event=core.cancel_event,
+                    on_tool_event=on_tool_event,
+                    agent_builder=agent_builder,  # Reuse to avoid duplicate creation
+                ):
+                    if core.is_cancelled():
+                        add_span_event(
+                            "streaming_cancelled", {"tokens_processed": token_count}
+                        )
+                        break
 
-                if not await core.process_token(token):
-                    add_span_event(
-                        "token_processing_stopped", {"tokens_processed": token_count}
-                    )
-                    break
+                    if not await core.process_token(token):
+                        add_span_event(
+                            "token_processing_stopped",
+                            {"tokens_processed": token_count},
+                        )
+                        break
 
-                token_count += 1
-                # Yield any pending events
-                async for event in self._emit_pending_events(emitter):
-                    yield event
+                    token_count += 1
+                    # Yield any pending events
+                    async for event in self._emit_pending_events(emitter):
+                        yield event
+            except SilentExitException as e:
+                # Handle silent exit from tool call
+                logger.info(
+                    "[CHAT_SERVICE] Silent exit requested: subtask_id=%d, reason=%s",
+                    request.subtask_id,
+                    e.reason,
+                )
+                add_span_event(
+                    "silent_exit_requested",
+                    {"reason": e.reason, "tokens_processed": token_count},
+                )
+                # Mark state as silent exit
+                state.is_silent_exit = True
+                state.silent_exit_reason = e.reason
 
             # Finalize if not cancelled
             if not core.is_cancelled():

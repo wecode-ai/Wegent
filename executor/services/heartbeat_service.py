@@ -17,6 +17,7 @@ import time
 from typing import Optional
 
 import requests
+
 from shared.logger import setup_logger
 
 logger = setup_logger("heartbeat_service")
@@ -278,18 +279,18 @@ class HeartbeatService:
 
         try:
             logger.info(
-                f"[HeartbeatService] Initializing Claude Code for sandbox {self._sandbox_id}..."
+                f"[HeartbeatService] Initializing Claude Code for sandbox {self._heartbeat_id}..."
             )
 
             # Import here to avoid circular dependencies
+            from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
             from shared.status import TaskStatus
-
-            from executor.agents.claude_code.claude_code_agent import \
-                ClaudeCodeAgent
 
             # Create minimal task data for initialization
             init_task_data = {
-                "task_id": int(self._sandbox_id) if self._sandbox_id.isdigit() else -1,
+                "task_id": (
+                    int(self._heartbeat_id) if self._heartbeat_id.isdigit() else -1
+                ),
                 "subtask_id": -1,
                 "bot": [claude_config.get("bot")],
                 "user": claude_config.get("user", {}),
@@ -305,7 +306,7 @@ class HeartbeatService:
             if init_status == TaskStatus.SUCCESS:
                 self._claude_initialized = True
                 logger.info(
-                    f"[HeartbeatService] Claude Code initialized successfully for sandbox {self._sandbox_id}"
+                    f"[HeartbeatService] Claude Code initialized successfully for sandbox {self._heartbeat_id}"
                 )
             else:
                 logger.warning(

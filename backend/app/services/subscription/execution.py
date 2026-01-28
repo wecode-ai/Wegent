@@ -28,6 +28,7 @@ from app.schemas.subscription import (
     BackgroundExecutionStatus,
     Subscription,
     SubscriptionStatus,
+    SubscriptionVisibility,
 )
 from app.services.subscription.helpers import resolve_prompt_template
 from app.services.subscription.state_machine import (
@@ -68,11 +69,42 @@ class BackgroundExecutionManager:
             BackgroundExecutionInDB object
         """
         subscription_crd = Subscription.model_validate(subscription.json)
+        internal = subscription.json.get("_internal", {})
+
+        # For rental subscriptions, get promptTemplate from source subscription
+        prompt_template = subscription_crd.spec.promptTemplate
+        display_name = subscription_crd.spec.displayName
+
+        if internal.get("is_rental", False):
+            source_subscription_id = internal.get("source_subscription_id")
+            if source_subscription_id:
+                source_subscription = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == source_subscription_id,
+                        Kind.kind == "Subscription",
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+                if source_subscription:
+                    source_crd = Subscription.model_validate(source_subscription.json)
+                    # Use source subscription's promptTemplate
+                    prompt_template = source_crd.spec.promptTemplate
+                    logger.info(
+                        f"[Subscription] Using source subscription {source_subscription_id} "
+                        f"promptTemplate for rental {subscription.id}"
+                    )
+                else:
+                    logger.warning(
+                        f"[Subscription] Source subscription {source_subscription_id} not found "
+                        f"for rental {subscription.id}, using placeholder"
+                    )
 
         # Resolve prompt template
         resolved_prompt = resolve_prompt_template(
-            subscription_crd.spec.promptTemplate,
-            subscription_crd.spec.displayName,
+            prompt_template,
+            display_name,
             extra_variables,
         )
 
@@ -238,6 +270,59 @@ class BackgroundExecutionManager:
 
         return BackgroundExecutionInDB(**exec_dict)
 
+    def delete_execution(
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        user_id: int,
+    ) -> None:
+        """
+        Delete a background execution record.
+
+        This method allows users to delete an execution record from the timeline.
+        Only executions in terminal states (COMPLETED, FAILED, CANCELLED) can be deleted.
+        Running or pending executions must be cancelled first.
+
+        Args:
+            db: Database session
+            execution_id: ID of the execution to delete
+            user_id: ID of the user requesting deletion
+
+        Raises:
+            HTTPException: If execution not found or cannot be deleted
+        """
+        execution = (
+            db.query(BackgroundExecution)
+            .filter(
+                BackgroundExecution.id == execution_id,
+                BackgroundExecution.user_id == user_id,
+            )
+            .first()
+        )
+
+        if not execution:
+            raise HTTPException(status_code=404, detail="Execution not found")
+
+        current_status = BackgroundExecutionStatus(execution.status)
+
+        # Only allow deletion of executions in terminal states
+        if not is_terminal_state(current_status):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete execution in {current_status.value} state. Please cancel it first.",
+            )
+
+        # Delete the execution record
+        db.delete(execution)
+        db.commit()
+
+        logger.info(
+            f"[Subscription] Execution {execution_id} deleted by user {user_id}: "
+            f"subscription_id={execution.subscription_id}, task_id={execution.task_id}, "
+            f"status={current_status.value}"
+        )
+
     def list_executions(
         self,
         db: Session,
@@ -249,11 +334,15 @@ class BackgroundExecutionManager:
         status: Optional[List[BackgroundExecutionStatus]] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        include_following: bool = True,
+        include_silent: bool = False,
     ) -> Tuple[List[BackgroundExecutionInDB], int]:
         """
         List BackgroundExecution records (timeline view).
 
         Optimized to avoid N+1 queries by batch loading related subscriptions and teams.
+        Now includes executions from followed subscriptions.
+        Also allows viewing executions of public subscriptions.
 
         Args:
             db: Database session
@@ -264,20 +353,84 @@ class BackgroundExecutionManager:
             status: Optional filter by status list
             start_date: Optional filter by start date
             end_date: Optional filter by end date
+            include_following: Include executions from followed subscriptions
+            include_silent: Include COMPLETED_SILENT executions (default False)
 
         Returns:
             Tuple of (list of BackgroundExecutionInDB, total count)
         """
-        query = db.query(BackgroundExecution).filter(
-            BackgroundExecution.user_id == user_id
-        )
+        from sqlalchemy import or_
 
+        # Check if querying a specific subscription that is public
+        is_public_subscription = False
         if subscription_id:
-            query = query.filter(BackgroundExecution.subscription_id == subscription_id)
+            subscription = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == subscription_id,
+                    Kind.kind == "Subscription",
+                )
+                .first()
+            )
+            if subscription:
+                subscription_crd = Subscription.model_validate(subscription.json)
+                # Check visibility field - PUBLIC means it's a public subscription
+                is_public_subscription = (
+                    subscription_crd.spec.visibility == SubscriptionVisibility.PUBLIC
+                )
+
+        # If querying a public subscription, allow access without user_id filter
+        if subscription_id and is_public_subscription:
+            query = db.query(BackgroundExecution).filter(
+                BackgroundExecution.subscription_id == subscription_id
+            )
+        else:
+            # Get subscription IDs the user is following
+            followed_subscription_ids = []
+            if include_following and not subscription_id:
+                from app.services.subscription.follow_service import (
+                    subscription_follow_service,
+                )
+
+                followed_subscription_ids = (
+                    subscription_follow_service.get_followed_subscription_ids(
+                        db, user_id=user_id
+                    )
+                )
+
+            # Build query: own subscriptions OR followed subscriptions
+            if followed_subscription_ids:
+                query = db.query(BackgroundExecution).filter(
+                    or_(
+                        BackgroundExecution.user_id == user_id,
+                        BackgroundExecution.subscription_id.in_(
+                            followed_subscription_ids
+                        ),
+                    )
+                )
+            else:
+                query = db.query(BackgroundExecution).filter(
+                    BackgroundExecution.user_id == user_id
+                )
+
+            if subscription_id:
+                query = query.filter(
+                    BackgroundExecution.subscription_id == subscription_id
+                )
 
         if status:
             query = query.filter(
                 BackgroundExecution.status.in_([s.value for s in status])
+            )
+
+        # Exclude silent executions unless explicitly requested
+        # Skip exclusion if COMPLETED_SILENT is explicitly included in status filter
+        if not include_silent and (
+            not status or BackgroundExecutionStatus.COMPLETED_SILENT not in status
+        ):
+            query = query.filter(
+                BackgroundExecution.status
+                != BackgroundExecutionStatus.COMPLETED_SILENT.value
             )
 
         if start_date:
@@ -318,6 +471,7 @@ class BackgroundExecutionManager:
                 "display_name": subscription_crd.spec.displayName,
                 "task_type": subscription_crd.spec.taskType.value,
                 "team_ref": subscription_crd.spec.teamRef,
+                "owner_user_id": subscription.user_id,  # Track subscription owner
             }
             if subscription_crd.spec.teamRef:
                 team_ref = subscription_crd.spec.teamRef
@@ -353,6 +507,10 @@ class BackgroundExecutionManager:
                 team = team_map.get((team_ref.name, team_ref.namespace))
                 if team:
                     exec_dict["team_name"] = team.name
+
+            # Set can_delete: only subscription owner can delete executions
+            owner_user_id = sub_info.get("owner_user_id")
+            exec_dict["can_delete"] = owner_user_id == user_id
 
             result.append(BackgroundExecutionInDB(**exec_dict))
 
@@ -504,6 +662,7 @@ class BackgroundExecutionManager:
             update_values["started_at"] = now_utc
         elif status in (
             BackgroundExecutionStatus.COMPLETED,
+            BackgroundExecutionStatus.COMPLETED_SILENT,
             BackgroundExecutionStatus.FAILED,
         ):
             update_values["completed_at"] = now_utc
@@ -540,6 +699,10 @@ class BackgroundExecutionManager:
         db.refresh(execution)
 
         # Update subscription statistics (only for terminal states to avoid double counting)
+        # Note: COMPLETED_SILENT is intentionally excluded from stats updates because:
+        # - Silent executions are designed for routine monitoring tasks
+        # - They are hidden from the timeline by default
+        # - Including them would pollute subscription metrics with routine checks
         if status in (
             BackgroundExecutionStatus.COMPLETED,
             BackgroundExecutionStatus.FAILED,

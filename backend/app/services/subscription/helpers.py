@@ -10,6 +10,7 @@ This module contains utility functions for:
 - Trigger configuration handling
 - Next execution time calculation
 - Prompt template resolution
+- Result summary extraction
 """
 
 import json
@@ -211,10 +212,13 @@ def build_trigger_config(
         execute_at_str = trigger_config.get("execute_at")
         if not execute_at_str:
             raise ValueError("execute_at is required for ONE_TIME trigger type")
+        # Handle ISO format with 'Z' suffix (JavaScript's toISOString() format)
+        # Python's fromisoformat() doesn't support 'Z', need to replace with '+00:00'
+        execute_at_normalized = execute_at_str.replace("Z", "+00:00")
         return SubscriptionTriggerConfig(
             type=trigger_type_enum,
             one_time=OneTimeTriggerConfig(
-                execute_at=datetime.fromisoformat(execute_at_str),
+                execute_at=datetime.fromisoformat(execute_at_normalized),
             ),
         )
     elif trigger_type_enum == SubscriptionTriggerType.EVENT:
@@ -469,3 +473,31 @@ def create_or_get_workspace(
     db.flush()  # Get the ID without committing
 
     return workspace.id
+
+
+def extract_result_summary(result: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Extract a summary from the result dict.
+
+    This function extracts the model output from task result for display in
+    BackgroundExecution result_summary. It is used by both:
+    - SubscriptionEventEmitter (for Chat Shell type tasks)
+    - ExecutorKindsService (for Executor type tasks like Claude Code, Agno)
+
+    Args:
+        result: The result dictionary from task/chat completion.
+                Expected structure: {"value": "model output text", ...}
+
+    Returns:
+        A summary string (the model output), or None if no result or empty value
+    """
+    if not result:
+        return None
+
+    # Try to get the value from result
+    value = result.get("value", "")
+    if not value:
+        return None
+
+    # Return full content - database column is TEXT type which can store large content
+    return value

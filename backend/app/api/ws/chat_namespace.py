@@ -21,10 +21,6 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 import socketio
-from shared.telemetry.context import (
-    set_request_context,
-    set_user_context,
-)
 from sqlalchemy.orm import Session
 
 from app.api.ws.context_decorators import auto_task_context
@@ -66,6 +62,10 @@ from app.services.chat.operations import (
 )
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import session_manager
+from shared.telemetry.context import (
+    set_request_context,
+    set_user_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +238,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 "user_name": user.user_name,
                 "request_id": request_id,
                 "token_exp": token_exp,  # Store token expiry for later checks
+                "auth_token": token,  # Store original token for downstream services
             },
         )
 
@@ -407,6 +408,7 @@ class ChatNamespace(socketio.AsyncNamespace):
         session = await self.get_session(sid)
         user_id = session.get("user_id")
         user_name = session.get("user_name")
+        auth_token = session.get("auth_token", "")  # Get original JWT token
         logger.info(f"[WS] chat:send session: user_id={user_id}, user_name={user_name}")
 
         if not user_id:
@@ -533,6 +535,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 title=payload.title,
                 model_id=payload.force_override_bot_model,
                 force_override_bot_model=payload.force_override_bot_model is not None,
+                force_override_bot_model_type=payload.force_override_bot_model_type,
                 is_group_chat=payload.is_group_chat,
                 git_url=payload.git_url,
                 git_repo=payload.git_repo,
@@ -702,6 +705,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                         if user_subtask_for_context
                         else None
                     ),  # Pass user subtask ID for unified context processing
+                    auth_token=auth_token,  # Pass original JWT token from WebSocket session
                 )
 
             # Return unified response - same structure for all modes
@@ -1372,11 +1376,10 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"success": true} or {"error": "..."}
         """
+        from app.api.ws.events import SkillResponsePayload
         from chat_shell.tools import (
             get_pending_request_registry,
         )
-
-        from app.api.ws.events import SkillResponsePayload
 
         request_id = data.get("request_id")
         skill_name = data.get("skill_name")

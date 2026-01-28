@@ -17,6 +17,10 @@ from app.models.project import Project
 from app.models.shared_task import SharedTask
 from app.models.shared_team import SharedTeam
 from app.models.skill_binary import SkillBinary
+from app.models.subscription_follow import (
+    SubscriptionFollow,
+    SubscriptionShareNamespace,
+)
 from app.models.subtask import Subtask
 from app.models.subtask_context import SubtaskContext
 from app.models.system_config import SystemConfig
@@ -44,4 +48,6 @@ __all__ = [
     "TaskMember",
     "KnowledgeDocument",
     "Project",
+    "SubscriptionFollow",
+    "SubscriptionShareNamespace",
 ]

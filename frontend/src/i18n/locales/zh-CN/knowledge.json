@@ -27,6 +27,8 @@
     "documents": "个文档",
     "noTeamHint": "您还没有加入任何团队。创建或加入团队后，可在此查看团队知识库。",
     "noGroupHint": "您还没有加入任何组。创建或加入组后，可在此查看组知识库。",
+    "searchGroups": "搜索组...",
+    "noGroupResults": "没有匹配的组",
     "tabs": {
       "personal": "个人知识",
       "group": "组知识",
@@ -57,7 +59,15 @@
       "cannotDeleteWithDocuments": "该知识库包含文档，无法删除。请先删除所有文档。",
       "deleteWarning": "该知识库包含 {{count}} 个文档，请先删除所有文档后再删除知识库。",
       "search": "搜索知识库...",
-      "noResults": "没有匹配的知识库"
+      "noResults": "没有匹配的知识库",
+      "convertType": "转换类型",
+      "convertToNotebook": "转为笔记本",
+      "convertToClassic": "转为知识库",
+      "convertToNotebookDisabled": "文档数超过 50 个限制，无法转为笔记本模式",
+      "convertToClassicConfirm": "转换后将不再支持笔记本内直接对话功能，但文档数量将不受限制。确定转换吗？",
+      "convertToNotebookConfirm": "转换为笔记本后，可直接在知识库内上传文件并开启对话，但文档数量将限制为最多 50 个。确定转换吗？",
+      "convertSuccess": "知识库类型转换成功",
+      "convertFailed": "知识库类型转换失败"
     },
     "document": {
       "title": "文档",
@@ -133,7 +143,19 @@
         "copyError": "复制失败",
         "contentLength": "内容长度",
         "characters": "字符",
-        "noContent": "暂无内容"
+        "noContent": "暂无内容",
+        "edit": "编辑",
+        "save": "保存",
+        "cancel": "取消",
+        "saving": "保存中...",
+        "saveSuccess": "保存成功",
+        "saveFailed": "保存失败",
+        "unsavedChanges": "您有未保存的更改，确定要放弃吗？",
+        "discardChanges": "放弃更改",
+        "viewRaw": "查看原始内容",
+        "viewPreview": "查看渲染预览",
+        "fullscreen": "全屏",
+        "exitFullscreen": "退出全屏"
       }
     },
     "upload": {
@@ -366,6 +388,10 @@
     "notFound": "知识库未找到",
     "createTaskError": "创建对话失败",
     "bindKnowledgeBaseError": "绑定知识库失败",
-    "newNote": "新笔记"
+    "newNote": "新笔记",
+    "summaryFailed": "摘要生成失败",
+    "summaryFailedHint": "点击重试按钮重新生成摘要",
+    "summaryRetry": "重试",
+    "summaryRetrying": "重试中..."
   }
 }

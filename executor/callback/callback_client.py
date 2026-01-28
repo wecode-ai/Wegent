@@ -10,14 +10,14 @@
 Callback client module, handles communication with the executor_manager callback API
 """
 
-import os
-import requests
-import time
 import json
-from typing import Dict, Any, Optional
+import os
+import time
+from typing import Any, Dict, Optional
+
+import requests
 
 from executor.config import config
-
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
@@ -33,7 +33,7 @@ class CallbackClient:
     def __init__(
         self,
         callback_url: str = None,
-        timeout: int = 3,
+        timeout: int = 10,
         max_retries: int = 10,
         retry_delay: int = 1,
         retry_backoff: int = 2,
@@ -170,10 +170,22 @@ class CallbackClient:
 
         # Prepare headers with trace context for distributed tracing
         headers = {"Content-Type": "application/json"}
+
+        # Inject X-Request-ID for log correlation
+        try:
+            from shared.telemetry.context import get_request_id
+
+            request_id = get_request_id()
+            if request_id:
+                headers["X-Request-ID"] = request_id
+        except Exception:
+            pass
+
+        # Inject OpenTelemetry trace context if enabled
         otel_config = get_otel_config()
         if otel_config.enabled:
-            from shared.telemetry.core import is_telemetry_enabled
             from shared.telemetry.context import inject_trace_context_to_headers
+            from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():
                 headers = inject_trace_context_to_headers(headers)

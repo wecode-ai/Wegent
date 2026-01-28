@@ -420,6 +420,9 @@ def get_group_endpoint(
             detail="Group not found",
         )
 
+    # Set the current user's role in the group
+    group.my_role = user_role
+
     return group
 
 

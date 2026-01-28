@@ -29,6 +29,15 @@ class MockExecutor(Executor):
     def get_container_address(self, executor_name):
         return {"status": "success", "base_url": "http://localhost:10001"}
 
+    def get_container_status(self, executor_name):
+        return {
+            "exists": True,
+            "status": "running",
+            "oom_killed": False,
+            "exit_code": 0,
+            "error_msg": None,
+        }
+
 
 class TestExecutorDispatcher:
     """Test cases for ExecutorDispatcher"""
@@ -42,8 +51,7 @@ class TestExecutorDispatcher:
 
         # Patch config before importing dispatcher
         with patch("executor_manager.config.config.EXECUTOR_CONFIG", ""):
-            from executor_manager.executors.dispatcher import \
-                ExecutorDispatcher
+            from executor_manager.executors.dispatcher import ExecutorDispatcher
 
             executors = ExecutorDispatcher._load_executors()
             assert "docker" in executors
@@ -59,8 +67,7 @@ class TestExecutorDispatcher:
         config = '{"custom": "executor_manager.tests.executors.test_dispatcher.MockExecutor"}'
         # Patch config before importing dispatcher
         with patch("executor_manager.config.config.EXECUTOR_CONFIG", config):
-            from executor_manager.executors.dispatcher import \
-                ExecutorDispatcher
+            from executor_manager.executors.dispatcher import ExecutorDispatcher
 
             executors = ExecutorDispatcher._load_executors()
             assert "custom" in executors
@@ -80,8 +87,7 @@ class TestExecutorDispatcher:
         # Patch config before importing dispatcher
         with patch("executor_manager.config.config.EXECUTOR_CONFIG", "invalid json"):
             with pytest.raises(ValueError, match="Invalid JSON"):
-                from executor_manager.executors.dispatcher import \
-                    ExecutorDispatcher
+                from executor_manager.executors.dispatcher import ExecutorDispatcher
 
     def test_load_executors_invalid_import_path(self):
         """Test that invalid import path raises error"""
@@ -94,8 +100,7 @@ class TestExecutorDispatcher:
         # Patch config before importing dispatcher
         with patch("executor_manager.config.config.EXECUTOR_CONFIG", config):
             with pytest.raises((ImportError, ValueError, RuntimeError)):
-                from executor_manager.executors.dispatcher import \
-                    ExecutorDispatcher
+                from executor_manager.executors.dispatcher import ExecutorDispatcher
 
     def test_load_executors_nonexistent_module(self):
         """Test that nonexistent module raises RuntimeError"""
@@ -108,8 +113,7 @@ class TestExecutorDispatcher:
         # Patch config before importing dispatcher
         with patch("executor_manager.config.config.EXECUTOR_CONFIG", config):
             with pytest.raises(RuntimeError):
-                from executor_manager.executors.dispatcher import \
-                    ExecutorDispatcher
+                from executor_manager.executors.dispatcher import ExecutorDispatcher
 
     def test_get_executor_docker_type(self):
         """Test getting docker executor"""
@@ -120,8 +124,7 @@ class TestExecutorDispatcher:
 
         # Patch config before importing dispatcher
         with patch("executor_manager.config.config.EXECUTOR_CONFIG", ""):
-            from executor_manager.executors.dispatcher import \
-                ExecutorDispatcher
+            from executor_manager.executors.dispatcher import ExecutorDispatcher
 
             # Mock the _executors class variable
             mock_docker_executor = MockExecutor()
@@ -140,8 +143,7 @@ class TestExecutorDispatcher:
 
         # Patch config before importing dispatcher
         with patch("executor_manager.config.config.EXECUTOR_CONFIG", ""):
-            from executor_manager.executors.dispatcher import \
-                ExecutorDispatcher
+            from executor_manager.executors.dispatcher import ExecutorDispatcher
 
             mock_docker_executor = MockExecutor()
             with patch.object(
@@ -159,8 +161,7 @@ class TestExecutorDispatcher:
 
         # Patch config before importing dispatcher
         with patch("executor_manager.config.config.EXECUTOR_CONFIG", ""):
-            from executor_manager.executors.dispatcher import \
-                ExecutorDispatcher
+            from executor_manager.executors.dispatcher import ExecutorDispatcher
 
             with patch.object(
                 ExecutorDispatcher, "_executors", {"custom": MockExecutor()}
@@ -179,8 +180,7 @@ class TestExecutorDispatcher:
 
         # Patch config before importing dispatcher
         with patch("executor_manager.config.config.EXECUTOR_CONFIG", ""):
-            from executor_manager.executors.dispatcher import \
-                ExecutorDispatcher
+            from executor_manager.executors.dispatcher import ExecutorDispatcher
 
             mock_custom_executor = MockExecutor()
             with patch.object(
@@ -201,8 +201,7 @@ class TestExecutorDispatcher:
         config = '{"docker": "executor_manager.tests.executors.test_dispatcher.MockExecutor", "custom": "executor_manager.tests.executors.test_dispatcher.MockExecutor"}'
         # Patch config before importing dispatcher
         with patch("executor_manager.config.config.EXECUTOR_CONFIG", config):
-            from executor_manager.executors.dispatcher import \
-                ExecutorDispatcher
+            from executor_manager.executors.dispatcher import ExecutorDispatcher
 
             executors = ExecutorDispatcher._load_executors()
             assert "docker" in executors

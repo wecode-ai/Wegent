@@ -7,7 +7,7 @@
 This module provides:
 - ToolRegistry: Central registry for tool management
 - Tool event handling for streaming
-- Built-in tools (file reader, web search, knowledge base, load skill)
+- Built-in tools (file reader, web search, knowledge base, load skill, silent exit)
 - Tool factories (knowledge base, skill)
 - MCP integration
 - Pending request registry for skill frontend interactions
@@ -19,6 +19,8 @@ from .builtin import (
     FileReaderSkill,
     KnowledgeBaseTool,
     LoadSkillTool,
+    SilentExitException,
+    SilentExitTool,
     WebSearchTool,
 )
 from .events import create_tool_event_handler
@@ -41,6 +43,8 @@ __all__ = [
     "FileReaderSkill",
     "FileListSkill",
     "LoadSkillTool",
+    "SilentExitTool",
+    "SilentExitException",
     # Pending requests
     "PendingRequest",
     "PendingRequestRegistry",

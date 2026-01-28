@@ -17,12 +17,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from shared.telemetry.decorators import add_span_event, trace_async
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chat_shell.core.config import settings
 from chat_shell.core.database import get_db_context
 from chat_shell.interface import ChatRequest
+from shared.telemetry.decorators import add_span_event, trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ class ChatContext:
             (
                 history,
                 kb_result,
-                skill_tools,
+                skill_result,
                 mcp_result,
             ) = await asyncio.gather(
                 self._load_chat_history(),
@@ -135,12 +135,16 @@ class ChatContext:
                 self._connect_mcp_servers(),
             )
 
+            # Unpack skill result (tools and MCP clients from skills)
+            skill_tools, skill_mcp_clients = skill_result
+
             add_span_event(
                 "parallel_tasks_completed",
                 {
                     "history_count": len(history),
                     "kb_tools_count": len(kb_result[0]) if kb_result else 0,
                     "skill_tools_count": len(skill_tools),
+                    "skill_mcp_clients_count": len(skill_mcp_clients),
                     "mcp_tools_count": len(mcp_result[0]) if mcp_result else 0,
                 },
             )
@@ -159,15 +163,17 @@ class ChatContext:
             if kb_tools:
                 system_prompt = updated_system_prompt
 
-            # Track MCP clients for cleanup
+            # Track MCP clients for cleanup (both from MCP servers and skills)
             _, mcp_clients = mcp_result
-            self._mcp_clients = mcp_clients
+            # Merge skill MCP clients with MCP server clients
+            all_mcp_clients = mcp_clients + skill_mcp_clients
+            self._mcp_clients = all_mcp_clients
 
             add_span_event(
                 "context_prepare_completed",
                 {
                     "total_extra_tools": len(extra_tools),
-                    "mcp_clients_count": len(mcp_clients),
+                    "mcp_clients_count": len(all_mcp_clients),
                 },
             )
 
@@ -175,7 +181,7 @@ class ChatContext:
                 history=history,
                 extra_tools=extra_tools,
                 system_prompt=system_prompt,
-                mcp_clients=mcp_clients,
+                mcp_clients=all_mcp_clients,
             )
 
     @trace_async(
@@ -248,7 +254,12 @@ class ChatContext:
         },
     )
     async def _prepare_kb_tools(self, db: AsyncSession) -> tuple[list, str]:
-        """Prepare knowledge base tools asynchronously."""
+        """Prepare knowledge base tools asynchronously.
+
+        In HTTP mode (when Backend calls chat_shell via HTTP), the system prompt
+        may already contain KB instructions added by Backend. We detect this by
+        checking for KB prompt markers to avoid duplicate KB prompts.
+        """
         from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
 
         base_system_prompt = self._request.system_prompt or ""
@@ -265,6 +276,18 @@ class ChatContext:
             if self._request.model_config
             else None
         )
+
+        # In HTTP mode, check if system_prompt already contains KB instructions
+        # to avoid duplicate KB prompts (Backend adds them before calling chat_shell)
+        skip_prompt_enhancement = self._should_skip_kb_prompt_enhancement(
+            base_system_prompt
+        )
+        if skip_prompt_enhancement:
+            logger.debug(
+                "[CHAT_CONTEXT] Detected KB prompt in system_prompt, "
+                "skipping KB prompt enhancement"
+            )
+
         result = await prepare_knowledge_base_tools(
             knowledge_base_ids=self._request.knowledge_base_ids,
             user_id=self._request.user_id,
@@ -275,9 +298,44 @@ class ChatContext:
             is_user_selected=self._request.is_user_selected_kb,
             document_ids=self._request.document_ids,
             context_window=context_window,
+            skip_prompt_enhancement=skip_prompt_enhancement,
         )
         add_span_event("kb_tools_prepared", {"tools_count": len(result[0])})
         return result
+
+    def _should_skip_kb_prompt_enhancement(self, system_prompt: str) -> bool:
+        """Check if KB prompt enhancement should be skipped.
+
+        In HTTP mode with remote storage, Backend adds KB prompts to system_prompt
+        before calling chat_shell. We detect this by:
+        1. Checking if we're in HTTP mode with remote storage
+        2. Checking if system_prompt already contains KB prompt markers
+
+        Returns:
+            True if KB prompt enhancement should be skipped, False otherwise.
+        """
+        # Check if in HTTP mode with remote storage
+        mode = settings.CHAT_SHELL_MODE.lower()
+        storage = settings.STORAGE_TYPE.lower()
+        is_http_mode = mode == "http" and storage == "remote"
+
+        if not is_http_mode:
+            return False
+
+        # Check for KB prompt markers in system_prompt
+        # Using both old (# IMPORTANT:) and new (## Knowledge Base) markers for compatibility
+        kb_prompt_markers = [
+            "## Knowledge Base Requirement",
+            "## Knowledge Base Available",
+            "# IMPORTANT: Knowledge Base Requirement",
+            "# Knowledge Base Available",
+        ]
+
+        for marker in kb_prompt_markers:
+            if marker in system_prompt:
+                return True
+
+        return False
 
     @trace_async(
         span_name="chat_context.prepare_skill_tools",
@@ -287,23 +345,26 @@ class ChatContext:
             "context.has_load_skill_tool": load_skill_tool is not None,
         },
     )
-    async def _prepare_skill_tools(self, load_skill_tool) -> list:
+    async def _prepare_skill_tools(self, load_skill_tool) -> tuple[list, list]:
         """Prepare skill tools asynchronously.
 
         This method also handles preloading skill prompts for skills
         specified in request.preload_skills.
+
+        Returns:
+            Tuple of (skill_tools, skill_mcp_clients)
         """
         from chat_shell.tools.skill_factory import prepare_skill_tools
 
         if not self._request.skill_configs:
             add_span_event("no_skill_configs_skipped")
-            return []
+            return [], []
 
         add_span_event(
             "preparing_skill_tools",
             {"skill_configs_count": len(self._request.skill_configs)},
         )
-        tools = await prepare_skill_tools(
+        tools, skill_mcp_clients = await prepare_skill_tools(
             task_id=self._request.task_id,
             subtask_id=self._request.subtask_id,
             user_id=self._request.user_id,
@@ -311,9 +372,17 @@ class ChatContext:
             load_skill_tool=load_skill_tool,
             preload_skills=self._request.preload_skills,
             user_name=self._request.user_name,
+            auth_token=self._request.auth_token,
+            task_data=self._request.task_data,
         )
-        add_span_event("skill_tools_prepared", {"tools_count": len(tools)})
-        return tools
+        add_span_event(
+            "skill_tools_prepared",
+            {
+                "tools_count": len(tools),
+                "skill_mcp_clients_count": len(skill_mcp_clients),
+            },
+        )
+        return tools, skill_mcp_clients
 
     @trace_async(
         span_name="chat_context.connect_single_mcp_server",
@@ -342,7 +411,7 @@ class ChatContext:
             if auth:
                 server_config[server_name]["headers"] = auth
 
-            client = MCPClient(server_config)
+            client = MCPClient(server_config, task_data=self._request.task_data)
             await client.connect()
             if client.is_connected:
                 tools = client.get_tools()
@@ -440,7 +509,7 @@ class ChatContext:
         mcp_summary = []
 
         try:
-            client = MCPClient(unified_config)
+            client = MCPClient(unified_config, task_data=self._request.task_data)
             add_span_event("mcp_client_created")
 
             await client.connect()
@@ -601,6 +670,22 @@ class ChatContext:
             self._request.team_name,
             backend_url,
         )
+
+        # Add SilentExitTool for subscription tasks
+        logger.info(
+            "[CHAT_CONTEXT] is_subscription=%s for task_id=%d, subtask_id=%d",
+            self._request.is_subscription,
+            self._request.task_id,
+            self._request.subtask_id,
+        )
+        if self._request.is_subscription:
+            from chat_shell.tools.builtin import SilentExitTool
+
+            extra_tools.append(SilentExitTool())
+            logger.info(
+                "[CHAT_CONTEXT] Added SilentExitTool for subscription task (task_id=%d)",
+                self._request.task_id,
+            )
 
         # === External Tools ===
 

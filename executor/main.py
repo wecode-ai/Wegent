@@ -14,19 +14,21 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
 import uvicorn
-from fastapi import (BackgroundTasks, Body, FastAPI, HTTPException, Query,
-                     Request)
+from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel
+
+from executor.mcp_servers.wegent import start_wegent_mcp_server
+from executor.mcp_servers.wegent.server import stop_wegent_mcp_server
+from executor.services.agent_service import AgentService
+from executor.services.heartbeat_service import start_heartbeat, stop_heartbeat
+from executor.tasks import process, run_task
+
 # Import the shared logger
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
 from shared.telemetry.context import set_task_context, set_user_context
 from shared.telemetry.core import is_telemetry_enabled
-
-from executor.services.agent_service import AgentService
-from executor.services.heartbeat_service import start_heartbeat, stop_heartbeat
-from executor.tasks import process, run_task
 
 # Use the shared logger setup function
 logger = setup_logger("task_executor")
@@ -70,8 +72,9 @@ async def lifespan(app: FastAPI):
             logger.info("OpenTelemetry initialized successfully")
 
             # Apply instrumentation
-            from shared.telemetry.instrumentation import \
-                setup_opentelemetry_instrumentation
+            from shared.telemetry.instrumentation import (
+                setup_opentelemetry_instrumentation,
+            )
 
             setup_opentelemetry_instrumentation(app, logger)
 
@@ -81,6 +84,19 @@ async def lifespan(app: FastAPI):
             logger.debug("Restored trace context from environment")
         except Exception as e:
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
+    # Start Wegent MCP server for internal tools (silent_exit, etc.)
+    # Must be started before run_task() so that agents can connect to it
+    wegent_mcp_url = None
+    try:
+        import asyncio
+
+        wegent_mcp_url = start_wegent_mcp_server(background=True)
+        logger.info(f"Wegent MCP server started at {wegent_mcp_url}")
+        # Wait a short time for the server to be fully ready
+        await asyncio.sleep(0.5)
+    except Exception as e:
+        logger.warning(f"Failed to start Wegent MCP server: {e}")
+
     try:
         if os.getenv("TASK_INFO"):
             # Generate a request_id for startup task execution
@@ -108,6 +124,13 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to start heartbeat service: {e}")
 
     yield  # Application runs here
+
+    # Stop Wegent MCP server
+    try:
+        stop_wegent_mcp_server()
+        logger.info("Wegent MCP server stopped")
+    except Exception as e:
+        logger.warning(f"Error stopping Wegent MCP server: {e}")
 
     # Stop heartbeat service
     try:
@@ -160,8 +183,10 @@ async def log_requests(request: Request, call_next):
     start_time = time.time()
 
     # Always set request context for logging (works even without OTEL)
-    from shared.telemetry.context import (extract_trace_context_from_headers,
-                                          set_request_context)
+    from shared.telemetry.context import (
+        extract_trace_context_from_headers,
+        set_request_context,
+    )
 
     set_request_context(request_id)
 
@@ -207,6 +232,7 @@ async def log_requests(request: Request, call_next):
     if otel_cfg.enabled:
         try:
             from opentelemetry import trace
+
             from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():
@@ -230,6 +256,7 @@ async def log_requests(request: Request, call_next):
     if otel_cfg.enabled:
         try:
             from opentelemetry import trace
+
             from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():

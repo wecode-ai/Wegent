@@ -8,6 +8,7 @@ Task CRUD operations.
 This module contains methods for creating, updating, deleting, and canceling tasks.
 """
 
+import asyncio
 import json as json_lib
 import logging
 from datetime import datetime
@@ -89,6 +90,11 @@ class TaskOperationsMixin:
 
         db.commit()
         db.refresh(task)
+
+        # Push mode: dispatch task to executor_manager immediately after commit
+        from app.services.task_dispatcher import task_dispatcher
+
+        task_dispatcher.schedule_dispatch(task.id)
 
         return convert_to_task_dict(task, db, user.id)
 
@@ -279,6 +285,13 @@ class TaskOperationsMixin:
                     **(
                         {"forceOverrideBotModel": "true"}
                         if obj_in.force_override_bot_model
+                        else {}
+                    ),
+                    **(
+                        {
+                            "forceOverrideBotModelType": obj_in.force_override_bot_model_type
+                        }
+                        if obj_in.force_override_bot_model_type
                         else {}
                     ),
                     **(
@@ -534,6 +547,10 @@ class TaskOperationsMixin:
         task.updated_at = datetime.now()
         task.is_active = False
         flag_modified(task, "json")
+
+        # Clean up long-term memories associated with this task (fire-and-forget)
+        # This runs in background and doesn't block task deletion
+        self._cleanup_task_memories(task.user_id, task_id)
 
         db.commit()
 
@@ -945,3 +962,75 @@ class TaskOperationsMixin:
             return True
 
         return False
+
+    def _cleanup_task_memories(self, user_id: int, task_id: int) -> None:
+        """
+        Clean up long-term memories associated with a task.
+
+        This is a fire-and-forget operation that runs in background
+        and doesn't block task deletion.
+
+        Args:
+            user_id: User ID who owns the task
+            task_id: Task ID being deleted
+        """
+        import asyncio
+
+        from app.services.memory import get_memory_manager
+
+        memory_manager = get_memory_manager()
+        if not memory_manager.is_enabled:
+            return
+
+        def _log_cleanup_exception(task_or_future):
+            """Log any exceptions from cleanup task."""
+            try:
+                if hasattr(task_or_future, "exception"):
+                    exc = task_or_future.exception()
+                    if exc:
+                        logger.error(
+                            "[delete_task] Memory cleanup failed for task %d: %s",
+                            task_id,
+                            exc,
+                            exc_info=exc,
+                        )
+            except Exception:
+                logger.exception("[delete_task] Error checking cleanup task status")
+
+        # Try to get the running event loop
+        try:
+            loop = asyncio.get_running_loop()
+            cleanup_task = loop.create_task(
+                memory_manager.cleanup_task_memories(
+                    user_id=str(user_id), task_id=str(task_id)
+                )
+            )
+            cleanup_task.add_done_callback(_log_cleanup_exception)
+            logger.info(
+                "[delete_task] Started background task to cleanup memories for task %d",
+                task_id,
+            )
+        except RuntimeError:
+            # No event loop running - try to schedule on main loop
+            try:
+                from app.services.chat.ws_emitter import get_main_event_loop
+
+                main_loop = get_main_event_loop()
+                if main_loop and main_loop.is_running():
+                    future = asyncio.run_coroutine_threadsafe(
+                        memory_manager.cleanup_task_memories(
+                            user_id=str(user_id), task_id=str(task_id)
+                        ),
+                        main_loop,
+                    )
+                    future.add_done_callback(_log_cleanup_exception)
+                    logger.info(
+                        "[delete_task] Scheduled memory cleanup on main loop for task %d",
+                        task_id,
+                    )
+                else:
+                    logger.warning(
+                        "[delete_task] Cannot cleanup memories: no running event loop"
+                    )
+            except Exception as e:
+                logger.warning("[delete_task] Failed to schedule memory cleanup: %s", e)

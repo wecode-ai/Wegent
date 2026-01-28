@@ -20,8 +20,7 @@ class TestSandboxManager:
         """Reset singleton instances before each test."""
         from executor_manager.common.redis_factory import RedisClientFactory
         from executor_manager.common.singleton import SingletonMeta
-        from executor_manager.services.heartbeat_manager import \
-            HeartbeatManager
+        from executor_manager.services.heartbeat_manager import HeartbeatManager
 
         # Reset SingletonMeta instances
         SingletonMeta.reset_all_instances()
@@ -622,6 +621,55 @@ class TestSandboxManager:
 
         assert result is True
         mock_redis_client.hset.assert_called()
+
+    def test_save_execution_without_update_activity_does_not_update_zset(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        sample_execution,
+        mocker,
+    ):
+        """Test save_execution with update_activity=False does NOT update ZSet timestamp.
+
+        This is the default behavior for execution status updates (running, failed, completed).
+        GC timestamp should only be refreshed for new executions.
+        """
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.reset_mock()
+
+        result = manager._repository.save_execution(
+            sample_execution, update_activity=False
+        )
+
+        assert result is True
+        mock_redis_client.hset.assert_called()
+        mock_redis_client.expire.assert_called()
+        # ZSet should NOT be updated for status updates
+        mock_redis_client.zadd.assert_not_called()
+
+    def test_save_execution_with_update_activity_updates_zset(
+        self,
+        sandbox_manager_with_mock_redis,
+        mock_redis_client,
+        sample_execution,
+        mocker,
+    ):
+        """Test save_execution with update_activity=True DOES update ZSet timestamp.
+
+        This should be used when creating new executions or on callback to keep sandbox alive.
+        """
+        manager = sandbox_manager_with_mock_redis
+        mock_redis_client.reset_mock()
+
+        result = manager._repository.save_execution(
+            sample_execution, update_activity=True
+        )
+
+        assert result is True
+        mock_redis_client.hset.assert_called()
+        mock_redis_client.expire.assert_called()
+        # ZSet SHOULD be updated for new executions
+        mock_redis_client.zadd.assert_called_once()
 
     def test_load_execution_success(
         self, sandbox_manager_with_mock_redis, mock_redis_client, sample_execution

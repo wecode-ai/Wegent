@@ -78,6 +78,9 @@ dependencies = [
     "chardet>=5.0.0",
     "pillow>=12.0.0",
     "python-magic>=0.4.27",
+    # OCR support for scanned PDFs
+    "pytesseract>=0.3.10",
+    "pdf2image>=1.16.0",
     "markdown>=3.5.0",
     "beautifulsoup4>=4.12.0",
     "html2text>=2024.2.26",
@@ -170,6 +173,8 @@ force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
 skip = ["alembic", ".venv", "venv"]
+skip_gitignore = true
+known_first_party = ["app", "shared", "chat_shell"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

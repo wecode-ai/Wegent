@@ -21,6 +21,7 @@ import { correctionApis } from '@/apis/correction'
 import { saveLastRepo } from '@/utils/userPreferences'
 import { useTaskContext } from '../../contexts/taskContext'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
+import { teamRequiresWorkspace } from '../../service/messageService'
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18
 
@@ -60,6 +61,11 @@ export interface ChatAreaState {
   // Branch state
   selectedBranch: GitBranch | null
   setSelectedBranch: (branch: GitBranch | null) => void
+
+  // Workspace override state (allows user to override team's default requires_workspace setting)
+  requiresWorkspaceOverride: boolean | null
+  setRequiresWorkspaceOverride: (value: boolean | null) => void
+  effectiveRequiresWorkspace: boolean // Computed: override ?? teamRequiresWorkspace(team)
 
   // Model state
   selectedModel: Model | null
@@ -174,6 +180,9 @@ export function useChatAreaState({
   // Repository and branch state
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
   const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null)
+
+  // Workspace override state (null means use team's default)
+  const [requiresWorkspaceOverride, setRequiresWorkspaceOverride] = useState<boolean | null>(null)
 
   // Model state
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
@@ -340,18 +349,21 @@ export function useChatAreaState({
   }, [_teams, isTeamCompatibleWithMode])
 
   // Find default team for current mode from teams list
+  // Returns null if no default team is configured for the mode
   const findDefaultTeamForMode = useCallback(
     (teams: Team[]): Team | null => {
       if (teams.length === 0) return null
-      if (!defaultTeamsConfig) return teams[0] || null
+      if (!defaultTeamsConfig) return null
 
       // Get the default config for current mode
       const modeKey = taskType as keyof DefaultTeamsResponse
       const defaultConfig = defaultTeamsConfig[modeKey]
 
       if (!defaultConfig) {
-        // No default configured, use first team
-        return teams[0] || null
+        // No default configured for this mode, return null
+        // This allows all teams to be shown in QuickAccessCards
+        console.log('[useChatAreaState] No default team configured for mode:', taskType)
+        return null
       }
 
       // Normalize namespace to handle undefined case
@@ -379,12 +391,14 @@ export function useChatAreaState({
         return selectedTeam
       }
 
-      // No match found, use first team
+      // No match found, return null (configured default team doesn't exist in list)
       console.log(
-        '[useChatAreaState] Default team not found in list, using first team for mode:',
-        taskType
+        '[useChatAreaState] Configured default team not found in list for mode:',
+        taskType,
+        defaultConfig.name,
+        normalizedNamespace
       )
-      return teams[0] || null
+      return null
     },
     [defaultTeamsConfig, taskType]
   )
@@ -407,6 +421,7 @@ export function useChatAreaState({
   }, [defaultTeam])
 
   // Handle team change - marks user as not using default team
+  // Also clears repository if the new team doesn't require a workspace
   const handleTeamChange = useCallback(
     (team: Team | null) => {
       console.log('[ChatArea] handleTeamChange called:', team?.name || 'null', team?.id || 'null')
@@ -416,6 +431,20 @@ export function useChatAreaState({
       setExternalApiParams({})
       setAppMode(undefined)
 
+      // Only reset workspace override when there's no selected task (new chat scenario)
+      // When loading an existing task, preserve the task's repository setting
+      if (!selectedTaskDetail) {
+        setRequiresWorkspaceOverride(null)
+
+        // Clear repository and branch if the new team doesn't require a workspace
+        // This handles switching from code agents (ClaudeCode, Agno) to chat-only agents (Chat, Dify)
+        if (team && !teamRequiresWorkspace(team)) {
+          console.log('[ChatArea] Team does not require workspace, clearing repo and branch')
+          setSelectedRepo(null)
+          setSelectedBranch(null)
+        }
+      }
+
       // Check if the selected team is the same as the default team
       if (team && defaultTeam && team.id === defaultTeam.id) {
         setIsUsingDefaultTeam(true)
@@ -424,7 +453,7 @@ export function useChatAreaState({
         setIsUsingDefaultTeam(false)
       }
     },
-    [defaultTeam]
+    [defaultTeam, selectedTaskDetail]
   )
 
   // Save repository preference when it changes
@@ -433,6 +462,18 @@ export function useChatAreaState({
       saveLastRepo(selectedRepo.git_repo_id, selectedRepo.git_repo)
     }
   }, [selectedRepo])
+
+  // Sync requiresWorkspaceOverride from task detail when loading an existing task
+  // This ensures user's manual repository selection is preserved across page refreshes
+  useEffect(() => {
+    if (selectedTaskDetail) {
+      // If task has git_repo, user selected a repository (requires workspace)
+      // If task has no git_repo, user selected "no workspace needed"
+      const taskHasRepo = Boolean(selectedTaskDetail.git_repo)
+      setRequiresWorkspaceOverride(taskHasRepo)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTaskDetail?.id]) // Only trigger when task changes, not on every detail update
 
   // Handle external team selection for new tasks
   useEffect(() => {
@@ -487,6 +528,15 @@ export function useChatAreaState({
     return appMode === 'workflow'
   }, [appMode])
 
+  // Compute effective requires workspace value
+  // Priority: user override > team default
+  const effectiveRequiresWorkspace = useMemo(() => {
+    if (requiresWorkspaceOverride !== null) {
+      return requiresWorkspaceOverride
+    }
+    return teamRequiresWorkspace(selectedTeam)
+  }, [requiresWorkspaceOverride, selectedTeam])
+
   return {
     // Team state
     selectedTeam,
@@ -506,6 +556,11 @@ export function useChatAreaState({
     // Branch state
     selectedBranch,
     setSelectedBranch,
+
+    // Workspace override state
+    requiresWorkspaceOverride,
+    setRequiresWorkspaceOverride,
+    effectiveRequiresWorkspace,
 
     // Model state
     selectedModel,

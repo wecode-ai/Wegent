@@ -222,6 +222,16 @@ async def lifespan(app: FastAPI):
     init_ws_emitter(sio)
     logger.info("✓ Socket.IO initialized")
 
+    # Initialize event bus and register event handlers
+    # This enables decoupled communication between modules (e.g., pet experience updates)
+    logger.info("Initializing event bus and registering handlers...")
+    from app.core.events import init_event_bus
+    from app.services.pet.event_handlers import register_pet_event_handlers
+
+    init_event_bus()
+    register_pet_event_handlers()
+    logger.info("✓ Event bus initialized and handlers registered")
+
     # Initialize PendingRequestRegistry for skill frontend interactions
     # This starts the Redis Pub/Sub listener for cross-worker communication
     logger.info("Initializing PendingRequestRegistry...")
@@ -431,6 +441,7 @@ def create_app():
         # Add OpenTelemetry span attributes if enabled
         if otel_config.enabled:
             from opentelemetry import trace
+
             from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():
@@ -469,6 +480,7 @@ def create_app():
         # Capture response headers and body if OTEL is enabled
         if otel_config.enabled:
             from opentelemetry import trace
+
             from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():

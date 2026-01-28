@@ -75,7 +75,7 @@ class SandboxClaudeTool(BaseSandboxTool):
     display_name: str = "执行 Claude 命令"
     description: str = """Execute a Claude command in an isolated sandbox environment.
 
-⚠️ ONLY use when user EXPLICITLY requests Claude by name (e.g., "use Claude to...", "让Claude帮我...").
+⚠️ ONLY use when user EXPLICITLY requests Claude by name (e.g., "use Claude to...", "let Claude help me...").
 DO NOT use for normal sandbox operations - use sandbox_command, sandbox_read_file, etc. instead.
 
 Parameters:
@@ -194,7 +194,6 @@ Example:
             sandbox, error = await sandbox_manager.get_or_create_sandbox(
                 shell_type=self.default_shell_type,
                 workspace_ref=None,
-                task_type="claude_command",
             )
 
             if error:
@@ -216,18 +215,12 @@ Example:
                 f"[SandboxClaudeTool] Running Claude command in sandbox {sandbox.sandbox_id}"
             )
 
-            # Execute command using sandbox.commands API
-            # Run synchronous command in executor without callbacks to avoid event loop issues
-            loop = asyncio.get_event_loop()
-
+            # Execute command using sandbox.commands API with async
             # Start the command without streaming callbacks
-            process = await loop.run_in_executor(
-                None,
-                lambda: sandbox.commands.run(
-                    cmd=command,
-                    cwd=working_dir,
-                    timeout=effective_timeout,
-                ),
+            process = await sandbox.commands.run(
+                cmd=command,
+                cwd=working_dir,
+                timeout=effective_timeout,
             )
 
             execution_time = time.time() - start_time

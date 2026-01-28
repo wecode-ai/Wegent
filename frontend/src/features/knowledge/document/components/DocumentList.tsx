@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import {
   ArrowLeft,
   Upload,
@@ -13,6 +13,7 @@ import {
   ChevronUp,
   ChevronDown,
   BookOpen,
+  FolderOpen,
   Trash2,
   Target,
   FileUp,
@@ -20,6 +21,8 @@ import {
   Info,
   CheckSquare,
   Square,
+  AlertTriangle,
+  ArrowRightLeft,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -31,9 +34,15 @@ import { DocumentUpload, type TableDocument } from './DocumentUpload'
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
 import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
+import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog'
 import { useDocuments } from '../hooks/useDocuments'
+import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
+import { toast } from '@/hooks/use-toast'
 import type { KnowledgeBase, KnowledgeDocument, SplitterConfig } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
+
+// Maximum documents allowed for notebook type
+const NOTEBOOK_MAX_DOCUMENTS = 50
 
 interface DocumentListProps {
   knowledgeBase: KnowledgeBase
@@ -43,6 +52,10 @@ interface DocumentListProps {
   compact?: boolean
   /** Callback when document selection changes (for notebook mode context injection) */
   onSelectionChange?: (documentIds: number[]) => void
+  /** Callback to refresh knowledge base details (used after summary retry) */
+  onRefreshKnowledgeBase?: () => void
+  /** Callback when knowledge base type is converted */
+  onTypeConverted?: (updatedKb: KnowledgeBase) => void
 }
 
 type SortField = 'name' | 'size' | 'date'
@@ -54,6 +67,8 @@ export function DocumentList({
   canManage = true,
   compact = false,
   onSelectionChange,
+  onRefreshKnowledgeBase,
+  onTypeConverted,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
@@ -66,6 +81,7 @@ export function DocumentList({
 
   const [showUpload, setShowUpload] = useState(false)
   const [showRetrievalTest, setShowRetrievalTest] = useState(false)
+  const [showConvertDialog, setShowConvertDialog] = useState(false)
   const [viewingDoc, setViewingDoc] = useState<KnowledgeDocument | null>(null)
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
@@ -79,6 +95,50 @@ export function DocumentList({
   const [initialSelectionDone, setInitialSelectionDone] = useState(false)
   // Track which document is being refreshed
   const [refreshingDocId, setRefreshingDocId] = useState<number | null>(null)
+  // Track if summary is being retried
+  const [isSummaryRetrying, setIsSummaryRetrying] = useState(false)
+
+  // Track component mounted state to prevent updates after unmount
+  const isMountedRef = useRef(true)
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
+
+  // Check if summary generation failed
+  const isSummaryFailed = knowledgeBase.summary?.status === 'failed'
+  const summaryError = knowledgeBase.summary?.error
+
+  // Handle retry summary generation
+  const handleRetrySummary = async () => {
+    setIsSummaryRetrying(true)
+    try {
+      await refreshKnowledgeBaseSummary(knowledgeBase.id)
+      toast({
+        description: t('chatPage.summaryRetrying'),
+      })
+      // Refresh knowledge base details after a short delay
+      if (onRefreshKnowledgeBase) {
+        setTimeout(() => {
+          if (isMountedRef.current) {
+            onRefreshKnowledgeBase()
+          }
+        }, 2000)
+      }
+    } catch (err) {
+      console.error('Failed to refresh summary:', err)
+      toast({
+        variant: 'destructive',
+        description: t('chatPage.summaryFailed'),
+      })
+    } finally {
+      if (isMountedRef.current) {
+        setIsSummaryRetrying(false)
+      }
+    }
+  }
 
   // Default select all documents when documents load (for notebook mode)
   useEffect(() => {
@@ -298,6 +358,12 @@ export function DocumentList({
 
   const longSummary = knowledgeBase.summary?.long_summary
 
+  // Knowledge base type info
+  const kbType = knowledgeBase.kb_type || 'notebook'
+  const isNotebook = kbType === 'notebook'
+  // Check if can convert to notebook (document count must be <= 50)
+  const canConvertToNotebook = documents.length <= NOTEBOOK_MAX_DOCUMENTS
+
   return (
     <div className="space-y-4">
       {/* Header - Wegent style */}
@@ -310,14 +376,19 @@ export function DocumentList({
             <ArrowLeft className="w-5 h-5" />
           </button>
         )}
-        <BookOpen className="w-5 h-5 text-primary flex-shrink-0" />
+        {/* Type icon - based on current kb type */}
+        {isNotebook ? (
+          <BookOpen className="w-5 h-5 text-primary flex-shrink-0" />
+        ) : (
+          <FolderOpen className="w-5 h-5 text-text-secondary flex-shrink-0" />
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <h2 className="text-base font-medium text-text-primary truncate">
               {knowledgeBase.name}
             </h2>
-            {/* Summary tooltip - next to title */}
-            {longSummary && (
+            {/* Summary tooltip - next to title (only show if not failed) */}
+            {longSummary && !isSummaryFailed && (
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>
@@ -331,11 +402,67 @@ export function DocumentList({
                 </Tooltip>
               </TooltipProvider>
             )}
+            {/* Summary failed warning - with retry button */}
+            {isSummaryFailed && (
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <button className="flex-shrink-0 p-0.5 rounded text-amber-500 hover:bg-surface transition-colors">
+                      <AlertTriangle className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" align="start" className="max-w-md">
+                    <p className="text-sm leading-relaxed">
+                      {summaryError || t('chatPage.summaryFailedHint')}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            {isSummaryFailed && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRetrySummary}
+                disabled={isSummaryRetrying}
+                className="h-6 px-2 text-xs text-amber-500 hover:text-amber-600"
+              >
+                <RefreshCw className={`w-3 h-3 mr-1 ${isSummaryRetrying ? 'animate-spin' : ''}`} />
+                {isSummaryRetrying ? t('chatPage.summaryRetrying') : t('chatPage.summaryRetry')}
+              </Button>
+            )}
           </div>
           {knowledgeBase.description && (
             <p className="text-xs text-text-muted truncate">{knowledgeBase.description}</p>
           )}
         </div>
+        {/* Convert type button - only shown when canManage is true */}
+        {canManage && (
+          <TooltipProvider>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowConvertDialog(true)}
+                  disabled={!isNotebook && !canConvertToNotebook}
+                  className="flex items-center gap-1.5"
+                >
+                  <ArrowRightLeft className="w-4 h-4" />
+                  {isNotebook
+                    ? t('document.knowledgeBase.convertToClassic')
+                    : t('document.knowledgeBase.convertToNotebook')}
+                </Button>
+              </TooltipTrigger>
+              {/* Only show tooltip when button is disabled */}
+              {!isNotebook && !canConvertToNotebook && (
+                <TooltipContent side="bottom" className="max-w-xs">
+                  <p className="text-sm">{t('document.knowledgeBase.convertToNotebookDisabled')}</p>
+                </TooltipContent>
+              )}
+            </Tooltip>
+          </TooltipProvider>
+        )}
       </div>
 
       {/* Search bar and action buttons */}
@@ -600,6 +727,7 @@ export function DocumentList({
         onOpenChange={open => !open && setViewingDoc(null)}
         document={viewingDoc}
         knowledgeBaseId={knowledgeBase.id}
+        kbType={knowledgeBase.kb_type}
       />
 
       <DocumentUpload
@@ -634,6 +762,13 @@ export function DocumentList({
         open={showRetrievalTest}
         onOpenChange={setShowRetrievalTest}
         knowledgeBase={knowledgeBase}
+      />
+
+      <ConvertKnowledgeBaseTypeDialog
+        open={showConvertDialog}
+        onOpenChange={setShowConvertDialog}
+        knowledgeBase={knowledgeBase}
+        onSuccess={onTypeConverted}
       />
     </div>
   )

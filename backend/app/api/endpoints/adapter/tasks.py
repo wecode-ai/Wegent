@@ -414,6 +414,7 @@ def join_shared_task(
         team_id=user_team.id,
         model_id=request.model_id,
         force_override_bot_model=request.force_override_bot_model or False,
+        force_override_bot_model_type=request.force_override_bot_model_type,
         git_repo_id=request.git_repo_id,
         git_url=request.git_url,
         git_repo=request.git_repo,

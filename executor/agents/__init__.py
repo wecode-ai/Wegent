@@ -8,7 +8,7 @@ Agent package initialization
 """
 
 from executor.agents.base import Agent
-from executor.agents.factory import AgentFactory
 from executor.agents.claude_code import ClaudeCodeAgent
+from executor.agents.factory import AgentFactory
 
 __all__ = ["Agent", "ClaudeCodeAgent", "AgentFactory"]

@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+
 from shared.telemetry.core import is_telemetry_enabled
 
 logger = logging.getLogger(__name__)

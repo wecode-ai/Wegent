@@ -24,6 +24,7 @@ from app.schemas.subscription import (
     BackgroundExecutionInDB,
     BackgroundExecutionListResponse,
     BackgroundExecutionStatus,
+    DiscoverSubscriptionsListResponse,
     SubscriptionCreate,
     SubscriptionInDB,
     SubscriptionListResponse,
@@ -31,6 +32,7 @@ from app.schemas.subscription import (
     SubscriptionUpdate,
 )
 from app.services.subscription import subscription_service
+from app.services.subscription.follow_service import subscription_follow_service
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,36 @@ def create_subscription(
     )
 
 
+# ========== Discover Endpoint ==========
+# NOTE: This static route MUST be defined before /{subscription_id} dynamic routes
+
+
+@router.get("/discover", response_model=DiscoverSubscriptionsListResponse)
+def discover_subscriptions(
+    sort_by: str = Query("popularity", description="Sort by: 'popularity' or 'recent'"),
+    search: Optional[str] = Query(None, description="Search query"),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Discover public subscriptions.
+
+    Returns a list of public subscriptions that can be followed.
+    Can be sorted by popularity (follower count) or recency.
+    """
+    skip = (page - 1) * limit
+    return subscription_follow_service.discover_subscriptions(
+        db=db,
+        user_id=current_user.id,
+        sort_by=sort_by,
+        search=search,
+        skip=skip,
+        limit=limit,
+    )
+
+
 # ========== Execution History Endpoints (Timeline) ==========
 # NOTE: These static routes MUST be defined before /{subscription_id} dynamic routes
 
@@ -106,6 +138,9 @@ def list_executions(
     ),
     start_date: Optional[datetime] = Query(None, description="Filter by start date"),
     end_date: Optional[datetime] = Query(None, description="Filter by end date"),
+    include_silent: bool = Query(
+        False, description="Include silent executions (COMPLETED_SILENT)"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -114,6 +149,9 @@ def list_executions(
 
     Returns paginated list of execution records sorted by creation time (newest first).
     Supports filtering by subscription, status, and date range.
+
+    By default, silent executions (COMPLETED_SILENT) are excluded. Set include_silent=True
+    to include them in the results.
     """
     skip = (page - 1) * limit
 
@@ -126,6 +164,7 @@ def list_executions(
         status=status,
         start_date=start_date,
         end_date=end_date,
+        include_silent=include_silent,
     )
 
     return BackgroundExecutionListResponse(total=total, items=items)
@@ -258,6 +297,26 @@ def cancel_execution(
     Returns the updated execution record with CANCELLED status.
     """
     return subscription_service.cancel_execution(
+        db=db,
+        execution_id=execution_id,
+        user_id=current_user.id,
+    )
+
+
+@router.delete("/executions/{execution_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_execution(
+    execution_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Delete a background execution record.
+
+    This endpoint allows users to delete an execution record from the timeline.
+    Only executions in terminal states (COMPLETED, FAILED, CANCELLED) can be deleted.
+    Running or pending executions must be cancelled first.
+    """
+    subscription_service.delete_execution(
         db=db,
         execution_id=execution_id,
         user_id=current_user.id,

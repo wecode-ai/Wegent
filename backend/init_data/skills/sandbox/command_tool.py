@@ -90,6 +90,9 @@ Example:
     # Default command timeout (5 minutes)
     default_command_timeout: int = 300
 
+    # Maximum output size to return (64KB per stream to avoid context overflow)
+    max_output_size: int = 65536  # 64KB
+
     def _run(
         self,
         command: str,
@@ -152,7 +155,6 @@ Example:
             sandbox, error = await sandbox_manager.get_or_create_sandbox(
                 shell_type=self.default_shell_type,
                 workspace_ref=None,
-                task_type="command",
             )
 
             if error:
@@ -175,28 +177,53 @@ Example:
                 f"[SandboxCommandTool] Running command in sandbox {sandbox.sandbox_id}"
             )
 
-            # Execute command using sandbox.commands API
-            # Run in thread pool since E2B SDK may be sync
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: sandbox.commands.run(
-                    cmd=command,
-                    cwd=working_dir,
-                    timeout=effective_timeout,
-                ),
+            # Execute command using sandbox.commands API with async
+            result = await sandbox.commands.run(
+                cmd=command,
+                cwd=working_dir,
+                timeout=effective_timeout,
             )
 
             execution_time = time.time() - start_time
 
+            # Truncate output if too large
+            stdout = result.stdout or ""
+            stderr = result.stderr or ""
+            stdout_truncated = False
+            stderr_truncated = False
+
+            if len(stdout) > self.max_output_size:
+                stdout = stdout[: self.max_output_size]
+                stdout_truncated = True
+                logger.warning(
+                    f"[SandboxCommandTool] stdout truncated (original size: {len(result.stdout)} bytes)"
+                )
+
+            if len(stderr) > self.max_output_size:
+                stderr = stderr[: self.max_output_size]
+                stderr_truncated = True
+                logger.warning(
+                    f"[SandboxCommandTool] stderr truncated (original size: {len(result.stderr)} bytes)"
+                )
+
             response = {
                 "success": result.exit_code == 0,
-                "stdout": result.stdout or "",
-                "stderr": result.stderr or "",
+                "stdout": stdout,
+                "stderr": stderr,
                 "exit_code": result.exit_code,
                 "execution_time": execution_time,
                 "sandbox_id": sandbox.sandbox_id,
             }
+
+            # Add truncation info if output was truncated
+            if stdout_truncated or stderr_truncated:
+                response["truncated"] = True
+                response["truncation_info"] = {
+                    "stdout_truncated": stdout_truncated,
+                    "stderr_truncated": stderr_truncated,
+                    "max_output_size": self.max_output_size,
+                    "message": f"Output truncated to {self.max_output_size} bytes per stream to avoid context overflow",
+                }
 
             logger.info(
                 f"[SandboxCommandTool] Command completed: exit_code={result.exit_code}, "

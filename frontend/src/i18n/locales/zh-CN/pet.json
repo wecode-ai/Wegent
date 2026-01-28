@@ -1,0 +1,43 @@
+{
+  "title": "我的宠物",
+  "stages": {
+    "baby": "幼年期",
+    "growing": "成长期",
+    "mature": "成熟期"
+  },
+  "stats": {
+    "experience": "经验值",
+    "chats": "对话次数",
+    "streak": "连续使用",
+    "days": "天",
+    "stage": "阶段"
+  },
+  "settings": {
+    "enable": "显示宠物",
+    "name": "宠物名称",
+    "name_placeholder": "输入宠物名称",
+    "reset": "重置宠物",
+    "reset_confirm": "确定要重置宠物吗？所有成长数据将被清除。",
+    "save": "保存更改",
+    "no_pet": "暂无宠物数据"
+  },
+  "notifications": {
+    "evolved": "恭喜！你的宠物进化到了{{stage}}！",
+    "streak_milestone": "连续使用{{days}}天！继续保持！"
+  },
+  "panel": {
+    "greeting": {
+      "morning": "早上好！",
+      "afternoon": "下午好！",
+      "evening": "晚上好！"
+    },
+    "exp": {
+      "total": "总经验：{{exp}}"
+    },
+    "tasks": {
+      "running": "{{count}} 个任务进行中",
+      "unread": "{{count}} 条未读消息"
+    },
+    "allClear": "所有任务已完成！"
+  }
+}

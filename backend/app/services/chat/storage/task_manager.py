@@ -44,6 +44,9 @@ class TaskCreationParams:
     title: Optional[str] = None
     model_id: Optional[str] = None
     force_override_bot_model: bool = False
+    force_override_bot_model_type: Optional[str] = (
+        None  # Model type: 'public', 'user', 'group'
+    )
     is_group_chat: bool = False
     git_url: Optional[str] = None
     git_repo: Optional[str] = None
@@ -310,6 +313,11 @@ def create_new_task(
                 **(
                     {"forceOverrideBotModel": "true"}
                     if params.force_override_bot_model
+                    else {}
+                ),
+                **(
+                    {"forceOverrideBotModelType": params.force_override_bot_model_type}
+                    if params.force_override_bot_model_type
                     else {}
                 ),
             },
@@ -674,6 +682,87 @@ async def create_task_and_subtasks(
     if assistant_subtask:
         db.refresh(assistant_subtask)
 
+    # Store user message in long-term memory (fire-and-forget)
+    # WebSocket chat (web) respects user preference for memory
+    # This runs in background and doesn't block the main flow
+    import asyncio
+
+    from app.core.config import settings
+    from app.services.memory import (
+        build_context_messages,
+        get_memory_manager,
+        is_memory_enabled_for_user,
+    )
+
+    # Check user preference first
+    if not is_memory_enabled_for_user(user):
+        logger.info(
+            "[task_manager] Long-term memory disabled by user preference, skipping memory save: user_id=%d",
+            user.id,
+        )
+    else:
+        memory_manager = get_memory_manager()
+        if memory_manager.is_enabled:
+            task_crd = Task.model_validate(task.json)
+            workspace_id = (
+                f"{task_crd.spec.workspaceRef.namespace}/{task_crd.spec.workspaceRef.name}"
+                if task_crd.spec.workspaceRef
+                else None
+            )
+            is_group_chat = task_crd.spec.is_group_chat
+
+            # Build context messages using shared utility
+            context_messages = build_context_messages(
+                db=db,
+                existing_subtasks=existing_subtasks,
+                current_message=message,
+                current_user=user,
+                is_group_chat=is_group_chat,
+                context_limit=settings.MEMORY_CONTEXT_MESSAGES,
+            )
+
+            # Create task with proper exception handling
+            def _log_memory_task_exception(task_obj: asyncio.Task) -> None:
+                """Log exceptions from background memory storage task."""
+                try:
+                    exc = task_obj.exception()
+                    if exc is not None:
+                        logger.error(
+                            "[create_task_and_subtasks] Memory storage task failed for user %d, task %d, subtask %d: %s",
+                            user.id,
+                            task.id,
+                            user_subtask.id,
+                            exc,
+                            exc_info=exc,
+                        )
+                except asyncio.CancelledError:
+                    logger.info(
+                        "[create_task_and_subtasks] Memory storage task cancelled for user %d, task %d, subtask %d",
+                        user.id,
+                        task.id,
+                        user_subtask.id,
+                    )
+
+            memory_save_task = asyncio.create_task(
+                memory_manager.save_user_message_async(
+                    user_id=str(user.id),
+                    team_id=str(team.id),
+                    task_id=str(task.id),
+                    subtask_id=str(user_subtask.id),
+                    messages=context_messages,
+                    workspace_id=workspace_id,
+                    project_id=str(task.project_id) if task.project_id else None,
+                    is_group_chat=is_group_chat,
+                )
+            )
+            memory_save_task.add_done_callback(_log_memory_task_exception)
+            logger.info(
+                "[create_task_and_subtasks] Started background task to store memory for user %d, task %d, subtask %d",
+                user.id,
+                task.id,
+                user_subtask.id,
+            )
+
     # Initialize Redis chat history from existing subtasks if needed
     if existing_subtasks:
         await initialize_redis_chat_history(task_id, existing_subtasks)
@@ -759,8 +848,10 @@ async def create_chat_task(
         # Executor path - use task_kinds_service.create_task_or_append
         logger.debug("[create_chat_task] Using Executor path")
 
-        # Auto-detect task type based on git_url presence
-        task_type = "code" if params.git_url else "chat"
+        # Use provided task_type, or auto-detect based on git_url presence
+        task_type = params.task_type
+        if not task_type:
+            task_type = "code" if params.git_url else "chat"
 
         # Build TaskCreate object
         task_create = TaskCreate(
@@ -780,6 +871,7 @@ async def create_chat_task(
             source=source,
             model_id=params.model_id,
             force_override_bot_model=params.force_override_bot_model,
+            force_override_bot_model_type=params.force_override_bot_model_type,
         )
 
         # Call create_task_or_append (synchronous method)

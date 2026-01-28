@@ -14,6 +14,7 @@ export interface UserPreferences {
   send_key: 'enter' | 'cmd_enter'
   search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
   quick_access?: QuickAccessConfig
+  memory_enabled?: boolean
 }
 
 // User Types
@@ -141,6 +142,7 @@ export interface Team {
   recommended_mode?: 'chat' | 'code' | 'both' // Recommended usage mode (for QuickAccess)
   bind_mode?: ('chat' | 'code' | 'knowledge')[] // Allowed modes for this team
   icon?: string // Icon ID from preset icon library
+  requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
   user?: {
     user_name: string
   }
