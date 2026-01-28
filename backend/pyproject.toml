@@ -78,6 +78,9 @@ dependencies = [
     "chardet>=5.0.0",
     "pillow>=12.0.0",
     "python-magic>=0.4.27",
+    # OCR support for scanned PDFs
+    "pytesseract>=0.3.10",
+    "pdf2image>=1.16.0",
     "markdown>=3.5.0",
     "beautifulsoup4>=4.12.0",
     "html2text>=2024.2.26",
