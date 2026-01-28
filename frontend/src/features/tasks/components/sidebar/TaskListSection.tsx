@@ -18,6 +18,7 @@ import {
   MessageSquare,
   Users,
   BookOpen,
+  Monitor,
 } from 'lucide-react'
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
@@ -162,6 +163,9 @@ export default function TaskListSection({
       if (task.task_type === 'knowledge' && task.knowledge_base_id) {
         // Knowledge type tasks navigate to the knowledge base page
         targetPath = `/knowledge/document/${task.knowledge_base_id}`
+      } else if (task.task_type === 'task') {
+        // Task type tasks navigate to device chat page
+        targetPath = '/devices/chat'
       } else if (task.task_type === 'code') {
         targetPath = paths.code.getHref()
       } else if (task.task_type === 'chat') {
@@ -444,6 +448,8 @@ export default function TaskListSection({
 
     if (taskType === 'knowledge') {
       return <BookOpen className="w-3.5 h-3.5 text-text-primary" />
+    } else if (taskType === 'task') {
+      return <Monitor className="w-3.5 h-3.5 text-text-primary" />
     } else if (taskType === 'code') {
       return <Code2 className="w-3.5 h-3.5 text-text-primary" />
     } else {

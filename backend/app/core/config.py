@@ -323,6 +323,9 @@ class Settings(BaseSettings):
     DEFAULT_TEAM_KNOWLEDGE: str = (
         "wegent-notebook#default"  # Default team for knowledge mode
     )
+    DEFAULT_TEAM_TASK: str = (
+        "wegent-wework#default"  # Default team for task mode (devices/chat page)
+    )
 
     # JSON configuration for MCP servers (similar to Claude Desktop format)
     # Example:
