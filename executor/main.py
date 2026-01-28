@@ -490,11 +490,28 @@ async def close_all_agent_sessions():
 
 def main():
     """
-    Main function for running the FastAPI server
+    Main function for running the executor.
+
+    In local mode (EXECUTOR_MODE=local), starts the WebSocket-based local runner.
+    In Docker mode (default), starts the FastAPI server.
     """
-    # Get port from environment variable, default to 10001
-    port = int(os.getenv("PORT", 10001))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    from executor.config import config
+
+    if config.EXECUTOR_MODE == "local":
+        # Local mode: Run WebSocket-based executor
+        import asyncio
+
+        from executor.modes.local.runner import LocalRunner
+
+        logger.info("Starting executor in LOCAL mode")
+        runner = LocalRunner()
+        asyncio.run(runner.start())
+    else:
+        # Docker mode (default): Run FastAPI server
+        logger.info("Starting executor in DOCKER mode")
+        # Get port from environment variable, default to 10001
+        port = int(os.getenv("PORT", 10001))
+        uvicorn.run(app, host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":

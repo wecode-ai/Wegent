@@ -582,7 +582,10 @@ def create_socketio_asgi_app():
     Returns a combined app that routes Socket.IO traffic to Socket.IO server
     and everything else to FastAPI.
     """
-    from app.api.ws import register_chat_namespace
+    from app.api.ws import (
+        register_chat_namespace,
+        register_local_executor_namespace,
+    )
     from app.core.socketio import create_socketio_app, get_sio
 
     sio = get_sio()
@@ -591,6 +594,11 @@ def create_socketio_asgi_app():
     # This ensures the namespace is available when clients connect
     register_chat_namespace(sio)
     _logger.info("Chat namespace registered during ASGI app creation")
+
+    # Register local executor namespace for local mode debugging
+    # This handles WebSocket communication with local executor instances
+    register_local_executor_namespace(sio)
+    _logger.info("Local Executor namespace registered during ASGI app creation")
 
     socketio_app = create_socketio_app(sio)
 
