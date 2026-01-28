@@ -41,6 +41,14 @@
     "copy": "复制",
     "copied": "已复制"
   },
+  "preview": {
+    "zoom_in": "放大 (+)",
+    "zoom_out": "缩小 (-)",
+    "rotate": "旋转 (R)",
+    "download": "下载",
+    "close": "关闭 (Esc)",
+    "click_to_download": "点击下载"
+  },
   "errors": {
     "request_failed": "请求大模型接口失败，请点击重试"
   },

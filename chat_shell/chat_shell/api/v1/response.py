@@ -414,7 +414,7 @@ async def _stream_response(
                             run_id[:20] if run_id else "N/A",
                             status,
                             tool_name,
-                            title[:30] if title else "N/A",
+                            str(title)[:30] if title else "N/A",
                         )
 
                         if status == "started":

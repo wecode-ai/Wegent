@@ -392,7 +392,10 @@ class ToolStart(BaseModel):
     id: str = Field(..., description="Tool call ID")
     name: str = Field(..., description="Tool name")
     input: dict = Field(..., description="Tool input")
-    display_name: Optional[str] = Field(None, description="Display name for UI")
+    display_name: Optional[Union[str, dict]] = Field(
+        None,
+        description="Display name for UI (can be string or i18n object with key and params)",
+    )
 
 
 class ToolProgress(BaseModel):
@@ -411,8 +414,9 @@ class ToolDone(BaseModel):
     duration_ms: Optional[int] = Field(None, description="Execution duration in ms")
     error: Optional[str] = Field(None, description="Error message if failed")
     sources: Optional[list[dict]] = Field(None, description="Source references")
-    display_name: Optional[str] = Field(
-        None, description="Display name for UI (updates title on completion)"
+    display_name: Optional[Union[str, dict]] = Field(
+        None,
+        description="Display name for UI (can be string or i18n object with key and params)",
     )
 
 

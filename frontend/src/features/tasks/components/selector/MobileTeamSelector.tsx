@@ -140,9 +140,7 @@ export default function MobileTeamSelector({
         >
           {searchFilteredTeams.length === 0 ? (
             <div className="rounded-xl bg-white dark:bg-[#2c2c2e] p-4 text-center text-sm text-[#8e8e93]">
-              {isLoading
-                ? t('common:loading', '加载中...')
-                : t('common:teams.no_match', '暂无匹配的智能体')}
+              {isLoading ? t('common:actions.loading') : t('common:teams.no_match')}
             </div>
           ) : (
             <div className="rounded-xl bg-white dark:bg-[#2c2c2e] overflow-hidden">
@@ -212,7 +210,7 @@ export default function MobileTeamSelector({
                 className="flex items-center gap-1.5 text-[#007aff] active:opacity-70"
               >
                 <Settings className="h-4 w-4" />
-                <span className="text-[13px]">{t('common:teams.manage', '管理')}</span>
+                <span className="text-[13px]">{t('common:teams.manage')}</span>
               </button>
             </div>
           </div>

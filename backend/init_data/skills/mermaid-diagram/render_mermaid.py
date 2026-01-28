@@ -87,7 +87,7 @@ class RenderMermaidTool(BaseTool):
     """
 
     name: str = "render_mermaid"
-    display_name: str = "渲染图表"
+    display_name: str = "tools.render_mermaid.display_name"
     description: str = """Render a Mermaid diagram. Use this tool when you need to create visual diagrams.
 
 Before calling render_mermaid, you SHOULD call read_mermaid_reference first to learn the correct syntax!

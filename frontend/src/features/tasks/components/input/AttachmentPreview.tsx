@@ -7,6 +7,7 @@
 import React, { useCallback, useState, useEffect } from 'react'
 import { Download, X, ZoomIn, ZoomOut, RotateCw, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   formatFileSize,
   getFileIcon,
@@ -34,11 +35,13 @@ function ImageLightbox({
   alt,
   onClose,
   onDownload,
+  t,
 }: {
   src: string
   alt: string
   onClose: () => void
   onDownload: () => void
+  t: (key: string) => string
 }) {
   const [scale, setScale] = useState(1)
   const [rotation, setRotation] = useState(0)
@@ -107,7 +110,7 @@ function ImageLightbox({
           size="icon"
           onClick={handleZoomOut}
           className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
-          title="缩小 (-)"
+          title={t('common:preview.zoom_out')}
         >
           <ZoomOut className="h-5 w-5" />
         </Button>
@@ -119,7 +122,7 @@ function ImageLightbox({
           size="icon"
           onClick={handleZoomIn}
           className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
-          title="放大 (+)"
+          title={t('common:preview.zoom_in')}
         >
           <ZoomIn className="h-5 w-5" />
         </Button>
@@ -128,7 +131,7 @@ function ImageLightbox({
           size="icon"
           onClick={handleRotate}
           className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
-          title="旋转 (R)"
+          title={t('common:preview.rotate')}
         >
           <RotateCw className="h-5 w-5" />
         </Button>
@@ -137,7 +140,7 @@ function ImageLightbox({
           size="icon"
           onClick={onDownload}
           className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
-          title="下载"
+          title={t('common:preview.download')}
         >
           <Download className="h-5 w-5" />
         </Button>
@@ -146,7 +149,7 @@ function ImageLightbox({
           size="icon"
           onClick={onClose}
           className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
-          title="关闭 (Esc)"
+          title={t('common:preview.close')}
         >
           <X className="h-5 w-5" />
         </Button>
@@ -248,6 +251,7 @@ export default function AttachmentPreview({
   showDownload = true,
   compact = false,
 }: AttachmentPreviewProps) {
+  const { t } = useTranslation()
   const [showLightbox, setShowLightbox] = useState(false)
 
   const handleDownload = useCallback(async () => {
@@ -312,6 +316,7 @@ export default function AttachmentPreview({
                 alt={attachment.filename}
                 onClose={handleCloseLightbox}
                 onDownload={handleDownload}
+                t={t}
               />
             )}
           </>
@@ -350,7 +355,7 @@ export default function AttachmentPreview({
                       handleDownload()
                     }}
                     className="h-6 w-6 text-white hover:bg-white/20 flex-shrink-0"
-                    title="下载"
+                    title={t('common:preview.download')}
                   >
                     <Download className="h-4 w-4" />
                   </Button>
@@ -364,6 +369,7 @@ export default function AttachmentPreview({
               alt={attachment.filename}
               onClose={handleCloseLightbox}
               onDownload={handleDownload}
+              t={t}
             />
           )}
         </>
@@ -386,7 +392,7 @@ export default function AttachmentPreview({
             size="icon"
             onClick={handleDownload}
             className="h-4 w-4 p-0 hover:bg-transparent"
-            title="下载"
+            title={t('common:preview.download')}
           >
             <Download className="h-3 w-3 text-text-muted" />
           </Button>
@@ -406,7 +412,7 @@ export default function AttachmentPreview({
           {formatFileSize(attachment.file_size)}
           {showDownload && (
             <button onClick={handleDownload} className="ml-2 text-link hover:underline">
-              点击下载
+              {t('common:preview.click_to_download')}
             </button>
           )}
         </div>

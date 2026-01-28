@@ -41,6 +41,14 @@
     "copy": "Copy",
     "copied": "Copied"
   },
+  "preview": {
+    "zoom_in": "Zoom In (+)",
+    "zoom_out": "Zoom Out (-)",
+    "rotate": "Rotate (R)",
+    "download": "Download",
+    "close": "Close (Esc)",
+    "click_to_download": "Click to download"
+  },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"
   },

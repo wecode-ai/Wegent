@@ -46,7 +46,7 @@ class DataTableTool(BaseTool):
     """
 
     name: str = "data_table_query"
-    display_name: str = "查询数据表"
+    display_name: str = "tools.data_table.display_name"
     description: str = (
         "Query data from a data table. Use this tool to retrieve records "
         "from the selected table. Returns table schema (field definitions) "

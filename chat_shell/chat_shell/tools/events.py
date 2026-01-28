@@ -9,11 +9,14 @@ including thinking step generation and event emission.
 """
 
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, Union
 
 from shared.telemetry.decorators import add_span_event, set_span_attribute
 
 logger = logging.getLogger(__name__)
+
+# Type alias for i18n title (can be a string or an object with key and params)
+I18nTitle = Union[str, dict[str, Any]]
 
 
 def create_tool_event_handler(
@@ -210,7 +213,7 @@ def _handle_tool_end(
 
 def _process_tool_output(
     tool_name: str, tool_output: Any
-) -> tuple[str, list[dict[str, Any]]]:
+) -> tuple[I18nTitle, list[dict[str, Any]]]:
     """Process tool output and extract sources.
 
     Args:
@@ -244,7 +247,10 @@ def _process_tool_output(
                             f"[TOOL_OUTPUT] Extracted {len(kb_sources)} sources from knowledge_base_search"
                         )
                     result_count = parsed.get("count", 0)
-                    title = f"检索完成，找到 {result_count} 条结果"
+                    title = {
+                        "key": "tools.knowledge_base.completed",
+                        "params": {"count": result_count},
+                    }
             except json.JSONDecodeError as e:
                 logger.warning(f"[TOOL_OUTPUT] Failed to parse tool output: {e}")
 
@@ -257,7 +263,10 @@ def _process_tool_output(
             urls = re.findall(r'https?://[^\s<>"{}|\\^`\[\]]+', tool_output)
             for url in urls[:5]:  # Limit to 5 sources
                 sources.append({"type": "url", "url": url})
-            title = f"搜索完成，找到 {len(urls)} 个结果"
+            title = {
+                "key": "tools.web_search.completed",
+                "params": {"count": len(urls)},
+            }
 
     return title, sources
 
@@ -291,7 +300,7 @@ def _build_tool_start_title(
     agent_builder: Any,
     tool_name: str,
     serializable_input: Any,
-) -> str:
+) -> I18nTitle:
     """Build friendly title for tool start event."""
     tool_instance = None
     if agent_builder.tool_registry:
@@ -303,7 +312,7 @@ def _build_tool_start_title(
 
     if display_name:
         title = display_name
-        # For load_skill, append the skill's friendly display name
+        # For load_skill, append the skill's friendly display name using i18n format
         if tool_name == "load_skill" and tool_instance:
             skill_name_param = (
                 serializable_input.get("skill_name", "")
@@ -319,14 +328,21 @@ def _build_tool_start_title(
                         )
                     except Exception:
                         pass
-                title = f"{display_name}：{skill_display}"
+                # Use i18n object format for proper frontend translation
+                title = {
+                    "key": "tools.load_skill.completed_with_name",
+                    "params": {"name": skill_display},
+                }
     elif tool_name == "web_search":
         query = (
             serializable_input if isinstance(serializable_input, dict) else {}
         ).get("query", "")
-        title = f"正在搜索: {query}" if query else "正在进行网页搜索"
+        if query:
+            title = {"key": "tools.web_search.searching", "params": {"query": query}}
+        else:
+            title = "tools.web_search.searching_default"
     else:
-        title = f"正在使用工具: {tool_name}"
+        title = {"key": "tools.using", "params": {"name": tool_name}}
 
     return title
 
@@ -337,7 +353,7 @@ def _build_tool_end_title(
     run_id: str,
     state: Any,
     default_title: str,
-) -> str:
+) -> I18nTitle:
     """Build friendly title for tool end event."""
     tool_instance = None
     if agent_builder.tool_registry:
@@ -350,11 +366,8 @@ def _build_tool_end_title(
     if not display_name:
         return default_title
 
-    # Remove "正在" prefix for cleaner display
-    if display_name.startswith("正在"):
-        base_title = display_name[2:]
-    else:
-        base_title = display_name
+    # Use display_name as base title (now it's an i18n key)
+    base_title = display_name
 
     # For load_skill, append the skill's friendly display name
     if tool_name == "load_skill" and tool_instance:
@@ -373,7 +386,10 @@ def _build_tool_end_title(
                         skill_display = tool_instance.get_skill_display_name(
                             skill_name_param
                         )
-                        return f"{base_title}：{skill_display}"
+                        return {
+                            "key": "tools.load_skill.completed_with_name",
+                            "params": {"name": skill_display},
+                        }
                 break
 
     return base_title
