@@ -16,7 +16,6 @@ from typing import Any, Callable, Dict, Optional
 import socketio
 
 from executor.config import config
-from executor.modes.local.events import LocalExecutorEvents
 from shared.logger import setup_logger
 
 logger = setup_logger("websocket_client")
@@ -82,22 +81,30 @@ class WebSocketClient:
         self._setup_internal_handlers()
 
     def _setup_internal_handlers(self) -> None:
-        """Setup internal event handlers for connection lifecycle."""
+        """Setup internal event handlers for connection lifecycle.
 
-        @self.sio.event
-        async def connect():
+        Note: Event handlers are registered on the /local-executor namespace
+        since that's the namespace we connect to. Using @self.sio.event decorator
+        would register on the default namespace, which doesn't receive events
+        for custom namespaces.
+        """
+
+        @self.sio.on("connect", namespace="/local-executor")
+        async def on_connect():
             self._connected = True
             self._connecting = False
             self._connection_error = None
-            logger.info(f"WebSocket connected to {self.backend_url}")
+            logger.info(
+                f"WebSocket connected to {self.backend_url} (namespace: /local-executor)"
+            )
 
-        @self.sio.event
-        async def disconnect():
+        @self.sio.on("disconnect", namespace="/local-executor")
+        async def on_disconnect():
             self._connected = False
-            logger.info("WebSocket disconnected")
+            logger.info("WebSocket disconnected from /local-executor namespace")
 
-        @self.sio.event
-        async def connect_error(data):
+        @self.sio.on("connect_error", namespace="/local-executor")
+        async def on_connect_error(data):
             self._connected = False
             self._connecting = False
             self._connection_error = str(data) if data else "Unknown connection error"
