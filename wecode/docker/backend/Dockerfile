@@ -7,9 +7,10 @@ FROM registry.api.weibo.com/wecode/python:3.12-slim
 # Set working directory
 WORKDIR /app
 
-# Configure Aliyun Debian mirror and install tzdata and libmagic (required by python-magic)
+# Configure Aliyun Debian mirror and install tzdata, libmagic (required by python-magic),
+# tesseract-ocr (required by pytesseract), and poppler-utils (required by pdf2image)
 RUN sed -i 's|http://deb.debian.org|http://mirrors.cloud.aliyuncs.com|g' /etc/apt/sources.list.d/debian.sources && \
-    apt-get update && apt-get install -y tzdata libmagic1 && \
+    apt-get update && apt-get install -y tzdata libmagic1 tesseract-ocr poppler-utils && \
     ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
     echo "Asia/Shanghai" > /etc/timezone && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
