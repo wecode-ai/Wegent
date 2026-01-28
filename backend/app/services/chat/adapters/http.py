@@ -108,6 +108,11 @@ class HTTPAdapter(ChatInterface):
             model_config["max_output_tokens"] = request.model_config[
                 "max_output_tokens"
             ]
+        # Add model_name and model_namespace for subscription creation
+        if request.model_config.get("model_name"):
+            model_config["model_name"] = request.model_config["model_name"]
+        if request.model_config.get("model_namespace"):
+            model_config["model_namespace"] = request.model_config["model_namespace"]
 
         # Build input config - handle multimodal messages
         if isinstance(request.message, dict) and request.message.get("type") in (

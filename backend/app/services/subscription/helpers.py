@@ -378,7 +378,22 @@ def calculate_next_execution_time(
                 if parsed.tzinfo is not None:
                     # Convert to UTC and strip tzinfo
                     return parsed.astimezone(utc_tz).replace(tzinfo=None)
-                # Assume naive datetime is already UTC
+                # For naive datetime, check if timezone is provided in trigger_config
+                # If so, interpret the datetime in that timezone and convert to UTC
+                timezone_str = trigger_config.get("timezone")
+                if timezone_str:
+                    try:
+                        user_tz = ZoneInfo(timezone_str)
+                        # Interpret the naive datetime as being in user's timezone
+                        parsed_with_tz = parsed.replace(tzinfo=user_tz)
+                        # Convert to UTC and strip tzinfo
+                        return parsed_with_tz.astimezone(utc_tz).replace(tzinfo=None)
+                    except Exception:
+                        logger.warning(
+                            f"Invalid timezone '{timezone_str}' for one_time trigger, "
+                            "treating execute_at as UTC"
+                        )
+                # No timezone provided, assume naive datetime is already UTC
                 return parsed
             elif hasattr(execute_at, "tzinfo") and execute_at.tzinfo is not None:
                 return execute_at.astimezone(utc_tz).replace(tzinfo=None)

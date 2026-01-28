@@ -14,4 +14,3 @@ __all__ = [
     "KB_PROMPT_STRICT",
     "KB_PROMPT_RELAXED",
 ]
-

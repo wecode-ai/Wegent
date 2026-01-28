@@ -38,6 +38,13 @@ class ModelConfig(BaseModel):
     timeout: float = Field(120.0, description="Request timeout in seconds")
     max_retries: int = Field(3, description="Max retry count")
     retry_delay: float = Field(1.0, description="Retry delay in seconds")
+    # Model CRD reference (for subscription creation)
+    model_name: Optional[str] = Field(
+        None, description="Model CRD name (for subscription creation)"
+    )
+    model_namespace: Optional[str] = Field(
+        None, description="Model CRD namespace (for subscription creation)"
+    )
 
 
 class MessageContent(BaseModel):

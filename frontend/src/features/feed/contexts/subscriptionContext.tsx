@@ -222,56 +222,59 @@ export function SubscriptionProvider({ children }: SubscriptionProviderProps) {
   }, [executionFilter, showSilentExecutions, refreshExecutions])
 
   // Handle WebSocket background execution updates
-  const handleBackgroundExecutionUpdate = useCallback((data: BackgroundExecutionUpdatePayload) => {
-    setExecutions(prev => {
-      // Check if this execution already exists
-      const existingIndex = prev.findIndex(e => e.id === data.execution_id)
-      const existingExecution = existingIndex >= 0 ? prev[existingIndex] : null
+  const handleBackgroundExecutionUpdate = useCallback(
+    (data: BackgroundExecutionUpdatePayload) => {
+      setExecutions(prev => {
+        // Check if this execution already exists
+        const existingIndex = prev.findIndex(e => e.id === data.execution_id)
+        const existingExecution = existingIndex >= 0 ? prev[existingIndex] : null
 
-      // If it's a silent execution and we're not showing silent executions,
-      // remove it from the list if it exists (handles status transition to silent)
-      if (data.is_silent && !showSilentExecutions) {
-        if (existingIndex >= 0) {
-          const newList = [...prev]
-          newList.splice(existingIndex, 1)
-          return newList
+        // If it's a silent execution and we're not showing silent executions,
+        // remove it from the list if it exists (handles status transition to silent)
+        if (data.is_silent && !showSilentExecutions) {
+          if (existingIndex >= 0) {
+            const newList = [...prev]
+            newList.splice(existingIndex, 1)
+            return newList
+          }
+          // Not showing silent executions and it's not in the list, skip
+          return prev
         }
-        // Not showing silent executions and it's not in the list, skip
-        return prev
-      }
 
-      const updatedExecution: BackgroundExecution = {
-        id: data.execution_id,
-        user_id: existingExecution?.user_id ?? 0,
-        subscription_id: data.subscription_id,
-        subscription_name: data.subscription_name,
-        subscription_display_name: data.subscription_display_name,
-        team_name: data.team_name,
-        status: data.status,
-        task_id: data.task_id,
-        task_type: data.task_type,
-        prompt: data.prompt || '',
-        result_summary: data.result_summary,
-        error_message: data.error_message,
-        trigger_type: existingExecution?.trigger_type ?? 'cron',
-        trigger_reason: data.trigger_reason,
-        retry_attempt: existingExecution?.retry_attempt ?? 0,
-        created_at: data.created_at,
-        updated_at: data.updated_at,
-        is_silent: data.is_silent,
-      }
+        const updatedExecution: BackgroundExecution = {
+          id: data.execution_id,
+          user_id: existingExecution?.user_id ?? 0,
+          subscription_id: data.subscription_id,
+          subscription_name: data.subscription_name,
+          subscription_display_name: data.subscription_display_name,
+          team_name: data.team_name,
+          status: data.status,
+          task_id: data.task_id,
+          task_type: data.task_type,
+          prompt: data.prompt || '',
+          result_summary: data.result_summary,
+          error_message: data.error_message,
+          trigger_type: existingExecution?.trigger_type ?? 'cron',
+          trigger_reason: data.trigger_reason,
+          retry_attempt: existingExecution?.retry_attempt ?? 0,
+          created_at: data.created_at,
+          updated_at: data.updated_at,
+          is_silent: data.is_silent,
+        }
 
-      if (existingIndex >= 0) {
-        // Update existing execution
-        const newList = [...prev]
-        newList[existingIndex] = updatedExecution
-        return newList
-      } else {
-        // Add new execution at the beginning
-        return [updatedExecution, ...prev]
-      }
-    })
-  }, [showSilentExecutions])
+        if (existingIndex >= 0) {
+          // Update existing execution
+          const newList = [...prev]
+          newList[existingIndex] = updatedExecution
+          return newList
+        } else {
+          // Add new execution at the beginning
+          return [updatedExecution, ...prev]
+        }
+      })
+    },
+    [showSilentExecutions]
+  )
 
   // Subscribe to WebSocket background execution events
   useEffect(() => {
