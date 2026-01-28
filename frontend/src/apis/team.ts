@@ -60,6 +60,30 @@ export interface TeamInputParametersResponse {
   app_mode?: string // Dify app mode: 'chat', 'chatflow', 'workflow', 'completion', 'agent'
 }
 
+// Copy to Group Request/Response Types
+export interface CopyToGroupRequest {
+  target_group_name: string
+}
+
+export interface CopiedBotInfo {
+  original_bot_id: number
+  new_bot_id: number
+  name: string
+}
+
+export interface ReferencedBotInfo {
+  bot_id: number
+  name: string
+}
+
+export interface CopyToGroupResponse {
+  id: number
+  name: string
+  namespace: string
+  copied_bots: CopiedBotInfo[]
+  referenced_bots: ReferencedBotInfo[]
+}
+
 export const teamApis = {
   /**
    * Get teams list
@@ -112,5 +136,15 @@ export const teamApis = {
   },
   async checkRunningTasks(id: number): Promise<CheckRunningTasksResponse> {
     return apiClient.get(`/teams/${id}/running-tasks`)
+  },
+  /**
+   * Copy a personal team to a group
+   * @param teamId - Team ID to copy
+   * @param targetGroupName - Target group name
+   */
+  async copyToGroup(teamId: number, targetGroupName: string): Promise<CopyToGroupResponse> {
+    return apiClient.post(`/teams/${teamId}/copy-to-group`, {
+      target_group_name: targetGroupName,
+    })
   },
 }

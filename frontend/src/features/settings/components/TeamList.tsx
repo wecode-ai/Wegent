@@ -18,6 +18,7 @@ import {
   LinkSlashIcon,
   SparklesIcon,
   ClipboardDocumentIcon,
+  ArrowUpOnSquareIcon,
 } from '@heroicons/react/24/outline'
 import { Bot, Team } from '@/types/api'
 import { fetchTeamsList, deleteTeam, shareTeam, checkTeamRunningTasks } from '../services/teams'
@@ -25,6 +26,7 @@ import { CheckRunningTasksResponse } from '@/apis/common'
 import { fetchBotsList } from '../services/bots'
 import TeamEditDialog from './TeamEditDialog'
 import BotList from './BotList'
+import CopyToGroupDialog from './CopyToGroupDialog'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import TeamShareModal from './TeamShareModal'
 import TeamCreationWizard from './wizard/TeamCreationWizard'
@@ -84,6 +86,8 @@ export default function TeamList({
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all')
   const [wizardOpen, setWizardOpen] = useState(false)
+  const [copyToGroupDialogOpen, setCopyToGroupDialogOpen] = useState(false)
+  const [teamToCopy, setTeamToCopy] = useState<Team | null>(null)
   const router = useRouter()
 
   const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>(
@@ -447,6 +451,27 @@ export default function TeamList({
     return true
   }
 
+  // Check if "Copy to Group" button should be shown
+  // Only for personal teams (namespace === 'default')
+  const shouldShowCopyToGroup = (team: Team) => {
+    // Only show for personal teams
+    return !isGroupTeam(team) && team.share_status !== 2
+  }
+
+  // Handle copy to group button click
+  const handleCopyToGroup = (team: Team) => {
+    setTeamToCopy(team)
+    setCopyToGroupDialogOpen(true)
+  }
+
+  // Handle copy to group success
+  const handleCopyToGroupSuccess = (newTeamId: number, groupName: string) => {
+    toast({
+      title: t('teams.copy_to_group.success_title'),
+      description: t('teams.copy_to_group.success_description', { groupName }),
+    })
+  }
+
   return (
     <>
       <div className="flex flex-col h-full min-h-0 overflow-hidden w-full max-w-full">
@@ -640,6 +665,17 @@ export default function TeamList({
                               disabled={sharingId === team.id}
                             >
                               <ShareIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            </Button>
+                          )}
+                          {shouldShowCopyToGroup(team) && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleCopyToGroup(team)}
+                              title={t('teams.copy_to_group.button')}
+                              className="h-7 w-7 sm:h-8 sm:w-8"
+                            >
+                              <ArrowUpOnSquareIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                             </Button>
                           )}
                           {shouldShowDelete(team) && (
@@ -896,6 +932,17 @@ export default function TeamList({
         onSuccess={handleWizardSuccess}
         scope={scope === 'all' ? undefined : scope}
         groupName={groupName}
+      />
+
+      {/* Copy to Group Dialog */}
+      <CopyToGroupDialog
+        open={copyToGroupDialogOpen}
+        onClose={() => {
+          setCopyToGroupDialogOpen(false)
+          setTeamToCopy(null)
+        }}
+        team={teamToCopy}
+        onSuccess={handleCopyToGroupSuccess}
       />
       {/* Error prompt unified with antd message, no local rendering */}
     </>

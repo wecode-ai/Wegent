@@ -278,6 +278,21 @@
       "confirm_suffix": "执行任务吗？",
       "join_description_prefix": "确定加入后，",
       "join_description_suffix": " 将添加到您的智能体列表中，您可以使用该智能体创建和执行任务。"
+    },
+    "copy_to_group": {
+      "button": "复制到群组",
+      "title": "复制到群组",
+      "description": "将智能体 \"{{teamName}}\" 复制到群组。您需要在目标群组中拥有开发者或更高权限。",
+      "select_group": "选择目标群组",
+      "select_placeholder": "选择群组...",
+      "no_groups": "没有可用的群组",
+      "no_groups_hint": "您需要在至少一个群组中拥有开发者或更高权限才能复制智能体。",
+      "confirm": "复制",
+      "copying": "复制中...",
+      "copy_failed": "复制智能体到群组失败",
+      "load_groups_failed": "加载群组列表失败",
+      "success_title": "复制成功",
+      "success_description": "智能体已复制到群组 \"{{groupName}}\""
     }
   },
   "team": {
