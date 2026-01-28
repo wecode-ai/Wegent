@@ -448,6 +448,7 @@ class RetrievalService:
         knowledge_base_id: int,
         db: Session,
         max_chunks: int = 10000,
+        query: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get all chunks from a knowledge base without permission check.
@@ -459,6 +460,7 @@ class RetrievalService:
             knowledge_base_id: Knowledge base ID
             db: Database session
             max_chunks: Maximum number of chunks to retrieve (safety limit)
+            query: Optional query string for logging purposes
 
         Returns:
             List of chunk dicts with content, title, chunk_id, doc_ref, metadata
@@ -527,8 +529,11 @@ class RetrievalService:
             user_id=kb.user_id,
         )
 
+        # Format query for logging
+        query_log = f", query={query[:50]}..." if query else ""
+
         logger.info(
-            f"[RAG] Retrieved {len(chunks)} total chunks from KB {knowledge_base_id}"
+            f"[RAG] Retrieved {len(chunks)} total chunks from KB {knowledge_base_id} (name={kb.name}){query_log}"
         )
 
         return chunks
