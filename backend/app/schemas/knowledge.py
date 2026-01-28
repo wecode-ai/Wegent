@@ -48,6 +48,7 @@ class ResourceScope(str, Enum):
     GROUP = "group"
     ALL = "all"
     EXTERNAL = "external"
+    ORGANIZATION = "organization"
 
 
 # ============== Knowledge Base Schemas ==============

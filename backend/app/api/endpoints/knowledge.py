@@ -20,6 +20,7 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
 from app.db.session import SessionLocal
+from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
@@ -47,6 +48,15 @@ from app.schemas.knowledge import (
     ResourceScope,
 )
 from app.schemas.knowledge_qa_history import QAHistoryResponse
+from app.schemas.permission_request import (
+    MyRequestsResponse,
+    PendingRequestCountResponse,
+    PermissionRequestCheckResponse,
+    PermissionRequestCreate,
+    PermissionRequestListResponse,
+    PermissionRequestProcess,
+    PermissionRequestResponse,
+)
 from app.schemas.rag import (
     SemanticSplitterConfig,
     SentenceSplitterConfig,
@@ -105,7 +115,7 @@ def get_organization_knowledge_base(
 def list_knowledge_bases(
     scope: str = Query(
         default="all",
-        description="Resource scope: personal, group, external, or all",
+        description="Resource scope: personal, group, organization, external, or all",
     ),
     group_name: Optional[str] = Query(
         default=None,
@@ -119,6 +129,7 @@ def list_knowledge_bases(
 
     - **scope=personal**: Only user's own personal knowledge bases
     - **scope=group**: Knowledge bases from a specific group (requires group_name)
+    - **scope=organization**: Organization-level knowledge bases (accessible to all users)
     - **scope=external**: Knowledge bases the user has been granted access to (via explicit permission)
     - **scope=all**: All accessible knowledge bases (personal + team)
     """
@@ -2018,3 +2029,285 @@ def get_my_knowledge_permission(
         permission_type=get_user_permission_type(db, current_user, kb),
         permission_source=get_permission_source(db, current_user, kb),
     )
+
+
+# ============== Permission Request Endpoints ==============
+
+permission_request_router = APIRouter()
+
+
+@permission_request_router.post("", response_model=PermissionRequestResponse)
+async def create_permission_request(
+    data: PermissionRequestCreate,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Create a permission request for a knowledge base.
+
+    Only applicable for personal and external knowledge bases.
+    - Organization KB: No request needed (accessible to all)
+    - Group KB: Must join the group first
+
+    Validation:
+    - User must not already have access
+    - User must not have a pending request for the same KB
+    """
+    from app.schemas.knowledge_notification import KnowledgeNotificationType
+    from app.services.knowledge import permission_request_service
+    from app.services.knowledge.notification_service import (
+        send_knowledge_permission_notification,
+    )
+
+    try:
+        result = permission_request_service.create_request(
+            db=db,
+            user_id=current_user.id,
+            data=data,
+        )
+
+        # Send notification to KB owner
+        kb = (
+            db.query(Kind)
+            .filter(Kind.id == data.kind_id, Kind.kind == "KnowledgeBase")
+            .first()
+        )
+        if kb:
+            owner = db.query(User).filter(User.id == kb.user_id).first()
+            if owner:
+                await send_knowledge_permission_notification(
+                    KnowledgeNotificationType.PERMISSION_REQUEST_SUBMITTED,
+                    kb,
+                    owner,
+                    applicant_user=current_user,
+                    request_reason=data.request_reason,
+                )
+
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@permission_request_router.get("/pending", response_model=PermissionRequestListResponse)
+def get_pending_requests(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get all pending permission requests that the current user can process.
+
+    Returns requests for all knowledge bases the user can manage.
+    """
+    from app.services.knowledge import permission_request_service
+
+    try:
+        return permission_request_service.get_all_pending_requests_for_user(
+            db=db,
+            user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@permission_request_router.get(
+    "/pending/count", response_model=PendingRequestCountResponse
+)
+def get_pending_request_count(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get count of pending permission requests that the current user can process.
+
+    Used for notification badge display.
+    """
+    from app.services.knowledge import permission_request_service
+
+    return permission_request_service.get_pending_request_count(
+        db=db,
+        user_id=current_user.id,
+    )
+
+
+@permission_request_router.get("/my", response_model=MyRequestsResponse)
+def get_my_requests(
+    request_status: Optional[str] = Query(
+        default=None,
+        description="Filter by status: pending, approved, rejected, cancelled, expired",
+    ),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get current user's permission requests.
+
+    Optionally filter by status.
+    """
+    from app.services.knowledge import permission_request_service
+
+    return permission_request_service.get_my_requests(
+        db=db,
+        user_id=current_user.id,
+        status=request_status,
+    )
+
+
+@permission_request_router.get(
+    "/check/{kb_id}", response_model=PermissionRequestCheckResponse
+)
+def check_pending_request(
+    kb_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Check if current user has a pending request for a knowledge base.
+
+    Used to determine whether to show "Apply" or "Pending" button.
+    """
+    from app.services.knowledge import permission_request_service
+
+    return permission_request_service.check_pending_request(
+        db=db,
+        user_id=current_user.id,
+        kb_id=kb_id,
+    )
+
+
+@permission_request_router.post(
+    "/{request_id}/process", response_model=PermissionRequestResponse
+)
+async def process_permission_request(
+    request_id: int,
+    data: PermissionRequestProcess,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Process (approve/reject) a permission request.
+
+    Requires manage permission on the knowledge base.
+    """
+    from app.models.permission_request import PermissionRequest
+    from app.schemas.knowledge_notification import KnowledgeNotificationType
+    from app.services.knowledge import permission_request_service
+    from app.services.knowledge.notification_service import (
+        send_knowledge_permission_notification,
+    )
+
+    try:
+        # Get request info before processing for notification
+        request = (
+            db.query(PermissionRequest)
+            .filter(PermissionRequest.id == request_id)
+            .first()
+        )
+        if not request:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Permission request not found",
+            )
+
+        applicant = db.query(User).filter(User.id == request.applicant_user_id).first()
+        kb = (
+            db.query(Kind)
+            .filter(Kind.id == request.kind_id, Kind.kind == "KnowledgeBase")
+            .first()
+        )
+
+        result = permission_request_service.process_request(
+            db=db,
+            request_id=request_id,
+            processor_user_id=current_user.id,
+            data=data,
+        )
+
+        # Send notification to applicant
+        if applicant and kb:
+            notification_type = (
+                KnowledgeNotificationType.PERMISSION_REQUEST_APPROVED
+                if data.action == "approve"
+                else KnowledgeNotificationType.PERMISSION_REQUEST_REJECTED
+            )
+            permission_type = (
+                data.granted_permission_type or request.requested_permission_type
+                if data.action == "approve"
+                else None
+            )
+            await send_knowledge_permission_notification(
+                notification_type,
+                kb,
+                applicant,
+                permission_type=permission_type,
+                response_message=data.response_message,
+            )
+
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@permission_request_router.delete(
+    "/{request_id}", response_model=PermissionRequestResponse
+)
+def cancel_permission_request(
+    request_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Cancel a pending permission request.
+
+    Only the applicant can cancel their own request.
+    """
+    from app.services.knowledge import permission_request_service
+
+    try:
+        return permission_request_service.cancel_request(
+            db=db,
+            request_id=request_id,
+            user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+# KB-specific permission request endpoint
+@permission_router.get(
+    "/{kb_id}/permission-requests", response_model=PermissionRequestListResponse
+)
+def get_kb_permission_requests(
+    kb_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get pending permission requests for a specific knowledge base.
+
+    Requires manage permission on the knowledge base.
+    """
+    from app.services.knowledge import permission_request_service
+
+    try:
+        return permission_request_service.get_pending_requests_for_kb(
+            db=db,
+            kb_id=kb_id,
+            user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )

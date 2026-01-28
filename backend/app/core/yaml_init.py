@@ -626,58 +626,20 @@ def ensure_organization_knowledge_base(db: Session, admin_user_id: int) -> bool:
     Returns:
         True if KB was created, False if it already exists
     """
-    from datetime import datetime
+    from app.services.knowledge.knowledge_service import KnowledgeService
 
-    from app.models.kind import Kind
-
-    # Check if organization KB already exists
-    existing = (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "KnowledgeBase",
-            Kind.namespace == "organization",
-            Kind.is_active == True,
-        )
-        .first()
+    logger.info("Checking organization knowledge base...")
+    kb_id = KnowledgeService.create_organization_knowledge_base(
+        db=db,
+        admin_user_id=admin_user_id,
     )
 
-    if existing:
-        logger.info(
-            f"Organization knowledge base already exists with ID: {existing.id}"
-        )
+    if kb_id is None:
+        logger.info("Organization knowledge base already exists")
         return False
 
-    # Create organization KB
-    logger.info("Creating organization knowledge base...")
-    org_kb = Kind(
-        user_id=admin_user_id,
-        kind="KnowledgeBase",
-        name="organization-knowledge-base",
-        namespace="organization",
-        json={
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "KnowledgeBase",
-            "metadata": {
-                "name": "organization-knowledge-base",
-                "namespace": "organization",
-            },
-            "spec": {
-                "name": "公司知识库",
-                "description": "公司级别的共享知识库，所有员工可访问",
-                "kbType": "classic",
-                "summaryEnabled": False,
-            },
-            "status": {"state": "Available"},
-        },
-        is_active=True,
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-    )
-
-    db.add(org_kb)
+    logger.info(f"Created organization knowledge base with ID: {kb_id}")
     db.commit()
-    db.refresh(org_kb)
-    logger.info(f"Created organization knowledge base with ID: {org_kb.id}")
     return True
 
 

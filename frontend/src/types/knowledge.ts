@@ -10,7 +10,7 @@ export type DocumentStatus = 'enabled' | 'disabled'
 
 export type DocumentSourceType = 'file' | 'text' | 'table' | 'web'
 
-export type KnowledgeResourceScope = 'personal' | 'group' | 'all' | 'external'
+export type KnowledgeResourceScope = 'personal' | 'group' | 'all' | 'external' | 'organization'
 
 // Retrieval Config types
 export interface RetrievalConfig {
@@ -337,4 +337,67 @@ export interface MyPermissionResponse {
   has_permission: boolean
   permission_type: PermissionType | null
   permission_source: PermissionSource
+}
+
+// ============== Permission Request Types ==============
+
+export type PermissionRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled' | 'expired'
+
+// Permission request creation
+export interface PermissionRequestCreate {
+  kind_id: number
+  request_reason?: string
+  requested_permission_type?: 'read' | 'download' | 'write'
+}
+
+// Permission request processing
+export interface PermissionRequestProcess {
+  action: 'approve' | 'reject'
+  response_message?: string
+  granted_permission_type?: PermissionType
+}
+
+// Permission request response
+export interface PermissionRequestResponse {
+  id: number
+  kind_id: number
+  resource_type: string
+  applicant_user_id: number
+  applicant_username: string
+  requested_permission_type: string
+  request_reason: string | null
+  status: PermissionRequestStatus
+  processed_by_user_id: number | null
+  processed_by_username: string | null
+  processed_at: string | null
+  response_message: string | null
+  created_at: string
+  updated_at: string
+  // Additional info for display
+  kb_name: string | null
+  kb_description: string | null
+  kb_owner_username: string | null
+}
+
+// Permission request list response
+export interface PermissionRequestListResponse {
+  total: number
+  items: PermissionRequestResponse[]
+}
+
+// Pending request count response
+export interface PendingRequestCountResponse {
+  count: number
+}
+
+// My requests response
+export interface MyRequestsResponse {
+  total: number
+  items: PermissionRequestResponse[]
+}
+
+// Check pending request response
+export interface PermissionRequestCheckResponse {
+  has_pending_request: boolean
+  pending_request: PermissionRequestResponse | null
 }

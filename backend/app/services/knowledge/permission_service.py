@@ -315,7 +315,7 @@ def get_or_create_organization_knowledge_base(
         If it doesn't exist and user is not admin, returns None instead of
         raising an error to provide a better user experience.
     """
-    from datetime import datetime
+    from app.services.knowledge.knowledge_service import KnowledgeService
 
     # Look for existing organization KB
     existing = (
@@ -337,34 +337,33 @@ def get_or_create_organization_knowledge_base(
         # The organization KB should be created during system initialization
         return None
 
-    # Create organization KB
-    org_kb = Kind(
-        user_id=user.id,
-        kind="KnowledgeBase",
-        name="organization-knowledge-base",
-        namespace="organization",
-        json={
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "KnowledgeBase",
-            "metadata": {
-                "name": "organization-knowledge-base",
-                "namespace": "organization",
-            },
-            "spec": {
-                "name": "公司知识库",
-                "description": "公司级别的共享知识库，所有员工可访问",
-                "kbType": "classic",
-                "summaryEnabled": False,
-            },
-            "status": {"state": "Available"},
-        },
-        is_active=True,
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
+    # Create organization KB using KnowledgeService
+    kb_id = KnowledgeService.create_organization_knowledge_base(
+        db=db,
+        admin_user_id=user.id,
     )
 
-    db.add(org_kb)
-    db.commit()
-    db.refresh(org_kb)
+    if kb_id is None:
+        # This shouldn't happen since we already checked for existing KB
+        # but handle it gracefully
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "KnowledgeBase",
+                Kind.namespace == "organization",
+                Kind.is_active == True,
+            )
+            .first()
+        )
 
-    return org_kb
+    db.commit()
+
+    # Return the created KB
+    return (
+        db.query(Kind)
+        .filter(
+            Kind.id == kb_id,
+            Kind.kind == "KnowledgeBase",
+        )
+        .first()
+    )

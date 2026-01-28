@@ -36,7 +36,7 @@ interface RetrievalSettingsSectionProps {
   onChange: (config: Partial<RetrievalConfig>) => void
   readOnly?: boolean
   partialReadOnly?: boolean // When true, only retriever and embedding model are read-only
-  scope?: 'personal' | 'group' | 'all'
+  scope?: 'personal' | 'group' | 'all' | 'organization'
   groupName?: string
 }
 

@@ -40,7 +40,7 @@ interface CreateKnowledgeBaseDialogProps {
     summary_model_ref?: SummaryModelRef | null
   }) => Promise<void>
   loading?: boolean
-  scope?: 'personal' | 'group' | 'all'
+  scope?: 'personal' | 'group' | 'all' | 'organization'
   groupName?: string
   /** Knowledge base type selected from dropdown menu (read-only in dialog) */
   kbType?: KnowledgeBaseType

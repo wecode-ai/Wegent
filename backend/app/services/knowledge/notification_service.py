@@ -26,6 +26,9 @@ async def send_knowledge_permission_notification(
     kb: Kind,
     target_user: User,
     permission_type: Optional[str] = None,
+    applicant_user: Optional[User] = None,
+    request_reason: Optional[str] = None,
+    response_message: Optional[str] = None,
 ):
     """
     Send knowledge base permission notification via webhook.
@@ -34,7 +37,10 @@ async def send_knowledge_permission_notification(
         event_type: Type of permission event
         kb: Knowledge base Kind object
         target_user: User who is affected by the permission change
-        permission_type: Permission level (for granted/updated events)
+        permission_type: Permission level (for granted/updated/approved events)
+        applicant_user: User who submitted the request (for request submitted events)
+        request_reason: Reason for the request (for request submitted events)
+        response_message: Response message from approver (for approved/rejected events)
     """
     try:
         kb_name = kb.json.get("spec", {}).get("name", kb.name)
@@ -52,8 +58,35 @@ async def send_knowledge_permission_notification(
             )
         elif event_type == KnowledgeNotificationType.PERMISSION_REVOKED:
             description = f"Your access to knowledge base '{kb_name}' has been revoked"
+        elif event_type == KnowledgeNotificationType.PERMISSION_REQUEST_SUBMITTED:
+            # Notification to KB owner about new request
+            applicant_name = applicant_user.user_name if applicant_user else "Unknown"
+            reason_text = f" Reason: {request_reason}" if request_reason else ""
+            description = (
+                f"User '{applicant_name}' has requested access to your knowledge base "
+                f"'{kb_name}'.{reason_text}"
+            )
+        elif event_type == KnowledgeNotificationType.PERMISSION_REQUEST_APPROVED:
+            # Notification to applicant about approval
+            response_text = f" Message: {response_message}" if response_message else ""
+            description = (
+                f"Your request for access to knowledge base '{kb_name}' has been approved. "
+                f"You now have '{permission_type}' permission.{response_text}"
+            )
+        elif event_type == KnowledgeNotificationType.PERMISSION_REQUEST_REJECTED:
+            # Notification to applicant about rejection
+            response_text = f" Reason: {response_message}" if response_message else ""
+            description = f"Your request for access to knowledge base '{kb_name}' has been rejected.{response_text}"
         else:
             description = f"Permission change for knowledge base '{kb_name}': {permission_type or 'revoked'}"
+
+        # Determine detail URL based on event type
+        if event_type == KnowledgeNotificationType.PERMISSION_REQUEST_SUBMITTED:
+            # Link to approval page for KB owner
+            detail_url = f"{settings.FRONTEND_URL}/knowledge/{kb.id}/requests"
+        else:
+            # Link to KB detail page
+            detail_url = f"{settings.FRONTEND_URL}/knowledge/{kb.id}"
 
         notification = Notification(
             user_name=target_user.user_name,
@@ -63,7 +96,7 @@ async def send_knowledge_permission_notification(
             end_time="",
             description=description,
             status="completed",
-            detail_url=f"{settings.FRONTEND_URL}/knowledge/{kb.id}",
+            detail_url=detail_url,
         )
 
         await webhook_notification_service.send_notification(notification)

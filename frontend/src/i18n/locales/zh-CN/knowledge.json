@@ -17,8 +17,79 @@
     "no_permission": {
       "title": "无访问权限",
       "description": "您没有访问此知识库的权限，请联系管理员",
+      "group_title": "群组内部知识库",
       "group_hint": "这是群组内部知识库，请先加入群组",
+      "organization_hint": "您没有访问此公司知识库的权限，请联系管理员",
       "owner": "所有者"
+    },
+    "pending_request": {
+      "title": "申请审批中",
+      "description": "您的访问权限申请正在等待审批",
+      "requested_at": "申请时间",
+      "requested_permission": "申请权限",
+      "submitted_at": "提交时间：{{time}}"
+    },
+    "request_access": {
+      "title": "申请访问权限",
+      "description": "您没有访问此知识库的权限，可以向管理员申请访问权限",
+      "button": "申请权限"
+    }
+  },
+  "permission_request": {
+    "title": "申请访问权限",
+    "description": "填写申请信息，提交后将通知知识库管理员审批",
+    "kb_name": "知识库名称",
+    "kb_owner": "创建者",
+    "kb_description": "描述",
+    "requested_permission": "申请权限",
+    "permission_hint": {
+      "read": "可查看知识库内容",
+      "download": "可查看和下载知识库文档",
+      "write": "可查看、下载和编辑知识库文档"
+    },
+    "reason_label": "申请理由",
+    "reason_placeholder": "请简要说明您申请访问此知识库的原因...",
+    "reason_hint": "清晰的申请理由有助于管理员快速审批",
+    "submit": "提交申请",
+    "submitting": "提交中...",
+    "messages": {
+      "submitted": "申请已提交，请等待管理员审批",
+      "submit_failed": "提交申请失败，请重试",
+      "load_failed": "加载申请列表失败",
+      "approved": "申请已通过",
+      "rejected": "申请已拒绝",
+      "approve_failed": "审批失败，请重试",
+      "reject_failed": "拒绝失败，请重试",
+      "duplicate": "您已有待审批的申请，请等待审批结果",
+      "kb_not_found": "该知识库已不存在",
+      "group_kb_hint": "这是群组内部知识库，请先加入群组"
+    },
+    "approval": {
+      "title": "权限申请审批",
+      "title_kb": "{{name}} - 权限申请审批",
+      "description": "审批用户的知识库访问权限申请",
+      "no_requests": "暂无待审批的申请",
+      "columns": {
+        "applicant": "申请人",
+        "kb_name": "知识库",
+        "requested": "申请权限",
+        "reason": "申请理由",
+        "time": "申请时间",
+        "actions": "操作"
+      },
+      "grant_permission": "授予权限",
+      "grant_permission_hint": "可以授予与申请不同的权限级别",
+      "response_message": "回复消息",
+      "response_placeholder": "可选：给申请人的回复消息",
+      "response_hint": "此消息将发送给申请人"
+    }
+  },
+  "permission": {
+    "type": {
+      "read": "查看",
+      "download": "下载",
+      "write": "编辑",
+      "manage": "管理"
     }
   },
   "modules": {
@@ -58,6 +129,7 @@
     "knowledgeBase": {
       "title": "知识库",
       "create": "创建知识库",
+      "createCompany": "创建公司知识库",
       "createNotebook": "创建笔记本",
       "createClassic": "创建知识库",
       "createDesc": "创建您的第一个知识库",

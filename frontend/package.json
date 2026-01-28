@@ -145,8 +145,10 @@
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,json,css,scss,md}": [
-      "prettier --write",
-      "eslint --fix"
+      "prettier --write"
+    ],
+    "*.{js,jsx,ts,tsx}": [
+      "next lint --fix --file"
     ]
   },
   "msw": {
