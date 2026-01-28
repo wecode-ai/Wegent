@@ -9,7 +9,15 @@ These models are used by both Backend and chat_shell services.
 """
 
 from .base import Base
-from .enums import ContextStatus, ContextType, SenderType, SubtaskRole, SubtaskStatus
+from .device import Device
+from .enums import (
+    ContextStatus,
+    ContextType,
+    DeviceStatus,
+    SenderType,
+    SubtaskRole,
+    SubtaskStatus,
+)
 from .kind import Kind
 from .skill_binary import SkillBinary
 from .subtask import Subtask
@@ -25,10 +33,12 @@ __all__ = [
     "SenderType",
     "ContextType",
     "ContextStatus",
+    "DeviceStatus",
     # Models
     "Subtask",
     "SubtaskContext",
     "User",
     "Kind",
     "SkillBinary",
+    "Device",
 ]

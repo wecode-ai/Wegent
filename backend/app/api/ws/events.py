@@ -146,6 +146,11 @@ class ChatSendPayload(BaseModel):
     preload_skills: Optional[List[str]] = Field(
         None, description="List of skill names to preload into system prompt"
     )
+    # Local device execution
+    device_id: Optional[str] = Field(
+        None,
+        description="Local device ID for task execution (if None, use cloud executor)",
+    )
 
 
 class ChatCancelPayload(BaseModel):

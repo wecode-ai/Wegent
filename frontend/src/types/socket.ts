@@ -64,6 +64,11 @@ export const ServerEvents = {
 
   // Mermaid rendering events (deprecated, use SKILL_REQUEST instead)
   MERMAID_RENDER: 'mermaid:render',
+
+  // Device events (to user room)
+  DEVICE_ONLINE: 'device:online',
+  DEVICE_OFFLINE: 'device:offline',
+  DEVICE_STATUS: 'device:status',
 } as const
 
 // Client -> Server Skill events
@@ -107,6 +112,8 @@ export interface ChatSendPayload {
   task_type?: 'chat' | 'code' | 'knowledge'
   // Knowledge base ID for knowledge type tasks
   knowledge_base_id?: number
+  // Local device execution
+  device_id?: string // Local device ID for task execution (if undefined, use cloud executor)
 }
 
 export interface ChatCancelPayload {
@@ -542,4 +549,37 @@ export interface SkillResponsePayload {
   result?: unknown
   /** Error message if failed */
   error?: string | Record<string, unknown>
+}
+
+// ============================================================
+// Device Event Payloads
+// ============================================================
+
+/** Device status type */
+export type DeviceStatus = 'online' | 'offline' | 'busy'
+
+/** Payload for device:online event */
+export interface DeviceOnlinePayload {
+  device_id: string
+  name: string
+  status: DeviceStatus
+}
+
+/** Payload for device:offline event */
+export interface DeviceOfflinePayload {
+  device_id: string
+}
+
+/** Payload for device:status event */
+export interface DeviceStatusPayload {
+  device_id: string
+  status: DeviceStatus
+}
+
+/** Device info for display */
+export interface DeviceInfo {
+  device_id: string
+  name: string
+  status: DeviceStatus
+  last_heartbeat?: string
 }

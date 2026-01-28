@@ -10,6 +10,7 @@ communication features including chat streaming and task events.
 """
 
 from app.api.ws.chat_namespace import register_chat_namespace
+from app.api.ws.device_namespace import register_device_namespace
 from app.api.ws.events import *  # noqa: F401,F403
 
-__all__ = ["register_chat_namespace"]
+__all__ = ["register_chat_namespace", "register_device_namespace"]

@@ -210,6 +210,8 @@ export interface ChatMessageRequest {
   task_type?: 'chat' | 'code' | 'knowledge'
   // Knowledge base ID for knowledge type tasks
   knowledge_base_id?: number
+  // Local device ID for task execution (optional, when undefined use cloud executor)
+  device_id?: string
 }
 
 /**
@@ -1233,6 +1235,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         task_type: request.task_type,
         // Knowledge base ID for knowledge type tasks
         knowledge_base_id: request.knowledge_base_id,
+        // Local device ID for task execution
+        device_id: request.device_id,
       }
 
       try {
