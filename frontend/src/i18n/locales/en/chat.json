@@ -178,7 +178,32 @@
     "execution_type": "Execution Type",
     "mcp_init_fail": "❌ MCP initialization failed. ",
     "attachments_downloaded": "📎 Attachments Downloaded",
-    "generating_content": "✨ Generating Content"
+    "generating_content": "✨ Generating Content",
+    "truncated": "Truncated",
+    "no_matches": "No matches found",
+    "no_files": "No files found",
+    "no_todos": "No tasks",
+    "units": {
+      "lines": "lines",
+      "characters": "characters",
+      "files": "files",
+      "matches": "matches"
+    },
+    "sections": {
+      "command": "Command",
+      "output": "Output",
+      "content": "Content",
+      "oldContent": "Old Content",
+      "newContent": "New Content",
+      "searchPattern": "Pattern",
+      "searchResults": "Results",
+      "files": "Files",
+      "pattern": "Pattern",
+      "prompt": "Prompt",
+      "input": "Input",
+      "subagentType": "Agent Type",
+      "taskDescription": "Task"
+    }
   },
   "send_button": {
     "shortcut_title": "Send Shortcut",

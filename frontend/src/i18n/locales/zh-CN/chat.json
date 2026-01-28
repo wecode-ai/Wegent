@@ -178,7 +178,32 @@
     "execution_type": "执行类型",
     "mcp_init_fail": "❌ MCP 初始化失败。",
     "attachments_downloaded": "📎 已下载附件",
-    "generating_content": "✨ 正在生成内容"
+    "generating_content": "✨ 正在生成内容",
+    "truncated": "已截断",
+    "no_matches": "未找到匹配项",
+    "no_files": "未找到文件",
+    "no_todos": "暂无任务",
+    "units": {
+      "lines": "行",
+      "characters": "字符",
+      "files": "文件",
+      "matches": "匹配项"
+    },
+    "sections": {
+      "command": "命令",
+      "output": "输出",
+      "content": "内容",
+      "oldContent": "原内容",
+      "newContent": "新内容",
+      "searchPattern": "搜索模式",
+      "searchResults": "搜索结果",
+      "files": "文件",
+      "pattern": "模式",
+      "prompt": "提示词",
+      "input": "输入",
+      "subagentType": "代理类型",
+      "taskDescription": "任务"
+    }
   },
   "send_button": {
     "shortcut_title": "发送快捷键",

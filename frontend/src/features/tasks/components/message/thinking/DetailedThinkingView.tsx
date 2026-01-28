@@ -20,12 +20,12 @@ import {
 import { MAX_CONTENT_HEIGHT } from './utils/constants'
 import { getStepTypeConfig } from './utils/stepTypeConfig'
 import ThinkingHeader from './components/ThinkingHeader'
-import ToolCallItem from './components/ToolCallItem'
-import ToolResultItem from './components/ToolResultItem'
+import EnhancedToolCallItem from './components/EnhancedToolCallItem'
 import TodoListDisplay from './components/TodoListDisplay'
 import SystemInfoDisplay from './components/SystemInfoDisplay'
 import ErrorDisplay from './components/ErrorDisplay'
 import ScrollToBottom from './components/ScrollToBottom'
+import type { ToolMetadata } from './tool-renderers'
 
 interface DetailedThinkingViewProps {
   thinking: ThinkingStep[] | null
@@ -224,6 +224,9 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
     const details = item.details
     if (!details) return null
 
+    // Extract metadata for enhanced display (if available)
+    const metadata = details.metadata as ToolMetadata | undefined
+
     // Handle assistant/user message with content array
     if ((details.type === 'assistant' || details.type === 'user') && details.message?.content) {
       return (
@@ -231,18 +234,22 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
           {details.message.content.map((content, idx) => {
             if (content.type === 'tool_use') {
               return (
-                <ToolCallItem
+                <EnhancedToolCallItem
                   key={idx}
                   toolName={content.name || 'unknown'}
                   input={content.input as Record<string, unknown>}
+                  metadata={metadata}
+                  isLoading={true}
                   itemIndex={itemIndex}
                 />
               )
             } else if (content.type === 'tool_result') {
               return (
-                <ToolResultItem
+                <EnhancedToolCallItem
                   key={idx}
-                  content={content.content || ''}
+                  toolName={details.tool_name || 'unknown'}
+                  output={content.content || ''}
+                  metadata={metadata}
                   isError={content.is_error}
                   itemIndex={itemIndex}
                 />
@@ -260,25 +267,29 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
       )
     }
 
-    // Handle direct tool_use type
+    // Handle direct tool_use type - use EnhancedToolCallItem
     if (details.type === 'tool_use') {
       return (
         <div className="mt-2">
-          <ToolCallItem
-            toolName={details.name || 'unknown'}
+          <EnhancedToolCallItem
+            toolName={details.tool_name || details.name || 'unknown'}
             input={details.input as Record<string, unknown>}
+            metadata={metadata}
+            isLoading={true}
             itemIndex={itemIndex}
           />
         </div>
       )
     }
 
-    // Handle direct tool_result type
+    // Handle direct tool_result type - use EnhancedToolCallItem
     if (details.type === 'tool_result') {
       return (
         <div className="mt-2">
-          <ToolResultItem
-            content={details.content || ''}
+          <EnhancedToolCallItem
+            toolName={details.tool_name || 'unknown'}
+            output={details.output || details.content || ''}
+            metadata={metadata}
             isError={details.is_error}
             itemIndex={itemIndex}
           />
