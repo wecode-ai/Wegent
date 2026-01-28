@@ -9,7 +9,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 
 # API Format Enum for OpenAI-compatible models
@@ -696,6 +696,35 @@ class KnowledgeBaseSpec(BaseModel):
         None,
         description="Model reference for summary generation. Required when summaryEnabled=True",
     )
+
+    # Knowledge base tool call limit configuration
+    maxCallsPerConversation: Optional[int] = Field(
+        default=10,
+        ge=2,
+        le=50,
+        description="Maximum number of knowledge base tool calls allowed per conversation. "
+        "Default: 10. For backward compatibility, if not set, defaults to 10 in code.",
+    )
+    exemptCallsBeforeCheck: Optional[int] = Field(
+        default=5,
+        ge=1,
+        description="Number of calls that are exempt from token checking. "
+        "Must be less than maxCallsPerConversation. Default: 5.",
+    )
+
+    @model_validator(mode="after")
+    def validate_call_limits(self):
+        """Validate that exemptCallsBeforeCheck < maxCallsPerConversation"""
+        if (
+            self.exemptCallsBeforeCheck is not None
+            and self.maxCallsPerConversation is not None
+        ):
+            if self.exemptCallsBeforeCheck >= self.maxCallsPerConversation:
+                raise ValueError(
+                    f"exemptCallsBeforeCheck ({self.exemptCallsBeforeCheck}) must be less than "
+                    f"maxCallsPerConversation ({self.maxCallsPerConversation})"
+                )
+        return self
 
 
 class KnowledgeBaseStatus(Status):
