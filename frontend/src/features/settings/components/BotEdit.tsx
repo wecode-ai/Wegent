@@ -36,7 +36,7 @@ import {
 } from '@/features/settings/services/bots'
 import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models'
 import { shellApis, UnifiedShell } from '@/apis/shells'
-import { fetchUnifiedSkillsList, UnifiedSkill } from '@/apis/skills'
+import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill } from '@/apis/skills'
 import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
 import { useTranslation } from 'react-i18next'
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter'
@@ -407,10 +407,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     const fetchSkills = async () => {
       setLoadingSkills(true)
       try {
-        const skillsData = await fetchUnifiedSkillsList({
-          scope: scope,
-          groupName: groupName,
-        })
+        // For public scope, use fetchPublicSkillsList; otherwise use fetchUnifiedSkillsList
+        const skillsData =
+          scope === 'public'
+            ? await fetchPublicSkillsList()
+            : await fetchUnifiedSkillsList({
+                scope: scope,
+                groupName: groupName,
+              })
         setAllSkills(skillsData)
         // Filter skills based on current shell type
         setAvailableSkills(filterSkillsByShellType(skillsData))
