@@ -32,7 +32,7 @@ export default function WikiDetailPage() {
     useWikiDetail(projectId)
 
   const handleBackToList = () => {
-    router.push('/knowledge')
+    router.back()
   }
 
   // Save last active tab to localStorage
