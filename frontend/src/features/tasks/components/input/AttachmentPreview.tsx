@@ -24,6 +24,8 @@ interface AttachmentPreviewProps {
   showDownload?: boolean
   /** Compact mode (smaller size) */
   compact?: boolean
+  /** Share token for public access (no login required) */
+  shareToken?: string
 }
 
 /**
@@ -177,8 +179,9 @@ function ImageLightbox({
 
 /**
  * Custom hook to fetch image with authentication and return blob URL
+ * Supports both JWT authentication and share token-based public access
  */
-function useAuthenticatedImage(attachmentId: number, isImage: boolean) {
+function useAuthenticatedImage(attachmentId: number, isImage: boolean, shareToken?: string) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState(false)
@@ -193,9 +196,11 @@ function useAuthenticatedImage(attachmentId: number, isImage: boolean) {
 
       try {
         const token = getToken()
-        const response = await fetch(getAttachmentPreviewUrl(attachmentId), {
+        const response = await fetch(getAttachmentPreviewUrl(attachmentId, shareToken), {
           headers: {
-            ...(token && { Authorization: `Bearer ${token}` }),
+            // Only include Authorization header if we have a token and no shareToken
+            // shareToken-based access doesn't require JWT authentication
+            ...(!shareToken && token && { Authorization: `Bearer ${token}` }),
           },
         })
 
@@ -229,7 +234,7 @@ function useAuthenticatedImage(attachmentId: number, isImage: boolean) {
         URL.revokeObjectURL(blobUrl)
       }
     }
-  }, [attachmentId, isImage])
+  }, [attachmentId, isImage, shareToken])
 
   // Clean up blob URL when it changes
   useEffect(() => {
@@ -247,16 +252,17 @@ export default function AttachmentPreview({
   attachment,
   showDownload = true,
   compact = false,
+  shareToken,
 }: AttachmentPreviewProps) {
   const [showLightbox, setShowLightbox] = useState(false)
 
   const handleDownload = useCallback(async () => {
     try {
-      await downloadAttachment(attachment.id, attachment.filename)
+      await downloadAttachment(attachment.id, attachment.filename, shareToken)
     } catch (err) {
       console.error('Failed to download attachment:', err)
     }
-  }, [attachment.id, attachment.filename])
+  }, [attachment.id, attachment.filename, shareToken])
 
   const handleImageClick = useCallback(() => {
     setShowLightbox(true)
@@ -274,7 +280,7 @@ export default function AttachmentPreview({
     blobUrl: imageUrl,
     isLoading: imageLoading,
     error: imageError,
-  } = useAuthenticatedImage(attachment.id, isImage)
+  } = useAuthenticatedImage(attachment.id, isImage, shareToken)
 
   // Render image preview for image types
   if (isImage && !imageError) {

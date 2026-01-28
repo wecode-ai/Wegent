@@ -671,3 +671,67 @@ def get_current_user_flexible(
         Authenticated User object
     """
     return auth_context.user
+
+
+def get_current_user_optional(
+    token: Optional[str] = Depends(oauth2_scheme_optional),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """
+    Get current authenticated user if a valid token is provided, otherwise return None.
+
+    This is useful for endpoints that support both authenticated and unauthenticated access.
+
+    Args:
+        token: JWT token from Authorization header (optional)
+        db: Database session
+
+    Returns:
+        User object if authenticated, None otherwise
+    """
+    if not token:
+        return None
+
+    with _tracer.start_as_current_span("auth.get_current_user_optional") as span:
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt_optional")
+            span.set_attribute(SpanAttributes.AUTH_TOKEN_TYPE, "bearer")
+            span.set_attribute(SpanAttributes.AUTH_SOURCE, "authorization_header")
+
+        try:
+            # Verify token
+            token_data = verify_token(token)
+            username = token_data.get("username")
+
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.USER_NAME, username)
+
+            # Query user
+            user = user_service.get_user_by_name(db=db, user_name=username)
+            if user is None or not user.is_active:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_FAILURE_REASON,
+                        "user_not_found" if user is None else "user_inactive",
+                    )
+                return None
+
+            # Set user context for tracing
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                set_user_context(user_id=str(user.id), user_name=user.user_name)
+
+            return user
+        except HTTPException:
+            # Token verification failed, return None instead of raising
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(SpanAttributes.AUTH_FAILURE_REASON, "invalid_token")
+            return None
+        except Exception as e:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(SpanAttributes.AUTH_FAILURE_REASON, str(e)[:200])
+            return None

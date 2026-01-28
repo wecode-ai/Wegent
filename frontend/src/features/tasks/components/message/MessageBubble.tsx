@@ -168,6 +168,8 @@ export interface MessageBubbleProps {
   onRegenerate?: (msg: Message, model: Model) => void
   /** Whether regenerate is in progress */
   isRegenerating?: boolean
+  /** Share token for public access to attachments (no login required) */
+  shareToken?: string
 }
 
 // Component for rendering a paragraph with hover action button
@@ -290,6 +292,7 @@ const MessageBubble = memo(
     isLastAiMessage,
     onRegenerate,
     isRegenerating,
+    shareToken,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
@@ -1470,6 +1473,7 @@ const MessageBubble = memo(
               <ContextBadgeList
                 contexts={msg.contexts || undefined}
                 onContextReselect={onContextReselect}
+                shareToken={shareToken}
               />
             )}
             {/* Show waiting indicator when streaming but no content yet */}
