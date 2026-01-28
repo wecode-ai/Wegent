@@ -109,6 +109,8 @@ class LocalRunner:
         5. Runs the task processing loop
         """
         logger.info("Starting Local Executor Runner...")
+        logger.info(f"Backend URL: {config.WEGENT_BACKEND_URL}")
+        logger.info(f"Auth Token: {'***' if config.WEGENT_AUTH_TOKEN else 'NOT SET'}")
         self._running = True
 
         # Setup signal handlers in the event loop
@@ -127,7 +129,14 @@ class LocalRunner:
             # Connect to Backend
             connected = await self.websocket_client.connect()
             if not connected:
-                logger.error("Failed to connect to Backend WebSocket")
+                error_msg = self.websocket_client.connection_error or "Unknown error"
+                logger.error(f"Failed to connect to Backend WebSocket: {error_msg}")
+                logger.error(
+                    "Please check:\n"
+                    "  1. WEGENT_BACKEND_URL should be http://localhost:8000 (not wss://, not port 3000)\n"
+                    "  2. Backend server is running on the specified URL\n"
+                    "  3. WEGENT_AUTH_TOKEN is set"
+                )
                 return
 
             logger.info("WebSocket connected to Backend")
