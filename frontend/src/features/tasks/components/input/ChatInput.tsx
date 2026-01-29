@@ -18,7 +18,7 @@ interface ChatInputProps {
   handleSendMessage: () => void
   isLoading: boolean
   disabled?: boolean
-  taskType?: 'chat' | 'code' | 'knowledge'
+  taskType?: 'chat' | 'code' | 'knowledge' | 'task'
   autoFocus?: boolean
   // Controls whether the message can be submitted (e.g., model selection required)
   canSubmit?: boolean
@@ -32,6 +32,8 @@ interface ChatInputProps {
   onPasteFile?: (files: File | File[]) => void
   // Whether there are no available teams (shows disabled state with special placeholder)
   hasNoTeams?: boolean
+  // Custom reason for disabled state (e.g., "Device offline"). Shows as placeholder.
+  disabledReason?: string
 }
 
 export default function ChatInput({
@@ -48,6 +50,7 @@ export default function ChatInput({
   team = null,
   onPasteFile,
   hasNoTeams = false,
+  disabledReason,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation()
 
@@ -56,7 +59,11 @@ export default function ChatInput({
 
   // Use tip text as placeholder if available, otherwise use default
   // If hasNoTeams is true, show the special placeholder
+  // If disabledReason is provided, show that as placeholder
   const placeholder = useMemo(() => {
+    if (disabledReason) {
+      return disabledReason
+    }
     if (hasNoTeams) {
       return t('chat:input.no_team_placeholder')
     }
@@ -68,10 +75,10 @@ export default function ChatInput({
       return t('chat:groupChat.mentionToTrigger', { teamName: team.name })
     }
     return t('chat:placeholder.input')
-  }, [tipText, currentLang, t, isGroupChat, team?.name, hasNoTeams])
+  }, [disabledReason, tipText, currentLang, t, isGroupChat, team?.name, hasNoTeams])
 
-  // Combine disabled and hasNoTeams for input disabled state
-  const isInputDisabled = disabled || hasNoTeams
+  // Combine disabled, hasNoTeams and disabledReason for input disabled state
+  const isInputDisabled = disabled || hasNoTeams || !!disabledReason
 
   const [isComposing, setIsComposing] = useState(false)
   // Track if composition just ended (for Safari where compositionend fires before keydown)

@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useTaskContext } from '../../contexts/taskContext'
 import { useChatStreamContext, computeIsStreaming } from '../../contexts/chatStreamContext'
 import { useSocket } from '@/contexts/SocketContext'
+import { useDevices } from '@/contexts/DeviceContext'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
@@ -52,7 +53,7 @@ export interface UseChatStreamHandlersOptions {
   isAttachmentReadyToSend: boolean
 
   // Task type
-  taskType: 'chat' | 'code' | 'knowledge'
+  taskType: 'chat' | 'code' | 'knowledge' | 'task'
 
   // Knowledge base ID (for knowledge type tasks)
   knowledgeBaseId?: number
@@ -180,6 +181,9 @@ export function useChatStreamHandlers({
   } = useChatStreamContext()
 
   const { retryMessage } = useSocket()
+
+  // Get selected device ID for executor-based tasks
+  const { selectedDeviceId } = useDevices()
 
   // Local state
   const [pendingTaskId, setPendingTaskId] = useState<number | null>(null)
@@ -560,6 +564,8 @@ export function useChatStreamHandlers({
             task_type: taskType,
             knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
             contexts: contextItems.length > 0 ? contextItems : undefined,
+            // Device ID for local device execution (only for executor-based teams, not Chat Shell)
+            device_id: !isChatShell(selectedTeam) ? selectedDeviceId || undefined : undefined,
           },
           {
             pendingUserMessage: message,
@@ -648,6 +654,7 @@ export function useChatStreamHandlers({
       externalApiParams,
       onTaskCreated,
       selectedDocumentIds,
+      selectedDeviceId,
     ]
   )
 

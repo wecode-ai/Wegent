@@ -461,7 +461,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           // Use the new unified models API which includes type information
           // Pass scope and groupName to filter models based on current context
           // Filter by 'llm' category type - only LLM models can be used for bots
-          const response = await modelApis.getUnifiedModels(shellType, false, scope, groupName, 'llm')
+          const response = await modelApis.getUnifiedModels(
+            shellType,
+            false,
+            scope,
+            groupName,
+            'llm'
+          )
           modelData = response.data
         }
 
