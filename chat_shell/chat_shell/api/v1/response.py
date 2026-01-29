@@ -101,6 +101,9 @@ async def _stream_response(
         set()
     )  # Track emitted tool events to avoid duplicates
     accumulated_sources: list[dict] = []  # Track knowledge base sources for citation
+    accumulated_blocks: list[dict] = (
+        []
+    )  # Track message blocks for mixed content rendering
     # Silent exit tracking for subscription tasks
     is_silent_exit = False
     silent_exit_reason = ""
@@ -371,22 +374,45 @@ async def _stream_response(
             # Convert ChatEvent to SSE event
             if event.type == ChatEventType.CHUNK:
                 chunk_text = event.data.get("content", "")
+
+                # Check for thinking data, sources, and blocks in result
+                result = event.data.get("result")
+                logger.debug(
+                    "[RESPONSE] CHUNK event: content_len=%d, has_result=%s, "
+                    "thinking_count=%d, blocks_count=%d",
+                    len(chunk_text),
+                    result is not None,
+                    len(result.get("thinking", [])) if result else 0,
+                    len(result.get("blocks", [])) if result else 0,
+                )
+
+                # Log blocks detail if present
+                if result and result.get("blocks"):
+                    logger.info(
+                        "[RESPONSE] CHUNK with blocks: subtask_id=%d, blocks=%s",
+                        subtask_id,
+                        [
+                            {
+                                "id": b.get("id"),
+                                "type": b.get("type"),
+                                "status": b.get("status"),
+                            }
+                            for b in result["blocks"]
+                        ],
+                    )
+
+                # Send content.delta event with result (including blocks for real-time mixed content)
                 if chunk_text:
                     full_content += chunk_text
                     yield _format_sse_event(
                         ResponseEventType.CONTENT_DELTA.value,
-                        ContentDelta(type="text", text=chunk_text).model_dump(),
+                        ContentDelta(
+                            type="text",
+                            text=chunk_text,
+                            result=result,  # Include result for real-time mixed content rendering
+                        ).model_dump(exclude_none=True),
                     )
 
-                # Check for thinking data and sources in result
-                result = event.data.get("result")
-                logger.debug(
-                    "[RESPONSE] CHUNK event: content_len=%d, has_result=%s, "
-                    "thinking_count=%d",
-                    len(chunk_text),
-                    result is not None,
-                    len(result.get("thinking", [])) if result else 0,
-                )
                 # Accumulate sources from result (knowledge base citations)
                 if result and result.get("sources"):
                     for source in result["sources"]:
@@ -398,6 +424,11 @@ async def _stream_response(
                         }
                         if key not in existing_keys:
                             accumulated_sources.append(source)
+                # Accumulate blocks from result (mixed content rendering)
+                if result and result.get("blocks"):
+                    # Replace accumulated_blocks with latest blocks array
+                    # Each chunk contains the full blocks array, not incremental updates
+                    accumulated_blocks = result["blocks"]
                 if result and result.get("thinking"):
                     for step in result["thinking"]:
                         details = step.get("details", {})
@@ -506,6 +537,14 @@ async def _stream_response(
                         subtask_id,
                         silent_exit_reason,
                     )
+                # Extract blocks from DONE event (final blocks array)
+                if result and result.get("blocks"):
+                    accumulated_blocks = result["blocks"]
+                    logger.info(
+                        "[RESPONSE] Blocks extracted from DONE event: subtask_id=%d, blocks_count=%d",
+                        subtask_id,
+                        len(accumulated_blocks),
+                    )
 
             elif event.type == ChatEventType.ERROR:
                 error_msg = event.data.get("error", "Unknown error")
@@ -561,6 +600,9 @@ async def _stream_response(
                 ),
                 stop_reason="silent_exit" if is_silent_exit else "end_turn",
                 sources=formatted_sources,
+                blocks=(
+                    accumulated_blocks if accumulated_blocks else None
+                ),  # Include accumulated blocks
                 silent_exit=is_silent_exit if is_silent_exit else None,
                 silent_exit_reason=silent_exit_reason if silent_exit_reason else None,
             ).model_dump(),

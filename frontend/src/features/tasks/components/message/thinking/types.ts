@@ -87,6 +87,25 @@ export interface ThinkingStep {
 export type ToolStatus = 'pending' | 'streaming' | 'invoking' | 'done' | 'error'
 
 /**
+ * Message block - can be text content or tool call.
+ *
+ * This enables mixed rendering of text and tool calls in chronological order,
+ * similar to cherry-studio's block architecture.
+ */
+export interface MessageBlock {
+  id: string // Unique block identifier
+  type: 'text' | 'tool' | 'thinking' | 'error' // Block type
+  content?: string // Text content for text blocks
+  tool_use_id?: string // Tool call ID for tool blocks
+  tool_name?: string // Tool name
+  tool_input?: Record<string, unknown> // Tool input parameters
+  tool_output?: unknown // Tool execution result
+  status?: 'pending' | 'streaming' | 'done' | 'error' // Block status
+  timestamp?: number // Block creation timestamp
+  metadata?: Record<string, unknown> // Additional metadata
+}
+
+/**
  * Paired tool use + tool result
  */
 export interface ToolPair {

@@ -77,6 +77,18 @@ export interface DisplayMessage {
     shell_type?: string // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
     sources?: SourceReference[] // RAG knowledge base sources
     reasoning_content?: string // DeepSeek R1 reasoning content
+    blocks?: Array<{
+      // Message blocks for mixed content rendering
+      id: string
+      type: 'text' | 'tool'
+      status?: string
+      content?: string
+      tool_name?: string
+      tool_use_id?: string
+      tool_input?: unknown
+      tool_output?: unknown
+      timestamp?: number
+    }>
   }
   /** Knowledge base source references (for RAG citations) - top-level for backward compatibility */
   sources?: SourceReference[]
@@ -139,7 +151,7 @@ export function useUnifiedMessages({
   isGroupChat,
   pendingTaskId,
 }: UseUnifiedMessagesOptions): UseUnifiedMessagesResult {
-  const { getStreamState, syncBackendMessages, resumeStream } = useChatStreamContext()
+  const { getStreamState, syncBackendMessages, resumeStream, streamStates } = useChatStreamContext()
   const { selectedTaskDetail } = useTaskContext()
   const { user } = useUser()
 
@@ -306,6 +318,18 @@ export function useUnifiedMessages({
         reasoningContent: msg.reasoningContent || msg.result?.reasoning_content,
       }
 
+      // DEBUG: Log if this message has blocks
+      if (msg.result?.blocks && msg.result.blocks.length > 0) {
+        console.log('[useUnifiedMessages] Message with blocks:', {
+          id: msg.id,
+          subtaskId: msg.subtaskId,
+          blocksCount: msg.result.blocks.length,
+          blocks: msg.result.blocks.map(b => ({ id: b.id, type: b.type, status: b.status })),
+          displayMsg_hasBlocks: !!displayMsg.result?.blocks,
+          displayMsg_blocksCount: displayMsg.result?.blocks?.length || 0,
+        })
+      }
+
       messages.push(displayMsg)
 
       // Track pending user messages
@@ -357,7 +381,7 @@ export function useUnifiedMessages({
       subtasksMap,
       pendingMessages,
     }
-  }, [effectiveTaskId, streamState, team?.name, isGroupChat, user?.id])
+  }, [effectiveTaskId, streamStates, team?.name, isGroupChat, user?.id])
 
   return result
 }

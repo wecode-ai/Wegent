@@ -469,20 +469,27 @@ class HTTPAdapter(ChatInterface):
                     text = data.get("text", "")
                     if text:
                         event_data["content"] = text
+                    # Extract result with blocks for real-time mixed content rendering
+                    # chat_shell's CHUNK events include the full blocks array for streaming display
+                    if data.get("result"):
+                        event_data["result"] = data["result"]
                 elif event_type == ChatEventType.THINKING:
                     # Thinking content is in "text" field
                     text = data.get("text", "")
                     if text:
                         event_data["content"] = text
                 elif event_type == ChatEventType.DONE:
-                    # Done event - chat_shell's ResponseDone has {id, usage, stop_reason, sources, silent_exit}
+                    # Done event - chat_shell's ResponseDone has {id, usage, stop_reason, sources, blocks, silent_exit}
                     # The actual response content is NOT in this event, it's accumulated from CHUNK events
-                    # We pass through the metadata (usage, stop_reason, sources, silent_exit) and let the caller set 'value'
+                    # We pass through the metadata (usage, stop_reason, sources, blocks, silent_exit) and let the caller set 'value'
                     event_data["result"] = {
                         "usage": data.get("usage"),
                         "stop_reason": data.get("stop_reason"),
                         "id": data.get("id"),
                         "sources": data.get("sources"),  # Knowledge base citations
+                        "blocks": data.get(
+                            "blocks"
+                        ),  # Message blocks for mixed content rendering
                         "silent_exit": data.get(
                             "silent_exit"
                         ),  # Silent exit flag for subscription tasks

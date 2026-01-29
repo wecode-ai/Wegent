@@ -100,10 +100,55 @@ class ThinkingStep(BaseModel):
         return super().dict(**kwargs)
 
 
+class MessageBlock(BaseModel):
+    """Message block - can be text content or tool call.
+
+    This enables mixed rendering of text and tool calls in chronological order,
+    similar to cherry-studio's block architecture.
+    """
+
+    id: str = Field(..., description="Unique block identifier")
+    type: str = Field(
+        ..., description="Block type: 'text' | 'tool' | 'thinking' | 'error'"
+    )
+    content: Optional[str] = Field(
+        default=None, description="Text content for text blocks"
+    )
+    tool_use_id: Optional[str] = Field(
+        default=None, description="Tool call ID for tool blocks"
+    )
+    tool_name: Optional[str] = Field(default=None, description="Tool name")
+    tool_input: Optional[Dict[str, Any]] = Field(
+        default=None, description="Tool input parameters"
+    )
+    tool_output: Optional[Any] = Field(
+        default=None, description="Tool execution result"
+    )
+    status: Optional[str] = Field(
+        default=None,
+        description="Block status: 'pending' | 'streaming' | 'done' | 'error'",
+    )
+    timestamp: Optional[float] = Field(
+        default=None, description="Block creation timestamp"
+    )
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None, description="Additional metadata"
+    )
+
+    def dict(self, **kwargs) -> Dict[str, Any]:
+        """Override dict method to exclude None values"""
+        kwargs.setdefault("exclude_none", True)
+        return super().dict(**kwargs)
+
+
 class ExecutionResult(BaseModel):
     value: Optional[str] = None
     thinking: List[ThinkingStep] = []
     reasoning_content: Optional[str] = None  # Reasoning content from DeepSeek R1 etc.
+    blocks: List[MessageBlock] = Field(
+        default_factory=list,
+        description="Message blocks for mixed text/tool rendering (new format)",
+    )
 
     def dict(self, **kwargs) -> Dict[str, Any]:
         """Override dict method to exclude None values"""

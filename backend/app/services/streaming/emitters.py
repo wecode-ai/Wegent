@@ -308,3 +308,30 @@ class WebSocketEmitter(StreamEmitter):
             "[WS_EMITTER] emit_json: scheduled chunk emission for subtask=%d",
             subtask_id,
         )
+
+    async def emit_event(self, event_type: str, data: dict[str, Any]) -> None:
+        """Emit a custom event using global emitter.
+
+        This is a generic method for emitting custom event types (like block events).
+
+        Args:
+            event_type: Event type (e.g., "chat:block_created", "chat:block_updated")
+            data: Event payload data
+        """
+        from app.services.chat.ws_emitter import get_ws_emitter
+
+        emitter = get_ws_emitter()
+        if emitter is None:
+            logger.warning("[WS_EMITTER] emit_event: no emitter available")
+            return
+
+        await emitter.emit_custom_event(
+            task_id=self.task_id,
+            event_type=event_type,
+            data=data,
+        )
+        logger.debug(
+            "[WS_EMITTER] emit_event: %s emitted for task=%d",
+            event_type,
+            self.task_id,
+        )

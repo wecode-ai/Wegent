@@ -20,6 +20,7 @@ def create_tool_event_handler(
     state: Any,
     emitter: Any,
     agent_builder: Any,
+    core: Any = None,
 ) -> Callable[[str, dict], None]:
     """Create a tool event handler function.
 
@@ -27,6 +28,7 @@ def create_tool_event_handler(
         state: Streaming state to update
         emitter: Stream emitter for events
         agent_builder: Agent builder for tool registry access
+        core: Optional StreamingCore instance for block event emission
 
     Returns:
         Tool event handler function
@@ -39,11 +41,11 @@ def create_tool_event_handler(
 
         if kind == "tool_start":
             _handle_tool_start(
-                state, emitter, agent_builder, tool_name, run_id, event_data
+                state, emitter, agent_builder, tool_name, run_id, event_data, core
             )
         elif kind == "tool_end":
             _handle_tool_end(
-                state, emitter, agent_builder, tool_name, run_id, event_data
+                state, emitter, agent_builder, tool_name, run_id, event_data, core
             )
 
     return handle_tool_event
@@ -56,6 +58,7 @@ def _handle_tool_start(
     tool_name: str,
     run_id: str,
     event_data: dict,
+    core: Any = None,
 ) -> None:
     """Handle tool start event."""
     # Extract tool input for better display
@@ -106,9 +109,39 @@ def _handle_tool_start(
 
     state.add_thinking_step(thinking_step)
 
+    # Emit block event if core is available (Block architecture)
+    if core is not None:
+        import asyncio
+
+        # Schedule async block event emission
+        # Use run_coroutine_threadsafe to call async method from sync context
+        try:
+            # Try to get the running event loop (we're in chat_shell's async context)
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # Fallback to get_event_loop if no running loop
+                loop = asyncio.get_event_loop()
+
+            asyncio.run_coroutine_threadsafe(
+                core.emit_tool_block(
+                    tool_use_id=tool_use_id,
+                    tool_name=tool_name,
+                    tool_input=serializable_input,
+                ),
+                loop,
+            )
+            logger.debug(
+                f"[BLOCK] Scheduled emit_tool_block for {tool_name} (tool_use_id={tool_use_id})"
+            )
+        except Exception as e:
+            logger.warning(f"[BLOCK] Failed to emit tool block: {e}")
+
     # Emit chunk with thinking data synchronously using emit_json
     # Note: emit_json is sync method, emit_chunk is async but we're in sync callback
-    current_result = state.get_current_result(include_value=False, slim_thinking=True)
+    current_result = state.get_current_result(
+        include_value=False, slim_thinking=True, include_blocks=True
+    )
     chunk_data = {
         "type": "chunk",
         "content": "",
@@ -126,6 +159,7 @@ def _handle_tool_end(
     tool_name: str,
     run_id: str,
     event_data: dict,
+    core: Any = None,
 ) -> None:
     """Handle tool end event."""
     # Extract and serialize tool output
@@ -133,12 +167,32 @@ def _handle_tool_end(
 
     serializable_output = _make_output_serializable(tool_output)
 
-    # Generate tool_use_id (prefer from event, fallback to run_id + timestamp)
-    import time
+    # Find matching start step first to get the tool_use_id that was created
+    # This ensures we use the same ID for updating the block
+    matching_start_idx = None
+    tool_use_id = event_data.get("tool_use_id")  # Try from event first
 
-    tool_use_id = event_data.get("tool_use_id")
     if not tool_use_id:
+        # Search for matching tool_start step to get the tool_use_id
+        for idx, step in enumerate(state.thinking):
+            if (
+                step.get("run_id") == run_id
+                and step.get("details", {}).get("status") == "started"
+            ):
+                matching_start_idx = idx
+                # Use the tool_use_id from the start step
+                tool_use_id = step.get("tool_use_id")
+                break
+
+    # If still no tool_use_id, generate one as fallback (should rarely happen)
+    if not tool_use_id:
+        import time
+
         tool_use_id = f"{run_id}-{int(time.time() * 1000)}"
+        logger.warning(
+            "[TOOL_END] No tool_use_id from event or matching start step, generated: %s",
+            tool_use_id,
+        )
 
     # Add OpenTelemetry span event for tool end
     output_str = str(serializable_output)
@@ -190,17 +244,17 @@ def _handle_tool_end(
     if status == "completed" and title == f"Tool completed: {tool_name}":
         title = _build_tool_end_title(agent_builder, tool_name, run_id, state, title)
 
-    # Find matching start step using tool_use_id (fallback to run_id)
-    matching_start_idx = None
-    for idx, step in enumerate(state.thinking):
-        # Try to match using tool_use_id first, fallback to run_id
-        step_id = step.get("tool_use_id") or step.get("run_id")
-        if (
-            step_id == tool_use_id
-            and step.get("details", {}).get("status") == "started"
-        ):
-            matching_start_idx = idx
-            break
+    # If we didn't find matching_start_idx earlier, search again for insertion position
+    if matching_start_idx is None:
+        for idx, step in enumerate(state.thinking):
+            # Try to match using tool_use_id first, fallback to run_id
+            step_id = step.get("tool_use_id") or step.get("run_id")
+            if (
+                step_id == tool_use_id
+                and step.get("details", {}).get("status") == "started"
+            ):
+                matching_start_idx = idx
+                break
 
     result_step = {
         "title": title,
@@ -224,8 +278,43 @@ def _handle_tool_end(
     else:
         state.add_thinking_step(result_step)
 
+    # Emit block update if core is available (Block architecture)
+    if core is not None:
+        import asyncio
+
+        # Schedule async block update emission and WAIT for it to complete
+        try:
+            # Try to get the running event loop (we're in chat_shell's async context)
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # Fallback to get_event_loop if no running loop
+                loop = asyncio.get_event_loop()
+
+            # CRITICAL: Wait for the update to complete before emitting chunk
+            # This ensures tool_output is included in the blocks when we call get_current_result
+            future = asyncio.run_coroutine_threadsafe(
+                core.update_tool_block(
+                    tool_use_id=tool_use_id,
+                    tool_output=serializable_output,
+                    status="done" if status == "completed" else "error",
+                    is_error=(status == "failed"),
+                ),
+                loop,
+            )
+            # Wait for the update to complete (with timeout to avoid hanging)
+            future.result(timeout=5.0)
+            logger.debug(
+                f"[BLOCK] Completed update_tool_block for {tool_name} (tool_use_id={tool_use_id})"
+            )
+        except Exception as e:
+            logger.warning(f"[BLOCK] Failed to update tool block: {e}")
+
     # Emit chunk with thinking data synchronously using emit_json
-    current_result = state.get_current_result(include_value=False, slim_thinking=True)
+    # This now includes the updated blocks with tool_output
+    current_result = state.get_current_result(
+        include_value=False, slim_thinking=True, include_blocks=True
+    )
     chunk_data = {
         "type": "chunk",
         "content": "",

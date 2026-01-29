@@ -46,10 +46,13 @@ import {
   ChatErrorPayload,
   ChatCancelledPayload,
   ChatMessagePayload,
+  ChatBlockCreatedPayload,
+  ChatBlockUpdatedPayload,
   SkillRequestPayload,
   SkillResponsePayload,
 } from '@/types/socket'
 import type { TaskDetailSubtask, Team } from '@/types/api'
+import type { MessageBlock } from '../components/message/thinking/types'
 import DOMPurify from 'dompurify'
 
 /**
@@ -114,6 +117,8 @@ export interface UnifiedMessage {
     }>
     /** Reasoning content from models like DeepSeek R1 */
     reasoning_content?: string
+    /** Message blocks for mixed rendering (new format) */
+    blocks?: MessageBlock[]
   }
   /** Knowledge base source references (for RAG citations) */
   sources?: Array<{
@@ -241,6 +246,8 @@ interface ChatStreamContextType {
   isTaskStreaming: (taskId: number) => boolean
   /** Get all currently streaming task IDs */
   getStreamingTaskIds: () => number[]
+  /** Map of task states for direct access (for useUnifiedMessages reactivity) */
+  streamStates: Map<number, StreamState>
   /** Send a chat message (returns task ID) */
   sendMessage: (
     request: ChatMessageRequest,
@@ -507,6 +514,27 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   const handleChatChunk = useCallback((data: ChatChunkPayload) => {
     const { subtask_id, content, result, sources } = data
 
+    // Temporary DEBUG: Check if blocks are being received
+    if (result?.blocks && result.blocks.length > 0) {
+      console.log('[ChatStreamContext][chat:chunk] ✅ Blocks received:', {
+        subtask_id,
+        blocksCount: result.blocks.length,
+        blocks: result.blocks.map(b => ({
+          id: b.id,
+          type: b.type,
+          status: b.status,
+          tool_name: b.tool_name,
+        })),
+      })
+    } else {
+      console.log('[ChatStreamContext][chat:chunk] ❌ No blocks in chunk:', {
+        subtask_id,
+        hasResult: !!result,
+        hasThinking: !!result?.thinking,
+        resultKeys: result ? Object.keys(result) : [],
+      })
+    }
+
     // Find task ID from subtask
     let taskId = subtaskToTaskRef.current.get(subtask_id)
 
@@ -574,6 +602,11 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               newResult && newResult.thinking
                 ? newResult.thinking
                 : existingMessage.result?.thinking,
+            // Special handling for blocks array:
+            // If new result has blocks, use it (backend sends full array)
+            // Otherwise keep existing blocks to prevent data loss
+            blocks:
+              newResult && newResult.blocks ? newResult.blocks : existingMessage.result?.blocks,
             // Keep accumulated reasoning_content
             reasoning_content:
               newResult?.reasoning_content || existingMessage.result?.reasoning_content,
@@ -681,12 +714,18 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           messageId: message_id,
           // Set sources if provided (check both top-level and result.sources)
           sources: finalSources || existingMessage.sources,
-          // IMPORTANT: Update result field to preserve thinking data from incremental updates
-          // Merge with existing result to keep accumulated thinking data
+          // IMPORTANT: Update result field to preserve thinking/blocks data from incremental updates
+          // Merge with existing result to keep accumulated thinking/blocks data
           result: result
             ? {
                 ...existingMessage.result,
                 ...(result as UnifiedMessage['result']),
+                // Explicitly preserve blocks and thinking if not provided in done event
+                thinking:
+                  (result as UnifiedMessage['result'])?.thinking ||
+                  existingMessage.result?.thinking,
+                blocks:
+                  (result as UnifiedMessage['result'])?.blocks || existingMessage.result?.blocks,
               }
             : existingMessage.result,
         })
@@ -905,6 +944,132 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  /**
+   * Handle chat:block_created event from WebSocket
+   * This creates a new block in the AI message's blocks array
+   */
+  const handleBlockCreated = useCallback((data: ChatBlockCreatedPayload) => {
+    const { subtask_id, block } = data
+
+    console.log('[ChatStreamContext][block_created] ✅ Block created:', {
+      subtask_id,
+      block_id: block.id,
+      block_type: block.type,
+      tool_name: block.tool_name,
+      block,
+    })
+
+    // Find task ID from subtask
+    const taskId = subtaskToTaskRef.current.get(subtask_id)
+    if (!taskId) {
+      console.warn('[ChatStreamContext][block_created] Unknown subtask:', subtask_id)
+      return
+    }
+
+    const aiMessageId = generateMessageId('ai', subtask_id)
+
+    // Add the block to the AI message's blocks array
+    setStreamStates(prev => {
+      const newMap = new Map(prev)
+      const currentState = newMap.get(taskId)
+      if (!currentState) {
+        console.warn('[ChatStreamContext][block_created] No state for task:', taskId)
+        return prev
+      }
+
+      const existingMessage = currentState.messages.get(aiMessageId)
+      if (!existingMessage) {
+        console.warn('[ChatStreamContext][block_created] AI message not found:', aiMessageId)
+        return prev
+      }
+
+      const newMessages = new Map(currentState.messages)
+      const currentBlocks = existingMessage.result?.blocks || []
+
+      newMessages.set(aiMessageId, {
+        ...existingMessage,
+        result: {
+          ...existingMessage.result,
+          blocks: [...currentBlocks, block as MessageBlock],
+        },
+      })
+
+      newMap.set(taskId, {
+        ...currentState,
+        messages: newMessages,
+      })
+      return newMap
+    })
+  }, [])
+
+  /**
+   * Handle chat:block_updated event from WebSocket
+   * This updates an existing block in the AI message's blocks array
+   */
+  const handleBlockUpdated = useCallback((data: ChatBlockUpdatedPayload) => {
+    const { subtask_id, block_id, content, tool_output, status } = data
+
+    console.log('[ChatStreamContext][block_updated] ✅ Block updated:', {
+      subtask_id,
+      block_id,
+      status,
+      has_content: !!content,
+      has_tool_output: tool_output !== undefined,
+    })
+
+    // Find task ID from subtask
+    const taskId = subtaskToTaskRef.current.get(subtask_id)
+    if (!taskId) {
+      console.warn('[ChatStreamContext][block_updated] Unknown subtask:', subtask_id)
+      return
+    }
+
+    const aiMessageId = generateMessageId('ai', subtask_id)
+
+    // Update the specific block in the AI message's blocks array
+    setStreamStates(prev => {
+      const newMap = new Map(prev)
+      const currentState = newMap.get(taskId)
+      if (!currentState) return prev
+
+      const existingMessage = currentState.messages.get(aiMessageId)
+      if (!existingMessage || !existingMessage.result?.blocks) {
+        console.warn(
+          '[ChatStreamContext][block_updated] AI message or blocks not found:',
+          aiMessageId
+        )
+        return prev
+      }
+
+      const newMessages = new Map(currentState.messages)
+      const updatedBlocks = existingMessage.result.blocks.map(block => {
+        if (block.id === block_id) {
+          return {
+            ...block,
+            ...(content !== undefined && { content }),
+            ...(tool_output !== undefined && { tool_output }),
+            ...(status !== undefined && { status }),
+          }
+        }
+        return block
+      })
+
+      newMessages.set(aiMessageId, {
+        ...existingMessage,
+        result: {
+          ...existingMessage.result,
+          blocks: updatedBlocks,
+        },
+      })
+
+      newMap.set(taskId, {
+        ...currentState,
+        messages: newMessages,
+      })
+      return newMap
+    })
+  }, [])
+
   // Register WebSocket event handlers
   useEffect(() => {
     const handlers: ChatEventHandlers = {
@@ -914,6 +1079,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       onChatError: handleChatError,
       onChatCancelled: handleChatCancelled,
       onChatMessage: handleChatMessage,
+      onBlockCreated: handleBlockCreated,
+      onBlockUpdated: handleBlockUpdated,
     }
 
     const cleanup = registerChatHandlers(handlers)
@@ -926,6 +1093,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     handleChatError,
     handleChatCancelled,
     handleChatMessage,
+    handleBlockCreated,
+    handleBlockUpdated,
   ])
 
   /**
@@ -2020,6 +2189,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         getStreamState,
         isTaskStreaming,
         getStreamingTaskIds,
+        streamStates,
         sendMessage,
         stopStream,
         resetStream,
