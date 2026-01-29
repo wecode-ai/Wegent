@@ -199,8 +199,9 @@ class ClaudeCodeAgent(Agent):
         self.is_silent_exit: bool = False
         self.silent_exit_reason: str = ""
 
-        # Config directory for Local mode (populated in initialize())
+        # Config directory and env config for Local mode (populated in initialize())
         self._claude_config_dir: str = ""
+        self._claude_env_config: Dict[str, Any] = {}
 
     def _set_git_env_variables(self, task_data: Dict[str, Any]) -> None:
         """
@@ -584,6 +585,7 @@ class ClaudeCodeAgent(Agent):
 
         # Store config directory for Local mode
         self._claude_config_dir = config_dir
+        self._claude_env_config = agent_config.get("env", {})
 
     def _create_claude_model(
         self, bot_config: Dict[str, Any], user_name: str = None, git_url: str = None
@@ -1080,6 +1082,12 @@ class ClaudeCodeAgent(Agent):
         # In Local mode, configure SDK to use task-specific config directory
         # to avoid modifying user's personal ~/.claude/ config
         if config.EXECUTOR_MODE == "local" and hasattr(self, "_claude_config_dir"):
+            # Pass env config (contains ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL, etc.)
+            if hasattr(self, "_claude_env_config") and self._claude_env_config:
+                existing_env = self.options.get("env", {})
+                merged_env = {**existing_env, **self._claude_env_config}
+                self.options["env"] = {k: str(v) for k, v in merged_env.items()}
+
             # Set CLAUDE_CONFIG_DIR env var to redirect all config reads/writes
             # This affects settings.json, claude.json, and skills locations
             env = self.options.get("env", {})
