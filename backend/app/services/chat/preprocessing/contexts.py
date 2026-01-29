@@ -925,15 +925,43 @@ def _prepare_kb_tools_from_contexts(
         f"{len(knowledge_base_ids)} knowledge bases: {knowledge_base_ids}"
     )
 
+    # Fetch KB configurations for injection (package mode)
+    # This follows the same pattern as context_window, injection_mode, etc.
+    kb_configs = {}
+    from app.services.knowledge.knowledge_service import KnowledgeService
+
+    for kb_id in knowledge_base_ids:
+        try:
+            kb_kind = KnowledgeService.get_knowledge_base(db, kb_id, user_id)
+            if kb_kind:
+                spec = kb_kind.json.get("spec", {})
+                kb_configs[kb_id] = {
+                    "maxCallsPerConversation": spec.get("maxCallsPerConversation", 10),
+                    "exemptCallsBeforeCheck": spec.get("exemptCallsBeforeCheck", 5),
+                    "name": spec.get("name", f"KB-{kb_id}"),
+                }
+        except Exception as e:
+            logger.warning(
+                f"[_prepare_kb_tools_from_contexts] Failed to fetch config for KB {kb_id}: {e}"
+            )
+            # Use defaults if fetch fails
+            kb_configs[kb_id] = {
+                "maxCallsPerConversation": 10,
+                "exemptCallsBeforeCheck": 5,
+                "name": f"KB-{kb_id}",
+            }
+
     # Import KnowledgeBaseTool
     from chat_shell.tools.builtin import KnowledgeBaseTool
 
     # Create KnowledgeBaseTool with the specified knowledge bases
+    # Inject kb_configs following same pattern as context_window, injection_mode
     kb_tool = KnowledgeBaseTool(
         knowledge_base_ids=knowledge_base_ids,
         user_id=user_id,
         db_session=db,
         user_subtask_id=user_subtask_id,
+        kb_configs=kb_configs,
     )
     extra_tools.append(kb_tool)
 

@@ -288,6 +288,11 @@ class ChatContext:
                 "skipping KB prompt enhancement"
             )
 
+        # Extract kb_configs from request metadata (injected by Backend)
+        kb_configs = (
+            self._request.metadata.get("kb_configs") if self._request.metadata else None
+        )
+
         result = await prepare_knowledge_base_tools(
             knowledge_base_ids=self._request.knowledge_base_ids,
             user_id=self._request.user_id,
@@ -298,6 +303,7 @@ class ChatContext:
             is_user_selected=self._request.is_user_selected_kb,
             document_ids=self._request.document_ids,
             context_window=context_window,
+            kb_configs=kb_configs,
             skip_prompt_enhancement=skip_prompt_enhancement,
         )
         add_span_event("kb_tools_prepared", {"tools_count": len(result[0])})

@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 TOKEN_WARNING_THRESHOLD = 0.70  # 70%: Strong warning but allow
 TOKEN_REJECT_THRESHOLD = 0.90  # 90%: Reject call
 
+# Token estimation heuristic (characters per token for ASCII text)
+TOKEN_CHARS_PER_TOKEN = 4  # ~4 chars/token for English, 1-2 for CJK
+
 # Default configuration values (used when KB spec doesn't specify)
 DEFAULT_MAX_CALLS_PER_CONVERSATION = 10
 DEFAULT_EXEMPT_CALLS_BEFORE_CHECK = 5
@@ -97,6 +100,14 @@ class KnowledgeBaseTool(BaseTool):
     # Current conversation messages for context calculation
     current_messages: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Knowledge base call limit configuration (injected at construction time)
+    # Maps KB ID to config: {"maxCallsPerConversation": int, "exemptCallsBeforeCheck": int, "name": str}
+    # Follows same injection pattern as context_window, injection_mode, etc.
+    kb_configs: Optional[Dict[int, Dict[str, Any]]] = Field(
+        default=None,
+        description="Knowledge base configurations (max calls, exempt calls, name) - injected by Backend/chat_shell",
+    )
+
     # Injection strategy instance (lazy initialized)
     _injection_strategy: Optional[InjectionStrategy] = PrivateAttr(default=None)
 
@@ -104,9 +115,6 @@ class KnowledgeBaseTool(BaseTool):
     # These are instance variables that persist across multiple tool calls in the same conversation
     _call_count: int = PrivateAttr(default=0)
     _accumulated_tokens: int = PrivateAttr(default=0)
-
-    # Knowledge base call limit configuration (fetched from KB spec)
-    _kb_configs: Optional[Dict[int, Dict[str, Any]]] = PrivateAttr(default=None)
 
     @property
     def injection_strategy(self) -> InjectionStrategy:
@@ -122,11 +130,22 @@ class KnowledgeBaseTool(BaseTool):
             )
         return self._injection_strategy
 
+    def _get_effective_context_window(self) -> int:
+        """Get effective context window size, using default if not provided.
+
+        Returns:
+            Context window size (uses InjectionStrategy.DEFAULT_CONTEXT_WINDOW if None)
+        """
+        return self.context_window or InjectionStrategy.DEFAULT_CONTEXT_WINDOW
+
     def _get_kb_limits(self) -> tuple[int, int]:
         """Get (max_calls, exempt_calls) for knowledge base tool calls.
 
         Returns limits for the first knowledge base in the list. If multiple KBs
         are configured, we use the first one's limits to keep behavior simple.
+
+        Configuration is injected at tool construction time (from Backend or chat_shell),
+        following the same pattern as context_window and injection_mode.
 
         Returns:
             Tuple of (max_calls_per_conversation, exempt_calls_before_check)
@@ -134,85 +153,34 @@ class KnowledgeBaseTool(BaseTool):
         if not self.knowledge_base_ids:
             return DEFAULT_MAX_CALLS_PER_CONVERSATION, DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
 
-        # Lazy load KB configs if not already loaded
-        if self._kb_configs is None:
-            self._kb_configs = self._fetch_kb_configs()
+        # Use injected config if available
+        if self.kb_configs:
+            first_kb_id = self.knowledge_base_ids[0]
+            kb_spec = self.kb_configs.get(first_kb_id, {})
 
-        # Use the first KB's configuration
-        first_kb_id = self.knowledge_base_ids[0]
-        kb_spec = self._kb_configs.get(first_kb_id, {})
-
-        max_calls = kb_spec.get(
-            "maxCallsPerConversation", DEFAULT_MAX_CALLS_PER_CONVERSATION
-        )
-        exempt_calls = kb_spec.get(
-            "exemptCallsBeforeCheck", DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
-        )
-
-        # Validate config
-        if exempt_calls >= max_calls:
-            logger.warning(
-                f"[KnowledgeBaseTool] Invalid KB config for KB {first_kb_id}: "
-                f"exempt_calls={exempt_calls} >= max_calls={max_calls}. Using defaults."
+            max_calls = kb_spec.get(
+                "maxCallsPerConversation", DEFAULT_MAX_CALLS_PER_CONVERSATION
             )
-            return DEFAULT_MAX_CALLS_PER_CONVERSATION, DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
-
-        return max_calls, exempt_calls
-
-    def _fetch_kb_configs(self) -> Dict[int, Dict[str, Any]]:
-        """Fetch configurations for all knowledge bases.
-
-        Returns:
-            Dictionary mapping KB IDs to their spec configurations
-        """
-        configs = {}
-
-        try:
-            # Try to import from backend if available (package mode)
-            from app.services.knowledge.knowledge_service import KnowledgeService
-
-            for kb_id in self.knowledge_base_ids:
-                try:
-                    kb_kind = KnowledgeService.get_knowledge_base(
-                        self.db_session, kb_id, self.user_id
-                    )
-                    if kb_kind:
-                        spec = kb_kind.json.get("spec", {})
-                        configs[kb_id] = {
-                            "maxCallsPerConversation": spec.get(
-                                "maxCallsPerConversation",
-                                DEFAULT_MAX_CALLS_PER_CONVERSATION,
-                            ),
-                            "exemptCallsBeforeCheck": spec.get(
-                                "exemptCallsBeforeCheck",
-                                DEFAULT_EXEMPT_CALLS_BEFORE_CHECK,
-                            ),
-                            "name": spec.get("name", f"KB-{kb_id}"),
-                        }
-                except Exception as e:
-                    logger.warning(
-                        f"[KnowledgeBaseTool] Failed to fetch config for KB {kb_id}: {e}"
-                    )
-                    configs[kb_id] = {
-                        "maxCallsPerConversation": DEFAULT_MAX_CALLS_PER_CONVERSATION,
-                        "exemptCallsBeforeCheck": DEFAULT_EXEMPT_CALLS_BEFORE_CHECK,
-                        "name": f"KB-{kb_id}",
-                    }
-
-        except ImportError:
-            # Backend not available, all KBs use defaults
-            # In HTTP mode, we could fetch via API, but for simplicity using defaults
-            logger.info(
-                "[KnowledgeBaseTool] Backend not available, using default KB configs"
+            exempt_calls = kb_spec.get(
+                "exemptCallsBeforeCheck", DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
             )
-            for kb_id in self.knowledge_base_ids:
-                configs[kb_id] = {
-                    "maxCallsPerConversation": DEFAULT_MAX_CALLS_PER_CONVERSATION,
-                    "exemptCallsBeforeCheck": DEFAULT_EXEMPT_CALLS_BEFORE_CHECK,
-                    "name": f"KB-{kb_id}",
-                }
 
-        return configs
+            # Validate config
+            if exempt_calls >= max_calls:
+                logger.warning(
+                    f"[KnowledgeBaseTool] Invalid KB config for KB {first_kb_id}: "
+                    f"exempt_calls={exempt_calls} >= max_calls={max_calls}. Using defaults."
+                )
+                return (
+                    DEFAULT_MAX_CALLS_PER_CONVERSATION,
+                    DEFAULT_EXEMPT_CALLS_BEFORE_CHECK,
+                )
+
+            return max_calls, exempt_calls
+
+        # Fallback to defaults if no config injected
+        logger.debug("[KnowledgeBaseTool] No kb_configs injected, using default limits")
+        return DEFAULT_MAX_CALLS_PER_CONVERSATION, DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
 
     def _estimate_tokens_from_content(self, content: str) -> int:
         """Estimate tokens from text content.
@@ -229,7 +197,7 @@ class KnowledgeBaseTool(BaseTool):
         """
         # Simple heuristic - could be improved with tiktoken for better accuracy
         # or by detecting CJK characters and adjusting the ratio
-        return len(content) // 4
+        return len(content) // TOKEN_CHARS_PER_TOKEN
 
     def _check_call_limits(
         self, query: str
@@ -269,11 +237,8 @@ class KnowledgeBaseTool(BaseTool):
         # Check 2: Token threshold (only after exempt period)
         if current_call > exempt_calls:
             # Calculate current token usage percentage
-            usage_percent = (
-                self._accumulated_tokens / self.context_window
-                if self.context_window
-                else 0.0
-            )
+            effective_context_window = self._get_effective_context_window()
+            usage_percent = self._accumulated_tokens / effective_context_window
 
             # Token >= 90%: Reject (most severe)
             if usage_percent >= TOKEN_REJECT_THRESHOLD:
@@ -297,7 +262,7 @@ class KnowledgeBaseTool(BaseTool):
                     kb_name,
                     query[:50],
                     self._accumulated_tokens,
-                    self.context_window or 0,
+                    effective_context_window,
                     usage_percent * 100,
                 )
                 return True, None, "strong"
@@ -312,7 +277,7 @@ class KnowledgeBaseTool(BaseTool):
                     kb_name,
                     query[:50],
                     self._accumulated_tokens,
-                    self.context_window or 0,
+                    effective_context_window,
                     usage_percent * 100,
                 )
                 return (
@@ -336,11 +301,14 @@ class KnowledgeBaseTool(BaseTool):
         if not self.knowledge_base_ids:
             return "Unknown"
 
-        if self._kb_configs is None:
-            self._kb_configs = self._fetch_kb_configs()
-
         first_kb_id = self.knowledge_base_ids[0]
-        return self._kb_configs.get(first_kb_id, {}).get("name", f"KB-{first_kb_id}")
+
+        # Use injected config if available
+        if self.kb_configs:
+            return self.kb_configs.get(first_kb_id, {}).get("name", f"KB-{first_kb_id}")
+
+        # Fallback to ID-based name
+        return f"KB-{first_kb_id}"
 
     def _format_rejection_message(self, rejection_reason: str, max_calls: int) -> str:
         """Format rejection message based on reason.
@@ -352,11 +320,8 @@ class KnowledgeBaseTool(BaseTool):
         Returns:
             JSON string with rejection message
         """
-        usage_percent = (
-            (self._accumulated_tokens / self.context_window * 100)
-            if self.context_window
-            else 0.0
-        )
+        effective_context_window = self._get_effective_context_window()
+        usage_percent = (self._accumulated_tokens / effective_context_window) * 100
 
         if rejection_reason == "max_calls_exceeded":
             message = (
@@ -389,6 +354,9 @@ class KnowledgeBaseTool(BaseTool):
     ) -> str:
         """Build call statistics header with optional warning.
 
+        NOTE: This method should be called AFTER incrementing self._call_count,
+        as it uses the updated count to display the current call number.
+
         Args:
             warning_level: "normal" for default check period warning,
                           "strong" for high token usage warning,
@@ -399,18 +367,16 @@ class KnowledgeBaseTool(BaseTool):
             Formatted header string (prepended to search results)
         """
         max_calls, exempt_calls = self._get_kb_limits()
-        current_call = self._call_count + 1  # After this call completes
+        # Use self._call_count directly (caller already incremented it)
+        current_call = self._call_count
 
         header = f"[Knowledge Base Search - Call {current_call}/{max_calls}]\n"
         header += f"Retrieved {chunks_count} chunks from knowledge base.\n"
 
         if warning_level == "strong":
             # Strong warning: Token >= 70%
-            usage_percent = (
-                (self._accumulated_tokens / self.context_window * 100)
-                if self.context_window
-                else 0.0
-            )
+            effective_context_window = self._get_effective_context_window()
+            usage_percent = (self._accumulated_tokens / effective_context_window) * 100
             header += (
                 f"\n🚨 Strong Warning: Knowledge base content has consumed {usage_percent:.1f}% "
                 f"of the context window.\n"
