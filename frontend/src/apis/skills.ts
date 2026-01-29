@@ -284,6 +284,16 @@ export function formatFileSize(bytes?: number): string {
 // ============================================================================
 
 /**
+ * Skill source information for git-imported skills
+ */
+export interface SkillSource {
+  type: 'upload' | 'git'
+  repo_url?: string
+  skill_path?: string
+  imported_at?: string
+}
+
+/**
  * Unified skill response type
  */
 export interface UnifiedSkill {
@@ -301,6 +311,8 @@ export interface UnifiedSkill {
   is_active: boolean
   is_public: boolean
   user_id: number // ID of the user who uploaded this skill
+  /** Source information for git-imported skills */
+  source?: SkillSource
   created_at?: string
   updated_at?: string
 }
@@ -703,4 +715,358 @@ export function parseSkillReferenceError(errorMessage: string): SkillReferenceEr
     // Not a JSON error
   }
   return null
+}
+
+// ============================================================================
+// Git Repository Import API
+// ============================================================================
+
+/**
+ * Skill information found in a Git repository
+ */
+export interface GitSkillInfo {
+  path: string
+  name: string
+  description: string
+  version?: string
+  author?: string
+  display_name?: string
+  tags?: string[]
+}
+
+/**
+ * Response from scanning a Git repository
+ */
+export interface GitScanResponse {
+  repo_url: string
+  skills: GitSkillInfo[]
+  total_count: number
+}
+
+/**
+ * Request to import skills from a Git repository
+ */
+export interface GitImportRequest {
+  repo_url: string
+  skill_paths: string[]
+  namespace?: string
+  overwrite_names?: string[]
+}
+
+/**
+ * Successfully imported skill
+ */
+export interface GitImportSuccessItem {
+  name: string
+  path: string
+  id: number
+  action: 'created' | 'updated'
+}
+
+/**
+ * Skipped skill (due to name conflict)
+ */
+export interface GitImportSkippedItem {
+  name: string
+  path: string
+  reason: string
+}
+
+/**
+ * Failed skill import
+ */
+export interface GitImportFailedItem {
+  name: string
+  path: string
+  error: string
+}
+
+/**
+ * Response from importing skills from a Git repository
+ */
+export interface GitImportResponse {
+  success: GitImportSuccessItem[]
+  skipped: GitImportSkippedItem[]
+  failed: GitImportFailedItem[]
+  total_success: number
+  total_skipped: number
+  total_failed: number
+}
+
+/**
+ * Scan a Git repository for skills (personal skills)
+ */
+export async function scanGitRepoSkills(repoUrl: string): Promise<GitScanResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/git/scan?repo_url=${encodeURIComponent(repoUrl)}`
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    try {
+      const json = JSON.parse(error)
+      throw new Error(json.detail || 'Failed to scan repository')
+    } catch {
+      throw new Error(error || 'Failed to scan repository')
+    }
+  }
+
+  return response.json()
+}
+
+/**
+ * Import skills from a Git repository (personal skills)
+ */
+export async function importGitRepoSkills(request: GitImportRequest): Promise<GitImportResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/git/import`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    try {
+      const json = JSON.parse(error)
+      throw new Error(json.detail || 'Failed to import skills')
+    } catch {
+      throw new Error(error || 'Failed to import skills')
+    }
+  }
+
+  return response.json()
+}
+
+/**
+ * Scan a Git repository for skills (public skills, admin only)
+ */
+export async function scanGitRepoPublicSkills(repoUrl: string): Promise<GitScanResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/public/git/scan?repo_url=${encodeURIComponent(repoUrl)}`
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    try {
+      const json = JSON.parse(error)
+      throw new Error(json.detail || 'Failed to scan repository')
+    } catch {
+      throw new Error(error || 'Failed to scan repository')
+    }
+  }
+
+  return response.json()
+}
+
+/**
+ * Import skills from a Git repository as public skills (admin only)
+ */
+export async function importGitRepoPublicSkills(
+  request: Omit<GitImportRequest, 'namespace'>
+): Promise<GitImportResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/public/git/import`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    try {
+      const json = JSON.parse(error)
+      throw new Error(json.detail || 'Failed to import skills')
+    } catch {
+      throw new Error(error || 'Failed to import skills')
+    }
+  }
+
+  return response.json()
+}
+
+// ============================================================================
+// Git Skill Update API
+// ============================================================================
+
+/**
+ * Response from updating a skill from Git
+ */
+export interface UpdateFromGitResponse {
+  id: number
+  name: string
+  message: string
+}
+
+/**
+ * Update a skill from its original Git repository
+ * Only works for skills that were imported from Git (source.type === 'git')
+ */
+export async function updateSkillFromGit(skillId: number): Promise<UpdateFromGitResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}/update-from-git`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    try {
+      const json = JSON.parse(error)
+      throw new Error(json.detail || 'Failed to update skill from Git')
+    } catch {
+      throw new Error(error || 'Failed to update skill from Git')
+    }
+  }
+
+  return response.json()
+}
+
+/**
+ * Update a public skill from its original Git repository (Admin only)
+ * Only works for skills that were imported from Git (source.type === 'git')
+ */
+export async function updatePublicSkillFromGit(skillId: number): Promise<UpdateFromGitResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/public/${skillId}/update-from-git`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    try {
+      const json = JSON.parse(error)
+      throw new Error(json.detail || 'Failed to update public skill from Git')
+    } catch {
+      throw new Error(error || 'Failed to update public skill from Git')
+    }
+  }
+
+  return response.json()
+}
+
+// ============================================================================
+// Git Skill Batch Update API
+// ============================================================================
+
+/**
+ * Request to batch update skills from their Git repository sources
+ */
+export interface GitBatchUpdateRequest {
+  skill_ids: number[]
+}
+
+/**
+ * Successfully updated skill information
+ */
+export interface GitBatchUpdateSuccessItem {
+  id: number
+  name: string
+  version?: string
+  source?: {
+    type: string
+    repo_url?: string
+    skill_path?: string
+    imported_at?: string
+  }
+}
+
+/**
+ * Skipped skill information (not found, not from git, etc.)
+ */
+export interface GitBatchUpdateSkippedItem {
+  id: number
+  name?: string
+  reason: string
+}
+
+/**
+ * Failed skill update information
+ */
+export interface GitBatchUpdateFailedItem {
+  id: number
+  name?: string
+  error: string
+}
+
+/**
+ * Response from batch updating skills from Git repositories
+ */
+export interface GitBatchUpdateResponse {
+  success: GitBatchUpdateSuccessItem[]
+  skipped: GitBatchUpdateSkippedItem[]
+  failed: GitBatchUpdateFailedItem[]
+  total_success: number
+  total_skipped: number
+  total_failed: number
+}
+
+/**
+ * Batch update multiple skills from their original Git repository sources.
+ *
+ * This function optimizes the update process by:
+ * 1. Grouping skills by their source repository
+ * 2. Downloading each repository only once
+ * 3. Updating all skills from the same repository in a single pass
+ *
+ * This is more efficient than calling updateSkillFromGit for each skill individually,
+ * especially when multiple skills come from the same repository.
+ *
+ * @param skillIds - Array of skill IDs to update
+ * @returns GitBatchUpdateResponse with success, skipped, and failed lists
+ */
+export async function batchUpdateSkillsFromGit(
+  skillIds: number[]
+): Promise<GitBatchUpdateResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/git/batch-update`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ skill_ids: skillIds }),
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    try {
+      const json = JSON.parse(error)
+      throw new Error(json.detail || 'Failed to batch update skills from Git')
+    } catch {
+      throw new Error(error || 'Failed to batch update skills from Git')
+    }
+  }
+
+  return response.json()
 }
