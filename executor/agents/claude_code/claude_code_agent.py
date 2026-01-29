@@ -26,6 +26,7 @@ from executor.agents.base import Agent
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
 from executor.agents.claude_code.response_processor import process_response
 from executor.config import config
+from executor.services.attachment_downloader import get_api_base_url
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
 from executor.utils.mcp_utils import (
@@ -1556,10 +1557,8 @@ class ClaudeCodeAgent(Agent):
 
             Path(skills_dir).mkdir(parents=True, exist_ok=True)
 
-            # Get API base URL and auth token from task_data
-            api_base_url = os.getenv(
-                "TASK_API_DOMAIN", "http://wegent-backend:8000"
-            ).rstrip("/")
+            # Get API base URL (handles local vs docker mode) and auth token
+            api_base_url = get_api_base_url()
             auth_token = self.task_data.get("auth_token")
 
             if not auth_token:
