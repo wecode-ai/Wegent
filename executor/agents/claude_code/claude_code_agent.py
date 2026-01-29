@@ -1565,7 +1565,7 @@ class ClaudeCodeAgent(Agent):
                 logger.warning("No auth token available, cannot download skills")
                 return
 
-            logger.info(f"Auth token available for skills download")
+            logger.info(f"Skills download: api_base_url={api_base_url}")
 
             # Download each skill
             import io

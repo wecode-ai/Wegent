@@ -112,6 +112,10 @@ class AttachmentDownloader:
             logger.debug("No attachments to download")
             return AttachmentDownloadResult(success=[], failed=[])
 
+        logger.info(
+            f"Downloading {len(attachments)} attachments, api_base_url={self.api_base_url}"
+        )
+
         # Create attachments directory
         attachments_dir = self.get_attachments_dir()
         Path(attachments_dir).mkdir(parents=True, exist_ok=True)

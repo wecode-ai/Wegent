@@ -387,6 +387,9 @@ class LocalRunner:
                 "websocket_progress_reporter",
                 "task_executor",
                 "executor.config.config_loader",
+                # Agent and download loggers
+                "claude_code_agent",
+                "executor.services.attachment_downloader",
             ]
             for name in logger_names:
                 log = logging.getLogger(name)
