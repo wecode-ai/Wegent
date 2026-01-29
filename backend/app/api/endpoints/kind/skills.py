@@ -18,9 +18,18 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.models.kind import Kind
 from app.models.user import User
-from app.schemas.kind import Skill, SkillList
+from app.schemas.kind import (
+    GitBatchUpdateRequest,
+    GitBatchUpdateResponse,
+    GitImportRequest,
+    GitImportResponse,
+    GitScanResponse,
+    Skill,
+    SkillList,
+)
 from app.services.adapters.public_skill import public_skill_service
 from app.services.adapters.skill_kinds import skill_kinds_service
+from app.services.git_skill_service import git_skill_service
 
 router = APIRouter()
 
@@ -59,6 +68,15 @@ class InvokeSkillResponse(BaseModel):
     prompt: str
 
 
+class SkillSourceResponse(BaseModel):
+    """Schema for skill source information"""
+
+    type: str = "upload"  # 'upload' or 'git'
+    repo_url: Optional[str] = None
+    skill_path: Optional[str] = None
+    imported_at: Optional[str] = None
+
+
 class UnifiedSkillResponse(BaseModel):
     """Schema for unified skill list item"""
 
@@ -75,6 +93,9 @@ class UnifiedSkillResponse(BaseModel):
     is_active: bool
     is_public: bool
     user_id: int  # ID of the user who uploaded this skill
+    source: Optional[SkillSourceResponse] = (
+        None  # Source information for git-imported skills
+    )
     created_at: Any
     updated_at: Any
 
@@ -195,6 +216,165 @@ def list_skills(
         db=db, user_id=current_user.id, skip=skip, limit=limit, namespace=namespace
     )
     return skills
+
+
+# ============================================================================
+# Git Repository Import Endpoints (Personal Skills)
+# NOTE: Static routes must be defined BEFORE dynamic routes like /{skill_id}
+# ============================================================================
+
+
+@router.get("/git/scan", response_model=GitScanResponse)
+def scan_git_repository(
+    repo_url: str = Query(..., description="Git repository URL"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Scan a Git repository for skills.
+
+    Supports GitHub, GitLab, Gitee, and Gitea platforms.
+    Only public repositories are supported.
+
+    Returns a list of skills found in the repository (directories containing SKILL.md).
+    """
+    skills = git_skill_service.scan_repository(repo_url)
+
+    return GitScanResponse(
+        repo_url=repo_url,
+        skills=[
+            {
+                "path": s.path,
+                "name": s.name,
+                "description": s.description,
+                "version": s.version,
+                "author": s.author,
+                "display_name": s.display_name,
+                "tags": s.tags,
+            }
+            for s in skills
+        ],
+        total_count=len(skills),
+    )
+
+
+@router.post("/git/import", response_model=GitImportResponse)
+def import_from_git_repository(
+    request: GitImportRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Import selected skills from a Git repository.
+
+    Supports GitHub, GitLab, Gitee, and Gitea platforms.
+    Only public repositories are supported.
+
+    Skills are imported to the user's personal namespace by default.
+    If a skill with the same name already exists:
+    - If the name is in overwrite_names, the existing skill will be updated
+    - Otherwise, the skill will be skipped
+    """
+    result = git_skill_service.import_skills(
+        repo_url=request.repo_url,
+        skill_paths=request.skill_paths,
+        namespace=request.namespace,
+        user_id=current_user.id,
+        overwrite_names=request.overwrite_names,
+        db=db,
+    )
+
+    return GitImportResponse(
+        success=[
+            {
+                "name": s["name"],
+                "path": s["path"],
+                "id": s["id"],
+                "action": s["action"],
+            }
+            for s in result.success
+        ],
+        skipped=[
+            {
+                "name": s["name"],
+                "path": s["path"],
+                "reason": s["reason"],
+            }
+            for s in result.skipped
+        ],
+        failed=[
+            {
+                "name": s["name"],
+                "path": s["path"],
+                "error": s["error"],
+            }
+            for s in result.failed
+        ],
+        total_success=len(result.success),
+        total_skipped=len(result.skipped),
+        total_failed=len(result.failed),
+    )
+
+
+@router.post("/git/batch-update", response_model=GitBatchUpdateResponse)
+def batch_update_skills_from_git(
+    request: GitBatchUpdateRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Batch update multiple skills from their original Git repository sources.
+
+    This endpoint optimizes the update process by:
+    1. Grouping skills by their source repository
+    2. Downloading each repository only once
+    3. Updating all skills from the same repository in a single pass
+
+    This is more efficient than calling update-from-git for each skill individually,
+    especially when multiple skills come from the same repository.
+
+    Only skills that were imported from Git (source.type === 'git') can be updated.
+    Skills that don't exist, are not from Git, or have incomplete source info will be skipped.
+
+    Returns:
+        GitBatchUpdateResponse with success, skipped, and failed lists
+    """
+    result = git_skill_service.batch_update_skills_from_git(
+        skill_ids=request.skill_ids,
+        user_id=current_user.id,
+        db=db,
+    )
+
+    return GitBatchUpdateResponse(
+        success=[
+            {
+                "id": s["id"],
+                "name": s["name"],
+                "version": s.get("version"),
+                "source": s.get("source"),
+            }
+            for s in result.success
+        ],
+        skipped=[
+            {
+                "id": s["id"],
+                "name": s.get("name"),
+                "reason": s["reason"],
+            }
+            for s in result.skipped
+        ],
+        failed=[
+            {
+                "id": s["id"],
+                "name": s.get("name"),
+                "error": s["error"],
+            }
+            for s in result.failed
+        ],
+        total_success=len(result.success),
+        total_skipped=len(result.skipped),
+        total_failed=len(result.failed),
+    )
 
 
 # ============================================================================
@@ -511,6 +691,103 @@ def get_public_skill_content(
 
 
 # ============================================================================
+# Public Skill Git Import Endpoints (Admin only)
+# ============================================================================
+
+
+@router.get("/public/git/scan", response_model=GitScanResponse)
+def scan_git_repository_for_public(
+    repo_url: str = Query(..., description="Git repository URL"),
+    current_user: User = Depends(security.get_admin_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Scan a Git repository for skills (admin only, for public skill import).
+
+    Supports GitHub, GitLab, Gitee, and Gitea platforms.
+    Only public repositories are supported.
+
+    Returns a list of skills found in the repository (directories containing SKILL.md).
+    """
+    skills = git_skill_service.scan_repository(repo_url)
+
+    return GitScanResponse(
+        repo_url=repo_url,
+        skills=[
+            {
+                "path": s.path,
+                "name": s.name,
+                "description": s.description,
+                "version": s.version,
+                "author": s.author,
+                "display_name": s.display_name,
+                "tags": s.tags,
+            }
+            for s in skills
+        ],
+        total_count=len(skills),
+    )
+
+
+@router.post("/public/git/import", response_model=GitImportResponse)
+def import_from_git_repository_for_public(
+    request: GitImportRequest,
+    current_user: User = Depends(security.get_admin_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Import selected skills from a Git repository as public skills (admin only).
+
+    Supports GitHub, GitLab, Gitee, and Gitea platforms.
+    Only public repositories are supported.
+
+    Skills are imported as public skills (user_id=0).
+    If a skill with the same name already exists:
+    - If the name is in overwrite_names, the existing skill will be updated
+    - Otherwise, the skill will be skipped
+    """
+    result = git_skill_service.import_skills(
+        repo_url=request.repo_url,
+        skill_paths=request.skill_paths,
+        namespace="default",  # Public skills always use default namespace
+        user_id=0,  # Public skill
+        overwrite_names=request.overwrite_names,
+        db=db,
+    )
+
+    return GitImportResponse(
+        success=[
+            {
+                "name": s["name"],
+                "path": s["path"],
+                "id": s["id"],
+                "action": s["action"],
+            }
+            for s in result.success
+        ],
+        skipped=[
+            {
+                "name": s["name"],
+                "path": s["path"],
+                "reason": s["reason"],
+            }
+            for s in result.skipped
+        ],
+        failed=[
+            {
+                "name": s["name"],
+                "path": s["path"],
+                "error": s["error"],
+            }
+            for s in result.failed
+        ],
+        total_success=len(result.success),
+        total_skipped=len(result.skipped),
+        total_failed=len(result.failed),
+    )
+
+
+# ============================================================================
 # Unified Skill Endpoints (User + Public)
 # NOTE: Static routes must be defined BEFORE dynamic routes like /{skill_id}
 # ============================================================================
@@ -583,6 +860,31 @@ def list_unified_skills(
         for skill in user_skills_list.items:
             if skill.metadata.name not in user_skill_names:
                 user_skill_names.add(skill.metadata.name)
+                # Extract source information if available
+                source_info = None
+                if hasattr(skill.spec, "source") and skill.spec.source:
+                    source_info = {
+                        "type": (
+                            skill.spec.source.type
+                            if hasattr(skill.spec.source, "type")
+                            else "upload"
+                        ),
+                        "repo_url": (
+                            skill.spec.source.repo_url
+                            if hasattr(skill.spec.source, "repo_url")
+                            else None
+                        ),
+                        "skill_path": (
+                            skill.spec.source.skill_path
+                            if hasattr(skill.spec.source, "skill_path")
+                            else None
+                        ),
+                        "imported_at": (
+                            skill.spec.source.imported_at
+                            if hasattr(skill.spec.source, "imported_at")
+                            else None
+                        ),
+                    }
                 user_skills.append(
                     {
                         "id": int(skill.metadata.labels.get("id", 0)),
@@ -598,6 +900,7 @@ def list_unified_skills(
                         "is_active": True,
                         "is_public": False,
                         "user_id": int(skill.metadata.labels.get("user_id", 0)),
+                        "source": source_info,
                         "created_at": None,
                         "updated_at": None,
                     }
@@ -782,6 +1085,29 @@ def remove_single_skill_reference(
     """
     result = skill_kinds_service.remove_single_skill_reference(
         db=db, skill_id=skill_id, ghost_id=ghost_id, user_id=current_user.id
+    )
+    return result
+
+
+@router.post("/{skill_id}/update-from-git", response_model=Dict[str, Any])
+def update_skill_from_git(
+    skill_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Update a skill from its original Git repository source.
+
+    This endpoint is only available for skills that were imported from a Git repository.
+    It will re-download the skill from the original repository and update the local copy.
+
+    Returns:
+        Dict with updated skill info including id, name, version, and source
+    """
+    result = git_skill_service.update_skill_from_git(
+        skill_id=skill_id,
+        user_id=current_user.id,
+        db=db,
     )
     return result
 

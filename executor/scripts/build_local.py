@@ -192,6 +192,8 @@ def build_executable():
         "--hidden-import=starlette.types",
         "--hidden-import=sse_starlette",
         "--hidden-import=sse_starlette.sse",
+        # SSL certificates (needed for HTTPS connections)
+        "--collect-data=certifi",
         # Exclude packages not needed in local mode
         "--exclude-module=uvicorn",
         "--exclude-module=fastapi",

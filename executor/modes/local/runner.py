@@ -436,9 +436,25 @@ class LocalRunner:
             logger.warning(f"Failed to setup file logging: {e}")
 
     def _cleanup_file_logging(self) -> None:
-        """Flush file logging handler on shutdown."""
+        """Flush and close file logging handler on shutdown."""
         if self._file_handler:
             try:
                 self._file_handler.flush()
+                self._file_handler.close()
+                # Remove handler from all loggers to prevent errors during shutdown
+                logger_names = [
+                    "local_runner",
+                    "websocket_client",
+                    "local_heartbeat",
+                    "local_handlers",
+                    "websocket_progress_reporter",
+                    "task_executor",
+                    "executor.config.config_loader",
+                    "claude_code_agent",
+                    "executor.services.attachment_downloader",
+                ]
+                for name in logger_names:
+                    log = logging.getLogger(name)
+                    log.removeHandler(self._file_handler)
             except Exception:
                 pass

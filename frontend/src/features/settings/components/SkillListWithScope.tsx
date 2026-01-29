@@ -15,6 +15,8 @@ import {
   removeSingleSkillReference,
   parseSkillReferenceError,
   ReferencedGhost,
+  updateSkillFromGit,
+  batchUpdateSkillsFromGit,
 } from '@/apis/skills'
 import { getGroup } from '@/apis/groups'
 import { Group } from '@/types/group'
@@ -30,7 +32,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Download, Trash2, Sparkles, Globe, Plus } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Progress } from '@/components/ui/progress'
+import { Download, Trash2, Sparkles, Globe, Plus, RefreshCw, GitBranch } from 'lucide-react'
 import { toast } from 'sonner'
 import SkillUploadModal from './skills/SkillUploadModal'
 import { SkillReferenceConflictDialog } from './skills/SkillReferenceConflictDialog'
@@ -53,6 +63,16 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
   const [deleting, setDeleting] = useState(false)
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
   const [currentGroup, setCurrentGroup] = useState<Group | null>(null)
+  const [updatingFromGitId, setUpdatingFromGitId] = useState<number | null>(null)
+  const [updatingAllFromGit, setUpdatingAllFromGit] = useState(false)
+  const [updateAllConfirmOpen, setUpdateAllConfirmOpen] = useState(false)
+  const [updateAllProgress, setUpdateAllProgress] = useState<{
+    total: number
+    current: number
+    currentSkillName: string
+    success: number
+    failed: number
+  } | null>(null)
 
   // Reference conflict dialog state
   const [referenceConflictOpen, setReferenceConflictOpen] = useState(false)
@@ -189,6 +209,92 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
     setDeleteDialogOpen(true)
   }
 
+  // Handle updating skill from Git repository
+  const handleUpdateFromGit = async (skill: UnifiedSkill) => {
+    if (!skill.source || skill.source.type !== 'git') return
+
+    setUpdatingFromGitId(skill.id)
+    try {
+      await updateSkillFromGit(skill.id)
+      toast.success(t('skills.success_update_from_git', { skillName: skill.name }))
+      loadSkills()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('skills.failed_update_from_git'))
+    } finally {
+      setUpdatingFromGitId(null)
+    }
+  }
+
+  // Get git skills for update all
+  const getGitSkills = () => {
+    return filteredSkills.filter(skill => !skill.is_public && skill.source?.type === 'git')
+  }
+
+  // Open confirm dialog for update all
+  const openUpdateAllConfirm = () => {
+    const gitSkills = getGitSkills()
+    if (gitSkills.length === 0) {
+      toast.info(t('skills.no_git_skills_to_update'))
+      return
+    }
+    setUpdateAllConfirmOpen(true)
+  }
+
+  // Handle updating all git-imported skills using batch API
+  const handleUpdateAllFromGit = async () => {
+    const gitSkills = getGitSkills()
+
+    if (gitSkills.length === 0) {
+      toast.info(t('skills.no_git_skills_to_update'))
+      return
+    }
+
+    // Close confirm dialog and show progress
+    setUpdateAllConfirmOpen(false)
+    setUpdatingAllFromGit(true)
+    setUpdateAllProgress({
+      total: gitSkills.length,
+      current: 0,
+      currentSkillName: t('skills.batch_updating'),
+      success: 0,
+      failed: 0,
+    })
+
+    try {
+      // Use batch update API - this groups skills by repository and downloads each repo only once
+      const skillIds = gitSkills.map(skill => skill.id)
+      const result = await batchUpdateSkillsFromGit(skillIds)
+
+      // Update progress with final results
+      setUpdateAllProgress({
+        total: gitSkills.length,
+        current: gitSkills.length,
+        currentSkillName: '',
+        success: result.total_success,
+        failed: result.total_failed + result.total_skipped,
+      })
+
+      // Show result toast
+      if (result.total_failed === 0 && result.total_skipped === 0) {
+        toast.success(t('skills.update_all_success', { count: result.total_success }))
+      } else {
+        toast.warning(
+          t('skills.update_all_partial', {
+            success: result.total_success,
+            failed: result.total_failed + result.total_skipped,
+          })
+        )
+      }
+
+      loadSkills()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('skills.failed_update_from_git'))
+    } finally {
+      setUpdatingAllFromGit(false)
+      setUpdateAllProgress(null)
+    }
+  }
+
   // Filter skills based on scope
   const filteredSkills = skills.filter(skill => {
     if (scope === 'personal') {
@@ -221,6 +327,11 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
     }
   }
 
+  // Check if there are any git-imported skills
+  const hasGitSkills = filteredSkills.some(
+    skill => !skill.is_public && skill.source?.type === 'git'
+  )
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -229,10 +340,24 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
           <h2 className="text-lg font-semibold text-text-primary">{t('skills.title')}</h2>
           <p className="text-sm text-text-secondary">{t('skills.description')}</p>
         </div>
-        <Button onClick={() => setUploadModalOpen(true)} size="sm">
-          <Plus className="w-4 h-4 mr-1" />
-          {t('skills.upload_skill')}
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Update All from Git button - only show if there are git-imported skills */}
+          {hasGitSkills && (
+            <Button
+              onClick={openUpdateAllConfirm}
+              size="sm"
+              variant="outline"
+              disabled={updatingAllFromGit}
+            >
+              <RefreshCw className={`w-4 h-4 mr-1 ${updatingAllFromGit ? 'animate-spin' : ''}`} />
+              {t('skills.update_all_from_git')}
+            </Button>
+          )}
+          <Button onClick={() => setUploadModalOpen(true)} size="sm">
+            <Plus className="w-4 h-4 mr-1" />
+            {t('skills.upload_skill')}
+          </Button>
+        </div>
       </div>
 
       {/* Skills list */}
@@ -295,10 +420,35 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
                 </p>
               )}
 
+              {/* Git source info */}
+              {skill.source?.type === 'git' && skill.source.repo_url && (
+                <div className="flex items-center gap-1.5 mb-3">
+                  <GitBranch className="w-3 h-3 text-text-muted" />
+                  <span className="text-xs text-text-muted truncate max-w-[200px]">
+                    {skill.source.repo_url}
+                  </span>
+                </div>
+              )}
+
               {/* Actions */}
               <div className="flex items-center gap-2 pt-2 border-t border-border">
                 {!skill.is_public && (
                   <>
+                    {/* Update from Git button - only show for git-imported skills */}
+                    {skill.source?.type === 'git' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleUpdateFromGit(skill)}
+                        disabled={updatingFromGitId === skill.id}
+                        className="text-text-secondary hover:text-text-primary"
+                        title={t('skills.update_from_git')}
+                      >
+                        <RefreshCw
+                          className={`w-4 h-4 ${updatingFromGitId === skill.id ? 'animate-spin' : ''}`}
+                        />
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -369,6 +519,78 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
           onDeleteSuccess={handleDeleteSuccess}
         />
       )}
+
+      {/* Update All Confirmation Dialog */}
+      <AlertDialog open={updateAllConfirmOpen} onOpenChange={setUpdateAllConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('skills.update_all_confirm_title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('skills.update_all_confirm_message', { count: getGitSkills().length })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('actions.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleUpdateAllFromGit}
+              className="bg-primary text-white hover:bg-primary/90"
+            >
+              {t('actions.confirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Update All Progress Dialog */}
+      <Dialog open={updatingAllFromGit} onOpenChange={() => {}}>
+        <DialogContent className="sm:max-w-md" hideCloseButton>
+          <DialogHeader>
+            <DialogTitle>{t('skills.update_all_progress_title')}</DialogTitle>
+            <DialogDescription>{t('skills.update_all_progress_description')}</DialogDescription>
+          </DialogHeader>
+          {updateAllProgress && (
+            <div className="space-y-4 py-4">
+              {/* Progress bar */}
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm text-text-secondary">
+                  <span>
+                    {updateAllProgress.current} / {updateAllProgress.total}
+                  </span>
+                  <span>
+                    {Math.round((updateAllProgress.current / updateAllProgress.total) * 100)}%
+                  </span>
+                </div>
+                <Progress
+                  value={(updateAllProgress.current / updateAllProgress.total) * 100}
+                  className="h-2"
+                />
+              </div>
+
+              {/* Current skill name */}
+              {updateAllProgress.currentSkillName && (
+                <div className="flex items-center gap-2 text-sm">
+                  <RefreshCw className="w-4 h-4 animate-spin text-primary" />
+                  <span className="text-text-secondary truncate">
+                    {t('skills.updating_skill', { name: updateAllProgress.currentSkillName })}
+                  </span>
+                </div>
+              )}
+
+              {/* Success/Failed counts */}
+              <div className="flex gap-4 text-sm">
+                <span className="text-green-600">
+                  ✓ {t('skills.update_success_count', { count: updateAllProgress.success })}
+                </span>
+                {updateAllProgress.failed > 0 && (
+                  <span className="text-red-500">
+                    ✗ {t('skills.update_failed_count', { count: updateAllProgress.failed })}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

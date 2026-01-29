@@ -371,9 +371,7 @@ class WebSocketClient:
                 "device_id": self.device_id,
                 "name": self.device_name,
             }
-            logger.info(
-                f"Sending device:register to /local-executor: {register_data}"
-            )
+            logger.info(f"Sending device:register to /local-executor: {register_data}")
 
             response = await self.sio.call(
                 "device:register",
@@ -420,7 +418,9 @@ class WebSocketClient:
 
         try:
             heartbeat_data = {"device_id": self.device_id}
-            logger.debug(f"Sending device:heartbeat to /local-executor: {heartbeat_data}")
+            logger.debug(
+                f"Sending device:heartbeat to /local-executor: {heartbeat_data}"
+            )
             response = await self.sio.call(
                 "device:heartbeat",
                 heartbeat_data,
