@@ -271,7 +271,7 @@ class KnowledgeBaseTool(BaseTool):
                 else 0.0
             )
 
-            # Token >= 90%: Reject
+            # Token >= 90%: Reject (most severe)
             if usage_percent >= TOKEN_REJECT_THRESHOLD:
                 logger.warning(
                     "[KnowledgeBaseTool] Call REJECTED | Reason: token_limit_exceeded | "
@@ -283,10 +283,10 @@ class KnowledgeBaseTool(BaseTool):
                 )
                 return False, "token_limit_exceeded", None
 
-            # Token >= 70%: Strong warning but allow
+            # Token >= 70%: Strong warning (stricter than default warning)
             elif usage_percent >= TOKEN_WARNING_THRESHOLD:
                 logger.warning(
-                    "[KnowledgeBaseTool] Call %d/%d (check period) | KB: %s | Query: %s | "
+                    "[KnowledgeBaseTool] Call %d/%d (check period, high token usage) | KB: %s | Query: %s | "
                     "Token: %d/%d (%.1f%%, threshold: 70%%) | Status: allowed_with_strong_warning",
                     current_call,
                     max_calls,
@@ -298,11 +298,11 @@ class KnowledgeBaseTool(BaseTool):
                 )
                 return True, None, "strong"
 
-            # Token < 70%: Allow without warning
+            # Token < 70%: Default warning for check period (gentler warning)
             else:
                 logger.info(
-                    "[KnowledgeBaseTool] Call %d/%d (check period) | KB: %s | Query: %s | "
-                    "Token: %d/%d (%.1f%%) | Status: allowed",
+                    "[KnowledgeBaseTool] Call %d/%d (check period, normal token usage) | KB: %s | Query: %s | "
+                    "Token: %d/%d (%.1f%%) | Status: allowed_with_warning",
                     current_call,
                     max_calls,
                     kb_name,
@@ -311,7 +311,11 @@ class KnowledgeBaseTool(BaseTool):
                     self.context_window or 0,
                     usage_percent * 100,
                 )
-                return True, None, None
+                return (
+                    True,
+                    None,
+                    "normal",
+                )  # Return "normal" warning level instead of None
 
         # Exempt period: Allow without checks
         logger.info(
@@ -382,7 +386,9 @@ class KnowledgeBaseTool(BaseTool):
         """Build call statistics header with optional warning.
 
         Args:
-            warning_level: "strong" if warning needed, None otherwise
+            warning_level: "normal" for default check period warning,
+                          "strong" for high token usage warning,
+                          None for exempt period
             chunks_count: Number of chunks retrieved
 
         Returns:
@@ -395,6 +401,7 @@ class KnowledgeBaseTool(BaseTool):
         header += f"Retrieved {chunks_count} chunks from knowledge base.\n"
 
         if warning_level == "strong":
+            # Strong warning: Token >= 70%
             usage_percent = (
                 (self._accumulated_tokens / self.context_window * 100)
                 if self.context_window
@@ -404,6 +411,12 @@ class KnowledgeBaseTool(BaseTool):
                 f"\n🚨 Strong Warning: Knowledge base content has consumed {usage_percent:.1f}% "
                 f"of the context window.\n"
                 f"Please prioritize using existing information to answer the user's question.\n"
+            )
+        elif warning_level == "normal":
+            # Normal warning: Entered check period but token < 70%
+            header += (
+                f"\n⚠️ Note: You are now in the check period (calls {self._get_kb_limits()[1] + 1}-{max_calls}). "
+                f"Consider using the information you've already gathered before making additional searches.\n"
             )
 
         return header
