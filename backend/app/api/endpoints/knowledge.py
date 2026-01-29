@@ -70,7 +70,7 @@ from app.services.knowledge import (
 )
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
-from shared.telemetry.decorators import trace_sync
+from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -1806,6 +1806,7 @@ def list_document_chunks(
 
 
 @permission_router.post("/{kb_id}/permissions")
+@trace_async("add_knowledge_permissions", "knowledge.api")
 async def add_knowledge_permissions(
     kb_id: int,
     data: PermissionCreate,
@@ -1908,6 +1909,7 @@ async def add_knowledge_permissions(
 
 
 @permission_router.put("/{kb_id}/permissions/{user_id}")
+@trace_async("update_knowledge_permission", "knowledge.api")
 async def update_knowledge_permission(
     kb_id: int,
     user_id: int,
@@ -2050,6 +2052,7 @@ def get_document_chunk(
 
 
 @permission_router.delete("/{kb_id}/permissions/{user_id}")
+@trace_async("delete_knowledge_permission", "knowledge.api")
 async def delete_knowledge_permission(
     kb_id: int,
     user_id: int,
@@ -2177,6 +2180,7 @@ permission_request_router = APIRouter()
 
 
 @permission_request_router.post("", response_model=PermissionRequestResponse)
+@trace_async("create_permission_request", "knowledge.api")
 async def create_permission_request(
     data: PermissionRequestCreate,
     current_user: User = Depends(security.get_current_user),
@@ -2323,6 +2327,7 @@ def check_pending_request(
 @permission_request_router.post(
     "/{request_id}/process", response_model=PermissionRequestResponse
 )
+@trace_async("process_permission_request", "knowledge.api")
 async def process_permission_request(
     request_id: int,
     data: PermissionRequestProcess,
@@ -2424,11 +2429,12 @@ def cancel_permission_request(
 @permission_router.get(
     "/{kb_id}/permission-requests", response_model=PermissionRequestListResponse
 )
+@trace_sync("get_kb_permission_requests", "knowledge.api")
 def get_kb_permission_requests(
     kb_id: int,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-):
+) -> PermissionRequestListResponse:
     """
     Get pending permission requests for a specific knowledge base.
 
