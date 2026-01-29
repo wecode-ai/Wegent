@@ -150,7 +150,7 @@ def list_knowledge_bases(
     # Handle external scope (knowledge bases with explicit permission grants)
     if resource_scope == ResourceScope.EXTERNAL:
         from app.models.kind import Kind
-        from app.models.permission import Permission
+        from app.models.permission import Permission, PermissionStatus
 
         # Find KBs where user has explicit permission but is not the owner
         permission_subquery = (
@@ -158,7 +158,7 @@ def list_knowledge_bases(
             .filter(
                 Permission.resource_type == "knowledge_base",
                 Permission.user_id == current_user.id,
-                Permission.is_active == True,
+                Permission.status == PermissionStatus.APPROVED,
             )
             .subquery()
         )
@@ -1671,7 +1671,7 @@ def get_knowledge_permissions(
 
     Requires manage permission.
     """
-    from app.models.permission import Permission
+    from app.models.permission import Permission, PermissionStatus
     from app.services.knowledge.permission_service import can_manage_knowledge_base
 
     kb = (
@@ -1701,7 +1701,7 @@ def get_knowledge_permissions(
         .filter(
             Permission.kind_id == kb_id,
             Permission.resource_type == "knowledge_base",
-            Permission.is_active == True,
+            Permission.status == PermissionStatus.APPROVED,
         )
         .all()
     )
@@ -1744,7 +1744,7 @@ async def add_knowledge_permissions(
     Requires manage permission.
     Skips users who already have permissions or are the owner.
     """
-    from app.models.permission import Permission
+    from app.models.permission import Permission, PermissionStatus
     from app.schemas.knowledge_notification import KnowledgeNotificationType
     from app.services.knowledge.notification_service import (
         send_knowledge_permission_notification,
@@ -1787,7 +1787,7 @@ async def add_knowledge_permissions(
             Permission.kind_id == kb_id,
             Permission.resource_type == "knowledge_base",
             Permission.user_id.in_(data.user_ids),
-            Permission.is_active == True,
+            Permission.status == PermissionStatus.APPROVED,
         )
         .all()
     )
@@ -1846,7 +1846,7 @@ async def update_knowledge_permission(
 
     Requires manage permission.
     """
-    from app.models.permission import Permission
+    from app.models.permission import Permission, PermissionStatus
     from app.schemas.knowledge_notification import KnowledgeNotificationType
     from app.services.knowledge.notification_service import (
         send_knowledge_permission_notification,
@@ -1881,7 +1881,7 @@ async def update_knowledge_permission(
             Permission.kind_id == kb_id,
             Permission.resource_type == "knowledge_base",
             Permission.user_id == user_id,
-            Permission.is_active == True,
+            Permission.status == PermissionStatus.APPROVED,
         )
         .first()
     )
@@ -1924,7 +1924,7 @@ async def delete_knowledge_permission(
     """
     from datetime import datetime
 
-    from app.models.permission import Permission
+    from app.models.permission import Permission, PermissionStatus
     from app.schemas.knowledge_notification import KnowledgeNotificationType
     from app.services.knowledge.notification_service import (
         send_knowledge_permission_notification,
@@ -1966,7 +1966,7 @@ async def delete_knowledge_permission(
             Permission.kind_id == kb_id,
             Permission.resource_type == "knowledge_base",
             Permission.user_id == user_id,
-            Permission.is_active == True,
+            Permission.status == PermissionStatus.APPROVED,
         )
         .first()
     )
@@ -2194,7 +2194,7 @@ async def process_permission_request(
 
     Requires manage permission on the knowledge base.
     """
-    from app.models.permission_request import PermissionRequest
+    from app.models.permission import Permission, PermissionStatus
     from app.schemas.knowledge_notification import KnowledgeNotificationType
     from app.services.knowledge import permission_request_service
     from app.services.knowledge.notification_service import (
@@ -2203,21 +2203,19 @@ async def process_permission_request(
 
     try:
         # Get request info before processing for notification
-        request = (
-            db.query(PermissionRequest)
-            .filter(PermissionRequest.id == request_id)
-            .first()
+        permission = (
+            db.query(Permission).filter(Permission.id == request_id).first()
         )
-        if not request:
+        if not permission:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Permission request not found",
             )
 
-        applicant = db.query(User).filter(User.id == request.applicant_user_id).first()
+        applicant = db.query(User).filter(User.id == permission.user_id).first()
         kb = (
             db.query(Kind)
-            .filter(Kind.id == request.kind_id, Kind.kind == "KnowledgeBase")
+            .filter(Kind.id == permission.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
 
@@ -2236,7 +2234,7 @@ async def process_permission_request(
                 else KnowledgeNotificationType.PERMISSION_REQUEST_REJECTED
             )
             permission_type = (
-                data.granted_permission_type or request.requested_permission_type
+                data.granted_permission_type or permission.permission_type
                 if data.action == "approve"
                 else None
             )
