@@ -5,7 +5,7 @@
 """
 Device namespace for Socket.IO.
 
-This module implements the /device namespace for local device connections.
+This module implements the /local-executor namespace for local device connections.
 It handles device authentication, registration, heartbeat, and task execution.
 
 Events:
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 class DeviceNamespace(socketio.AsyncNamespace):
     """
-    Socket.IO namespace for local device connections.
+    Socket.IO namespace for local executor connections.
 
     Handles:
     - Authentication on connect (using user JWT token)
@@ -59,7 +59,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
     - Task execution routing
     """
 
-    def __init__(self, namespace: str = "/device"):
+    def __init__(self, namespace: str = "/local-executor"):
         """Initialize the device namespace."""
         super().__init__(namespace)
 
@@ -444,6 +444,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if not subtask_id:
             return {"error": "Missing subtask_id"}
 
+        logger.info(
+            f"[Device WS] task:progress received: subtask_id={subtask_id}, data={data}"
+        )
+
         db = SessionLocal()
         try:
             # Verify subtask belongs to this device
@@ -470,9 +474,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
             # NOTE: Device sends full accumulated content in result.value, but frontend
             # expects incremental chunks. We need to calculate the delta to avoid duplicates.
             ws_emitter = get_ws_emitter()
-            if "result" in data:
+            if "result" in data and data["result"] is not None:
                 result = data["result"]
-                full_content = result.get("value", "")
+                full_content = result.get("value", "") or ""
 
                 # Get last emitted offset from existing subtask result
                 last_offset = 0
@@ -512,6 +516,15 @@ class DeviceNamespace(socketio.AsyncNamespace):
             logger.debug(
                 f"[Device WS] Progress received: subtask={subtask_id}, progress={data.get('progress', 0)}"
             )
+
+            # If status is COMPLETED, treat as task completion
+            if data.get("status") == "COMPLETED":
+                logger.info(
+                    f"[Device WS] Progress event with COMPLETED status, treating as completion: subtask={subtask_id}"
+                )
+                # Delegate to on_task_complete for proper completion handling
+                db.close()
+                return await self.on_task_complete(sid, data)
 
             return {"success": True}
 
@@ -713,6 +726,6 @@ def register_device_namespace(sio: socketio.AsyncServer) -> None:
     Args:
         sio: Socket.IO server instance
     """
-    device_ns = DeviceNamespace("/device")
+    device_ns = DeviceNamespace("/local-executor")
     sio.register_namespace(device_ns)
-    logger.info("Device namespace registered at /device")
+    logger.info("Device namespace registered at /local-executor")

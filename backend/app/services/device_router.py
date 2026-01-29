@@ -105,7 +105,9 @@ async def route_task_to_device(
     sio = get_sio()
     device_room = f"device:{user_id}:{device_id}"
 
-    await sio.emit("task:execute", task_data, room=device_room, namespace="/device")
+    await sio.emit(
+        "task:execute", task_data, room=device_room, namespace="/local-executor"
+    )
 
     logger.info(
         f"[DeviceRouter] Task routed to device: task_id={task.id}, "

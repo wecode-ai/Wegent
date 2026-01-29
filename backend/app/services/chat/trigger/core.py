@@ -1921,12 +1921,14 @@ async def _trigger_device_execution(
             db.close()
 
     # Emit chat:start event to inform frontend that AI is processing
+    # For device execution, shell_type is ClaudeCode since devices run Claude Code SDK
     ws_emitter = get_ws_emitter()
     if ws_emitter:
         await ws_emitter.emit_chat_start(
             task_id=task.id,
             subtask_id=assistant_subtask.id,
             message_id=assistant_subtask.message_id,
+            shell_type="ClaudeCode",
         )
 
     # Route task to device

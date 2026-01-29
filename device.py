@@ -42,9 +42,9 @@ class LocalDeviceClient:
         )
 
         # Register event handlers
-        self.sio.on("connect", self.on_connect, namespace="/device")
-        self.sio.on("disconnect", self.on_disconnect, namespace="/device")
-        self.sio.on("task:execute", self.on_task_execute, namespace="/device")
+        self.sio.on("connect", self.on_connect, namespace="/local-executor")
+        self.sio.on("disconnect", self.on_disconnect, namespace="/local-executor")
+        self.sio.on("task:execute", self.on_task_execute, namespace="/local-executor")
 
         self.heartbeat_task = None
         self.is_running = False
@@ -72,12 +72,12 @@ class LocalDeviceClient:
     async def connect(self):
         """Connect to backend with authentication"""
         try:
-            logger.info(f"Connecting to {self.backend_url}/device...")
+            logger.info(f"Connecting to {self.backend_url}/local-executor...")
 
             await self.sio.connect(
                 self.backend_url,
                 auth={"token": self.user_token},
-                namespaces=["/device"],
+                namespaces=["/local-executor"],
                 transports=["websocket"],
                 socketio_path="/socket.io",
             )
@@ -101,7 +101,7 @@ class LocalDeviceClient:
             response = await self.sio.call(
                 "device:register",
                 {"device_id": self.device_id, "name": self.device_name},
-                namespace="/device",
+                namespace="/local-executor",
                 timeout=10,
             )
 
@@ -142,7 +142,7 @@ class LocalDeviceClient:
                     response = await self.sio.call(
                         "device:heartbeat",
                         {"device_id": self.device_id},
-                        namespace="/device",
+                        namespace="/local-executor",
                         timeout=5,
                     )
 
@@ -229,7 +229,7 @@ class LocalDeviceClient:
                     "progress": progress,
                     "result": {"value": accumulated_content},
                 },
-                namespace="/device",
+                namespace="/local-executor",
             )
 
             # Simulate typing delay (100-300ms per chunk)
@@ -244,7 +244,7 @@ class LocalDeviceClient:
                 "progress": 100,
                 "result": {"value": accumulated_content},
             },
-            namespace="/device",
+            namespace="/local-executor",
         )
 
         logger.info(f"[Task] Completed subtask {subtask_id}")
