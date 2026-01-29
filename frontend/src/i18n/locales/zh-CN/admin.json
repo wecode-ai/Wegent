@@ -419,6 +419,10 @@
     "edit_team": "编辑智能体",
     "delete_team": "删除智能体",
     "member_count": "{{count}} 个机器人",
+    "tabs": {
+      "basic": "基础",
+      "advanced": "高级"
+    },
     "status": {
       "active": "启用",
       "inactive": "禁用"

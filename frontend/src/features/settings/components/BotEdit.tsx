@@ -36,8 +36,9 @@ import {
 } from '@/features/settings/services/bots'
 import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models'
 import { shellApis, UnifiedShell } from '@/apis/shells'
-import { fetchUnifiedSkillsList, UnifiedSkill } from '@/apis/skills'
-import { useTranslation } from 'react-i18next'
+import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill } from '@/apis/skills'
+import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
+import { useTranslation } from '@/hooks/useTranslation'
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter'
 
 /** Agent types supported by the system */
@@ -90,7 +91,7 @@ interface BotEditProps {
   /** Whether to hide action buttons (save/edit/cancel) - useful when parent handles saving */
   hideActions?: boolean
   /** Scope for filtering shells */
-  scope?: 'personal' | 'group' | 'all'
+  scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
 }
@@ -323,9 +324,19 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     const fetchShells = async () => {
       setLoadingShells(true)
       try {
-        const response = await shellApis.getUnifiedShells(scope, groupName)
+        let shellData: UnifiedShell[] = []
+
+        if (scope === 'public') {
+          // For public scope, use public resource API
+          shellData = await publicResourceApis.getPublicShells()
+        } else {
+          // For other scopes, use regular shell API
+          const response = await shellApis.getUnifiedShells(scope, groupName)
+          shellData = response.data || []
+        }
+
         // Filter shells based on allowedAgents prop (using shellType as agent type)
-        let filteredShells = response.data || []
+        let filteredShells = shellData
         if (allowedAgents && allowedAgents.length > 0) {
           filteredShells = filteredShells.filter(shell =>
             allowedAgents.includes(shell.shellType as AgentType)
@@ -396,10 +407,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     const fetchSkills = async () => {
       setLoadingSkills(true)
       try {
-        const skillsData = await fetchUnifiedSkillsList({
-          scope: scope,
-          groupName: groupName,
-        })
+        // For public scope, use fetchPublicSkillsList; otherwise use fetchUnifiedSkillsList
+        const skillsData =
+          scope === 'public'
+            ? await fetchPublicSkillsList()
+            : await fetchUnifiedSkillsList({
+                scope: scope,
+                groupName: groupName,
+              })
         setAllSkills(skillsData)
         // Filter skills based on current shell type
         setAvailableSkills(filterSkillsByShellType(skillsData))
@@ -437,11 +452,26 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         // Use shell's shellType for model filtering, fallback to agentName for public shells
         const shellType = selectedShell?.shellType || agentName
 
-        // Use the new unified models API which includes type information
-        // Pass scope and groupName to filter models based on current context
-        // Filter by 'llm' category type - only LLM models can be used for bots
-        const response = await modelApis.getUnifiedModels(shellType, false, scope, groupName, 'llm')
-        setModels(response.data)
+        let modelData: UnifiedModel[] = []
+
+        if (scope === 'public') {
+          // For public scope, use public resource API
+          modelData = await publicResourceApis.getPublicModels(shellType, 'llm')
+        } else {
+          // Use the new unified models API which includes type information
+          // Pass scope and groupName to filter models based on current context
+          // Filter by 'llm' category type - only LLM models can be used for bots
+          const response = await modelApis.getUnifiedModels(
+            shellType,
+            false,
+            scope,
+            groupName,
+            'llm'
+          )
+          modelData = response.data
+        }
+
+        setModels(modelData)
 
         // After loading models, check if we should restore the bot's saved model
         // This handles the case when editing an existing bot with a predefined model
@@ -458,7 +488,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           const savedModelType = getModelTypeFromConfig(baseBot.agent_config)
           // Only set the model if it exists in the loaded models list
           // Match by both name and type if type is specified
-          const foundModel = response.data.find((m: UnifiedModel) => {
+          const foundModel = modelData.find((m: UnifiedModel) => {
             if (savedModelType) {
               return m.name === savedModelName && m.type === savedModelType
             }
@@ -681,25 +711,49 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     setBotSaving(true)
     try {
-      const botReq: CreateBotRequest = {
-        name: botData.name,
-        shell_name: botData.shell_name,
-        agent_config: botData.agent_config,
-        system_prompt: botData.system_prompt,
-        mcp_servers: botData.mcp_servers,
-        skills: botData.skills,
-        // preload_skills: botData.preload_skills,
-        namespace: scope === 'group' && groupName ? groupName : undefined,
-      }
+      if (scope === 'public') {
+        // For public scope, use public resource API
+        const publicBotData: PublicBotFormData = {
+          name: botData.name,
+          shell_name: botData.shell_name,
+          agent_config: botData.agent_config,
+          system_prompt: botData.system_prompt,
+          mcp_servers: botData.mcp_servers,
+          skills: botData.skills,
+          namespace: 'default',
+        }
 
-      if (editingBotId && editingBotId > 0) {
-        const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest)
-        setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
-        return updated.id
+        if (editingBotId && editingBotId > 0) {
+          const updated = await publicResourceApis.updatePublicBot(editingBotId, publicBotData)
+          setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
+          return updated.id
+        } else {
+          const created = await publicResourceApis.createPublicBot(publicBotData)
+          setBots(prev => [created, ...prev])
+          return created.id
+        }
       } else {
-        const created = await botApis.createBot(botReq)
-        setBots(prev => [created, ...prev])
-        return created.id
+        // For other scopes, use regular bot API
+        const botReq: CreateBotRequest = {
+          name: botData.name,
+          shell_name: botData.shell_name,
+          agent_config: botData.agent_config,
+          system_prompt: botData.system_prompt,
+          mcp_servers: botData.mcp_servers,
+          skills: botData.skills,
+          // preload_skills: botData.preload_skills,
+          namespace: scope === 'group' && groupName ? groupName : undefined,
+        }
+
+        if (editingBotId && editingBotId > 0) {
+          const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest)
+          setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
+          return updated.id
+        } else {
+          const created = await botApis.createBot(botReq)
+          setBots(prev => [created, ...prev])
+          return created.id
+        }
       }
     } catch (error) {
       toast({
@@ -710,7 +764,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } finally {
       setBotSaving(false)
     }
-  }, [validateBot, getBotData, editingBotId, setBots, toast, t])
+  }, [validateBot, getBotData, editingBotId, setBots, toast, t, scope, groupName])
 
   // Expose methods via ref
   // Use a stable object reference to avoid infinite loops with React 19 and Radix UI
@@ -842,25 +896,47 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     setBotSaving(true)
     try {
-      const botReq: CreateBotRequest = {
-        name: botName.trim(),
-        shell_name: agentName.trim(), // Use shell_name instead of shell_type
-        agent_config: parsedAgentConfig as Record<string, unknown>,
-        system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
-        mcp_servers: parsedMcpConfig ?? {},
-        skills: selectedSkills.length > 0 ? selectedSkills : [],
-        // preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
-        namespace: scope === 'group' && groupName ? groupName : undefined,
-      }
+      if (scope === 'public') {
+        // For public scope, use public resource API
+        const publicBotData: PublicBotFormData = {
+          name: botName.trim(),
+          shell_name: agentName.trim(),
+          agent_config: parsedAgentConfig as Record<string, unknown>,
+          system_prompt: isDifyAgent ? '' : prompt.trim() || '',
+          mcp_servers: parsedMcpConfig ?? {},
+          skills: selectedSkills.length > 0 ? selectedSkills : [],
+          namespace: 'default',
+        }
 
-      if (editingBotId && editingBotId > 0) {
-        // Edit existing bot
-        const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest)
-        setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
+        if (editingBotId && editingBotId > 0) {
+          const updated = await publicResourceApis.updatePublicBot(editingBotId, publicBotData)
+          setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
+        } else {
+          const created = await publicResourceApis.createPublicBot(publicBotData)
+          setBots(prev => [created, ...prev])
+        }
       } else {
-        // Create new bot
-        const created = await botApis.createBot(botReq)
-        setBots(prev => [created, ...prev])
+        // For other scopes, use regular bot API
+        const botReq: CreateBotRequest = {
+          name: botName.trim(),
+          shell_name: agentName.trim(), // Use shell_name instead of shell_type
+          agent_config: parsedAgentConfig as Record<string, unknown>,
+          system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
+          mcp_servers: parsedMcpConfig ?? {},
+          skills: selectedSkills.length > 0 ? selectedSkills : [],
+          // preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
+          namespace: scope === 'group' && groupName ? groupName : undefined,
+        }
+
+        if (editingBotId && editingBotId > 0) {
+          // Edit existing bot
+          const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest)
+          setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
+        } else {
+          // Create new bot
+          const created = await botApis.createBot(botReq)
+          setBots(prev => [created, ...prev])
+        }
       }
       onClose()
     } catch (error) {
@@ -1577,10 +1653,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           // Reload skills list when skills are changed
           const fetchSkills = async () => {
             try {
-              const skillsData = await fetchUnifiedSkillsList({
-                scope: scope,
-                groupName: groupName,
-              })
+              // For public scope, use fetchPublicSkillsList; otherwise use fetchUnifiedSkillsList
+              const skillsData =
+                scope === 'public'
+                  ? await fetchPublicSkillsList()
+                  : await fetchUnifiedSkillsList({
+                      scope: scope,
+                      groupName: groupName,
+                    })
               setAllSkills(skillsData)
               // Filter skills based on current shell type
               setAvailableSkills(filterSkillsByShellType(skillsData))
