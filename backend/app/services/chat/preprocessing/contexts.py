@@ -928,12 +928,45 @@ def _prepare_kb_tools_from_contexts(
     # Import KnowledgeBaseTool
     from chat_shell.tools.builtin import KnowledgeBaseTool
 
-    # Create KnowledgeBaseTool with the specified knowledge bases
+    # Get KB configuration for call limits (use first KB's config)
+    # If multiple KBs are bound, we use the first one's limits to keep behavior simple
+    max_calls_per_conversation = 10  # Default
+    exempt_calls_before_check = 5  # Default
+
+    if knowledge_base_ids:
+        try:
+            from app.services.knowledge.knowledge_service import KnowledgeService
+
+            first_kb = KnowledgeService.get_knowledge_base(
+                db, knowledge_base_ids[0], user_id
+            )
+            if first_kb:
+                spec = first_kb.json.get("spec", {})
+                max_calls_per_conversation = spec.get("maxCallsPerConversation", 10)
+                exempt_calls_before_check = spec.get("exemptCallsBeforeCheck", 5)
+
+                # Validate config (safety check)
+                if exempt_calls_before_check >= max_calls_per_conversation:
+                    logger.warning(
+                        f"[_prepare_kb_tools_from_contexts] Invalid KB config for KB {knowledge_base_ids[0]}: "
+                        f"exemptCallsBeforeCheck ({exempt_calls_before_check}) >= "
+                        f"maxCallsPerConversation ({max_calls_per_conversation}). Using defaults."
+                    )
+                    max_calls_per_conversation = 10
+                    exempt_calls_before_check = 5
+        except Exception as e:
+            logger.warning(
+                f"[_prepare_kb_tools_from_contexts] Failed to fetch KB config, using defaults: {e}"
+            )
+
+    # Create KnowledgeBaseTool with the specified knowledge bases and call limits
     kb_tool = KnowledgeBaseTool(
         knowledge_base_ids=knowledge_base_ids,
         user_id=user_id,
         db_session=db,
         user_subtask_id=user_subtask_id,
+        max_calls_per_conversation=max_calls_per_conversation,
+        exempt_calls_before_check=exempt_calls_before_check,
     )
     extra_tools.append(kb_tool)
 
