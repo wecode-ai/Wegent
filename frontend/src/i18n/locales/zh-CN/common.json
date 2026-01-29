@@ -426,7 +426,14 @@
     "access_denied_title": "无访问权限",
     "access_denied_description": "您没有权限访问此任务。请联系任务创建者，通过「邀请成员」功能邀请您加入。",
     "access_denied_go_home": "返回聊天页",
-    "total_count": "共 {{count}} 条记录"
+    "total_count": "共 {{count}} 条记录",
+    "delete_confirm_title": "删除任务",
+    "delete_confirm_message": "确定要删除任务「{{title}}」吗？此操作无法撤销。",
+    "leave_confirm_title": "离开群聊",
+    "leave_confirm_message": "确定要离开群聊「{{title}}」吗？",
+    "delete_success": "任务已删除",
+    "leave_success": "已离开群聊",
+    "delete_failed": "删除失败，请重试"
   },
   "settings": {
     "title": "设置",
