@@ -80,6 +80,11 @@ export interface Subscription {
   trigger_config: Record<string, unknown>
   team_id: number
   workspace_id?: number
+  // Git repository fields (alternative to workspace_id)
+  git_repo?: string
+  git_repo_id?: number
+  git_domain?: string
+  branch_name?: string
   // Model reference fields
   model_ref?: SubscriptionModelRef
   force_override_bot_model?: boolean

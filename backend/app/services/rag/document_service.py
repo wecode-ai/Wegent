@@ -149,17 +149,19 @@ class DocumentService:
             model_namespace=embedding_model_namespace,
         )
 
-        # Create indexer with storage backend and splitter config
-        indexer = DocumentIndexer(
-            storage_backend=self.storage_backend,
-            embed_model=embed_model,
-            splitter_config=splitter_config,
-        )
-
         if attachment_id is not None:
             # Get original binary data from attachment (supports MySQL and external storage)
             binary_data, filename, file_extension = self._get_attachment_binary(
                 db, attachment_id
+            )
+
+            # Create indexer with file_extension for SmartSplitter to use correct strategy
+            # This is critical for .md files to use MarkdownNodeParser
+            indexer = DocumentIndexer(
+                storage_backend=self.storage_backend,
+                embed_model=embed_model,
+                splitter_config=splitter_config,
+                file_extension=file_extension,
             )
 
             # Index from binary data directly (indexer handles parsing)
@@ -172,6 +174,19 @@ class DocumentService:
                 user_id=user_id,
             )
         else:
+            # For file path, extract extension from path
+            from pathlib import Path
+
+            file_extension = Path(file_path).suffix.lower() if file_path else None
+
+            # Create indexer with file_extension for SmartSplitter
+            indexer = DocumentIndexer(
+                storage_backend=self.storage_backend,
+                embed_model=embed_model,
+                splitter_config=splitter_config,
+                file_extension=file_extension,
+            )
+
             # Index from file path
             result = indexer.index_document(
                 knowledge_id=knowledge_id,

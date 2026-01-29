@@ -44,6 +44,27 @@ import { SplitterSettingsSection, type SplitterConfig } from './SplitterSettings
 import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { validateTableUrl } from '@/apis/knowledge'
+
+// Smart splitter supported file extensions
+const SMART_SUPPORTED_EXTENSIONS = ['.pdf', '.txt', '.doc', '.docx', '.md']
+
+/**
+ * Check if a file extension is supported by smart splitter
+ */
+function isSmartSupportedExtension(filename: string): boolean {
+  const ext = filename.toLowerCase().slice(filename.lastIndexOf('.'))
+  return SMART_SUPPORTED_EXTENSIONS.includes(ext)
+}
+
+/**
+ * Check if all files are supported by smart splitter
+ */
+function areAllFilesSmartSupported(files: { file: File; status: string }[]): boolean {
+  const successFiles = files.filter(f => f.status === 'success')
+  if (successFiles.length === 0) return false
+  return successFiles.every(f => isSmartSupportedExtension(f.file.name))
+}
+
 // Upload mode type
 type UploadMode = 'file' | 'text' | 'table' | 'web'
 
@@ -573,6 +594,23 @@ export function DocumentUpload({
       setValidationError(null)
     }
   }, [open, reset])
+
+  // Auto-select smart splitter when all successful files support it
+  useEffect(() => {
+    // Only check when all uploads are complete and there are successful files
+    if (!allUploadsComplete || successCount === 0) return
+
+    // Check if all successful files support smart splitter
+    if (areAllFilesSmartSupported(state.files)) {
+      // Auto-select smart type if not already selected
+      setSplitterConfig(prev => {
+        if (prev.type !== 'smart') {
+          return { ...prev, type: 'smart' }
+        }
+        return prev
+      })
+    }
+  }, [allUploadsComplete, successCount, state.files])
 
   // Render text input mode
   const renderTextMode = () => (

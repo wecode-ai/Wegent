@@ -11,11 +11,14 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from slowapi import Limiter
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.config import settings
+from app.core.rate_limit import get_limiter
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -47,6 +50,9 @@ from app.services.readers.kinds import KindType, kindReader
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Get rate limiter instance
+limiter = get_limiter()
 
 
 def _task_to_response_object(
@@ -112,7 +118,9 @@ def _task_to_response_object(
 
 
 @router.post("")
+@limiter.limit(settings.RATE_LIMIT_CREATE_RESPONSE)
 async def create_response(
+    request: Request,
     request_body: ResponseCreateInput,
     db: Session = Depends(get_db),
     auth_context: security.AuthContext = Depends(security.get_auth_context),
@@ -325,16 +333,21 @@ async def create_response(
         )
 
     # Non-Chat Shell type (Executor-based): create task and return queued response
+    workspace = tool_settings.get("workspace")
     task_create = TaskCreate(
         prompt=input_text,
         team_name=model_info["team_name"],
         team_namespace=model_info["namespace"],
-        task_type="chat",
+        task_type="code" if workspace else "chat",
         type="online",
         source="api",
         model_id=model_info.get("model_id"),
         force_override_bot_model=model_info.get("model_id") is not None,
         api_key_name=api_key_name,
+        git_url=workspace.get("git_url", "") if workspace else "",
+        git_repo=workspace.get("git_repo", "") if workspace else "",
+        git_domain=workspace.get("git_domain", "") if workspace else "",
+        branch_name=workspace.get("branch", "") if workspace else "",
     )
 
     try:
@@ -374,7 +387,9 @@ async def create_response(
 
 
 @router.get("/{response_id}", response_model=ResponseObject)
+@limiter.limit(settings.RATE_LIMIT_GET_RESPONSE)
 async def get_response(
+    request: Request,
     response_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_flexible),
@@ -454,7 +469,9 @@ async def get_response(
 
 
 @router.post("/{response_id}/cancel", response_model=ResponseObject)
+@limiter.limit(settings.RATE_LIMIT_CANCEL_RESPONSE)
 async def cancel_response(
+    request: Request,
     response_id: str,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -646,7 +663,9 @@ async def cancel_response(
 
 
 @router.delete("/{response_id}", response_model=ResponseDeletedObject)
+@limiter.limit(settings.RATE_LIMIT_DELETE_RESPONSE)
 async def delete_response(
+    request: Request,
     response_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_flexible),

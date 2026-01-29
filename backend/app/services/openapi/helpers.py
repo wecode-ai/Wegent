@@ -79,16 +79,32 @@ def parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
         - enable_chat_bot: bool (enables all server-side capabilities)
         - mcp_servers: dict (custom MCP server configurations, format: {name: config})
         - preload_skills: list (skills to preload for the bot)
+        - workspace: dict (git workspace info for code tasks, contains git_url, branch, git_repo, git_domain)
     """
     result: Dict[str, Any] = {
         "enable_chat_bot": False,
         "mcp_servers": {},
         "preload_skills": [],
+        "workspace": None,
     }
     if tools:
         for tool in tools:
             if tool.type == "wegent_chat_bot":
                 result["enable_chat_bot"] = True
+            elif tool.type == "wegent_code_bot":
+                # Extract git repository information for code tasks
+                if not tool.workspace:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="workspace is required when type='wegent_code_bot'",
+                    )
+                result["workspace"] = {
+                    "git_url": tool.workspace.git_url,
+                    "branch": tool.workspace.branch,
+                    "git_repo": tool.workspace.git_repo
+                    or _extract_repo_from_url(tool.workspace.git_url),
+                    "git_domain": _extract_domain_from_url(tool.workspace.git_url),
+                }
             elif tool.type == "mcp" and tool.mcp_servers:
                 # mcp_servers is List[Dict[str, Any]]
                 # Each dict maps server_name -> config
@@ -109,6 +125,86 @@ def parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
                 # Add skills to preload_skills list
                 result["preload_skills"].extend(tool.preload_skills)
     return result
+
+
+def _extract_repo_from_url(git_url: str) -> Optional[str]:
+    """
+    Extract repository name from git URL.
+
+    Examples:
+        https://github.com/user/repo.git -> user/repo
+        git@github.com:user/repo.git -> user/repo
+        https://gitlab.com/group/subgroup/repo.git -> group/subgroup/repo
+
+    Args:
+        git_url: Git repository URL
+
+    Returns:
+        Repository name or None if cannot be extracted
+    """
+    if not git_url:
+        return None
+
+    # Remove trailing .git
+    url = git_url.rstrip("/")
+    if url.endswith(".git"):
+        url = url[:-4]
+
+    # Handle SSH format: git@github.com:user/repo
+    if url.startswith("git@"):
+        # git@github.com:user/repo -> user/repo
+        parts = url.split(":")
+        if len(parts) == 2:
+            return parts[1]
+
+    # Handle HTTPS format: https://github.com/user/repo
+    # Extract path after domain
+    if "://" in url:
+        # Remove protocol and domain
+        path = url.split("://", 1)[1]
+        # Remove domain part
+        if "/" in path:
+            path = path.split("/", 1)[1]
+            return path
+
+    return None
+
+
+def _extract_domain_from_url(git_url: str) -> Optional[str]:
+    """
+    Extract domain from git URL.
+
+    Examples:
+        https://github.com/user/repo.git -> github.com
+        git@github.com:user/repo.git -> github.com
+        https://gitlab.example.com/group/repo.git -> gitlab.example.com
+
+    Args:
+        git_url: Git repository URL
+
+    Returns:
+        Domain or None if cannot be extracted
+    """
+    if not git_url:
+        return None
+
+    # Handle SSH format: git@github.com:user/repo
+    if git_url.startswith("git@"):
+        # git@github.com:user/repo -> github.com
+        url = git_url[4:]  # Remove 'git@'
+        if ":" in url:
+            return url.split(":")[0]
+
+    # Handle HTTPS format: https://github.com/user/repo
+    if "://" in git_url:
+        # Remove protocol
+        url = git_url.split("://", 1)[1]
+        # Get domain part
+        if "/" in url:
+            return url.split("/")[0]
+        return url
+
+    return None
 
 
 def extract_input_text(input_data: Union[str, List[InputItem]]) -> str:

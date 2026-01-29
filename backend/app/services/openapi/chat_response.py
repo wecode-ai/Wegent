@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task
 from app.schemas.openapi_response import (
@@ -49,9 +50,12 @@ async def create_streaming_response(
     Supports MCP tools and web search when enabled.
     Uses HTTP adapter to call remote chat_shell service.
 
+    Note: This method closes the passed-in database session after setup
+    to avoid holding connections during long-running LLM calls.
+
     Args:
-        db: Database session
-        user: Current user
+        db: Database session (will be closed after setup)
+        user: Current user object
         team: Team Kind object
         model_info: Parsed model info
         request_body: Original request body
@@ -87,92 +91,128 @@ async def _create_streaming_response_http(
     task_id: Optional[int] = None,
     api_key_name: Optional[str] = None,
 ) -> StreamingResponse:
-    """Create streaming response using HTTP adapter to call remote chat_shell service."""
+    """Create streaming response using HTTP adapter to call remote chat_shell service.
+
+    This method closes the passed-in database session after setup to avoid holding
+    connections during long-running LLM streaming calls.
+    """
     from app.core.config import settings
+    from app.db.session import SessionLocal
     from app.services.chat.adapters.http import HTTPAdapter
     from app.services.chat.adapters.interface import ChatEventType, ChatRequest
     from app.services.chat.storage import db_handler, session_manager
     from app.services.openapi.streaming import streaming_service
 
-    # Set up chat session (config, task, subtasks)
-    setup = setup_chat_session(
-        db,
-        user,
-        team,
-        model_info,
-        input_text,
-        tool_settings,
-        task_id,
-        api_key_name,
-    )
+    # Extract user and team info for use after db is closed
+    user_id = user.id
+    user_name = user.user_name
+    team_id = team.id
+    team_name = team.name
+    team_user_id = team.user_id
 
-    response_id = f"resp_{setup.task_id}"
-    created_at = int(datetime.now().timestamp())
-    assistant_subtask_id = setup.assistant_subtask.id
-    user_subtask_id = (
-        setup.user_subtask.id
-    )  # User subtask ID for RAG result persistence
-    user_message_id = (
-        setup.user_subtask.message_id
-    )  # User message_id for history exclusion
-    task_kind_id = setup.task_id
-    enable_chat_bot = tool_settings.get("enable_chat_bot", False)
-
-    # Prepare MCP servers for HTTP mode
-    # Only load MCP servers when tools are explicitly enabled via enable_chat_bot
-    # This ensures /api/v1/responses without tools parameter doesn't auto-load tools
-    mcp_servers_to_pass = []
-
-    # 1. Load bot MCP servers from Ghost CRD
-    if setup.bot_name:
-        try:
-            from app.services.openapi.mcp import _get_bot_mcp_servers_sync
-
-            bot_mcp_servers = _get_bot_mcp_servers_sync(
-                team.user_id, setup.bot_name, setup.bot_namespace
-            )
-            if bot_mcp_servers:
-                # Convert to chat_shell expected format
-                for name, config in bot_mcp_servers.items():
-                    if isinstance(config, dict):
-                        server_entry = {
-                            "name": name,
-                            "url": config.get("url", ""),
-                            "type": config.get("type", "streamable-http"),
-                        }
-                        if config.get("headers"):
-                            server_entry["auth"] = config["headers"]
-                        mcp_servers_to_pass.append(server_entry)
-                logger.info(
-                    f"[OPENAPI_HTTP] Loaded {len(bot_mcp_servers)} bot MCP servers for HTTP mode: "
-                    f"bot={setup.bot_namespace}/{setup.bot_name}"
-                )
-        except Exception as e:
-            logger.warning(f"[OPENAPI_HTTP] Failed to load bot MCP servers: {e}")
-
-    # 2. Add custom MCP servers from API request
-    custom_mcp_servers = tool_settings.get("mcp_servers", {})
-    if custom_mcp_servers:
-        for name, config in custom_mcp_servers.items():
-            if isinstance(config, dict) and config.get("url"):
-                server_entry = {
-                    "name": name,
-                    "url": config.get("url", ""),
-                    "type": config.get("type", "streamable-http"),
-                }
-                if config.get("headers"):
-                    server_entry["auth"] = config["headers"]
-                mcp_servers_to_pass.append(server_entry)
-        logger.info(
-            f"[OPENAPI_HTTP] Added {len(custom_mcp_servers)} custom MCP servers from request"
+    try:
+        # Set up chat session (config, task, subtasks)
+        setup = setup_chat_session(
+            db,
+            user,
+            team,
+            model_info,
+            input_text,
+            tool_settings,
+            task_id,
+            api_key_name,
         )
+
+        response_id = f"resp_{setup.task_id}"
+        created_at = int(datetime.now().timestamp())
+        assistant_subtask_id = setup.assistant_subtask.id
+        user_subtask_id = (
+            setup.user_subtask.id
+        )  # User subtask ID for RAG result persistence
+        user_message_id = (
+            setup.user_subtask.message_id
+        )  # User message_id for history exclusion
+        task_kind_id = setup.task_id
+        enable_chat_bot = tool_settings.get("enable_chat_bot", False)
+
+        # Prepare MCP servers for HTTP mode
+        # Only load MCP servers when tools are explicitly enabled via enable_chat_bot
+        # This ensures /api/v1/responses without tools parameter doesn't auto-load tools
+        mcp_servers_to_pass = []
+
+        # 1. Load bot MCP servers from Ghost CRD
+        if setup.bot_name:
+            try:
+                from app.services.openapi.mcp import _get_bot_mcp_servers_sync
+
+                bot_mcp_servers = _get_bot_mcp_servers_sync(
+                    team_user_id, setup.bot_name, setup.bot_namespace
+                )
+                if bot_mcp_servers:
+                    # Convert to chat_shell expected format
+                    for name, config in bot_mcp_servers.items():
+                        if isinstance(config, dict):
+                            server_entry = {
+                                "name": name,
+                                "url": config.get("url", ""),
+                                "type": config.get("type", "streamable-http"),
+                            }
+                            if config.get("headers"):
+                                server_entry["auth"] = config["headers"]
+                            mcp_servers_to_pass.append(server_entry)
+                    logger.info(
+                        f"[OPENAPI_HTTP] Loaded {len(bot_mcp_servers)} bot MCP servers for HTTP mode: "
+                        f"bot={setup.bot_namespace}/{setup.bot_name}"
+                    )
+            except Exception as e:
+                logger.warning(f"[OPENAPI_HTTP] Failed to load bot MCP servers: {e}")
+
+        # 2. Add custom MCP servers from API request
+        custom_mcp_servers = tool_settings.get("mcp_servers", {})
+        if custom_mcp_servers:
+            for name, config in custom_mcp_servers.items():
+                if isinstance(config, dict) and config.get("url"):
+                    server_entry = {
+                        "name": name,
+                        "url": config.get("url", ""),
+                        "type": config.get("type", "streamable-http"),
+                    }
+                    if config.get("headers"):
+                        server_entry["auth"] = config["headers"]
+                    mcp_servers_to_pass.append(server_entry)
+            logger.info(
+                f"[OPENAPI_HTTP] Added {len(custom_mcp_servers)} custom MCP servers from request"
+            )
+
+        # Build chat history while db is still open (before close)
+        # This converts ORM objects to plain dicts, avoiding DetachedInstanceError
+        chat_history = build_chat_history(setup.existing_subtasks)
+
+        # Store setup data needed for streaming
+        setup_data = {
+            "system_prompt": setup.system_prompt,
+            "chat_history": chat_history,  # Pre-built history (plain dicts, not ORM objects)
+            "model_config": setup.model_config,
+            "bot_name": setup.bot_name,
+            "bot_namespace": setup.bot_namespace,
+            "skill_names": setup.skill_names,
+            "skill_configs": setup.skill_configs,
+            "preload_skills": setup.preload_skills,
+            "task_project_id": setup.task.project_id,
+        }
+
+    finally:
+        # IMPORTANT: Close the database session before streaming starts
+        # This prevents holding the db connection during long-running LLM calls
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        db.close()
 
     async def raw_chat_stream() -> AsyncGenerator[str, None]:
         """Generate raw text chunks from HTTP adapter."""
-        from app.api.dependencies import get_db as get_db_session
-
         accumulated_content = ""
-        db_gen = next(get_db_session())
 
         try:
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
@@ -189,15 +229,15 @@ async def _create_streaming_response_http(
                     try:
                         logger.info(
                             "[OPENAPI_HTTP] Searching for relevant cross-conversation memories: user_id=%d, project_id=%s",
-                            user.id,
-                            setup.task.project_id or "None",
+                            user_id,
+                            setup_data["task_project_id"] or "None",
                         )
                         relevant_memories = await memory_manager.search_memories(
-                            user_id=str(user.id),
+                            user_id=str(user_id),
                             query=input_text,
                             project_id=(
-                                str(setup.task.project_id)
-                                if setup.task.project_id
+                                str(setup_data["task_project_id"])
+                                if setup_data["task_project_id"]
                                 else None
                             ),
                         )
@@ -213,13 +253,13 @@ async def _create_streaming_response_http(
                         )
 
             # Inject memories into system prompt if any found
-            base_system_prompt = setup.system_prompt
+            base_system_prompt = setup_data["system_prompt"]
             if relevant_memories:
                 from app.services.memory import get_memory_manager
 
                 memory_manager = get_memory_manager()
                 base_system_prompt = memory_manager.inject_memories_to_prompt(
-                    base_prompt=setup.system_prompt, memories=relevant_memories
+                    base_prompt=setup_data["system_prompt"], memories=relevant_memories
                 )
                 logger.info(
                     "[OPENAPI_HTTP] Injected %d memories into system prompt",
@@ -233,8 +273,8 @@ async def _create_streaming_response_http(
                 base_system_prompt, enable_chat_bot
             )
 
-            # Build chat history
-            history = build_chat_history(setup.existing_subtasks)
+            # Use pre-built chat history (already converted to dicts before db.close())
+            history = setup_data["chat_history"]
 
             # Create HTTP adapter
             adapter = HTTPAdapter(
@@ -249,21 +289,21 @@ async def _create_streaming_response_http(
                 user_subtask_id=user_subtask_id,  # For RAG result persistence
                 user_message_id=user_message_id,  # For history exclusion (prevent duplicate messages)
                 message=input_text,
-                user_id=user.id,
-                user_name=user.user_name or "",
-                team_id=team.id,
-                team_name=team.name,
-                model_config=setup.model_config,
+                user_id=user_id,
+                user_name=user_name or "",
+                team_id=team_id,
+                team_name=team_name,
+                model_config=setup_data["model_config"],
                 system_prompt=final_system_prompt,
                 history=history,
                 enable_deep_thinking=enable_chat_bot,
                 enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
-                bot_name=setup.bot_name,
-                bot_namespace=setup.bot_namespace,
+                bot_name=setup_data["bot_name"],
+                bot_namespace=setup_data["bot_namespace"],
                 mcp_servers=mcp_servers_to_pass,
-                skill_names=setup.skill_names,
-                skill_configs=setup.skill_configs,
-                preload_skills=setup.preload_skills,
+                skill_names=setup_data["skill_names"],
+                skill_configs=setup_data["skill_configs"],
+                preload_skills=setup_data["preload_skills"],
             )
 
             # Stream from HTTP adapter
@@ -303,19 +343,27 @@ async def _create_streaming_response_http(
                     assistant_subtask_id, "COMPLETED", result=result
                 )
 
-                # Update task status
-                task_kind = db_gen.query(Kind).filter(Kind.id == task_kind_id).first()
-                if task_kind:
-                    task_crd = Task.model_validate(task_kind.json)
-                    if task_crd.status:
-                        task_crd.status.status = "COMPLETED"
-                        task_crd.status.updatedAt = datetime.now()
-                        task_crd.status.completedAt = datetime.now()
-                        task_kind.json = task_crd.model_dump(mode="json")
-                        from sqlalchemy.orm.attributes import flag_modified
+                # Update task status - create session only when needed
+                stream_db = SessionLocal()
+                try:
+                    task_resource = (
+                        stream_db.query(TaskResource)
+                        .filter(TaskResource.id == task_kind_id)
+                        .first()
+                    )
+                    if task_resource:
+                        task_crd = Task.model_validate(task_resource.json)
+                        if task_crd.status:
+                            task_crd.status.status = "COMPLETED"
+                            task_crd.status.updatedAt = datetime.now()
+                            task_crd.status.completedAt = datetime.now()
+                            task_resource.json = task_crd.model_dump(mode="json")
+                            from sqlalchemy.orm.attributes import flag_modified
 
-                        flag_modified(task_kind, "json")
-                        db_gen.commit()
+                            flag_modified(task_resource, "json")
+                            stream_db.commit()
+                finally:
+                    stream_db.close()
 
         except Exception as e:
             logger.exception(f"Error in HTTP streaming: {e}")
@@ -329,7 +377,6 @@ async def _create_streaming_response_http(
         finally:
             await session_manager.unregister_stream(assistant_subtask_id)
             await session_manager.delete_streaming_content(assistant_subtask_id)
-            db_gen.close()
 
     async def generate():
         async for event in streaming_service.create_streaming_response(
@@ -369,9 +416,12 @@ async def create_sync_response(
     Supports MCP tools and web search when enabled.
     Uses HTTP adapter to call remote chat_shell service.
 
+    Note: This method closes the passed-in database session after setup
+    to avoid holding connections during long-running LLM calls.
+
     Args:
-        db: Database session
-        user: Current user
+        db: Database session (will be closed after setup)
+        user: Current user object
         team: Team Kind object
         model_info: Parsed model info
         request_body: Original request body
@@ -407,85 +457,127 @@ async def _create_sync_response_http(
     task_id: Optional[int] = None,
     api_key_name: Optional[str] = None,
 ) -> ResponseObject:
-    """Create sync response using HTTP adapter to call remote chat_shell service."""
+    """Create sync response using HTTP adapter to call remote chat_shell service.
+
+    This method closes the passed-in database session after setup to avoid holding
+    connections during long-running LLM calls.
+    """
     from sqlalchemy.orm.attributes import flag_modified
 
     from app.core.config import settings
+    from app.db.session import SessionLocal
     from app.services.chat.adapters.http import HTTPAdapter
     from app.services.chat.adapters.interface import ChatEventType, ChatRequest
     from app.services.chat.storage import db_handler, session_manager
 
-    # Set up chat session (config, task, subtasks)
-    setup = setup_chat_session(
-        db,
-        user,
-        team,
-        model_info,
-        input_text,
-        tool_settings,
-        task_id,
-        api_key_name,
-    )
+    # Extract user and team info for use after db is closed
+    user_id = user.id
+    user_name = user.user_name
+    team_id = team.id
+    team_name = team.name
+    team_user_id = team.user_id
 
-    response_id = f"resp_{setup.task_id}"
-    created_at = int(datetime.now().timestamp())
-    assistant_subtask_id = setup.assistant_subtask.id
-    user_subtask_id = (
-        setup.user_subtask.id
-    )  # User subtask ID for RAG result persistence
-    user_message_id = (
-        setup.user_subtask.message_id
-    )  # User message_id for history exclusion
-    enable_chat_bot = tool_settings.get("enable_chat_bot", False)
-
-    # Prepare MCP servers for HTTP mode
-    # Only load MCP servers when tools are explicitly enabled via enable_chat_bot
-    # This ensures /api/v1/responses without tools parameter doesn't auto-load tools
-    mcp_servers_to_pass = []
-
-    # 1. Load bot MCP servers from Ghost CRD
-    if setup.bot_name:
-        try:
-            from app.services.openapi.mcp import _get_bot_mcp_servers_sync
-
-            bot_mcp_servers = _get_bot_mcp_servers_sync(
-                team.user_id, setup.bot_name, setup.bot_namespace
-            )
-            if bot_mcp_servers:
-                # Convert to chat_shell expected format
-                for name, config in bot_mcp_servers.items():
-                    if isinstance(config, dict):
-                        server_entry = {
-                            "name": name,
-                            "url": config.get("url", ""),
-                            "type": config.get("type", "streamable-http"),
-                        }
-                        if config.get("headers"):
-                            server_entry["auth"] = config["headers"]
-                        mcp_servers_to_pass.append(server_entry)
-                logger.info(
-                    f"[OPENAPI_HTTP_SYNC] Loaded {len(bot_mcp_servers)} bot MCP servers for HTTP mode: "
-                    f"bot={setup.bot_namespace}/{setup.bot_name}"
-                )
-        except Exception as e:
-            logger.warning(f"[OPENAPI_HTTP_SYNC] Failed to load bot MCP servers: {e}")
-
-    # 2. Add custom MCP servers from API request
-    custom_mcp_servers = tool_settings.get("mcp_servers", {})
-    if custom_mcp_servers:
-        for name, config in custom_mcp_servers.items():
-            if isinstance(config, dict) and config.get("url"):
-                server_entry = {
-                    "name": name,
-                    "url": config.get("url", ""),
-                    "type": config.get("type", "streamable-http"),
-                }
-                if config.get("headers"):
-                    server_entry["auth"] = config["headers"]
-                mcp_servers_to_pass.append(server_entry)
-        logger.info(
-            f"[OPENAPI_HTTP_SYNC] Added {len(custom_mcp_servers)} custom MCP servers from request"
+    try:
+        # Set up chat session (config, task, subtasks)
+        setup = setup_chat_session(
+            db,
+            user,
+            team,
+            model_info,
+            input_text,
+            tool_settings,
+            task_id,
+            api_key_name,
         )
+
+        response_id = f"resp_{setup.task_id}"
+        created_at = int(datetime.now().timestamp())
+        assistant_subtask_id = setup.assistant_subtask.id
+        user_subtask_id = (
+            setup.user_subtask.id
+        )  # User subtask ID for RAG result persistence
+        user_message_id = (
+            setup.user_subtask.message_id
+        )  # User message_id for history exclusion
+        task_kind_id = setup.task_id
+        enable_chat_bot = tool_settings.get("enable_chat_bot", False)
+
+        # Prepare MCP servers for HTTP mode
+        # Only load MCP servers when tools are explicitly enabled via enable_chat_bot
+        # This ensures /api/v1/responses without tools parameter doesn't auto-load tools
+        mcp_servers_to_pass = []
+
+        # 1. Load bot MCP servers from Ghost CRD
+        if setup.bot_name:
+            try:
+                from app.services.openapi.mcp import _get_bot_mcp_servers_sync
+
+                bot_mcp_servers = _get_bot_mcp_servers_sync(
+                    team_user_id, setup.bot_name, setup.bot_namespace
+                )
+                if bot_mcp_servers:
+                    # Convert to chat_shell expected format
+                    for name, config in bot_mcp_servers.items():
+                        if isinstance(config, dict):
+                            server_entry = {
+                                "name": name,
+                                "url": config.get("url", ""),
+                                "type": config.get("type", "streamable-http"),
+                            }
+                            if config.get("headers"):
+                                server_entry["auth"] = config["headers"]
+                            mcp_servers_to_pass.append(server_entry)
+                    logger.info(
+                        f"[OPENAPI_HTTP_SYNC] Loaded {len(bot_mcp_servers)} bot MCP servers for HTTP mode: "
+                        f"bot={setup.bot_namespace}/{setup.bot_name}"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[OPENAPI_HTTP_SYNC] Failed to load bot MCP servers: {e}"
+                )
+
+        # 2. Add custom MCP servers from API request
+        custom_mcp_servers = tool_settings.get("mcp_servers", {})
+        if custom_mcp_servers:
+            for name, config in custom_mcp_servers.items():
+                if isinstance(config, dict) and config.get("url"):
+                    server_entry = {
+                        "name": name,
+                        "url": config.get("url", ""),
+                        "type": config.get("type", "streamable-http"),
+                    }
+                    if config.get("headers"):
+                        server_entry["auth"] = config["headers"]
+                    mcp_servers_to_pass.append(server_entry)
+            logger.info(
+                f"[OPENAPI_HTTP_SYNC] Added {len(custom_mcp_servers)} custom MCP servers from request"
+            )
+
+        # Build chat history while db is still open (before close)
+        # This converts ORM objects to plain dicts, avoiding DetachedInstanceError
+        chat_history = build_chat_history(setup.existing_subtasks)
+
+        # Store setup data needed for LLM call
+        setup_data = {
+            "system_prompt": setup.system_prompt,
+            "chat_history": chat_history,  # Pre-built history (plain dicts, not ORM objects)
+            "model_config": setup.model_config,
+            "bot_name": setup.bot_name,
+            "bot_namespace": setup.bot_namespace,
+            "skill_names": setup.skill_names,
+            "skill_configs": setup.skill_configs,
+            "preload_skills": setup.preload_skills,
+            "task_project_id": setup.task.project_id,
+        }
+
+    finally:
+        # IMPORTANT: Close the database session before LLM call starts
+        # This prevents holding the db connection during long-running LLM calls
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        db.close()
 
     # Update subtask status to RUNNING
     await db_handler.update_subtask_status(assistant_subtask_id, "RUNNING")
@@ -504,15 +596,15 @@ async def _create_sync_response_http(
                 try:
                     logger.info(
                         "[OPENAPI_HTTP_SYNC] Searching for relevant cross-conversation memories: user_id=%d, project_id=%s",
-                        user.id,
-                        setup.task.project_id or "None",
+                        user_id,
+                        setup_data["task_project_id"] or "None",
                     )
                     relevant_memories = await memory_manager.search_memories(
-                        user_id=str(user.id),
+                        user_id=str(user_id),
                         query=input_text,
                         project_id=(
-                            str(setup.task.project_id)
-                            if setup.task.project_id
+                            str(setup_data["task_project_id"])
+                            if setup_data["task_project_id"]
                             else None
                         ),
                     )
@@ -528,13 +620,13 @@ async def _create_sync_response_http(
                     )
 
         # Inject memories into system prompt if any found
-        base_system_prompt = setup.system_prompt
+        base_system_prompt = setup_data["system_prompt"]
         if relevant_memories:
             from app.services.memory import get_memory_manager
 
             memory_manager = get_memory_manager()
             base_system_prompt = memory_manager.inject_memories_to_prompt(
-                base_prompt=setup.system_prompt, memories=relevant_memories
+                base_prompt=setup_data["system_prompt"], memories=relevant_memories
             )
             logger.info(
                 "[OPENAPI_HTTP_SYNC] Injected %d memories into system prompt",
@@ -548,8 +640,8 @@ async def _create_sync_response_http(
             base_system_prompt, enable_chat_bot
         )
 
-        # Build chat history
-        history = build_chat_history(setup.existing_subtasks)
+        # Use pre-built chat history (already converted to dicts before db.close())
+        history = setup_data["chat_history"]
 
         # Create HTTP adapter
         adapter = HTTPAdapter(
@@ -559,26 +651,26 @@ async def _create_sync_response_http(
 
         # Build ChatRequest
         chat_request = ChatRequest(
-            task_id=setup.task_id,
+            task_id=task_kind_id,
             subtask_id=assistant_subtask_id,
             user_subtask_id=user_subtask_id,  # For RAG result persistence
             user_message_id=user_message_id,  # For history exclusion (prevent duplicate messages)
             message=input_text,
-            user_id=user.id,
-            user_name=user.user_name or "",
-            team_id=team.id,
-            team_name=team.name,
-            model_config=setup.model_config,
+            user_id=user_id,
+            user_name=user_name or "",
+            team_id=team_id,
+            team_name=team_name,
+            model_config=setup_data["model_config"],
             system_prompt=final_system_prompt,
             history=history,
             enable_deep_thinking=enable_chat_bot,
             enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
-            bot_name=setup.bot_name,
-            bot_namespace=setup.bot_namespace,
+            bot_name=setup_data["bot_name"],
+            bot_namespace=setup_data["bot_namespace"],
             mcp_servers=mcp_servers_to_pass,
-            skill_names=setup.skill_names,
-            skill_configs=setup.skill_configs,
-            preload_skills=setup.preload_skills,
+            skill_names=setup_data["skill_names"],
+            skill_configs=setup_data["skill_configs"],
+            preload_skills=setup_data["preload_skills"],
         )
 
         # Stream from HTTP adapter and accumulate
@@ -604,20 +696,30 @@ async def _create_sync_response_http(
 
         # Save chat history
         await session_manager.append_user_and_assistant_messages(
-            setup.task_id, input_text, accumulated_content
+            task_kind_id, input_text, accumulated_content
         )
 
-        # Update task status
-        task_crd = Task.model_validate(setup.task.json)
-        if task_crd.status:
-            task_crd.status.status = "COMPLETED"
-            task_crd.status.updatedAt = datetime.now()
-            task_crd.status.completedAt = datetime.now()
-            task_crd.status.result = result
-            setup.task.json = task_crd.model_dump(mode="json")
-            setup.task.updated_at = datetime.now()
-            flag_modified(setup.task, "json")
-            db.commit()
+        # Update task status using a new database session
+        update_db = SessionLocal()
+        try:
+            task_resource = (
+                update_db.query(TaskResource)
+                .filter(TaskResource.id == task_kind_id)
+                .first()
+            )
+            if task_resource:
+                task_crd = Task.model_validate(task_resource.json)
+                if task_crd.status:
+                    task_crd.status.status = "COMPLETED"
+                    task_crd.status.updatedAt = datetime.now()
+                    task_crd.status.completedAt = datetime.now()
+                    task_crd.status.result = result
+                    task_resource.json = task_crd.model_dump(mode="json")
+                    task_resource.updated_at = datetime.now()
+                    flag_modified(task_resource, "json")
+                    update_db.commit()
+        finally:
+            update_db.close()
 
     except Exception as e:
         logger.exception(f"Error in HTTP sync chat response: {e}")
@@ -626,18 +728,26 @@ async def _create_sync_response_http(
             assistant_subtask_id, "FAILED", error=error_message
         )
 
-        # Update task status to FAILED
-        task_crd = Task.model_validate(setup.task.json)
-        if task_crd.status:
-            task_crd.status.status = "FAILED"
-            task_crd.status.errorMessage = error_message
-            task_crd.status.updatedAt = datetime.now()
-            setup.task.json = task_crd.model_dump(mode="json")
-            setup.task.updated_at = datetime.now()
-            from sqlalchemy.orm.attributes import flag_modified
-
-            flag_modified(setup.task, "json")
-            db.commit()
+        # Update task status to FAILED using a new database session
+        error_db = SessionLocal()
+        try:
+            task_resource = (
+                error_db.query(TaskResource)
+                .filter(TaskResource.id == task_kind_id)
+                .first()
+            )
+            if task_resource:
+                task_crd = Task.model_validate(task_resource.json)
+                if task_crd.status:
+                    task_crd.status.status = "FAILED"
+                    task_crd.status.errorMessage = error_message
+                    task_crd.status.updatedAt = datetime.now()
+                    task_resource.json = task_crd.model_dump(mode="json")
+                    task_resource.updated_at = datetime.now()
+                    flag_modified(task_resource, "json")
+                    error_db.commit()
+        finally:
+            error_db.close()
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
