@@ -15,36 +15,31 @@ class TestSilentExitTool:
     """Tests for silent_exit tool."""
 
     def test_silent_exit_returns_marker(self):
-        """Test that silent_exit returns the correct marker."""
-        # Mock at the db.session module level to avoid import order issues
-        with patch("app.db.session.SessionLocal") as mock_session_cls:
-            mock_session = MagicMock()
-            mock_session_cls.return_value = mock_session
+        """Test that silent_exit returns the correct marker without token_info."""
+        from app.mcp_server.tools.silent_exit import silent_exit
 
-            from app.mcp_server.tools.silent_exit import silent_exit
+        # When token_info is None, no database access is needed
+        result = silent_exit(reason="test reason")
+        parsed = json.loads(result)
 
-            result = silent_exit(reason="test reason")
-            parsed = json.loads(result)
-
-            assert parsed["__silent_exit__"] is True
-            assert parsed["reason"] == "test reason"
+        assert parsed["__silent_exit__"] is True
+        assert parsed["reason"] == "test reason"
 
     def test_silent_exit_empty_reason(self):
         """Test silent_exit with empty reason."""
-        with patch("app.db.session.SessionLocal") as mock_session_cls:
-            mock_session = MagicMock()
-            mock_session_cls.return_value = mock_session
+        from app.mcp_server.tools.silent_exit import silent_exit
 
-            from app.mcp_server.tools.silent_exit import silent_exit
+        # When token_info is None, no database access is needed
+        result = silent_exit()
+        parsed = json.loads(result)
 
-            result = silent_exit()
-            parsed = json.loads(result)
-
-            assert parsed["__silent_exit__"] is True
-            assert parsed["reason"] == ""
+        assert parsed["__silent_exit__"] is True
+        assert parsed["reason"] == ""
 
     def test_silent_exit_with_token_info(self):
-        """Test silent_exit with token info."""
+        """Test silent_exit with token info - verifies marker is returned."""
+        from app.mcp_server.tools.silent_exit import silent_exit
+
         token_info = TaskTokenInfo(
             task_id=123,
             subtask_id=456,
@@ -52,20 +47,14 @@ class TestSilentExitTool:
             user_name="testuser",
         )
 
-        # Mock SessionLocal at db.session level to prevent actual DB connection
-        with patch("app.db.session.SessionLocal") as mock_session_cls:
-            mock_session = MagicMock()
-            mock_session.query.return_value.filter.return_value.first.return_value = (
-                None
-            )
-            mock_session_cls.return_value = mock_session
-
-            from app.mcp_server.tools.silent_exit import silent_exit
-
+        # Mock _update_subtask_silent_exit to avoid database dependency
+        with patch(
+            "app.mcp_server.tools.silent_exit._update_subtask_silent_exit"
+        ) as mock_update:
             result = silent_exit(reason="completed", token_info=token_info)
 
-            # Should query the database
-            mock_session.query.assert_called_once()
+            # Should attempt to update the database
+            mock_update.assert_called_once_with(456, "completed")
 
             parsed = json.loads(result)
             assert parsed["__silent_exit__"] is True
