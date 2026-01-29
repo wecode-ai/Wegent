@@ -53,7 +53,7 @@ from app.services.knowledge import (
 )
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
-from shared.telemetry.decorators import trace_async, trace_sync
+from shared.telemetry.decorators import add_span_event, trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -663,6 +663,7 @@ def _trigger_document_summary_if_enabled(
         )
 
 
+@trace_sync("rag_indexing_background", "knowledge.worker")
 def _index_document_background(
     knowledge_base_id: str,
     attachment_id: int,
@@ -782,73 +783,16 @@ def _index_document_background(
             f"document_id={document_id}, indexed_count={indexed_count}, "
             f"index_name={index_name}, status={status}"
         )
-
-        # CRITICAL: Verify data was actually written to vector store
-        # LlamaIndex's async_bulk may silently fail (ignoring 'failed' count)
-        if indexed_count == 0:
-            logger.error(
-                f"[RAG Indexing] VERIFICATION FAILED: indexed_count=0 for "
-                f"kb_id={knowledge_base_id}, document_id={document_id}"
-            )
-            raise RuntimeError(
-                f"RAG indexing returned indexed_count=0 for document {document_id}"
-            )
-
-        # Additional verification: query vector store to confirm data exists
-        # This catches cases where LlamaIndex's async_bulk silently fails
-        # (ignoring the 'failed' count returned by Elasticsearch)
-        try:
-            verified_count = storage_backend.verify_indexing(
-                knowledge_id=knowledge_base_id,
-                doc_ref=str(document_id) if document_id else None,
-                user_id=kb_info.index_owner_user_id,
-            )
-            logger.info(
-                f"[RAG Indexing] Verification: expected_chunks={indexed_count}, "
-                f"actual_chunks={verified_count}, kb_id={knowledge_base_id}, "
-                f"document_id={document_id}"
-            )
-
-            # Check for complete failure (no chunks indexed)
-            if verified_count == 0:
-                logger.error(
-                    f"[RAG Indexing] COMPLETE FAILURE: No chunks found in vector store. "
-                    f"Expected {indexed_count} chunks but found 0. "
-                    f"kb_id={knowledge_base_id}, document_id={document_id}"
-                )
-                raise RuntimeError(
-                    f"RAG indexing complete failure: expected {indexed_count} chunks "
-                    f"but found 0 in vector store for document {document_id}"
-                )
-
-            # Check for partial failure (some chunks failed to index)
-            if verified_count < indexed_count:
-                logger.error(
-                    f"[RAG Indexing] PARTIAL FAILURE: Only {verified_count}/{indexed_count} "
-                    f"chunks were indexed. This indicates partial write failure in "
-                    f"Elasticsearch bulk operation. kb_id={knowledge_base_id}, "
-                    f"document_id={document_id}"
-                )
-                raise RuntimeError(
-                    f"RAG indexing partial failure: expected {indexed_count} chunks "
-                    f"but only {verified_count} were indexed for document {document_id}"
-                )
-
-            logger.info(
-                f"[RAG Indexing] Verification PASSED: all {verified_count} chunks "
-                f"successfully indexed for document_id={document_id}"
-            )
-
-        except RuntimeError:
-            # Re-raise our own RuntimeError exceptions
-            raise
-        except Exception as verify_err:
-            # Log other verification errors but don't fail the indexing
-            # (e.g., ES connection issues during verification)
-            logger.warning(
-                f"[RAG Indexing] Verification query failed (non-fatal): {verify_err}. "
-                f"Proceeding with status update but data integrity is uncertain."
-            )
+        add_span_event(
+            "rag.indexing.completed",
+            {
+                "kb_id": str(knowledge_base_id),
+                "document_id": str(document_id),
+                "indexed_count": indexed_count,
+                "index_name": index_name,
+                "status": status,
+            },
+        )
 
         # Update document is_active to True and status to enabled after successful indexing
         # Also save chunk metadata to document if CHUNK_STORAGE_ENABLED is True

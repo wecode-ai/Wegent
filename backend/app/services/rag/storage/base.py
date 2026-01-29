@@ -380,29 +380,3 @@ class BaseStorageBackend(ABC):
                 - metadata: dict, additional metadata
         """
         pass
-
-    @abstractmethod
-    def verify_indexing(
-        self,
-        knowledge_id: str,
-        doc_ref: Optional[str] = None,
-        **kwargs,
-    ) -> int:
-        """
-        Verify that documents were actually indexed in the vector store.
-
-        This method queries the vector store directly to confirm data exists,
-        catching cases where indexing may silently fail.
-
-        Args:
-            knowledge_id: Knowledge base ID
-            doc_ref: Optional document reference ID to filter by
-            **kwargs: Additional parameters (e.g., user_id for per_user strategy)
-
-        Returns:
-            Number of documents/chunks found in the vector store
-
-        Raises:
-            Exception: If vector store query fails
-        """
-        pass
