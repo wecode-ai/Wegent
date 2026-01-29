@@ -90,6 +90,7 @@ class TestHTTPAdapterIntegration:
                 patch(
                     "app.services.chat.storage.session_manager"
                 ) as mock_session_manager,
+                patch("app.db.session.SessionLocal") as mock_session_local,
             ):
                 # Setup mock session with complete task json
                 mock_task = MagicMock()
@@ -118,6 +119,27 @@ class TestHTTPAdapterIntegration:
                 mock_setup_session.return_value = mock_setup
 
                 mock_build_history.return_value = []
+
+                # Setup mock SessionLocal for task status update
+                mock_update_db = MagicMock()
+                # Create a mock task_resource with proper json for Task validation
+                mock_task_resource = MagicMock()
+                mock_task_resource.json = {
+                    "apiVersion": "agent.wecode.io/v1",
+                    "kind": "Task",
+                    "metadata": {"name": "test-task", "namespace": "default"},
+                    "spec": {
+                        "title": "Test",
+                        "prompt": "Hello",
+                        "teamRef": {"name": "test-team", "namespace": "default"},
+                        "workspaceRef": {"name": "workspace-1", "namespace": "default"},
+                    },
+                    "status": {"status": "RUNNING"},
+                }
+                mock_update_db.query.return_value.filter.return_value.first.return_value = (
+                    mock_task_resource
+                )
+                mock_session_local.return_value = mock_update_db
 
                 # Setup mock adapter to yield chunks
                 mock_adapter = MagicMock()
@@ -194,6 +216,7 @@ class TestHTTPAdapterIntegration:
                 patch(
                     "app.services.chat.storage.session_manager"
                 ) as mock_session_manager,
+                patch("app.db.session.SessionLocal") as mock_session_local,
             ):
                 # Setup mock session with complete task json
                 mock_task = MagicMock()
@@ -222,6 +245,27 @@ class TestHTTPAdapterIntegration:
                 mock_setup_session.return_value = mock_setup
 
                 mock_build_history.return_value = []
+
+                # Setup mock SessionLocal for task status update (used in error handling)
+                mock_error_db = MagicMock()
+                # Create a mock task_resource with proper json for Task validation
+                mock_task_resource = MagicMock()
+                mock_task_resource.json = {
+                    "apiVersion": "agent.wecode.io/v1",
+                    "kind": "Task",
+                    "metadata": {"name": "test-task", "namespace": "default"},
+                    "spec": {
+                        "title": "Test",
+                        "prompt": "Hello",
+                        "teamRef": {"name": "test-team", "namespace": "default"},
+                        "workspaceRef": {"name": "workspace-1", "namespace": "default"},
+                    },
+                    "status": {"status": "RUNNING"},
+                }
+                mock_error_db.query.return_value.filter.return_value.first.return_value = (
+                    mock_task_resource
+                )
+                mock_session_local.return_value = mock_error_db
 
                 # Setup mock adapter to yield error
                 mock_adapter = MagicMock()
@@ -414,6 +458,7 @@ class TestEnableChatBotFeatures:
                 patch(
                     "app.services.chat.storage.session_manager"
                 ) as mock_session_manager,
+                patch("app.db.session.SessionLocal") as mock_session_local,
             ):
                 # Setup mock session
                 mock_task = MagicMock()
@@ -442,6 +487,27 @@ class TestEnableChatBotFeatures:
                 mock_setup_session.return_value = mock_setup
 
                 mock_build_history.return_value = []
+
+                # Setup mock SessionLocal for task status update
+                mock_update_db = MagicMock()
+                # Create a mock task_resource with proper json for Task validation
+                mock_task_resource = MagicMock()
+                mock_task_resource.json = {
+                    "apiVersion": "agent.wecode.io/v1",
+                    "kind": "Task",
+                    "metadata": {"name": "test-task", "namespace": "default"},
+                    "spec": {
+                        "title": "Test",
+                        "prompt": "Hello",
+                        "teamRef": {"name": "test-team", "namespace": "default"},
+                        "workspaceRef": {"name": "workspace-1", "namespace": "default"},
+                    },
+                    "status": {"status": "RUNNING"},
+                }
+                mock_update_db.query.return_value.filter.return_value.first.return_value = (
+                    mock_task_resource
+                )
+                mock_session_local.return_value = mock_update_db
 
                 # Capture the ChatRequest
                 captured_request = None
@@ -514,6 +580,7 @@ class TestEnableChatBotFeatures:
                 patch(
                     "app.services.chat.storage.session_manager"
                 ) as mock_session_manager,
+                patch("app.db.session.SessionLocal") as mock_session_local,
             ):
                 # Setup mock session
                 mock_task = MagicMock()
@@ -542,6 +609,27 @@ class TestEnableChatBotFeatures:
                 mock_setup_session.return_value = mock_setup
 
                 mock_build_history.return_value = []
+
+                # Setup mock SessionLocal for task status update
+                mock_update_db = MagicMock()
+                # Create a mock task_resource with proper json for Task validation
+                mock_task_resource = MagicMock()
+                mock_task_resource.json = {
+                    "apiVersion": "agent.wecode.io/v1",
+                    "kind": "Task",
+                    "metadata": {"name": "test-task", "namespace": "default"},
+                    "spec": {
+                        "title": "Test",
+                        "prompt": "Hello",
+                        "teamRef": {"name": "test-team", "namespace": "default"},
+                        "workspaceRef": {"name": "workspace-1", "namespace": "default"},
+                    },
+                    "status": {"status": "RUNNING"},
+                }
+                mock_update_db.query.return_value.filter.return_value.first.return_value = (
+                    mock_task_resource
+                )
+                mock_session_local.return_value = mock_update_db
 
                 # Capture the ChatRequest
                 captured_request = None

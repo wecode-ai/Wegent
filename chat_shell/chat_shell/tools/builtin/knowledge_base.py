@@ -173,7 +173,7 @@ class KnowledgeBaseTool(BaseTool):
 
             if should_use_direct_injection:
                 # Step 3a: Get all chunks and inject directly
-                kb_chunks = await self._get_all_chunks_from_all_kbs()
+                kb_chunks = await self._get_all_chunks_from_all_kbs(query)
 
                 if not kb_chunks:
                     return json.dumps(
@@ -368,8 +368,13 @@ class KnowledgeBaseTool(BaseTool):
             )
             return {"total_file_size": 0, "total_estimated_tokens": 0}
 
-    async def _get_all_chunks_from_all_kbs(self) -> Dict[int, List[Dict[str, Any]]]:
+    async def _get_all_chunks_from_all_kbs(
+        self, query: Optional[str] = None
+    ) -> Dict[int, List[Dict[str, Any]]]:
         """Get all chunks from all knowledge bases for direct injection.
+
+        Args:
+            query: Optional query string for logging purposes
 
         Returns:
             Dictionary mapping KB IDs to their chunks
@@ -388,6 +393,7 @@ class KnowledgeBaseTool(BaseTool):
                         knowledge_base_id=kb_id,
                         db=self.db_session,
                         max_chunks=10000,
+                        query=query,
                     )
 
                     logger.info(
@@ -417,12 +423,17 @@ class KnowledgeBaseTool(BaseTool):
 
         except ImportError:
             # Backend not available, try HTTP fallback
-            kb_chunks = await self._get_all_chunks_via_http()
+            kb_chunks = await self._get_all_chunks_via_http(query)
 
         return kb_chunks
 
-    async def _get_all_chunks_via_http(self) -> Dict[int, List[Dict[str, Any]]]:
+    async def _get_all_chunks_via_http(
+        self, query: Optional[str] = None
+    ) -> Dict[int, List[Dict[str, Any]]]:
         """Get all chunks from RAG service via HTTP API.
+
+        Args:
+            query: Optional query string for logging purposes
 
         Returns:
             Dictionary mapping KB IDs to their chunks
@@ -443,9 +454,13 @@ class KnowledgeBaseTool(BaseTool):
         async with httpx.AsyncClient(timeout=60.0) as client:
             for kb_id in self.knowledge_base_ids:
                 try:
+                    payload = {"knowledge_base_id": kb_id, "max_chunks": 10000}
+                    if query:
+                        payload["query"] = query
+
                     response = await client.post(
                         f"{backend_url}/api/internal/rag/all-chunks",
-                        json={"knowledge_base_id": kb_id, "max_chunks": 10000},
+                        json=payload,
                     )
 
                     if response.status_code != 200:

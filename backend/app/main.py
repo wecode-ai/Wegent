@@ -222,6 +222,16 @@ async def lifespan(app: FastAPI):
     init_ws_emitter(sio)
     logger.info("✓ Socket.IO initialized")
 
+    # Initialize event bus and register event handlers
+    # This enables decoupled communication between modules (e.g., pet experience updates)
+    logger.info("Initializing event bus and registering handlers...")
+    from app.core.events import init_event_bus
+    from app.services.pet.event_handlers import register_pet_event_handlers
+
+    init_event_bus()
+    register_pet_event_handlers()
+    logger.info("✓ Event bus initialized and handlers registered")
+
     # Initialize PendingRequestRegistry for skill frontend interactions
     # This starts the Redis Pub/Sub listener for cross-worker communication
     logger.info("Initializing PendingRequestRegistry...")
@@ -554,6 +564,18 @@ def create_app():
     app.add_exception_handler(CustomHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(Exception, python_exception_handler)
+
+    # Register rate limiter exception handler and state
+    from app.core.rate_limit import get_limiter, is_rate_limit_enabled
+
+    if is_rate_limit_enabled():
+        from slowapi import _rate_limit_exceeded_handler
+        from slowapi.errors import RateLimitExceeded
+
+        limiter = get_limiter()
+        app.state.limiter = limiter
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+        logger.info("Rate limiting enabled for API endpoints")
 
     # Include API routes
     app.include_router(api_router, prefix=settings.API_PREFIX)

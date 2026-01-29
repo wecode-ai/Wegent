@@ -507,4 +507,86 @@ class MyPermissionResponse(BaseModel):
     permission_source: str = Field(
         ...,
         description="Permission source: owner/group_role/explicit_grant/organization_member/system_admin/none",
+# ============== Chunk Schemas ==============
+
+
+class ChunkItem(BaseModel):
+    """Schema for a single chunk item."""
+
+    index: int = Field(..., ge=0, description="Chunk index (0-based)")
+    content: str = Field(..., description="Chunk text content")
+    token_count: int = Field(0, ge=0, description="Token count for this chunk")
+    start_position: int = Field(
+        0, ge=0, description="Start position in original document"
+    )
+    end_position: int = Field(0, ge=0, description="End position in original document")
+
+
+class ChunkMetadata(BaseModel):
+    """Schema for document chunks metadata stored in database."""
+
+    items: list[ChunkItem] = Field(
+        default_factory=list, description="List of chunk items"
+    )
+    total_count: int = Field(0, ge=0, description="Total number of chunks")
+    splitter_type: str = Field("semantic", description="Type of splitter used")
+    splitter_subtype: Optional[str] = Field(
+        None,
+        description="Subtype for smart splitter (markdown_sentence|sentence|recursive_character)",
+    )
+    created_at: str = Field(..., description="Chunk creation timestamp (ISO format)")
+
+
+class ChunkResponse(BaseModel):
+    """Schema for single chunk response."""
+
+    index: int = Field(..., ge=0, description="Chunk index (0-based)")
+    content: str = Field(..., description="Full chunk content")
+    token_count: int = Field(0, ge=0, description="Token count for this chunk")
+    document_name: str = Field(..., description="Document name")
+    document_id: int = Field(..., description="Document ID")
+    kb_id: int = Field(..., description="Knowledge base ID")
+
+
+class ChunkListResponse(BaseModel):
+    """Schema for chunk list response with pagination."""
+
+    total: int = Field(..., description="Total number of chunks")
+    page: int = Field(1, ge=1, description="Current page number")
+    page_size: int = Field(20, ge=1, le=100, description="Page size")
+    items: list[ChunkItem] = Field(default_factory=list, description="Chunk items")
+    splitter_type: Optional[str] = Field(None, description="Type of splitter used")
+    splitter_subtype: Optional[str] = Field(None, description="Splitter subtype")
+
+
+# ============== Citation Schemas ==============
+
+
+class CandidateChunk(BaseModel):
+    """Schema for a candidate chunk from retrieval (internal use, passed to AI)."""
+
+    retrieval_index: int = Field(
+        ..., ge=1, description="Retrieval result index (1-based), for AI citation"
+    )
+    kb_id: int = Field(..., description="Knowledge base ID")
+    document_id: int = Field(..., description="Document ID")
+    document_name: str = Field(..., description="Document name")
+    chunk_index: int = Field(..., ge=0, description="Chunk index in document (0-based)")
+    content: str = Field(..., description="Chunk full content")
+    score: float = Field(..., ge=0.0, le=1.0, description="Retrieval relevance score")
+
+
+class CitationSource(BaseModel):
+    """Schema for citation source returned to frontend (after filtering and re-indexing)."""
+
+    index: int = Field(
+        ...,
+        ge=1,
+        description="Re-indexed citation number (1, 2, 3...), corresponds to [1], [2], [3] in AI response",
+    )
+    kb_id: int = Field(..., description="Knowledge base ID")
+    document_id: int = Field(..., description="Document ID")
+    document_name: str = Field(..., description="Document name")
+    chunk_index: int = Field(
+        ..., ge=0, description="Chunk index in document (0-based), for precise location"
     )

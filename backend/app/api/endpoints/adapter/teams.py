@@ -39,8 +39,8 @@ def list_teams(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
     scope: str = Query(
-        "personal",
-        description="Query scope: 'personal' (default), 'group', or 'all'",
+        "all",
+        description="Query scope: 'personal', 'group', or 'all' (default)",
     ),
     group_name: Optional[str] = Query(
         None, description="Group name (required when scope='group')"
@@ -52,9 +52,9 @@ def list_teams(
     Get current user's Team list (paginated) with scope support.
 
     Scope behavior:
-    - scope='personal' (default): personal teams + shared teams
+    - scope='personal': personal teams + shared teams
     - scope='group': group teams (requires group_name)
-    - scope='all': personal + shared + all user's groups
+    - scope='all' (default): personal + shared + all user's groups
     """
     api_start = time.time()
     logger.info(

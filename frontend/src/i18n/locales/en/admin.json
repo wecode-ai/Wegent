@@ -418,6 +418,10 @@
     "edit_team": "Edit Agent",
     "delete_team": "Delete Agent",
     "member_count": "{{count}} Bot(s)",
+    "tabs": {
+      "basic": "Basic",
+      "advanced": "Advanced"
+    },
     "status": {
       "active": "Active",
       "inactive": "Inactive"
@@ -615,6 +619,49 @@
       "name_required": "Shell name is required",
       "config_required": "Shell configuration is required",
       "config_invalid_json": "Shell configuration must be valid JSON"
+    }
+  },
+  "setup_wizard": {
+    "title": "Welcome to Wegent",
+    "subtitle": "Let's set up some essential resources for your system",
+    "step_indicator": "Step {{current}} of {{total}}",
+    "step_models": "Configure Public Models",
+    "step_skills": "Configure Public Skills",
+    "next": "Next",
+    "previous": "Previous",
+    "skip": "Skip",
+    "finish": "Finish",
+    "skip_confirm_title": "Skip Setup?",
+    "skip_confirm_message": "You can configure public models and skills later in the administration panel. Are you sure you want to skip the setup wizard?",
+    "skip_confirm_yes": "Yes, skip",
+    "skip_confirm_no": "Continue setup",
+    "model_step": {
+      "title": "Configure Public Models",
+      "description": "Set up AI models that will be available to all users. You can add multiple models.",
+      "no_models": "No public models configured yet",
+      "add_model": "Add Model",
+      "model_added": "Model added successfully",
+      "model_updated": "Model updated successfully",
+      "model_deleted": "Model deleted successfully",
+      "add_first_model": "Add your first public model"
+    },
+    "skill_step": {
+      "title": "Configure Public Skills",
+      "description": "Upload skill packages (.zip) that will be available to all users. Skills provide on-demand capabilities to AI agents.",
+      "no_skills": "No public skills configured yet",
+      "upload_skill": "Upload Skill",
+      "skill_uploaded": "Skill uploaded successfully",
+      "skill_deleted": "Skill deleted successfully",
+      "drag_drop_hint": "Drag and drop a .zip file here, or click to browse",
+      "file_requirements": "Skill package must be a .zip file containing SKILL.md"
+    },
+    "success": {
+      "completed": "Setup completed successfully! You can now start using Wegent.",
+      "skipped": "Setup skipped. You can configure resources anytime from the admin panel."
+    },
+    "errors": {
+      "load_status_failed": "Failed to check setup status",
+      "complete_failed": "Failed to complete setup"
     }
   }
 }

@@ -11,6 +11,7 @@ from app.api.endpoints import (
     knowledge,
     oidc,
     openapi_responses,
+    pet,
     projects,
     quota,
     rag,
@@ -47,6 +48,7 @@ from app.api.endpoints.internal import (
     rag_router,
     services_router,
     skills_router,
+    subscriptions_router,
     tables_router,
 )
 from app.api.endpoints.kind import k_router
@@ -57,6 +59,7 @@ api_router.include_router(health.router, tags=["health"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(oidc.router, prefix="/auth/oidc", tags=["auth", "oidc"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
+api_router.include_router(pet.router, prefix="/users/me/pet", tags=["pet"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
@@ -154,4 +157,7 @@ api_router.include_router(
 )
 api_router.include_router(
     services_router, prefix="/internal", tags=["internal-services"]
+)
+api_router.include_router(
+    subscriptions_router, prefix="/internal", tags=["internal-subscriptions"]
 )

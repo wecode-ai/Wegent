@@ -144,9 +144,7 @@ export function KnowledgeBaseSummaryCard({
                       <AlertTriangle className="w-4 h-4 text-amber-500 cursor-help" />
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p className="max-w-xs">
-                        {summaryError || t('chatPage.summaryFailedHint')}
-                      </p>
+                      <p className="max-w-xs">{summaryError || t('chatPage.summaryFailedHint')}</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>

@@ -24,6 +24,31 @@ setup('authenticate', async ({ page }) => {
   // Verify login was successful by checking we're on a protected page
   await expect(page).not.toHaveURL(/\/login/)
 
+  // Mark admin setup as complete to prevent the setup wizard dialog from blocking tests
+  // This is necessary because the GlobalAdminSetupWizard component shows a modal dialog
+  // for admin users when admin_setup_completed is false, which intercepts all pointer events
+  const apiBaseUrl = process.env.E2E_API_URL || 'http://localhost:8000'
+  try {
+    // Get auth token from localStorage
+    const token = await page.evaluate(() => localStorage.getItem('auth_token'))
+    if (token) {
+      const response = await page.request.post(`${apiBaseUrl}/api/admin/setup-complete`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      })
+      if (response.ok()) {
+        console.log('Admin setup marked as complete')
+      } else {
+        console.warn(`Failed to mark admin setup as complete: ${response.status()}`)
+      }
+    }
+  } catch (error) {
+    console.warn('Warning: Could not mark admin setup as complete:', error)
+    // Continue anyway - this is not critical for all tests
+  }
+
   // Save storage state (cookies, localStorage)
   await page.context().storageState({ path: authFile })
 

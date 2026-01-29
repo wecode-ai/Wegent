@@ -22,6 +22,7 @@ import { SkillListWithScope } from '@/features/settings/components/SkillListWith
 import { TeamListWithScope } from '@/features/settings/components/TeamListWithScope'
 import ApiKeyList from '@/features/settings/components/ApiKeyList'
 import { RetrieverListWithScope } from '@/features/settings/components/RetrieverListWithScope'
+import { PetSettings } from '@/features/pet/components/PetSettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
@@ -189,6 +190,8 @@ function SettingsContent() {
         return <NotificationSettings />
       case 'api-keys':
         return <ApiKeyList />
+      case 'pet':
+        return <PetSettings />
       default:
         // Default to personal-team (智能体)
         return <TeamListWithScope scope="personal" />

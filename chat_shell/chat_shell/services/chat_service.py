@@ -259,7 +259,8 @@ class ChatService(ChatInterface):
 
                     if not await core.process_token(token):
                         add_span_event(
-                            "token_processing_stopped", {"tokens_processed": token_count}
+                            "token_processing_stopped",
+                            {"tokens_processed": token_count},
                         )
                         break
 
