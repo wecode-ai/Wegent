@@ -22,6 +22,15 @@ import sys
 if getattr(sys, "frozen", False):
     multiprocessing.freeze_support()
 
+    # Fix SSL certificate path for PyInstaller bundled executable
+    # PyInstaller bundles certifi but Python may not find it automatically
+    try:
+        import certifi
+        os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+        os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
+    except ImportError:
+        pass
+
 # Import the shared logger
 from shared.logger import setup_logger
 
