@@ -47,8 +47,6 @@ class LocalRunner:
     - Graceful shutdown handling via SIGINT/SIGTERM
     """
 
-    VERSION = "1.0.0"
-
     def __init__(self):
         """Initialize the local runner."""
         # WebSocket client
@@ -218,7 +216,6 @@ class LocalRunner:
             "executor_type": "local",
             "platform": sys.platform,
             "arch": platform.machine(),
-            "version": self.VERSION,
             "capabilities": ["claude_code"],
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "hostname": platform.node(),
