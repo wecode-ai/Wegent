@@ -571,6 +571,8 @@ export interface ChatTipItem {
 export interface WelcomeConfigResponse {
   slogans: ChatSloganItem[]
   tips: ChatTipItem[]
+  /** Whether admin setup wizard has been completed (only returned for admin users) */
+  admin_setup_completed?: boolean | null
 }
 
 // Default Teams Configuration Types

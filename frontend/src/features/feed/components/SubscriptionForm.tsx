@@ -7,7 +7,7 @@
 /**
  * Subscription creation/edit form component.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Copy, Check, Terminal, Brain, ChevronDown, Eye, EyeOff } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
@@ -56,6 +56,7 @@ import { CronSchedulePicker } from './CronSchedulePicker'
 import { RepositorySelector, BranchSelector } from '@/features/tasks/components/selector'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { cn, parseUTCDate } from '@/lib/utils'
+import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
 
 // Model type for selector
 interface SubscriptionModel {
@@ -64,6 +65,30 @@ interface SubscriptionModel {
   provider?: string
   modelId?: string
   type?: string
+}
+
+const resolveGitType = (gitDomain?: string): GitRepoInfo['type'] => {
+  if (!gitDomain) return 'github'
+  if (gitDomain.includes('gitlab')) return 'gitlab'
+  if (gitDomain.includes('gitee')) return 'gitee'
+  if (gitDomain.endsWith('github.com')) return 'github'
+  return 'github'
+}
+
+const buildRepoInfoFromSubscription = (subscription: Subscription): GitRepoInfo | null => {
+  if (!subscription.git_repo) return null
+  const gitDomain = subscription.git_domain || 'github.com'
+  const repoName = subscription.git_repo.split('/').pop() || subscription.git_repo
+
+  return {
+    git_repo_id: subscription.git_repo_id ?? 0,
+    name: repoName,
+    git_repo: subscription.git_repo,
+    git_url: `https://${gitDomain}/${subscription.git_repo}.git`,
+    git_domain: gitDomain,
+    private: false,
+    type: resolveGitType(gitDomain),
+  }
 }
 
 /**
@@ -272,6 +297,7 @@ export function SubscriptionForm({
   const [modelsLoading, setModelsLoading] = useState(false)
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false)
   const [modelSearchValue, setModelSearchValue] = useState('')
+  const promptTemplateRef = useRef<HTMLTextAreaElement>(null)
 
   // Repository/Branch state for code-type teams
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
@@ -361,10 +387,22 @@ export function SubscriptionForm({
     })
   })()
 
+  const compatibleProvider = getCompatibleProviderFromAgentType(selectedTeam?.agent_type)
+
   // Determine if model selection is required
   // For rental subscriptions: model is REQUIRED (must select a model to use)
   // For non-rental: required only if team has no model configured
   const modelRequired = isRental ? !selectedModel : !teamHasModel && !selectedModel
+  const promptVariables = [
+    '{{date}}',
+    '{{time}}',
+    '{{datetime}}',
+    '{{subscription_name}}',
+    '{{webhook_data}}',
+  ]
+  const promptVariablesHint = t('prompt_variables_hint')
+  const promptVariablesLabel = promptVariablesHint.split(/[:：]/)[0]?.trim() || promptVariablesHint
+  const promptVariablesDelimiter = promptVariablesHint.includes('：') ? '：' : ':'
 
   // Handle repository change
   const handleRepoChange = useCallback((repo: GitRepoInfo | null) => {
@@ -375,6 +413,27 @@ export function SubscriptionForm({
   // Handle branch change
   const handleBranchChange = useCallback((branch: GitBranch | null) => {
     setSelectedBranch(branch)
+  }, [])
+
+  const handleInsertPromptVariable = useCallback((variable: string) => {
+    const textarea = promptTemplateRef.current
+    if (!textarea) {
+      setPromptTemplate(prevValue => `${prevValue}${variable}`)
+      return
+    }
+
+    const currentValue = textarea.value
+    const selectionStart = textarea.selectionStart ?? currentValue.length
+    const selectionEnd = textarea.selectionEnd ?? currentValue.length
+    const nextValue =
+      currentValue.slice(0, selectionStart) + variable + currentValue.slice(selectionEnd)
+
+    setPromptTemplate(nextValue)
+    requestAnimationFrame(() => {
+      textarea.focus()
+      const caretPosition = selectionStart + variable.length
+      textarea.setSelectionRange(caretPosition, caretPosition)
+    })
   }, [])
 
   // Handle team change - reset repo/branch when team changes
@@ -401,10 +460,17 @@ export function SubscriptionForm({
       setEnabled(subscription.enabled)
       setPreserveHistory(subscription.preserve_history || false)
       setVisibility(subscription.visibility || 'private')
-      // Note: workspace_id restoration will be handled when we have workspace API
-      // For now, reset repo selection
-      setSelectedRepo(null)
-      setSelectedBranch(null)
+      const repoInfo = buildRepoInfoFromSubscription(subscription)
+      setSelectedRepo(repoInfo)
+      setSelectedBranch(
+        repoInfo && subscription.branch_name
+          ? {
+              name: subscription.branch_name,
+              protected: false,
+              default: false,
+            }
+          : null
+      )
       // Restore model selection from subscription
       if (subscription.model_ref) {
         setSelectedModel({
@@ -599,7 +665,11 @@ export function SubscriptionForm({
   ])
 
   // Filter models based on search
-  const filteredModels = models.filter(model => {
+  const compatibleModels = compatibleProvider
+    ? models.filter(model => model.provider === compatibleProvider)
+    : models
+
+  const filteredModels = compatibleModels.filter(model => {
     const searchLower = modelSearchValue.toLowerCase()
     return (
       model.name.toLowerCase().includes(searchLower) ||
@@ -607,6 +677,16 @@ export function SubscriptionForm({
       (model.provider && model.provider.toLowerCase().includes(searchLower))
     )
   })
+
+  // Clear incompatible model selection when team changes
+  useEffect(() => {
+    if (!selectedModel || !compatibleProvider) return
+    const matchedModel = models.find(model => model.name === selectedModel.name)
+    const resolvedProvider = matchedModel?.provider || selectedModel.provider
+    if (resolvedProvider && resolvedProvider !== compatibleProvider) {
+      setSelectedModel(null)
+    }
+  }, [compatibleProvider, models, selectedModel])
 
   const renderTriggerConfig = () => {
     switch (triggerType) {
@@ -927,14 +1007,26 @@ export function SubscriptionForm({
                         <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-[400px] p-0" align="start">
-                      <Command>
+                    <PopoverContent
+                      className={cn(
+                        'w-[400px] p-0',
+                        'max-h-[var(--radix-popover-content-available-height,360px)]',
+                        'flex flex-col overflow-hidden'
+                      )}
+                      align="start"
+                    >
+                      <Command className="flex flex-col flex-1 min-h-0">
                         <CommandInput
                           placeholder={t('search_model')}
                           value={modelSearchValue}
                           onValueChange={setModelSearchValue}
                         />
-                        <CommandList>
+                        <CommandList
+                          className="min-h-[36px] max-h-[240px] overflow-y-auto flex-1"
+                          onWheel={event => {
+                            event.stopPropagation()
+                          }}
+                        >
                           <CommandEmpty>{t('no_model_found')}</CommandEmpty>
                           <CommandGroup>
                             {/* Option to clear selection */}
@@ -1148,13 +1240,34 @@ export function SubscriptionForm({
                   {t('prompt_template')} <span className="text-destructive">*</span>
                 </Label>
                 <Textarea
+                  ref={promptTemplateRef}
                   value={promptTemplate}
                   onChange={e => setPromptTemplate(e.target.value)}
                   placeholder={t('prompt_template_placeholder')}
                   rows={5}
                   className="resize-none"
                 />
-                <p className="text-xs text-text-muted">{t('prompt_variables_hint')}</p>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
+                  <span>
+                    {promptVariablesLabel}
+                    {promptVariablesDelimiter}
+                  </span>
+                  {promptVariables.map(variable => (
+                    <Button
+                      key={variable}
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className={cn(
+                        'h-7 px-2 text-[11px] rounded-full border-border',
+                        'bg-surface text-text-secondary hover:text-text-primary hover:bg-hover'
+                      )}
+                      onClick={() => handleInsertPromptVariable(variable)}
+                    >
+                      {variable}
+                    </Button>
+                  ))}
+                </div>
               </div>
             </div>
           )}

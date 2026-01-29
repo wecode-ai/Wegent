@@ -35,7 +35,7 @@ interface TeamModeEditorProps {
   leaderOptions: Bot[]
   allowedAgentsForMode?: AgentType[]
   botEditRef: React.RefObject<BotEditRef | null>
-  scope?: 'personal' | 'group' | 'all'
+  scope?: 'personal' | 'group' | 'all' | 'public'
   groupName?: string
   /** Pipeline mode: requireConfirmation settings for each bot */
   requireConfirmationMap?: Record<number, boolean>

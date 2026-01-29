@@ -16,12 +16,13 @@ This module contains utility functions for:
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.task import TaskResource
+from app.schemas.kind import Workspace
 from app.schemas.subscription import (
     CronTriggerConfig,
     EventTriggerConfig,
@@ -378,7 +379,22 @@ def calculate_next_execution_time(
                 if parsed.tzinfo is not None:
                     # Convert to UTC and strip tzinfo
                     return parsed.astimezone(utc_tz).replace(tzinfo=None)
-                # Assume naive datetime is already UTC
+                # For naive datetime, check if timezone is provided in trigger_config
+                # If so, interpret the datetime in that timezone and convert to UTC
+                timezone_str = trigger_config.get("timezone")
+                if timezone_str:
+                    try:
+                        user_tz = ZoneInfo(timezone_str)
+                        # Interpret the naive datetime as being in user's timezone
+                        parsed_with_tz = parsed.replace(tzinfo=user_tz)
+                        # Convert to UTC and strip tzinfo
+                        return parsed_with_tz.astimezone(utc_tz).replace(tzinfo=None)
+                    except Exception:
+                        logger.warning(
+                            f"Invalid timezone '{timezone_str}' for one_time trigger, "
+                            "treating execute_at as UTC"
+                        )
+                # No timezone provided, assume naive datetime is already UTC
                 return parsed
             elif hasattr(execute_at, "tzinfo") and execute_at.tzinfo is not None:
                 return execute_at.astimezone(utc_tz).replace(tzinfo=None)
@@ -473,6 +489,106 @@ def create_or_get_workspace(
     db.flush()  # Get the ID without committing
 
     return workspace.id
+
+
+def extract_workspace_repo_fields(
+    workspace_json: Dict[str, Any],
+) -> Dict[str, Optional[Any]]:
+    """Extract repository fields from workspace JSON."""
+    try:
+        workspace_crd = Workspace.model_validate(workspace_json)
+        repo = workspace_crd.spec.repository
+        return {
+            "git_repo": repo.gitRepo,
+            "git_repo_id": repo.gitRepoId,
+            "git_domain": repo.gitDomain,
+            "branch_name": repo.branchName,
+        }
+    except Exception:
+        repo = workspace_json.get("spec", {}).get("repository", {})
+        return {
+            "git_repo": repo.get("gitRepo"),
+            "git_repo_id": repo.get("gitRepoId"),
+            "git_domain": repo.get("gitDomain"),
+            "branch_name": repo.get("branchName"),
+        }
+
+
+def build_workspace_repo_cache(
+    db: Session, workspace_ids: Iterable[int]
+) -> Dict[int, Dict[str, Optional[Any]]]:
+    """Batch load workspace repository fields by workspace IDs."""
+    workspace_id_list = [ws_id for ws_id in set(workspace_ids) if ws_id]
+    if not workspace_id_list:
+        return {}
+
+    workspaces = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id.in_(workspace_id_list),
+            TaskResource.kind == "Workspace",
+            TaskResource.is_active == True,
+        )
+        .all()
+    )
+    return {
+        workspace.id: extract_workspace_repo_fields(workspace.json)
+        for workspace in workspaces
+    }
+
+
+def resolve_workspace_repo_fields(
+    db: Session,
+    *,
+    user_id: int,
+    workspace_id: Optional[int],
+    workspace_ref: Optional[SubscriptionWorkspaceRef],
+    workspace_repo_cache: Optional[Dict[int, Dict[str, Optional[Any]]]] = None,
+) -> Dict[str, Optional[Any]]:
+    """Resolve repository fields from a workspace reference."""
+    empty = {
+        "git_repo": None,
+        "git_repo_id": None,
+        "git_domain": None,
+        "branch_name": None,
+    }
+
+    if workspace_id and workspace_repo_cache is not None:
+        cached = workspace_repo_cache.get(workspace_id)
+        if cached is not None:
+            return cached
+
+    workspace = None
+    if workspace_id:
+        workspace = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == workspace_id,
+                TaskResource.kind == "Workspace",
+                TaskResource.is_active == True,
+            )
+            .first()
+        )
+    elif workspace_ref:
+        workspace = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.user_id == user_id,
+                TaskResource.kind == "Workspace",
+                TaskResource.name == workspace_ref.name,
+                TaskResource.namespace == workspace_ref.namespace,
+                TaskResource.is_active == True,
+            )
+            .first()
+        )
+
+    if not workspace:
+        return empty
+
+    fields = extract_workspace_repo_fields(workspace.json)
+    if workspace_id and workspace_repo_cache is not None:
+        workspace_repo_cache[workspace_id] = fields
+    return fields
 
 
 def extract_result_summary(result: Optional[Dict[str, Any]]) -> Optional[str]:

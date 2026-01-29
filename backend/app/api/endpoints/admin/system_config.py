@@ -12,6 +12,7 @@ from app.core.security import get_admin_user
 from app.models.system_config import SystemConfig
 from app.models.user import User
 from app.schemas.admin import (
+    AdminSetupCompleteResponse,
     ChatSloganItem,
     ChatSloganTipsResponse,
     ChatSloganTipsUpdate,
@@ -25,6 +26,7 @@ router = APIRouter()
 # Config keys
 QUICK_ACCESS_CONFIG_KEY = "quick_access_recommended"
 CHAT_SLOGAN_TIPS_CONFIG_KEY = "chat_slogan_tips"
+ADMIN_SETUP_CONFIG_KEY = "admin_setup_completed"
 
 # Default slogan and tips configuration
 DEFAULT_SLOGAN_TIPS_CONFIG = {
@@ -212,4 +214,47 @@ async def update_slogan_tips_config(
         version=config.version,
         slogans=config_data.slogans,
         tips=config_data.tips,
+    )
+
+
+# ==================== Admin Setup Wizard Endpoints ====================
+
+
+@router.post("/setup-complete", response_model=AdminSetupCompleteResponse)
+async def mark_admin_setup_complete(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Mark admin setup wizard as completed.
+    This will prevent the wizard from showing on subsequent admin logins.
+
+    Returns:
+        AdminSetupCompleteResponse: Contains success status and message
+    """
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == ADMIN_SETUP_CONFIG_KEY)
+        .first()
+    )
+
+    if config:
+        # Update existing config
+        config.config_value = {"completed": True}
+        config.updated_by = current_user.id
+        config.version += 1
+    else:
+        # Create new config
+        config = SystemConfig(
+            config_key=ADMIN_SETUP_CONFIG_KEY,
+            updated_by=current_user.id,
+        )
+        config.config_value = {"completed": True}
+        db.add(config)
+
+    db.commit()
+
+    return AdminSetupCompleteResponse(
+        success=True,
+        message="Admin setup wizard marked as completed",
     )

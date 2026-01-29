@@ -9,6 +9,7 @@ from .chat_storage import router as chat_storage_router
 from .rag import router as rag_router
 from .services import router as services_router
 from .skills import router as skills_router
+from .subscriptions import router as subscriptions_router
 from .tables import router as tables_router
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "rag_router",
     "services_router",
     "skills_router",
+    "subscriptions_router",
     "tables_router",
 ]

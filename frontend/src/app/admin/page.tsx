@@ -22,6 +22,7 @@ import PublicBotList from '@/features/admin/components/PublicBotList'
 import ApiKeyManagement from '@/features/admin/components/ApiKeyManagement'
 import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel'
 import BackgroundExecutionMonitorPanel from '@/features/admin/components/BackgroundExecutionMonitorPanel'
+import GlobalAdminSetupWizard from '@/features/admin/components/GlobalAdminSetupWizard'
 import { UserProvider, useUser } from '@/features/common/UserContext'
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
@@ -190,6 +191,9 @@ function AdminContent() {
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
+      {/* Admin Setup Wizard */}
+      <GlobalAdminSetupWizard />
+
       {/* Resizable sidebar with TaskSidebar */}
       <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
         <TaskSidebar

@@ -52,7 +52,7 @@ def _model_to_response(model: Kind) -> PublicModelResponse:
 @router.get("/public-models", response_model=PublicModelListResponse)
 async def list_public_models(
     page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=1000),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):

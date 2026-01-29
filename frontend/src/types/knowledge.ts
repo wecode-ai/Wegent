@@ -30,7 +30,7 @@ export interface RetrievalConfig {
 }
 
 // Splitter Config types
-export type SplitterType = 'sentence' | 'semantic'
+export type SplitterType = 'sentence' | 'semantic' | 'smart'
 
 // Base splitter config
 export interface BaseSplitterConfig {
@@ -52,8 +52,17 @@ export interface SemanticSplitterConfig extends BaseSplitterConfig {
   breakpoint_percentile_threshold?: number // 50-100, default 95
 }
 
+// Smart splitter config (file-type aware)
+export interface SmartSplitterConfig extends BaseSplitterConfig {
+  type: 'smart'
+  chunk_size?: number // 128-8192, default 1024
+  chunk_overlap?: number // 0-2048, default 50
+  file_extension?: string // .md, .txt, .pdf, .doc, .docx
+  subtype?: string // markdown_sentence, sentence, recursive_character
+}
+
 // Union type for splitter config
-export type SplitterConfig = SentenceSplitterConfig | SemanticSplitterConfig
+export type SplitterConfig = SentenceSplitterConfig | SemanticSplitterConfig | SmartSplitterConfig
 
 // Summary Model Reference types
 export interface SummaryModelRef {
@@ -269,4 +278,31 @@ export interface WebScrapeResponse {
     | 'CONTENT_TOO_LARGE'
     | 'NOT_HTML'
   error_message?: string
+}
+
+// Chunk types
+export interface ChunkItem {
+  index: number
+  content: string
+  token_count: number
+  start_position: number
+  end_position: number
+}
+
+export interface ChunkResponse {
+  index: number
+  content: string
+  token_count: number
+  document_name: string
+  document_id: number
+  kb_id: number
+}
+
+export interface ChunkListResponse {
+  total: number
+  page: number
+  page_size: number
+  items: ChunkItem[]
+  splitter_type?: string
+  splitter_subtype?: string
 }
