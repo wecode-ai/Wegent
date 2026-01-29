@@ -4,9 +4,19 @@
 
 'use client'
 
-import { FileText, Pencil, Trash2, ArrowRight, Clock, BookOpen, FolderOpen } from 'lucide-react'
+import {
+  FileText,
+  Pencil,
+  Trash2,
+  ArrowRight,
+  Clock,
+  BookOpen,
+  FolderOpen,
+  Link,
+} from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useToast } from '@/hooks/use-toast'
 import type { KnowledgeBase } from '@/types/knowledge'
 
 interface KnowledgeBaseCardProps {
@@ -27,6 +37,45 @@ export function KnowledgeBaseCard({
   canDelete = true,
 }: KnowledgeBaseCardProps) {
   const { t } = useTranslation()
+  const { toast } = useToast()
+
+  // Handle copy link to clipboard
+  const handleCopyLink = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const shareUrl = `${window.location.origin}/knowledge/share/${knowledgeBase.id}`
+
+    // Try modern clipboard API first
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(shareUrl)
+        toast({
+          description: t('knowledge:share.link_copied'),
+        })
+        return
+      } catch (error) {
+        console.error('Clipboard API failed, falling back to execCommand:', error)
+      }
+    }
+
+    // Fallback to traditional method if clipboard API is not available
+    try {
+      const textArea = document.createElement('textarea')
+      textArea.value = shareUrl
+      document.body.appendChild(textArea)
+      textArea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textArea)
+      toast({
+        description: t('knowledge:share.link_copied'),
+      })
+    } catch (error) {
+      console.error('Failed to copy link:', error)
+      toast({
+        variant: 'destructive',
+        description: 'Failed to copy link',
+      })
+    }
+  }
 
   // Format date for compact display (MM-DD HH:mm)
   const formatDate = (dateString: string) => {
@@ -102,6 +151,14 @@ export function KnowledgeBaseCard({
         </div>
         {/* Action icons */}
         <div className="flex items-center gap-1">
+          {/* Copy link button */}
+          <button
+            className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
+            onClick={handleCopyLink}
+            title={t('knowledge:share.copy_link')}
+          >
+            <Link className="w-4 h-4" />
+          </button>
           {canEdit && onEdit && (
             <button
               className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"

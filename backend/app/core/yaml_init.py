@@ -611,6 +611,38 @@ def scan_and_apply_yaml_directory(
     }
 
 
+def ensure_organization_knowledge_base(db: Session, admin_user_id: int) -> bool:
+    """
+    Ensure the organization knowledge base exists.
+
+    Creates the organization knowledge base if it doesn't exist.
+    This is called during system initialization to ensure the company KB
+    is always available for all users.
+
+    Args:
+        db: Database session
+        admin_user_id: Admin user ID to use as the creator
+
+    Returns:
+        True if KB was created, False if it already exists
+    """
+    from app.services.knowledge.knowledge_service import KnowledgeService
+
+    logger.info("Checking organization knowledge base...")
+    kb_id = KnowledgeService.create_organization_knowledge_base(
+        db=db,
+        admin_user_id=admin_user_id,
+    )
+
+    if kb_id is None:
+        logger.info("Organization knowledge base already exists")
+        return False
+
+    logger.info(f"Created organization knowledge base with ID: {kb_id}")
+    db.commit()
+    return True
+
+
 def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, Any]:
     """
     Main entry point for YAML initialization.
@@ -655,6 +687,17 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
     except Exception as e:
         logger.error(f"Failed to create default user: {e}", exc_info=True)
         return {"status": "error", "reason": "failed to create default user"}
+
+    # Ensure organization knowledge base exists
+    try:
+        logger.info("Ensuring organization knowledge base exists...")
+        org_kb_created = ensure_organization_knowledge_base(db, user_id)
+        logger.info(f"Organization knowledge base ready, created: {org_kb_created}")
+    except Exception as e:
+        logger.error(
+            f"Failed to create organization knowledge base: {e}", exc_info=True
+        )
+        # Don't fail initialization, just log the error
 
     # Scan and apply YAML resources
     init_dir = Path(settings.INIT_DATA_DIR)

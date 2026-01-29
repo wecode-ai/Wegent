@@ -10,7 +10,7 @@ export type DocumentStatus = 'enabled' | 'disabled'
 
 export type DocumentSourceType = 'file' | 'text' | 'table' | 'web'
 
-export type KnowledgeResourceScope = 'personal' | 'group' | 'all'
+export type KnowledgeResourceScope = 'personal' | 'group' | 'all' | 'external' | 'organization'
 
 // Retrieval Config types
 export interface RetrievalConfig {
@@ -91,6 +91,8 @@ export interface KnowledgeBase {
   summary?: KnowledgeBaseSummary | null
   /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
   kb_type?: KnowledgeBaseType
+  /** Whether this is a company knowledge base */
+  is_company?: boolean
   created_at: string
   updated_at: string
 }
@@ -104,6 +106,8 @@ export interface KnowledgeBaseCreate {
   summary_model_ref?: SummaryModelRef | null
   /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
   kb_type?: KnowledgeBaseType
+  /** Whether this is a company knowledge base */
+  is_company?: boolean
 }
 
 export interface RetrievalConfigUpdate {
@@ -280,6 +284,135 @@ export interface WebScrapeResponse {
   error_message?: string
 }
 
+// ============== Permission Management Types ==============
+
+export type PermissionType = 'read' | 'download' | 'write' | 'manage'
+
+export type PermissionSource =
+  | 'owner'
+  | 'group_role'
+  | 'explicit_grant'
+  | 'organization_member'
+  | 'system_admin'
+  | 'none'
+
+// Share info for share page
+export interface KnowledgeShareInfoResponse {
+  kb_id: number
+  name: string
+  description: string | null
+  namespace: string
+  kb_type: string | null
+  owner_user_id: number
+  owner_username: string
+  has_permission: boolean
+  permission_type: PermissionType | null
+  permission_source: PermissionSource
+}
+
+// Permission creation
+export interface PermissionCreate {
+  user_ids: number[]
+  permission_type: PermissionType
+}
+
+// Permission update
+export interface PermissionUpdate {
+  permission_type: PermissionType
+}
+
+// Permission record
+export interface PermissionResponse {
+  id: number
+  user_id: number
+  username: string
+  permission_type: PermissionType
+  granted_by_user_id: number
+  granted_by_username: string
+  granted_at: string
+}
+
+// Permission list
+export interface PermissionListResponse {
+  total: number
+  items: PermissionResponse[]
+}
+
+// Batch permission result
+export interface PermissionBatchResult {
+  success_count: number
+  skipped_count: number
+  skipped_user_ids: number[]
+}
+
+// Current user's permission
+export interface MyPermissionResponse {
+  has_permission: boolean
+  permission_type: PermissionType | null
+  permission_source: PermissionSource
+}
+
+// ============== Permission Request Types ==============
+
+export type PermissionRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled' | 'expired' | 'disallow'
+
+// Permission request creation
+export interface PermissionRequestCreate {
+  kind_id: number
+  request_reason?: string
+  requested_permission_type?: 'read' | 'download' | 'write'
+}
+
+// Permission request processing
+export interface PermissionRequestProcess {
+  action: 'approve' | 'reject'
+  response_message?: string
+  granted_permission_type?: PermissionType
+}
+
+// Permission request response
+export interface PermissionRequestResponse {
+  id: number
+  kind_id: number
+  resource_type: string
+  applicant_user_id: number
+  applicant_username: string
+  requested_permission_type: string
+  request_reason: string | null
+  status: PermissionRequestStatus
+  processed_by_user_id: number | null
+  processed_by_username: string | null
+  processed_at: string | null
+  response_message: string | null
+  created_at: string
+  updated_at: string
+  // Additional info for display
+  kb_name: string | null
+  kb_description: string | null
+  kb_owner_username: string | null
+}
+
+// Permission request list response
+export interface PermissionRequestListResponse {
+  total: number
+  items: PermissionRequestResponse[]
+}
+
+// Pending request count response
+export interface PendingRequestCountResponse {
+  count: number
+}
+
+// My requests response
+export interface MyRequestsResponse {
+  total: number
+  items: PermissionRequestResponse[]
+}
+
+// Check pending request response
+export interface PermissionRequestCheckResponse {
+  has_pending_request: boolean
+  pending_request: PermissionRequestResponse | null
 // Chunk types
 export interface ChunkItem {
   index: number

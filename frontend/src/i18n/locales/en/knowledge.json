@@ -9,6 +9,89 @@
   "documents": "documents",
   "document_count": "{{count}} document",
   "documents_count": "{{count}} documents",
+  "share": {
+    "title": "Share Knowledge Base",
+    "copy_link": "Copy Link",
+    "link_copied": "Link copied to clipboard",
+    "manage_permissions": "Manage Permissions",
+    "no_permission": {
+      "title": "No Access",
+      "description": "You don't have permission to access this knowledge base. Please contact the administrator.",
+      "group_title": "Group Knowledge Base",
+      "group_hint": "This is a group knowledge base. Please join the group first.",
+      "organization_hint": "You don't have permission to access this company knowledge base. Please contact the administrator.",
+      "owner": "Owner"
+    },
+    "pending_request": {
+      "title": "Request Pending",
+      "description": "Your access request is pending approval",
+      "requested_at": "Requested at",
+      "requested_permission": "Requested permission",
+      "submitted_at": "Submitted at: {{time}}"
+    },
+    "request_access": {
+      "title": "Request Access",
+      "description": "You don't have permission to access this knowledge base. You can request access from the administrator.",
+      "button": "Request Access"
+    }
+  },
+  "permission_request": {
+    "title": "Request Access",
+    "description": "Fill in the request form. The knowledge base administrator will be notified for approval.",
+    "kb_name": "Knowledge Base",
+    "kb_owner": "Owner",
+    "kb_description": "Description",
+    "requested_permission": "Requested Permission",
+    "permission_hint": {
+      "read": "Can view knowledge base content",
+      "download": "Can view and download documents",
+      "write": "Can view, download, and edit documents"
+    },
+    "reason_label": "Request Reason",
+    "reason_placeholder": "Please briefly explain why you need access to this knowledge base...",
+    "reason_hint": "A clear reason helps the administrator approve your request faster",
+    "submit": "Submit Request",
+    "submitting": "Submitting...",
+    "messages": {
+      "submitted": "Request submitted. Please wait for administrator approval.",
+      "submit_failed": "Failed to submit request. Please try again.",
+      "load_failed": "Failed to load requests",
+      "approved": "Request approved",
+      "rejected": "Request rejected",
+      "approve_failed": "Failed to approve request. Please try again.",
+      "reject_failed": "Failed to reject request. Please try again.",
+      "duplicate": "You already have a pending request. Please wait for the approval result.",
+      "kb_not_found": "This knowledge base no longer exists",
+      "group_kb_hint": "This is a group knowledge base. Please join the group first."
+    },
+    "approval": {
+      "title": "Permission Request Approval",
+      "title_kb": "{{name}} - Permission Requests",
+      "description": "Review and process knowledge base access requests",
+      "no_requests": "No pending requests",
+      "columns": {
+        "applicant": "Applicant",
+        "kb_name": "Knowledge Base",
+        "requested": "Requested",
+        "reason": "Reason",
+        "time": "Time",
+        "actions": "Actions"
+      },
+      "grant_permission": "Grant Permission",
+      "grant_permission_hint": "You can grant a different permission level than requested",
+      "response_message": "Response Message",
+      "response_placeholder": "Optional: Message to the applicant",
+      "response_hint": "This message will be sent to the applicant"
+    }
+  },
+  "permission": {
+    "type": {
+      "read": "Read",
+      "download": "Download",
+      "write": "Write",
+      "manage": "Manage"
+    }
+  },
   "modules": {
     "title": "Knowledge Space",
     "code": "Code Knowledge",
@@ -29,14 +112,24 @@
     "noGroupHint": "You haven't joined any groups yet. Create or join a group to view group knowledge bases here.",
     "searchGroups": "Search groups...",
     "noGroupResults": "No matching groups",
+    "company": {
+      "title": "Company Knowledge Base",
+      "description": "Company-wide shared knowledge base accessible to all employees",
+      "empty": "No company knowledge base",
+      "emptyHint": "Company knowledge base has not been created yet",
+      "adminOnly": "Only administrators can manage company knowledge base",
+      "loadFailed": "Failed to load company knowledge base"
+    },
     "tabs": {
       "personal": "Personal",
       "group": "Group",
+      "company": "Company",
       "external": "External"
     },
     "knowledgeBase": {
       "title": "Knowledge Base",
       "create": "Create Knowledge Base",
+      "createCompany": "Create Company Knowledge Base",
       "createNotebook": "Create Notebook",
       "createClassic": "Create Knowledge Base",
       "createDesc": "Create your first knowledge base",
@@ -53,6 +146,8 @@
       "nameTooLong": "Name must be 100 characters or less",
       "description": "Description",
       "descriptionPlaceholder": "Enter description (optional)",
+      "companyKnowledgeBase": "Company Knowledge Base",
+      "companyKnowledgeBaseDesc": "Mark as company knowledge base, displayed in company knowledge base list",
       "documentCount": "Documents",
       "empty": "No knowledge bases yet",
       "confirmDelete": "Are you sure you want to delete this knowledge base? This action cannot be undone.",
@@ -249,7 +344,52 @@
       }
     },
     "permission": {
-      "noAccess": "You do not have permission to perform this action"
+      "noAccess": "You do not have permission to perform this action",
+      "title": "Permission Management",
+      "tabs": {
+        "users": "Authorized Users",
+        "add": "Add Users"
+      },
+      "type": {
+        "read": "Read",
+        "download": "Download",
+        "write": "Write",
+        "manage": "Manage"
+      },
+      "source": {
+        "owner": "Owner",
+        "group_role": "Group Role",
+        "explicit_grant": "Explicit Grant",
+        "organization_member": "Organization Member",
+        "system_admin": "System Admin"
+      },
+      "columns": {
+        "user": "User",
+        "permission": "Permission",
+        "granted_by": "Granted By",
+        "actions": "Actions"
+      },
+      "no_users": "No authorized users",
+      "actions": {
+        "revoke": "Revoke Permission",
+        "revoke_confirm": "Are you sure you want to revoke this user's access?",
+        "modify": "Modify Permission"
+      },
+      "add_users": {
+        "search_placeholder": "Search username...",
+        "selected": "{{count}} selected",
+        "add": "Add",
+        "select_permission": "Select permission type"
+      },
+      "messages": {
+        "load_failed": "Failed to load permissions",
+        "permission_added": "Permissions added: {{success}} succeeded, {{skipped}} skipped",
+        "add_failed": "Failed to add permissions",
+        "permission_updated": "Permission updated successfully",
+        "update_failed": "Failed to update permission",
+        "permission_revoked": "Permission revoked successfully",
+        "revoke_failed": "Failed to revoke permission"
+      }
     },
     "advancedSettings": {
       "title": "Advanced Settings",

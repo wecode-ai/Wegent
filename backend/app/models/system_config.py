@@ -29,7 +29,7 @@ class SystemConfig(Base):
     config_key = Column(String(100), nullable=False, unique=True, index=True)
     _config_value = Column("config_value", String(4096), nullable=False, default="{}")
     version = Column(Integer, nullable=False, default=1)
-    updated_by = Column(Integer, nullable=True)  # User ID who last updated
+    updated_by = Column(Integer, nullable=False, default=0)  # User ID who last updated
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 

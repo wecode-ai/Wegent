@@ -88,6 +88,9 @@ class KnowledgeDocument(Base):
     source_config = Column(
         JSON, nullable=False, default={}
     )  # Source configuration (e.g., {"url": "..."} for table)
+    summary = Column(
+        JSON, nullable=False, default={}
+    )  # Document summary information (JSON)
     summary = Column(JSON, nullable=True)  # Document summary information (JSON)
     chunks = Column(
         JSON, nullable=True

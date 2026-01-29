@@ -253,6 +253,195 @@ export async function refreshKnowledgeBaseSummary(
   )
 }
 
+// ============== Permission Management APIs ==============
+
+import type {
+  KnowledgeShareInfoResponse,
+  MyPermissionResponse,
+  PermissionBatchResult,
+  PermissionCreate,
+  PermissionListResponse,
+  PermissionUpdate,
+} from '@/types/knowledge'
+
+/**
+ * Get knowledge base share info (for share page)
+ * @param kbId Knowledge base ID
+ * @returns Share info with permission status
+ */
+export async function getKnowledgeShareInfo(kbId: number): Promise<KnowledgeShareInfoResponse> {
+  return apiClient.get<KnowledgeShareInfoResponse>(`/knowledge-bases/${kbId}/share-info`)
+}
+
+/**
+ * Get list of users with explicit permissions on a knowledge base
+ * Requires manage permission
+ * @param kbId Knowledge base ID
+ * @returns List of permission records
+ */
+export async function getKnowledgePermissions(kbId: number): Promise<PermissionListResponse> {
+  return apiClient.get<PermissionListResponse>(`/knowledge-bases/${kbId}/permissions`)
+}
+
+/**
+ * Add permissions for multiple users to a knowledge base
+ * Requires manage permission
+ * @param kbId Knowledge base ID
+ * @param data User IDs and permission type
+ * @returns Batch operation result
+ */
+export async function addKnowledgePermissions(
+  kbId: number,
+  data: PermissionCreate
+): Promise<PermissionBatchResult> {
+  return apiClient.post<PermissionBatchResult>(`/knowledge-bases/${kbId}/permissions`, data)
+}
+
+/**
+ * Update a user's permission for a knowledge base
+ * Requires manage permission
+ * @param kbId Knowledge base ID
+ * @param userId User ID to update
+ * @param data New permission type
+ */
+export async function updateKnowledgePermission(
+  kbId: number,
+  userId: number,
+  data: PermissionUpdate
+): Promise<{ message: string }> {
+  return apiClient.put<{ message: string }>(`/knowledge-bases/${kbId}/permissions/${userId}`, data)
+}
+
+/**
+ * Revoke a user's permission for a knowledge base
+ * Requires manage permission
+ * @param kbId Knowledge base ID
+ * @param userId User ID to revoke
+ */
+export async function deleteKnowledgePermission(
+  kbId: number,
+  userId: number
+): Promise<{ message: string }> {
+  return apiClient.delete<{ message: string }>(`/knowledge-bases/${kbId}/permissions/${userId}`)
+}
+
+/**
+ * Get current user's permission for a knowledge base
+ * @param kbId Knowledge base ID
+ * @returns Current user's permission info
+ */
+export async function getMyKnowledgePermission(kbId: number): Promise<MyPermissionResponse> {
+  return apiClient.get<MyPermissionResponse>(`/knowledge-bases/${kbId}/my-permission`)
+}
+
+/**
+ * Get the organization knowledge base
+ * Creates it if doesn't exist and user is admin
+ * @returns Organization knowledge base
+ */
+export async function getOrganizationKnowledgeBase(): Promise<KnowledgeBase> {
+  return apiClient.get<KnowledgeBase>('/knowledge-bases/organization')
+}
+
+// ============== Permission Request APIs ==============
+
+import type {
+  MyRequestsResponse,
+  PendingRequestCountResponse,
+  PermissionRequestCheckResponse,
+  PermissionRequestCreate,
+  PermissionRequestListResponse,
+  PermissionRequestProcess,
+  PermissionRequestResponse,
+} from '@/types/knowledge'
+
+/**
+ * Create a permission request for a knowledge base
+ * @param data Request data with kind_id and optional reason
+ * @returns Created permission request
+ */
+export async function createPermissionRequest(
+  data: PermissionRequestCreate
+): Promise<PermissionRequestResponse> {
+  return apiClient.post<PermissionRequestResponse>('/permission-requests', data)
+}
+
+/**
+ * Get all pending permission requests that the current user can process
+ * @returns List of pending requests
+ */
+export async function getPendingPermissionRequests(): Promise<PermissionRequestListResponse> {
+  return apiClient.get<PermissionRequestListResponse>('/permission-requests/pending')
+}
+
+/**
+ * Get count of pending permission requests for notification badge
+ * @returns Count of pending requests
+ */
+export async function getPendingRequestCount(): Promise<PendingRequestCountResponse> {
+  return apiClient.get<PendingRequestCountResponse>('/permission-requests/pending/count')
+}
+
+/**
+ * Get current user's permission requests
+ * @param status Optional status filter
+ * @returns List of user's requests
+ */
+export async function getMyPermissionRequests(status?: string): Promise<MyRequestsResponse> {
+  const endpoint = status
+    ? `/permission-requests/my?request_status=${status}`
+    : '/permission-requests/my'
+  return apiClient.get<MyRequestsResponse>(endpoint)
+}
+
+/**
+ * Check if current user has a pending request for a knowledge base
+ * @param kbId Knowledge base ID
+ * @returns Check result with pending request if exists
+ */
+export async function checkPendingRequest(kbId: number): Promise<PermissionRequestCheckResponse> {
+  return apiClient.get<PermissionRequestCheckResponse>(`/permission-requests/check/${kbId}`)
+}
+
+/**
+ * Process (approve/reject) a permission request
+ * @param requestId Request ID
+ * @param data Processing data with action and optional message
+ * @returns Updated permission request
+ */
+export async function processPermissionRequest(
+  requestId: number,
+  data: PermissionRequestProcess
+): Promise<PermissionRequestResponse> {
+  return apiClient.post<PermissionRequestResponse>(
+    `/permission-requests/${requestId}/process`,
+    data
+  )
+}
+
+/**
+ * Cancel a pending permission request
+ * @param requestId Request ID
+ * @returns Cancelled permission request
+ */
+export async function cancelPermissionRequest(
+  requestId: number
+): Promise<PermissionRequestResponse> {
+  return apiClient.delete<PermissionRequestResponse>(`/permission-requests/${requestId}`)
+}
+
+/**
+ * Get pending permission requests for a specific knowledge base
+ * Requires manage permission
+ * @param kbId Knowledge base ID
+ * @returns List of pending requests
+ */
+export async function getKbPermissionRequests(
+  kbId: number
+): Promise<PermissionRequestListResponse> {
+  return apiClient.get<PermissionRequestListResponse>(
+    `/knowledge-bases/${kbId}/permission-requests`
+  )
 // ============== Configuration APIs ==============
 
 /**

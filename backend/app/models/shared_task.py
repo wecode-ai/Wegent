@@ -43,7 +43,11 @@ class SharedTask(Base):
 
     # New task ID created for the user who joined (copied task)
     copied_task_id = Column(
-        Integer, ForeignKey("kinds.id", ondelete="CASCADE"), nullable=True, index=True
+        Integer,
+        ForeignKey("kinds.id", ondelete="CASCADE"),
+        nullable=True,
+        default=None,
+        index=True,
     )
 
     # Whether this share relationship is active
