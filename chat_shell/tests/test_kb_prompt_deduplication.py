@@ -180,9 +180,7 @@ class TestKnowledgeFactorySkipPromptEnhancement:
         kb_ids = [1, 2]
 
         # Mock the KnowledgeBaseTool import in knowledge_factory
-        with patch(
-            "chat_shell.tools.builtin.KnowledgeBaseTool"
-        ) as mock_kb_tool_class:
+        with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool_class:
             mock_kb_tool_class.return_value = MagicMock()
 
             tools, enhanced_prompt = await prepare_knowledge_base_tools(
@@ -209,9 +207,7 @@ class TestKnowledgeFactorySkipPromptEnhancement:
         kb_ids = [1, 2]
 
         # Mock the KnowledgeBaseTool import in knowledge_factory
-        with patch(
-            "chat_shell.tools.builtin.KnowledgeBaseTool"
-        ) as mock_kb_tool_class:
+        with patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool_class:
             mock_kb_tool_class.return_value = MagicMock()
 
             tools, enhanced_prompt = await prepare_knowledge_base_tools(

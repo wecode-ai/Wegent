@@ -11,7 +11,7 @@ follow relationships between users and subscriptions.
 
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy import and_, desc, func
@@ -45,7 +45,11 @@ from app.schemas.subscription import (
     SubscriptionTriggerType,
     SubscriptionVisibility,
 )
-from app.services.subscription.helpers import extract_trigger_config
+from app.services.subscription.helpers import (
+    build_workspace_repo_cache,
+    extract_trigger_config,
+    resolve_workspace_repo_fields,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -323,20 +327,35 @@ class SubscriptionFollowService:
             .all()
         )
 
-        items = []
-        for follow in follows:
-            subscription = (
+        subscription_ids = [follow.subscription_id for follow in follows]
+        subscriptions = []
+        if subscription_ids:
+            subscriptions = (
                 db.query(Kind)
                 .filter(
-                    Kind.id == follow.subscription_id,
+                    Kind.id.in_(subscription_ids),
                     Kind.kind == "Subscription",
                     Kind.is_active == True,
                 )
-                .first()
+                .all()
             )
+        subscription_map = {
+            subscription.id: subscription for subscription in subscriptions
+        }
+        workspace_ids = [
+            sub.json.get("_internal", {}).get("workspace_id") for sub in subscriptions
+        ]
+        workspace_repo_cache = build_workspace_repo_cache(db, workspace_ids)
+
+        items = []
+        for follow in follows:
+            subscription = subscription_map.get(follow.subscription_id)
             if subscription:
                 subscription_in_db = self._convert_to_subscription_in_db(
-                    db, subscription, user_id
+                    db,
+                    subscription,
+                    user_id,
+                    workspace_repo_cache=workspace_repo_cache,
                 )
                 items.append(
                     FollowingSubscriptionResponse(
@@ -1162,7 +1181,12 @@ class SubscriptionFollowService:
         return [f[0] for f in follows]
 
     def _convert_to_subscription_in_db(
-        self, db: Session, subscription: Kind, current_user_id: Optional[int] = None
+        self,
+        db: Session,
+        subscription: Kind,
+        current_user_id: Optional[int] = None,
+        *,
+        workspace_repo_cache: Optional[Dict[int, Dict[str, Optional[Any]]]] = None,
     ) -> SubscriptionInDB:
         """Convert Kind to SubscriptionInDB with follow info."""
         subscription_crd = Subscription.model_validate(subscription.json)
@@ -1219,6 +1243,14 @@ class SubscriptionFollowService:
             subscription_crd.spec, "visibility", SubscriptionVisibility.PRIVATE
         )
 
+        workspace_repo_fields = resolve_workspace_repo_fields(
+            db,
+            user_id=subscription.user_id,
+            workspace_id=internal.get("workspace_id"),
+            workspace_ref=subscription_crd.spec.workspaceRef,
+            workspace_repo_cache=workspace_repo_cache,
+        )
+
         return SubscriptionInDB(
             id=subscription.id,
             user_id=subscription.user_id,
@@ -1232,6 +1264,10 @@ class SubscriptionFollowService:
             trigger_config=extract_trigger_config(subscription_crd.spec.trigger),
             team_id=internal.get("team_id", 0),
             workspace_id=internal.get("workspace_id", 0),
+            git_repo=workspace_repo_fields.get("git_repo"),
+            git_repo_id=workspace_repo_fields.get("git_repo_id"),
+            git_domain=workspace_repo_fields.get("git_domain"),
+            branch_name=workspace_repo_fields.get("branch_name"),
             model_ref=model_ref,
             force_override_bot_model=subscription_crd.spec.forceOverrideBotModel,
             prompt_template=subscription_crd.spec.promptTemplate,

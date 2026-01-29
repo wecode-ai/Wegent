@@ -68,6 +68,7 @@ class ChatRequest:
     # Bot configuration
     bot_name: str = ""
     bot_namespace: str = ""
+    timezone: str = "Asia/Shanghai"  # User timezone for CreateSubscriptionTool
     skills: list = field(default_factory=list)  # Skill metadata for prompt injection
 
     # Skill configuration for dynamic tool loading

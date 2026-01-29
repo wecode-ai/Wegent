@@ -38,9 +38,11 @@ from app.services.subscription.execution import (
 from app.services.subscription.helpers import (
     build_subscription_crd,
     build_trigger_config,
+    build_workspace_repo_cache,
     calculate_next_execution_time,
     create_or_get_workspace,
     extract_trigger_config,
+    resolve_workspace_repo_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -179,7 +181,7 @@ class SubscriptionService:
         db.commit()
         db.refresh(subscription)
 
-        return self._convert_to_subscription_in_db(subscription)
+        return self._convert_to_subscription_in_db(subscription, db=db)
 
     def get_subscription(
         self,
@@ -203,7 +205,7 @@ class SubscriptionService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        return self._convert_to_subscription_in_db(subscription)
+        return self._convert_to_subscription_in_db(subscription, db=db)
 
     def list_subscriptions(
         self,
@@ -255,7 +257,17 @@ class SubscriptionService:
         total = len(subscriptions)
         subscriptions = subscriptions[skip : skip + limit]
 
-        return [self._convert_to_subscription_in_db(s) for s in subscriptions], total
+        workspace_ids = [
+            s.json.get("_internal", {}).get("workspace_id") for s in subscriptions
+        ]
+        workspace_repo_cache = build_workspace_repo_cache(db, workspace_ids)
+
+        return [
+            self._convert_to_subscription_in_db(
+                s, db=db, workspace_repo_cache=workspace_repo_cache
+            )
+            for s in subscriptions
+        ], total
 
     def update_subscription(
         self,
@@ -325,6 +337,37 @@ class SubscriptionService:
                     name=workspace.name, namespace=workspace.namespace
                 )
                 internal["workspace_id"] = update_data["workspace_id"]
+            else:
+                subscription_crd.spec.workspaceRef = None
+                internal["workspace_id"] = 0
+        elif any(
+            key in update_data
+            for key in ("git_repo", "git_repo_id", "git_domain", "branch_name")
+        ):
+            git_repo = update_data.get("git_repo")
+            if git_repo:
+                workspace_id = create_or_get_workspace(
+                    db,
+                    user_id=user_id,
+                    git_repo=git_repo,
+                    git_repo_id=update_data.get("git_repo_id"),
+                    git_domain=update_data.get("git_domain") or "github.com",
+                    branch_name=update_data.get("branch_name") or "main",
+                )
+                workspace = (
+                    db.query(TaskResource)
+                    .filter(
+                        TaskResource.id == workspace_id,
+                        TaskResource.kind == "Workspace",
+                        TaskResource.is_active == True,
+                    )
+                    .first()
+                )
+                if workspace:
+                    subscription_crd.spec.workspaceRef = SubscriptionWorkspaceRef(
+                        name=workspace.name, namespace=workspace.namespace
+                    )
+                    internal["workspace_id"] = workspace.id
             else:
                 subscription_crd.spec.workspaceRef = None
                 internal["workspace_id"] = 0
@@ -455,7 +498,7 @@ class SubscriptionService:
         db.commit()
         db.refresh(subscription)
 
-        return self._convert_to_subscription_in_db(subscription)
+        return self._convert_to_subscription_in_db(subscription, db=db)
 
     def delete_subscription(
         self,
@@ -539,7 +582,7 @@ class SubscriptionService:
         db.commit()
         db.refresh(subscription)
 
-        return self._convert_to_subscription_in_db(subscription)
+        return self._convert_to_subscription_in_db(subscription, db=db)
 
     def trigger_subscription_manually(
         self,
@@ -733,7 +776,12 @@ class SubscriptionService:
         return calculate_next_execution_time(trigger_type, trigger_config)
 
     def _convert_to_subscription_in_db(
-        self, subscription: Kind, current_user_id: Optional[int] = None
+        self,
+        subscription: Kind,
+        current_user_id: Optional[int] = None,
+        *,
+        db: Optional[Session] = None,
+        workspace_repo_cache: Optional[Dict[int, Dict[str, Optional[Any]]]] = None,
     ) -> SubscriptionInDB:
         """Convert Kind to SubscriptionInDB."""
         from app.schemas.subscription import SubscriptionVisibility
@@ -789,6 +837,22 @@ class SubscriptionService:
         )
         source_owner_username = internal.get("source_owner_username")
         rental_count = internal.get("rental_count", 0)
+        workspace_repo_fields = (
+            resolve_workspace_repo_fields(
+                db,
+                user_id=subscription.user_id,
+                workspace_id=internal.get("workspace_id"),
+                workspace_ref=subscription_crd.spec.workspaceRef,
+                workspace_repo_cache=workspace_repo_cache,
+            )
+            if db
+            else {
+                "git_repo": None,
+                "git_repo_id": None,
+                "git_domain": None,
+                "branch_name": None,
+            }
+        )
 
         return SubscriptionInDB(
             id=subscription.id,
@@ -803,6 +867,10 @@ class SubscriptionService:
             trigger_config=extract_trigger_config(subscription_crd.spec.trigger),
             team_id=internal.get("team_id", 0),
             workspace_id=internal.get("workspace_id", 0),
+            git_repo=workspace_repo_fields.get("git_repo"),
+            git_repo_id=workspace_repo_fields.get("git_repo_id"),
+            git_domain=workspace_repo_fields.get("git_domain"),
+            branch_name=workspace_repo_fields.get("branch_name"),
             model_ref=model_ref,
             force_override_bot_model=subscription_crd.spec.forceOverrideBotModel,
             prompt_template=subscription_crd.spec.promptTemplate,

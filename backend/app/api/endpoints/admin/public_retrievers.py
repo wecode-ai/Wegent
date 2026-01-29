@@ -39,7 +39,7 @@ def _retriever_to_response(r: dict) -> PublicRetrieverResponse:
 @router.get("/public-retrievers", response_model=PublicRetrieverListResponse)
 async def list_public_retrievers(
     page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=1000),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):

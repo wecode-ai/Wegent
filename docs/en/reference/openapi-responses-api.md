@@ -95,8 +95,31 @@ The `tools` array enables additional server-side capabilities:
 | Tool Type | Description |
 |-----------|-------------|
 | `wegent_chat_bot` | Enable all server-side capabilities (deep thinking, web search, server MCP tools, message enhancement) |
+| `wegent_code_bot` | Enable code task with git repository (for Executor-based Teams) |
 | `mcp` | Add custom MCP servers |
 | `skill` | Preload specific skills |
+
+**Code Bot Configuration (for code tasks):**
+```json
+{
+  "tools": [
+    {
+      "type": "wegent_code_bot",
+      "workspace": {
+        "git_url": "https://github.com/user/repo.git",
+        "branch": "main",
+        "git_repo": "user/repo"
+      }
+    }
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `workspace.git_url` | string | Yes | Git repository URL |
+| `workspace.branch` | string | Yes | Git branch name |
+| `workspace.git_repo` | string | No | Repository name (e.g., `user/repo`). Will be extracted from `git_url` if not provided |
 
 **MCP Server Configuration:**
 ```json

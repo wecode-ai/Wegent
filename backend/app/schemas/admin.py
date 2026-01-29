@@ -236,6 +236,10 @@ class WelcomeConfigResponse(BaseModel):
         default_factory=list, description="List of slogans"
     )
     tips: List[ChatTipItem] = Field(default_factory=list, description="List of tips")
+    admin_setup_completed: Optional[bool] = Field(
+        default=None,
+        description="Whether admin setup wizard has been completed (only returned for admin users)",
+    )
 
 
 # Public Retriever Management Schemas
@@ -368,23 +372,43 @@ class PublicTeamListResponse(BaseModel):
 
 # Public Bot Management Schemas
 class PublicBotCreate(BaseModel):
-    """Public bot creation model"""
+    """Public bot creation model - supports both raw JSON and form data modes"""
 
     name: str = Field(..., min_length=1, max_length=100)
     namespace: str = Field(default="default", max_length=100)
-    bot_json: dict = Field(..., alias="json")
+    bot_json: Optional[dict] = Field(None, alias="json")
+
+    # Form data fields (used when bot_json is not provided)
+    # These fields allow creating a Bot with auto-generated Ghost
+    shell_name: Optional[str] = Field(None, description="Shell name to reference")
+    system_prompt: Optional[str] = Field(None, description="System prompt for Ghost")
+    mcp_servers: Optional[dict] = Field(
+        None, description="MCP servers config for Ghost"
+    )
+    skills: Optional[List[str]] = Field(None, description="Skills list for Ghost")
+    agent_config: Optional[dict] = Field(None, description="Agent config for Model")
 
     class Config:
         populate_by_name = True
 
 
 class PublicBotUpdate(BaseModel):
-    """Public bot update model"""
+    """Public bot update model - supports both raw JSON and form data modes"""
 
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     namespace: Optional[str] = Field(None, max_length=100)
     bot_json: Optional[dict] = Field(None, alias="json")
     is_active: Optional[bool] = None
+
+    # Form data fields (used when bot_json is not provided)
+    # These fields allow updating a Bot with auto-updated Ghost
+    shell_name: Optional[str] = Field(None, description="Shell name to reference")
+    system_prompt: Optional[str] = Field(None, description="System prompt for Ghost")
+    mcp_servers: Optional[dict] = Field(
+        None, description="MCP servers config for Ghost"
+    )
+    skills: Optional[List[str]] = Field(None, description="Skills list for Ghost")
+    agent_config: Optional[dict] = Field(None, description="Agent config for Model")
 
     class Config:
         populate_by_name = True
@@ -405,6 +429,12 @@ class PublicBotResponse(BaseModel):
     ghost_name: Optional[str] = None
     shell_name: Optional[str] = None
     model_name: Optional[str] = None
+    # Expanded Ghost fields for UI convenience
+    system_prompt: Optional[str] = None
+    mcp_servers: Optional[dict] = None
+    skills: Optional[List[str]] = None
+    # Expanded Model fields for UI convenience
+    agent_config: Optional[dict] = None
 
     class Config:
         from_attributes = True
@@ -514,3 +544,11 @@ class PublicShellListResponse(BaseModel):
 
     total: int
     items: List[PublicShellResponse]
+
+
+# Admin Setup Wizard Schemas
+class AdminSetupCompleteResponse(BaseModel):
+    """Admin setup complete response model"""
+
+    success: bool = Field(..., description="Whether the operation was successful")
+    message: str = Field(..., description="Response message")

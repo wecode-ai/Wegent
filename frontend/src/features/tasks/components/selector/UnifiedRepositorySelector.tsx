@@ -5,39 +5,24 @@
 'use client'
 
 import * as React from 'react'
-import { useState, useEffect, useMemo, useCallback, useContext } from 'react'
-import {
-  Check,
-  ChevronDown,
-  ChevronLeft,
-  Loader2,
-  GitBranch as GitBranchIcon,
-  FolderGit2,
-  FolderX,
-} from 'lucide-react'
+import { useState, useEffect, useMemo, useCallback, useContext, useRef } from 'react'
+import { ChevronDown, Loader2, GitBranch as GitBranchIcon, X } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Switch } from '@/components/ui/switch'
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
 
 import { truncateMiddle } from '@/utils/stringUtils'
 import { GitRepoInfo, GitBranch, TaskDetail } from '@/types/api'
 import { githubApis } from '@/apis/github'
 import { useToast } from '@/hooks/use-toast'
 import { useRepositorySearch } from '../../hooks/useRepositorySearch'
-import { RepositorySelectorFooter } from './RepositorySelectorFooter'
+import { RepoListView } from './RepoListView'
+import { BranchListView } from './BranchListView'
 import { TaskContext } from '../../contexts/taskContext'
 
 /**
@@ -66,8 +51,45 @@ export interface UnifiedRepositorySelectorProps {
 type SelectorView = 'repo' | 'branch'
 
 /**
+ * Animation variants for drill-down transitions
+ */
+const slideVariants = {
+  enterFromRight: {
+    x: 20,
+    opacity: 0,
+  },
+  enterFromLeft: {
+    x: -20,
+    opacity: 0,
+  },
+  center: {
+    x: 0,
+    opacity: 1,
+  },
+  exitToLeft: {
+    x: -40,
+    opacity: 0,
+  },
+  exitToRight: {
+    x: 40,
+    opacity: 0,
+  },
+}
+
+/**
+ * Spring transition for smooth, iOS-like animations
+ */
+const slideTransition = {
+  type: 'spring' as const,
+  stiffness: 400,
+  damping: 30,
+  mass: 0.8,
+}
+
+/**
  * UnifiedRepositorySelector component
  * Provides unified repository and branch selection in a single Popover
+ * with smooth drill-down animations and skeleton loading
  */
 export default function UnifiedRepositorySelector({
   selectedRepo,
@@ -89,12 +111,17 @@ export default function UnifiedRepositorySelector({
   // Popover state
   const [isOpen, setIsOpen] = useState(false)
   const [currentView, setCurrentView] = useState<SelectorView>('repo')
+  // Track slide direction for animations
+  const [slideDirection, setSlideDirection] = useState<'left' | 'right'>('left')
 
   // Branch state
   const [branches, setBranches] = useState<GitBranch[]>([])
   const [branchLoading, setBranchLoading] = useState(false)
   const [branchError, setBranchError] = useState<string | null>(null)
   const [userCleared, setUserCleared] = useState(false)
+
+  // Track previous requiresWorkspace value to detect changes (e.g., team switch)
+  const prevRequiresWorkspaceRef = useRef(requiresWorkspace)
 
   // Try to get context, but don't throw if not available
   const taskContext = useContext(TaskContext)
@@ -140,9 +167,14 @@ export default function UnifiedRepositorySelector({
     return items
   }, [repos, selectedRepo])
 
-  // Convert branches to items
+  // Convert branches to items - sort default branch first
   const branchItems = useMemo(() => {
-    return branches.map(branch => ({
+    const sorted = [...branches].sort((a, b) => {
+      if (a.default && !b.default) return -1
+      if (!a.default && b.default) return 1
+      return 0
+    })
+    return sorted.map(branch => ({
       value: branch.name,
       label: branch.name,
       searchText: branch.name,
@@ -227,12 +259,32 @@ export default function UnifiedRepositorySelector({
     setUserCleared(false)
   }, [selectedRepo, selectedTaskDetail?.branch_name])
 
-  // Reset view when popover closes
+  // Set initial view when popover opens based on selection state
   useEffect(() => {
-    if (!isOpen) {
-      setCurrentView('repo')
+    if (isOpen) {
+      // If repo is already selected, start with branch view for quick branch switching
+      if (selectedRepo) {
+        setSlideDirection('left')
+        setCurrentView('branch')
+      } else {
+        setCurrentView('repo')
+      }
     }
-  }, [isOpen])
+  }, [isOpen, selectedRepo])
+
+  // Auto-open popover when requiresWorkspace changes from false to true (e.g., team switch)
+  // and no repo is currently selected
+  useEffect(() => {
+    const prevValue = prevRequiresWorkspaceRef.current
+    prevRequiresWorkspaceRef.current = requiresWorkspace
+
+    // If changed from false to true and no repo selected, auto-open
+    if (!prevValue && requiresWorkspace && !selectedRepo) {
+      setTimeout(() => {
+        setIsOpen(true)
+      }, 100)
+    }
+  }, [requiresWorkspace, selectedRepo])
 
   // Navigate to settings page
   const handleIntegrationClick = () => {
@@ -240,14 +292,21 @@ export default function UnifiedRepositorySelector({
     setIsOpen(false)
   }
 
-  // Handle repo selection
+  // Handle repo selection - drill into branch view
   const handleRepoSelect = useCallback(
     (value: string) => {
+      // If workspace was disabled, re-enable it when user selects a repo
+      if (!requiresWorkspace && onRequiresWorkspaceChange) {
+        onRequiresWorkspaceChange(true)
+      }
+
       handleRepoSelectFromSearch(value)
+      // Set direction for slide animation
+      setSlideDirection('left')
       // After selecting repo, automatically switch to branch view
       setCurrentView('branch')
     },
-    [handleRepoSelectFromSearch]
+    [handleRepoSelectFromSearch, requiresWorkspace, onRequiresWorkspaceChange]
   )
 
   // Handle branch selection
@@ -265,6 +324,7 @@ export default function UnifiedRepositorySelector({
 
   // Go back to repo view
   const handleBackToRepo = useCallback(() => {
+    setSlideDirection('right')
     setCurrentView('repo')
   }, [])
 
@@ -276,6 +336,12 @@ export default function UnifiedRepositorySelector({
       if (!checked) {
         onRepoChange(null)
         onBranchChange(null)
+      } else {
+        // When turning on workspace requirement, auto-open the popover
+        // Use setTimeout to ensure the toggle animation completes first
+        setTimeout(() => {
+          setIsOpen(true)
+        }, 100)
       }
     },
     [onRequiresWorkspaceChange, onRepoChange, onBranchChange]
@@ -334,51 +400,52 @@ export default function UnifiedRepositorySelector({
               <PopoverTrigger asChild>
                 <div
                   className={cn(
-                    'flex items-center gap-1.5 min-w-0 rounded-full pl-2.5 pr-3 py-2.5 h-9',
-                    'transition-colors cursor-pointer',
-                    isNotSelected
-                      ? 'border border-dashed border-border bg-muted/30 text-text-muted'
+                    'group flex items-center gap-1.5 min-w-0 rounded-full pl-2.5 pr-3 py-2.5 h-9',
+                    'transition-all duration-200 cursor-pointer',
+                    // When workspace is required but not selected - show error state like ModelSelector
+                    requiresWorkspace && isNotSelected
+                      ? 'border border-error text-error bg-error/5 hover:bg-error/10'
                       : 'border border-border bg-base text-text-primary hover:bg-hover',
                     isLoading ? 'animate-pulse' : '',
                     'focus:outline-none focus:ring-0',
                     (disabled || isLoading) && 'cursor-not-allowed opacity-50'
                   )}
                 >
-                  {requiresWorkspace ? (
-                    <FolderGit2
-                      className={cn(
-                        'w-4 h-4 flex-shrink-0',
-                        isNotSelected ? 'text-text-muted' : ''
-                      )}
-                    />
-                  ) : (
-                    <FolderX className="w-4 h-4 flex-shrink-0 text-text-muted" />
-                  )}
-                  {/* Embedded Toggle - show when onRequiresWorkspaceChange is provided (new chat) */}
-                  {!compact && onRequiresWorkspaceChange && (
-                    <>
-                      <span className="text-xs text-text-primary whitespace-nowrap">
-                        {t('common:repos.repository')}
-                      </span>
-                      <Switch
-                        checked={requiresWorkspace}
-                        onCheckedChange={handleRequiresWorkspaceToggle}
-                        className="scale-75"
-                        disabled={disabled}
-                        onClick={e => e.stopPropagation()}
-                      />
-                    </>
-                  )}
+                  <GitBranchIcon
+                    className={cn(
+                      'w-4 h-4 flex-shrink-0 transition-colors opacity-100',
+                      // When workspace required but not selected - show error
+                      requiresWorkspace && isNotSelected ? 'text-error' : 'text-text-primary'
+                    )}
+                  />
                   {/* Repository/Branch display text and chevron */}
                   {!compact && (
                     <>
-                      {/* Show repo/branch text only when:
-                          1. Has selected repo (show repo/branch name)
-                          2. Or no toggle (hasMessages), show current state text */}
-                      {(selectedRepo || !onRequiresWorkspaceChange) && (
+                      {selectedRepo && (
                         <span className="truncate text-xs min-w-0">{getDisplayText()}</span>
                       )}
-                      <ChevronDown className="h-2.5 w-2.5 flex-shrink-0 opacity-60" />
+
+                      {/* Show Chevron by default, but show X on hover if we can clear */}
+                      <div className="flex items-center">
+                        {selectedRepo && onRequiresWorkspaceChange ? (
+                          <>
+                            <ChevronDown className="h-2.5 w-2.5 flex-shrink-0 opacity-60 group-hover:hidden" />
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              className="hidden group-hover:flex items-center justify-center h-4 w-4 rounded-full hover:bg-hover text-text-muted hover:text-text-primary transition-colors"
+                              onClick={e => {
+                                e.stopPropagation()
+                                handleRequiresWorkspaceToggle(false)
+                              }}
+                            >
+                              <X className="h-3 w-3" />
+                            </div>
+                          </>
+                        ) : (
+                          <ChevronDown className="h-2.5 w-2.5 flex-shrink-0 opacity-60" />
+                        )}
+                      </div>
                     </>
                   )}
                 </div>
@@ -403,173 +470,80 @@ export default function UnifiedRepositorySelector({
           avoidCollisions={true}
           sticky="partial"
         >
-          {/* Repository View */}
-          {currentView === 'repo' && (
-            <Command
-              className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden"
-              shouldFilter={false}
-            >
-              {/* Repository Selection - only show when workspace is required */}
-              {requiresWorkspace ? (
-                <>
-                  <div className="flex items-center border-b border-border px-3 py-2">
-                    <FolderGit2 className="w-4 h-4 text-text-muted mr-2" />
-                    <span className="text-sm font-medium text-text-primary">
-                      {t('common:repos.repository')}
-                    </span>
-                  </div>
-                  <CommandInput
-                    placeholder={t('common:branches.search_repository')}
-                    onValueChange={handleSearchChange}
-                    className={cn(
-                      'h-9 rounded-none border-b border-border flex-shrink-0',
-                      'placeholder:text-text-muted text-sm'
-                    )}
-                  />
-                  <CommandList className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1">
-                    {repoError ? (
-                      <div className="py-4 px-3 text-center text-sm text-error">{repoError}</div>
-                    ) : repoItems.length === 0 ? (
-                      <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                        {repoLoading ? 'Loading...' : t('common:branches.select_repository')}
-                      </CommandEmpty>
-                    ) : (
-                      <>
-                        <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                          {t('common:branches.no_match')}
-                        </CommandEmpty>
-                        <CommandGroup>
-                          {repoItems.map(item => (
-                            <CommandItem
-                              key={item.value}
-                              value={item.searchText || item.label}
-                              onSelect={() => handleRepoSelect(item.value)}
-                              className={cn(
-                                'group cursor-pointer select-none',
-                                'px-3 py-1.5 text-sm text-text-primary',
-                                'rounded-md mx-1 my-[2px]',
-                                'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
-                                'aria-selected:bg-hover',
-                                '!flex !flex-row !items-center !gap-3'
-                              )}
-                            >
-                              <Check
-                                className={cn(
-                                  'h-3 w-3 shrink-0',
-                                  selectedRepo?.git_repo_id.toString() === item.value
-                                    ? 'opacity-100 text-primary'
-                                    : 'opacity-0 text-text-muted'
-                                )}
-                              />
-                              <span className="flex-1 min-w-0 truncate" title={item.label}>
-                                {item.label}
-                              </span>
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </>
-                    )}
-                  </CommandList>
-                  <RepositorySelectorFooter
-                    onConfigureClick={handleIntegrationClick}
-                    onRefreshClick={handleRefreshCache}
-                    isRefreshing={isRefreshing}
-                  />
-                </>
-              ) : (
-                /* No workspace needed - show message */
-                <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
-                  <FolderX className="w-10 h-10 text-text-muted mb-3" />
-                  <p className="text-sm text-text-muted">
-                    {t('common:repos.no_workspace_description')}
-                  </p>
-                </div>
-              )}
-            </Command>
+          {/* Loading progress bar */}
+          {(branchLoading || isSearching) && (
+            <div className="absolute top-0 left-0 right-0 h-[2px] bg-muted overflow-hidden z-10">
+              <motion.div
+                className="h-full bg-primary"
+                initial={{ x: '-100%', width: '30%' }}
+                animate={{ x: '400%' }}
+                transition={{
+                  duration: 1,
+                  repeat: Infinity,
+                  ease: 'linear',
+                }}
+              />
+            </div>
           )}
 
-          {/* Branch View */}
-          {currentView === 'branch' && (
-            <Command className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden">
-              <button
-                type="button"
-                className="flex items-center border-b border-border px-3 py-2 cursor-pointer hover:bg-hover w-full text-left"
-                onClick={handleBackToRepo}
+          <AnimatePresence mode="wait" initial={false}>
+            {/* Repository View */}
+            {currentView === 'repo' && (
+              <motion.div
+                key="repo-view"
+                initial={slideDirection === 'right' ? 'enterFromLeft' : 'center'}
+                animate="center"
+                exit="exitToLeft"
+                variants={slideVariants}
+                transition={slideTransition}
+                className="flex flex-col flex-1 min-h-0"
               >
-                <ChevronLeft className="w-4 h-4 text-text-muted mr-1" />
-                <GitBranchIcon className="w-4 h-4 text-text-muted mr-2" />
-                <span className="text-sm font-medium text-text-primary">
-                  {t('common:repos.branch')}
-                </span>
-                {selectedRepo && (
-                  <span className="ml-2 text-xs text-text-muted truncate">
-                    ({truncateMiddle(selectedRepo.git_repo, 20)})
-                  </span>
-                )}
-              </button>
-              <CommandInput
-                placeholder={t('common:branches.search_branch')}
-                className={cn(
-                  'h-9 rounded-none border-b border-border flex-shrink-0',
-                  'placeholder:text-text-muted text-sm'
-                )}
-              />
-              <CommandList className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1">
-                {branchError ? (
-                  <div className="py-4 px-3 text-center text-sm text-error">{branchError}</div>
-                ) : branchItems.length === 0 ? (
-                  <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                    {branchLoading ? 'Loading...' : t('common:branches.no_branch')}
-                  </CommandEmpty>
-                ) : (
-                  <>
-                    <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                      {t('common:branches.no_match')}
-                    </CommandEmpty>
-                    <CommandGroup>
-                      {branchItems.map(item => (
-                        <CommandItem
-                          key={item.value}
-                          value={item.searchText || item.label}
-                          onSelect={() => handleBranchSelect(item.value)}
-                          className={cn(
-                            'group cursor-pointer select-none',
-                            'px-3 py-1.5 text-sm text-text-primary',
-                            'rounded-md mx-1 my-[2px]',
-                            'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
-                            'aria-selected:bg-hover',
-                            '!flex !flex-row !items-center !gap-3'
-                          )}
-                        >
-                          <Check
-                            className={cn(
-                              'h-3 w-3 shrink-0',
-                              selectedBranch?.name === item.value
-                                ? 'opacity-100 text-primary'
-                                : 'opacity-0 text-text-muted'
-                            )}
-                          />
-                          <span className="flex-1 min-w-0 truncate" title={item.label}>
-                            {item.label}
-                            {item.isDefault && (
-                              <span className="ml-2 text-green-400 text-[10px]">
-                                {t('common:branches.default')}
-                              </span>
-                            )}
-                          </span>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </>
-                )}
-              </CommandList>
-              {/* Footer for branch view - just a divider line */}
-              <div className="border-t border-border py-2 px-3 text-xs text-text-muted">
-                {branches.length > 0 &&
-                  `${branches.length} ${t('common:branches.select_branch').toLowerCase()}`}
-              </div>
-            </Command>
-          )}
+                <RepoListView
+                  repos={repoItems}
+                  selectedRepoId={selectedRepo?.git_repo_id.toString() ?? null}
+                  onSelect={handleRepoSelect}
+                  onSearchChange={handleSearchChange}
+                  onConfigureClick={handleIntegrationClick}
+                  onRefreshClick={handleRefreshCache}
+                  isLoading={repoLoading}
+                  isSearching={isSearching}
+                  isRefreshing={isRefreshing}
+                  error={repoError}
+                  onClearSelection={
+                    // Only show clear button if we have a way to toggle workspace requirement
+                    // And currently workspace IS required (so we can clear it)
+                    onRequiresWorkspaceChange && requiresWorkspace
+                      ? () => handleRequiresWorkspaceToggle(false)
+                      : undefined
+                  }
+                />
+              </motion.div>
+            )}
+
+            {/* Branch View */}
+            {currentView === 'branch' && (
+              <motion.div
+                key="branch-view"
+                initial="enterFromRight"
+                animate="center"
+                exit="exitToRight"
+                variants={slideVariants}
+                transition={slideTransition}
+                className="flex flex-col flex-1 min-h-0"
+              >
+                <BranchListView
+                  branches={branchItems}
+                  selectedBranchName={selectedBranch?.name ?? null}
+                  repoName={selectedRepo?.git_repo ?? ''}
+                  branchCount={branches.length}
+                  onSelect={handleBranchSelect}
+                  onBack={handleBackToRepo}
+                  isLoading={branchLoading}
+                  error={branchError}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </PopoverContent>
       </Popover>
 

@@ -117,7 +117,7 @@ def _team_to_response(team: Kind) -> PublicTeamResponse:
 @trace_async()
 async def list_public_teams(
     page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=1000),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
