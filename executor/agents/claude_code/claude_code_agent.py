@@ -37,7 +37,12 @@ from shared.logger import setup_logger
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
-from shared.utils.crypto import decrypt_git_token, is_token_encrypted
+from shared.utils.crypto import (
+    decrypt_git_token,
+    decrypt_sensitive_data,
+    is_data_encrypted,
+    is_token_encrypted,
+)
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = setup_logger("claude_code_agent")
@@ -587,6 +592,49 @@ class ClaudeCodeAgent(Agent):
         self._claude_config_dir = config_dir
         self._claude_env_config = agent_config.get("env", {})
 
+    def _resolve_env_value(self, value: str) -> str:
+        """Resolve a value that may be an environment variable template or encrypted.
+
+        Handles different formats:
+        1. ${VAR_NAME} - environment variable template, replace with os.environ value
+        2. Encrypted value - decrypt using decrypt_sensitive_data
+        3. Plain value - use as-is
+
+        Args:
+            value: The value to resolve
+
+        Returns:
+            The resolved value
+        """
+        import re
+
+        if not value:
+            return value
+
+        # Check for ${VAR_NAME} pattern and replace with env var
+        env_var_pattern = r"^\$\{([^}]+)\}$"
+        match = re.match(env_var_pattern, value)
+        if match:
+            var_name = match.group(1)
+            resolved = os.environ.get(var_name, "")
+            if resolved:
+                logger.info(f"Resolved env var ${{{var_name}}} from environment")
+            else:
+                logger.warning(f"Environment variable {var_name} not found")
+            return resolved
+
+        # Check if encrypted and decrypt
+        if is_data_encrypted(value):
+            decrypted = decrypt_sensitive_data(value)
+            if decrypted:
+                logger.info("Decrypted sensitive data")
+                return decrypted
+            logger.warning("Failed to decrypt sensitive data")
+            return ""
+
+        # Return as-is
+        return value
+
     def _create_claude_model(
         self, bot_config: Dict[str, Any], user_name: str = None, git_url: str = None
     ) -> Dict[str, Any]:
@@ -601,12 +649,19 @@ class ClaudeCodeAgent(Agent):
 
         model_id = env.get("model_id", "")
 
+        # Extract API key and handle different formats:
+        # 1. ${VAR_NAME} - environment variable template, replace with os.environ value
+        # 2. Encrypted value - decrypt using decrypt_sensitive_data
+        # 3. Plain value - use as-is
+        api_key = env.get("api_key", "")
+        api_key = self._resolve_env_value(api_key)
+
         # Note: ANTHROPIC_SMALL_FAST_MODEL is deprecated in favor of ANTHROPIC_DEFAULT_HAIKU_MODEL.
         env_config = {
             "ANTHROPIC_MODEL": model_id,
             "ANTHROPIC_SMALL_FAST_MODEL": env.get("small_model", model_id),
             "ANTHROPIC_DEFAULT_HAIKU_MODEL": env.get("small_model", model_id),
-            "ANTHROPIC_AUTH_TOKEN": env.get("api_key", ""),
+            "ANTHROPIC_AUTH_TOKEN": api_key,
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": int(
                 os.getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "0")
             ),
@@ -1081,20 +1136,20 @@ class ClaudeCodeAgent(Agent):
 
         # In Local mode, configure SDK to use task-specific config directory
         # to avoid modifying user's personal ~/.claude/ config
-        if config.EXECUTOR_MODE == "local" and hasattr(self, "_claude_config_dir"):
+        if config.EXECUTOR_MODE == "local" and self._claude_config_dir:
             # Pass env config (contains ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL, etc.)
-            if hasattr(self, "_claude_env_config") and self._claude_env_config:
+            if self._claude_env_config:
                 existing_env = self.options.get("env", {})
                 merged_env = {**existing_env, **self._claude_env_config}
                 self.options["env"] = {k: str(v) for k, v in merged_env.items()}
 
             # Set CLAUDE_CONFIG_DIR env var to redirect all config reads/writes
             # This affects settings.json, claude.json, and skills locations
+            # Note: Keep setting_sources as ["user", "project", "local"] so SDK
+            # reads config from CLAUDE_CONFIG_DIR instead of default ~/.claude/
             env = self.options.get("env", {})
             env["CLAUDE_CONFIG_DIR"] = self._claude_config_dir
             self.options["env"] = env
-            # Disable reading from default config locations (user's ~/.claude/)
-            self.options["setting_sources"] = []
             logger.info(f"Local mode: using config dir {self._claude_config_dir}")
 
         # Create client with options
