@@ -49,6 +49,7 @@ export function EditDocumentDialog({
   const tableUrl = isTableDocument ? (document.source_config?.url as string) : ''
 
   // Reset form when document changes
+  // Reset form when document changes
   useEffect(() => {
     if (document) {
       setName(document.name)
@@ -60,6 +61,11 @@ export function EditDocumentDialog({
             type: 'semantic',
             buffer_size: config.buffer_size ?? 1,
             breakpoint_percentile_threshold: config.breakpoint_percentile_threshold ?? 95,
+          })
+        } else if (config.type === 'smart') {
+          // Smart splitter - no additional config needed
+          setSplitterConfig({
+            type: 'smart',
           })
         } else {
           // Default to sentence splitter
@@ -82,7 +88,6 @@ export function EditDocumentDialog({
       setShowAdvanced(false) // Reset to collapsed state
     }
   }, [document])
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
