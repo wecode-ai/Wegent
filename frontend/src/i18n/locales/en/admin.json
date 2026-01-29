@@ -418,6 +418,10 @@
     "edit_team": "Edit Agent",
     "delete_team": "Delete Agent",
     "member_count": "{{count}} Bot(s)",
+    "tabs": {
+      "basic": "Basic",
+      "advanced": "Advanced"
+    },
     "status": {
       "active": "Active",
       "inactive": "Inactive"

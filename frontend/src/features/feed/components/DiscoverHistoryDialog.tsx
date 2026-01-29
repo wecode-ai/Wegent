@@ -31,18 +31,23 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { subscriptionApis } from '@/apis/subscription'
-import type {
-  DiscoverSubscriptionResponse,
-  BackgroundExecution,
-  BackgroundExecutionStatus,
-} from '@/types/subscription'
+import type { BackgroundExecution, BackgroundExecutionStatus } from '@/types/subscription'
 import { cn } from '@/lib/utils'
 import { parseUTCDate } from '@/lib/utils'
 import { SubscriptionConversationDialog } from './SubscriptionConversationDialog'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
 
+/**
+ * Generic subscription info interface for the history dialog.
+ * This allows the dialog to be used with different subscription response types.
+ */
+export interface HistoryDialogSubscription {
+  id: number
+  display_name: string
+}
+
 interface DiscoverHistoryDialogProps {
-  subscription: DiscoverSubscriptionResponse | null
+  subscription: HistoryDialogSubscription | null
   open: boolean
   onOpenChange: (open: boolean) => void
 }

@@ -38,7 +38,7 @@ interface TeamEditDrawerProps {
   /** List of allowed agent types for filtering when creating/editing bots */
   allowedAgents?: AgentType[]
   /** Scope for filtering shells */
-  scope?: 'personal' | 'group' | 'all'
+  scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
 }

@@ -585,7 +585,7 @@ const PublicRetrieverList: React.FC = () => {
               <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
                 {t('admin:common.cancel')}
               </Button>
-              <Button onClick={handleCreateRetriever} disabled={saving}>
+              <Button variant="primary" onClick={handleCreateRetriever} disabled={saving}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {t('admin:common.create')}
               </Button>
@@ -627,7 +627,7 @@ const PublicRetrieverList: React.FC = () => {
               <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
                 {t('admin:common.cancel')}
               </Button>
-              <Button onClick={handleUpdateRetriever} disabled={saving}>
+              <Button variant="primary" onClick={handleUpdateRetriever} disabled={saving}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {t('admin:common.save')}
               </Button>

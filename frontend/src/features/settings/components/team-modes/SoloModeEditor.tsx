@@ -41,7 +41,7 @@ export interface SoloModeEditorProps {
   /** Ref to access BotEdit methods for external saving */
   botEditRef?: React.RefObject<BotEditRef | null>
   /** Scope for filtering shells */
-  scope?: 'personal' | 'group' | 'all'
+  scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
 }
