@@ -129,6 +129,19 @@ def get_accessible_knowledge(
     )
 
 
+@router.get("/config")
+def get_knowledge_config():
+    """
+    Get knowledge base configuration.
+
+    Returns system-level configuration for knowledge base features.
+    This is used by frontend to determine which features are enabled.
+    """
+    return {
+        "chunk_storage_enabled": settings.CHUNK_STORAGE_ENABLED,
+    }
+
+
 @router.post(
     "",
     response_model=KnowledgeBaseResponse,
@@ -710,7 +723,7 @@ def _index_document_background(
         )
 
         # Update document is_active to True and status to enabled after successful indexing
-        # Also save chunk metadata to document
+        # Also save chunk metadata to document if CHUNK_STORAGE_ENABLED is True
         if document_id:
             from app.models.knowledge import DocumentStatus, KnowledgeDocument
 
@@ -722,13 +735,20 @@ def _index_document_background(
             if doc:
                 doc.is_active = True
                 doc.status = DocumentStatus.ENABLED
-                # Save chunk metadata from indexing result
-                chunks_data = result.get("chunks_data")
-                if chunks_data:
-                    doc.chunks = chunks_data
+                # Save chunk metadata from indexing result only if CHUNK_STORAGE_ENABLED is True
+                # When disabled (default), chunks are only stored in vector database for retrieval
+                if settings.CHUNK_STORAGE_ENABLED:
+                    chunks_data = result.get("chunks_data")
+                    if chunks_data:
+                        doc.chunks = chunks_data
+                        logger.info(
+                            f"Saved {chunks_data.get('total_count', 0)} chunks metadata "
+                            f"for document {document_id}"
+                        )
+                else:
                     logger.info(
-                        f"Saved {chunks_data.get('total_count', 0)} chunks metadata "
-                        f"for document {document_id}"
+                        f"Skipping chunk storage for document {document_id} "
+                        "(CHUNK_STORAGE_ENABLED=False)"
                     )
                 db.commit()
                 logger.info(

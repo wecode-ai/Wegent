@@ -240,6 +240,23 @@ export async function refreshKnowledgeBaseSummary(
   )
 }
 
+// ============== Configuration APIs ==============
+
+/**
+ * Knowledge base configuration response
+ */
+export interface KnowledgeConfig {
+  chunk_storage_enabled: boolean
+}
+
+/**
+ * Get knowledge base configuration
+ * Returns system-level configuration for knowledge base features
+ */
+export async function getKnowledgeConfig(): Promise<KnowledgeConfig> {
+  return apiClient.get<KnowledgeConfig>('/knowledge-bases/config')
+}
+
 // ============== Chunk APIs ==============
 
 /**
