@@ -14,6 +14,7 @@ import wecode.api.models_endpoint_patch # noqa: F401  patch app.api.endpoints.mo
 import wecode.api.agents_endpoint_patch # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
 import wecode.api.oidc_endpoint_patch   # noqa: F401  patch app.api.endpoints.oidc OIDC callback for wecode-specific git_info handling
 import wecode.api.executors_endpoint_patch # noqa: F401  patch app.api.endpoints.executors /tasks/dispatch to replace API key placeholders
+import wecode.api.device_router_patch  # noqa: F401  patch app.services.device_router to replace API key placeholders for device task dispatch
 import wecode.api.quota_endpoint_patch  # noqa: F401  patch app.api.endpoints.quota to proxy quota requests to external service
 import wecode.service.storage_backend_patch  # noqa: F401  register MinIO/S3 storage backends for attachment service
 
