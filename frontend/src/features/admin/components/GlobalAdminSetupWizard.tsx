@@ -29,18 +29,27 @@ import { CheckCircleIcon } from '@heroicons/react/24/outline'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { adminApis } from '@/apis/admin'
+import { userApis } from '@/apis/user'
+import { useUser } from '@/features/common/UserContext'
 import SetupModelStep from './SetupModelStep'
 import SetupSkillStep from './SetupSkillStep'
 
-interface AdminSetupWizardProps {
-  onComplete: () => void
-}
-
 const TOTAL_STEPS = 2
 
-const AdminSetupWizard: React.FC<AdminSetupWizardProps> = ({ onComplete }) => {
+/**
+ * Global Admin Setup Wizard component that shows on any page when:
+ * 1. Current user is an admin
+ * 2. Admin setup has not been completed yet
+ *
+ * This component should be placed in the root layout to ensure it shows
+ * regardless of which page the admin first lands on.
+ *
+ * Setup status is fetched from the welcome-config API to avoid extra API calls.
+ */
+const GlobalAdminSetupWizard: React.FC = () => {
   const { t } = useTranslation('admin')
   const { toast } = useToast()
+  const { user, isLoading: userLoading } = useUser()
 
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -48,27 +57,38 @@ const AdminSetupWizard: React.FC<AdminSetupWizardProps> = ({ onComplete }) => {
   const [isSkipDialogOpen, setIsSkipDialogOpen] = useState(false)
   const [completing, setCompleting] = useState(false)
 
-  // Check setup status on mount
+  // Check setup status when user is loaded and is admin
   useEffect(() => {
     const checkSetupStatus = async () => {
+      // Wait for user to be loaded
+      if (userLoading) {
+        return
+      }
+
+      // Only check for admin users
+      if (!user || user.role !== 'admin') {
+        setLoading(false)
+        return
+      }
+
       try {
-        const response = await adminApis.getSetupStatus()
-        if (!response.completed) {
+        // Get setup status from welcome-config API
+        const response = await userApis.getWelcomeConfig()
+        // admin_setup_completed is only returned for admin users
+        if (response.admin_setup_completed === false) {
           setOpen(true)
         }
       } catch (error) {
         console.error('Failed to check setup status:', error)
-        toast({
-          variant: 'destructive',
-          title: t('setup_wizard.errors.load_status_failed'),
-        })
+        // Don't show error toast for network errors
+        // The wizard simply won't show
       } finally {
         setLoading(false)
       }
     }
 
     checkSetupStatus()
-  }, [toast, t])
+  }, [user, userLoading])
 
   const handleNext = useCallback(() => {
     if (currentStep < TOTAL_STEPS) {
@@ -90,17 +110,17 @@ const AdminSetupWizard: React.FC<AdminSetupWizardProps> = ({ onComplete }) => {
         title: t('setup_wizard.success.completed'),
       })
       setOpen(false)
-      onComplete()
+      // Reload the page to refresh model list and other data
+      window.location.reload()
     } catch (error) {
       console.error('Failed to complete setup:', error)
       toast({
         variant: 'destructive',
         title: t('setup_wizard.errors.complete_failed'),
       })
-    } finally {
       setCompleting(false)
     }
-  }, [toast, t, onComplete])
+  }, [toast, t])
 
   const handleSkip = useCallback(async () => {
     setCompleting(true)
@@ -110,21 +130,21 @@ const AdminSetupWizard: React.FC<AdminSetupWizardProps> = ({ onComplete }) => {
         title: t('setup_wizard.success.skipped'),
       })
       setOpen(false)
-      onComplete()
+      // Reload the page to refresh model list and other data
+      window.location.reload()
     } catch (error) {
       console.error('Failed to skip setup:', error)
       toast({
         variant: 'destructive',
         title: t('setup_wizard.errors.complete_failed'),
       })
-    } finally {
       setCompleting(false)
       setIsSkipDialogOpen(false)
     }
-  }, [toast, t, onComplete])
+  }, [toast, t])
 
-  // Don't render anything while checking status
-  if (loading) {
+  // Don't render anything while checking status or if not admin
+  if (loading || userLoading || !user || user.role !== 'admin') {
     return null
   }
 
@@ -206,11 +226,11 @@ const AdminSetupWizard: React.FC<AdminSetupWizardProps> = ({ onComplete }) => {
                   </Button>
                 )}
                 {currentStep < TOTAL_STEPS ? (
-                  <Button onClick={handleNext} disabled={completing}>
+                  <Button variant="primary" onClick={handleNext} disabled={completing}>
                     {t('setup_wizard.next')}
                   </Button>
                 ) : (
-                  <Button onClick={handleComplete} disabled={completing}>
+                  <Button variant="primary" onClick={handleComplete} disabled={completing}>
                     {completing ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -232,7 +252,9 @@ const AdminSetupWizard: React.FC<AdminSetupWizardProps> = ({ onComplete }) => {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t('setup_wizard.skip_confirm_title')}</AlertDialogTitle>
-            <AlertDialogDescription>{t('setup_wizard.skip_confirm_message')}</AlertDialogDescription>
+            <AlertDialogDescription>
+              {t('setup_wizard.skip_confirm_message')}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={completing}>
@@ -255,4 +277,4 @@ const AdminSetupWizard: React.FC<AdminSetupWizardProps> = ({ onComplete }) => {
   )
 }
 
-export default AdminSetupWizard
+export default GlobalAdminSetupWizard

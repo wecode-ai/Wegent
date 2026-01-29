@@ -761,13 +761,6 @@ export const adminApis = {
   // ==================== Admin Setup Wizard ====================
 
   /**
-   * Get admin setup wizard completion status
-   */
-  async getSetupStatus(): Promise<{ completed: boolean }> {
-    return apiClient.get('/admin/setup-status')
-  },
-
-  /**
    * Mark admin setup wizard as completed
    */
   async markSetupComplete(): Promise<{ success: boolean; message: string }> {

@@ -236,6 +236,10 @@ class WelcomeConfigResponse(BaseModel):
         default_factory=list, description="List of slogans"
     )
     tips: List[ChatTipItem] = Field(default_factory=list, description="List of tips")
+    admin_setup_completed: Optional[bool] = Field(
+        default=None,
+        description="Whether admin setup wizard has been completed (only returned for admin users)",
+    )
 
 
 # Public Retriever Management Schemas
@@ -517,12 +521,6 @@ class PublicShellListResponse(BaseModel):
 
 
 # Admin Setup Wizard Schemas
-class AdminSetupStatusResponse(BaseModel):
-    """Admin setup status response model"""
-
-    completed: bool = Field(..., description="Whether admin setup has been completed")
-
-
 class AdminSetupCompleteResponse(BaseModel):
     """Admin setup complete response model"""
 
