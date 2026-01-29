@@ -2,19 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import os
 
-from dotenv import load_dotenv
-
+import dingtalk  # noqa: F401  side-effect import for DingTalk auth
 import wecode.api  # noqa: F401  side-effect import to load wecode patches and auto-mount internal routers
-
-# Load .env file early to ensure environment variables are available
-load_dotenv()
-
-# DingTalk authentication module (loaded when AUTH_MODE=dingtalk)
-if os.getenv("AUTH_MODE") == "dingtalk":
-    import dingtalk  # noqa: F401  side-effect import for DingTalk auth
-
 from app.api.endpoints import (
     admin,
     admin_notification,

@@ -2,10 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""DingTalk configuration - loaded from environment variables."""
-import os
+"""DingTalk configuration - loaded from pydantic settings."""
 from dataclasses import dataclass, field
 from typing import List
+
+from app.core.config import settings
 
 
 @dataclass
@@ -29,28 +30,21 @@ class DingTalkConfig:
     rate_limit_window: int = 60  # seconds
 
     @classmethod
-    def from_env(cls) -> "DingTalkConfig":
-        """Load configuration from environment variables."""
-        allowed_referers_str = os.getenv("DINGTALK_ALLOWED_REFERERS", "")
-        ip_whitelist_str = os.getenv("DINGTALK_IP_WHITELIST", "")
-
+    def from_settings(cls) -> "DingTalkConfig":
+        """Load configuration from pydantic settings."""
         return cls(
-            corp_id=os.getenv("DINGTALK_CORP_ID", ""),
-            client_id=os.getenv("DINGTALK_CLIENT_ID", ""),
-            client_secret=os.getenv("DINGTALK_CLIENT_SECRET", ""),
-            erp_api_key=os.getenv("ERP_API_KEY", ""),
-            fallback_url=os.getenv(
-                "DINGTALK_FALLBACK_URL", "https://github.com/aspect-build/wegent"
-            ),
-            allowed_referers=[
-                r.strip() for r in allowed_referers_str.split(",") if r.strip()
-            ],
-            ip_whitelist=[
-                ip.strip() for ip in ip_whitelist_str.split(",") if ip.strip()
-            ],
-            code_expire_seconds=int(os.getenv("DINGTALK_CODE_EXPIRE_SECONDS", "300")),
-            rate_limit_requests=int(os.getenv("DINGTALK_RATE_LIMIT_REQUESTS", "10")),
-            rate_limit_window=int(os.getenv("DINGTALK_RATE_LIMIT_WINDOW", "60")),
+            corp_id=settings.DINGTALK_CORP_ID,
+            client_id=settings.DINGTALK_CLIENT_ID,
+            client_secret=settings.DINGTALK_CLIENT_SECRET,
+            erp_api_key=settings.ERP_API_KEY,
+            fallback_url=settings.DINGTALK_FALLBACK_URL
+            or "https://github.com/aspect-build/wegent",
+            # Use default values for optional settings
+            allowed_referers=[],
+            ip_whitelist=[],
+            code_expire_seconds=300,
+            rate_limit_requests=10,
+            rate_limit_window=60,
         )
 
     def validate(self) -> bool:
@@ -59,4 +53,4 @@ class DingTalkConfig:
 
 
 # Global config instance
-dingtalk_config = DingTalkConfig.from_env()
+dingtalk_config = DingTalkConfig.from_settings()
