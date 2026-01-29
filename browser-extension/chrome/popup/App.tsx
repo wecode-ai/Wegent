@@ -47,7 +47,7 @@ function App() {
     if (isLoggedIn && !pendingAction?.text) {
       extractContent(extractionMode)
     }
-  }, [extractionMode, isLoggedIn])
+  }, [extractionMode, isLoggedIn, pendingAction?.text, extractContent])
 
   const checkAuth = async () => {
     try {

@@ -46,6 +46,8 @@ function Header({ user, onLogout, onSettingsClick, isSettingsOpen }: HeaderProps
         {/* Settings button */}
         <button
           onClick={onSettingsClick}
+          aria-label="Settings"
+          aria-pressed={isSettingsOpen}
           className={`rounded p-1.5 transition-colors ${
             isSettingsOpen
               ? 'bg-primary/10 text-primary'

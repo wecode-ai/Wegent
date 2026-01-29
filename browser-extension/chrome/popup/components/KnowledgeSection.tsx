@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import {
   listKnowledgeBases,
   uploadTextContent,
@@ -26,26 +26,18 @@ function KnowledgeSection({ content, defaultExpanded = false }: KnowledgeSection
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
 
-  // Load knowledge bases when section expands
+  // Load default KB selection on mount
   useEffect(() => {
-    if (isExpanded && knowledgeBases.length === 0) {
-      loadKnowledgeBases()
+    const loadDefaultKbId = async () => {
+      const defaultId = await getStorageValue('defaultKnowledgeBaseId')
+      if (defaultId) {
+        setSelectedKbId(defaultId)
+      }
     }
-  }, [isExpanded])
-
-  // Load default selection
-  useEffect(() => {
     loadDefaultKbId()
   }, [])
 
-  const loadDefaultKbId = async () => {
-    const defaultId = await getStorageValue('defaultKnowledgeBaseId')
-    if (defaultId) {
-      setSelectedKbId(defaultId)
-    }
-  }
-
-  const loadKnowledgeBases = async () => {
+  const loadKnowledgeBases = useCallback(async () => {
     setIsLoadingKbs(true)
     try {
       const kbs = await listKnowledgeBases('all')
@@ -60,7 +52,14 @@ function KnowledgeSection({ content, defaultExpanded = false }: KnowledgeSection
     } finally {
       setIsLoadingKbs(false)
     }
-  }
+  }, [selectedKbId])
+
+  // Load knowledge bases when section expands
+  useEffect(() => {
+    if (isExpanded && knowledgeBases.length === 0) {
+      loadKnowledgeBases()
+    }
+  }, [isExpanded, knowledgeBases.length, loadKnowledgeBases])
 
   const handleAdd = async () => {
     if (!content || !selectedKbId) return

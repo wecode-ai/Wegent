@@ -25,7 +25,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": ["http://*/*", "https://*/*"],
       "js": ["content-script.js"],
       "run_at": "document_idle"
     }
@@ -36,12 +36,13 @@
     "contextMenus"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "http://*/*",
+    "https://*/*"
   ],
   "web_accessible_resources": [
     {
       "resources": ["assets/*"],
-      "matches": ["<all_urls>"]
+      "matches": ["http://*/*", "https://*/*"]
     }
   ]
 }
