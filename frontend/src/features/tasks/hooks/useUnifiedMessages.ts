@@ -32,6 +32,7 @@ import { useUser } from '@/features/common/UserContext'
 import { useTaskContext } from '../contexts/taskContext'
 import type { Team, Attachment, SubtaskContextBrief } from '@/types/api'
 import type { SourceReference } from '@/types/socket'
+import type { MessageBlock } from '../components/message/thinking/types'
 
 /**
  * Message for display - extends UnifiedMessage with additional rendering info
@@ -77,18 +78,7 @@ export interface DisplayMessage {
     shell_type?: string // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
     sources?: SourceReference[] // RAG knowledge base sources
     reasoning_content?: string // DeepSeek R1 reasoning content
-    blocks?: Array<{
-      // Message blocks for mixed content rendering
-      id: string
-      type: 'text' | 'tool'
-      status?: string
-      content?: string
-      tool_name?: string
-      tool_use_id?: string
-      tool_input?: unknown
-      tool_output?: unknown
-      timestamp?: number
-    }>
+    blocks?: MessageBlock[] // Message blocks for mixed content rendering
   }
   /** Knowledge base source references (for RAG citations) - top-level for backward compatibility */
   sources?: SourceReference[]
