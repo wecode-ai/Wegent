@@ -61,7 +61,7 @@ def _shell_to_response(shell: Kind) -> PublicShellResponse:
 @router.get("/public-shells", response_model=PublicShellListResponse)
 async def list_public_shells(
     page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=1000),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):

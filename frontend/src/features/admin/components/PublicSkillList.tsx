@@ -534,7 +534,11 @@ const PublicSkillList: React.FC = () => {
             <Button variant="outline" onClick={handleCloseUploadDialog} disabled={uploading}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleUploadSubmit} disabled={uploading || !selectedFile}>
+            <Button
+              variant="primary"
+              onClick={handleUploadSubmit}
+              disabled={uploading || !selectedFile}
+            >
               {uploading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

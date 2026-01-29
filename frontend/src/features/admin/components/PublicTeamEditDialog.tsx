@@ -79,13 +79,29 @@ function buildTeamJson(data: {
       icon: data.icon || undefined,
       requiresWorkspace: data.requiresWorkspace ?? true,
       members: data.members.map(m => ({
-        botRef: m.botName,
+        botRef: {
+          name: m.botName,
+          namespace: 'default',
+        },
         botPrompt: m.botPrompt || undefined,
         role: m.role || undefined,
         requireConfirmation: m.requireConfirmation || undefined,
       })),
     },
   }
+}
+
+/**
+ * Extract bot name from botRef (can be object or string for backward compatibility)
+ */
+function extractBotName(botRef: unknown): string {
+  if (typeof botRef === 'object' && botRef !== null) {
+    return ((botRef as Record<string, unknown>).name as string) || ''
+  }
+  if (typeof botRef === 'string') {
+    return botRef
+  }
+  return ''
 }
 
 /**
@@ -113,7 +129,7 @@ function parseTeamJson(json: Record<string, unknown>): {
 
     const rawMembers = (spec?.members as Array<Record<string, unknown>>) || []
     const members = rawMembers.map(m => ({
-      botName: (m?.botRef as string) || '',
+      botName: extractBotName(m?.botRef),
       botPrompt: (m?.botPrompt as string) || '',
       role: (m?.role as string) || undefined,
       requireConfirmation: (m?.requireConfirmation as boolean) || undefined,
@@ -144,7 +160,7 @@ export default function PublicTeamEditDialog({
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [mode, setMode] = useState<TeamMode>('solo')
-  const [bindMode, setBindMode] = useState<('chat' | 'code' | 'knowledge')[]>(['chat', 'code'])
+  const [bindMode, setBindMode] = useState<('chat' | 'code' | 'knowledge')[]>(['chat'])
   const [icon, setIcon] = useState<string | null>(null)
   const [requiresWorkspace, setRequiresWorkspace] = useState<boolean | null>(true)
 
@@ -275,7 +291,7 @@ export default function PublicTeamEditDialog({
       setIsActive(true)
       setName('')
       setDescription('')
-      setBindMode(['chat', 'code'])
+      setBindMode(['chat'])
       setIcon(null)
       setRequiresWorkspace(true)
       setMode('solo')
@@ -734,7 +750,10 @@ export default function PublicTeamEditDialog({
         toast({ title: t('public_teams.success.updated') })
       } else {
         const createData: AdminPublicTeamCreate = {
-          name: name.trim() || (teamJson.metadata as Record<string, unknown>)?.name?.toString() || 'new-team',
+          name:
+            name.trim() ||
+            (teamJson.metadata as Record<string, unknown>)?.name?.toString() ||
+            'new-team',
           namespace,
           json: teamJson,
         }
@@ -793,17 +812,17 @@ export default function PublicTeamEditDialog({
                   <Label htmlFor="status-toggle" className="text-sm text-text-muted">
                     {isActive ? t('public_teams.status.active') : t('public_teams.status.inactive')}
                   </Label>
-                  <Switch
-                    id="status-toggle"
-                    checked={isActive}
-                    onCheckedChange={setIsActive}
-                  />
+                  <Switch id="status-toggle" checked={isActive} onCheckedChange={setIsActive} />
                 </div>
               )}
             </div>
           </DialogHeader>
 
-          <Tabs value={activeTab} onValueChange={handleTabChange} className="flex-1 flex flex-col overflow-hidden">
+          <Tabs
+            value={activeTab}
+            onValueChange={handleTabChange}
+            className="flex-1 flex flex-col overflow-hidden"
+          >
             <TabsList className="grid w-full grid-cols-2 mb-4">
               <TabsTrigger value="basic">{t('public_teams.tabs.basic')}</TabsTrigger>
               <TabsTrigger value="advanced">{t('public_teams.tabs.advanced')}</TabsTrigger>
@@ -902,7 +921,7 @@ export default function PublicTeamEditDialog({
             <Button variant="outline" onClick={onClose}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleSave} disabled={saving}>
+            <Button variant="primary" onClick={handleSave} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('common.save')}
             </Button>

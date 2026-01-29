@@ -20,35 +20,21 @@ import { adminApis, AdminPublicBot, AdminPublicShell, AdminPublicModel } from '.
  * Transform AdminPublicBot to Bot type used by UI components
  */
 export function transformPublicBotToBot(publicBot: AdminPublicBot): Bot {
-  const json = publicBot.json as Record<string, unknown>
-  const spec = (json?.spec as Record<string, unknown>) || {}
-
-  // Extract agent_config from spec
-  const agentConfig = (spec?.agentConfig as Record<string, unknown>) || {}
-
-  // Extract system_prompt from spec (may be nested in ghostRef or direct)
-  const systemPrompt = (spec?.systemPrompt as string) || ''
-
-  // Extract MCP servers from spec
-  const mcpServers = (spec?.mcpServers as Record<string, unknown>) || {}
-
-  // Extract skills from spec
-  const skills = (spec?.skills as string[]) || []
-
-  // Extract preload skills from spec
-  const preloadSkills = (spec?.preloadSkills as string[]) || []
+  // Use the expanded fields from backend response directly
+  // These fields are populated by the backend from the associated Ghost and Model resources
+  const shellName = publicBot.shell_name || ''
 
   return {
     id: publicBot.id,
     name: publicBot.name,
     namespace: publicBot.namespace,
-    shell_name: publicBot.shell_name || (spec?.shellRef as string) || '',
-    shell_type: (spec?.shellType as string) || publicBot.shell_name || '',
-    agent_config: agentConfig,
-    system_prompt: systemPrompt,
-    mcp_servers: mcpServers,
-    skills: skills,
-    preload_skills: preloadSkills,
+    shell_name: shellName,
+    shell_type: shellName, // shell_type is the same as shell_name for public bots
+    agent_config: publicBot.agent_config || {},
+    system_prompt: publicBot.system_prompt || '',
+    mcp_servers: publicBot.mcp_servers || {},
+    skills: publicBot.skills || [],
+    preload_skills: [], // preload_skills not supported for public bots yet
     is_active: publicBot.is_active,
     created_at: publicBot.created_at,
     updated_at: publicBot.updated_at,
@@ -100,38 +86,20 @@ export function transformPublicModelToUnifiedModel(publicModel: AdminPublicModel
 }
 
 /**
- * Create Bot CRD JSON from BotFormData for public bot creation/update
+ * Form data for public bot creation/update
+ *
+ * The backend will auto-create Ghost and Model resources based on these fields.
+ * This matches the structure used by BotEdit component.
  */
 export interface PublicBotFormData {
   name: string
   namespace?: string
-  shell_name: string
-  agent_config: Record<string, unknown>
-  system_prompt: string
-  mcp_servers: Record<string, unknown>
-  skills?: string[]
-  preload_skills?: string[]
+  shell_name: string // Required: reference to public Shell
+  system_prompt?: string // System prompt for Ghost
+  mcp_servers?: Record<string, unknown> // MCP servers config for Ghost
+  skills?: string[] // Skills list for Ghost
+  agent_config?: Record<string, unknown> // Agent config for Model
 }
-
-export function createPublicBotJson(formData: PublicBotFormData): Record<string, unknown> {
-  return {
-    apiVersion: 'agent.wecode.io/v1',
-    kind: 'Bot',
-    metadata: {
-      name: formData.name,
-      namespace: formData.namespace || 'default',
-    },
-    spec: {
-      shellRef: formData.shell_name,
-      agentConfig: formData.agent_config,
-      systemPrompt: formData.system_prompt,
-      mcpServers: formData.mcp_servers,
-      skills: formData.skills || [],
-      preloadSkills: formData.preload_skills || [],
-    },
-  }
-}
-
 /**
  * Public Resources API - provides unified interface for public resource management
  */
@@ -147,27 +115,35 @@ export const publicResourceApis = {
   },
 
   /**
-   * Create a public bot
+   * Create a public bot using form data mode
+   * The backend will auto-create Ghost and Model resources
    */
   async createPublicBot(formData: PublicBotFormData): Promise<Bot> {
-    const json = createPublicBotJson(formData)
     const created = await adminApis.createPublicBot({
       name: formData.name,
       namespace: formData.namespace || 'default',
-      json,
+      shell_name: formData.shell_name,
+      system_prompt: formData.system_prompt,
+      mcp_servers: formData.mcp_servers,
+      skills: formData.skills,
+      agent_config: formData.agent_config,
     })
     return transformPublicBotToBot(created)
   },
 
   /**
-   * Update a public bot
+   * Update a public bot using form data mode
+   * The backend will auto-update Ghost and Model resources
    */
   async updatePublicBot(botId: number, formData: PublicBotFormData): Promise<Bot> {
-    const json = createPublicBotJson(formData)
     const updated = await adminApis.updatePublicBot(botId, {
       name: formData.name,
       namespace: formData.namespace || 'default',
-      json,
+      shell_name: formData.shell_name,
+      system_prompt: formData.system_prompt,
+      mcp_servers: formData.mcp_servers,
+      skills: formData.skills,
+      agent_config: formData.agent_config,
     })
     return transformPublicBotToBot(updated)
   },

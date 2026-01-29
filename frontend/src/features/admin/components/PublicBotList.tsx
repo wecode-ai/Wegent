@@ -156,6 +156,16 @@ const PublicBotList: React.FC = () => {
       return null
     }
   }
+  // Helper to extract name from ref (can be object or string for backward compatibility)
+  const extractRefName = (ref: unknown): string => {
+    if (typeof ref === 'object' && ref !== null) {
+      return ((ref as Record<string, unknown>).name as string) || ''
+    }
+    if (typeof ref === 'string') {
+      return ref
+    }
+    return ''
+  }
 
   // Extract refs from config
   const extractRefsFromConfig = (
@@ -165,16 +175,16 @@ const PublicBotList: React.FC = () => {
       const config = JSON.parse(configStr)
       const spec = (config.spec as Record<string, unknown>) || {}
       return {
-        ghostRef: (spec.ghostRef as string) || '',
-        shellRef: (spec.shellRef as string) || '',
-        modelRef: (spec.modelRef as string) || '',
+        ghostRef: extractRefName(spec.ghostRef),
+        shellRef: extractRefName(spec.shellRef),
+        modelRef: extractRefName(spec.modelRef),
       }
     } catch {
       return { ghostRef: '', shellRef: '', modelRef: '' }
     }
   }
 
-  // Update config with new ref value
+  // Update config with new ref value (always use object format)
   const updateConfigWithRef = (
     configStr: string,
     refKey: 'ghostRef' | 'shellRef' | 'modelRef',
@@ -186,7 +196,11 @@ const PublicBotList: React.FC = () => {
         config.spec = {}
       }
       if (refValue && refValue !== NONE_VALUE) {
-        config.spec[refKey] = refValue
+        // Always use object format for refs
+        config.spec[refKey] = {
+          name: refValue,
+          namespace: 'default',
+        }
       } else {
         delete config.spec[refKey]
       }
@@ -582,7 +596,7 @@ const PublicBotList: React.FC = () => {
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleCreateBot} disabled={saving}>
+            <Button variant="primary" onClick={handleCreateBot} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('common.create')}
             </Button>
@@ -688,7 +702,7 @@ const PublicBotList: React.FC = () => {
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleUpdateBot} disabled={saving}>
+            <Button variant="primary" onClick={handleUpdateBot} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('common.save')}
             </Button>
