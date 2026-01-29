@@ -345,7 +345,7 @@ export interface MyPermissionResponse {
 
 // ============== Permission Request Types ==============
 
-export type PermissionRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled' | 'expired'
+export type PermissionRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled' | 'expired' | 'disallow'
 
 // Permission request creation
 export interface PermissionRequestCreate {

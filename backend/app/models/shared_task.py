@@ -45,8 +45,8 @@ class SharedTask(Base):
     copied_task_id = Column(
         Integer,
         ForeignKey("kinds.id", ondelete="CASCADE"),
-        nullable=False,
-        default=0,
+        nullable=True,
+        default=None,
         index=True,
     )
 

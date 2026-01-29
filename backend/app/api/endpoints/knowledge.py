@@ -138,7 +138,7 @@ def list_knowledge_bases(
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid scope: {scope}. Must be one of: personal, group, external, all",
+            detail=f"Invalid scope: {scope}. Must be one of: personal, group, organization, external, all",
         )
 
     if resource_scope == ResourceScope.GROUP and not group_name:

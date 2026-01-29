@@ -59,18 +59,7 @@ def upgrade() -> None:
 
     # 3. Fix nullable columns in other tables
 
-    # shared_tasks.kind_id: nullable=True -> nullable=False, default=0
-    op.execute(
-        """
-        UPDATE shared_tasks SET copied_task_id = 0 WHERE copied_task_id IS NULL;
-        """
-    )
-    op.alter_column(
-        'shared_tasks',
-        'copied_task_id',
-        nullable=False,
-        server_default='0'
-    )
+    # Skip shared_tasks.copied_task_id (kept as nullable=True, default=None to represent "not yet copied")
 
     # system_config.updated_by: nullable=True -> nullable=False, default=0
     op.execute(
@@ -147,14 +136,14 @@ def upgrade() -> None:
             server_default=sa.false()
         )
     )
-    op.create_index('ix_namespaces_is_company', 'namespace', ['is_company'])
+    op.create_index('ix_namespace_is_company', 'namespace', ['is_company'])
 
 
 def downgrade() -> None:
     """Downgrade schema."""
 
     # Revert is_company column
-    op.drop_index('ix_namespaces_is_company', table_name='namespace')
+    op.drop_index('ix_namespace_is_company', table_name='namespace')
     op.drop_column('namespace', 'is_company')
 
     # Revert nullable changes for wiki_projects

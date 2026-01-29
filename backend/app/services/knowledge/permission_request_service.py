@@ -88,22 +88,49 @@ class PermissionRequestService:
         if can_access_knowledge_base(db, user_id, kb):
             raise ValueError("You already have access to this knowledge base")
 
-        # Check if user already has a pending request
-        existing_request = (
+        # Check if user already has any permission (regardless of status)
+        existing_permission = (
             db.query(Permission)
             .filter(
                 Permission.kind_id == data.kind_id,
                 Permission.resource_type == "knowledge_base",
                 Permission.user_id == user_id,
-                Permission.status == PermissionStatus.PENDING,
             )
             .first()
         )
 
-        if existing_request:
+        if (
+            existing_permission
+            and existing_permission.status == PermissionStatus.PENDING
+        ):
             raise ValueError(
                 "You already have a pending request for this knowledge base"
             )
+
+        if (
+            existing_permission
+            and existing_permission.status == PermissionStatus.APPROVED
+        ):
+            raise ValueError("You already have access to this knowledge base")
+
+        if existing_permission:
+            # Non-pending, non-approved status exists (e.g., disallow, cancelled, expired)
+            # Update it to pending for a new request
+            existing_permission.permission_type = data.requested_permission_type
+            existing_permission.granted_by_user_id = kb.user_id
+            existing_permission.granted_at = datetime.utcnow()
+            existing_permission.status = PermissionStatus.PENDING
+            existing_permission.is_active = False
+            existing_permission.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(existing_permission)
+
+            logger.info(
+                f"Permission request reactivated: user={user_id}, kb={data.kind_id}, "
+                f"request_id={existing_permission.id}"
+            )
+
+            return PermissionRequestService._build_response(db, existing_permission)
 
         # Create the permission record with status='pending'
         request = Permission(
