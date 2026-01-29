@@ -26,6 +26,7 @@ if getattr(sys, "frozen", False):
     # PyInstaller bundles certifi but Python may not find it automatically
     try:
         import certifi
+
         os.environ.setdefault("SSL_CERT_FILE", certifi.where())
         os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
     except ImportError:

@@ -5,7 +5,14 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { PencilIcon, TrashIcon, DownloadIcon, PackageIcon } from 'lucide-react'
+import {
+  PencilIcon,
+  TrashIcon,
+  DownloadIcon,
+  PackageIcon,
+  RefreshCwIcon,
+  GitBranchIcon,
+} from 'lucide-react'
 import LoadingState from '@/features/common/LoadingState'
 import {
   fetchUnifiedSkillsList,
@@ -13,6 +20,7 @@ import {
   UnifiedSkill,
   deleteSkill,
   downloadSkill,
+  updateSkillFromGit,
 } from '@/apis/skills'
 import SkillUploadModal from './SkillUploadModal'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
@@ -54,6 +62,7 @@ export default function SkillManagementModal({
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
   const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [updatingFromGitId, setUpdatingFromGitId] = useState<number | null>(null)
 
   // Determine the namespace for uploading skills
   const uploadNamespace = scope === 'group' && groupName ? groupName : 'default'
@@ -141,6 +150,29 @@ export default function SkillManagementModal({
         title: t('common:skills.failed_download'),
         description: error instanceof Error ? error.message : t('common:common.unknown_error'),
       })
+    }
+  }
+
+  const handleUpdateFromGit = async (skill: UnifiedSkill) => {
+    if (!skill.source || skill.source.type !== 'git') return
+
+    setUpdatingFromGitId(skill.id)
+    try {
+      await updateSkillFromGit(skill.id)
+      toast({
+        title: t('common:common.success'),
+        description: t('common:skills.success_update_from_git', { skillName: skill.name }),
+      })
+      await loadSkills()
+      onSkillsChange?.()
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: t('common:skills.failed_update_from_git'),
+        description: error instanceof Error ? error.message : t('common:common.unknown_error'),
+      })
+    } finally {
+      setUpdatingFromGitId(null)
     }
   }
 
@@ -254,11 +286,36 @@ export default function SkillManagementModal({
                                     </span>
                                   </div>
                                 )}
+
+                              {/* Git source info */}
+                              {skill.source?.type === 'git' && skill.source.repo_url && (
+                                <div className="flex items-center gap-1.5 mt-2">
+                                  <GitBranchIcon className="w-3 h-3 text-text-muted" />
+                                  <span className="text-xs text-text-muted truncate max-w-[300px]">
+                                    {skill.source.repo_url}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           </div>
 
                           {/* Action Buttons */}
                           <div className="flex gap-1 flex-shrink-0 ml-4">
+                            {/* Update from Git button - only show for git-imported skills */}
+                            {skill.source?.type === 'git' && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={() => handleUpdateFromGit(skill)}
+                                disabled={updatingFromGitId === skill.id}
+                                title={t('common:skills.update_from_git')}
+                              >
+                                <RefreshCwIcon
+                                  className={`w-4 h-4 ${updatingFromGitId === skill.id ? 'animate-spin' : ''}`}
+                                />
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="icon"

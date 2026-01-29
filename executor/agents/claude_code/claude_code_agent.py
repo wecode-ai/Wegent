@@ -1653,7 +1653,9 @@ class ClaudeCodeAgent(Agent):
                 for skill_name in skills:
                     skill_path = os.path.join(skills_dir, skill_name)
                     if os.path.exists(skill_path):
-                        logger.info(f"Local mode: skill '{skill_name}' already exists, skipping")
+                        logger.info(
+                            f"Local mode: skill '{skill_name}' already exists, skipping"
+                        )
                     else:
                         missing_skills.append(skill_name)
 
@@ -1661,7 +1663,9 @@ class ClaudeCodeAgent(Agent):
                     logger.info("Local mode: all required skills already exist locally")
                     return
 
-                logger.info(f"Local mode: need to download {len(missing_skills)} missing skills: {missing_skills}")
+                logger.info(
+                    f"Local mode: need to download {len(missing_skills)} missing skills: {missing_skills}"
+                )
                 skills = missing_skills  # Only download missing skills
             else:
                 # Docker mode: Handle skills directory based on SKILL_CLEAR_CACHE config
