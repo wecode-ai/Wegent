@@ -10,8 +10,13 @@ the LocalDeviceClient protocol for communicating with the Backend server.
 """
 
 import asyncio
+import hashlib
+import os
 import platform
+import re
+import subprocess
 import uuid
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 import socketio
@@ -20,6 +25,9 @@ from executor.config import config
 from shared.logger import setup_logger
 
 logger = setup_logger("websocket_client")
+
+# Device ID cache file location
+DEVICE_ID_CACHE_FILE = Path.home() / ".wegent-executor" / "device_id"
 
 
 class WebSocketClient:
@@ -57,7 +65,6 @@ class WebSocketClient:
         # Device identification
         self.device_id = self._generate_device_id()
         self.device_name = self._get_device_name()
-        self.mac_address = self._get_mac_address()
 
         # Reconnection settings
         reconnection_delay = reconnection_delay or config.LOCAL_RECONNECT_DELAY
@@ -101,15 +108,143 @@ class WebSocketClient:
         return token
 
     def _generate_device_id(self) -> str:
-        """Generate unique device ID based on MAC address."""
-        mac = uuid.getnode()
-        return f"mac-{mac:012x}"
+        """Generate stable unique device ID.
 
-    def _get_mac_address(self) -> str:
-        """Get formatted MAC address."""
-        mac = uuid.getnode()
-        # Format as XX:XX:XX:XX:XX:XX
-        return ":".join(f"{(mac >> (8 * i)) & 0xff:02x}" for i in reversed(range(6)))
+        Priority:
+        1. Cached device ID from file (ensures stability across restarts)
+        2. Hardware UUID (macOS) or machine-id (Linux)
+        3. Fallback to MAC address based ID
+
+        Returns:
+            Stable device ID string.
+        """
+        # Try to load cached device ID first
+        cached_id = self._load_cached_device_id()
+        if cached_id:
+            logger.debug(f"Using cached device ID: {cached_id}")
+            return cached_id
+
+        # Generate new device ID
+        device_id = self._get_hardware_id()
+        if not device_id:
+            # Fallback to MAC address
+            mac = uuid.getnode()
+            # Check if MAC is random (bit 0 of first byte is 1)
+            if mac & 0x010000000000:
+                logger.warning("MAC address appears to be random, using UUID fallback")
+                device_id = f"uuid-{uuid.uuid4().hex[:12]}"
+            else:
+                device_id = f"mac-{mac:012x}"
+
+        # Cache the device ID for future use
+        self._save_cached_device_id(device_id)
+        logger.info(f"Generated new device ID: {device_id}")
+        return device_id
+
+    def _get_hardware_id(self) -> Optional[str]:
+        """Get hardware-based unique ID from the system.
+
+        Returns:
+            Hardware ID string or None if not available.
+        """
+        system = platform.system()
+
+        try:
+            if system == "Darwin":
+                # macOS: Use IOPlatformUUID (Hardware UUID)
+                result = subprocess.run(
+                    [
+                        "ioreg",
+                        "-rd1",
+                        "-c",
+                        "IOPlatformExpertDevice",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    match = re.search(
+                        r'"IOPlatformUUID"\s*=\s*"([^"]+)"', result.stdout
+                    )
+                    if match:
+                        hw_uuid = match.group(1)
+                        # Hash to create shorter ID
+                        hashed = hashlib.sha256(hw_uuid.encode()).hexdigest()[:12]
+                        return f"hw-{hashed}"
+
+            elif system == "Linux":
+                # Linux: Use /etc/machine-id
+                machine_id_path = Path("/etc/machine-id")
+                if machine_id_path.exists():
+                    machine_id = machine_id_path.read_text().strip()
+                    if machine_id:
+                        hashed = hashlib.sha256(machine_id.encode()).hexdigest()[:12]
+                        return f"hw-{hashed}"
+
+                # Fallback: /var/lib/dbus/machine-id
+                dbus_id_path = Path("/var/lib/dbus/machine-id")
+                if dbus_id_path.exists():
+                    machine_id = dbus_id_path.read_text().strip()
+                    if machine_id:
+                        hashed = hashlib.sha256(machine_id.encode()).hexdigest()[:12]
+                        return f"hw-{hashed}"
+
+            elif system == "Windows":
+                # Windows: Use MachineGuid from registry
+                result = subprocess.run(
+                    [
+                        "reg",
+                        "query",
+                        r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography",
+                        "/v",
+                        "MachineGuid",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    match = re.search(r"MachineGuid\s+REG_SZ\s+(\S+)", result.stdout)
+                    if match:
+                        machine_guid = match.group(1)
+                        hashed = hashlib.sha256(machine_guid.encode()).hexdigest()[:12]
+                        return f"hw-{hashed}"
+
+        except Exception as e:
+            logger.warning(f"Failed to get hardware ID: {e}")
+
+        return None
+
+    def _load_cached_device_id(self) -> Optional[str]:
+        """Load cached device ID from file.
+
+        Returns:
+            Cached device ID or None if not exists.
+        """
+        try:
+            if DEVICE_ID_CACHE_FILE.exists():
+                device_id = DEVICE_ID_CACHE_FILE.read_text().strip()
+                if device_id:
+                    return device_id
+        except Exception as e:
+            logger.warning(f"Failed to load cached device ID: {e}")
+        return None
+
+    def _save_cached_device_id(self, device_id: str) -> None:
+        """Save device ID to cache file.
+
+        Args:
+            device_id: Device ID to cache.
+        """
+        try:
+            DEVICE_ID_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            DEVICE_ID_CACHE_FILE.write_text(device_id)
+            # Set restrictive permissions (owner read/write only)
+            os.chmod(DEVICE_ID_CACHE_FILE, 0o600)
+            logger.debug(f"Cached device ID to {DEVICE_ID_CACHE_FILE}")
+        except Exception as e:
+            logger.warning(f"Failed to cache device ID: {e}")
 
     def _get_device_name(self) -> str:
         """Get device name from system."""
@@ -233,7 +368,7 @@ class WebSocketClient:
 
         try:
             logger.info(
-                f"Registering device: id={self.device_id}, name={self.device_name}, mac={self.mac_address}"
+                f"Registering device: id={self.device_id}, name={self.device_name}"
             )
 
             response = await self.sio.call(
@@ -241,7 +376,6 @@ class WebSocketClient:
                 {
                     "device_id": self.device_id,
                     "name": self.device_name,
-                    "mac_address": self.mac_address,
                 },
                 namespace="/local-executor",
                 timeout=timeout,
