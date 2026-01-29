@@ -59,7 +59,7 @@ interface PublicTeamEditDialogProps {
 function buildTeamJson(data: {
   name: string
   description: string
-  bindMode: ('chat' | 'code' | 'knowledge')[]
+  bindMode: ('chat' | 'code' | 'knowledge' | 'task')[]
   icon: string | null
   requiresWorkspace: boolean | null
   mode: TeamMode
@@ -160,7 +160,7 @@ export default function PublicTeamEditDialog({
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [mode, setMode] = useState<TeamMode>('solo')
-  const [bindMode, setBindMode] = useState<('chat' | 'code' | 'knowledge')[]>(['chat'])
+  const [bindMode, setBindMode] = useState<('chat' | 'code' | 'knowledge' | 'task')[]>(['chat'])
   const [icon, setIcon] = useState<string | null>(null)
   const [requiresWorkspace, setRequiresWorkspace] = useState<boolean | null>(true)
 

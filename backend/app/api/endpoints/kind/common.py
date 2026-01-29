@@ -14,6 +14,8 @@ from app.core.exceptions import ConflictException, NotFoundException
 from app.schemas.kind import (
     Bot,
     BotList,
+    Device,
+    DeviceList,
     Ghost,
     GhostList,
     Model,
@@ -42,6 +44,7 @@ KIND_SCHEMA_MAP = {
     "Workspace": Workspace,
     "Task": Task,
     "Retriever": Retriever,
+    "Device": Device,
 }
 
 # Map kind strings to their corresponding list schema classes
@@ -54,6 +57,7 @@ KIND_LIST_SCHEMA_MAP = {
     "Workspace": WorkspaceList,
     "Task": TaskList,
     "Retriever": RetrieverList,
+    "Device": DeviceList,
 }
 
 # Map kind strings to their plural form for URL paths
@@ -66,6 +70,7 @@ KIND_URL_MAP = {
     "Workspace": "workspaces",
     "Task": "tasks",
     "Retriever": "retrievers",
+    "Device": "devices",
 }
 
 # Map URL paths to their corresponding kind

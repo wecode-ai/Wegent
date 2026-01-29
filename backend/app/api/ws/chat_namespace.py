@@ -860,15 +860,21 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "error": f"Cannot cancel subtask in {subtask.status.value} state"
                 }
 
-            # Check if this is a Chat Shell task or Executor task based on shell_type
+            # Check if this is a Chat Shell task, Device task, or Executor task
             # Shell type "Chat" uses session_manager (direct chat)
+            # Device tasks (executor_name starts with "device-") use WebSocket to device
             # Other shell types (ClaudeCode, Agno, etc.) use executor_manager
             is_chat_shell = (
                 payload.shell_type == "Chat" if payload.shell_type else False
             )
+            is_device_task = subtask.executor_name and subtask.executor_name.startswith(
+                "device-"
+            )
 
             logger.info(
-                f"[WS] chat:cancel task_id={subtask.task_id}, shell_type={payload.shell_type}, is_chat_shell={is_chat_shell}"
+                f"[WS] chat:cancel task_id={subtask.task_id}, shell_type={payload.shell_type}, "
+                f"is_chat_shell={is_chat_shell}, is_device_task={is_device_task}, "
+                f"executor_name={subtask.executor_name}"
             )
 
             if is_chat_shell:
@@ -892,6 +898,26 @@ class ChatNamespace(socketio.AsyncNamespace):
                         f"[WS] chat:cancel Using chat session_manager (v1) for subtask_id={payload.subtask_id}"
                     )
                     await session_manager.cancel_stream(payload.subtask_id)
+            elif is_device_task:
+                # For Device tasks, send task:cancel event via WebSocket to the device
+                # Extract device_id from executor_name (format: "device-{device_id}")
+                device_id = subtask.executor_name[7:]  # Remove "device-" prefix
+                device_room = f"device:{user_id}:{device_id}"
+
+                logger.info(
+                    f"[WS] chat:cancel Sending task:cancel to device: "
+                    f"device_id={device_id}, room={device_room}, subtask_id={payload.subtask_id}"
+                )
+
+                from app.core.socketio import get_sio
+
+                sio = get_sio()
+                await sio.emit(
+                    "task:cancel",
+                    {"subtask_id": payload.subtask_id, "task_id": subtask.task_id},
+                    room=device_room,
+                    namespace="/local-executor",
+                )
             else:
                 # For Executor tasks, call executor_manager API
                 await call_executor_cancel(subtask.task_id)

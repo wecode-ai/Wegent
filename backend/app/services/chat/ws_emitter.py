@@ -17,9 +17,7 @@ from typing import Any, Dict, Optional
 
 import socketio
 
-from app.api.ws.events import (
-    ServerEvents,
-)
+from app.api.ws.events import ServerEvents
 
 logger = logging.getLogger(__name__)
 
