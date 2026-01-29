@@ -153,7 +153,7 @@
     "tool_call": "🔧 工具调用",
     "tool_use": "🔧 工具使用",
     "tool_result": "🔧 工具结果",
-    "tool_error": "❌ 工具错误",
+    "tool_error": "⚠️ 工具错误",
     "model_reasoning": "💭 模型思考",
     "text_response": "文本响应",
     "expand": "展开",
@@ -178,7 +178,26 @@
     "execution_type": "执行类型",
     "mcp_init_fail": "❌ MCP 初始化失败。",
     "attachments_downloaded": "📎 已下载附件",
-    "generating_content": "✨ 正在生成内容"
+    "generating_content": "✨ 正在生成内容",
+    "tool_group": "工具组",
+    "tools_count": "工具",
+    "completed": "已完成",
+    "running": "执行中",
+    "has_errors": "有错误",
+    "tool_input": "输入",
+    "tool_output": "输出",
+    "tool_executing": "执行中...",
+    "tools": {
+      "bash": "执行命令",
+      "read": "读取文件",
+      "edit": "编辑文件",
+      "write": "写入文件",
+      "grep": "搜索代码",
+      "glob": "查找文件",
+      "todo": "更新待办事项",
+      "kb_search": "搜索知识库",
+      "web_search": "网页搜索"
+    }
   },
   "send_button": {
     "shortcut_title": "发送快捷键",

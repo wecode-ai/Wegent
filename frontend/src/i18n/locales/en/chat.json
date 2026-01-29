@@ -97,6 +97,28 @@
     "collapse_content": "Collapse",
     "lines": "lines"
   },
+  "thinking": {
+    "tool_group": "Tool Group",
+    "tools": "tools",
+    "completed": "Completed",
+    "running": "Running",
+    "has_errors": "Has Errors",
+    "tool_input": "Input",
+    "tool_output": "Output",
+    "tool_error": "Error",
+    "tool_executing": "Executing...",
+    "tools": {
+      "bash": "Execute Command",
+      "read": "Read File",
+      "edit": "Edit File",
+      "write": "Write File",
+      "grep": "Search Code",
+      "glob": "Find Files",
+      "todo": "Update Tasks",
+      "kb_search": "Search Knowledge Base",
+      "web_search": "Web Search"
+    }
+  },
   "shared_task": {
     "share_task": "Share",
     "sharing": "Sharing...",
@@ -153,7 +175,7 @@
     "tool_call": "🔧 Tool Call",
     "tool_use": "🔧 Tool Use",
     "tool_result": "🔧 Tool Result",
-    "tool_error": "❌ Tool Error",
+    "tool_error": "⚠️ Tool Error",
     "model_reasoning": "💭 Model Thinking",
     "text_response": "Text Response",
     "expand": "Expand",
@@ -178,7 +200,26 @@
     "execution_type": "Execution Type",
     "mcp_init_fail": "❌ MCP initialization failed. ",
     "attachments_downloaded": "📎 Attachments Downloaded",
-    "generating_content": "✨ Generating Content"
+    "generating_content": "✨ Generating Content",
+    "tool_group": "Tool Group",
+    "tools_count": "Tools",
+    "completed": "Completed",
+    "running": "Running",
+    "has_errors": "Has Errors",
+    "tool_input": "Input",
+    "tool_output": "Output",
+    "tool_executing": "Executing...",
+    "tools": {
+      "bash": "Execute Command",
+      "read": "Read File",
+      "edit": "Edit File",
+      "write": "Write File",
+      "grep": "Search Code",
+      "glob": "Find Files",
+      "todo": "Update Tasks",
+      "kb_search": "Search Knowledge Base",
+      "web_search": "Web Search"
+    }
   },
   "send_button": {
     "shortcut_title": "Send Shortcut",

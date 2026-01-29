@@ -64,33 +64,47 @@ def _handle_tool_start(
     # Convert input to JSON-serializable format
     serializable_input = _make_serializable(tool_input)
 
+    # Generate tool_use_id (prefer from event, fallback to run_id + timestamp)
+    import time
+
+    tool_use_id = event_data.get("tool_use_id")
+    if not tool_use_id:
+        # Fallback: generate unique ID from run_id + timestamp
+        tool_use_id = f"{run_id}-{int(time.time() * 1000)}"
+
     # Add OpenTelemetry span event for tool start
     add_span_event(
         f"tool_start:{tool_name}",
         attributes={
             "tool.name": tool_name,
             "tool.run_id": run_id,
+            "tool.tool_use_id": tool_use_id,
             "tool.input": str(serializable_input)[:1000],
         },
+    )
+
+    logger.info(
+        f"[TOOL_START] {tool_name} (run_id={run_id}, tool_use_id={tool_use_id})"
     )
 
     # Build friendly title
     title = _build_tool_start_title(agent_builder, tool_name, serializable_input)
 
-    state.add_thinking_step(
-        {
-            "title": title,
-            "next_action": "continue",
-            "run_id": run_id,
-            "details": {
-                "type": "tool_use",
-                "tool_name": tool_name,
-                "name": tool_name,
-                "status": "started",
-                "input": serializable_input,
-            },
-        }
-    )
+    thinking_step = {
+        "title": title,
+        "next_action": "continue",
+        "run_id": run_id,  # Keep for backward compatibility
+        "tool_use_id": tool_use_id,  # NEW: Standard identifier
+        "details": {
+            "type": "tool_use",
+            "tool_name": tool_name,
+            "name": tool_name,
+            "status": "started",
+            "input": serializable_input,
+        },
+    }
+
+    state.add_thinking_step(thinking_step)
 
     # Emit chunk with thinking data synchronously using emit_json
     # Note: emit_json is sync method, emit_chunk is async but we're in sync callback
@@ -116,7 +130,15 @@ def _handle_tool_end(
     """Handle tool end event."""
     # Extract and serialize tool output
     tool_output = event_data.get("data", {}).get("output", "")
+
     serializable_output = _make_output_serializable(tool_output)
+
+    # Generate tool_use_id (prefer from event, fallback to run_id + timestamp)
+    import time
+
+    tool_use_id = event_data.get("tool_use_id")
+    if not tool_use_id:
+        tool_use_id = f"{run_id}-{int(time.time() * 1000)}"
 
     # Add OpenTelemetry span event for tool end
     output_str = str(serializable_output)
@@ -125,11 +147,14 @@ def _handle_tool_end(
         attributes={
             "tool.name": tool_name,
             "tool.run_id": run_id,
+            "tool.tool_use_id": tool_use_id,
             "tool.output_length": len(output_str),
             "tool.output": output_str[:1000],
             "tool.status": "completed",
         },
     )
+
+    logger.info(f"[TOOL_END] {tool_name} (run_id={run_id}, tool_use_id={tool_use_id})")
 
     # Process tool output and extract metadata
     title, sources = _process_tool_output(tool_name, serializable_output)
@@ -165,11 +190,13 @@ def _handle_tool_end(
     if status == "completed" and title == f"Tool completed: {tool_name}":
         title = _build_tool_end_title(agent_builder, tool_name, run_id, state, title)
 
-    # Find matching start step and insert result after it
+    # Find matching start step using tool_use_id (fallback to run_id)
     matching_start_idx = None
     for idx, step in enumerate(state.thinking):
+        # Try to match using tool_use_id first, fallback to run_id
+        step_id = step.get("tool_use_id") or step.get("run_id")
         if (
-            step.get("run_id") == run_id
+            step_id == tool_use_id
             and step.get("details", {}).get("status") == "started"
         ):
             matching_start_idx = idx
@@ -178,7 +205,8 @@ def _handle_tool_end(
     result_step = {
         "title": title,
         "next_action": "continue",
-        "run_id": run_id,
+        "run_id": run_id,  # Keep for backward compatibility
+        "tool_use_id": tool_use_id,  # NEW: Standard identifier
         "details": {
             "type": "tool_result",
             "tool_name": tool_name,

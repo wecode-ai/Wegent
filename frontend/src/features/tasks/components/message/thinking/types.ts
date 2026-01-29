@@ -8,6 +8,8 @@
 export interface ThinkingStep {
   title: string
   next_action: string
+  run_id?: string // Legacy: LangChain run_id
+  tool_use_id?: string // NEW: Anthropic standard tool_use_id
   details?: {
     type?: string
     subtype?: string
@@ -36,11 +38,15 @@ export interface ThinkingStep {
     // Tool use details
     id?: string
     name?: string
+    tool_name?: string
+    status?: string
     input?: string | Record<string, unknown>
     // Tool result details
     tool_use_id?: string
     content?: string
+    output?: unknown
     is_error?: boolean
+    error?: string
     // Result message details
     session_id?: string
     num_turns?: number
@@ -73,6 +79,48 @@ export interface ThinkingStep {
   reasoning?: string
   confidence?: number
   value?: unknown
+}
+
+/**
+ * Tool execution status
+ */
+export type ToolStatus = 'pending' | 'streaming' | 'invoking' | 'done' | 'error'
+
+/**
+ * Paired tool use + tool result
+ */
+export interface ToolPair {
+  toolUseId: string
+  toolName: string
+  status: ToolStatus
+  toolUse: ThinkingStep // tool_use type step
+  toolResult?: ThinkingStep // tool_result type step (may be incomplete during streaming)
+  startTime?: number
+  endTime?: number
+}
+
+/**
+ * Group of consecutive tools
+ */
+export interface ToolGroup {
+  id: string // Unique group ID
+  tools: ToolPair[]
+  isComplete: boolean // All tools in group are done
+}
+
+/**
+ * Props for ToolBlock component
+ */
+export interface ToolBlockProps {
+  tool: ToolPair
+  defaultExpanded?: boolean
+}
+
+/**
+ * Props for ToolRenderer component
+ */
+export interface ToolRendererProps {
+  tool: ToolPair
 }
 
 /**
