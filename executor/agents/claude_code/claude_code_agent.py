@@ -624,13 +624,6 @@ class ClaudeCodeAgent(Agent):
             if key not in excluded_keys and value is not None:
                 env_config[key] = value
 
-        # Add user header for API requests (same as Docker mode)
-        # This passes user information to the API proxy for tracking/billing
-        if user_name:
-            user_headers = {"user": user_name}
-            env_config["ANTHROPIC_DEFAULT_REQUEST_HEADERS"] = json.dumps(user_headers)
-            logger.info(f"Added user header for API requests: user={user_name}")
-
         # Apply post-creation hook if available
         if "post_create_claude_model" in self._hooks:
             try:
