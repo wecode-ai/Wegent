@@ -213,13 +213,11 @@ const SetupSkillStep: React.FC = () => {
         <h3 className="text-lg font-semibold text-text-primary">
           {t('setup_wizard.skill_step.title')}
         </h3>
-        <p className="text-sm text-text-muted mt-1">
-          {t('setup_wizard.skill_step.description')}
-        </p>
+        <p className="text-sm text-text-muted mt-1">{t('setup_wizard.skill_step.description')}</p>
       </div>
 
       {/* Skill List */}
-      <div className="bg-base border border-border rounded-md p-3 min-h-[200px] max-h-[300px] overflow-y-auto">
+      <div className="bg-base border border-border rounded-md p-3 min-h-[200px]">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-6 h-6 animate-spin text-text-muted" />
@@ -305,9 +303,7 @@ const SetupSkillStep: React.FC = () => {
         <DialogContent className="sm:max-w-[500px] bg-surface">
           <DialogHeader>
             <DialogTitle>{t('setup_wizard.skill_step.upload_skill')}</DialogTitle>
-            <DialogDescription>
-              {t('setup_wizard.skill_step.file_requirements')}
-            </DialogDescription>
+            <DialogDescription>{t('setup_wizard.skill_step.file_requirements')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             {/* Skill Name Input */}
