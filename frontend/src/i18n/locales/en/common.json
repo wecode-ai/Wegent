@@ -427,7 +427,14 @@
     "access_denied_title": "Access Denied",
     "access_denied_description": "You don't have permission to access this task. Please contact the task owner to invite you via the \"Invite Members\" feature.",
     "access_denied_go_home": "Go to Chat",
-    "total_count": "{{count}} items total"
+    "total_count": "{{count}} items total",
+    "delete_confirm_title": "Delete Task",
+    "delete_confirm_message": "Are you sure you want to delete \"{{title}}\"? This action cannot be undone.",
+    "leave_confirm_title": "Leave Group Chat",
+    "leave_confirm_message": "Are you sure you want to leave \"{{title}}\"?",
+    "delete_success": "Task deleted successfully",
+    "leave_success": "Left group chat successfully",
+    "delete_failed": "Failed to delete, please try again"
   },
   "settings": {
     "title": "Settings",
