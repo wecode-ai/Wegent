@@ -199,9 +199,7 @@ class ClaudeCodeAgent(Agent):
         self.is_silent_exit: bool = False
         self.silent_exit_reason: str = ""
 
-        # Environment config for Local mode (populated in initialize())
-        self._claude_env_config: Dict[str, Any] = {}
-        self._claude_settings_config: Dict[str, Any] = {}
+        # Config directory for Local mode (populated in initialize())
         self._claude_config_dir: str = ""
 
     def _set_git_env_variables(self, task_data: Dict[str, Any]) -> None:
@@ -584,10 +582,8 @@ class ClaudeCodeAgent(Agent):
             json.dump(claude_json_config, f, indent=2)
         logger.info(f"Saved Claude Code config to {claude_json_path}")
 
-        # Store config for later use (needed for Local mode to pass via settings parameter)
+        # Store config directory for Local mode
         self._claude_config_dir = config_dir
-        self._claude_settings_config = agent_config
-        self._claude_env_config = agent_config.get("env", {})
 
     def _create_claude_model(
         self, bot_config: Dict[str, Any], user_name: str = None, git_url: str = None
@@ -1081,37 +1077,17 @@ class ClaudeCodeAgent(Agent):
             os.makedirs(cwd, exist_ok=True)
             self.options["cwd"] = cwd
 
-        # Pass env and settings from saved config
-        if hasattr(self, "_claude_env_config") and self._claude_env_config:
-            # Merge with existing env options (if any), bot config takes precedence
-            existing_env = self.options.get("env", {})
-            merged_env = {**existing_env, **self._claude_env_config}
-            # Convert all values to strings as required by env parameter
-            self.options["env"] = {k: str(v) for k, v in merged_env.items()}
-            logger.info(
-                f"Passing env vars to Claude SDK (keys: {list(self.options['env'].keys())})"
-            )
-
         # In Local mode, configure SDK to use task-specific config directory
         # to avoid modifying user's personal ~/.claude/ config
         if config.EXECUTOR_MODE == "local" and hasattr(self, "_claude_config_dir"):
             # Set CLAUDE_CONFIG_DIR env var to redirect all config reads/writes
-            # This affects both settings.json and claude.json locations
+            # This affects settings.json, claude.json, and skills locations
             env = self.options.get("env", {})
             env["CLAUDE_CONFIG_DIR"] = self._claude_config_dir
             self.options["env"] = env
-
-            # Also pass settings file path explicitly for additional safety
-            settings_path = os.path.join(self._claude_config_dir, "settings.json")
-            if os.path.exists(settings_path):
-                self.options["settings"] = settings_path
-                # Disable reading from default config locations (user's ~/.claude/)
-                self.options["setting_sources"] = []
-
-            logger.info(
-                f"Local mode: using config dir {self._claude_config_dir}, "
-                f"disabled default setting sources"
-            )
+            # Disable reading from default config locations (user's ~/.claude/)
+            self.options["setting_sources"] = []
+            logger.info(f"Local mode: using config dir {self._claude_config_dir}")
 
         # Create client with options
         if self.options:
