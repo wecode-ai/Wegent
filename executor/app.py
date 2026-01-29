@@ -47,14 +47,18 @@ async def lifespan(app: FastAPI):
     """
     Run task at startup if TASK_INFO is available
     """
-    # Ensure /home/user directory exists (for container compatibility)
-    try:
-        home_user_dir = "/home/user"
-        if not os.path.exists(home_user_dir):
-            os.makedirs(home_user_dir, mode=0o777, exist_ok=True)
-            logger.info(f"Created {home_user_dir} directory")
-    except Exception as e:
-        logger.warning(f"Failed to create {home_user_dir} directory: {e}")
+    # Ensure /home/user directory exists (for Docker container compatibility)
+    # Skip in Local mode as it's not needed and may fail on macOS
+    from executor.config import config as executor_config
+
+    if executor_config.EXECUTOR_MODE != "local":
+        try:
+            home_user_dir = "/home/user"
+            if not os.path.exists(home_user_dir):
+                os.makedirs(home_user_dir, mode=0o777, exist_ok=True)
+                logger.info(f"Created {home_user_dir} directory")
+        except Exception as e:
+            logger.warning(f"Failed to create {home_user_dir} directory: {e}")
 
     # Initialize OpenTelemetry if enabled (configuration from shared/telemetry/config.py)
     otel_config = get_otel_config("wegent-executor")
