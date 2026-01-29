@@ -9,18 +9,35 @@ The ChannelManager is a singleton that handles:
 - Starting/stopping channel providers
 - Managing provider lifecycle
 - Providing status information
+
+IM channels are stored as Messager CRD in the kinds table.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol
 
 from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
-    from app.models.im_channel import IMChannel
     from app.services.channels.base import BaseChannelProvider
 
 logger = logging.getLogger(__name__)
+
+# CRD kind for IM channels
+MESSAGER_KIND = "Messager"
+MESSAGER_USER_ID = 0
+
+
+class ChannelLike(Protocol):
+    """Protocol for channel-like objects (IMChannel or IMChannelAdapter)."""
+
+    id: int
+    name: str
+    channel_type: str
+    is_enabled: bool
+    config: Dict[str, Any]
+    default_team_id: int
+    default_model_name: str
 
 
 class ChannelManager:
@@ -60,6 +77,7 @@ class ChannelManager:
         Start all enabled channels from the database.
 
         This should be called during application startup.
+        IM channels are stored as Messager CRD in the kinds table.
 
         Args:
             db: Database session
@@ -67,15 +85,32 @@ class ChannelManager:
         Returns:
             Number of channels started successfully
         """
-        from app.models.im_channel import IMChannel
+        from app.api.endpoints.admin.im_channels import IMChannelAdapter
+        from app.models.kind import Kind
 
-        channels = db.query(IMChannel).filter(IMChannel.is_enabled == True).all()
-        logger.info("[ChannelManager] Found %d enabled channels", len(channels))
+        # Query all active Messager CRDs
+        channels = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == MESSAGER_KIND,
+                Kind.user_id == MESSAGER_USER_ID,
+                Kind.is_active == True,
+            )
+            .all()
+        )
+
+        # Filter enabled channels
+        enabled_channels = [
+            ch for ch in channels if ch.json.get("spec", {}).get("isEnabled", True)
+        ]
+
+        logger.info("[ChannelManager] Found %d enabled channels", len(enabled_channels))
 
         started_count = 0
-        for channel in channels:
+        for channel in enabled_channels:
             try:
-                if await self.start_channel(channel):
+                adapter = IMChannelAdapter(channel)
+                if await self.start_channel(adapter):
                     started_count += 1
             except Exception as e:
                 logger.exception(
@@ -86,16 +121,18 @@ class ChannelManager:
                 )
 
         logger.info(
-            "[ChannelManager] Started %d/%d channels", started_count, len(channels)
+            "[ChannelManager] Started %d/%d channels",
+            started_count,
+            len(enabled_channels),
         )
         return started_count
 
-    async def start_channel(self, channel: "IMChannel") -> bool:
+    async def start_channel(self, channel: ChannelLike) -> bool:
         """
         Start a single channel.
 
         Args:
-            channel: IMChannel model instance
+            channel: Channel-like object (IMChannel or IMChannelAdapter)
 
         Returns:
             True if started successfully, False otherwise
@@ -164,12 +201,12 @@ class ChannelManager:
         finally:
             del self._channels[channel_id]
 
-    async def restart_channel(self, channel: "IMChannel") -> bool:
+    async def restart_channel(self, channel: ChannelLike) -> bool:
         """
         Restart a channel (used after configuration update).
 
         Args:
-            channel: Updated IMChannel model instance
+            channel: Updated channel-like object
 
         Returns:
             True if restarted successfully, False otherwise
@@ -182,12 +219,12 @@ class ChannelManager:
         await self.stop_channel(channel.id)
         return await self.start_channel(channel)
 
-    def _create_provider(self, channel: "IMChannel") -> Optional["BaseChannelProvider"]:
+    def _create_provider(self, channel: ChannelLike) -> Optional["BaseChannelProvider"]:
         """
         Create a provider instance based on channel type.
 
         Args:
-            channel: IMChannel model instance
+            channel: Channel-like object
 
         Returns:
             Provider instance or None if type is unknown
