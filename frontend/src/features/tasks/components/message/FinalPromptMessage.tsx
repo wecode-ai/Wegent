@@ -224,7 +224,7 @@ export default function FinalPromptMessage({
             source={data.final_prompt}
             style={{ background: 'transparent' }}
             wrapperElement={{ 'data-color-mode': theme }}
-            components={createSmartMarkdownComponents({ enableImagePreview: true })}
+            components={createSmartMarkdownComponents({ enableImagePreview: true, theme })}
           />
         )}
       </div>

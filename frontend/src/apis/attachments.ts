@@ -42,6 +42,15 @@ export interface AttachmentDetailResponse extends AttachmentResponse {
 }
 
 /**
+ * Attachment preview response with extracted text snippet
+ */
+export interface AttachmentPreviewResponse extends AttachmentDetailResponse {
+  preview_type: 'text' | 'image' | 'none'
+  preview_text?: string | null
+  download_url: string
+}
+
+/**
  * Error code to i18n key mapping
  */
 const ERROR_CODE_MAPPING: Record<
@@ -410,6 +419,33 @@ export async function getAttachment(attachmentId: number): Promise<AttachmentDet
 }
 
 /**
+ * Get attachment preview by ID
+ *
+ * @param attachmentId - Attachment ID
+ * @returns Attachment preview details
+ */
+export async function getAttachmentPreview(
+  attachmentId: number
+): Promise<AttachmentPreviewResponse> {
+  const token = getToken()
+
+  const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}/preview`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.detail || 'Failed to get attachment preview')
+  }
+
+  return response.json()
+}
+
+/**
  * Get attachment download URL
  *
  * @param attachmentId - Attachment ID
@@ -540,6 +576,7 @@ export async function getAttachmentBySubtask(
 export const attachmentApis = {
   uploadAttachment,
   getAttachment,
+  getAttachmentPreview,
   getAttachmentDownloadUrl,
   downloadAttachment,
   deleteAttachment,

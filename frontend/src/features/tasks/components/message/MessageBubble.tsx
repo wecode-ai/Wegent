@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { memo, useState } from 'react'
+import React, { memo, useMemo, useState } from 'react'
 import type {
   TaskDetail,
   Team,
@@ -30,6 +30,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import MarkdownEditor from '@uiw/react-markdown-editor'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
+import AttachmentEmbed from '@/components/common/AttachmentEmbed'
 import { ThinkingDisplay, ReasoningDisplay } from './thinking'
 import ClarificationForm from '../clarification/ClarificationForm'
 import FinalPromptMessage from './FinalPromptMessage'
@@ -49,6 +50,8 @@ import { useMessageFeedback } from '@/hooks/useMessageFeedback'
 import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartUrlRenderer'
 import { formatDateTime } from '@/utils/dateTime'
 import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
+import { parseAttachmentSchemeUrl } from '@/utils/attachment'
+import { SchemeLink } from '@/lib/scheme'
 export interface Message {
   type: 'user' | 'ai'
   content: string
@@ -362,6 +365,185 @@ const MessageBubble = memo(
       isWaiting ||
       msg.isWaiting
 
+    const normalizeSchemeMarkup = (content: string): string => {
+      if (!content || (!content.includes('attachment://') && !content.includes('wegent://'))) {
+        return content
+      }
+
+      let normalized = content
+
+      normalized = normalized.replace(
+        /<img[^>]*src=["']attachment:\/\/(\d+)["'][^>]*>/gi,
+        (_match, id) => `<attachment-embed data-id="${id}"></attachment-embed>`
+      )
+
+      normalized = normalized.replace(
+        /<a[^>]*href=["']attachment:\/\/(\d+)["'][^>]*>[\s\S]*?<\/a>/gi,
+        (_match, id) => `<attachment-embed data-id="${id}"></attachment-embed>`
+      )
+
+      normalized = normalized.replace(
+        /!\[[^\]]*]\(\s*attachment:\/\/(\d+)[^)]*\)/gi,
+        (_match, id) => `<attachment-embed data-id="${id}"></attachment-embed>`
+      )
+
+      normalized = normalized.replace(
+        /\[[^\]]*]\(\s*attachment:\/\/(\d+)[^)]*\)/gi,
+        (_match, id) => `<attachment-embed data-id="${id}"></attachment-embed>`
+      )
+
+      normalized = normalized.replace(
+        /<a[^>]*href=["'](wegent:\/\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
+        (_match, href, text) => `<scheme-link data-href="${href}">${text || href}</scheme-link>`
+      )
+
+      normalized = normalized.replace(
+        /!\[([^\]]*)]\(\s*(wegent:\/\/[^)]+)\)/gi,
+        (_match, text, href) => `<scheme-link data-href="${href}">${text || href}</scheme-link>`
+      )
+
+      normalized = normalized.replace(
+        /\[([^\]]+)]\(\s*(wegent:\/\/[^)]+)\)/gi,
+        (_match, text, href) => `<scheme-link data-href="${href}">${text || href}</scheme-link>`
+      )
+
+      return normalized
+    }
+
+    const buildMarkdownComponents = (action?: ParagraphAction) => {
+      const extractText = (node: React.ReactNode): string => {
+        if (typeof node === 'string') return node
+        if (typeof node === 'number') return String(node)
+        if (Array.isArray(node)) return node.map(extractText).join('')
+        if (React.isValidElement(node)) {
+          const props = node.props as { children?: React.ReactNode }
+          if (props.children) {
+            return extractText(props.children)
+          }
+        }
+        return ''
+      }
+
+      const wrapWithAction = (element: React.ReactNode, text: string) => {
+        if (!action || !text.trim()) return element
+        return (
+          <ParagraphWithAction paragraphText={text} action={action}>
+            {element}
+          </ParagraphWithAction>
+        )
+      }
+
+      const isAttachmentEmbedElement = (node: React.ReactNode): boolean =>
+        React.isValidElement(node) && Boolean(node.props?.['data-attachment-embed'])
+
+      const renderParagraph = (children: React.ReactNode) => {
+        const childArray = React.Children.toArray(children)
+        if (childArray.length === 1 && isAttachmentEmbedElement(childArray[0])) {
+          return <div>{childArray[0]}</div>
+        }
+        const text = extractText(children)
+        return wrapWithAction(<p>{children}</p>, text)
+      }
+
+      const renderAttachment = (attachmentId: number) => (
+        <AttachmentEmbed attachmentId={attachmentId} theme={theme} />
+      )
+
+      const renderLink = (href: string | undefined, children: React.ReactNode) => {
+        if (!href) {
+          return <span>{children}</span>
+        }
+        const attachmentId = parseAttachmentSchemeUrl(href)
+        if (attachmentId) {
+          return renderAttachment(attachmentId)
+        }
+        return (
+          <SmartLink href={href} disabled={isStreaming}>
+            {children}
+          </SmartLink>
+        )
+      }
+
+      const renderImage = (src: string | undefined, alt?: string) => {
+        if (!src || typeof src !== 'string') return null
+        const attachmentId = parseAttachmentSchemeUrl(src)
+        if (attachmentId) {
+          return renderAttachment(attachmentId)
+        }
+        return <SmartImage src={src} alt={alt} />
+      }
+
+      return {
+        'attachment-embed': ({ 'data-id': dataId, id }: { 'data-id'?: string; id?: string }) => {
+          const parsedId = Number(dataId || id)
+          if (!Number.isFinite(parsedId) || parsedId <= 0) {
+            return null
+          }
+          return <AttachmentEmbed attachmentId={parsedId} theme={theme} />
+        },
+        'scheme-link': ({
+          'data-href': dataHref,
+          href,
+          children,
+        }: {
+          'data-href'?: string
+          href?: string
+          children?: React.ReactNode
+        }) => {
+          const targetHref = dataHref || href
+          if (!targetHref) {
+            return <span>{children}</span>
+          }
+          return <SchemeLink href={targetHref}>{children || targetHref}</SchemeLink>
+        },
+        a: ({ href, children }: { href?: string; children: React.ReactNode }) =>
+          renderLink(href, children),
+        img: ({ src, alt }: { src?: string; alt?: string }) => renderImage(src, alt),
+        p: ({ children }: { children: React.ReactNode }) => renderParagraph(children),
+        h1: ({ children }: { children: React.ReactNode }) => {
+          const text = extractText(children)
+          return wrapWithAction(<h1>{children}</h1>, text)
+        },
+        h2: ({ children }: { children: React.ReactNode }) => {
+          const text = extractText(children)
+          return wrapWithAction(<h2>{children}</h2>, text)
+        },
+        h3: ({ children }: { children: React.ReactNode }) => {
+          const text = extractText(children)
+          return wrapWithAction(<h3>{children}</h3>, text)
+        },
+        h4: ({ children }: { children: React.ReactNode }) => {
+          const text = extractText(children)
+          return wrapWithAction(<h4>{children}</h4>, text)
+        },
+        h5: ({ children }: { children: React.ReactNode }) => {
+          const text = extractText(children)
+          return wrapWithAction(<h5>{children}</h5>, text)
+        },
+        h6: ({ children }: { children: React.ReactNode }) => {
+          const text = extractText(children)
+          return wrapWithAction(<h6>{children}</h6>, text)
+        },
+        li: ({ children }: { children: React.ReactNode }) => {
+          const text = extractText(children)
+          return wrapWithAction(<li>{children}</li>, text)
+        },
+        blockquote: ({ children }: { children: React.ReactNode }) => {
+          const text = extractText(children)
+          return wrapWithAction(<blockquote>{children}</blockquote>, text)
+        },
+      }
+    }
+
+    const markdownComponents = useMemo(
+      () => buildMarkdownComponents(paragraphAction),
+      [paragraphAction, isStreaming, theme]
+    )
+    const markdownComponentsNoAction = useMemo(
+      () => buildMarkdownComponents(undefined),
+      [isStreaming, theme]
+    )
+
     const renderProgressBar = (status: string, progress: number) => {
       const normalizedStatus = (status ?? '').toUpperCase()
       const isActiveStatus = ['RUNNING', 'PENDING', 'PROCESSING'].includes(normalizedStatus)
@@ -485,29 +667,7 @@ const MessageBubble = memo(
         return renderProgressBar(status, progress)
       }
 
-      // Helper to extract text content from React children
-      const extractText = (node: React.ReactNode): string => {
-        if (typeof node === 'string') return node
-        if (typeof node === 'number') return String(node)
-        if (Array.isArray(node)) return node.map(extractText).join('')
-        if (React.isValidElement(node)) {
-          const props = node.props as { children?: React.ReactNode }
-          if (props.children) {
-            return extractText(props.children)
-          }
-        }
-        return ''
-      }
-
-      // Helper to wrap content with paragraph action
-      const wrapWithAction = (element: React.ReactNode, text: string) => {
-        if (!paragraphAction || !text.trim()) return element
-        return (
-          <ParagraphWithAction paragraphText={text} action={paragraphAction}>
-            {element}
-          </ParagraphWithAction>
-        )
-      }
+      const attachmentNormalizedResult = normalizeSchemeMarkup(normalizedResult)
 
       // Check if message should be collapsible (only for completed AI messages in group chat, not streaming)
       // Only enable collapsing for group chat messages
@@ -515,90 +675,20 @@ const MessageBubble = memo(
 
       const markdownContent = (
         <EnhancedMarkdown
-          source={normalizedResult}
+          source={attachmentNormalizedResult}
           theme={theme}
-          components={
-            paragraphAction
-              ? {
-                  a: ({ href, children }) => {
-                    if (!href) {
-                      return <span>{children}</span>
-                    }
-                    return (
-                      <SmartLink href={href} disabled={isStreaming}>
-                        {children}
-                      </SmartLink>
-                    )
-                  },
-                  img: ({ src, alt }) => {
-                    if (!src || typeof src !== 'string') return null
-                    return <SmartImage src={src} alt={alt} />
-                  },
-                  p: ({ children }) => {
-                    const text = extractText(children)
-                    return wrapWithAction(<p>{children}</p>, text)
-                  },
-                  h1: ({ children }) => {
-                    const text = extractText(children)
-                    return wrapWithAction(<h1>{children}</h1>, text)
-                  },
-                  h2: ({ children }) => {
-                    const text = extractText(children)
-                    return wrapWithAction(<h2>{children}</h2>, text)
-                  },
-                  h3: ({ children }) => {
-                    const text = extractText(children)
-                    return wrapWithAction(<h3>{children}</h3>, text)
-                  },
-                  h4: ({ children }) => {
-                    const text = extractText(children)
-                    return wrapWithAction(<h4>{children}</h4>, text)
-                  },
-                  h5: ({ children }) => {
-                    const text = extractText(children)
-                    return wrapWithAction(<h5>{children}</h5>, text)
-                  },
-                  h6: ({ children }) => {
-                    const text = extractText(children)
-                    return wrapWithAction(<h6>{children}</h6>, text)
-                  },
-                  li: ({ children }) => {
-                    const text = extractText(children)
-                    return wrapWithAction(<li>{children}</li>, text)
-                  },
-                  blockquote: ({ children }) => {
-                    const text = extractText(children)
-                    return wrapWithAction(<blockquote>{children}</blockquote>, text)
-                  },
-                }
-              : {
-                  a: ({ href, children }) => {
-                    if (!href) {
-                      return <span>{children}</span>
-                    }
-                    return (
-                      <SmartLink href={href} disabled={isStreaming}>
-                        {children}
-                      </SmartLink>
-                    )
-                  },
-                  img: ({ src, alt }) => {
-                    if (!src || typeof src !== 'string') return null
-                    return <SmartImage src={src} alt={alt} />
-                  },
-                }
-          }
+          components={markdownComponents}
         />
       )
 
       return (
         <>
-          <CollapsibleMessage content={normalizedResult} enabled={shouldEnableCollapse}>
+          <CollapsibleMessage content={attachmentNormalizedResult} enabled={shouldEnableCollapse}>
             {markdownContent}
           </CollapsibleMessage>
           <SourceReferences sources={msg.sources || msg.result?.sources || []} />
           <BubbleTools
-            contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`}
+            contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${attachmentNormalizedResult}`}
             onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
             tools={[
               {
@@ -606,7 +696,7 @@ const MessageBubble = memo(
                 title: t('messages.download') || 'Download',
                 icon: <Download className="h-4 w-4 text-text-muted" />,
                 onClick: () => {
-                  const blob = new Blob([`${normalizedResult}`], {
+                  const blob = new Blob([`${attachmentNormalizedResult}`], {
                     type: 'text/plain;charset=utf-8',
                   })
                   const url = URL.createObjectURL(blob)
@@ -782,7 +872,7 @@ const MessageBubble = memo(
 
         // Use SmartTextLine to detect and render URLs (images and links) in plain text
         // Pass disabled={isStreaming} to avoid metadata fetching during streaming
-        return <SmartTextLine key={idx} text={line} disabled={isStreaming} />
+        return <SmartTextLine key={idx} text={line} disabled={isStreaming} theme={theme} />
       })
     }
     // Helper function to parse Markdown clarification questions
@@ -1076,6 +1166,7 @@ const MessageBubble = memo(
             contentToParse = result
           }
         }
+        contentToParse = normalizeSchemeMarkup(contentToParse)
         const markdownClarification = parseMarkdownClarification(contentToParse)
         if (markdownClarification) {
           const { data, prefixText, suffixText } = markdownClarification
@@ -1084,25 +1175,10 @@ const MessageBubble = memo(
               {/* Render prefix text (content before the clarification form) */}
               {prefixText && (
                 <MarkdownEditor.Markdown
-                  source={prefixText}
+                  source={normalizeSchemeMarkup(prefixText)}
                   style={{ background: 'transparent' }}
                   wrapperElement={{ 'data-color-mode': theme }}
-                  components={{
-                    a: ({ href, children }) => {
-                      if (!href) {
-                        return <span>{children}</span>
-                      }
-                      return (
-                        <SmartLink href={href} disabled={isStreaming}>
-                          {children}
-                        </SmartLink>
-                      )
-                    },
-                    img: ({ src, alt }) => {
-                      if (!src || typeof src !== 'string') return null
-                      return <SmartImage src={src} alt={alt} />
-                    },
-                  }}
+                  components={markdownComponentsNoAction}
                 />
               )}
               {/* Render the clarification form */}
@@ -1117,25 +1193,10 @@ const MessageBubble = memo(
               {suffixText && (
                 <div className="mt-4 p-3 rounded-lg border border-border bg-surface/50">
                   <MarkdownEditor.Markdown
-                    source={suffixText}
+                    source={normalizeSchemeMarkup(suffixText)}
                     style={{ background: 'transparent' }}
                     wrapperElement={{ 'data-color-mode': theme }}
-                    components={{
-                      a: ({ href, children }) => {
-                        if (!href) {
-                          return <span>{children}</span>
-                        }
-                        return (
-                          <SmartLink href={href} disabled={isStreaming}>
-                            {children}
-                          </SmartLink>
-                        )
-                      },
-                      img: ({ src, alt }) => {
-                        if (!src || typeof src !== 'string') return null
-                        return <SmartImage src={src} alt={alt} />
-                      },
-                    }}
+                    components={markdownComponentsNoAction}
                   />
                 </div>
               )}
@@ -1211,10 +1272,11 @@ const MessageBubble = memo(
       // Pre-process markdown to handle edge cases where ** is followed by punctuation
       // Same fix as in renderMarkdownResult - convert all ** to <strong> tags
       const contentToRender = msg.recoveredContent.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      const normalizedRecoveredContent = normalizeSchemeMarkup(contentToRender)
 
       // Try to parse clarification format from recovered/streaming content
       // This ensures clarification forms are rendered correctly during streaming
-      const markdownClarification = parseMarkdownClarification(contentToRender)
+      const markdownClarification = parseMarkdownClarification(normalizedRecoveredContent)
       if (markdownClarification) {
         const { data, prefixText, suffixText } = markdownClarification
         return (
@@ -1222,25 +1284,10 @@ const MessageBubble = memo(
             {/* Render prefix text (content before the clarification form) */}
             {prefixText && (
               <MarkdownEditor.Markdown
-                source={prefixText}
+                source={normalizeSchemeMarkup(prefixText)}
                 style={{ background: 'transparent' }}
                 wrapperElement={{ 'data-color-mode': theme }}
-                components={{
-                  a: ({ href, children }) => {
-                    if (!href) {
-                      return <span>{children}</span>
-                    }
-                    return (
-                      <SmartLink href={href} disabled={isStreaming}>
-                        {children}
-                      </SmartLink>
-                    )
-                  },
-                  img: ({ src, alt }) => {
-                    if (!src || typeof src !== 'string') return null
-                    return <SmartImage src={src} alt={alt} />
-                  },
-                }}
+                components={markdownComponentsNoAction}
               />
             )}
             {/* Render the clarification form */}
@@ -1255,25 +1302,10 @@ const MessageBubble = memo(
             {suffixText && (
               <div className="mt-4 p-3 rounded-lg border border-border bg-surface/50">
                 <MarkdownEditor.Markdown
-                  source={suffixText}
+                  source={normalizeSchemeMarkup(suffixText)}
                   style={{ background: 'transparent' }}
                   wrapperElement={{ 'data-color-mode': theme }}
-                  components={{
-                    a: ({ href, children }) => {
-                      if (!href) {
-                        return <span>{children}</span>
-                      }
-                      return (
-                        <SmartLink href={href} disabled={isStreaming}>
-                          {children}
-                        </SmartLink>
-                      )
-                    },
-                    img: ({ src, alt }) => {
-                      if (!src || typeof src !== 'string') return null
-                      return <SmartImage src={src} alt={alt} />
-                    },
-                  }}
+                  components={markdownComponentsNoAction}
                 />
               </div>
             )}
@@ -1314,7 +1346,7 @@ const MessageBubble = memo(
       }
 
       // Try to parse final prompt format
-      const markdownFinalPrompt = parseMarkdownFinalPrompt(contentToRender)
+      const markdownFinalPrompt = parseMarkdownFinalPrompt(normalizedRecoveredContent)
       if (markdownFinalPrompt) {
         return (
           <FinalPromptMessage
@@ -1332,32 +1364,17 @@ const MessageBubble = memo(
       // Default: render as markdown
       return (
         <div className="space-y-2">
-          {contentToRender ? (
+          {normalizedRecoveredContent ? (
             <>
               <EnhancedMarkdown
-                source={contentToRender}
+                source={normalizedRecoveredContent}
                 theme={theme}
-                components={{
-                  a: ({ href, children }) => {
-                    if (!href) {
-                      return <span>{children}</span>
-                    }
-                    return (
-                      <SmartLink href={href} disabled={isStreaming}>
-                        {children}
-                      </SmartLink>
-                    )
-                  },
-                  img: ({ src, alt }) => {
-                    if (!src || typeof src !== 'string') return null
-                    return <SmartImage src={src} alt={alt} />
-                  },
-                }}
+                components={markdownComponentsNoAction}
               />
               {/* Show copy and download buttons during streaming */}
               <SourceReferences sources={msg.sources || msg.result?.sources || []} />
               <BubbleTools
-                contentToCopy={contentToRender}
+                contentToCopy={normalizedRecoveredContent}
                 onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
                 tools={[
                   {
@@ -1365,7 +1382,7 @@ const MessageBubble = memo(
                     title: t('messages.download') || 'Download',
                     icon: <Download className="h-4 w-4 text-text-muted" />,
                     onClick: () => {
-                      const blob = new Blob([contentToRender], {
+                      const blob = new Blob([normalizedRecoveredContent], {
                         type: 'text/plain;charset=utf-8',
                       })
                       const url = URL.createObjectURL(blob)

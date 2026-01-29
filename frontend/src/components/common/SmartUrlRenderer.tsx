@@ -9,8 +9,10 @@ import React from 'react'
 import ImagePreview from '@/components/common/ImagePreview'
 import LinkCard from '@/components/common/LinkCard'
 import AttachmentCard from '@/components/common/AttachmentCard'
+import AttachmentEmbed from '@/components/common/AttachmentEmbed'
 import { SchemeLink } from '@/lib/scheme'
 import { isImageUrl, detectUrls } from '@/utils/url-detector'
+import { parseAttachmentSchemeUrl } from '@/utils/attachment'
 
 /**
  * Check if a URL is an absolute HTTP(S) URL.
@@ -51,6 +53,11 @@ interface SmartLinkProps {
  * other constrained containers. All links are rendered as simple styled links.
  */
 export function SmartLink({ href, children }: SmartLinkProps) {
+  const attachmentSchemeId = parseAttachmentSchemeUrl(href)
+  if (attachmentSchemeId) {
+    return <AttachmentEmbed attachmentId={attachmentSchemeId} />
+  }
+
   // Check if this is an attachment download URL
   // Matches: /api/attachments/{id}/download
   const attachmentUrlMatch = href.match(/^\/api\/attachments\/(\d+)\/download$/)
@@ -118,8 +125,22 @@ export function SmartImage({ src, alt }: SmartImageProps) {
  * (especially in tables). Links are rendered as styled plain links instead.
  * Image preview with Lightbox is still supported.
  */
-export function createSmartMarkdownComponents(options?: { enableImagePreview?: boolean }) {
-  const { enableImagePreview = true } = options || {}
+export function createSmartMarkdownComponents(options?: {
+  enableImagePreview?: boolean
+  theme?: 'light' | 'dark'
+}) {
+  const { enableImagePreview = true, theme = 'light' } = options || {}
+
+  const isAttachmentEmbedElement = (node: React.ReactNode): boolean =>
+    React.isValidElement(node) && Boolean(node.props?.['data-attachment-embed'])
+
+  const renderParagraph = (children?: React.ReactNode) => {
+    const childArray = React.Children.toArray(children)
+    if (childArray.length === 1 && isAttachmentEmbedElement(childArray[0])) {
+      return <div>{childArray[0]}</div>
+    }
+    return <p>{children}</p>
+  }
 
   return {
     // Custom link renderer - handles attachment downloads with authentication
@@ -136,6 +157,11 @@ export function createSmartMarkdownComponents(options?: { enableImagePreview?: b
             {children}
           </a>
         )
+      }
+
+      const attachmentSchemeId = parseAttachmentSchemeUrl(href)
+      if (attachmentSchemeId) {
+        return <AttachmentEmbed attachmentId={attachmentSchemeId} theme={theme} />
       }
 
       // Check if this is an attachment download URL
@@ -179,6 +205,11 @@ export function createSmartMarkdownComponents(options?: { enableImagePreview?: b
 
     // Custom image renderer
     img: ({ src, alt, ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => {
+      const attachmentSchemeId = parseAttachmentSchemeUrl(src)
+      if (attachmentSchemeId) {
+        return <AttachmentEmbed attachmentId={attachmentSchemeId} theme={theme} />
+      }
+
       // If image preview is disabled or no src or src is not a string, render as normal img
       if (!enableImagePreview || !src || typeof src !== 'string') {
         // eslint-disable-next-line @next/next/no-img-element
@@ -188,6 +219,8 @@ export function createSmartMarkdownComponents(options?: { enableImagePreview?: b
       // Use SmartImage for preview with Lightbox
       return <SmartImage src={src} alt={alt} />
     },
+
+    p: ({ children }) => renderParagraph(children),
   }
 }
 
@@ -196,6 +229,8 @@ interface SmartTextLineProps {
   text: string
   /** CSS class name for the container */
   className?: string
+  /** Theme for attachment embeds */
+  theme?: 'light' | 'dark'
   /**
    * Whether to disable rich rendering (metadata fetching).
    * When true, renders URLs as simple clickable links.
@@ -218,7 +253,12 @@ interface SmartTextLineProps {
  * @param disabled - When true, skips metadata fetching and renders URLs as simple links.
  *                   Use this during streaming to avoid excessive API calls.
  */
-export function SmartTextLine({ text, className = '', disabled = false }: SmartTextLineProps) {
+export function SmartTextLine({
+  text,
+  className = '',
+  disabled = false,
+  theme = 'light',
+}: SmartTextLineProps) {
   // If empty line, return non-breaking space to preserve line height
   if (!text) {
     return <div className={`text-sm break-all min-h-[1.25em] ${className}`}>{'\u00A0'}</div>
@@ -245,8 +285,12 @@ export function SmartTextLine({ text, className = '', disabled = false }: SmartT
       }
     }
 
-    // Add the URL component
-    if (urlInfo.isImage) {
+    const attachmentId = parseAttachmentSchemeUrl(urlInfo.url)
+    if (attachmentId) {
+      segments.push(
+        <AttachmentEmbed key={`attachment-${index}`} attachmentId={attachmentId} theme={theme} />
+      )
+    } else if (urlInfo.isImage) {
       segments.push(
         <ImagePreview
           key={`url-${index}`}

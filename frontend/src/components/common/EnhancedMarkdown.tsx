@@ -16,7 +16,8 @@ import katex from 'katex'
 import { Check, Copy, Code, ChevronDown, ChevronUp } from 'lucide-react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { createSchemeAwareUrlTransform } from '@/lib/scheme'
+import { createSchemeAwareUrlTransform, SchemeLink } from '@/lib/scheme'
+import AttachmentEmbed from '@/components/common/AttachmentEmbed'
 
 import 'katex/dist/katex.min.css'
 
@@ -424,6 +425,28 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   // Default components with link handling and code block rendering
   const defaultComponents = useMemo(
     (): Components => ({
+      'attachment-embed': ({ 'data-id': dataId, id }: { 'data-id'?: string; id?: string }) => {
+        const parsedId = Number(dataId || id)
+        if (!Number.isFinite(parsedId) || parsedId <= 0) {
+          return null
+        }
+        return <AttachmentEmbed attachmentId={parsedId} theme={theme} />
+      },
+      'scheme-link': ({
+        'data-href': dataHref,
+        href,
+        children,
+      }: {
+        'data-href'?: string
+        href?: string
+        children?: React.ReactNode
+      }) => {
+        const targetHref = dataHref || href
+        if (!targetHref) {
+          return <span>{children}</span>
+        }
+        return <SchemeLink href={targetHref}>{children || targetHref}</SchemeLink>
+      },
       a: ({ href, children, ...props }) => (
         <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
           {children}
@@ -513,7 +536,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   }, [hasMath])
 
   // URL transform to allow wegent:// scheme URLs
-  const urlTransform = useMemo(() => createSchemeAwareUrlTransform(['wegent:']), [])
+  const urlTransform = useMemo(() => createSchemeAwareUrlTransform(['wegent:', 'attachment:']), [])
 
   // Render markdown content
   const renderMarkdown = (content: string) => (

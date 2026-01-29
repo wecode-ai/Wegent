@@ -1127,6 +1127,11 @@
       "content_truncated_hint": "File content was too long. Kept first {{length}} million characters",
       "batch_limit_exceeded": "Too many files selected (max {{max}} files)"
     },
+    "preview": {
+      "label": "Preview",
+      "loading": "Loading preview...",
+      "unavailable": "Preview unavailable"
+    },
     "truncation": {
       "notice": "⚠️ Content too long, auto-truncated ({{original}} chars → {{truncated}} chars)"
     },
