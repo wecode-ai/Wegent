@@ -30,6 +30,10 @@ export function SplitterSettingsSection({
 
   const splitterType = (config.type as SplitterType) || 'sentence'
 
+  // Smart splitter config (also uses chunk_size and chunk_overlap)
+  const smartChunkSize = config.type === 'smart' ? (config.chunk_size ?? 1024) : 1024
+  const smartChunkOverlap = config.type === 'smart' ? (config.chunk_overlap ?? 50) : 50
+
   // Sentence splitter config
   const chunkSize = config.type === 'sentence' ? (config.chunk_size ?? 1024) : 1024
   const chunkOverlap = config.type === 'sentence' ? (config.chunk_overlap ?? 50) : 50
@@ -49,7 +53,13 @@ export function SplitterSettingsSection({
   }, [chunkSize, chunkOverlap, splitterType, t])
 
   const handleTypeChange = (newType: string) => {
-    if (newType === 'sentence') {
+    if (newType === 'smart') {
+      onChange({
+        type: 'smart',
+        chunk_size: 1024,
+        chunk_overlap: 50,
+      })
+    } else if (newType === 'sentence') {
       onChange({
         type: 'sentence',
         separator: '\n\n',
@@ -63,6 +73,16 @@ export function SplitterSettingsSection({
         breakpoint_percentile_threshold: 95,
       })
     }
+  }
+
+  const handleSmartChunkSizeChange = (value: number) => {
+    const newValue = Math.max(128, Math.min(8192, value))
+    onChange({ ...config, type: 'smart', chunk_size: newValue })
+  }
+
+  const handleSmartChunkOverlapChange = (value: number) => {
+    const newValue = Math.max(0, Math.min(smartChunkSize - 1, value))
+    onChange({ ...config, type: 'smart', chunk_overlap: newValue })
   }
 
   const handleChunkSizeChange = (value: number) => {
@@ -86,6 +106,7 @@ export function SplitterSettingsSection({
   }
 
   const splitterTypeItems = [
+    { value: 'smart', label: t('knowledge:document.splitter.smart') },
     { value: 'sentence', label: t('knowledge:document.splitter.sentence') },
     { value: 'semantic', label: t('knowledge:document.splitter.semantic') },
   ]
@@ -102,6 +123,62 @@ export function SplitterSettingsSection({
           items={splitterTypeItems}
         />
       </div>
+
+      {/* Smart Splitter Settings */}
+      {splitterType === 'smart' && (
+        <>
+          {/* Smart splitter hint */}
+          <p className="text-xs text-text-muted">{t('knowledge:document.splitter.smartHint')}</p>
+
+          {/* Chunk Size */}
+          <div className="space-y-2">
+            <Label htmlFor="smart-chunk-size">{t('knowledge:document.splitter.chunkSize')}</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="smart-chunk-size"
+                type="number"
+                min={128}
+                max={8192}
+                value={smartChunkSize}
+                onChange={e => handleSmartChunkSizeChange(parseInt(e.target.value) || 128)}
+                disabled={readOnly}
+                className="flex-1"
+              />
+              <span className="text-sm text-text-secondary whitespace-nowrap">
+                {t('knowledge:document.splitter.characters')}
+              </span>
+            </div>
+            <p className="text-xs text-text-muted">
+              {t('knowledge:document.splitter.chunkSizeHint')}
+            </p>
+          </div>
+
+          {/* Chunk Overlap */}
+          <div className="space-y-2">
+            <Label htmlFor="smart-chunk-overlap">
+              {t('knowledge:document.splitter.chunkOverlap')}
+            </Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="smart-chunk-overlap"
+                type="number"
+                min={0}
+                max={smartChunkSize - 1}
+                value={smartChunkOverlap}
+                onChange={e => handleSmartChunkOverlapChange(parseInt(e.target.value) || 0)}
+                disabled={readOnly}
+                className="flex-1"
+              />
+              <span className="text-sm text-text-secondary whitespace-nowrap">
+                {t('knowledge:document.splitter.characters')}
+              </span>
+            </div>
+            <p className="text-xs text-text-muted">
+              {t('knowledge:document.splitter.chunkOverlapHint')}
+            </p>
+          </div>
+        </>
+      )}
 
       {/* Sentence Splitter Settings */}
       {splitterType === 'sentence' && (

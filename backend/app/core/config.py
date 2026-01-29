@@ -369,6 +369,12 @@ class Settings(BaseSettings):
     # Enable/disable automatic summary generation after document indexing
     SUMMARY_ENABLED: bool = True
 
+    # Knowledge base chunk storage configuration
+    # Enable/disable storing chunk content in database for frontend viewing
+    # When disabled (default), chunks are only stored in vector database for retrieval
+    # When enabled, chunk content is also saved to knowledge_documents.chunks column
+    CHUNK_STORAGE_ENABLED: bool = False
+
     # Long-term memory configuration (mem0)
     # Enable/disable long-term memory feature
     MEMORY_ENABLED: bool = False

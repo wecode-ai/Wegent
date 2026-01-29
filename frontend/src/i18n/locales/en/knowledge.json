@@ -155,7 +155,18 @@
         "viewRaw": "View raw content",
         "viewPreview": "View rendered preview",
         "fullscreen": "Fullscreen",
-        "exitFullscreen": "Exit fullscreen"
+        "exitFullscreen": "Exit fullscreen",
+        "chunks": "Chunks",
+        "chunksTitle": "Document Chunks",
+        "chunksEmpty": "No chunks available",
+        "chunksLoading": "Loading chunks...",
+        "chunksError": "Failed to load chunks",
+        "chunksTotal": "{{count}} chunks total",
+        "chunkIndex": "Chunk {{index}}",
+        "chunkTokens": "{{count}} tokens",
+        "viewChunks": "View Chunks",
+        "splitterType": "Splitter Type",
+        "splitterSubtype": "Splitter Subtype"
       }
     },
     "upload": {
@@ -279,6 +290,8 @@
       "title": "Chunking Settings",
       "type": "Chunking Type",
       "general": "General",
+      "smart": "Smart Chunking",
+      "smartHint": "Automatically selects the best chunking strategy based on file type: Markdown uses structure chunking, TXT uses sentence chunking, PDF/Word uses recursive character chunking",
       "sentence": "Sentence Chunking",
       "semantic": "Semantic Chunking",
       "separator": "Separator",
