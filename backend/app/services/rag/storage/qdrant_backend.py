@@ -583,3 +583,87 @@ class QdrantBackend(BaseStorageBackend):
                 f"[Qdrant] Failed to get all chunks for KB {knowledge_id}: {e}"
             )
             return []
+
+    def verify_indexing(
+        self,
+        knowledge_id: str,
+        doc_ref: Optional[str] = None,
+        **kwargs,
+    ) -> int:
+        """
+        Verify that documents were actually indexed in Qdrant.
+
+        This method queries Qdrant directly to confirm data exists, catching cases
+        where indexing may silently fail.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            doc_ref: Optional document reference ID to filter by
+            **kwargs: Additional parameters (e.g., user_id for per_user strategy)
+
+        Returns:
+            Number of documents/chunks found in Qdrant
+
+        Raises:
+            Exception: If Qdrant query fails
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        collection_name = self.get_index_name(knowledge_id, **kwargs)
+
+        # Build filter conditions
+        must_conditions = [
+            qdrant_models.FieldCondition(
+                key="knowledge_id",
+                match=qdrant_models.MatchValue(value=knowledge_id),
+            )
+        ]
+
+        # Add doc_ref filter if provided
+        if doc_ref:
+            must_conditions.append(
+                qdrant_models.FieldCondition(
+                    key="doc_ref",
+                    match=qdrant_models.MatchValue(value=doc_ref),
+                )
+            )
+
+        scroll_filter = qdrant_models.Filter(must=must_conditions)
+
+        try:
+            # Check if collection exists
+            try:
+                self.client.get_collection(collection_name)
+            except Exception:
+                logger.warning(f"[Qdrant] Collection {collection_name} does not exist")
+                return 0
+
+            # Count documents using scroll API
+            # We use scroll with limit=0 and count_only approach
+            # Since Qdrant doesn't have a direct count API, we scroll and count
+            total_count = 0
+            offset = None
+            batch_size = 1000
+
+            while True:
+                results, offset = self.client.scroll(
+                    collection_name=collection_name,
+                    scroll_filter=scroll_filter,
+                    limit=batch_size,
+                    offset=offset,
+                    with_payload=False,  # Don't need payload for counting
+                    with_vectors=False,
+                )
+                total_count += len(results)
+                if offset is None or len(results) == 0:
+                    break
+
+            return total_count
+
+        except Exception as e:
+            logger.error(
+                f"[Qdrant] Failed to verify indexing for KB {knowledge_id}: {e}"
+            )
+            raise
