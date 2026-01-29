@@ -190,17 +190,46 @@ class LocalRunner:
         await self.task_queue.put(task_data)
 
     async def cancel_task(self, task_id: int) -> None:
-        """Cancel a running task."""
+        """Cancel a running task and send CANCELLED callback."""
         if self.current_task and self.current_task.get("task_id") == task_id:
             if self.current_agent and hasattr(self.current_agent, "cancel_run"):
                 self.current_agent.cancel_run()
                 logger.info(f"Cancelled task: task_id={task_id}")
+
+                # Send CANCELLED status callback
+                await self._send_cancel_callback(task_id)
             else:
                 logger.warning(
                     f"Cannot cancel task {task_id}: agent doesn't support cancellation"
                 )
         else:
             logger.warning(f"Cannot cancel task {task_id}: not currently running")
+
+    async def _send_cancel_callback(self, task_id: int) -> None:
+        """Send CANCELLED status callback to Backend."""
+        try:
+            if not self.current_task:
+                return
+
+            subtask_id = self.current_task.get("subtask_id", -1)
+            task_title = self.current_task.get("task_title", "")
+            subtask_title = self.current_task.get("subtask_title", "")
+
+            await self.websocket_client.emit(
+                TaskEvents.PROGRESS,
+                {
+                    "task_id": task_id,
+                    "subtask_id": subtask_id,
+                    "task_title": task_title,
+                    "subtask_title": subtask_title,
+                    "progress": 100,
+                    "status": "cancelled",
+                    "message": "${{tasks.cancel_task}}",
+                },
+            )
+            logger.info(f"Cancel callback sent for task {task_id}")
+        except Exception as e:
+            logger.error(f"Failed to send cancel callback for task {task_id}: {e}")
 
     async def _task_loop(self) -> None:
         """Main task processing loop."""
