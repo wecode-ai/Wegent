@@ -80,8 +80,8 @@ knowledge_mcp_server = FastMCP(
 
 
 # Store for request context (using ContextVar for thread-safe concurrent request handling)
-_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = contextvars.ContextVar(
-    "_request_token_info", default=None
+_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_request_token_info", default=None)
 )
 
 

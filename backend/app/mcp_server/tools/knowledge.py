@@ -142,7 +142,9 @@ def list_documents(
                     "status": doc.status.value if doc.status else "enabled",
                     "source_type": doc.source_type,
                     "is_active": doc.is_active,
-                    "created_at": doc.created_at.isoformat() if doc.created_at else None,
+                    "created_at": (
+                        doc.created_at.isoformat() if doc.created_at else None
+                    ),
                 }
             )
 
