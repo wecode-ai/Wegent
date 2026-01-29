@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { PencilIcon, TrashIcon, DownloadIcon, PackageIcon } from 'lucide-react'
 import LoadingState from '@/features/common/LoadingState'
-import { fetchUnifiedSkillsList, UnifiedSkill, deleteSkill, downloadSkill } from '@/apis/skills'
+import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill, deleteSkill, downloadSkill } from '@/apis/skills'
 import SkillUploadModal from './SkillUploadModal'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import { Button } from '@/components/ui/button'
@@ -28,7 +28,7 @@ interface SkillManagementModalProps {
   open: boolean
   onClose: () => void
   onSkillsChange?: () => void
-  scope?: 'personal' | 'group' | 'all'
+  scope?: 'personal' | 'group' | 'all' | 'public'
   groupName?: string | null
 }
 
@@ -55,12 +55,16 @@ export default function SkillManagementModal({
   const loadSkills = useCallback(async () => {
     setIsLoading(true)
     try {
-      const skillsData = await fetchUnifiedSkillsList({
-        scope: scope,
-        groupName: groupName || undefined,
-      })
-      // Filter out public skills for management (only show user's own skills)
-      setSkills(skillsData.filter(s => !s.is_public))
+      // For public scope, use fetchPublicSkillsList; otherwise use fetchUnifiedSkillsList
+      const skillsData =
+        scope === 'public'
+          ? await fetchPublicSkillsList()
+          : await fetchUnifiedSkillsList({
+              scope: scope,
+              groupName: groupName || undefined,
+            })
+      // Filter out public skills for management (only show user's own skills) unless scope is 'public'
+      setSkills(scope === 'public' ? skillsData : skillsData.filter(s => !s.is_public))
     } catch (error) {
       toast({
         variant: 'destructive',
