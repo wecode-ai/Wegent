@@ -52,6 +52,7 @@ from app.services.knowledge import (
 )
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
+from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,7 @@ def get_accessible_knowledge(
 
 
 @router.get("/config")
+@trace_sync("get_knowledge_config", "knowledge.api")
 def get_knowledge_config():
     """
     Get knowledge base configuration.
@@ -963,6 +965,7 @@ async def update_document_content(
 
 
 @document_router.get("/{document_id}/detail")
+@trace_sync("get_document_detail_standalone", "knowledge.api")
 def get_document_detail_standalone(
     document_id: int,
     include_content: bool = Query(True, description="Include document content"),
@@ -1591,6 +1594,7 @@ def _update_kb_summary_after_deletion(kb_id: int, user_id: int, user_name: str):
 
 
 @document_router.get("/{document_id}/chunks")
+@trace_sync("list_document_chunks", "knowledge.api")
 def list_document_chunks(
     document_id: int,
     page: int = Query(1, ge=1, description="Page number"),
@@ -1660,6 +1664,7 @@ def list_document_chunks(
 
 
 @document_router.get("/{document_id}/chunks/{chunk_index}")
+@trace_sync("get_document_chunk", "knowledge.api")
 def get_document_chunk(
     document_id: int,
     chunk_index: int,

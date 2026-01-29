@@ -290,7 +290,7 @@ export async function getDocumentChunk(
 ): Promise<ChunkResponse> {
   return apiClient.get<ChunkResponse>(`/knowledge-documents/${documentId}/chunks/${chunkIndex}`)
 }
-/**
+
 /**
  * Get document detail (content and summary)
  * Note: This endpoint requires knowing the knowledge_base_id.

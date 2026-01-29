@@ -24,32 +24,6 @@ from app.services.rag.storage.base import BaseStorageBackend
 logger = logging.getLogger(__name__)
 
 
-def _normalize_file_extension(extension: Optional[str]) -> Optional[str]:
-    """
-    Normalize file extension to ensure consistent format.
-
-    Handles cases where extension may be:
-    - Empty or None
-    - Missing leading dot
-    - Not lowercased
-
-    Args:
-        extension: Raw file extension (e.g., "md", ".MD", "PDF", ".pdf")
-
-    Returns:
-        Normalized extension with leading dot and lowercase (e.g., ".md", ".pdf"),
-        or None if extension is empty/None
-    """
-    if not extension:
-        return None
-
-    extension = extension.strip().lower()
-    if not extension.startswith("."):
-        extension = f".{extension}"
-
-    return extension
-
-
 class DocumentService:
     """
     High-level document management service.
