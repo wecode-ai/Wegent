@@ -757,4 +757,13 @@ export const adminApis = {
   async deletePublicShell(shellId: number): Promise<void> {
     return apiClient.delete(`/admin/public-shells/${shellId}`)
   },
+
+  // ==================== Admin Setup Wizard ====================
+
+  /**
+   * Mark admin setup wizard as completed
+   */
+  async markSetupComplete(): Promise<{ success: boolean; message: string }> {
+    return apiClient.post('/admin/setup-complete')
+  },
 }

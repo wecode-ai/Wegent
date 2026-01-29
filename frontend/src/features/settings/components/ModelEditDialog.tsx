@@ -39,12 +39,76 @@ import {
   AvailableModel,
 } from '@/apis/models'
 
+// Model form data that can be used by callers
+export interface ModelFormData {
+  modelIdName: string
+  displayName: string
+  modelCategoryType: ModelCategoryType
+  providerType: string
+  modelId: string
+  customModelId: string
+  apiKey: string
+  baseUrl: string
+  customHeaders: string
+  contextWindow?: number
+  maxOutputTokens?: number
+  // Type-specific configs
+  ttsVoice?: string
+  ttsSpeed?: number
+  ttsOutputFormat?: 'mp3' | 'wav'
+  sttLanguage?: string
+  sttTranscriptionFormat?: 'text' | 'srt' | 'vtt'
+  embeddingDimensions?: number
+  embeddingEncodingFormat?: 'float' | 'base64'
+  rerankTopN?: number
+  rerankReturnDocuments?: boolean
+}
+
+// Initial data for editing (can be from ModelCRD or admin model JSON)
+export interface ModelInitialData {
+  name: string
+  displayName?: string
+  modelCategoryType?: ModelCategoryType
+  providerType?: string
+  modelId?: string
+  apiKey?: string
+  baseUrl?: string
+  customHeaders?: Record<string, string>
+  protocol?: string
+  contextWindow?: number
+  maxOutputTokens?: number
+  // Type-specific configs
+  ttsConfig?: TTSConfig
+  sttConfig?: STTConfig
+  embeddingConfig?: EmbeddingConfig
+  rerankConfig?: RerankConfig
+}
+
 interface ModelEditDialogProps {
   open: boolean
-  model: ModelCRD | null
+  /**
+   * Initial data for editing. If null, creates a new model.
+   */
+  initialData?: ModelInitialData | null
+  /**
+   * Legacy prop for backward compatibility - will be converted to initialData
+   * @deprecated Use initialData instead
+   */
+  model?: ModelCRD | null
   onClose: () => void
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
+  /**
+   * Custom save handler. If provided, will be called instead of default modelApis.
+   * Return true if save was successful, false otherwise.
+   */
+  onSave?: (formData: ModelFormData, modelCRD: ModelCRD) => Promise<boolean>
+  /**
+   * Group name for group scope models
+   */
   groupName?: string
+  /**
+   * Scope for the model (personal or group)
+   */
   scope?: 'personal' | 'group'
 }
 
@@ -118,13 +182,37 @@ const GEMINI_MODEL_OPTIONS = [
 const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   open,
   model,
+  initialData,
   onClose,
   toast,
+  onSave,
   groupName,
   scope,
 }) => {
   const { t } = useTranslation()
-  const isEditing = !!model
+  // Support both legacy model prop and new initialData prop
+  const effectiveInitialData =
+    initialData ||
+    (model
+      ? {
+          name: model.metadata.name,
+          displayName: model.metadata.displayName,
+          modelCategoryType: model.spec.modelType,
+          providerType: model.spec.modelConfig?.env?.model,
+          modelId: model.spec.modelConfig?.env?.model_id,
+          apiKey: model.spec.modelConfig?.env?.api_key,
+          baseUrl: model.spec.modelConfig?.env?.base_url,
+          customHeaders: model.spec.modelConfig?.env?.custom_headers,
+          protocol: model.spec.protocol,
+          contextWindow: model.spec.contextWindow,
+          maxOutputTokens: model.spec.maxOutputTokens,
+          ttsConfig: model.spec.ttsConfig,
+          sttConfig: model.spec.sttConfig,
+          embeddingConfig: model.spec.embeddingConfig,
+          rerankConfig: model.spec.rerankConfig,
+        }
+      : null)
+  const isEditing = !!effectiveInitialData
   const isGroupScope = scope === 'group'
 
   // Form state
@@ -180,16 +268,16 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // Ref for dialog content to use as Popover container (fixes pointer-events issue in Dialog)
   const dialogContentRef = React.useRef<HTMLDivElement>(null)
 
-  // Reset form when dialog opens/closes or model changes
+  // Reset form when dialog opens/closes or initialData changes
   useEffect(() => {
     if (open) {
-      if (model) {
-        setModelIdName(model.metadata.name || '')
-        setDisplayName(model.metadata.displayName || '')
+      if (effectiveInitialData) {
+        setModelIdName(effectiveInitialData.name || '')
+        setDisplayName(effectiveInitialData.displayName || '')
         // Set model category type
-        setModelCategoryType(model.spec.modelType || 'llm')
-        const modelType = model.spec.modelConfig?.env?.model
-        const protocol = model.spec.protocol
+        setModelCategoryType(effectiveInitialData.modelCategoryType || 'llm')
+        const modelType = effectiveInitialData.providerType
+        const protocol = effectiveInitialData.protocol
         // Map model type to provider type
         // Check protocol first for openai-responses
         if (protocol === 'openai-responses') {
@@ -207,39 +295,42 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         } else {
           setProviderType('openai') // Default fallback
         }
-        setApiKey(model.spec.modelConfig?.env?.api_key || '')
-        setBaseUrl(model.spec.modelConfig?.env?.base_url || '')
-        const headers = model.spec.modelConfig?.env?.custom_headers
+        setApiKey(effectiveInitialData.apiKey || '')
+        setBaseUrl(effectiveInitialData.baseUrl || '')
+        const headers = effectiveInitialData.customHeaders
         if (headers && Object.keys(headers).length > 0) {
           setCustomHeaders(JSON.stringify(headers, null, 2))
         } else {
           setCustomHeaders('')
         }
         // Load type-specific configs
-        if (model.spec.ttsConfig) {
-          setTtsVoice(model.spec.ttsConfig.voice || '')
-          setTtsSpeed(model.spec.ttsConfig.speed || 1.0)
-          setTtsOutputFormat((model.spec.ttsConfig.output_format as 'mp3' | 'wav') || 'mp3')
+        if (effectiveInitialData.ttsConfig) {
+          setTtsVoice(effectiveInitialData.ttsConfig.voice || '')
+          setTtsSpeed(effectiveInitialData.ttsConfig.speed || 1.0)
+          setTtsOutputFormat(
+            (effectiveInitialData.ttsConfig.output_format as 'mp3' | 'wav') || 'mp3'
+          )
         }
-        if (model.spec.sttConfig) {
-          setSttLanguage(model.spec.sttConfig.language || '')
+        if (effectiveInitialData.sttConfig) {
+          setSttLanguage(effectiveInitialData.sttConfig.language || '')
           setSttTranscriptionFormat(
-            (model.spec.sttConfig.transcription_format as 'text' | 'srt' | 'vtt') || 'text'
+            (effectiveInitialData.sttConfig.transcription_format as 'text' | 'srt' | 'vtt') ||
+              'text'
           )
         }
-        if (model.spec.embeddingConfig) {
-          setEmbeddingDimensions(model.spec.embeddingConfig.dimensions)
+        if (effectiveInitialData.embeddingConfig) {
+          setEmbeddingDimensions(effectiveInitialData.embeddingConfig.dimensions)
           setEmbeddingEncodingFormat(
-            (model.spec.embeddingConfig.encoding_format as 'float' | 'base64') || 'float'
+            (effectiveInitialData.embeddingConfig.encoding_format as 'float' | 'base64') || 'float'
           )
         }
-        if (model.spec.rerankConfig) {
-          setRerankTopN(model.spec.rerankConfig.top_n)
-          setRerankReturnDocuments(model.spec.rerankConfig.return_documents ?? true)
+        if (effectiveInitialData.rerankConfig) {
+          setRerankTopN(effectiveInitialData.rerankConfig.top_n)
+          setRerankReturnDocuments(effectiveInitialData.rerankConfig.return_documents ?? true)
         }
         // Load LLM-specific configs
-        setContextWindow(model.spec.contextWindow)
-        setMaxOutputTokens(model.spec.maxOutputTokens)
+        setContextWindow(effectiveInitialData.contextWindow)
+        setMaxOutputTokens(effectiveInitialData.maxOutputTokens)
       } else {
         // Reset for new model
         setModelIdName('')
@@ -268,7 +359,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       setCustomHeadersError('')
       setShowApiKey(false)
     }
-  }, [open, model])
+  }, [open, effectiveInitialData])
 
   // Determine model options based on model category type and provider
   // For embedding/rerank, only show "Custom..." option since they don't use preset LLM models
@@ -336,10 +427,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     }
   }
 
-  // Set model ID when model changes
+  // Set model ID when initialData changes
   useEffect(() => {
-    if (model?.spec.modelConfig?.env?.model_id) {
-      const id = model.spec.modelConfig.env.model_id
+    if (effectiveInitialData?.modelId) {
+      const id = effectiveInitialData.modelId
       const isPreset = modelOptions.some(opt => opt.value === id && opt.value !== 'custom')
       if (isPreset) {
         setModelId(id)
@@ -349,7 +440,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setCustomModelId(id)
       }
     }
-  }, [model, modelOptions])
+  }, [effectiveInitialData, modelOptions])
   const handleProviderChange = (value: string) => {
     setProviderType(value)
     setModelId('')
@@ -674,19 +765,51 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         },
       }
 
-      if (isEditing && model) {
-        await modelApis.updateModel(model.metadata.name, modelCRD)
-        toast({
-          title: t('common:models.update_success'),
-        })
-      } else {
-        await modelApis.createModel(modelCRD)
-        toast({
-          title: t('common:models.create_success'),
-        })
+      // Build form data for custom onSave callback
+      const formData: ModelFormData = {
+        modelIdName: modelIdName.trim(),
+        displayName: displayName.trim(),
+        modelCategoryType,
+        providerType,
+        modelId: finalModelId,
+        customModelId,
+        apiKey,
+        baseUrl,
+        customHeaders,
+        contextWindow,
+        maxOutputTokens,
+        ttsVoice,
+        ttsSpeed,
+        ttsOutputFormat,
+        sttLanguage,
+        sttTranscriptionFormat,
+        embeddingDimensions,
+        embeddingEncodingFormat,
+        rerankTopN,
+        rerankReturnDocuments,
       }
 
-      onClose()
+      // If custom onSave callback is provided, use it
+      if (onSave) {
+        const success = await onSave(formData, modelCRD)
+        if (success) {
+          onClose()
+        }
+      } else {
+        // Default behavior: use modelApis for user models
+        if (isEditing && model) {
+          await modelApis.updateModel(model.metadata.name, modelCRD)
+          toast({
+            title: t('common:models.update_success'),
+          })
+        } else {
+          await modelApis.createModel(modelCRD)
+          toast({
+            title: t('common:models.create_success'),
+          })
+        }
+        onClose()
+      }
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -1203,11 +1326,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             <Button variant="outline" onClick={onClose}>
               {t('common:actions.cancel')}
             </Button>
-            <Button
-              onClick={handleSave}
-              disabled={saving}
-              className="bg-primary hover:bg-primary/90"
-            >
+            <Button variant="primary" onClick={handleSave} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {saving ? t('common:actions.saving') : t('common:actions.save')}
             </Button>
