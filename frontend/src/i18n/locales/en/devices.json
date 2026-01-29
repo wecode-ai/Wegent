@@ -1,0 +1,17 @@
+{
+  "title": "My Devices",
+  "device_name": "Device Name",
+  "status": "Status",
+  "status_online": "Online",
+  "status_offline": "Offline",
+  "status_busy": "Busy",
+  "last_heartbeat": "Last Heartbeat",
+  "no_devices": "No devices online",
+  "instructions": "Devices will appear automatically after starting and logging in locally",
+  "cloud_executor": "Cloud Executor",
+  "select_device": "Select Device",
+  "device_offline_hint": "Device is offline, please select another",
+  "device_busy_hint": "Device is busy with another task",
+  "refresh": "Refresh",
+  "menu_title": "My Devices"
+}

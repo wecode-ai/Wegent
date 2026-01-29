@@ -16,6 +16,7 @@ import SendButton from './SendButton'
 import LoadingDots from '../message/LoadingDots'
 import QuotaUsage from '../params/QuotaUsage'
 import { ActionButton } from '@/components/ui/action-button'
+import { DeviceSelector } from './DeviceSelector'
 import type {
   Team,
   GitRepoInfo,
@@ -349,6 +350,11 @@ export function ChatInputControls({
             taskId={taskId}
             taskModelId={taskModelId}
           />
+        )}
+
+        {/* Device Selector - only show for executor-based teams (non-Chat Shell) */}
+        {selectedTeam && !isChatShell(selectedTeam) && (
+          <DeviceSelector disabled={isLoading || isStreaming} />
         )}
       </div>
 
