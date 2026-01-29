@@ -1040,7 +1040,7 @@ class ClaudeCodeAgent(Agent):
 
         # Ensure working directory exists
         if self.options.get("cwd") is None or self.options.get("cwd") == "":
-            cwd = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
+            cwd = os.path.join(config.get_workspace_root(), str(self.task_id))
             os.makedirs(cwd, exist_ok=True)
             self.options["cwd"] = cwd
 
@@ -1550,7 +1550,9 @@ class ClaudeCodeAgent(Agent):
                         import shutil
 
                         shutil.rmtree(skill_path)
-                        logger.info(f"Removed existing skill for replacement: {skill_name}")
+                        logger.info(
+                            f"Removed existing skill for replacement: {skill_name}"
+                        )
 
             Path(skills_dir).mkdir(parents=True, exist_ok=True)
 

@@ -11,11 +11,14 @@ agent execution.
 """
 
 import asyncio
+import logging
 import os
 import platform
 import signal
 import sys
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from executor.config import config
@@ -24,7 +27,7 @@ from executor.modes.local.events import (
     LocalExecutorEvents,
     LocalTaskEvents,
 )
-from executor.modes.local.handlers import ConnectionHandler, TaskHandler
+from executor.modes.local.handlers import TaskHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
 from executor.modes.local.progress_reporter import WebSocketProgressReporter
 from executor.modes.local.websocket_client import WebSocketClient
@@ -56,7 +59,6 @@ class LocalRunner:
 
         # Event handlers
         self.task_handler = TaskHandler(self)
-        self.connection_handler = ConnectionHandler(self)
 
         # Task queue for serial execution
         self.task_queue: asyncio.Queue = asyncio.Queue()
@@ -68,6 +70,9 @@ class LocalRunner:
         # Runner state
         self._running = False
         self._shutdown_event = asyncio.Event()
+
+        # File logging handler (for cleanup on shutdown)
+        self._file_handler: Optional[logging.Handler] = None
 
         # Setup signal handlers
         self._setup_signal_handlers()
@@ -102,13 +107,17 @@ class LocalRunner:
         """Start the local executor runner.
 
         This is the main entry point that:
-        1. Sets up signal handlers
-        2. Creates workspace directory
-        3. Connects to Backend WebSocket
-        4. Registers the executor
-        5. Starts heartbeat service
-        6. Runs the task processing loop
+        1. Sets up file logging for local mode
+        2. Sets up signal handlers
+        3. Creates workspace directory
+        4. Connects to Backend WebSocket
+        5. Registers the executor
+        6. Starts heartbeat service
+        7. Runs the task processing loop
         """
+        # Setup file logging first so all subsequent logs go to file
+        self._setup_file_logging()
+
         logger.info("Starting Local Executor Runner...")
         logger.info(f"Backend URL: {config.WEGENT_BACKEND_URL}")
         logger.info(f"Auth Token: {'***' if config.WEGENT_AUTH_TOKEN else 'NOT SET'}")
@@ -181,6 +190,9 @@ class LocalRunner:
 
         logger.info("Local Executor Runner shutdown complete")
 
+        # Flush file logging handler to ensure all logs are written
+        self._cleanup_file_logging()
+
     def _register_handlers(self) -> None:
         """Register WebSocket event handlers."""
         # Task events
@@ -194,20 +206,11 @@ class LocalRunner:
             LocalChatEvents.MESSAGE, self.task_handler.handle_chat_message
         )
 
-        # Connection events (handled by socketio internally, we log here)
-        @self.websocket_client.sio.event
-        async def connect():
-            await self.connection_handler.handle_connect()
+        # Note: Connection events (connect, disconnect, connect_error) are handled
+        # internally by websocket_client.py. Additional handlers can be added here
+        # but they must not try to emit before the internal handler sets _connected=True.
 
-        @self.websocket_client.sio.event
-        async def disconnect():
-            await self.connection_handler.handle_disconnect()
-
-        @self.websocket_client.sio.event
-        async def connect_error(data):
-            await self.connection_handler.handle_connect_error(data)
-
-        logger.debug("WebSocket event handlers registered")
+        logger.info("WebSocket event handlers registered")
 
     async def _register(self) -> None:
         """Register this executor with Backend."""
@@ -386,10 +389,17 @@ class LocalRunner:
         result = await self.current_agent.execute_async()
         logger.info(f"Task execution completed: task_id={task_id}, result={result}")
 
-        # Get execution result from agent
+        # Get execution result from agent's state manager
         execution_result = {}
-        if hasattr(self.current_agent, "get_execution_result"):
-            execution_result = self.current_agent.get_execution_result() or {}
+        if (
+            hasattr(self.current_agent, "state_manager")
+            and self.current_agent.state_manager
+        ):
+            execution_result = (
+                self.current_agent.state_manager.get_current_state() or {}
+            )
+            # Log the complete execution result for debugging
+            logger.info(f"Execution result for task_id={task_id}: {execution_result}")
 
         # Report final result
         await progress_reporter.report_result(
@@ -423,3 +433,83 @@ class LocalRunner:
             result={"error": error_message},
             message=error_message,
         )
+
+    def _setup_file_logging(self) -> None:
+        """Configure file logging for local mode.
+
+        Sets up a RotatingFileHandler to write logs to file with rotation.
+        Logs are written to WEGENT_EXECUTOR_LOG_DIR/WEGENT_EXECUTOR_LOG_FILE.
+        """
+        try:
+            # Ensure log directory exists
+            log_dir = config.WEGENT_EXECUTOR_LOG_DIR
+            Path(log_dir).mkdir(parents=True, exist_ok=True)
+
+            log_file = os.path.join(log_dir, config.WEGENT_EXECUTOR_LOG_FILE)
+            max_bytes = config.WEGENT_EXECUTOR_LOG_MAX_SIZE * 1024 * 1024
+            backup_count = config.WEGENT_EXECUTOR_LOG_BACKUP_COUNT
+
+            # Create rotating file handler
+            file_handler = RotatingFileHandler(
+                log_file,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8",
+            )
+
+            # Use same format as shared logger
+            formatter = logging.Formatter(
+                "%(asctime)s - [%(request_id)s] - [%(name)s] - %(levelname)s - %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+            file_handler.setFormatter(formatter)
+
+            # Get log level from environment
+            log_level = logging.INFO
+            env_log_level = os.environ.get("LOG_LEVEL")
+            if env_log_level and env_log_level.upper() == "DEBUG":
+                log_level = logging.DEBUG
+            file_handler.setLevel(log_level)
+
+            # Add RequestIdFilter to file handler
+            from shared.logger import RequestIdFilter
+
+            file_handler.addFilter(RequestIdFilter())
+
+            # Add file handler to all relevant loggers (not root logger)
+            # because shared logger sets propagate=False
+            logger_names = [
+                "local_runner",
+                "websocket_client",
+                "local_heartbeat",
+                "local_handlers",
+                "websocket_progress_reporter",
+                "task_executor",
+                "executor.config.config_loader",
+            ]
+            for name in logger_names:
+                log = logging.getLogger(name)
+                log.addHandler(file_handler)
+
+            # Store reference for cleanup
+            self._file_handler = file_handler
+
+            # Log startup info (this will go to both console and file)
+            logger.info(f"File logging enabled: {log_file}")
+            logger.info(
+                f"Log rotation: max {config.WEGENT_EXECUTOR_LOG_MAX_SIZE}MB, "
+                f"keep {backup_count} backups"
+            )
+
+        except Exception as e:
+            # Don't fail startup if logging setup fails, just warn
+            logger.warning(f"Failed to setup file logging: {e}")
+
+    def _cleanup_file_logging(self) -> None:
+        """Flush file logging handler on shutdown."""
+        if self._file_handler:
+            try:
+                self._file_handler.flush()
+            except Exception:
+                # Ignore errors during cleanup
+                pass

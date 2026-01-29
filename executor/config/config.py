@@ -101,11 +101,36 @@ LOCAL_RECONNECT_MAX_DELAY = _get_int_env(
     "LOCAL_RECONNECT_MAX_DELAY", DEFAULT_LOCAL_RECONNECT_MAX_DELAY
 )
 
+# Local mode home directory
+# All local mode data (workspace, logs, cache) will be stored under this directory
+WEGENT_EXECUTOR_HOME = os.environ.get(
+    "WEGENT_EXECUTOR_HOME", os.path.expanduser("~/.wegent-executor")
+)
+
 # Local mode workspace root directory
 # This is where tasks will be executed and code will be cloned
-# Defaults to system temp directory if not set
-import tempfile
-
 LOCAL_WORKSPACE_ROOT = os.environ.get(
-    "LOCAL_WORKSPACE_ROOT", os.path.join(tempfile.gettempdir(), "wegent-local")
+    "LOCAL_WORKSPACE_ROOT", os.path.join(WEGENT_EXECUTOR_HOME, "workspace")
 )
+
+
+def get_workspace_root() -> str:
+    """Get the workspace root directory based on executor mode.
+
+    Returns:
+        For local mode: LOCAL_WORKSPACE_ROOT (~/.wegent-executor/workspace)
+        For docker mode: WORKSPACE_ROOT (/workspace/)
+    """
+    if EXECUTOR_MODE == "local":
+        return LOCAL_WORKSPACE_ROOT
+    return WORKSPACE_ROOT
+
+
+# Local mode logging configuration
+# Log files will be stored in this directory with rotation
+WEGENT_EXECUTOR_LOG_DIR = os.environ.get(
+    "WEGENT_EXECUTOR_LOG_DIR", os.path.join(WEGENT_EXECUTOR_HOME, "logs")
+)
+WEGENT_EXECUTOR_LOG_FILE = os.environ.get("WEGENT_EXECUTOR_LOG_FILE", "executor.log")
+WEGENT_EXECUTOR_LOG_MAX_SIZE = _get_int_env("WEGENT_EXECUTOR_LOG_MAX_SIZE", 10)  # MB
+WEGENT_EXECUTOR_LOG_BACKUP_COUNT = _get_int_env("WEGENT_EXECUTOR_LOG_BACKUP_COUNT", 5)

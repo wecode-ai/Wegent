@@ -98,8 +98,8 @@ class ConnectionHandler:
     async def handle_connect(self) -> None:
         """Handle successful connection."""
         logger.info("Connected to Backend WebSocket")
-        # Re-register executor after reconnection
-        await self.runner._register()
+        # Note: Registration is handled by LocalRunner.start() after connection
+        # and by reconnection logic in the internal handlers.
 
     async def handle_disconnect(self) -> None:
         """Handle disconnection."""

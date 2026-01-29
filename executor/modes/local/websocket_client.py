@@ -224,7 +224,9 @@ class WebSocketClient:
         """
         self._handlers[event] = handler
         self.sio.on(event, handler, namespace="/local-executor")
-        logger.debug(f"Registered handler for event: {event}")
+        logger.info(
+            f"Registered handler for event: {event} on namespace /local-executor"
+        )
 
     def off(self, event: str) -> None:
         """Unregister an event handler.

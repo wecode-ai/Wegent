@@ -629,6 +629,7 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
 
         # Create minimal bot configuration for ClaudeCode
         bot_config = {
+            "id": 1,  # Add id for session key
             "name": "test-bot",
             "shell": {"shellType": "ClaudeCode"},
             "ghost": {
@@ -646,7 +647,7 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
             "task_title": "Test Task",
             "subtask_title": "Test Subtask",
             "prompt": prompt,
-            "bot": bot_config,
+            "bot": [bot_config],  # bot should be a list
             "team": {"name": "test-team", "members": [bot_config]},
             "git_url": "",
             "branch_name": "",

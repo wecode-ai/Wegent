@@ -148,3 +148,27 @@ async def get_status():
             for e in executors
         ],
     }
+
+
+@router.delete("/executors")
+async def clear_all_executors():
+    """
+    Clear all registered executors (for development/debugging).
+
+    This is useful when testing and there are stale executor entries
+    from previous sessions that haven't properly disconnected.
+
+    Returns:
+        Number of executors cleared.
+    """
+    namespace = get_local_executor_namespace()
+    if not namespace:
+        raise HTTPException(
+            status_code=503, detail="Local executor namespace not initialized"
+        )
+
+    count = len(namespace._executors)
+    namespace._executors.clear()
+    logger.info(f"Cleared {count} executor entries")
+
+    return {"cleared": count, "message": f"Cleared {count} executor entries"}

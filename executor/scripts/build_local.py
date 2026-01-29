@@ -1,111 +1,223 @@
-#!/usr/bin/env python
-
+#!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
 """
-PyInstaller build script for local mode executor.
+Build script for local executor binary.
 
-This script builds the executor as a standalone binary for local deployment.
-Supports macOS (Universal Binary for Intel and Apple Silicon).
+This script uses PyInstaller to create a standalone executable for the
+local executor mode. The binary can be distributed without requiring
+Python or dependencies to be installed.
 
 Usage:
     cd executor
+    uv sync --group build
     uv run python scripts/build_local.py
 
 Output:
-    dist/wegent-executor (or wegent-executor.exe on Windows)
+    dist/wegent-executor (macOS/Linux)
+    dist/wegent-executor.exe (Windows)
 """
 
 import os
+import platform
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 
 def get_project_root() -> Path:
-    """Get the project root directory (parent of executor/)."""
+    """Get the project root directory (Wegent/)."""
     return Path(__file__).parent.parent.parent
 
 
-def build():
-    """Build the local executor binary."""
-    try:
-        import PyInstaller.__main__
-    except ImportError:
-        print("Error: PyInstaller not installed. Install with:")
-        print("  uv add pyinstaller --group build")
-        sys.exit(1)
+def get_executor_root() -> Path:
+    """Get the executor directory."""
+    return Path(__file__).parent.parent
 
+
+def clean_build_artifacts():
+    """Clean previous build artifacts."""
+    executor_root = get_executor_root()
+    dirs_to_clean = [
+        executor_root / "build",
+        executor_root / "dist",
+    ]
+    files_to_clean = [
+        executor_root / "wegent-executor.spec",
+    ]
+
+    for dir_path in dirs_to_clean:
+        if dir_path.exists():
+            print(f"Cleaning {dir_path}...")
+            shutil.rmtree(dir_path)
+
+    for file_path in files_to_clean:
+        if file_path.exists():
+            print(f"Removing {file_path}...")
+            file_path.unlink()
+
+
+def build_executable():
+    """Build the executable using PyInstaller."""
     project_root = get_project_root()
-    executor_dir = project_root / "executor"
-    shared_dir = project_root / "shared"
+    executor_root = get_executor_root()
 
-    # Verify directories exist
-    if not executor_dir.exists():
-        print(f"Error: executor directory not found at {executor_dir}")
-        sys.exit(1)
-
-    if not shared_dir.exists():
-        print(f"Error: shared directory not found at {shared_dir}")
-        sys.exit(1)
-
-    # Change to project root for proper path resolution
-    original_cwd = os.getcwd()
+    # Change to project root for correct imports
     os.chdir(project_root)
 
-    try:
-        # Build arguments
-        args = [
-            str(executor_dir / "main.py"),
-            "--name=wegent-executor",
-            "--onefile",
-            "--console",
-            # Add data directories
-            f"--add-data={executor_dir}{os.pathsep}executor",
-            f"--add-data={shared_dir}{os.pathsep}shared",
-            # Hidden imports for dynamic modules
-            "--hidden-import=executor.modes.local",
-            "--hidden-import=executor.modes.local.runner",
-            "--hidden-import=executor.modes.local.websocket_client",
-            "--hidden-import=executor.modes.local.heartbeat",
-            "--hidden-import=executor.modes.local.progress_reporter",
-            "--hidden-import=executor.modes.local.handlers",
-            "--hidden-import=executor.modes.local.events",
-            "--hidden-import=executor.agents.claude_code.claude_code_agent",
-            "--hidden-import=socketio",
-            "--hidden-import=engineio",
-            "--hidden-import=aiohttp",
-            # Exclude modules not needed for local mode
-            "--exclude-module=docker",
-            "--exclude-module=kubernetes",
-            "--exclude-module=uvicorn",
-            "--exclude-module=fastapi",
-            "--exclude-module=starlette",
-            # Output directory
-            f"--distpath={executor_dir / 'dist'}",
-            f"--workpath={executor_dir / 'pyinstaller_build'}",
-            f"--specpath={executor_dir / 'scripts'}",
-        ]
+    # Determine output name based on platform
+    if platform.system() == "Windows":
+        output_name = "wegent-executor.exe"
+    else:
+        output_name = "wegent-executor"
 
-        # Platform-specific options
-        if sys.platform == "darwin":
-            # macOS: Build Universal Binary for both Intel and Apple Silicon
-            args.append("--target-arch=universal2")
+    # PyInstaller command
+    cmd = [
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        "--onefile",
+        "--name=wegent-executor",
+        f"--distpath={executor_root / 'dist'}",
+        f"--workpath={executor_root / 'build'}",
+        f"--specpath={executor_root}",
+        # Add project root to Python path
+        f"--paths={project_root}",
+        # Hidden imports for dependencies
+        "--hidden-import=executor",
+        "--hidden-import=executor.config",
+        "--hidden-import=executor.modes",
+        "--hidden-import=executor.modes.local",
+        "--hidden-import=executor.modes.local.runner",
+        "--hidden-import=executor.agents",
+        "--hidden-import=executor.agents.claude_code",
+        "--hidden-import=shared",
+        "--hidden-import=shared.logger",
+        "--hidden-import=shared.status",
+        # Socket.IO and related
+        "--hidden-import=socketio",
+        "--hidden-import=socketio.asyncio_client",
+        "--hidden-import=engineio",
+        "--hidden-import=engineio.async_client",
+        "--hidden-import=engineio.async_drivers.aiohttp",
+        # aiohttp and related (for Socket.IO transport)
+        "--hidden-import=aiohttp",
+        "--hidden-import=aiohttp.web",
+        "--hidden-import=aiohttp.client",
+        "--hidden-import=aiohttp.connector",
+        "--hidden-import=aiohttp.http",
+        "--hidden-import=aiohttp.http_parser",
+        "--hidden-import=aiohttp.http_writer",
+        "--hidden-import=aiohttp.streams",
+        "--hidden-import=aiohttp.payload",
+        "--hidden-import=aiohttp.resolver",
+        "--hidden-import=aiohttp.cookiejar",
+        "--hidden-import=aiohttp.tracing",
+        "--hidden-import=aiohttp.client_exceptions",
+        "--hidden-import=aiohttp.client_reqrep",
+        "--hidden-import=aiohttp.client_ws",
+        "--hidden-import=aiohttp.formdata",
+        "--hidden-import=aiohttp.helpers",
+        "--hidden-import=aiohttp.multipart",
+        "--hidden-import=aiohttp.web_app",
+        "--hidden-import=aiohttp.web_exceptions",
+        "--hidden-import=aiohttp.web_middlewares",
+        "--hidden-import=aiohttp.web_protocol",
+        "--hidden-import=aiohttp.web_request",
+        "--hidden-import=aiohttp.web_response",
+        "--hidden-import=aiohttp.web_routedef",
+        "--hidden-import=aiohttp.web_runner",
+        "--hidden-import=aiohttp.web_server",
+        "--hidden-import=aiohttp.web_urldispatcher",
+        "--hidden-import=aiohttp.web_ws",
+        "--hidden-import=aiohttp.abc",
+        "--hidden-import=aiohttp.base_protocol",
+        "--hidden-import=aiohttp.client_proto",
+        "--hidden-import=aiohttp.locks",
+        "--hidden-import=aiohttp.log",
+        "--hidden-import=aiohttp.typedefs",
+        "--hidden-import=aiohttp._helpers",
+        "--hidden-import=aiohttp._http_parser",
+        "--hidden-import=aiohttp._http_writer",
+        "--hidden-import=aiohttp._websocket",
+        # aiohttp dependencies
+        "--hidden-import=aiohappyeyeballs",
+        "--hidden-import=multidict",
+        "--hidden-import=yarl",
+        "--hidden-import=frozenlist",
+        "--hidden-import=propcache",
+        "--hidden-import=async_timeout",
+        "--hidden-import=aiosignal",
+        "--hidden-import=attrs",
+        # Async libraries
+        "--hidden-import=asyncio",
+        "--hidden-import=anyio",
+        "--hidden-import=anyio._backends",
+        "--hidden-import=anyio._backends._asyncio",
+        # Claude Code SDK
+        "--hidden-import=claude_code_sdk",
+        # Exclude packages not needed in local mode
+        "--exclude-module=uvicorn",
+        "--exclude-module=fastapi",
+        "--exclude-module=starlette",
+        "--exclude-module=docker",
+        "--exclude-module=kubernetes",
+        "--exclude-module=torch",
+        "--exclude-module=tensorflow",
+        "--exclude-module=numpy",
+        "--exclude-module=pandas",
+        "--exclude-module=scipy",
+        "--exclude-module=matplotlib",
+        "--exclude-module=PIL",
+        "--exclude-module=cv2",
+        # Entry point
+        str(executor_root / "main.py"),
+    ]
 
-        print("Building wegent-executor binary...")
-        print(f"  Platform: {sys.platform}")
-        print(f"  Python: {sys.version}")
-        print(f"  Output: {executor_dir / 'dist' / 'wegent-executor'}")
+    print("Building executable...")
+    print(f"Command: {' '.join(cmd[:10])}...")  # Print first few args
 
-        PyInstaller.__main__.run(args)
+    result = subprocess.run(cmd, capture_output=False)
 
-        print("\nBuild completed successfully!")
-        print(f"Binary location: {executor_dir / 'dist' / 'wegent-executor'}")
+    if result.returncode != 0:
+        print(f"Build failed with return code {result.returncode}")
+        sys.exit(1)
 
-    finally:
-        os.chdir(original_cwd)
+    # Check output
+    output_path = executor_root / "dist" / output_name
+    if output_path.exists():
+        size_mb = output_path.stat().st_size / (1024 * 1024)
+        print(f"\nBuild successful!")
+        print(f"Output: {output_path}")
+        print(f"Size: {size_mb:.1f} MB")
+    else:
+        print(f"Error: Output file not found at {output_path}")
+        sys.exit(1)
+
+
+def main():
+    """Main entry point."""
+    print("=" * 60)
+    print("Wegent Local Executor - Build Script")
+    print("=" * 60)
+    print(f"Platform: {platform.system()} {platform.machine()}")
+    print(f"Python: {sys.version}")
+    print()
+
+    # Clean previous builds
+    clean_build_artifacts()
+
+    # Build executable
+    build_executable()
+
+    print()
+    print("=" * 60)
+    print("Build complete!")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
-    build()
+    main()

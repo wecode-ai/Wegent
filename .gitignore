@@ -87,3 +87,8 @@ coverage/
 .claude/settings.local.json
 .history
 .wegentrc
+
+# PyInstaller
+*.spec
+executor/build/
+executor/dist/
