@@ -57,6 +57,7 @@ class WebSocketClient:
         # Device identification
         self.device_id = self._generate_device_id()
         self.device_name = self._get_device_name()
+        self.mac_address = self._get_mac_address()
 
         # Reconnection settings
         reconnection_delay = reconnection_delay or config.LOCAL_RECONNECT_DELAY
@@ -103,6 +104,12 @@ class WebSocketClient:
         """Generate unique device ID based on MAC address."""
         mac = uuid.getnode()
         return f"mac-{mac:012x}"
+
+    def _get_mac_address(self) -> str:
+        """Get formatted MAC address."""
+        mac = uuid.getnode()
+        # Format as XX:XX:XX:XX:XX:XX
+        return ":".join(f"{(mac >> (8 * i)) & 0xff:02x}" for i in reversed(range(6)))
 
     def _get_device_name(self) -> str:
         """Get device name from system."""
@@ -226,12 +233,16 @@ class WebSocketClient:
 
         try:
             logger.info(
-                f"Registering device: id={self.device_id}, name={self.device_name}"
+                f"Registering device: id={self.device_id}, name={self.device_name}, mac={self.mac_address}"
             )
 
             response = await self.sio.call(
                 "device:register",
-                {"device_id": self.device_id, "name": self.device_name},
+                {
+                    "device_id": self.device_id,
+                    "name": self.device_name,
+                    "mac_address": self.mac_address,
+                },
                 namespace="/local-executor",
                 timeout=timeout,
             )
