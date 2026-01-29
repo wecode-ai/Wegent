@@ -39,7 +39,8 @@
     "upload": "Upload",
     "view": "View",
     "copy": "Copy",
-    "copied": "Copied"
+    "copied": "Copied",
+    "loadMore": "Load More"
   },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"
@@ -334,7 +335,8 @@
     "bind_mode": "Bind Mode",
     "bind_mode_chat": "Chat",
     "bind_mode_code": "Code",
-    "bind_mode_required": "Please select at least one bind mode (Chat or Code)",
+    "bind_mode_task": "Task",
+    "bind_mode_required": "Please select at least one bind mode",
     "require_confirmation_tooltip": "When enabled, the task will pause after this stage completes, waiting for user confirmation before proceeding to the next stage",
     "requires_workspace": "Requires Repository",
     "requires_workspace_hint": "When enabled, this agent requires a code repository to be selected in code mode before starting a task. When disabled, tasks can start without selecting a repository."
@@ -426,7 +428,14 @@
     "access_denied_title": "Access Denied",
     "access_denied_description": "You don't have permission to access this task. Please contact the task owner to invite you via the \"Invite Members\" feature.",
     "access_denied_go_home": "Go to Chat",
-    "total_count": "{{count}} items total"
+    "total_count": "{{count}} items total",
+    "delete_confirm_title": "Delete Task",
+    "delete_confirm_message": "Are you sure you want to delete \"{{title}}\"? This action cannot be undone.",
+    "leave_confirm_title": "Leave Group Chat",
+    "leave_confirm_message": "Are you sure you want to leave \"{{title}}\"?",
+    "delete_success": "Task deleted successfully",
+    "leave_success": "Left group chat successfully",
+    "delete_failed": "Failed to delete, please try again"
   },
   "settings": {
     "title": "Settings",

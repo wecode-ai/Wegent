@@ -36,7 +36,7 @@ interface QuickAccessCardsProps {
   teams: Team[]
   selectedTeam: Team | null
   onTeamSelect: (team: Team) => void
-  currentMode: 'chat' | 'code' | 'knowledge'
+  currentMode: 'chat' | 'code' | 'knowledge' | 'task'
   isLoading?: boolean
   isTeamsLoading?: boolean
   hideSelected?: boolean // Whether to hide the selected team from the cards
@@ -63,7 +63,9 @@ export function QuickAccessCards({
   const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([])
   const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true)
   const [clickedTeamId, setClickedTeamId] = useState<number | null>(null)
-  const [switchingToMode, setSwitchingToMode] = useState<'chat' | 'code' | 'knowledge' | null>(null)
+  const [switchingToMode, setSwitchingToMode] = useState<
+    'chat' | 'code' | 'knowledge' | 'task' | null
+  >(null)
   const [showMoreTeams, setShowMoreTeams] = useState(false)
   const [showWizard, setShowWizard] = useState(false)
   const moreButtonRef = useRef<HTMLDivElement>(null)
@@ -101,8 +103,8 @@ export function QuickAccessCards({
   const filteredTeams = teams.filter(team => {
     // If bind_mode is not set or is an empty array, filter it out (team has no bound mode)
     if (!team.bind_mode || team.bind_mode.length === 0) return false
-    // Otherwise, only show if current mode is in bind_mode
-    return team.bind_mode.includes(currentMode)
+    // Only show if current mode is in bind_mode
+    return team.bind_mode.includes(currentMode as 'chat' | 'code' | 'knowledge' | 'task')
   })
 
   // Get display teams: quick access teams matched with full team data
@@ -189,7 +191,9 @@ export function QuickAccessCards({
   }, [showMoreTeams])
 
   // Determine the target mode for a team based on recommended_mode or bind_mode
-  const getTeamTargetMode = (team: DisplayTeam): 'chat' | 'code' | 'knowledge' | 'both' => {
+  const getTeamTargetMode = (
+    team: DisplayTeam
+  ): 'chat' | 'code' | 'knowledge' | 'task' | 'both' => {
     // First check recommended_mode (from quick access config)
     if (team.recommended_mode && team.recommended_mode !== 'both') {
       return team.recommended_mode

@@ -41,7 +41,9 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { useDocumentDetail } from '../hooks/useDocumentDetail'
+import { ChunksSection } from './ChunksSection'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
+import { getKnowledgeConfig } from '@/apis/knowledge'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { toast } from 'sonner'
@@ -139,6 +141,20 @@ export function DocumentDetailDialog({
   const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview')
   // Fullscreen mode for editing
   const [isFullscreen, setIsFullscreen] = useState(false)
+  // Chunk storage configuration - controls whether chunks section is visible
+  const [chunkStorageEnabled, setChunkStorageEnabled] = useState(false)
+
+  // Fetch knowledge config on mount to check if chunk storage is enabled
+  useEffect(() => {
+    getKnowledgeConfig()
+      .then(config => {
+        setChunkStorageEnabled(config.chunk_storage_enabled)
+      })
+      .catch(() => {
+        // If config fetch fails, default to hiding chunks section
+        setChunkStorageEnabled(false)
+      })
+  }, [])
 
   const { detail, loading, error, refresh } = useDocumentDetail({
     kbId: knowledgeBaseId,
@@ -403,6 +419,11 @@ export function DocumentDetailDialog({
                       </div>
                     )}
                   </div>
+                )}
+
+                {/* Chunks Section - only show when not editing and chunk storage is enabled */}
+                {!isEditing && document && chunkStorageEnabled && (
+                  <ChunksSection documentId={document.id} enabled={open && !loading} />
                 )}
 
                 {/* Content Section */}

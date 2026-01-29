@@ -39,7 +39,8 @@
     "upload": "上传",
     "view": "查看",
     "copy": "复制",
-    "copied": "已复制"
+    "copied": "已复制",
+    "loadMore": "加载更多"
   },
   "errors": {
     "request_failed": "请求大模型接口失败，请点击重试"
@@ -334,7 +335,8 @@
     "bind_mode": "绑定模式",
     "bind_mode_chat": "聊天",
     "bind_mode_code": "编码",
-    "bind_mode_required": "请至少选择一个绑定模式（聊天或编码）",
+    "bind_mode_task": "任务",
+    "bind_mode_required": "请至少选择一个绑定模式",
     "require_confirmation_tooltip": "启用后，该阶段完成时任务将暂停，等待用户确认后再继续执行下一阶段",
     "requires_workspace": "需要仓库",
     "requires_workspace_hint": "启用后，该智能体在编码模式下必须选择代码仓库才能开始任务。关闭后，无需选择仓库即可开始。"
@@ -426,7 +428,14 @@
     "access_denied_title": "无访问权限",
     "access_denied_description": "您没有权限访问此任务。请联系任务创建者，通过「邀请成员」功能邀请您加入。",
     "access_denied_go_home": "返回聊天页",
-    "total_count": "共 {{count}} 条记录"
+    "total_count": "共 {{count}} 条记录",
+    "delete_confirm_title": "删除任务",
+    "delete_confirm_message": "确定要删除任务「{{title}}」吗？此操作无法撤销。",
+    "leave_confirm_title": "离开群聊",
+    "leave_confirm_message": "确定要离开群聊「{{title}}」吗？",
+    "delete_success": "任务已删除",
+    "leave_success": "已离开群聊",
+    "delete_failed": "删除失败，请重试"
   },
   "settings": {
     "title": "设置",

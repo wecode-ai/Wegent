@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useState, useEffect, useMemo, useContext } from 'react'
+import React, { useState, useEffect, useMemo, useContext, useRef } from 'react'
 import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select'
 import { FiGitBranch } from 'react-icons/fi'
 import { Check } from 'lucide-react'
@@ -57,6 +57,7 @@ export default function BranchSelector({
   // Used antd message.error for unified error prompt, no need for local error state
   const [error, setError] = useState<string | null>(null)
   const [userCleared, setUserCleared] = useState(false)
+  const previousRepoIdRef = useRef<number | null>(null)
   // State for compact mode popover - must be declared before any conditional returns
   const [compactOpen, setCompactOpen] = React.useState(false)
 
@@ -68,7 +69,13 @@ export default function BranchSelector({
 
   // Fetch branch list
   useEffect(() => {
-    handleBranchChange(null)
+    const currentRepoId = selectedRepo?.git_repo_id ?? null
+    const previousRepoId = previousRepoIdRef.current
+    const repoChanged = previousRepoId !== null && currentRepoId !== previousRepoId
+    if (repoChanged) {
+      handleBranchChange(null)
+    }
+    previousRepoIdRef.current = currentRepoId
     if (!selectedRepo) {
       setBranches([])
       setError(null)
@@ -109,6 +116,17 @@ export default function BranchSelector({
   useEffect(() => {
     if (!branches || branches.length === 0) return
     if (userCleared) return
+    if (selectedBranch?.name) {
+      const foundBranch = branches.find(b => b.name === selectedBranch.name) || null
+      if (
+        foundBranch &&
+        (foundBranch.default !== selectedBranch.default ||
+          foundBranch.protected !== selectedBranch.protected)
+      ) {
+        handleBranchChange(foundBranch)
+      }
+      return
+    }
     if (
       selectedTaskDetail &&
       'branch_name' in selectedTaskDetail &&
@@ -143,7 +161,7 @@ export default function BranchSelector({
 
   // Convert branches to SearchableSelectItem format
   const selectItems: SearchableSelectItem[] = useMemo(() => {
-    return branches.map(branch => ({
+    const items = branches.map(branch => ({
       value: branch.name,
       label: branch.name,
       searchText: branch.name,
@@ -156,7 +174,16 @@ export default function BranchSelector({
         </span>
       ),
     }))
-  }, [branches, t])
+    if (selectedBranch && !items.some(item => item.value === selectedBranch.name)) {
+      items.unshift({
+        value: selectedBranch.name,
+        label: selectedBranch.name,
+        searchText: selectedBranch.name,
+        content: <span>{selectedBranch.name}</span>,
+      })
+    }
+    return items
+  }, [branches, selectedBranch, t])
 
   // Do not render (no branches, no selection, and no loading/error)
   if (!selectedBranch && branches.length === 0 && !showLoading && !showError) return null

@@ -260,6 +260,12 @@ export interface AdminPublicBot {
   ghost_name: string | null
   shell_name: string | null
   model_name: string | null
+  // Expanded Ghost fields for UI convenience
+  system_prompt: string | null
+  mcp_servers: Record<string, unknown> | null
+  skills: string[] | null
+  // Expanded Model fields for UI convenience
+  agent_config: Record<string, unknown> | null
 }
 
 export interface AdminPublicBotListResponse {
@@ -270,14 +276,26 @@ export interface AdminPublicBotListResponse {
 export interface AdminPublicBotCreate {
   name: string
   namespace?: string
-  json: Record<string, unknown>
+  json?: Record<string, unknown> // Raw JSON mode (optional)
+  // Form data mode fields (used when json is not provided)
+  shell_name?: string
+  system_prompt?: string
+  mcp_servers?: Record<string, unknown>
+  skills?: string[]
+  agent_config?: Record<string, unknown>
 }
 
 export interface AdminPublicBotUpdate {
   name?: string
   namespace?: string
-  json?: Record<string, unknown>
+  json?: Record<string, unknown> // Raw JSON mode (optional)
   is_active?: boolean
+  // Form data mode fields (used when json is not provided)
+  shell_name?: string
+  system_prompt?: string
+  mcp_servers?: Record<string, unknown>
+  skills?: string[]
+  agent_config?: Record<string, unknown>
 }
 
 // Public Ghost Types
@@ -340,6 +358,55 @@ export interface AdminPublicShellUpdate {
   namespace?: string
   json?: Record<string, unknown>
   is_active?: boolean
+}
+
+// IM Channel Types
+export type IMChannelType = 'dingtalk' | 'feishu' | 'wechat'
+
+export interface IMChannel {
+  id: number
+  name: string
+  channel_type: IMChannelType
+  is_enabled: boolean
+  config: Record<string, unknown>
+  default_team_id: number // 0 means no default team
+  default_model_name: string // empty string means use bot's default model
+  created_at: string
+  updated_at: string
+  created_by: number // 0 means system
+}
+
+export interface IMChannelListResponse {
+  total: number
+  items: IMChannel[]
+}
+
+export interface IMChannelCreate {
+  name: string
+  channel_type: IMChannelType
+  config: Record<string, unknown>
+  is_enabled?: boolean
+  default_team_id?: number // 0 or undefined means no default team
+  default_model_name?: string // undefined or empty means use bot's default model
+}
+
+export interface IMChannelUpdate {
+  name?: string
+  is_enabled?: boolean
+  config?: Record<string, unknown>
+  default_team_id?: number // 0 means no default team
+  default_model_name?: string // empty string means clear the override
+}
+
+export interface IMChannelStatus {
+  id: number
+  name: string
+  channel_type: IMChannelType
+  is_enabled: boolean
+  is_connected: boolean
+  last_error: string | null
+  uptime_seconds: number | null
+  extra_info: Record<string, unknown> | null
 }
 
 // Admin API Services
@@ -627,9 +694,16 @@ export const adminApis = {
 
   /**
    * Get list of all public teams with pagination
+   * @param page Page number
+   * @param limit Items per page
+   * @param chatOnly If true, only return chat-type teams (for IM channel selection)
    */
-  async getPublicTeams(page: number = 1, limit: number = 20): Promise<AdminPublicTeamListResponse> {
-    return apiClient.get(`/admin/public-teams?page=${page}&limit=${limit}`)
+  async getPublicTeams(
+    page: number = 1,
+    limit: number = 20,
+    chatOnly: boolean = false
+  ): Promise<AdminPublicTeamListResponse> {
+    return apiClient.get(`/admin/public-teams?page=${page}&limit=${limit}&chat_only=${chatOnly}`)
   },
 
   /**
@@ -756,5 +830,82 @@ export const adminApis = {
    */
   async deletePublicShell(shellId: number): Promise<void> {
     return apiClient.delete(`/admin/public-shells/${shellId}`)
+  },
+
+  // ==================== Admin Setup Wizard ====================
+
+  /**
+   * Mark admin setup wizard as completed
+   */
+  async markSetupComplete(): Promise<{ success: boolean; message: string }> {
+    return apiClient.post('/admin/setup-complete')
+  },
+
+  // ==================== IM Channel Management ====================
+
+  /**
+   * Get list of all IM channels with pagination
+   */
+  async getIMChannels(
+    page: number = 1,
+    limit: number = 20,
+    channelType?: IMChannelType
+  ): Promise<IMChannelListResponse> {
+    const params = new URLSearchParams()
+    params.append('page', String(page))
+    params.append('limit', String(limit))
+    if (channelType) {
+      params.append('channel_type', channelType)
+    }
+    return apiClient.get(`/admin/im-channels?${params.toString()}`)
+  },
+
+  /**
+   * Get a specific IM channel by ID
+   */
+  async getIMChannel(channelId: number): Promise<IMChannel> {
+    return apiClient.get(`/admin/im-channels/${channelId}`)
+  },
+
+  /**
+   * Create a new IM channel
+   */
+  async createIMChannel(channelData: IMChannelCreate): Promise<IMChannel> {
+    return apiClient.post('/admin/im-channels', channelData)
+  },
+
+  /**
+   * Update an IM channel
+   */
+  async updateIMChannel(channelId: number, channelData: IMChannelUpdate): Promise<IMChannel> {
+    return apiClient.put(`/admin/im-channels/${channelId}`, channelData)
+  },
+
+  /**
+   * Delete an IM channel
+   */
+  async deleteIMChannel(channelId: number): Promise<void> {
+    return apiClient.delete(`/admin/im-channels/${channelId}`)
+  },
+
+  /**
+   * Toggle IM channel enabled status
+   */
+  async toggleIMChannel(channelId: number): Promise<IMChannel> {
+    return apiClient.post(`/admin/im-channels/${channelId}/toggle`)
+  },
+
+  /**
+   * Restart an IM channel connection
+   */
+  async restartIMChannel(channelId: number): Promise<IMChannelStatus> {
+    return apiClient.post(`/admin/im-channels/${channelId}/restart`)
+  },
+
+  /**
+   * Get IM channel connection status
+   */
+  async getIMChannelStatus(channelId: number): Promise<IMChannelStatus> {
+    return apiClient.get(`/admin/im-channels/${channelId}/status`)
   },
 }

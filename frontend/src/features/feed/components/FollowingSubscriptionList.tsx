@@ -43,6 +43,7 @@ import type {
 } from '@/types/subscription'
 import { paths } from '@/config/paths'
 import { parseUTCDate } from '@/lib/utils'
+import { DiscoverHistoryDialog, type HistoryDialogSubscription } from './DiscoverHistoryDialog'
 
 interface FollowingSubscriptionListProps {
   /**
@@ -72,6 +73,9 @@ export function FollowingSubscriptionList({ followType }: FollowingSubscriptionL
   const [page, setPage] = useState(1)
   const [unfollowingId, setUnfollowingId] = useState<number | null>(null)
   const [pendingUnfollow, setPendingUnfollow] = useState<FollowingSubscriptionResponse | null>(null)
+  // History dialog state
+  const [historyDialogSubscription, setHistoryDialogSubscription] =
+    useState<HistoryDialogSubscription | null>(null)
 
   // Load following subscriptions
   const loadSubscriptions = useCallback(
@@ -154,12 +158,15 @@ export function FollowingSubscriptionList({ followType }: FollowingSubscriptionL
     }
   }, [pendingUnfollow, unfollowingId, t])
 
-  // Navigate to subscription detail
-  const handleViewSubscription = useCallback(
-    (subscriptionId: number) => {
-      router.push(paths.feedSubscriptionDetail.getHref(subscriptionId))
+  // Handle click on subscription name - open history dialog
+  const handleSubscriptionClick = useCallback(
+    (subscription: FollowingSubscriptionResponse['subscription']) => {
+      setHistoryDialogSubscription({
+        id: subscription.id,
+        display_name: subscription.display_name,
+      })
     },
-    [router]
+    []
   )
 
   // Navigate to discover page
@@ -270,7 +277,7 @@ export function FollowingSubscriptionList({ followType }: FollowingSubscriptionL
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => handleViewSubscription(subscription.id)}
+                        onClick={() => handleSubscriptionClick(subscription)}
                         className="truncate font-medium hover:text-primary transition-colors text-left"
                       >
                         {subscription.display_name}
@@ -369,6 +376,15 @@ export function FollowingSubscriptionList({ followType }: FollowingSubscriptionL
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* History Dialog */}
+      <DiscoverHistoryDialog
+        subscription={historyDialogSubscription}
+        open={historyDialogSubscription !== null}
+        onOpenChange={open => {
+          if (!open) setHistoryDialogSubscription(null)
+        }}
+      />
     </div>
   )
 }

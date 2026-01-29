@@ -34,7 +34,7 @@ export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskIn
   isUsingDefaultTeam?: boolean
 
   // Task type
-  taskType: 'chat' | 'code' | 'knowledge'
+  taskType: 'chat' | 'code' | 'knowledge' | 'task'
   autoFocus?: boolean
 
   // Knowledge base ID to exclude from context selector (used in notebook mode)
@@ -65,6 +65,9 @@ export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskIn
 
   // Whether there are no available teams (shows disabled state)
   hasNoTeams?: boolean
+
+  // Reason why input is disabled (e.g., device offline). Shows as placeholder text.
+  disabledReason?: string
 }
 
 /**
@@ -106,6 +109,7 @@ export function ChatInputCard({
   onPasteFile,
   inputControlsRef,
   hasNoTeams = false,
+  disabledReason,
   // ChatInputControls props
   selectedModel,
   setSelectedModel,
@@ -229,6 +233,7 @@ export function ChatInputCard({
               team={selectedTeam}
               onPasteFile={onPasteFile}
               hasNoTeams={hasNoTeams}
+              disabledReason={disabledReason}
             />
           </div>
         )}

@@ -12,6 +12,7 @@
     "public_shells": "Public Shells",
     "api_keys": "API Keys",
     "system_config": "System Config",
+    "im_channels": "IM Channels",
     "monitor": "Monitor"
   },
   "stats": {
@@ -418,6 +419,10 @@
     "edit_team": "Edit Agent",
     "delete_team": "Delete Agent",
     "member_count": "{{count}} Bot(s)",
+    "tabs": {
+      "basic": "Basic",
+      "advanced": "Advanced"
+    },
     "status": {
       "active": "Active",
       "inactive": "Inactive"
@@ -615,6 +620,118 @@
       "name_required": "Shell name is required",
       "config_required": "Shell configuration is required",
       "config_invalid_json": "Shell configuration must be valid JSON"
+    }
+  },
+  "setup_wizard": {
+    "title": "Welcome to Wegent",
+    "subtitle": "Let's set up some essential resources for your system",
+    "step_indicator": "Step {{current}} of {{total}}",
+    "step_models": "Configure Public Models",
+    "step_skills": "Configure Public Skills",
+    "next": "Next",
+    "previous": "Previous",
+    "skip": "Skip",
+    "finish": "Finish",
+    "skip_confirm_title": "Skip Setup?",
+    "skip_confirm_message": "You can configure public models and skills later in the administration panel. Are you sure you want to skip the setup wizard?",
+    "skip_confirm_yes": "Yes, skip",
+    "skip_confirm_no": "Continue setup",
+    "model_step": {
+      "title": "Configure Public Models",
+      "description": "Set up AI models that will be available to all users. You can add multiple models.",
+      "no_models": "No public models configured yet",
+      "add_model": "Add Model",
+      "model_added": "Model added successfully",
+      "model_updated": "Model updated successfully",
+      "model_deleted": "Model deleted successfully",
+      "add_first_model": "Add your first public model"
+    },
+    "skill_step": {
+      "title": "Configure Public Skills",
+      "description": "Upload skill packages (.zip) that will be available to all users. Skills provide on-demand capabilities to AI agents.",
+      "no_skills": "No public skills configured yet",
+      "upload_skill": "Upload Skill",
+      "skill_uploaded": "Skill uploaded successfully",
+      "skill_deleted": "Skill deleted successfully",
+      "drag_drop_hint": "Drag and drop a .zip file here, or click to browse",
+      "file_requirements": "Skill package must be a .zip file containing SKILL.md"
+    },
+    "success": {
+      "completed": "Setup completed successfully! You can now start using Wegent.",
+      "skipped": "Setup skipped. You can configure resources anytime from the admin panel."
+    },
+    "errors": {
+      "load_status_failed": "Failed to check setup status",
+      "complete_failed": "Failed to complete setup"
+    }
+  },
+  "im_channels": {
+    "title": "IM Channel Management",
+    "description": "Manage IM platform integrations (DingTalk, Feishu)",
+    "create_description": "Create a new IM channel integration. Configure platform credentials and default agent.",
+    "loading": "Loading channels...",
+    "no_channels": "No IM channels configured",
+    "no_default_team": "No default agent",
+    "default_team": "Default Agent",
+    "create_channel": "Create Channel",
+    "edit_channel": "Edit Channel",
+    "delete_channel": "Delete Channel",
+    "restart_channel": "Restart Connection",
+    "types": {
+      "dingtalk": "DingTalk",
+      "feishu": "Feishu",
+      "not_supported": "Not supported"
+    },
+    "status": {
+      "enabled": "Enabled",
+      "disabled": "Disabled"
+    },
+    "connection": {
+      "connected": "Connected",
+      "disconnected": "Disconnected"
+    },
+    "form": {
+      "name": "Channel Name",
+      "name_placeholder": "Enter channel name",
+      "channel_type": "Channel Type",
+      "client_id": "Client ID",
+      "client_id_placeholder": "Enter the platform Client ID",
+      "client_secret": "Client Secret",
+      "client_secret_placeholder": "Enter the platform Client Secret",
+      "client_secret_edit_placeholder": "Enter new Client Secret (leave empty to keep existing)",
+      "leave_empty_to_keep": "Leave empty to keep existing",
+      "default_team": "Default Agent",
+      "default_team_placeholder": "Select default agent",
+      "no_default_team": "No default agent",
+      "default_model": "Default Model",
+      "default_model_placeholder": "Select default model",
+      "no_default_model": "Use agent's default model",
+      "team_no_model_warning": "The selected agent has no model configured. You must select a default model.",
+      "is_enabled": "Enable Channel"
+    },
+    "confirm": {
+      "delete_title": "Delete Channel",
+      "delete_message": "Are you sure you want to delete IM channel \"{{name}}\"? This action cannot be undone."
+    },
+    "success": {
+      "created": "IM channel created successfully",
+      "updated": "IM channel updated successfully",
+      "deleted": "IM channel deleted successfully",
+      "enabled": "IM channel enabled",
+      "disabled": "IM channel disabled",
+      "restarted": "IM channel restarted"
+    },
+    "errors": {
+      "load_failed": "Failed to load IM channels",
+      "create_failed": "Failed to create IM channel",
+      "update_failed": "Failed to update IM channel",
+      "delete_failed": "Failed to delete IM channel",
+      "toggle_failed": "Failed to toggle IM channel status",
+      "restart_failed": "Failed to restart IM channel",
+      "name_required": "Channel name is required",
+      "config_required": "Client ID and Client Secret are required",
+      "team_required": "A default agent must be selected",
+      "model_required_for_team": "The selected agent has no model configured. You must select a default model."
     }
   }
 }

@@ -23,6 +23,7 @@ class SplitterType(str, Enum):
 
     SEMANTIC = "semantic"  # Semantic-based splitting using embeddings
     SENTENCE = "sentence"  # Sentence/text-based splitting with separators
+    SMART = "smart"  # Smart splitting based on file type
 
 
 class SemanticSplitterConfig(BaseModel):
@@ -70,8 +71,44 @@ class SentenceSplitterConfig(BaseModel):
         return v
 
 
+class SmartSplitterConfig(BaseModel):
+    """Configuration for smart splitter (file-type aware)."""
+
+    type: Literal["smart"] = "smart"
+    chunk_size: int = Field(
+        1024, ge=128, le=8192, description="Maximum chunk size in characters"
+    )
+    chunk_overlap: int = Field(
+        50,
+        ge=0,
+        le=2048,
+        description="Number of characters to overlap between chunks",
+    )
+    file_extension: Optional[str] = Field(
+        None,
+        description="File extension to determine splitting strategy (.md, .txt, .pdf, .doc, .docx)",
+    )
+    subtype: Optional[str] = Field(
+        None,
+        description="Splitting strategy subtype (markdown_sentence, sentence, recursive_character)",
+    )
+
+    @field_validator("chunk_overlap")
+    @classmethod
+    def validate_overlap(cls, v, info):
+        """Validate that chunk_overlap is less than chunk_size."""
+        chunk_size = info.data.get("chunk_size", 1024)
+        if v >= chunk_size:
+            raise ValueError(
+                f"chunk_overlap ({v}) must be less than chunk_size ({chunk_size})"
+            )
+        return v
+
+
 # Union type for splitter configuration
-SplitterConfig = Union[SemanticSplitterConfig, SentenceSplitterConfig]
+SplitterConfig = Union[
+    SemanticSplitterConfig, SentenceSplitterConfig, SmartSplitterConfig
+]
 
 
 class HybridWeights(BaseModel):

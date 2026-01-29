@@ -130,6 +130,14 @@ class Settings(BaseSettings):
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
 
+    # Rate limiting configuration for OpenAPI endpoints
+    # Format: "requests/period" where period can be second, minute, hour, day
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_CREATE_RESPONSE: str = "60/minute"  # POST /api/v1/responses
+    RATE_LIMIT_GET_RESPONSE: str = "120/minute"  # GET /api/v1/responses/{id}
+    RATE_LIMIT_CANCEL_RESPONSE: str = "30/minute"  # POST /api/v1/responses/{id}/cancel
+    RATE_LIMIT_DELETE_RESPONSE: str = "30/minute"  # DELETE /api/v1/responses/{id}
+
     # Celery configuration
     CELERY_BROKER_URL: Optional[str] = None  # If None/empty, uses REDIS_URL
     CELERY_RESULT_BACKEND: Optional[str] = None  # If None/empty, uses REDIS_URL
@@ -323,6 +331,9 @@ class Settings(BaseSettings):
     DEFAULT_TEAM_KNOWLEDGE: str = (
         "wegent-notebook#default"  # Default team for knowledge mode
     )
+    DEFAULT_TEAM_TASK: str = (
+        "wegent-wework#default"  # Default team for task mode (devices/chat page)
+    )
 
     # JSON configuration for MCP servers (similar to Claude Desktop format)
     # Example:
@@ -360,6 +371,12 @@ class Settings(BaseSettings):
     # Knowledge base and document summary configuration
     # Enable/disable automatic summary generation after document indexing
     SUMMARY_ENABLED: bool = True
+
+    # Knowledge base chunk storage configuration
+    # Enable/disable storing chunk content in database for frontend viewing
+    # When disabled (default), chunks are only stored in vector database for retrieval
+    # When enabled, chunk content is also saved to knowledge_documents.chunks column
+    CHUNK_STORAGE_ENABLED: bool = False
 
     # Long-term memory configuration (mem0)
     # Enable/disable long-term memory feature

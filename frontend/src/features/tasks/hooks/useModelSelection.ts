@@ -20,6 +20,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots'
+import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
 import {
   saveGlobalModelPreference,
   getGlobalModelPreference,
@@ -179,11 +180,7 @@ export function useModelSelection({
 
   /** Get compatible provider based on team agent_type */
   const compatibleProvider = useMemo((): string | null => {
-    if (!selectedTeam?.agent_type) return null
-    const agentType = selectedTeam.agent_type.toLowerCase()
-    if (agentType === 'agno') return 'openai'
-    if (agentType === 'claude' || agentType === 'claudecode') return 'claude'
-    return null
+    return getCompatibleProviderFromAgentType(selectedTeam?.agent_type)
   }, [selectedTeam?.agent_type])
 
   /** Filter models by compatible provider and sort by display name */

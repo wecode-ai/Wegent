@@ -12,6 +12,7 @@
     "public_shells": "公共 Shell",
     "api_keys": "密钥管理",
     "system_config": "系统配置",
+    "im_channels": "IM 渠道",
     "monitor": "监控"
   },
   "stats": {
@@ -418,6 +419,10 @@
     "edit_team": "编辑智能体",
     "delete_team": "删除智能体",
     "member_count": "{{count}} 个机器人",
+    "tabs": {
+      "basic": "基础",
+      "advanced": "高级"
+    },
     "status": {
       "active": "启用",
       "inactive": "禁用"
@@ -615,6 +620,118 @@
       "name_required": "Shell 名称不能为空",
       "config_required": "Shell 配置不能为空",
       "config_invalid_json": "Shell 配置必须是有效的 JSON 格式"
+    }
+  },
+  "setup_wizard": {
+    "title": "欢迎使用 Wegent",
+    "subtitle": "让我们为您的系统配置一些必要的资源",
+    "step_indicator": "第 {{current}} 步，共 {{total}} 步",
+    "step_models": "配置公共模型",
+    "step_skills": "配置公共技能",
+    "next": "下一步",
+    "previous": "上一步",
+    "skip": "跳过",
+    "finish": "完成",
+    "skip_confirm_title": "跳过设置？",
+    "skip_confirm_message": "您可以稍后在管理面板中配置公共模型和技能。确定要跳过设置向导吗？",
+    "skip_confirm_yes": "是的，跳过",
+    "skip_confirm_no": "继续设置",
+    "model_step": {
+      "title": "配置公共模型",
+      "description": "设置所有用户可用的 AI 模型。您可以添加多个模型。",
+      "no_models": "尚未配置公共模型",
+      "add_model": "添加模型",
+      "model_added": "模型添加成功",
+      "model_updated": "模型更新成功",
+      "model_deleted": "模型删除成功",
+      "add_first_model": "添加您的第一个公共模型"
+    },
+    "skill_step": {
+      "title": "配置公共技能",
+      "description": "上传所有用户可用的技能包（.zip）。技能为 AI 代理提供按需能力。",
+      "no_skills": "尚未配置公共技能",
+      "upload_skill": "上传技能",
+      "skill_uploaded": "技能上传成功",
+      "skill_deleted": "技能删除成功",
+      "drag_drop_hint": "将 .zip 文件拖放到此处，或点击浏览",
+      "file_requirements": "技能包必须是包含 SKILL.md 的 .zip 文件"
+    },
+    "success": {
+      "completed": "设置完成！您现在可以开始使用 Wegent。",
+      "skipped": "设置已跳过。您可以随时在管理面板中配置资源。"
+    },
+    "errors": {
+      "load_status_failed": "检查设置状态失败",
+      "complete_failed": "完成设置失败"
+    }
+  },
+  "im_channels": {
+    "title": "IM 渠道管理",
+    "description": "管理 IM 平台集成（钉钉、飞书）",
+    "create_description": "创建新的 IM 渠道集成。配置平台凭据和默认智能体。",
+    "loading": "加载渠道中...",
+    "no_channels": "暂无 IM 渠道配置",
+    "no_default_team": "无默认智能体",
+    "default_team": "默认智能体",
+    "create_channel": "创建渠道",
+    "edit_channel": "编辑渠道",
+    "delete_channel": "删除渠道",
+    "restart_channel": "重启连接",
+    "types": {
+      "dingtalk": "钉钉",
+      "feishu": "飞书",
+      "not_supported": "暂不支持"
+    },
+    "status": {
+      "enabled": "已启用",
+      "disabled": "已禁用"
+    },
+    "connection": {
+      "connected": "已连接",
+      "disconnected": "未连接"
+    },
+    "form": {
+      "name": "渠道名称",
+      "name_placeholder": "请输入渠道名称",
+      "channel_type": "渠道类型",
+      "client_id": "Client ID",
+      "client_id_placeholder": "请输入平台 Client ID",
+      "client_secret": "Client Secret",
+      "client_secret_placeholder": "请输入平台 Client Secret",
+      "client_secret_edit_placeholder": "请输入新的 Client Secret（留空保持不变）",
+      "leave_empty_to_keep": "留空保持不变",
+      "default_team": "默认智能体",
+      "default_team_placeholder": "选择默认智能体",
+      "no_default_team": "无默认智能体",
+      "default_model": "默认模型",
+      "default_model_placeholder": "选择默认模型",
+      "no_default_model": "使用智能体默认模型",
+      "team_no_model_warning": "该智能体没有配置模型，必须选择一个默认模型",
+      "is_enabled": "启用渠道"
+    },
+    "confirm": {
+      "delete_title": "删除渠道",
+      "delete_message": "确定要删除 IM 渠道 \"{{name}}\" 吗？此操作无法撤销。"
+    },
+    "success": {
+      "created": "IM 渠道创建成功",
+      "updated": "IM 渠道更新成功",
+      "deleted": "IM 渠道删除成功",
+      "enabled": "IM 渠道已启用",
+      "disabled": "IM 渠道已禁用",
+      "restarted": "IM 渠道已重启"
+    },
+    "errors": {
+      "load_failed": "加载 IM 渠道失败",
+      "create_failed": "创建 IM 渠道失败",
+      "update_failed": "更新 IM 渠道失败",
+      "delete_failed": "删除 IM 渠道失败",
+      "toggle_failed": "切换 IM 渠道状态失败",
+      "restart_failed": "重启 IM 渠道失败",
+      "name_required": "渠道名称不能为空",
+      "config_required": "Client ID 和 Client Secret 不能为空",
+      "team_required": "必须选择一个默认智能体",
+      "model_required_for_team": "所选智能体没有配置模型，必须选择一个默认模型"
     }
   }
 }

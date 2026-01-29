@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 from llama_index.core import Document, SimpleDirectoryReader
 
 from app.schemas.rag import SplitterConfig
-from app.services.rag.splitter import SemanticSplitter, SentenceSplitter
+from app.services.rag.splitter import SemanticSplitter, SentenceSplitter, SmartSplitter
 from app.services.rag.splitter.factory import create_splitter
 from app.services.rag.storage.base import BaseStorageBackend
 
@@ -74,6 +74,7 @@ class DocumentIndexer:
         storage_backend: BaseStorageBackend,
         embed_model,
         splitter_config: Optional[SplitterConfig] = None,
+        file_extension: Optional[str] = None,
     ):
         """
         Initialize document indexer.
@@ -82,10 +83,12 @@ class DocumentIndexer:
             storage_backend: Storage backend instance
             embed_model: Embedding model
             splitter_config: Optional splitter configuration. If None, defaults to SemanticSplitter
+            file_extension: Optional file extension for smart splitter
         """
         self.storage_backend = storage_backend
         self.embed_model = embed_model
-        self.splitter = create_splitter(splitter_config, embed_model)
+        self.file_extension = file_extension
+        self.splitter = create_splitter(splitter_config, embed_model, file_extension)
 
     def index_document(
         self, knowledge_id: str, file_path: str, doc_ref: str, **kwargs
@@ -207,7 +210,7 @@ class DocumentIndexer:
             **kwargs: Additional parameters
 
         Returns:
-            Indexing result dict
+            Indexing result dict including chunk metadata for storage
         """
         # Sanitize document metadata to prevent ES mapping conflicts
         # This removes complex nested structures from PPTX/DOCX metadata
@@ -216,6 +219,9 @@ class DocumentIndexer:
 
         # Split documents into nodes
         nodes = self.splitter.split_documents(documents)
+
+        # Build chunk metadata for storage in database
+        chunks_data = self._build_chunks_metadata(nodes)
 
         # Prepare metadata
         created_at = datetime.now(timezone.utc).isoformat()
@@ -239,7 +245,58 @@ class DocumentIndexer:
                 "source_file": source_file,
                 "chunk_count": len(nodes),
                 "created_at": created_at,
+                "chunks_data": chunks_data,  # Include chunk metadata for DB storage
             }
         )
 
         return result
+
+    def _build_chunks_metadata(self, nodes: List) -> Dict[str, Any]:
+        """
+        Build chunk metadata from nodes for storage in database.
+
+        Args:
+            nodes: List of nodes from splitter
+
+        Returns:
+            Dictionary with chunk metadata suitable for JSON storage
+        """
+        items = []
+        current_position = 0
+
+        for idx, node in enumerate(nodes):
+            text = node.text if hasattr(node, "text") else str(node)
+            text_length = len(text)
+
+            # Estimate token count (roughly 4 characters per token)
+            token_count = text_length // 4
+
+            items.append(
+                {
+                    "index": idx,
+                    "content": text,
+                    "token_count": token_count,
+                    "start_position": current_position,
+                    "end_position": current_position + text_length,
+                }
+            )
+
+            current_position += text_length
+
+        # Get splitter type info
+        splitter_type = "semantic"  # default
+        splitter_subtype = None
+
+        if isinstance(self.splitter, SmartSplitter):
+            splitter_type = "smart"
+            splitter_subtype = self.splitter._get_subtype()
+        elif isinstance(self.splitter, SentenceSplitter):
+            splitter_type = "sentence"
+
+        return {
+            "items": items,
+            "total_count": len(items),
+            "splitter_type": splitter_type,
+            "splitter_subtype": splitter_subtype,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }

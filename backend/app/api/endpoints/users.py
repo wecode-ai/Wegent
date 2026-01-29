@@ -289,6 +289,10 @@ DEFAULT_SLOGAN_TIPS_CONFIG = {
 }
 
 
+# Config key for admin setup completion status
+ADMIN_SETUP_CONFIG_KEY = "admin_setup_completed"
+
+
 @router.get("/welcome-config", response_model=WelcomeConfigResponse)
 async def get_welcome_config(
     db: Session = Depends(get_db),
@@ -297,12 +301,27 @@ async def get_welcome_config(
     """
     Get welcome configuration (slogans and tips) for the chat page.
     This is a public endpoint for logged-in users.
+
+    For admin users, also returns admin_setup_completed status.
     """
     config = (
         db.query(SystemConfig)
         .filter(SystemConfig.config_key == CHAT_SLOGAN_TIPS_CONFIG_KEY)
         .first()
     )
+
+    # Check admin setup status for admin users
+    admin_setup_completed = None
+    if current_user.role == "admin":
+        setup_config = (
+            db.query(SystemConfig)
+            .filter(SystemConfig.config_key == ADMIN_SETUP_CONFIG_KEY)
+            .first()
+        )
+        if setup_config and setup_config.config_value:
+            admin_setup_completed = setup_config.config_value.get("completed", False)
+        else:
+            admin_setup_completed = False
 
     if not config:
         # Return default configuration
@@ -311,6 +330,7 @@ async def get_welcome_config(
                 ChatSloganItem(**s) for s in DEFAULT_SLOGAN_TIPS_CONFIG["slogans"]
             ],
             tips=[ChatTipItem(**tip) for tip in DEFAULT_SLOGAN_TIPS_CONFIG["tips"]],
+            admin_setup_completed=admin_setup_completed,
         )
 
     config_value = config.config_value or {}
@@ -323,6 +343,7 @@ async def get_welcome_config(
             ChatTipItem(**tip)
             for tip in config_value.get("tips", DEFAULT_SLOGAN_TIPS_CONFIG["tips"])
         ],
+        admin_setup_completed=admin_setup_completed,
     )
 
 
@@ -357,6 +378,7 @@ class DefaultTeamsResponse(BaseModel):
     chat: Optional[DefaultTeamConfig] = None
     code: Optional[DefaultTeamConfig] = None
     knowledge: Optional[DefaultTeamConfig] = None
+    task: Optional[DefaultTeamConfig] = None
 
 
 def parse_default_team_config(config_value: str) -> Optional[DefaultTeamConfig]:
@@ -379,7 +401,7 @@ async def get_default_teams(
     _current_user: User = Depends(security.get_current_user),  # noqa: ARG001
 ):
     """
-    Get default team configuration for each mode (chat, code, knowledge).
+    Get default team configuration for each mode (chat, code, knowledge, task).
     These are system-level configurations from environment variables.
     """
     from app.core.config import settings
@@ -388,6 +410,7 @@ async def get_default_teams(
         chat=parse_default_team_config(settings.DEFAULT_TEAM_CHAT),
         code=parse_default_team_config(settings.DEFAULT_TEAM_CODE),
         knowledge=parse_default_team_config(settings.DEFAULT_TEAM_KNOWLEDGE),
+        task=parse_default_team_config(settings.DEFAULT_TEAM_TASK),
     )
 
 

@@ -95,8 +95,31 @@ POST /api/v1/responses
 | 工具类型 | 描述 |
 |----------|------|
 | `wegent_chat_bot` | 启用所有服务端能力（深度思考、网络搜索、服务端 MCP 工具、消息增强） |
+| `wegent_code_bot` | 启用代码任务并指定 Git 仓库（用于 Executor 类型的 Team） |
 | `mcp` | 添加自定义 MCP 服务器 |
 | `skill` | 预加载特定技能 |
+
+**代码任务配置：**
+```json
+{
+  "tools": [
+    {
+      "type": "wegent_code_bot",
+      "workspace": {
+        "git_url": "https://github.com/user/repo.git",
+        "branch": "main",
+        "git_repo": "user/repo"
+      }
+    }
+  ]
+}
+```
+
+| 字段 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| `workspace.git_url` | string | 是 | Git 仓库 URL |
+| `workspace.branch` | string | 是 | Git 分支名 |
+| `workspace.git_repo` | string | 否 | 仓库名称（如 `user/repo`）。如未提供将从 `git_url` 自动提取 |
 
 **MCP 服务器配置：**
 ```json

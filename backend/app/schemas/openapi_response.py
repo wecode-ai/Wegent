@@ -12,12 +12,25 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field
 
 
+class WorkspaceConfig(BaseModel):
+    """Workspace configuration for code tasks."""
+
+    git_url: str = Field(..., min_length=1, description="Git repository URL")
+    branch: str = Field(..., min_length=1, description="Git branch name")
+    git_repo: Optional[str] = Field(
+        default=None,
+        description="Repository name (e.g., 'user/repo'). Will be extracted from git_url if not provided",
+    )
+
+
 class WegentTool(BaseModel):
     """Custom Wegent tool configuration.
 
     Supported tool types:
     - wegent_chat_bot: Enable all server-side capabilities (recommended)
       Includes: deep thinking with web search, server MCP tools, and message enhancement
+    - wegent_code_bot: Enable code task with git repository
+      Allows the agent to work on code in a specified git repository
     - mcp: Custom MCP server configuration
       Allows connecting to user-provided MCP servers for additional tools
     - skill: Preload specific skills for the bot
@@ -25,12 +38,22 @@ class WegentTool(BaseModel):
     Note:
     - Bot/Ghost MCP tools are always available by default (no user tool needed)
     - Use wegent_chat_bot to enable full server-side capabilities
+    - Use wegent_code_bot to enable code tasks with a git repository
     - Use mcp type with mcp_servers to add custom MCP servers
     - Use skill type with skills to preload specific skills
 
     Examples:
         # Enable all server-side capabilities
         {"type": "wegent_chat_bot"}
+
+        # Enable code task with git repository
+        {
+            "type": "wegent_code_bot",
+            "workspace": {
+                "git_url": "https://github.com/user/repo.git",
+                "branch": "main"
+            }
+        }
 
         # Add custom MCP servers (standard format)
         {
@@ -49,7 +72,7 @@ class WegentTool(BaseModel):
 
     type: str = Field(
         ...,
-        description="Tool type: 'wegent_chat_bot' (server capabilities), 'mcp' (custom MCP servers), or 'skill' (preload skills)",
+        description="Tool type: 'wegent_chat_bot' (server capabilities), 'wegent_code_bot' (code task with git repo), 'mcp' (custom MCP servers), or 'skill' (preload skills)",
     )
     mcp_servers: Optional[List[Dict[str, Any]]] = Field(
         default=None,
@@ -58,6 +81,10 @@ class WegentTool(BaseModel):
     preload_skills: Optional[List[str]] = Field(
         default=None,
         description="List of skill names to preload. Required when type='skill'",
+    )
+    workspace: Optional[WorkspaceConfig] = Field(
+        default=None,
+        description="Workspace configuration for code tasks. Required when type='wegent_code_bot'",
     )
 
 
