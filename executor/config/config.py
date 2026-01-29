@@ -4,6 +4,7 @@
 
 # coding: utf-8
 import os
+import sys
 
 from executor.config.config_loader import load_custom_config
 
@@ -76,7 +77,17 @@ def _get_int_env(name: str, default: int) -> int:
 
 
 # Deployment mode: 'local' for local deployment via WebSocket, empty/other for Docker mode
-EXECUTOR_MODE = os.environ.get("EXECUTOR_MODE", "")
+# When running as PyInstaller binary, default to 'local' mode
+def _get_executor_mode() -> str:
+    """Get executor mode, defaulting to 'local' when running as PyInstaller binary."""
+    mode = os.environ.get("EXECUTOR_MODE", "")
+    if not mode and getattr(sys, "frozen", False):
+        # Running as PyInstaller binary - default to local mode
+        return "local"
+    return mode
+
+
+EXECUTOR_MODE = _get_executor_mode()
 
 # Local mode WebSocket connection settings
 WEGENT_AUTH_TOKEN = os.environ.get("WEGENT_AUTH_TOKEN", "")  # WebSocket auth token
