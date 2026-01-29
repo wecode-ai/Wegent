@@ -110,6 +110,23 @@ class DatabaseHandler:
                 subtask.updated_at = datetime.now()
 
                 if result is not None:
+                    # Preserve silent_exit fields if they were set by MCP tool
+                    # MCP silent_exit tool directly updates subtask.result before this
+                    if subtask.result and isinstance(subtask.result, dict):
+                        existing_silent_exit = subtask.result.get("silent_exit")
+                        existing_silent_exit_reason = subtask.result.get(
+                            "silent_exit_reason"
+                        )
+                        if existing_silent_exit:
+                            result["silent_exit"] = existing_silent_exit
+                            if existing_silent_exit_reason:
+                                result["silent_exit_reason"] = (
+                                    existing_silent_exit_reason
+                                )
+                            logger.info(
+                                "[DB] Preserved silent_exit flag from MCP tool for subtask %s",
+                                subtask_id,
+                            )
                     subtask.result = result
                 if error is not None:
                     subtask.error_message = error

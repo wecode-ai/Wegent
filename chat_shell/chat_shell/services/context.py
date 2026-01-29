@@ -469,8 +469,15 @@ class ChatContext:
         """
         from chat_shell.tools.mcp import MCPClient
 
+        logger.info(
+            "[CHAT_CONTEXT] _connect_mcp_servers called: task_id=%d, mcp_servers=%s",
+            self._request.task_id,
+            self._request.mcp_servers,
+        )
+
         if not self._request.mcp_servers:
             add_span_event("no_mcp_servers_skipped")
+            logger.info("[CHAT_CONTEXT] No MCP servers to connect, returning empty")
             return [], []
 
         add_span_event(

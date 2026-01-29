@@ -12,7 +12,6 @@ The MCP Server uses FastMCP with HTTP Streamable transport and integrates
 with the existing FastAPI application.
 """
 
-import contextlib
 import contextvars
 import json
 import logging
@@ -44,6 +43,16 @@ system_mcp_server = FastMCP(
     streamable_http_path="/",
 )
 
+# Store for system MCP request context (using ContextVar for thread-safe concurrent request handling)
+_system_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_system_request_token_info", default=None)
+)
+
+
+def _get_system_token_info_from_context() -> Optional[TaskTokenInfo]:
+    """Get token info from system MCP request context."""
+    return _system_request_token_info.get()
+
 
 @system_mcp_server.tool()
 def silent_exit(reason: str = "") -> str:
@@ -61,10 +70,13 @@ def silent_exit(reason: str = "") -> str:
     """
     from app.mcp_server.tools.silent_exit import silent_exit as impl_silent_exit
 
-    # Note: In stateless HTTP mode, we cannot get the token from request context
-    # The silent exit marker will be detected by executor/chat_shell
-    logger.info(f"[MCP:System] silent_exit called with reason: {reason}")
-    return impl_silent_exit(reason=reason, token_info=None)
+    # Get token info from request context to update subtask in database
+    token_info = _get_system_token_info_from_context()
+    logger.info(
+        f"[MCP:System] silent_exit called with reason: {reason}, "
+        f"token_info: {token_info.subtask_id if token_info else None}"
+    )
+    return impl_silent_exit(reason=reason, token_info=token_info)
 
 
 # ============== Knowledge MCP Server ==============
@@ -226,29 +238,70 @@ def update_document(
 
 
 def _create_system_mcp_app() -> Starlette:
-    """Create Starlette app for system MCP server."""
+    """Create Starlette app for system MCP server.
+
+    Note: The session_manager.run() is managed by FastAPI's lifespan in main.py,
+    not by this Starlette app's lifespan. This is required because FastAPI's
+    app.mount() does not automatically run the mounted app's lifespan.
+    """
 
     async def health_check(request: Request):
         return JSONResponse({"status": "healthy", "service": "wegent-system-mcp"})
 
-    @contextlib.asynccontextmanager
-    async def lifespan(app: Starlette):
-        async with system_mcp_server.session_manager.run():
-            yield
+    async def system_auth_middleware(request: Request, call_next):
+        """Middleware to extract and validate task token for system MCP."""
+        auth_header = request.headers.get("authorization", "")
+        token = extract_token_from_header(auth_header)
 
-    app = Starlette(
+        token_info: Optional[TaskTokenInfo] = None
+        if token:
+            token_info = verify_task_token(token)
+            if token_info:
+                logger.debug(
+                    f"[MCP:System] Authenticated: task={token_info.task_id}, "
+                    f"subtask={token_info.subtask_id}, user={token_info.user_name}"
+                )
+            else:
+                logger.warning("[MCP:System] Invalid task token")
+
+        # Set token info in context var for the duration of this request
+        ctx_token = _system_request_token_info.set(token_info)
+        try:
+            response = await call_next(request)
+            return response
+        finally:
+            # Reset context var after request completes
+            _system_request_token_info.reset(ctx_token)
+
+    # No lifespan here - session_manager is managed by FastAPI's lifespan
+    # Create base app
+    base_app = Starlette(
         debug=False,
         routes=[
             Route("/health", health_check, methods=["GET"]),
             Mount("/", app=system_mcp_server.streamable_http_app()),
         ],
-        lifespan=lifespan,
     )
-    return app
+
+    # Add auth middleware to extract task token
+    from starlette.middleware.base import BaseHTTPMiddleware
+
+    class SystemAuthMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            return await system_auth_middleware(request, call_next)
+
+    base_app.add_middleware(SystemAuthMiddleware)
+
+    return base_app
 
 
 def _create_knowledge_mcp_app() -> Starlette:
-    """Create Starlette app for knowledge MCP server."""
+    """Create Starlette app for knowledge MCP server.
+
+    Note: The session_manager.run() is managed by FastAPI's lifespan in main.py,
+    not by this Starlette app's lifespan. This is required because FastAPI's
+    app.mount() does not automatically run the mounted app's lifespan.
+    """
 
     async def health_check(request: Request):
         return JSONResponse({"status": "healthy", "service": "wegent-knowledge-mcp"})
@@ -277,11 +330,7 @@ def _create_knowledge_mcp_app() -> Starlette:
             # Reset context var after request completes
             _request_token_info.reset(token)
 
-    @contextlib.asynccontextmanager
-    async def lifespan(app: Starlette):
-        async with knowledge_mcp_server.session_manager.run():
-            yield
-
+    # No lifespan here - session_manager is managed by FastAPI's lifespan
     # Create base app
     base_app = Starlette(
         debug=False,
@@ -289,7 +338,6 @@ def _create_knowledge_mcp_app() -> Starlette:
             Route("/health", health_check, methods=["GET"]),
             Mount("/", app=knowledge_mcp_server.streamable_http_app()),
         ],
-        lifespan=lifespan,
     )
 
     # Add auth middleware
