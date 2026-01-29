@@ -581,9 +581,12 @@ class ClaudeCodeAgent(Agent):
 
     def _save_claude_config_files(self, agent_config: Dict[str, Any]) -> None:
         """
-        Save Claude config files.
-        - Docker mode: saves to ~/.claude/ (original behavior, Claude SDK reads from here)
-        - Local mode: saves to task workspace directory, then passes via 'settings' parameter
+        Save Claude config files to appropriate directory based on execution mode.
+
+        - Docker mode: saves to ~/.claude/ (SDK reads from default location)
+        - Local mode: saves to task workspace directory, file path passed via
+          SDK's 'settings' parameter in _create_and_connect_client() to avoid
+          modifying user's personal ~/.claude/ config
 
         Args:
             agent_config: The agent configuration dictionary
@@ -1147,17 +1150,16 @@ class ClaudeCodeAgent(Agent):
                 f"Passing env vars to Claude SDK (keys: {list(self.options['env'].keys())})"
             )
 
-        if hasattr(self, "_claude_settings_config") and self._claude_settings_config:
-            # Filter out 'env' key - it's passed separately via options["env"]
-            # Also filter out any dict values that can't be converted to command line args
-            settings_for_sdk = {
-                k: v for k, v in self._claude_settings_config.items()
-                if k != "env" and not isinstance(v, dict)
-            }
-            if settings_for_sdk:
-                self.options["settings"] = settings_for_sdk
+        # In Local mode, pass settings file path to SDK (avoid modifying user's ~/.claude/)
+        # SDK accepts settings as file path or JSON string via --settings CLI flag
+        if config.EXECUTOR_MODE == "local" and hasattr(self, "_claude_config_dir"):
+            settings_path = os.path.join(self._claude_config_dir, "settings.json")
+            if os.path.exists(settings_path):
+                self.options["settings"] = settings_path
+                # Disable reading from default config locations (user's ~/.claude/)
+                self.options["setting_sources"] = []
                 logger.info(
-                    f"Passing settings to Claude SDK (keys: {list(settings_for_sdk.keys())})"
+                    f"Local mode: using settings file at {settings_path}, disabled default setting sources"
                 )
 
         # Create client with options
