@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Pydantic schemas for IM Channel management.
+Pydantic schemas for IM Channel (Messager CRD) management.
+
+IM channels are stored in the kinds table with kind="Messager".
 """
 
 from datetime import datetime
@@ -15,12 +17,29 @@ from pydantic import BaseModel, Field, field_validator
 ChannelType = Literal["dingtalk", "feishu", "wechat"]
 
 
+class MessagerSpec(BaseModel):
+    """Spec for Messager CRD."""
+
+    channelType: ChannelType = Field(
+        ..., description="Channel type: dingtalk, feishu, wechat"
+    )
+    isEnabled: bool = Field(default=True, description="Whether channel is enabled")
+    config: Dict[str, Any] = Field(
+        ..., description="Channel configuration (varies by type)"
+    )
+    defaultTeamId: int = Field(0, description="Default team ID for messages")
+    defaultModelName: str = Field(
+        "", description="Default model name to override bot's model"
+    )
+
+
 class IMChannelCreate(BaseModel):
-    """Schema for creating a new IM channel."""
+    """Schema for creating a new IM channel (Messager CRD)."""
 
     name: str = Field(
         ..., min_length=1, max_length=100, description="Channel display name"
     )
+    namespace: str = Field(default="default", description="Namespace")
     channel_type: ChannelType = Field(
         ..., description="Channel type: dingtalk, feishu, wechat"
     )
@@ -39,8 +58,6 @@ class IMChannelCreate(BaseModel):
     @classmethod
     def validate_config(cls, v: Dict[str, Any], info) -> Dict[str, Any]:
         """Validate config has required fields based on channel type."""
-        # Note: We can't access other fields in field_validator easily in Pydantic v2
-        # Validation based on channel_type should be done at the service layer
         return v
 
 
@@ -65,6 +82,7 @@ class IMChannelResponse(BaseModel):
 
     id: int
     name: str
+    namespace: str = "default"
     channel_type: str
     is_enabled: bool
     config: Dict[str, Any] = Field(
@@ -77,13 +95,9 @@ class IMChannelResponse(BaseModel):
     )
     created_at: datetime
     updated_at: datetime
-    created_by: int = Field(
-        0, alias="create_user_id", description="User ID who created, 0 means system"
-    )
 
     class Config:
         from_attributes = True
-        populate_by_name = True
 
 
 class IMChannelListResponse(BaseModel):

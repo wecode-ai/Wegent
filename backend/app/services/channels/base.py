@@ -7,17 +7,28 @@ Base class for IM channel providers.
 
 All channel implementations (DingTalk, Feishu, WeChat) must inherit from
 BaseChannelProvider and implement the required methods.
+
+IM channels are stored as Messager CRD in the kinds table.
 """
 
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, Optional
-
-if TYPE_CHECKING:
-    from app.models.im_channel import IMChannel
+from typing import Any, Dict, Optional, Protocol
 
 logger = logging.getLogger(__name__)
+
+
+class ChannelLike(Protocol):
+    """Protocol for channel-like objects (IMChannelAdapter)."""
+
+    id: int
+    name: str
+    channel_type: str
+    is_enabled: bool
+    config: Dict[str, Any]
+    default_team_id: int
+    default_model_name: str
 
 
 class BaseChannelProvider(ABC):
@@ -28,12 +39,12 @@ class BaseChannelProvider(ABC):
     for a specific IM platform (DingTalk, Feishu, WeChat).
     """
 
-    def __init__(self, channel: "IMChannel"):
+    def __init__(self, channel: ChannelLike):
         """
         Initialize the provider with channel configuration.
 
         Args:
-            channel: IMChannel model instance with configuration
+            channel: Channel-like object (IMChannelAdapter) with configuration
         """
         self._channel = channel
         self._is_running = False
@@ -61,7 +72,7 @@ class BaseChannelProvider(ABC):
         return self._channel.config
 
     @property
-    def default_team_id(self) -> Optional[int]:
+    def default_team_id(self) -> int:
         """Get the default team ID for this channel."""
         return self._channel.default_team_id
 
@@ -113,12 +124,12 @@ class BaseChannelProvider(ABC):
         await self.stop()
         return await self.start()
 
-    def update_config(self, channel: "IMChannel") -> None:
+    def update_config(self, channel: ChannelLike) -> None:
         """
         Update the channel configuration.
 
         Args:
-            channel: Updated IMChannel model instance
+            channel: Updated channel-like object
         """
         self._channel = channel
 

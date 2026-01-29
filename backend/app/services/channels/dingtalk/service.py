@@ -7,21 +7,24 @@ DingTalk Stream Channel Provider.
 
 This module provides the channel provider for DingTalk Stream mode integration.
 It manages the DingTalk Stream client lifecycle and message handling.
+
+IM channels are stored as Messager CRD in the kinds table.
 """
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import Any, Dict, Optional
 
 import dingtalk_stream
 
 from app.services.channels.base import BaseChannelProvider
 from app.services.channels.dingtalk.handler import WegentChatbotHandler
 
-if TYPE_CHECKING:
-    from app.models.im_channel import IMChannel
-
 logger = logging.getLogger(__name__)
+
+# CRD kind for IM channels
+MESSAGER_KIND = "Messager"
+MESSAGER_USER_ID = 0
 
 
 def _get_channel_default_team_id(channel_id: int) -> Optional[int]:
@@ -30,21 +33,32 @@ def _get_channel_default_team_id(channel_id: int) -> Optional[int]:
 
     This function is used by the handler to dynamically get the latest
     default_team_id, allowing configuration updates without restart.
+    IM channels are stored as Messager CRD in the kinds table.
 
     Args:
-        channel_id: The IM channel ID
+        channel_id: The IM channel ID (Kind.id)
 
     Returns:
         The default team ID or None
     """
     from app.db.session import SessionLocal
-    from app.models.im_channel import IMChannel
+    from app.models.kind import Kind
 
     db = SessionLocal()
     try:
-        channel = db.query(IMChannel).filter(IMChannel.id == channel_id).first()
+        channel = (
+            db.query(Kind)
+            .filter(
+                Kind.id == channel_id,
+                Kind.kind == MESSAGER_KIND,
+                Kind.user_id == MESSAGER_USER_ID,
+                Kind.is_active == True,
+            )
+            .first()
+        )
         if channel:
-            return channel.default_team_id
+            spec = channel.json.get("spec", {})
+            return spec.get("defaultTeamId", 0)
         return None
     finally:
         db.close()
@@ -56,22 +70,34 @@ def _get_channel_default_model_name(channel_id: int) -> Optional[str]:
 
     This function is used by the handler to dynamically get the latest
     default_model_name, allowing configuration updates without restart.
+    IM channels are stored as Messager CRD in the kinds table.
 
     Args:
-        channel_id: The IM channel ID
+        channel_id: The IM channel ID (Kind.id)
 
     Returns:
         The default model name or None (returns None if empty string)
     """
     from app.db.session import SessionLocal
-    from app.models.im_channel import IMChannel
+    from app.models.kind import Kind
 
     db = SessionLocal()
     try:
-        channel = db.query(IMChannel).filter(IMChannel.id == channel_id).first()
-        if channel and channel.default_model_name:
+        channel = (
+            db.query(Kind)
+            .filter(
+                Kind.id == channel_id,
+                Kind.kind == MESSAGER_KIND,
+                Kind.user_id == MESSAGER_USER_ID,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if channel:
+            spec = channel.json.get("spec", {})
+            model_name = spec.get("defaultModelName", "")
             # Return None if empty string, otherwise return the model name
-            return channel.default_model_name
+            return model_name if model_name else None
         return None
     finally:
         db.close()
@@ -87,12 +113,12 @@ class DingTalkChannelProvider(BaseChannelProvider):
     - Health monitoring
     """
 
-    def __init__(self, channel: "IMChannel"):
+    def __init__(self, channel: Any):
         """
         Initialize the DingTalk channel provider.
 
         Args:
-            channel: IMChannel model instance with DingTalk configuration
+            channel: Channel-like object (IMChannelAdapter) with DingTalk configuration
         """
         super().__init__(channel)
         self._client: Optional[dingtalk_stream.DingTalkStreamClient] = None
