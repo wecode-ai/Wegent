@@ -204,51 +204,6 @@ class ClaudeCodeAgent(Agent):
         self._claude_settings_config: Dict[str, Any] = {}
         self._claude_config_dir: str = ""
 
-    def _resolve_env_placeholder(self, value: str) -> str:
-        """
-        Resolve environment variable placeholders in a string.
-
-        Supports formats like ${VAR_NAME} or $VAR_NAME.
-        If the environment variable is not set, returns empty string.
-
-        Args:
-            value: String that may contain environment variable placeholders
-
-        Returns:
-            Resolved string with environment variables expanded
-        """
-        if not value:
-            return ""
-
-        # Match ${VAR_NAME} pattern
-        pattern = r"\$\{([^}]+)\}"
-        match = re.match(pattern, value)
-        if match:
-            env_var_name = match.group(1)
-            resolved = os.environ.get(env_var_name, "")
-            if resolved:
-                logger.info(f"Resolved env placeholder ${{{env_var_name}}} to actual value")
-            else:
-                logger.warning(
-                    f"Environment variable {env_var_name} not set, API key will be empty"
-                )
-            return resolved
-
-        # Match $VAR_NAME pattern (without braces)
-        if value.startswith("$") and not value.startswith("${"):
-            env_var_name = value[1:]
-            resolved = os.environ.get(env_var_name, "")
-            if resolved:
-                logger.info(f"Resolved env placeholder ${env_var_name} to actual value")
-            else:
-                logger.warning(
-                    f"Environment variable {env_var_name} not set, API key will be empty"
-                )
-            return resolved
-
-        # No placeholder, return as-is
-        return value
-
     def _set_git_env_variables(self, task_data: Dict[str, Any]) -> None:
         """
         Extract git-related fields from task_data and set them as environment variables
@@ -648,18 +603,13 @@ class ClaudeCodeAgent(Agent):
 
         model_id = env.get("model_id", "")
 
-        # Resolve environment variable placeholders (e.g., ${WECODE_API_KEY})
-        # This is needed for Local mode where API key is passed via environment variable
-        raw_api_key = env.get("api_key", "")
-        api_key = self._resolve_env_placeholder(raw_api_key)
-
         # Note: ANTHROPIC_SMALL_FAST_MODEL is deprecated in favor of ANTHROPIC_DEFAULT_HAIKU_MODEL.
         # Claude Code SDK uses ANTHROPIC_API_KEY for authentication
         env_config = {
             "ANTHROPIC_MODEL": model_id,
             "ANTHROPIC_SMALL_FAST_MODEL": env.get("small_model", model_id),
             "ANTHROPIC_DEFAULT_HAIKU_MODEL": env.get("small_model", model_id),
-            "ANTHROPIC_API_KEY": api_key,  # SDK uses ANTHROPIC_API_KEY, not ANTHROPIC_AUTH_TOKEN
+            "ANTHROPIC_API_KEY": env.get("api_key", ""),
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": int(
                 os.getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "0")
             ),
