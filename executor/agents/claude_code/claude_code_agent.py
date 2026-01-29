@@ -1150,17 +1150,26 @@ class ClaudeCodeAgent(Agent):
                 f"Passing env vars to Claude SDK (keys: {list(self.options['env'].keys())})"
             )
 
-        # In Local mode, pass settings file path to SDK (avoid modifying user's ~/.claude/)
-        # SDK accepts settings as file path or JSON string via --settings CLI flag
+        # In Local mode, configure SDK to use task-specific config directory
+        # to avoid modifying user's personal ~/.claude/ config
         if config.EXECUTOR_MODE == "local" and hasattr(self, "_claude_config_dir"):
+            # Set CLAUDE_CONFIG_DIR env var to redirect all config reads/writes
+            # This affects both settings.json and claude.json locations
+            env = self.options.get("env", {})
+            env["CLAUDE_CONFIG_DIR"] = self._claude_config_dir
+            self.options["env"] = env
+
+            # Also pass settings file path explicitly for additional safety
             settings_path = os.path.join(self._claude_config_dir, "settings.json")
             if os.path.exists(settings_path):
                 self.options["settings"] = settings_path
                 # Disable reading from default config locations (user's ~/.claude/)
                 self.options["setting_sources"] = []
-                logger.info(
-                    f"Local mode: using settings file at {settings_path}, disabled default setting sources"
-                )
+
+            logger.info(
+                f"Local mode: using config dir {self._claude_config_dir}, "
+                f"disabled default setting sources"
+            )
 
         # Create client with options
         if self.options:
