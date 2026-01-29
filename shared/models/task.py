@@ -85,6 +85,13 @@ class ThinkingStep(BaseModel):
     details: Optional[Dict[str, Any]] = Field(
         default=None, description="Detailed structured data for this step"
     )
+    run_id: Optional[str] = Field(
+        default=None,
+        description="LangChain run_id for matching tool start/end (legacy)",
+    )
+    tool_use_id: Optional[str] = Field(
+        default=None, description="Anthropic tool_use_id (standard identifier)"
+    )
 
     def dict(self, **kwargs) -> Dict[str, Any]:
         """Override dict method to exclude None values"""

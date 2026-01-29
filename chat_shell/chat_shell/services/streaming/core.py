@@ -154,6 +154,10 @@ class StreamingState:
             }
             if "run_id" in step:
                 slim_step["run_id"] = step["run_id"]
+            # Preserve tool_use_id for tool matching
+            if "tool_use_id" in step:
+                slim_step["tool_use_id"] = step["tool_use_id"]
+
             details = step.get("details", {})
             if details:
                 slim_details: dict = {
@@ -161,6 +165,17 @@ class StreamingState:
                     "status": details.get("status"),
                     "tool_name": details.get("tool_name") or details.get("name"),
                 }
+                # Preserve input for tool_use (tool parameters like file_path)
+                if details.get("input"):
+                    slim_details["input"] = details["input"]
+                # Preserve output/content for tool_result (tool execution results)
+                if details.get("output"):
+                    slim_details["output"] = details["output"]
+                if details.get("content"):
+                    slim_details["content"] = details["content"]
+                # Preserve is_error for error handling
+                if details.get("is_error"):
+                    slim_details["is_error"] = details["is_error"]
                 # Preserve error field for failed status
                 if details.get("error"):
                     slim_details["error"] = details["error"]
