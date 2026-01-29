@@ -1639,10 +1639,11 @@ class ClaudeCodeAgent(Agent):
 
     def _download_and_deploy_skills(self, bot_config: Dict[str, Any]) -> None:
         """
-        Download Skills from Backend API and deploy to ~/.claude/skills/.
+        Download Skills from Backend API and deploy to skills directory.
 
-        In Local mode, only downloads skills that don't exist locally.
-        Existing skills are preserved to avoid overwriting user's personal skills.
+        - Docker mode: deploys to ~/.claude/skills/
+        - Local mode: deploys to task config directory (same as CLAUDE_CONFIG_DIR)
+          to avoid modifying user's personal skills
 
         Args:
             bot_config: Bot configuration containing skills list
@@ -1656,8 +1657,13 @@ class ClaudeCodeAgent(Agent):
 
             logger.info(f"Found {len(skills)} skills to deploy: {skills}")
 
-            # Prepare skills directory
-            skills_dir = os.path.expanduser("~/.claude/skills")
+            # Determine skills directory based on mode
+            if config.EXECUTOR_MODE == "local" and hasattr(self, "_claude_config_dir"):
+                # Local mode: use task config directory (follows CLAUDE_CONFIG_DIR)
+                skills_dir = os.path.join(self._claude_config_dir, "skills")
+            else:
+                # Docker mode: use default ~/.claude/skills
+                skills_dir = os.path.expanduser("~/.claude/skills")
 
             # In Local mode, only download missing skills (don't delete existing ones)
             if config.EXECUTOR_MODE == "local":
