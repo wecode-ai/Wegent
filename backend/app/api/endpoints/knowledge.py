@@ -70,6 +70,7 @@ from app.services.knowledge import (
 )
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
+from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -1731,6 +1732,79 @@ def get_knowledge_permissions(
     return PermissionListResponse(total=len(items), items=items)
 
 
+# ============== Chunk Management Endpoints ==============
+
+
+@document_router.get("/{document_id}/chunks")
+@trace_sync("list_document_chunks", "knowledge.api")
+def list_document_chunks(
+    document_id: int,
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Page size"),
+    search: Optional[str] = Query(None, description="Search keyword"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    List chunks for a document with pagination and optional search.
+
+    Returns paginated chunk list with content and metadata.
+    """
+    from app.models.knowledge import KnowledgeDocument
+    from app.schemas.knowledge import ChunkItem, ChunkListResponse
+
+    # Get document with access check
+    document = (
+        db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
+    )
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    # Check access permission via knowledge base
+    kb = KnowledgeService.get_knowledge_base(
+        db=db,
+        knowledge_base_id=document.kind_id,
+        user_id=current_user.id,
+    )
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this document",
+        )
+
+    # Get chunks from document
+    chunks_data = document.chunks or {}
+    all_items = chunks_data.get("items", [])
+
+    # Apply search filter if provided
+    if search:
+        search_lower = search.lower()
+        all_items = [
+            item
+            for item in all_items
+            if search_lower in item.get("content", "").lower()
+        ]
+
+    # Pagination
+    total = len(all_items)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paginated_items = all_items[start:end]
+
+    return ChunkListResponse(
+        total=total,
+        page=page,
+        page_size=page_size,
+        items=[ChunkItem(**item) for item in paginated_items],
+        splitter_type=chunks_data.get("splitter_type"),
+        splitter_subtype=chunks_data.get("splitter_subtype"),
+    )
+
+
 @permission_router.post("/{kb_id}/permissions")
 async def add_knowledge_permissions(
     kb_id: int,
@@ -1907,6 +1981,72 @@ async def update_knowledge_permission(
         )
 
     return {"message": "Permission updated successfully"}
+
+
+@document_router.get("/{document_id}/chunks/{chunk_index}")
+@trace_sync("get_document_chunk", "knowledge.api")
+def get_document_chunk(
+    document_id: int,
+    chunk_index: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get a single chunk by index.
+
+    Returns full chunk content for citation hover display.
+    """
+    from app.models.knowledge import KnowledgeDocument
+    from app.schemas.knowledge import ChunkResponse
+
+    # Get document
+    document = (
+        db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
+    )
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    # Check access permission via knowledge base
+    kb = KnowledgeService.get_knowledge_base(
+        db=db,
+        knowledge_base_id=document.kind_id,
+        user_id=current_user.id,
+    )
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this document",
+        )
+
+    # Get chunk by index
+    chunks_data = document.chunks or {}
+    items = chunks_data.get("items", [])
+
+    # Find chunk by index
+    chunk = None
+    for item in items:
+        if item.get("index") == chunk_index:
+            chunk = item
+            break
+
+    if not chunk:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Chunk with index {chunk_index} not found",
+        )
+
+    return ChunkResponse(
+        index=chunk.get("index", chunk_index),
+        content=chunk.get("content", ""),
+        token_count=chunk.get("token_count", 0),
+        document_name=document.name,
+        document_id=document.id,
+        kb_id=document.kind_id,
+    )
 
 
 @permission_router.delete("/{kb_id}/permissions/{user_id}")

@@ -2,22 +2,21 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Add status to permissions and fix nullable columns
+"""Add permissions table for knowledge base sharing and add status column
 
-Revision ID: 1c19c8741e82
-Revises: w3x4y5z6a7b8
+Revision ID: w3x4y5z6a7b8
+Revises: v2w3x4y5z6a7
 Create Date: 2026-01-29
 
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = '1c19c8741e82'
-down_revision: Union[str, Sequence[str], None] = 'w3x4y5z6a7b8'
+revision: str = "w3x4y5z6a7b8"
+down_revision: Union[str, None] = "v2w3x4y5z6a7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -25,39 +24,49 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
 
-    # 1. Add status column to permissions table
-    op.execute(
-        """
-        CREATE TYPE permissionstatus AS ENUM ('pending', 'approved', 'disallow');
-        """
-    )
-    op.add_column(
-        'permissions',
+    # 1. Create permissions table
+    op.create_table(
+        "permissions",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("kind_id", sa.Integer(), nullable=False),
         sa.Column(
-            'status',
+            "resource_type", sa.String(50), nullable=False, server_default="knowledge_base"
+        ),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("permission_type", sa.String(20), nullable=False),
+        sa.Column("granted_by_user_id", sa.Integer(), nullable=False),
+        sa.Column("granted_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
+        sa.Column(
+            "created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(),
+            nullable=False,
+            server_default=sa.func.now(),
+            onupdate=sa.func.now(),
+        ),
+        sa.Column(
+            "status",
             sa.Enum('pending', 'approved', 'disallow', name='permissionstatus'),
             nullable=False,
             server_default='pending',
-        )
-    )
-    op.create_index('ix_permissions_status', 'permissions', ['status'])
-
-    # 2. Fix granted_at column: set default and make non-nullable
-    # First set default values for existing NULL rows
-    op.execute(
-        """
-        UPDATE permissions SET granted_at = NOW() WHERE granted_at IS NULL;
-        """
-    )
-    # Alter column to be NOT NULL with default
-    op.alter_column(
-        'permissions',
-        'granted_at',
-        nullable=False,
-        server_default=sa.func.now()
+        ),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint(
+            "kind_id", "resource_type", "user_id", name="uq_permission_user_resource"
+        ),
+        comment="Permission authorization table for resource access control",
     )
 
-    # 3. Fix nullable columns in other tables
+    # Create indexes
+    op.create_index("ix_permissions_kind_id", "permissions", ["kind_id"])
+    op.create_index("ix_permissions_user_id", "permissions", ["user_id"])
+    op.create_index("ix_permissions_kb_active", "permissions", ["kind_id", "is_active"])
+    op.create_index("ix_permissions_status", "permissions", ["status"])
+
+    # 2. Fix nullable columns in other tables
 
     # Skip shared_tasks.copied_task_id (kept as nullable=True, default=None to represent "not yet copied")
 
@@ -126,7 +135,7 @@ def upgrade() -> None:
         server_default=''
     )
 
-    # 4. Add is_company column to namespace table
+    # 3. Add is_company column to namespace table
     op.add_column(
         'namespace',
         sa.Column(
@@ -192,15 +201,12 @@ def downgrade() -> None:
         server_default=None
     )
 
-    # Revert granted_at changes
-    op.alter_column(
-        'permissions',
-        'granted_at',
-        nullable=True,
-        server_default=None
-    )
+    # Drop indexes
+    op.drop_index("ix_permissions_status", table_name="permissions")
+    op.drop_index("ix_permissions_kb_active", table_name="permissions")
+    op.drop_index("ix_permissions_user_id", table_name="permissions")
+    op.drop_index("ix_permissions_kind_id", table_name="permissions")
 
-    # Revert status column
-    op.drop_index('ix_permissions_status', table_name='permissions')
-    op.drop_column('permissions', 'status')
+    # Drop table
+    op.drop_table("permissions")
     op.execute('DROP TYPE IF EXISTS permissionstatus')
