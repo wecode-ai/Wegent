@@ -26,6 +26,7 @@ from executor.agents.base import Agent
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
 from executor.agents.claude_code.response_processor import process_response
 from executor.config import config
+from executor.services.attachment_downloader import get_api_base_url
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
 from executor.utils.mcp_utils import (
@@ -1040,7 +1041,7 @@ class ClaudeCodeAgent(Agent):
 
         # Ensure working directory exists
         if self.options.get("cwd") is None or self.options.get("cwd") == "":
-            cwd = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
+            cwd = os.path.join(config.get_workspace_root(), str(self.task_id))
             os.makedirs(cwd, exist_ok=True)
             self.options["cwd"] = cwd
 
@@ -1450,7 +1451,7 @@ class ClaudeCodeAgent(Agent):
             # Attachments should be stored in WORKSPACE_ROOT/task_id, not in the project path
             # This ensures attachments are accessible at /workspace/{task_id}:executor:attachments/...
             # instead of /workspace/{task_id}/{repo_name}/{task_id}:executor:attachments/...
-            workspace = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
+            workspace = os.path.join(config.get_workspace_root(), str(self.task_id))
 
             # Import and use attachment downloader
             from executor.services.attachment_downloader import AttachmentDownloader
@@ -1531,26 +1532,40 @@ class ClaudeCodeAgent(Agent):
             # Prepare skills directory
             skills_dir = os.path.expanduser("~/.claude/skills")
 
-            # Clear existing skills directory
-            if os.path.exists(skills_dir):
-                import shutil
+            # Handle skills directory based on SKILL_CLEAR_CACHE config
+            if config.SKILL_CLEAR_CACHE:
+                # Clear existing skills directory (default behavior)
+                if os.path.exists(skills_dir):
+                    import shutil
 
-                shutil.rmtree(skills_dir)
-                logger.info(f"Cleared existing skills directory: {skills_dir}")
+                    shutil.rmtree(skills_dir)
+                    logger.info(f"Cleared existing skills directory: {skills_dir}")
+            else:
+                # Only clear skills that will be replaced
+                logger.info(
+                    f"Skill cache mode enabled, will only replace existing skills"
+                )
+                for skill_name in skills:
+                    skill_path = os.path.join(skills_dir, skill_name)
+                    if os.path.exists(skill_path):
+                        import shutil
+
+                        shutil.rmtree(skill_path)
+                        logger.info(
+                            f"Removed existing skill for replacement: {skill_name}"
+                        )
 
             Path(skills_dir).mkdir(parents=True, exist_ok=True)
 
-            # Get API base URL and auth token from task_data
-            api_base_url = os.getenv(
-                "TASK_API_DOMAIN", "http://wegent-backend:8000"
-            ).rstrip("/")
+            # Get API base URL (handles local vs docker mode) and auth token
+            api_base_url = get_api_base_url()
             auth_token = self.task_data.get("auth_token")
 
             if not auth_token:
                 logger.warning("No auth token available, cannot download skills")
                 return
 
-            logger.info(f"Auth token available for skills download")
+            logger.info(f"Skills download: api_base_url={api_base_url}")
 
             # Download each skill
             import io

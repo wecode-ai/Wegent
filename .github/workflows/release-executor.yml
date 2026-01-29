@@ -1,0 +1,115 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release Executor Binary
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'executor/**'
+      - '.github/workflows/release-executor.yml'
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      upload_to_release:
+        description: 'Upload to latest release'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            platform: darwin-amd64
+            artifact: wegent-executor-local-darwin-amd64
+          - os: macos-14
+            platform: darwin-arm64
+            artifact: wegent-executor-local-darwin-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        working-directory: executor
+        run: |
+          uv sync --group build
+
+      - name: Build binary
+        working-directory: executor
+        run: |
+          uv run python scripts/build_local.py
+
+      - name: Rename binary
+        working-directory: executor
+        run: |
+          mv dist/wegent-executor dist/${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: executor/dist/${{ matrix.artifact }}
+          retention-days: 7
+
+  upload-release:
+    needs: build
+    runs-on: ubuntu-latest
+    # Only run on release event or manual trigger with upload_to_release=true
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release)
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      - name: List artifacts
+        run: |
+          ls -la artifacts/
+          find artifacts -type f
+
+      - name: Get release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            # Get latest release tag
+            LATEST_TAG=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r .tag_name)
+            echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload binaries to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: |
+            artifacts/wegent-executor-local-darwin-amd64/wegent-executor-local-darwin-amd64
+            artifacts/wegent-executor-local-darwin-arm64/wegent-executor-local-darwin-arm64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
