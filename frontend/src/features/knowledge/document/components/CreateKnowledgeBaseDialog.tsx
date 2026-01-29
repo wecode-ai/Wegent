@@ -38,6 +38,7 @@ interface CreateKnowledgeBaseDialogProps {
     retrieval_config?: Partial<RetrievalConfig>
     summary_enabled?: boolean
     summary_model_ref?: SummaryModelRef | null
+    is_company?: boolean
   }) => Promise<void>
   loading?: boolean
   scope?: 'personal' | 'group' | 'all' | 'organization'
@@ -74,6 +75,7 @@ export function CreateKnowledgeBaseDialog({
       keyword_weight: 0.3,
     },
   })
+  const [isCompany, setIsCompany] = useState(false)
   const [error, setError] = useState('')
   const [accordionValue, setAccordionValue] = useState<string>('')
 
@@ -129,9 +131,11 @@ export function CreateKnowledgeBaseDialog({
         retrieval_config: retrievalConfig,
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
+        is_company: isCompany,
       })
       setName('')
       setDescription('')
+      setIsCompany(false)
       // Reset summaryEnabled based on kbType: enabled for notebook, disabled for classic
       setSummaryEnabled(kbType === 'notebook')
       setSummaryModelRef(null)
@@ -153,6 +157,7 @@ export function CreateKnowledgeBaseDialog({
     if (!newOpen) {
       setName('')
       setDescription('')
+      setIsCompany(false)
       // Reset summaryEnabled based on kbType: enabled for notebook, disabled for classic
       setSummaryEnabled(kbType === 'notebook')
       setSummaryModelRef(null)
@@ -240,6 +245,27 @@ export function CreateKnowledgeBaseDialog({
                 rows={3}
               />
             </div>
+
+            {/* Company Knowledge Base Checkbox */}
+            {scope === 'personal' && (
+              <div className="space-y-2 border-b border-border pb-4">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="is-company">
+                      Company Knowledge Base
+                    </Label>
+                    <p className="text-xs text-text-muted">
+                      Make this knowledge base accessible to all company members
+                    </p>
+                  </div>
+                  <Switch
+                    id="is-company"
+                    checked={isCompany}
+                    onCheckedChange={setIsCompany}
+                  />
+                </div>
+              </div>
+            )}
 
             {/* Summary Settings - moved outside accordion */}
             <div className="space-y-3 border-b border-border pb-4">

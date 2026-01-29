@@ -17,6 +17,11 @@ class Namespace(Base):
 
     Supports hierarchical structure with parent/child groups using name prefixes.
     Example: 'aaa/bbb' represents group 'bbb' under parent group 'aaa'.
+
+    Company Knowledge Base:
+    - is_company=True indicates this is a company-wide knowledge base
+    - Company knowledge bases are accessible to all users in the company
+    - Default is False for personal/team knowledge bases
     """
 
     __tablename__ = "namespace"
@@ -26,13 +31,15 @@ class Namespace(Base):
     # Sub-groups use prefix format (e.g., 'aaa/bbb')
     name = Column(String(100), nullable=False, unique=True, index=True)
     # Display name, can be modified
-    display_name = Column(String(100), nullable=True)
+    display_name = Column(String(100), nullable=False, default="")
     # Group owner user ID
     owner_user_id = Column(Integer, nullable=False, index=True)
     # Visibility: private, internal, public
     visibility = Column(String(20), nullable=False, default="private")
     # Group description
     description = Column(Text, nullable=False, default="")
+    # Whether this is a company knowledge base (accessible to all users)
+    is_company = Column(Boolean, nullable=False, default=False)
     # Is group active
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())

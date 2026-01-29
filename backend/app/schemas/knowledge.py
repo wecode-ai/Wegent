@@ -66,6 +66,10 @@ class KnowledgeBaseCreate(BaseModel):
         "notebook",
         description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
     )
+    is_company: bool = Field(
+        default=False,
+        description="Whether this is a company knowledge base accessible to all members",
+    )
     retrieval_config: Optional[RetrievalConfig] = Field(
         None, description="Retrieval configuration"
     )

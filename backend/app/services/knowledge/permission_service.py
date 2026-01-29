@@ -15,7 +15,7 @@ from sqlalchemy import case
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.permission import Permission
+from app.models.permission import Permission, PermissionStatus
 from app.models.user import User
 from app.schemas.namespace import GroupRole
 from app.services.group_permission import get_effective_role_in_group
@@ -60,7 +60,7 @@ def can_access_knowledge_base(db: Session, user_id: int, kb: Kind) -> bool:
             Permission.resource_type == "knowledge_base",
             Permission.user_id == user_id,
             Permission.permission_type.in_(["read", "download", "write", "manage"]),
-            Permission.is_active == True,
+            Permission.status == PermissionStatus.APPROVED,
         )
         .first()
     )
@@ -111,7 +111,7 @@ def can_manage_knowledge_base(db: Session, user: User, kb: Kind) -> bool:
             Permission.resource_type == "knowledge_base",
             Permission.user_id == user.id,
             Permission.permission_type == "manage",
-            Permission.is_active == True,
+            Permission.status == PermissionStatus.APPROVED,
         )
         .first()
     )
@@ -163,7 +163,7 @@ def can_write_knowledge_base(db: Session, user: User, kb: Kind) -> bool:
             Permission.resource_type == "knowledge_base",
             Permission.user_id == user.id,
             Permission.permission_type.in_(["write", "manage"]),
-            Permission.is_active == True,
+            Permission.status == PermissionStatus.APPROVED,
         )
         .first()
     )
@@ -221,7 +221,7 @@ def get_user_permission_type(db: Session, user: User, kb: Kind) -> Optional[str]
             Permission.kind_id == kb.id,
             Permission.resource_type == "knowledge_base",
             Permission.user_id == user.id,
-            Permission.is_active == True,
+            Permission.status == PermissionStatus.APPROVED,
         )
         .order_by(
             case(
@@ -282,7 +282,7 @@ def get_permission_source(db: Session, user: User, kb: Kind) -> str:
             Permission.kind_id == kb.id,
             Permission.resource_type == "knowledge_base",
             Permission.user_id == user.id,
-            Permission.is_active == True,
+            Permission.status == PermissionStatus.APPROVED,
         )
         .first()
     )

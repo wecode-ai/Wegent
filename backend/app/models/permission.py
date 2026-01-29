@@ -9,11 +9,13 @@ Provides storage for explicit permission grants between users and resources.
 """
 
 from datetime import datetime
+from enum import Enum as PyEnum
 
 from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Enum as SQLEnum,
     Index,
     Integer,
     String,
@@ -23,12 +25,25 @@ from sqlalchemy import (
 from app.db.base import Base
 
 
+class PermissionStatus(str, PyEnum):
+    """Status of a permission grant."""
+
+    PENDING = "pending"  # Permission requested, waiting for approval
+    APPROVED = "approved"  # Permission granted and active
+    DISALLOW = "disallow"  # Permission denied
+
+
 class Permission(Base):
     """
     Permission authorization record table.
 
     Stores explicit permission grants for resources like knowledge bases.
     Designed to be extensible for other resource types in the future.
+
+    Status Workflow:
+    - pending: User has requested permission, waiting for approval
+    - approved: Permission granted and active (user can access resource)
+    - disallow: Permission denied (user cannot access resource)
     """
 
     __tablename__ = "permissions"
@@ -42,11 +57,25 @@ class Permission(Base):
     user_id = Column(Integer, nullable=False, index=True)
     # Permission level: read, download, write, manage
     permission_type = Column(String(20), nullable=False)
+    # Permission status: pending, approved, disallow
+    status = Column(
+        SQLEnum(
+            PermissionStatus,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="permissionstatus",
+        ),
+        nullable=False,
+        default=PermissionStatus.APPROVED,
+    )
     # User who granted this permission
     granted_by_user_id = Column(Integer, nullable=False)
     # When the permission was granted
     granted_at = Column(DateTime, default=datetime.utcnow)
-    # Whether the permission is currently active
+    # Reason for the permission request (provided by applicant)
+    request_reason = Column(String(1000), nullable=False, default="")
+    # Response message from the processor (optional)
+    response_message = Column(String(500), nullable=False, default="")
+    # Whether the permission is currently active (deprecated, use status instead)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -56,7 +85,7 @@ class Permission(Base):
         UniqueConstraint(
             "kind_id", "resource_type", "user_id", name="uq_permission_user_resource"
         ),
-        # Index for efficient lookup of active permissions for a resource
+        # Index for efficient lookup of active/approved permissions for a resource
         Index("ix_permissions_kb_active", "kind_id", "is_active"),
         {
             "sqlite_autoincrement": True,

@@ -79,6 +79,7 @@ class KnowledgeService:
         retrieval_config: Optional[dict] = None,
         summary_enabled: bool = False,
         summary_model_ref: Optional[dict] = None,
+        is_company: bool = False,
     ) -> int:
         """
         Internal method to create a knowledge base record.
@@ -97,11 +98,43 @@ class KnowledgeService:
             retrieval_config: Retrieval configuration dict
             summary_enabled: Enable automatic summary generation
             summary_model_ref: Model reference for summary generation
+            is_company: Whether this is a company knowledge base
 
         Returns:
             Created KnowledgeBase ID
         """
         from datetime import datetime
+
+        # If company KB, ensure organization namespace exists and has is_company=True
+        if namespace == "organization" and is_company:
+            from app.models.namespace import Namespace
+
+            org_namespace = (
+                db.query(Namespace)
+                .filter(Namespace.name == "organization")
+                .first()
+            )
+
+            if not org_namespace:
+                # Create organization namespace with is_company=True
+                org_namespace = Namespace(
+                    name="organization",
+                    display_name="Organization",
+                    description="Organization namespace for company knowledge bases",
+                    owner_user_id=user_id,
+                    visibility="internal",
+                    is_company=True,
+                    is_active=True,
+                    created_at=datetime.now(),
+                    updated_at=datetime.now(),
+                )
+                db.add(org_namespace)
+                db.flush()
+            elif not org_namespace.is_company:
+                # Update existing namespace to have is_company=True
+                org_namespace.is_company = True
+                org_namespace.updated_at = datetime.now()
+                db.flush()
 
         # Build CRD structure
         spec_kwargs = {
@@ -235,17 +268,24 @@ class KnowledgeService:
         if data.retrieval_config:
             retrieval_config_dict = data.retrieval_config.model_dump()
 
+        # Handle company knowledge base - create/update namespace if needed
+        namespace_to_use = data.namespace
+        if data.is_company:
+            # Company knowledge bases should use organization namespace
+            namespace_to_use = "organization"
+
         return KnowledgeService._create_knowledge_base_internal(
             db=db,
             user_id=user_id,
             kb_name=kb_name,
-            namespace=data.namespace,
+            namespace=namespace_to_use,
             display_name=data.name,
             description=data.description or "",
             kb_type=data.kb_type or "notebook",
             retrieval_config=retrieval_config_dict,
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
+            is_company=data.is_company,
         )
 
     @staticmethod

@@ -6,6 +6,7 @@
 Permission request service for knowledge base access approval workflow.
 
 Provides functions to create, process, and manage permission requests.
+Permission requests are now stored in the permissions table with status='pending'.
 """
 
 import logging
@@ -15,8 +16,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.permission import Permission
-from app.models.permission_request import PermissionRequest, PermissionRequestStatus
+from app.models.permission import Permission, PermissionStatus
 from app.models.user import User
 from app.schemas.permission_request import (
     MyRequestsResponse,
@@ -90,12 +90,12 @@ class PermissionRequestService:
 
         # Check if user already has a pending request
         existing_request = (
-            db.query(PermissionRequest)
+            db.query(Permission)
             .filter(
-                PermissionRequest.kind_id == data.kind_id,
-                PermissionRequest.resource_type == "knowledge_base",
-                PermissionRequest.applicant_user_id == user_id,
-                PermissionRequest.status == PermissionRequestStatus.PENDING,
+                Permission.kind_id == data.kind_id,
+                Permission.resource_type == "knowledge_base",
+                Permission.user_id == user_id,
+                Permission.status == PermissionStatus.PENDING,
             )
             .first()
         )
@@ -105,28 +105,32 @@ class PermissionRequestService:
                 "You already have a pending request for this knowledge base"
             )
 
-        # Create the request
-        request = PermissionRequest(
+        # Create the permission with PENDING status
+        permission = Permission(
             kind_id=data.kind_id,
             resource_type="knowledge_base",
-            applicant_user_id=user_id,
-            requested_permission_type=data.requested_permission_type,
-            request_reason=data.request_reason,
-            status=PermissionRequestStatus.PENDING,
+            user_id=user_id,
+            permission_type=data.requested_permission_type,
+            granted_by_user_id=kb.user_id,  # KB owner as the granter
+            granted_at=datetime.utcnow(),
+            status=PermissionStatus.PENDING,
+            request_reason=data.request_reason or "",
+            response_message="",
+            is_active=True,  # For backward compatibility
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
         )
 
-        db.add(request)
+        db.add(permission)
         db.commit()
-        db.refresh(request)
+        db.refresh(permission)
 
         logger.info(
             f"Permission request created: user={user_id}, kb={data.kind_id}, "
-            f"request_id={request.id}"
+            f"permission_id={permission.id}"
         )
 
-        return PermissionRequestService._build_response(db, request)
+        return PermissionRequestService._build_response(db, permission)
 
     @staticmethod
     def process_request(
@@ -140,7 +144,7 @@ class PermissionRequestService:
 
         Args:
             db: Database session
-            request_id: Request ID to process
+            request_id: Permission ID to process (stored in permissions table)
             processor_user_id: User ID of the processor
             data: Processing data
 
@@ -150,41 +154,39 @@ class PermissionRequestService:
         Raises:
             ValueError: If validation fails or permission denied
         """
-        # Get the request
-        request = (
-            db.query(PermissionRequest)
-            .filter(PermissionRequest.id == request_id)
-            .first()
+        # Get the permission (request)
+        permission = (
+            db.query(Permission).filter(Permission.id == request_id).first()
         )
 
-        if not request:
+        if not permission:
             raise ValueError("Permission request not found")
 
-        if request.status != PermissionRequestStatus.PENDING:
+        if permission.status != PermissionStatus.PENDING:
             raise ValueError(
-                f"Request has already been processed (status: {request.status.value})"
+                f"Request has already been processed (status: {permission.status.value})"
             )
 
         # Get the knowledge base
         kb = (
             db.query(Kind)
             .filter(
-                Kind.id == request.kind_id,
+                Kind.id == permission.kind_id,
                 Kind.kind == "KnowledgeBase",
             )
             .first()
         )
 
         if not kb:
-            # KB was deleted, mark request as expired
-            request.status = PermissionRequestStatus.EXPIRED
-            request.updated_at = datetime.utcnow()
+            # KB was deleted, mark request as disallowed
+            permission.status = PermissionStatus.DISALLOW
+            permission.updated_at = datetime.utcnow()
             db.commit()
             raise ValueError("Knowledge base has been deleted")
 
         if not kb.is_active:
-            request.status = PermissionRequestStatus.EXPIRED
-            request.updated_at = datetime.utcnow()
+            permission.status = PermissionStatus.DISALLOW
+            permission.updated_at = datetime.utcnow()
             db.commit()
             raise ValueError("Knowledge base has been deleted")
 
@@ -202,45 +204,31 @@ class PermissionRequestService:
         if data.action == "approve":
             # Determine permission type to grant
             permission_type = (
-                data.granted_permission_type or request.requested_permission_type
+                data.granted_permission_type or permission.permission_type
             )
 
-            # Create permission record
-            permission = Permission(
-                kind_id=request.kind_id,
-                resource_type="knowledge_base",
-                user_id=request.applicant_user_id,
-                permission_type=permission_type,
-                granted_by_user_id=processor_user_id,
-                granted_at=datetime.utcnow(),
-                is_active=True,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-            )
-            db.add(permission)
-
-            request.status = PermissionRequestStatus.APPROVED
+            # Update permission to APPROVED status
+            permission.status = PermissionStatus.APPROVED
+            permission.permission_type = permission_type
+            permission.response_message = data.response_message or ""
             logger.info(
                 f"Permission request approved: request_id={request_id}, "
-                f"user={request.applicant_user_id}, kb={request.kind_id}, "
+                f"user={permission.user_id}, kb={permission.kind_id}, "
                 f"permission={permission_type}"
             )
         else:  # reject
-            request.status = PermissionRequestStatus.REJECTED
+            permission.status = PermissionStatus.DISALLOW
+            permission.response_message = data.response_message or ""
             logger.info(
                 f"Permission request rejected: request_id={request_id}, "
-                f"user={request.applicant_user_id}, kb={request.kind_id}"
+                f"user={permission.user_id}, kb={permission.kind_id}"
             )
 
-        request.processed_by_user_id = processor_user_id
-        request.processed_at = datetime.utcnow()
-        request.response_message = data.response_message
-        request.updated_at = datetime.utcnow()
-
+        permission.updated_at = datetime.utcnow()
         db.commit()
-        db.refresh(request)
+        db.refresh(permission)
 
-        return PermissionRequestService._build_response(db, request)
+        return PermissionRequestService._build_response(db, permission)
 
     @staticmethod
     def cancel_request(
@@ -253,7 +241,7 @@ class PermissionRequestService:
 
         Args:
             db: Database session
-            request_id: Request ID to cancel
+            request_id: Permission ID to cancel
             user_id: User ID (must be the applicant)
 
         Returns:
@@ -262,32 +250,30 @@ class PermissionRequestService:
         Raises:
             ValueError: If validation fails
         """
-        request = (
-            db.query(PermissionRequest)
-            .filter(PermissionRequest.id == request_id)
-            .first()
+        permission = (
+            db.query(Permission).filter(Permission.id == request_id).first()
         )
 
-        if not request:
+        if not permission:
             raise ValueError("Permission request not found")
 
-        if request.applicant_user_id != user_id:
+        if permission.user_id != user_id:
             raise ValueError("You can only cancel your own requests")
 
-        if request.status != PermissionRequestStatus.PENDING:
+        if permission.status != PermissionStatus.PENDING:
             raise ValueError(
-                f"Cannot cancel request with status: {request.status.value}"
+                f"Cannot cancel request with status: {permission.status.value}"
             )
 
-        request.status = PermissionRequestStatus.CANCELLED
-        request.updated_at = datetime.utcnow()
+        permission.status = PermissionStatus.DISALLOW
+        permission.updated_at = datetime.utcnow()
 
         db.commit()
-        db.refresh(request)
+        db.refresh(permission)
 
         logger.info(f"Permission request cancelled: request_id={request_id}")
 
-        return PermissionRequestService._build_response(db, request)
+        return PermissionRequestService._build_response(db, permission)
 
     @staticmethod
     def get_pending_requests_for_kb(
@@ -334,17 +320,19 @@ class PermissionRequestService:
             )
 
         requests = (
-            db.query(PermissionRequest)
+            db.query(Permission)
             .filter(
-                PermissionRequest.kind_id == kb_id,
-                PermissionRequest.resource_type == "knowledge_base",
-                PermissionRequest.status == PermissionRequestStatus.PENDING,
+                Permission.kind_id == kb_id,
+                Permission.resource_type == "knowledge_base",
+                Permission.status == PermissionStatus.PENDING,
             )
-            .order_by(PermissionRequest.created_at.desc())
+            .order_by(Permission.created_at.desc())
             .all()
         )
 
-        items = [PermissionRequestService._build_response(db, req) for req in requests]
+        items = [
+            PermissionRequestService._build_response(db, req) for req in requests
+        ]
 
         return PermissionRequestListResponse(total=len(items), items=items)
 
@@ -389,17 +377,19 @@ class PermissionRequestService:
 
         # Get pending requests for these KBs
         requests = (
-            db.query(PermissionRequest)
+            db.query(Permission)
             .filter(
-                PermissionRequest.kind_id.in_(personal_kb_ids),
-                PermissionRequest.resource_type == "knowledge_base",
-                PermissionRequest.status == PermissionRequestStatus.PENDING,
+                Permission.kind_id.in_(personal_kb_ids),
+                Permission.resource_type == "knowledge_base",
+                Permission.status == PermissionStatus.PENDING,
             )
-            .order_by(PermissionRequest.created_at.desc())
+            .order_by(Permission.created_at.desc())
             .all()
         )
 
-        items = [PermissionRequestService._build_response(db, req) for req in requests]
+        items = [
+            PermissionRequestService._build_response(db, req) for req in requests
+        ]
 
         return PermissionRequestListResponse(total=len(items), items=items)
 
@@ -435,11 +425,11 @@ class PermissionRequestService:
             return PendingRequestCountResponse(count=0)
 
         count = (
-            db.query(PermissionRequest)
+            db.query(Permission)
             .filter(
-                PermissionRequest.kind_id.in_(personal_kb_ids),
-                PermissionRequest.resource_type == "knowledge_base",
-                PermissionRequest.status == PermissionRequestStatus.PENDING,
+                Permission.kind_id.in_(personal_kb_ids),
+                Permission.resource_type == "knowledge_base",
+                Permission.status == PermissionStatus.PENDING,
             )
             .count()
         )
@@ -463,21 +453,23 @@ class PermissionRequestService:
         Returns:
             List of user's requests
         """
-        query = db.query(PermissionRequest).filter(
-            PermissionRequest.applicant_user_id == user_id,
-            PermissionRequest.resource_type == "knowledge_base",
+        query = db.query(Permission).filter(
+            Permission.user_id == user_id,
+            Permission.resource_type == "knowledge_base",
         )
 
         if status:
             try:
-                status_enum = PermissionRequestStatus(status)
-                query = query.filter(PermissionRequest.status == status_enum)
+                status_enum = PermissionStatus(status)
+                query = query.filter(Permission.status == status_enum)
             except ValueError:
                 pass  # Invalid status, ignore filter
 
-        requests = query.order_by(PermissionRequest.created_at.desc()).all()
+        requests = query.order_by(Permission.created_at.desc()).all()
 
-        items = [PermissionRequestService._build_response(db, req) for req in requests]
+        items = [
+            PermissionRequestService._build_response(db, req) for req in requests
+        ]
 
         return MyRequestsResponse(total=len(items), items=items)
 
@@ -499,12 +491,12 @@ class PermissionRequestService:
             Check result with pending request if exists
         """
         request = (
-            db.query(PermissionRequest)
+            db.query(Permission)
             .filter(
-                PermissionRequest.kind_id == kb_id,
-                PermissionRequest.resource_type == "knowledge_base",
-                PermissionRequest.applicant_user_id == user_id,
-                PermissionRequest.status == PermissionRequestStatus.PENDING,
+                Permission.kind_id == kb_id,
+                Permission.resource_type == "knowledge_base",
+                Permission.user_id == user_id,
+                Permission.status == PermissionStatus.PENDING,
             )
             .first()
         )
@@ -512,7 +504,9 @@ class PermissionRequestService:
         if request:
             return PermissionRequestCheckResponse(
                 has_pending_request=True,
-                pending_request=PermissionRequestService._build_response(db, request),
+                pending_request=PermissionRequestService._build_response(
+                    db, request
+                ),
             )
 
         return PermissionRequestCheckResponse(
@@ -526,7 +520,7 @@ class PermissionRequestService:
         kb_id: int,
     ) -> int:
         """
-        Mark all pending requests for a deleted knowledge base as expired.
+        Mark all pending requests for a deleted knowledge base as disallowed.
 
         Args:
             db: Database session
@@ -536,16 +530,16 @@ class PermissionRequestService:
             Number of requests expired
         """
         result = (
-            db.query(PermissionRequest)
+            db.query(Permission)
             .filter(
-                PermissionRequest.kind_id == kb_id,
-                PermissionRequest.resource_type == "knowledge_base",
-                PermissionRequest.status == PermissionRequestStatus.PENDING,
+                Permission.kind_id == kb_id,
+                Permission.resource_type == "knowledge_base",
+                Permission.status == PermissionStatus.PENDING,
             )
             .update(
                 {
-                    PermissionRequest.status: PermissionRequestStatus.EXPIRED,
-                    PermissionRequest.updated_at: datetime.utcnow(),
+                    Permission.status: PermissionStatus.DISALLOW,
+                    Permission.updated_at: datetime.utcnow(),
                 }
             )
         )
@@ -562,34 +556,40 @@ class PermissionRequestService:
     @staticmethod
     def _build_response(
         db: Session,
-        request: PermissionRequest,
+        permission: Permission,
     ) -> PermissionRequestResponse:
         """
         Build a response object from a permission request.
 
         Args:
             db: Database session
-            request: Permission request object
+            permission: Permission object
 
         Returns:
             Permission request response
         """
         # Get applicant info
-        applicant = db.query(User).filter(User.id == request.applicant_user_id).first()
+        applicant = (
+            db.query(User).filter(User.id == permission.user_id).first()
+        )
         applicant_username = applicant.user_name if applicant else "Unknown"
 
-        # Get processor info
+        # Get processor info (use granted_by_user_id)
         processor_username = None
-        if request.processed_by_user_id:
+        if permission.granted_by_user_id:
             processor = (
-                db.query(User).filter(User.id == request.processed_by_user_id).first()
+                db.query(User)
+                .filter(User.id == permission.granted_by_user_id)
+                .first()
             )
             processor_username = processor.user_name if processor else "Unknown"
 
         # Get KB info
         kb = (
             db.query(Kind)
-            .filter(Kind.id == request.kind_id, Kind.kind == "KnowledgeBase")
+            .filter(
+                Kind.id == permission.kind_id, Kind.kind == "KnowledgeBase"
+            )
             .first()
         )
         kb_name = None
@@ -603,20 +603,20 @@ class PermissionRequestService:
             kb_owner_username = owner.user_name if owner else "Unknown"
 
         return PermissionRequestResponse(
-            id=request.id,
-            kind_id=request.kind_id,
-            resource_type=request.resource_type,
-            applicant_user_id=request.applicant_user_id,
+            id=permission.id,
+            kind_id=permission.kind_id,
+            resource_type=permission.resource_type,
+            applicant_user_id=permission.user_id,
             applicant_username=applicant_username,
-            requested_permission_type=request.requested_permission_type,
-            request_reason=request.request_reason,
-            status=request.status,
-            processed_by_user_id=request.processed_by_user_id,
+            requested_permission_type=permission.permission_type,
+            request_reason=permission.request_reason,
+            status=permission.status,
+            processed_by_user_id=permission.granted_by_user_id,
             processed_by_username=processor_username,
-            processed_at=request.processed_at,
-            response_message=request.response_message,
-            created_at=request.created_at,
-            updated_at=request.updated_at,
+            processed_at=permission.granted_at,
+            response_message=permission.response_message,
+            created_at=permission.created_at,
+            updated_at=permission.updated_at,
             kb_name=kb_name,
             kb_description=kb_description,
             kb_owner_username=kb_owner_username,
