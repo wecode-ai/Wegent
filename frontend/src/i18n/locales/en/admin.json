@@ -12,6 +12,7 @@
     "public_shells": "Public Shells",
     "api_keys": "API Keys",
     "system_config": "System Config",
+    "im_channels": "IM Channels",
     "monitor": "Monitor"
   },
   "stats": {
@@ -662,6 +663,75 @@
     "errors": {
       "load_status_failed": "Failed to check setup status",
       "complete_failed": "Failed to complete setup"
+    }
+  },
+  "im_channels": {
+    "title": "IM Channel Management",
+    "description": "Manage IM platform integrations (DingTalk, Feishu)",
+    "create_description": "Create a new IM channel integration. Configure platform credentials and default agent.",
+    "loading": "Loading channels...",
+    "no_channels": "No IM channels configured",
+    "no_default_team": "No default agent",
+    "default_team": "Default Agent",
+    "create_channel": "Create Channel",
+    "edit_channel": "Edit Channel",
+    "delete_channel": "Delete Channel",
+    "restart_channel": "Restart Connection",
+    "types": {
+      "dingtalk": "DingTalk",
+      "feishu": "Feishu",
+      "not_supported": "Not supported"
+    },
+    "status": {
+      "enabled": "Enabled",
+      "disabled": "Disabled"
+    },
+    "connection": {
+      "connected": "Connected",
+      "disconnected": "Disconnected"
+    },
+    "form": {
+      "name": "Channel Name",
+      "name_placeholder": "Enter channel name",
+      "channel_type": "Channel Type",
+      "client_id": "Client ID",
+      "client_id_placeholder": "Enter the platform Client ID",
+      "client_secret": "Client Secret",
+      "client_secret_placeholder": "Enter the platform Client Secret",
+      "client_secret_edit_placeholder": "Enter new Client Secret (leave empty to keep existing)",
+      "leave_empty_to_keep": "Leave empty to keep existing",
+      "default_team": "Default Agent",
+      "default_team_placeholder": "Select default agent",
+      "no_default_team": "No default agent",
+      "default_model": "Default Model",
+      "default_model_placeholder": "Select default model",
+      "no_default_model": "Use agent's default model",
+      "team_no_model_warning": "The selected agent has no model configured. You must select a default model.",
+      "is_enabled": "Enable Channel"
+    },
+    "confirm": {
+      "delete_title": "Delete Channel",
+      "delete_message": "Are you sure you want to delete IM channel \"{{name}}\"? This action cannot be undone."
+    },
+    "success": {
+      "created": "IM channel created successfully",
+      "updated": "IM channel updated successfully",
+      "deleted": "IM channel deleted successfully",
+      "enabled": "IM channel enabled",
+      "disabled": "IM channel disabled",
+      "restarted": "IM channel restarted"
+    },
+    "errors": {
+      "load_failed": "Failed to load IM channels",
+      "create_failed": "Failed to create IM channel",
+      "update_failed": "Failed to update IM channel",
+      "delete_failed": "Failed to delete IM channel",
+      "toggle_failed": "Failed to toggle IM channel status",
+      "restart_failed": "Failed to restart IM channel",
+      "name_required": "Channel name is required",
+      "config_required": "Client ID and Client Secret are required",
+      "team_required": "A default agent must be selected",
+      "model_required_for_team": "The selected agent has no model configured. You must select a default model."
     }
   }
 }

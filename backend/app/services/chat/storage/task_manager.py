@@ -110,10 +110,8 @@ def get_task_with_access_check(
 
     Returns:
         Tuple of (task, subtask_user_id) where subtask_user_id is the user_id
-        to use for creating subtasks (owner's ID for group chats)
-
-    Raises:
-        HTTPException: If task not found or access denied
+        to use for creating subtasks (owner's ID for group chats).
+        Returns (None, user_id) if task not found or access denied.
     """
     from app.models.task_member import MemberStatus, TaskMember
 
@@ -158,7 +156,13 @@ def get_task_with_access_check(
             # For group members, use task owner's user_id for subtasks
             return task, task.user_id
 
-    raise HTTPException(status_code=404, detail="Task not found")
+    # Task not found or access denied - log error and return None
+    logger.error(
+        "[get_task_with_access_check] Task not found or access denied: task_id=%d, user_id=%d",
+        task_id,
+        user_id,
+    )
+    return None, user_id
 
 
 def check_task_status(db: Session, task: TaskResource) -> None:
@@ -612,29 +616,33 @@ async def create_task_and_subtasks(
     bot_ids = get_bot_ids_from_team(db, team)
 
     task = None
-    task = None
     # Track the user_id to use for subtasks (owner's ID for group chats)
     subtask_user_id = user.id
 
     if task_id:
-        if task_id:
-            # Get existing task with access check
-            task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
+        # Get existing task with access check
+        task, subtask_user_id = get_task_with_access_check(db, task_id, user.id)
+        if task:
             check_task_status(db, task)
-        # Update modelId in existing task if provided
-        if params.model_id:
-            from sqlalchemy.orm.attributes import flag_modified
+            # Update modelId in existing task if provided
+            if params.model_id:
+                from sqlalchemy.orm.attributes import flag_modified
 
-            task_crd = Task.model_validate(task.json)
-            if not task_crd.metadata.labels:
-                task_crd.metadata.labels = {}
-            task_crd.metadata.labels["modelId"] = params.model_id
-            if params.force_override_bot_model:
-                task_crd.metadata.labels["forceOverrideBotModel"] = "true"
-            task.json = task_crd.model_dump(mode="json")
-            flag_modified(task, "json")
+                task_crd = Task.model_validate(task.json)
+                if not task_crd.metadata.labels:
+                    task_crd.metadata.labels = {}
+                task_crd.metadata.labels["modelId"] = params.model_id
+                if params.force_override_bot_model:
+                    task_crd.metadata.labels["forceOverrideBotModel"] = "true"
+                task.json = task_crd.model_dump(mode="json")
+                flag_modified(task, "json")
+                logger.info(
+                    f"[create_task_and_subtasks] Updated modelId to {params.model_id} for existing task {task_id}"
+                )
+        else:
+            # Task not found, treat as new conversation
             logger.info(
-                f"[create_task_and_subtasks] Updated modelId to {params.model_id} for existing task {task_id}"
+                f"[create_task_and_subtasks] Task {task_id} not found, creating new task"
             )
 
     if not task:
