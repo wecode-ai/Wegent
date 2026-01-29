@@ -257,9 +257,6 @@ const GlobalAdminSetupWizard: React.FC = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={completing}>
-              {t('setup_wizard.skip_confirm_no')}
-            </AlertDialogCancel>
             <AlertDialogAction onClick={handleSkip} disabled={completing}>
               {completing ? (
                 <>
@@ -270,6 +267,12 @@ const GlobalAdminSetupWizard: React.FC = () => {
                 t('setup_wizard.skip_confirm_yes')
               )}
             </AlertDialogAction>
+            <AlertDialogCancel
+              disabled={completing}
+              className="bg-primary text-white hover:bg-primary/90"
+            >
+              {t('setup_wizard.skip_confirm_no')}
+            </AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
