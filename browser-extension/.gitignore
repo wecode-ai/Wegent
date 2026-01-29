@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Safari Xcode artifacts
+safari/WegentExtension/
+*.xcworkspace
+*.xcuserdata
+DerivedData/
+
+# Environment
+.env
+.env.local
+
+# TypeScript cache
+*.tsbuildinfo
