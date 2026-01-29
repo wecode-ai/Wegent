@@ -367,19 +367,21 @@ class WebSocketClient:
             raise ConnectionError("WebSocket not connected")
 
         try:
+            register_data = {
+                "device_id": self.device_id,
+                "name": self.device_name,
+            }
             logger.info(
-                f"Registering device: id={self.device_id}, name={self.device_name}"
+                f"Sending device:register to /local-executor: {register_data}"
             )
 
             response = await self.sio.call(
                 "device:register",
-                {
-                    "device_id": self.device_id,
-                    "name": self.device_name,
-                },
+                register_data,
                 namespace="/local-executor",
                 timeout=timeout,
             )
+            logger.info(f"device:register response: {response}")
 
             if response and response.get("success"):
                 self._registered = True
@@ -417,12 +419,15 @@ class WebSocketClient:
             raise ConnectionError("WebSocket not connected")
 
         try:
+            heartbeat_data = {"device_id": self.device_id}
+            logger.debug(f"Sending device:heartbeat to /local-executor: {heartbeat_data}")
             response = await self.sio.call(
                 "device:heartbeat",
-                {"device_id": self.device_id},
+                heartbeat_data,
                 namespace="/local-executor",
                 timeout=timeout,
             )
+            logger.debug(f"device:heartbeat response: {response}")
 
             if response and response.get("success"):
                 logger.debug(f"Heartbeat OK for device {self.device_id}")

@@ -14,7 +14,13 @@ Supports two modes:
 - Docker mode (default): FastAPI server for container deployment
 """
 
+import multiprocessing
 import os
+import sys
+
+# Required for PyInstaller on macOS/Windows to prevent infinite fork
+if getattr(sys, "frozen", False):
+    multiprocessing.freeze_support()
 
 # Import the shared logger
 from shared.logger import setup_logger
