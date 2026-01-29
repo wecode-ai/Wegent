@@ -226,6 +226,12 @@ class Metadata(BaseModel):
         True,
         description="Whether KB is explicitly selected by user (strict mode) or inherited from task (relaxed mode)",
     )
+    # Knowledge base call limit configuration (injected by Backend for both package and HTTP modes)
+    # Maps KB ID to config: {"maxCallsPerConversation": int, "exemptCallsBeforeCheck": int, "name": str}
+    kb_configs: Optional[dict[int, dict[str, Any]]] = Field(
+        None,
+        description="Knowledge base configurations (max calls, exempt calls, name) - injected by Backend",
+    )
     # Table configuration
     table_contexts: Optional[list[dict]] = Field(
         None, description="Table contexts for DataTableTool"

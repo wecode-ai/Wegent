@@ -97,6 +97,14 @@ class KnowledgeBaseTool(BaseTool):
     # Current conversation messages for context calculation
     current_messages: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Knowledge base call limit configuration (injected at construction time)
+    # Maps KB ID to config: {"maxCallsPerConversation": int, "exemptCallsBeforeCheck": int, "name": str}
+    # Follows same injection pattern as context_window, injection_mode, etc.
+    kb_configs: Optional[Dict[int, Dict[str, Any]]] = Field(
+        default=None,
+        description="Knowledge base configurations (max calls, exempt calls, name) - injected by Backend/chat_shell",
+    )
+
     # Injection strategy instance (lazy initialized)
     _injection_strategy: Optional[InjectionStrategy] = PrivateAttr(default=None)
 
@@ -104,9 +112,6 @@ class KnowledgeBaseTool(BaseTool):
     # These are instance variables that persist across multiple tool calls in the same conversation
     _call_count: int = PrivateAttr(default=0)
     _accumulated_tokens: int = PrivateAttr(default=0)
-
-    # Knowledge base call limit configuration (fetched from KB spec)
-    _kb_configs: Optional[Dict[int, Dict[str, Any]]] = PrivateAttr(default=None)
 
     @property
     def injection_strategy(self) -> InjectionStrategy:
@@ -128,91 +133,43 @@ class KnowledgeBaseTool(BaseTool):
         Returns limits for the first knowledge base in the list. If multiple KBs
         are configured, we use the first one's limits to keep behavior simple.
 
+        Configuration is injected at tool construction time (from Backend or chat_shell),
+        following the same pattern as context_window and injection_mode.
+
         Returns:
             Tuple of (max_calls_per_conversation, exempt_calls_before_check)
         """
         if not self.knowledge_base_ids:
             return DEFAULT_MAX_CALLS_PER_CONVERSATION, DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
 
-        # Lazy load KB configs if not already loaded
-        if self._kb_configs is None:
-            self._kb_configs = self._fetch_kb_configs()
+        # Use injected config if available
+        if self.kb_configs:
+            first_kb_id = self.knowledge_base_ids[0]
+            kb_spec = self.kb_configs.get(first_kb_id, {})
 
-        # Use the first KB's configuration
-        first_kb_id = self.knowledge_base_ids[0]
-        kb_spec = self._kb_configs.get(first_kb_id, {})
-
-        max_calls = kb_spec.get(
-            "maxCallsPerConversation", DEFAULT_MAX_CALLS_PER_CONVERSATION
-        )
-        exempt_calls = kb_spec.get(
-            "exemptCallsBeforeCheck", DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
-        )
-
-        # Validate config
-        if exempt_calls >= max_calls:
-            logger.warning(
-                f"[KnowledgeBaseTool] Invalid KB config for KB {first_kb_id}: "
-                f"exempt_calls={exempt_calls} >= max_calls={max_calls}. Using defaults."
+            max_calls = kb_spec.get(
+                "maxCallsPerConversation", DEFAULT_MAX_CALLS_PER_CONVERSATION
             )
-            return DEFAULT_MAX_CALLS_PER_CONVERSATION, DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
-
-        return max_calls, exempt_calls
-
-    def _fetch_kb_configs(self) -> Dict[int, Dict[str, Any]]:
-        """Fetch configurations for all knowledge bases.
-
-        Returns:
-            Dictionary mapping KB IDs to their spec configurations
-        """
-        configs = {}
-
-        try:
-            # Try to import from backend if available (package mode)
-            from app.services.knowledge.knowledge_service import KnowledgeService
-
-            for kb_id in self.knowledge_base_ids:
-                try:
-                    kb_kind = KnowledgeService.get_knowledge_base(
-                        self.db_session, kb_id, self.user_id
-                    )
-                    if kb_kind:
-                        spec = kb_kind.json.get("spec", {})
-                        configs[kb_id] = {
-                            "maxCallsPerConversation": spec.get(
-                                "maxCallsPerConversation",
-                                DEFAULT_MAX_CALLS_PER_CONVERSATION,
-                            ),
-                            "exemptCallsBeforeCheck": spec.get(
-                                "exemptCallsBeforeCheck",
-                                DEFAULT_EXEMPT_CALLS_BEFORE_CHECK,
-                            ),
-                            "name": spec.get("name", f"KB-{kb_id}"),
-                        }
-                except Exception as e:
-                    logger.warning(
-                        f"[KnowledgeBaseTool] Failed to fetch config for KB {kb_id}: {e}"
-                    )
-                    configs[kb_id] = {
-                        "maxCallsPerConversation": DEFAULT_MAX_CALLS_PER_CONVERSATION,
-                        "exemptCallsBeforeCheck": DEFAULT_EXEMPT_CALLS_BEFORE_CHECK,
-                        "name": f"KB-{kb_id}",
-                    }
-
-        except ImportError:
-            # Backend not available, all KBs use defaults
-            # In HTTP mode, we could fetch via API, but for simplicity using defaults
-            logger.info(
-                "[KnowledgeBaseTool] Backend not available, using default KB configs"
+            exempt_calls = kb_spec.get(
+                "exemptCallsBeforeCheck", DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
             )
-            for kb_id in self.knowledge_base_ids:
-                configs[kb_id] = {
-                    "maxCallsPerConversation": DEFAULT_MAX_CALLS_PER_CONVERSATION,
-                    "exemptCallsBeforeCheck": DEFAULT_EXEMPT_CALLS_BEFORE_CHECK,
-                    "name": f"KB-{kb_id}",
-                }
 
-        return configs
+            # Validate config
+            if exempt_calls >= max_calls:
+                logger.warning(
+                    f"[KnowledgeBaseTool] Invalid KB config for KB {first_kb_id}: "
+                    f"exempt_calls={exempt_calls} >= max_calls={max_calls}. Using defaults."
+                )
+                return (
+                    DEFAULT_MAX_CALLS_PER_CONVERSATION,
+                    DEFAULT_EXEMPT_CALLS_BEFORE_CHECK,
+                )
+
+            return max_calls, exempt_calls
+
+        # Fallback to defaults if no config injected
+        logger.debug("[KnowledgeBaseTool] No kb_configs injected, using default limits")
+        return DEFAULT_MAX_CALLS_PER_CONVERSATION, DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
 
     def _estimate_tokens_from_content(self, content: str) -> int:
         """Estimate tokens from text content.
@@ -336,11 +293,14 @@ class KnowledgeBaseTool(BaseTool):
         if not self.knowledge_base_ids:
             return "Unknown"
 
-        if self._kb_configs is None:
-            self._kb_configs = self._fetch_kb_configs()
-
         first_kb_id = self.knowledge_base_ids[0]
-        return self._kb_configs.get(first_kb_id, {}).get("name", f"KB-{first_kb_id}")
+
+        # Use injected config if available
+        if self.kb_configs:
+            return self.kb_configs.get(first_kb_id, {}).get("name", f"KB-{first_kb_id}")
+
+        # Fallback to ID-based name
+        return f"KB-{first_kb_id}"
 
     def _format_rejection_message(self, rejection_reason: str, max_calls: int) -> str:
         """Format rejection message based on reason.
