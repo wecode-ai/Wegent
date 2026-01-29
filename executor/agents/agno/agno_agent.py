@@ -40,7 +40,7 @@ db = SqliteDb(db_file="/tmp/agno_data.db")
 class SafeJSONEncoder(json.JSONEncoder):
     """Custom JSON encoder that handles non-serializable objects from agno library."""
 
-    def default(self, obj):
+    def default(self, obj: Any) -> Any:
         # Handle objects with __dict__ attribute
         if hasattr(obj, "__dict__"):
             return str(obj)
