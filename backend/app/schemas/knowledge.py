@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Import shared types from kind.py to avoid duplication
 from app.schemas.kind import (

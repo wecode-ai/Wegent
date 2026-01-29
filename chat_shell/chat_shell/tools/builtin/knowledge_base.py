@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from ..knowledge_content_cleaner import get_content_cleaner
 from ..knowledge_injection_strategy import InjectionMode, InjectionStrategy
@@ -98,15 +98,15 @@ class KnowledgeBaseTool(BaseTool):
     current_messages: List[Dict[str, Any]] = Field(default_factory=list)
 
     # Injection strategy instance (lazy initialized)
-    _injection_strategy: Optional[InjectionStrategy] = None
+    _injection_strategy: Optional[InjectionStrategy] = PrivateAttr(default=None)
 
     # Tool call limit tracking (per conversation)
     # These are instance variables that persist across multiple tool calls in the same conversation
-    _call_count: int = 0
-    _accumulated_tokens: int = 0
+    _call_count: int = PrivateAttr(default=0)
+    _accumulated_tokens: int = PrivateAttr(default=0)
 
     # Knowledge base call limit configuration (fetched from KB spec)
-    _kb_configs: Optional[Dict[int, Dict[str, Any]]] = None
+    _kb_configs: Optional[Dict[int, Dict[str, Any]]] = PrivateAttr(default=None)
 
     @property
     def injection_strategy(self) -> InjectionStrategy:
@@ -169,12 +169,12 @@ class KnowledgeBaseTool(BaseTool):
 
         try:
             # Try to import from backend if available (package mode)
-            from app.services.knowledge_service import KnowledgeService
+            from app.services.knowledge.knowledge_service import KnowledgeService
 
             for kb_id in self.knowledge_base_ids:
                 try:
                     kb_kind = KnowledgeService.get_knowledge_base(
-                        self.db_session, kb_id
+                        self.db_session, kb_id, self.user_id
                     )
                     if kb_kind:
                         spec = kb_kind.json.get("spec", {})
@@ -217,7 +217,9 @@ class KnowledgeBaseTool(BaseTool):
     def _estimate_tokens_from_content(self, content: str) -> int:
         """Estimate tokens from text content.
 
-        Uses the simple heuristic: ~4 characters per token.
+        Uses the simple heuristic: ~4 characters per token for ASCII text.
+        Note: This may underestimate for CJK (Chinese/Japanese/Korean) text
+        where the ratio is ~1-2 characters per token.
 
         Args:
             content: Text content
@@ -225,6 +227,8 @@ class KnowledgeBaseTool(BaseTool):
         Returns:
             Estimated token count
         """
+        # Simple heuristic - could be improved with tiktoken for better accuracy
+        # or by detecting CJK characters and adjusting the ratio
         return len(content) // 4
 
     def _check_call_limits(
@@ -252,7 +256,7 @@ class KnowledgeBaseTool(BaseTool):
             logger.warning(
                 "[KnowledgeBaseTool] Call REJECTED | Reason: max_calls_exceeded | "
                 "Call count: %d/%d | KB: %s",
-                self._call_count,
+                current_call,
                 max_calls,
                 kb_name,
             )
@@ -276,7 +280,7 @@ class KnowledgeBaseTool(BaseTool):
                 logger.warning(
                     "[KnowledgeBaseTool] Call REJECTED | Reason: token_limit_exceeded | "
                     "Call count: %d/%d | Token usage: %.1f%% | KB: %s",
-                    self._call_count,
+                    current_call,
                     max_calls,
                     usage_percent * 100,
                     kb_name,
@@ -394,7 +398,7 @@ class KnowledgeBaseTool(BaseTool):
         Returns:
             Formatted header string (prepended to search results)
         """
-        max_calls, _ = self._get_kb_limits()
+        max_calls, exempt_calls = self._get_kb_limits()
         current_call = self._call_count + 1  # After this call completes
 
         header = f"[Knowledge Base Search - Call {current_call}/{max_calls}]\n"
@@ -415,7 +419,7 @@ class KnowledgeBaseTool(BaseTool):
         elif warning_level == "normal":
             # Normal warning: Entered check period but token < 70%
             header += (
-                f"\n⚠️ Note: You are now in the check period (calls {self._get_kb_limits()[1] + 1}-{max_calls}). "
+                f"\n⚠️ Note: You are now in the check period (calls {exempt_calls + 1}-{max_calls}). "
                 f"Consider using the information you've already gathered before making additional searches.\n"
             )
 
@@ -462,7 +466,7 @@ class KnowledgeBaseTool(BaseTool):
                 )
 
             # Step 1: Check call limits BEFORE executing search
-            max_calls, exempt_calls = self._get_kb_limits()
+            max_calls, _exempt_calls = self._get_kb_limits()
             should_allow, rejection_reason, warning_level = self._check_call_limits(
                 query
             )
