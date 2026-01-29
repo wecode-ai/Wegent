@@ -13,20 +13,13 @@ agent execution.
 import asyncio
 import logging
 import os
-import platform
 import signal
-import sys
-from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from executor.config import config
-from executor.modes.local.events import (
-    LocalChatEvents,
-    LocalExecutorEvents,
-    LocalTaskEvents,
-)
+from executor.modes.local.events import ChatEvents, TaskEvents
 from executor.modes.local.handlers import TaskHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
 from executor.modes.local.progress_reporter import WebSocketProgressReporter
@@ -42,6 +35,7 @@ class LocalRunner:
 
     Features:
     - WebSocket connection to Backend for bidirectional communication
+    - Device-based registration with unique device_id
     - Task queue for serial task execution (one task at a time)
     - Heartbeat service for connection health monitoring
     - Graceful shutdown handling via SIGINT/SIGTERM
@@ -72,33 +66,16 @@ class LocalRunner:
         # File logging handler (for cleanup on shutdown)
         self._file_handler: Optional[logging.Handler] = None
 
-        # Setup signal handlers
-        self._setup_signal_handlers()
-
-    def _setup_signal_handlers(self) -> None:
-        """Setup signal handlers for graceful shutdown."""
-        # Note: Signal handlers in asyncio should be set in the main thread
-        # We'll handle this in start() method
-        pass
-
     def _handle_signal(self, signum: int, frame: Any) -> None:
-        """Handle shutdown signals.
-
-        Args:
-            signum: Signal number.
-            frame: Current stack frame.
-        """
+        """Handle shutdown signals."""
         signal_name = signal.Signals(signum).name
         logger.info(f"Received {signal_name}, initiating graceful shutdown...")
         self._running = False
-        # Set shutdown event to wake up any waiting coroutines
         if hasattr(self, "_shutdown_event"):
-            # Schedule the set in the event loop
             try:
                 loop = asyncio.get_running_loop()
                 loop.call_soon_threadsafe(self._shutdown_event.set)
             except RuntimeError:
-                # No running loop, just set it
                 self._shutdown_event.set()
 
     async def start(self) -> None:
@@ -109,11 +86,10 @@ class LocalRunner:
         2. Sets up signal handlers
         3. Creates workspace directory
         4. Connects to Backend WebSocket
-        5. Registers the executor
+        5. Registers the device
         6. Starts heartbeat service
         7. Runs the task processing loop
         """
-        # Setup file logging first so all subsequent logs go to file
         self._setup_file_logging()
 
         logger.info("Starting Local Executor Runner...")
@@ -134,7 +110,6 @@ class LocalRunner:
             try:
                 loop.add_signal_handler(sig, lambda s=sig: self._handle_signal(s, None))
             except NotImplementedError:
-                # Windows doesn't support add_signal_handler
                 signal.signal(sig, self._handle_signal)
 
         try:
@@ -156,8 +131,16 @@ class LocalRunner:
 
             logger.info("WebSocket connected to Backend")
 
-            # Register executor with Backend
-            await self._register()
+            # Register device with Backend (using call for acknowledgment)
+            registered = await self.websocket_client.register_device()
+            if not registered:
+                logger.error("Failed to register device with Backend")
+                return
+
+            logger.info(
+                f"Device registered: id={self.websocket_client.device_id}, "
+                f"name={self.websocket_client.device_name}"
+            )
 
             # Start heartbeat service
             await self.heartbeat_service.start()
@@ -177,81 +160,37 @@ class LocalRunner:
         # Stop heartbeat service
         await self.heartbeat_service.stop()
 
-        # Unregister from Backend
-        try:
-            await self._unregister()
-        except Exception as e:
-            logger.warning(f"Error during unregister: {e}")
-
         # Disconnect WebSocket
         await self.websocket_client.disconnect()
 
         logger.info("Local Executor Runner shutdown complete")
 
-        # Flush file logging handler to ensure all logs are written
+        # Flush file logging handler
         self._cleanup_file_logging()
 
     def _register_handlers(self) -> None:
         """Register WebSocket event handlers."""
-        # Task events
+        # Task events - use new event names
         self.websocket_client.on(
-            LocalTaskEvents.DISPATCH, self.task_handler.handle_task_dispatch
+            TaskEvents.EXECUTE, self.task_handler.handle_task_dispatch
         )
         self.websocket_client.on(
-            LocalTaskEvents.CANCEL, self.task_handler.handle_task_cancel
+            TaskEvents.CANCEL, self.task_handler.handle_task_cancel
         )
         self.websocket_client.on(
-            LocalChatEvents.MESSAGE, self.task_handler.handle_chat_message
+            ChatEvents.MESSAGE, self.task_handler.handle_chat_message
         )
-
-        # Note: Connection events (connect, disconnect, connect_error) are handled
-        # internally by websocket_client.py. Additional handlers can be added here
-        # but they must not try to emit before the internal handler sets _connected=True.
 
         logger.info("WebSocket event handlers registered")
 
-    async def _register(self) -> None:
-        """Register this executor with Backend."""
-        registration_data = {
-            "executor_type": "local",
-            "platform": sys.platform,
-            "arch": platform.machine(),
-            "capabilities": ["claude_code"],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "hostname": platform.node(),
-            "workspace_root": config.LOCAL_WORKSPACE_ROOT,
-        }
-
-        await self.websocket_client.emit(
-            LocalExecutorEvents.REGISTER, registration_data
-        )
-        logger.info(f"Registered local executor: {registration_data}")
-
-    async def _unregister(self) -> None:
-        """Unregister this executor from Backend."""
-        if self.websocket_client.connected:
-            await self.websocket_client.emit(
-                LocalExecutorEvents.UNREGISTER,
-                {"timestamp": datetime.now(timezone.utc).isoformat()},
-            )
-            logger.info("Unregistered local executor")
-
     async def enqueue_task(self, task_data: Dict[str, Any]) -> None:
-        """Add a task to the execution queue.
-
-        Args:
-            task_data: Task data from Backend.
-        """
+        """Add a task to the execution queue."""
         task_id = task_data.get("task_id", -1)
         logger.info(f"Enqueuing task: task_id={task_id}")
         await self.task_queue.put(task_data)
 
     async def cancel_task(self, task_id: int) -> None:
-        """Cancel a running task.
-
-        Args:
-            task_id: Task ID to cancel.
-        """
+        """Cancel a running task."""
         if self.current_task and self.current_task.get("task_id") == task_id:
             if self.current_agent and hasattr(self.current_agent, "cancel_run"):
                 self.current_agent.cancel_run()
@@ -264,15 +203,11 @@ class LocalRunner:
             logger.warning(f"Cannot cancel task {task_id}: not currently running")
 
     async def _task_loop(self) -> None:
-        """Main task processing loop.
-
-        Processes tasks from the queue one at a time (serial execution).
-        """
+        """Main task processing loop."""
         logger.info("Starting task processing loop")
 
         while self._running:
             try:
-                # Wait for task with timeout to allow shutdown check
                 try:
                     task_data = await asyncio.wait_for(
                         self.task_queue.get(), timeout=1.0
@@ -280,7 +215,6 @@ class LocalRunner:
                 except asyncio.TimeoutError:
                     continue
 
-                # Process the task
                 try:
                     self.current_task = task_data
                     await self._execute_task(task_data)
@@ -289,8 +223,6 @@ class LocalRunner:
                     logger.exception(
                         f"Task execution failed for task_id={task_id}: {e}"
                     )
-
-                    # Report failure via WebSocket
                     await self._report_task_failure(task_data, str(e))
                 finally:
                     self.current_task = None
@@ -304,16 +236,11 @@ class LocalRunner:
         logger.info("Task processing loop ended")
 
     async def _execute_task(self, task_data: Dict[str, Any]) -> None:
-        """Execute a single task.
-
-        Args:
-            task_data: Task data containing all necessary information.
-        """
+        """Execute a single task."""
         task_id = task_data.get("task_id", -1)
         subtask_id = task_data.get("subtask_id", -1)
         logger.info(f"Executing task: task_id={task_id}, subtask_id={subtask_id}")
 
-        # Import here to avoid circular imports
         from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 
         # Create progress reporter
@@ -325,14 +252,10 @@ class LocalRunner:
             subtask_title=task_data.get("subtask_title", ""),
         )
 
-        # Store progress reporter in task_data for agent use
         task_data["_local_progress_reporter"] = progress_reporter
 
         # Create and initialize agent
         self.current_agent = ClaudeCodeAgent(task_data)
-
-        # Override report_progress to use WebSocket
-        original_report_progress = self.current_agent.report_progress
 
         def websocket_report_progress(
             progress: int,
@@ -340,8 +263,6 @@ class LocalRunner:
             message: Optional[str] = None,
             result: Optional[Dict[str, Any]] = None,
         ) -> None:
-            """Report progress via WebSocket instead of HTTP callback."""
-            # Create coroutine and schedule it
             asyncio.create_task(
                 progress_reporter.report_progress(
                     progress=progress,
@@ -360,7 +281,7 @@ class LocalRunner:
             message="${{thinking.task_started}}",
         )
 
-        # Initialize agent (downloads skills, etc.)
+        # Initialize agent
         init_status = self.current_agent.initialize()
         if init_status != TaskStatus.SUCCESS:
             logger.error(f"Agent initialization failed: {init_status}")
@@ -371,7 +292,7 @@ class LocalRunner:
             )
             return
 
-        # Pre-execute (download code, attachments, etc.)
+        # Pre-execute
         pre_status = self.current_agent.pre_execute()
         if pre_status != TaskStatus.SUCCESS:
             logger.error(f"Agent pre-execution failed: {pre_status}")
@@ -386,7 +307,7 @@ class LocalRunner:
         result = await self.current_agent.execute_async()
         logger.info(f"Task execution completed: task_id={task_id}, result={result}")
 
-        # Get execution result from agent's state manager
+        # Get execution result
         execution_result = {}
         if (
             hasattr(self.current_agent, "state_manager")
@@ -395,7 +316,6 @@ class LocalRunner:
             execution_result = (
                 self.current_agent.state_manager.get_current_state() or {}
             )
-            # Log the complete execution result for debugging
             logger.info(f"Execution result for task_id={task_id}: {execution_result}")
 
         # Report final result
@@ -408,12 +328,7 @@ class LocalRunner:
     async def _report_task_failure(
         self, task_data: Dict[str, Any], error_message: str
     ) -> None:
-        """Report task failure via WebSocket.
-
-        Args:
-            task_data: Task data.
-            error_message: Error message.
-        """
+        """Report task failure via WebSocket."""
         task_id = task_data.get("task_id", -1)
         subtask_id = task_data.get("subtask_id", -1)
 
@@ -432,13 +347,8 @@ class LocalRunner:
         )
 
     def _setup_file_logging(self) -> None:
-        """Configure file logging for local mode.
-
-        Sets up a RotatingFileHandler to write logs to file with rotation.
-        Logs are written to WEGENT_EXECUTOR_LOG_DIR/WEGENT_EXECUTOR_LOG_FILE.
-        """
+        """Configure file logging for local mode."""
         try:
-            # Ensure log directory exists
             log_dir = config.WEGENT_EXECUTOR_LOG_DIR
             Path(log_dir).mkdir(parents=True, exist_ok=True)
 
@@ -446,7 +356,6 @@ class LocalRunner:
             max_bytes = config.WEGENT_EXECUTOR_LOG_MAX_SIZE * 1024 * 1024
             backup_count = config.WEGENT_EXECUTOR_LOG_BACKUP_COUNT
 
-            # Create rotating file handler
             file_handler = RotatingFileHandler(
                 log_file,
                 maxBytes=max_bytes,
@@ -454,27 +363,22 @@ class LocalRunner:
                 encoding="utf-8",
             )
 
-            # Use same format as shared logger
             formatter = logging.Formatter(
                 "%(asctime)s - [%(request_id)s] - [%(name)s] - %(levelname)s - %(message)s",
                 datefmt="%Y-%m-%d %H:%M:%S",
             )
             file_handler.setFormatter(formatter)
 
-            # Get log level from environment
             log_level = logging.INFO
             env_log_level = os.environ.get("LOG_LEVEL")
             if env_log_level and env_log_level.upper() == "DEBUG":
                 log_level = logging.DEBUG
             file_handler.setLevel(log_level)
 
-            # Add RequestIdFilter to file handler
             from shared.logger import RequestIdFilter
 
             file_handler.addFilter(RequestIdFilter())
 
-            # Add file handler to all relevant loggers (not root logger)
-            # because shared logger sets propagate=False
             logger_names = [
                 "local_runner",
                 "websocket_client",
@@ -488,10 +392,8 @@ class LocalRunner:
                 log = logging.getLogger(name)
                 log.addHandler(file_handler)
 
-            # Store reference for cleanup
             self._file_handler = file_handler
 
-            # Log startup info (this will go to both console and file)
             logger.info(f"File logging enabled: {log_file}")
             logger.info(
                 f"Log rotation: max {config.WEGENT_EXECUTOR_LOG_MAX_SIZE}MB, "
@@ -499,7 +401,6 @@ class LocalRunner:
             )
 
         except Exception as e:
-            # Don't fail startup if logging setup fails, just warn
             logger.warning(f"Failed to setup file logging: {e}")
 
     def _cleanup_file_logging(self) -> None:
@@ -508,5 +409,4 @@ class LocalRunner:
             try:
                 self._file_handler.flush()
             except Exception:
-                # Ignore errors during cleanup
                 pass

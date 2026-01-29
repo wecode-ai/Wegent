@@ -5,41 +5,31 @@
 """
 Event type definitions for local executor mode.
 
-All local executor events use 'local:' prefix to distinguish from other events.
+Protocol aligned with LocalDeviceClient for device-based communication.
 """
 
 
-class LocalExecutorEvents:
-    """Local Executor events for lifecycle management."""
+class DeviceEvents:
+    """Device lifecycle events."""
 
-    # Registration events
-    REGISTER = "local:executor:register"
-    UNREGISTER = "local:executor:unregister"
-    HEARTBEAT = "local:executor:heartbeat"
-
-    # Connection events
-    CONNECT = "connect"
-    DISCONNECT = "disconnect"
-    CONNECT_ERROR = "connect_error"
-    RECONNECT = "reconnect"
+    REGISTER = "device:register"
+    HEARTBEAT = "device:heartbeat"
 
 
-class LocalTaskEvents:
-    """Local Executor task events."""
+class TaskEvents:
+    """Task execution events."""
 
-    # Task lifecycle events
-    DISPATCH = "local:task:dispatch"
-    PROGRESS = "local:task:progress"
-    RESULT = "local:task:result"
-    CANCEL = "local:task:cancel"
+    EXECUTE = "task:execute"
+    PROGRESS = "task:progress"
+    RESULT = "task:result"
+    CANCEL = "task:cancel"
 
 
-class LocalChatEvents:
-    """Local Executor chat events for streaming messages."""
+class ChatEvents:
+    """Chat streaming events."""
 
-    # Chat events
-    MESSAGE = "local:chat:message"
-    CHUNK = "local:chat:chunk"
-    DONE = "local:chat:done"
-    START = "local:chat:start"
-    ERROR = "local:chat:error"
+    MESSAGE = "chat:message"
+    CHUNK = "chat:chunk"
+    DONE = "chat:done"
+    START = "chat:start"
+    ERROR = "chat:error"

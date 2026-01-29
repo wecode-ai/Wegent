@@ -5,13 +5,10 @@
 """
 Local Executor WebSocket namespace for local deployment mode.
 
-This namespace handles communication with local executor instances that connect
-via WebSocket instead of going through executor_manager.
-
-Used for local development and debugging of the local executor mode.
+This namespace handles communication with local executor devices that connect
+via WebSocket. Uses device-based protocol with device:register and device:heartbeat.
 """
 
-import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -22,31 +19,30 @@ logger = logging.getLogger(__name__)
 
 
 # Event names (matching executor/modes/local/events.py)
-class LocalExecutorEvents:
-    """Local Executor events for lifecycle management."""
+class DeviceEvents:
+    """Device lifecycle events."""
 
-    REGISTER = "local:executor:register"
-    UNREGISTER = "local:executor:unregister"
-    HEARTBEAT = "local:executor:heartbeat"
-
-
-class LocalTaskEvents:
-    """Local Executor task events."""
-
-    DISPATCH = "local:task:dispatch"
-    PROGRESS = "local:task:progress"
-    RESULT = "local:task:result"
-    CANCEL = "local:task:cancel"
+    REGISTER = "device:register"
+    HEARTBEAT = "device:heartbeat"
 
 
-class LocalChatEvents:
-    """Local Executor chat events for streaming messages."""
+class TaskEvents:
+    """Task execution events."""
 
-    MESSAGE = "local:chat:message"
-    CHUNK = "local:chat:chunk"
-    DONE = "local:chat:done"
-    START = "local:chat:start"
-    ERROR = "local:chat:error"
+    EXECUTE = "task:execute"
+    PROGRESS = "task:progress"
+    RESULT = "task:result"
+    CANCEL = "task:cancel"
+
+
+class ChatEvents:
+    """Chat streaming events."""
+
+    MESSAGE = "chat:message"
+    CHUNK = "chat:chunk"
+    DONE = "chat:done"
+    START = "chat:start"
+    ERROR = "chat:error"
 
 
 class LocalExecutorNamespace(socketio.AsyncNamespace):
@@ -54,47 +50,33 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
     Socket.IO namespace for local executor communication.
 
     Handles:
-    - Executor registration and heartbeat
+    - Device registration and heartbeat
     - Task dispatch to executor
     - Progress and result reporting from executor
     - Chat streaming events
-
-    This is a mock/debug implementation for local development.
     """
 
     def __init__(self, namespace: str = "/local-executor"):
         """Initialize the local executor namespace."""
         super().__init__(namespace)
-        # Track connected executors: sid -> executor_info
-        self._executors: Dict[str, Dict[str, Any]] = {}
+        # Track connected devices: sid -> device_info
+        self._devices: Dict[str, Dict[str, Any]] = {}
         # Track pending tasks waiting for executor
         self._pending_tasks: Dict[int, Dict[str, Any]] = {}
-        # Map colon-separated event names to handler methods
+        # Map event names to handler methods
         self._event_handlers: Dict[str, str] = {
-            LocalExecutorEvents.REGISTER: "on_executor_register",
-            LocalExecutorEvents.UNREGISTER: "on_executor_unregister",
-            LocalExecutorEvents.HEARTBEAT: "on_executor_heartbeat",
-            LocalTaskEvents.PROGRESS: "on_task_progress",
-            LocalTaskEvents.RESULT: "on_task_result",
-            LocalChatEvents.START: "on_chat_start",
-            LocalChatEvents.CHUNK: "on_chat_chunk",
-            LocalChatEvents.DONE: "on_chat_done",
-            LocalChatEvents.ERROR: "on_chat_error",
+            DeviceEvents.REGISTER: "on_device_register",
+            DeviceEvents.HEARTBEAT: "on_device_heartbeat",
+            TaskEvents.PROGRESS: "on_task_progress",
+            TaskEvents.RESULT: "on_task_result",
+            ChatEvents.START: "on_chat_start",
+            ChatEvents.CHUNK: "on_chat_chunk",
+            ChatEvents.DONE: "on_chat_done",
+            ChatEvents.ERROR: "on_chat_error",
         }
 
     async def trigger_event(self, event: str, sid: str, *args):
-        """
-        Override trigger_event to handle colon-separated event names.
-
-        Args:
-            event: Event name (e.g., 'local:executor:register')
-            sid: Socket ID
-            *args: Event arguments
-
-        Returns:
-            Result from the event handler
-        """
-        # Check if this is a colon-separated event we handle
+        """Override trigger_event to handle custom event names."""
         if event in self._event_handlers:
             handler_name = self._event_handlers[event]
             handler = getattr(self, handler_name, None)
@@ -104,24 +86,12 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
                 )
                 return await handler(sid, *args)
 
-        # Fall back to default behavior for other events (connect, disconnect, etc.)
         return await super().trigger_event(event, sid, *args)
 
     async def on_connect(self, sid: str, environ: dict, auth: Optional[dict] = None):
-        """
-        Handle executor connection.
-
-        Args:
-            sid: Socket ID
-            environ: WSGI environ dict
-            auth: Authentication data (expected: {"token": "..."})
-
-        Raises:
-            ConnectionRefusedError: If authentication fails
-        """
+        """Handle device connection."""
         logger.info(f"[LocalExecutor] Connection attempt sid={sid}")
 
-        # Validate auth token
         if not auth or not isinstance(auth, dict):
             logger.warning(f"[LocalExecutor] Missing auth data sid={sid}")
             raise ConnectionRefusedError("Missing authentication token")
@@ -131,119 +101,64 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
             logger.warning(f"[LocalExecutor] Missing token in auth sid={sid}")
             raise ConnectionRefusedError("Missing authentication token")
 
-        # For mock/debug purposes, accept any non-empty token
-        # In production, this should validate against WEGENT_AUTH_TOKEN
         logger.info(f"[LocalExecutor] Connected sid={sid}")
 
-        # Save session data
         await self.save_session(
             sid, {"auth_token": token, "connected_at": datetime.now().isoformat()}
         )
 
     async def on_disconnect(self, sid: str):
-        """
-        Handle executor disconnection.
-
-        Args:
-            sid: Socket ID
-        """
+        """Handle device disconnection."""
         logger.info(f"[LocalExecutor] Disconnected sid={sid}")
 
-        # Remove from executors registry
-        if sid in self._executors:
-            executor_info = self._executors.pop(sid)
+        if sid in self._devices:
+            device_info = self._devices.pop(sid)
             logger.info(
-                f"[LocalExecutor] Unregistered executor: {executor_info.get('executor_type', 'unknown')}"
+                f"[LocalExecutor] Unregistered device: {device_info.get('device_id', 'unknown')}"
             )
 
-    async def on_executor_register(self, sid: str, data: dict) -> dict:
-        """
-        Handle executor registration.
+    async def on_device_register(self, sid: str, data: dict) -> dict:
+        """Handle device registration (called via sio.call)."""
+        device_id = data.get("device_id")
+        device_name = data.get("name", "Unknown")
 
-        Args:
-            sid: Socket ID
-            data: Registration data containing executor info
+        logger.info(
+            f"[LocalExecutor] Device register: sid={sid}, device_id={device_id}, name={device_name}"
+        )
 
-        Returns:
-            {"success": true} or {"error": "..."}
-        """
-        logger.info(f"[LocalExecutor] Register request: sid={sid}, data={data}")
-
-        executor_info = {
+        device_info = {
             "sid": sid,
-            "executor_type": data.get("executor_type", "local"),
-            "platform": data.get("platform"),
-            "arch": data.get("arch"),
-            "version": data.get("version"),
-            "capabilities": data.get("capabilities", []),
-            "hostname": data.get("hostname"),
+            "device_id": device_id,
+            "name": device_name,
             "registered_at": datetime.now().isoformat(),
             "last_heartbeat": datetime.now().isoformat(),
+            "capabilities": ["claude_code"],  # Default capability
         }
 
-        self._executors[sid] = executor_info
-        logger.info(f"[LocalExecutor] Registered executor: {executor_info}")
+        self._devices[sid] = device_info
+        logger.info(f"[LocalExecutor] Registered device: {device_info}")
 
-        # Check if there are pending tasks to dispatch
+        # Check for pending tasks
         await self._dispatch_pending_tasks(sid)
 
         return {"success": True}
 
-    async def on_executor_unregister(self, sid: str, data: dict) -> dict:
-        """
-        Handle executor unregistration.
+    async def on_device_heartbeat(self, sid: str, data: dict) -> dict:
+        """Handle device heartbeat (called via sio.call)."""
+        device_id = data.get("device_id")
 
-        Args:
-            sid: Socket ID
-            data: Unregistration data
-
-        Returns:
-            {"success": true}
-        """
-        logger.info(f"[LocalExecutor] Unregister request: sid={sid}")
-
-        if sid in self._executors:
-            executor_info = self._executors.pop(sid)
-            logger.info(
-                f"[LocalExecutor] Unregistered executor: {executor_info.get('executor_type', 'unknown')}"
-            )
-
-        return {"success": True}
-
-    async def on_executor_heartbeat(self, sid: str, data: dict) -> dict:
-        """
-        Handle executor heartbeat.
-
-        Args:
-            sid: Socket ID
-            data: Heartbeat data containing timestamp and status
-
-        Returns:
-            {"success": true}
-        """
-        if sid in self._executors:
-            self._executors[sid]["last_heartbeat"] = datetime.now().isoformat()
-            logger.debug(
-                f"[LocalExecutor] Heartbeat received: sid={sid}, status={data.get('status')}"
-            )
+        if sid in self._devices:
+            self._devices[sid]["last_heartbeat"] = datetime.now().isoformat()
+            logger.debug(f"[LocalExecutor] Heartbeat received: device_id={device_id}")
+            return {"success": True}
         else:
             logger.warning(
-                f"[LocalExecutor] Heartbeat from unregistered executor: sid={sid}"
+                f"[LocalExecutor] Heartbeat from unregistered device: device_id={device_id}"
             )
-
-        return {"success": True}
+            return {"success": False, "error": "Device not registered"}
 
     async def on_task_progress(self, sid: str, data: dict) -> dict:
-        """
-        Handle task progress update from executor.
-
-        Args:
-            sid: Socket ID
-            data: Progress data containing task_id, subtask_id, progress, status, message
-
-        Returns:
-            {"success": true}
-        """
+        """Handle task progress update from executor."""
         task_id = data.get("task_id")
         subtask_id = data.get("subtask_id")
         progress = data.get("progress", 0)
@@ -255,7 +170,6 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
             f"progress={progress}%, status={status}, message={message}"
         )
 
-        # Forward to chat namespace for UI update
         await self._forward_to_chat_room(
             task_id,
             "task:status",
@@ -271,16 +185,7 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
         return {"success": True}
 
     async def on_task_result(self, sid: str, data: dict) -> dict:
-        """
-        Handle task result from executor.
-
-        Args:
-            sid: Socket ID
-            data: Result data containing task_id, subtask_id, status, result
-
-        Returns:
-            {"success": true}
-        """
+        """Handle task result from executor."""
         task_id = data.get("task_id")
         subtask_id = data.get("subtask_id")
         status = data.get("status")
@@ -292,10 +197,8 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
             f"status={status}, result_keys={list(result.keys()) if result else []}"
         )
 
-        # Update task/subtask status in database
         await self._update_task_status(task_id, subtask_id, status, result)
 
-        # Forward completion event to chat room
         await self._forward_to_chat_room(
             task_id,
             "chat:done",
@@ -310,16 +213,7 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
         return {"success": True}
 
     async def on_chat_start(self, sid: str, data: dict) -> dict:
-        """
-        Handle chat start event from executor.
-
-        Args:
-            sid: Socket ID
-            data: Start data containing task_id, subtask_id, model
-
-        Returns:
-            {"success": true}
-        """
+        """Handle chat start event from executor."""
         task_id = data.get("task_id")
         subtask_id = data.get("subtask_id")
         model = data.get("model", "")
@@ -328,7 +222,6 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
             f"[LocalExecutor] Chat start: task_id={task_id}, subtask_id={subtask_id}, model={model}"
         )
 
-        # Forward to chat room
         await self._forward_to_chat_room(
             task_id,
             "chat:start",
@@ -342,45 +235,25 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
         return {"success": True}
 
     async def on_chat_chunk(self, sid: str, data: dict) -> dict:
-        """
-        Handle streaming chat chunk from executor.
-
-        Args:
-            sid: Socket ID
-            data: Chunk data containing task_id, subtask_id, chunk
-
-        Returns:
-            {"success": true}
-        """
+        """Handle streaming chat chunk from executor."""
         task_id = data.get("task_id")
         subtask_id = data.get("subtask_id")
         chunk = data.get("chunk", "")
 
-        # Don't log every chunk to avoid spam
-        # Forward to chat room for streaming display
         await self._forward_to_chat_room(
             task_id,
             "chat:chunk",
             {
                 "subtask_id": subtask_id,
                 "content": chunk,
-                "offset": 0,  # Will be calculated by frontend
+                "offset": 0,
             },
         )
 
         return {"success": True}
 
     async def on_chat_done(self, sid: str, data: dict) -> dict:
-        """
-        Handle chat done event from executor.
-
-        Args:
-            sid: Socket ID
-            data: Done data containing task_id, subtask_id, content, usage
-
-        Returns:
-            {"success": true}
-        """
+        """Handle chat done event from executor."""
         task_id = data.get("task_id")
         subtask_id = data.get("subtask_id")
         content = data.get("content", "")
@@ -391,7 +264,6 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
             f"content_len={len(content)}, usage={usage}"
         )
 
-        # Forward to chat room
         await self._forward_to_chat_room(
             task_id,
             "chat:done",
@@ -408,16 +280,7 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
         return {"success": True}
 
     async def on_chat_error(self, sid: str, data: dict) -> dict:
-        """
-        Handle chat error event from executor.
-
-        Args:
-            sid: Socket ID
-            data: Error data containing task_id, subtask_id, error
-
-        Returns:
-            {"success": true}
-        """
+        """Handle chat error event from executor."""
         task_id = data.get("task_id")
         subtask_id = data.get("subtask_id")
         error = data.get("error", "Unknown error")
@@ -426,7 +289,6 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
             f"[LocalExecutor] Chat error: task_id={task_id}, subtask_id={subtask_id}, error={error}"
         )
 
-        # Forward to chat room
         await self._forward_to_chat_room(
             task_id,
             "chat:error",
@@ -439,53 +301,33 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
         return {"success": True}
 
     # ============================================================
-    # Task Dispatch Methods (called by Backend to send tasks to executor)
+    # Task Dispatch Methods
     # ============================================================
 
     async def dispatch_task(self, task_data: dict) -> bool:
-        """
-        Dispatch a task to a connected local executor.
-
-        Args:
-            task_data: Task data to send to executor
-
-        Returns:
-            True if dispatched successfully, False otherwise
-        """
+        """Dispatch a task to a connected device."""
         task_id = task_data.get("task_id")
 
-        # Find an available executor
-        for sid, executor_info in self._executors.items():
-            # Check if executor supports the required capability
-            capabilities = executor_info.get("capabilities", [])
+        for sid, device_info in self._devices.items():
+            capabilities = device_info.get("capabilities", [])
             if "claude_code" in capabilities:
                 logger.info(
-                    f"[LocalExecutor] Dispatching task {task_id} to executor sid={sid}"
+                    f"[LocalExecutor] Dispatching task {task_id} to device "
+                    f"{device_info.get('device_id')} (sid={sid})"
                 )
-
-                await self.emit(LocalTaskEvents.DISPATCH, task_data, to=sid)
+                await self.emit(TaskEvents.EXECUTE, task_data, to=sid)
                 return True
 
-        # No executor available, queue the task
         logger.warning(
-            f"[LocalExecutor] No executor available for task {task_id}, queueing"
+            f"[LocalExecutor] No device available for task {task_id}, queueing"
         )
         self._pending_tasks[task_id] = task_data
         return False
 
     async def cancel_task(self, task_id: int) -> bool:
-        """
-        Send cancel request to executor.
-
-        Args:
-            task_id: Task ID to cancel
-
-        Returns:
-            True if cancel request sent, False otherwise
-        """
-        # Broadcast cancel to all executors (they will check if they're running this task)
-        for sid in self._executors.keys():
-            await self.emit(LocalTaskEvents.CANCEL, {"task_id": task_id}, to=sid)
+        """Send cancel request to devices."""
+        for sid in self._devices.keys():
+            await self.emit(TaskEvents.CANCEL, {"task_id": task_id}, to=sid)
 
         logger.info(f"[LocalExecutor] Cancel request sent for task {task_id}")
         return True
@@ -495,35 +337,23 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
     # ============================================================
 
     async def _dispatch_pending_tasks(self, sid: str) -> None:
-        """
-        Dispatch pending tasks to newly connected executor.
-
-        Args:
-            sid: Socket ID of the new executor
-        """
+        """Dispatch pending tasks to newly connected device."""
         if not self._pending_tasks:
             return
 
-        executor_info = self._executors.get(sid, {})
-        capabilities = executor_info.get("capabilities", [])
+        device_info = self._devices.get(sid, {})
+        capabilities = device_info.get("capabilities", [])
 
         for task_id, task_data in list(self._pending_tasks.items()):
             if "claude_code" in capabilities:
                 logger.info(
-                    f"[LocalExecutor] Dispatching pending task {task_id} to executor sid={sid}"
+                    f"[LocalExecutor] Dispatching pending task {task_id} to device sid={sid}"
                 )
-                await self.emit(LocalTaskEvents.DISPATCH, task_data, to=sid)
+                await self.emit(TaskEvents.EXECUTE, task_data, to=sid)
                 del self._pending_tasks[task_id]
 
     async def _forward_to_chat_room(self, task_id: int, event: str, data: dict) -> None:
-        """
-        Forward event to the chat room for task.
-
-        Args:
-            task_id: Task ID
-            event: Event name
-            data: Event data
-        """
+        """Forward event to the chat room for task."""
         from app.core.socketio import get_sio
 
         sio = get_sio()
@@ -538,23 +368,13 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
     async def _update_task_status(
         self, task_id: int, subtask_id: int, status: str, result: dict
     ) -> None:
-        """
-        Update task and subtask status in database.
-
-        Args:
-            task_id: Task ID
-            subtask_id: Subtask ID
-            status: Status string
-            result: Result data
-        """
-        # Import here to avoid circular imports
+        """Update task and subtask status in database."""
         from app.db.session import SessionLocal
         from app.models.subtask import Subtask, SubtaskStatus
         from app.models.task import TaskResource
 
         db = SessionLocal()
         try:
-            # Update subtask
             subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
             if subtask:
                 if status in ["completed", "success", "SUCCESS", "COMPLETED"]:
@@ -566,7 +386,6 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
                 subtask.completed_at = datetime.now()
                 subtask.updated_at = datetime.now()
 
-            # Update task
             task = (
                 db.query(TaskResource)
                 .filter(TaskResource.id == task_id, TaskResource.kind == "Task")
@@ -599,37 +418,19 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
         finally:
             db.close()
 
-    def get_connected_executors(self) -> list:
-        """
-        Get list of connected executors.
-
-        Returns:
-            List of executor info dicts
-        """
-        return list(self._executors.values())
+    def get_connected_devices(self) -> list:
+        """Get list of connected devices."""
+        return list(self._devices.values())
 
     async def dispatch_test_task(self, prompt: str, model_env: dict = None) -> dict:
-        """
-        Dispatch a test task to a connected local executor.
-
-        This is a convenience method for testing the local executor flow.
-
-        Args:
-            prompt: The task prompt to send
-            model_env: Optional environment variables for the model (e.g., ANTHROPIC_API_KEY)
-
-        Returns:
-            {"success": True, "task_id": ..., "executor_sid": ...} or {"success": False, "error": ...}
-        """
+        """Dispatch a test task to a connected device."""
         import time
 
-        # Generate test task IDs
         task_id = int(time.time() * 1000) % 1000000
         subtask_id = task_id + 1
 
-        # Create minimal bot configuration for ClaudeCode
         bot_config = {
-            "id": 1,  # Add id for session key
+            "id": 1,
             "name": "test-bot",
             "shell": {"shellType": "ClaudeCode"},
             "ghost": {
@@ -640,14 +441,13 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
             },
         }
 
-        # Create test task data
         task_data = {
             "task_id": task_id,
             "subtask_id": subtask_id,
             "task_title": "Test Task",
             "subtask_title": "Test Subtask",
             "prompt": prompt,
-            "bot": [bot_config],  # bot should be a list
+            "bot": [bot_config],
             "team": {"name": "test-team", "members": [bot_config]},
             "git_url": "",
             "branch_name": "",
@@ -655,29 +455,27 @@ class LocalExecutorNamespace(socketio.AsyncNamespace):
             "auth_token": "test-token",
         }
 
-        # Try to dispatch
         dispatched = await self.dispatch_task(task_data)
 
         if dispatched:
-            # Find the executor that received the task
-            executor_sid = None
-            for sid, info in self._executors.items():
+            device_sid = None
+            for sid, info in self._devices.items():
                 if "claude_code" in info.get("capabilities", []):
-                    executor_sid = sid
+                    device_sid = sid
                     break
 
             return {
                 "success": True,
                 "task_id": task_id,
                 "subtask_id": subtask_id,
-                "executor_sid": executor_sid,
-                "message": f"Task dispatched to executor {executor_sid}",
+                "device_sid": device_sid,
+                "message": f"Task dispatched to device {device_sid}",
             }
         else:
             return {
                 "success": False,
                 "task_id": task_id,
-                "error": "No executor available, task queued",
+                "error": "No device available, task queued",
                 "pending_tasks": len(self._pending_tasks),
             }
 
@@ -692,12 +490,7 @@ def get_local_executor_namespace() -> Optional[LocalExecutorNamespace]:
 
 
 def register_local_executor_namespace(sio: socketio.AsyncServer) -> None:
-    """
-    Register the local executor namespace with the Socket.IO server.
-
-    Args:
-        sio: Socket.IO server instance
-    """
+    """Register the local executor namespace with the Socket.IO server."""
     global _local_executor_namespace
     _local_executor_namespace = LocalExecutorNamespace("/local-executor")
     sio.register_namespace(_local_executor_namespace)

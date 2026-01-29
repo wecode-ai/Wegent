@@ -1450,7 +1450,7 @@ class ClaudeCodeAgent(Agent):
             # Attachments should be stored in WORKSPACE_ROOT/task_id, not in the project path
             # This ensures attachments are accessible at /workspace/{task_id}:executor:attachments/...
             # instead of /workspace/{task_id}/{repo_name}/{task_id}:executor:attachments/...
-            workspace = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
+            workspace = os.path.join(config.get_workspace_root(), str(self.task_id))
 
             # Import and use attachment downloader
             from executor.services.attachment_downloader import AttachmentDownloader

@@ -12,7 +12,7 @@ used in Docker mode.
 
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from executor.modes.local.events import LocalChatEvents, LocalTaskEvents
+from executor.modes.local.events import ChatEvents, TaskEvents
 from shared.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -68,7 +68,7 @@ class WebSocketProgressReporter:
         """
         try:
             await self.client.emit(
-                LocalTaskEvents.PROGRESS,
+                TaskEvents.PROGRESS,
                 {
                     "task_id": self.task_id,
                     "subtask_id": self.subtask_id,
@@ -103,18 +103,17 @@ class WebSocketProgressReporter:
             Exception: If the emit fails, re-raised after logging.
         """
         try:
-            await self.client.emit(
-                LocalTaskEvents.RESULT,
-                {
-                    "task_id": self.task_id,
-                    "subtask_id": self.subtask_id,
-                    "task_title": self.task_title,
-                    "subtask_title": self.subtask_title,
-                    "status": status,
-                    "result": result,
-                    "message": message,
-                },
-            )
+            data = {
+                "task_id": self.task_id,
+                "subtask_id": self.subtask_id,
+                "task_title": self.task_title,
+                "subtask_title": self.subtask_title,
+                "status": status,
+                "result": result,
+                "message": message,
+            }
+            logger.info(f"Reporting result: {data}")
+            await self.client.emit(TaskEvents.RESULT, data)
             logger.info(f"Result reported: task_id={self.task_id}, status={status}")
         except Exception as e:
             logger.exception(f"Failed to report result for task {self.task_id}: {e}")
@@ -133,7 +132,7 @@ class WebSocketProgressReporter:
         """
         try:
             await self.client.emit(
-                LocalChatEvents.START,
+                ChatEvents.START,
                 {
                     "task_id": self.task_id,
                     "subtask_id": self.subtask_id,
@@ -158,7 +157,7 @@ class WebSocketProgressReporter:
         """
         try:
             await self.client.emit(
-                LocalChatEvents.CHUNK,
+                ChatEvents.CHUNK,
                 {
                     "task_id": self.task_id,
                     "subtask_id": self.subtask_id,
@@ -185,7 +184,7 @@ class WebSocketProgressReporter:
         """
         try:
             await self.client.emit(
-                LocalChatEvents.DONE,
+                ChatEvents.DONE,
                 {
                     "task_id": self.task_id,
                     "subtask_id": self.subtask_id,
@@ -211,7 +210,7 @@ class WebSocketProgressReporter:
         """
         try:
             await self.client.emit(
-                LocalChatEvents.ERROR,
+                ChatEvents.ERROR,
                 {
                     "task_id": self.task_id,
                     "subtask_id": self.subtask_id,
