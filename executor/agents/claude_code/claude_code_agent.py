@@ -26,6 +26,7 @@ from executor.agents.base import Agent
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
 from executor.agents.claude_code.response_processor import process_response
 from executor.config import config
+from executor.services.attachment_downloader import get_api_base_url
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
 from executor.utils.mcp_utils import (
@@ -36,7 +37,12 @@ from shared.logger import setup_logger
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
-from shared.utils.crypto import decrypt_git_token, is_token_encrypted
+from shared.utils.crypto import (
+    decrypt_git_token,
+    decrypt_sensitive_data,
+    is_data_encrypted,
+    is_token_encrypted,
+)
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = setup_logger("claude_code_agent")
@@ -197,6 +203,10 @@ class ClaudeCodeAgent(Agent):
         # Silent exit tracking for subscription tasks
         self.is_silent_exit: bool = False
         self.silent_exit_reason: str = ""
+
+        # Config directory and env config for Local mode (populated in initialize())
+        self._claude_config_dir: str = ""
+        self._claude_env_config: Dict[str, Any] = {}
 
     def _set_git_env_variables(self, task_data: Dict[str, Any]) -> None:
         """
@@ -487,7 +497,7 @@ class ClaudeCodeAgent(Agent):
     def initialize(self) -> TaskStatus:
         """
         Initialize the Claude Code Agent with configuration from task_data.
-        Saves the bot configuration to ~/.claude/settings.json if available.
+        Generates config files to task workspace directory and passes via settings parameter.
 
         Returns:
             TaskStatus: Initialization status
@@ -512,34 +522,8 @@ class ClaudeCodeAgent(Agent):
                     bot_config, user_name=user_name, git_url=git_url
                 )
                 if agent_config:
-                    # Ensure ~/.claude directory exists
-                    claude_dir = os.path.expanduser("~/.claude")
-                    Path(claude_dir).mkdir(parents=True, exist_ok=True)
-
-                    # Save config to settings.json
-                    settings_path = os.path.join(claude_dir, "settings.json")
-                    with open(settings_path, "w") as f:
-                        json.dump(agent_config, f, indent=2)
-                    logger.info(f"Saved Claude Code settings to {settings_path}")
-
-                    # Save claude.json config
-                    claude_json_path = os.path.expanduser("~/.claude.json")
-                    claude_json_config = {
-                        "numStartups": 2,
-                        "installMethod": "unknown",
-                        "autoUpdates": True,
-                        "sonnet45MigrationComplete": True,
-                        "userID": _generate_claude_code_user_id(),
-                        "hasCompletedOnboarding": True,
-                        "lastOnboardingVersion": "2.0.14",
-                        "bypassPermissionsModeAccepted": True,
-                        "hasOpusPlanDefault": False,
-                        "lastReleaseNotesSeen": "2.0.14",
-                        "isQualifiedForDataSharing": False,
-                    }
-                    with open(claude_json_path, "w") as f:
-                        json.dump(claude_json_config, f, indent=2)
-                    logger.info(f"Saved Claude Code config to {claude_json_path}")
+                    # Generate config files to task workspace directory
+                    self._save_claude_config_files(agent_config)
 
                     # Download and deploy Skills if configured
                     self._download_and_deploy_skills(bot_config)
@@ -553,6 +537,103 @@ class ClaudeCodeAgent(Agent):
                 title_key="thinking.initialize_failed", report_immediately=False
             )
             return TaskStatus.FAILED
+
+    def _save_claude_config_files(self, agent_config: Dict[str, Any]) -> None:
+        """
+        Save Claude config files to appropriate directory based on execution mode.
+
+        - Docker mode: saves to ~/.claude/ (SDK reads from default location)
+        - Local mode: saves to task workspace directory, file path passed via
+          SDK's 'settings' parameter in _create_and_connect_client() to avoid
+          modifying user's personal ~/.claude/ config
+
+        Args:
+            agent_config: The agent configuration dictionary
+        """
+        # Determine config directory based on mode
+        if config.EXECUTOR_MODE == "local":
+            # Local mode: save to task workspace directory (avoid modifying user's ~/.claude/)
+            config_dir = os.path.join(
+                config.get_workspace_root(), str(self.task_id), ".claude"
+            )
+            claude_json_path = os.path.join(config_dir, "claude.json")
+        else:
+            # Docker mode: save to user's ~/.claude directory (original behavior)
+            config_dir = os.path.expanduser("~/.claude")
+            claude_json_path = os.path.expanduser("~/.claude.json")
+
+        Path(config_dir).mkdir(parents=True, exist_ok=True)
+
+        # Save settings.json
+        settings_path = os.path.join(config_dir, "settings.json")
+        with open(settings_path, "w") as f:
+            json.dump(agent_config, f, indent=2)
+        logger.info(f"Saved Claude Code settings to {settings_path}")
+
+        # Save claude.json config (user preferences)
+        claude_json_config = {
+            "numStartups": 2,
+            "installMethod": "unknown",
+            "autoUpdates": True,
+            "sonnet45MigrationComplete": True,
+            "userID": _generate_claude_code_user_id(),
+            "hasCompletedOnboarding": True,
+            "lastOnboardingVersion": "2.0.14",
+            "bypassPermissionsModeAccepted": True,
+            "hasOpusPlanDefault": False,
+            "lastReleaseNotesSeen": "2.0.14",
+            "isQualifiedForDataSharing": False,
+        }
+        with open(claude_json_path, "w") as f:
+            json.dump(claude_json_config, f, indent=2)
+        logger.info(f"Saved Claude Code config to {claude_json_path}")
+
+        # Store config directory for Local mode
+        self._claude_config_dir = config_dir
+        self._claude_env_config = agent_config.get("env", {})
+
+    def _resolve_env_value(self, value: str) -> str:
+        """Resolve a value that may be an environment variable template or encrypted.
+
+        Handles different formats:
+        1. ${VAR_NAME} - environment variable template, replace with os.environ value
+        2. Encrypted value - decrypt using decrypt_sensitive_data
+        3. Plain value - use as-is
+
+        Args:
+            value: The value to resolve
+
+        Returns:
+            The resolved value
+        """
+        import re
+
+        if not value:
+            return value
+
+        # Check for ${VAR_NAME} pattern and replace with env var
+        env_var_pattern = r"^\$\{([^}]+)\}$"
+        match = re.match(env_var_pattern, value)
+        if match:
+            var_name = match.group(1)
+            resolved = os.environ.get(var_name, "")
+            if resolved:
+                logger.info(f"Resolved env var ${{{var_name}}} from environment")
+            else:
+                logger.warning(f"Environment variable {var_name} not found")
+            return resolved
+
+        # Check if encrypted and decrypt
+        if is_data_encrypted(value):
+            decrypted = decrypt_sensitive_data(value)
+            if decrypted:
+                logger.info("Decrypted sensitive data")
+                return decrypted
+            logger.warning("Failed to decrypt sensitive data")
+            return ""
+
+        # Return as-is
+        return value
 
     def _create_claude_model(
         self, bot_config: Dict[str, Any], user_name: str = None, git_url: str = None
@@ -568,12 +649,19 @@ class ClaudeCodeAgent(Agent):
 
         model_id = env.get("model_id", "")
 
+        # Extract API key and handle different formats:
+        # 1. ${VAR_NAME} - environment variable template, replace with os.environ value
+        # 2. Encrypted value - decrypt using decrypt_sensitive_data
+        # 3. Plain value - use as-is
+        api_key = env.get("api_key", "")
+        api_key = self._resolve_env_value(api_key)
+
         # Note: ANTHROPIC_SMALL_FAST_MODEL is deprecated in favor of ANTHROPIC_DEFAULT_HAIKU_MODEL.
         env_config = {
             "ANTHROPIC_MODEL": model_id,
             "ANTHROPIC_SMALL_FAST_MODEL": env.get("small_model", model_id),
             "ANTHROPIC_DEFAULT_HAIKU_MODEL": env.get("small_model", model_id),
-            "ANTHROPIC_AUTH_TOKEN": env.get("api_key", ""),
+            "ANTHROPIC_AUTH_TOKEN": api_key,
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": int(
                 os.getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "0")
             ),
@@ -1032,6 +1120,8 @@ class ClaudeCodeAgent(Agent):
         Create and connect a new Claude SDK client.
         Sets up the working directory if needed, creates the client with options,
         connects it, and stores it in the cache.
+
+        Config files are generated in initialize() and passed via 'settings' parameter.
         """
         logger.info(f"Creating new Claude client for session_id: {self.session_id}")
         logger.info(
@@ -1040,9 +1130,27 @@ class ClaudeCodeAgent(Agent):
 
         # Ensure working directory exists
         if self.options.get("cwd") is None or self.options.get("cwd") == "":
-            cwd = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
+            cwd = os.path.join(config.get_workspace_root(), str(self.task_id))
             os.makedirs(cwd, exist_ok=True)
             self.options["cwd"] = cwd
+
+        # In Local mode, configure SDK to use task-specific config directory
+        # to avoid modifying user's personal ~/.claude/ config
+        if config.EXECUTOR_MODE == "local" and self._claude_config_dir:
+            # Pass env config (contains ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL, etc.)
+            if self._claude_env_config:
+                existing_env = self.options.get("env", {})
+                merged_env = {**existing_env, **self._claude_env_config}
+                self.options["env"] = {k: str(v) for k, v in merged_env.items()}
+
+            # Set CLAUDE_CONFIG_DIR env var to redirect all config reads/writes
+            # This affects settings.json, claude.json, and skills locations
+            # Note: Keep setting_sources as ["user", "project", "local"] so SDK
+            # reads config from CLAUDE_CONFIG_DIR instead of default ~/.claude/
+            env = self.options.get("env", {})
+            env["CLAUDE_CONFIG_DIR"] = self._claude_config_dir
+            self.options["env"] = env
+            logger.info(f"Local mode: using config dir {self._claude_config_dir}")
 
         # Create client with options
         if self.options:
@@ -1304,8 +1412,6 @@ class ClaudeCodeAgent(Agent):
             custom_rules: Dictionary of {file_path: content} for custom instruction files
         """
         try:
-            import shutil
-
             claudecode_dir = os.path.join(project_path, ".claudecode")
 
             # Create .claudecode directory if it doesn't exist
@@ -1450,7 +1556,7 @@ class ClaudeCodeAgent(Agent):
             # Attachments should be stored in WORKSPACE_ROOT/task_id, not in the project path
             # This ensures attachments are accessible at /workspace/{task_id}:executor:attachments/...
             # instead of /workspace/{task_id}/{repo_name}/{task_id}:executor:attachments/...
-            workspace = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
+            workspace = os.path.join(config.get_workspace_root(), str(self.task_id))
 
             # Import and use attachment downloader
             from executor.services.attachment_downloader import AttachmentDownloader
@@ -1514,7 +1620,11 @@ class ClaudeCodeAgent(Agent):
 
     def _download_and_deploy_skills(self, bot_config: Dict[str, Any]) -> None:
         """
-        Download Skills from Backend API and deploy to ~/.claude/skills/.
+        Download Skills from Backend API and deploy to skills directory.
+
+        - Docker mode: deploys to ~/.claude/skills/
+        - Local mode: deploys to task config directory (same as CLAUDE_CONFIG_DIR)
+          to avoid modifying user's personal skills
 
         Args:
             bot_config: Bot configuration containing skills list
@@ -1528,29 +1638,70 @@ class ClaudeCodeAgent(Agent):
 
             logger.info(f"Found {len(skills)} skills to deploy: {skills}")
 
-            # Prepare skills directory
-            skills_dir = os.path.expanduser("~/.claude/skills")
+            # Determine skills directory based on mode
+            if config.EXECUTOR_MODE == "local" and hasattr(self, "_claude_config_dir"):
+                # Local mode: use task config directory (follows CLAUDE_CONFIG_DIR)
+                skills_dir = os.path.join(self._claude_config_dir, "skills")
+            else:
+                # Docker mode: use default ~/.claude/skills
+                skills_dir = os.path.expanduser("~/.claude/skills")
 
-            # Clear existing skills directory
-            if os.path.exists(skills_dir):
-                import shutil
+            # In Local mode, only download missing skills (don't delete existing ones)
+            if config.EXECUTOR_MODE == "local":
+                # Filter out skills that already exist locally
+                missing_skills = []
+                for skill_name in skills:
+                    skill_path = os.path.join(skills_dir, skill_name)
+                    if os.path.exists(skill_path):
+                        logger.info(
+                            f"Local mode: skill '{skill_name}' already exists, skipping"
+                        )
+                    else:
+                        missing_skills.append(skill_name)
 
-                shutil.rmtree(skills_dir)
-                logger.info(f"Cleared existing skills directory: {skills_dir}")
+                if not missing_skills:
+                    logger.info("Local mode: all required skills already exist locally")
+                    return
+
+                logger.info(
+                    f"Local mode: need to download {len(missing_skills)} missing skills: {missing_skills}"
+                )
+                skills = missing_skills  # Only download missing skills
+            else:
+                # Docker mode: Handle skills directory based on SKILL_CLEAR_CACHE config
+                if config.SKILL_CLEAR_CACHE:
+                    # Clear existing skills directory (default behavior)
+                    if os.path.exists(skills_dir):
+                        import shutil
+
+                        shutil.rmtree(skills_dir)
+                        logger.info(f"Cleared existing skills directory: {skills_dir}")
+                else:
+                    # Only clear skills that will be replaced
+                    logger.info(
+                        f"Skill cache mode enabled, will only replace existing skills"
+                    )
+                    for skill_name in skills:
+                        skill_path = os.path.join(skills_dir, skill_name)
+                        if os.path.exists(skill_path):
+                            import shutil
+
+                            shutil.rmtree(skill_path)
+                            logger.info(
+                                f"Removed existing skill for replacement: {skill_name}"
+                            )
 
             Path(skills_dir).mkdir(parents=True, exist_ok=True)
 
-            # Get API base URL and auth token from task_data
-            api_base_url = os.getenv(
-                "TASK_API_DOMAIN", "http://wegent-backend:8000"
-            ).rstrip("/")
+            # Get API base URL (handles local vs docker mode) and auth token
+            api_base_url = get_api_base_url()
             auth_token = self.task_data.get("auth_token")
 
             if not auth_token:
                 logger.warning("No auth token available, cannot download skills")
                 return
 
-            logger.info(f"Auth token available for skills download")
+            logger.info(f"Skills download: api_base_url={api_base_url}")
 
             # Download each skill
             import io
@@ -1688,7 +1839,7 @@ class ClaudeCodeAgent(Agent):
         target_path = self.project_path or self.options.get("cwd")
         if not target_path:
             # Create default workspace directory
-            target_path = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
+            target_path = os.path.join(config.get_workspace_root(), str(self.task_id))
             os.makedirs(target_path, exist_ok=True)
             # Also update options["cwd"] so Claude Code uses this directory
             self.options["cwd"] = target_path

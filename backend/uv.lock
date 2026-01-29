@@ -1051,6 +1051,19 @@ wheels = [
 ]
 
 [[package]]
+name = "dingtalk-stream"
+version = "0.24.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "requests" },
+    { name = "websockets" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4c/44/102dede3f371277598df6aa9725b82e3add068c729333c7a5dbc12764579/dingtalk_stream-0.24.3-py3-none-any.whl", hash = "sha256:2160403656985962878bf60cdf5adf41619f21067348e06f07a7c7eebf5943ad", size = 27813, upload-time = "2025-10-24T09:36:57.497Z" },
+]
+
+[[package]]
 name = "dirtyjson"
 version = "1.0.8"
 source = { registry = "https://pypi.org/simple" }
@@ -5679,6 +5692,7 @@ dependencies = [
     { name = "crawl4ai" },
     { name = "croniter" },
     { name = "cryptography" },
+    { name = "dingtalk-stream" },
     { name = "docx2txt" },
     { name = "email-validator" },
     { name = "emoji" },
@@ -5776,6 +5790,7 @@ requires-dist = [
     { name = "crawl4ai", specifier = ">=0.4.0" },
     { name = "croniter", specifier = ">=2.0.0" },
     { name = "cryptography", specifier = ">=42.0.4" },
+    { name = "dingtalk-stream", specifier = ">=0.24.0" },
     { name = "docx2txt", specifier = ">=0.8" },
     { name = "email-validator", specifier = ">=2.0.0" },
     { name = "emoji", specifier = ">=2.9.0" },

@@ -140,7 +140,7 @@ export interface Team {
   agent_type?: string // agno, claude, dify, etc.
   is_mix_team?: boolean // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
   recommended_mode?: 'chat' | 'code' | 'both' // Recommended usage mode (for QuickAccess)
-  bind_mode?: ('chat' | 'code' | 'knowledge')[] // Allowed modes for this team
+  bind_mode?: ('chat' | 'code' | 'knowledge' | 'task')[] // Allowed modes for this team
   icon?: string // Icon ID from preset icon library
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
   user?: {
@@ -174,7 +174,7 @@ export type TaskStatus =
   | 'CANCELLING'
   | 'DELETE'
   | 'PENDING_CONFIRMATION' // Pipeline stage completed, waiting for user confirmation
-export type TaskType = 'chat' | 'code' | 'knowledge'
+export type TaskType = 'chat' | 'code' | 'knowledge' | 'task'
 
 // Git commit statistics
 interface CommitStats {
@@ -585,6 +585,7 @@ export interface DefaultTeamsResponse {
   chat: DefaultTeamConfig | null
   code: DefaultTeamConfig | null
   knowledge: DefaultTeamConfig | null
+  task: DefaultTeamConfig | null
 }
 
 export interface SystemConfigResponse {

@@ -808,6 +808,55 @@ class RetrieverList(BaseModel):
     items: List[Retriever]
 
 
+# Device CRD schemas
+class DeviceSpec(BaseModel):
+    """Device specification for local device registration"""
+
+    deviceId: str = Field(
+        ...,
+        description="Device unique identifier (self-generated, e.g., MAC/UUID)",
+    )
+    displayName: Optional[str] = Field(
+        None,
+        description="Human-readable device name",
+    )
+    isDefault: bool = Field(
+        default=False,
+        description="Whether this is the default device for the user",
+    )
+    capabilities: Optional[List[str]] = Field(
+        None,
+        description="Device capabilities/tags (e.g., 'gpu', 'high-memory')",
+    )
+
+
+class DeviceStatus(Status):
+    """Device status"""
+
+    state: str = "Available"  # Available, Unavailable
+    online: bool = False  # Derived from Redis at query time
+    deviceStatus: str = "offline"  # online, offline, busy (from Redis)
+    lastHeartbeat: Optional[datetime] = None
+
+
+class Device(BaseModel):
+    """Device CRD for local device management"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "Device"
+    metadata: ObjectMeta
+    spec: DeviceSpec
+    status: Optional[DeviceStatus] = None
+
+
+class DeviceList(BaseModel):
+    """Device list"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "DeviceList"
+    items: List[Device]
+
+
 # Git Skill Import schemas
 class GitSkillInfo(BaseModel):
     """Information about a skill found in a Git repository"""

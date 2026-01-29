@@ -18,8 +18,8 @@ interface TeamBasicInfoFormProps {
   setName: (name: string) => void
   description: string
   setDescription: (description: string) => void
-  bindMode: ('chat' | 'code' | 'knowledge')[]
-  setBindMode: (bindMode: ('chat' | 'code' | 'knowledge')[]) => void
+  bindMode: ('chat' | 'code' | 'knowledge' | 'task')[]
+  setBindMode: (bindMode: ('chat' | 'code' | 'knowledge' | 'task')[]) => void
   icon?: string | null
   setIcon?: (icon: string) => void
   requiresWorkspace?: boolean | null
@@ -67,7 +67,7 @@ export default function TeamBasicInfoForm({
         <div className="space-y-2">
           <Label className="text-sm font-medium">{t('common:team.bind_mode')}</Label>
           <div className="flex gap-2">
-            {(['chat', 'code'] as const).map(opt => {
+            {(['chat', 'code', 'task'] as const).map(opt => {
               const isSelected = bindMode.includes(opt)
               return (
                 <button

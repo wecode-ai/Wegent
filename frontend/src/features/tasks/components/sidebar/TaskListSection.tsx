@@ -18,6 +18,7 @@ import {
   MessageSquare,
   Users,
   BookOpen,
+  Monitor,
 } from 'lucide-react'
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
@@ -29,6 +30,17 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useDraggable } from '@dnd-kit/core'
 import { cn } from '@/lib/utils'
 import { useProjectContext } from '@/features/projects'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { toast } from 'sonner'
 
 interface TaskListSectionProps {
   tasks: Task[]
@@ -106,7 +118,6 @@ export default function TaskListSection({
   // This is needed to update the unread dot immediately when a task is clicked
   const _viewStatusVersion = viewStatusVersion
   const [hoveredTaskId, setHoveredTaskId] = useState<number | null>(null)
-  const [_loading, setLoading] = useState(false)
   const [longPressTaskId, setLongPressTaskId] = useState<number | null>(null)
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
   // Local task titles for optimistic update during rename
@@ -114,6 +125,9 @@ export default function TaskListSection({
   // Click timer ref for distinguishing single-click from double-click
   const clickTimerRef = useRef<NodeJS.Timeout | null>(null)
   const clickedTaskRef = useRef<Task | null>(null)
+  // Delete confirmation dialog state
+  const [deleteConfirmTask, setDeleteConfirmTask] = useState<Task | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // Touch interaction state
   const [touchState, setTouchState] = useState<{
@@ -162,6 +176,9 @@ export default function TaskListSection({
       if (task.task_type === 'knowledge' && task.knowledge_base_id) {
         // Knowledge type tasks navigate to the knowledge base page
         targetPath = `/knowledge/document/${task.knowledge_base_id}`
+      } else if (task.task_type === 'task') {
+        // Task type tasks navigate to device chat page
+        targetPath = '/devices/chat'
       } else if (task.task_type === 'code') {
         targetPath = paths.code.getHref()
       } else if (task.task_type === 'chat') {
@@ -304,22 +321,46 @@ export default function TaskListSection({
     }
   }
 
-  // Delete task
-  const handleDeleteTask = async (taskId: number) => {
-    setLoading(true)
-    try {
-      await taskApis.deleteTask(taskId)
-      setSelectedTask(null)
-      if (typeof window !== 'undefined') {
-        const url = new URL(window.location.href)
-        url.searchParams.delete('taskId')
-        router.replace(url.pathname + url.search)
-        refreshTasks()
+  // Delete task - show confirmation dialog
+  const handleDeleteTask = useCallback(
+    (taskId: number) => {
+      const task = tasks.find(t => t.id === taskId)
+      if (task) {
+        setDeleteConfirmTask(task)
       }
+    },
+    [tasks]
+  )
+
+  // Confirm delete task
+  const handleConfirmDelete = async () => {
+    if (!deleteConfirmTask) return
+
+    setIsDeleting(true)
+    try {
+      await taskApis.deleteTask(deleteConfirmTask.id)
+      // Show success toast based on task type
+      if (deleteConfirmTask.is_group_chat) {
+        toast.success(t('common:tasks.leave_success'))
+      } else {
+        toast.success(t('common:tasks.delete_success'))
+      }
+      // If the deleted task is the currently selected task, clear selection
+      if (selectedTask?.id === deleteConfirmTask.id) {
+        setSelectedTask(null)
+        if (typeof window !== 'undefined') {
+          const url = new URL(window.location.href)
+          url.searchParams.delete('taskId')
+          router.replace(url.pathname + url.search)
+        }
+      }
+      refreshTasks()
+      setDeleteConfirmTask(null)
     } catch (err) {
       console.error('Delete failed', err)
+      toast.error(t('common:tasks.delete_failed'))
     } finally {
-      setLoading(false)
+      setIsDeleting(false)
     }
   }
 
@@ -444,6 +485,8 @@ export default function TaskListSection({
 
     if (taskType === 'knowledge') {
       return <BookOpen className="w-3.5 h-3.5 text-text-primary" />
+    } else if (taskType === 'task') {
+      return <Monitor className="w-3.5 h-3.5 text-text-primary" />
     } else if (taskType === 'code') {
       return <Code2 className="w-3.5 h-3.5 text-text-primary" />
     } else {
@@ -654,6 +697,65 @@ export default function TaskListSection({
           )
         })}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog
+        open={deleteConfirmTask !== null}
+        onOpenChange={open => !open && !isDeleting && setDeleteConfirmTask(null)}
+      >
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {deleteConfirmTask?.is_group_chat
+                ? t('common:tasks.leave_confirm_title')
+                : t('common:tasks.delete_confirm_title')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteConfirmTask?.is_group_chat
+                ? t('common:tasks.leave_confirm_message', { title: deleteConfirmTask?.title })
+                : t('common:tasks.delete_confirm_message', { title: deleteConfirmTask?.title })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>
+              {t('common:actions.cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+              className="bg-error hover:bg-error/90 text-white"
+            >
+              {isDeleting ? (
+                <div className="flex items-center">
+                  <svg
+                    className="animate-spin -ml-1 mr-2 h-4 w-4"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    />
+                  </svg>
+                  {t('common:actions.deleting')}
+                </div>
+              ) : (
+                t('common:actions.delete')
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

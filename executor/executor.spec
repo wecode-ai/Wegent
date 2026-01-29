@@ -36,6 +36,14 @@ hiddenimports += collect_submodules('cryptography')
 hiddenimports += collect_submodules('requests')
 hiddenimports += collect_submodules('pymysql')
 
+# MCP server dependencies (starlette is required by mcp.server.sse, mcp.server.websocket, mcp.server.auth)
+hiddenimports += collect_submodules('starlette')
+hiddenimports += collect_submodules('sse_starlette')
+hiddenimports += collect_submodules('anyio')
+hiddenimports += collect_submodules('sniffio')
+hiddenimports += collect_submodules('httpcore')
+hiddenimports += collect_submodules('h11')
+
 # OpenTelemetry packages
 hiddenimports += collect_submodules('opentelemetry')
 hiddenimports += collect_submodules('opentelemetry.sdk')
@@ -66,7 +74,7 @@ hiddenimports += [
 
 # Collect package data
 for package in ['fastapi', 'uvicorn', 'pydantic', 'anthropic', 'claude_agent_sdk',
-                'agno', 'openai', 'mcp', 'sqlalchemy', 'httpx']:
+                'agno', 'openai', 'mcp', 'sqlalchemy', 'httpx', 'starlette', 'sse_starlette']:
     try:
         tmp_datas, tmp_binaries, tmp_hiddenimports = collect_all(package)
         datas += tmp_datas
