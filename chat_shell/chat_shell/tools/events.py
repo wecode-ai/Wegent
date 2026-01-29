@@ -131,6 +131,9 @@ def _handle_tool_end(
         },
     )
 
+    # Check for MCP silent_exit marker in tool output
+    _check_silent_exit_marker(state, tool_name, serializable_output)
+
     # Process tool output and extract metadata
     title, sources = _process_tool_output(tool_name, serializable_output)
 
@@ -377,3 +380,42 @@ def _build_tool_end_title(
                 break
 
     return base_title
+
+
+def _check_silent_exit_marker(state: Any, tool_name: str, tool_output: Any) -> None:
+    """Check for MCP silent_exit marker in tool output.
+
+    This detects the "__silent_exit__" marker from MCP tools and sets the
+    silent exit state accordingly.
+
+    Args:
+        state: Streaming state to update
+        tool_name: Name of the tool
+        tool_output: Output from the tool
+    """
+    import json
+
+    if not isinstance(tool_output, str):
+        return
+
+    try:
+        parsed = json.loads(tool_output)
+        if isinstance(parsed, dict) and parsed.get("__silent_exit__") is True:
+            reason = parsed.get("reason", "")
+            logger.info(
+                "[TOOL_EVENT] MCP silent_exit detected: tool=%s, reason=%s",
+                tool_name,
+                reason,
+            )
+            # Mark state as silent exit
+            state.is_silent_exit = True
+            state.silent_exit_reason = reason
+            add_span_event(
+                "mcp_silent_exit_detected",
+                attributes={
+                    "tool.name": tool_name,
+                    "silent_exit.reason": reason,
+                },
+            )
+    except json.JSONDecodeError:
+        pass
