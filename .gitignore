@@ -62,6 +62,8 @@ htmlcov/
 # Celery Beat schedule files
 celerybeat-schedule
 celerybeat-schedule.db
+celerybeat-schedule.dir
+celerybeat-schedule.pag
 celerybeat-schedule-shm
 celerybeat-schedule-wal
 
@@ -87,3 +89,8 @@ coverage/
 .claude/settings.local.json
 .history
 .wegentrc
+
+# PyInstaller
+*.spec
+executor/build/
+executor/dist/

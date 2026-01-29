@@ -89,6 +89,9 @@ class KnowledgeDocument(Base):
         JSON, nullable=False, default={}
     )  # Source configuration (e.g., {"url": "..."} for table)
     summary = Column(JSON, nullable=True)  # Document summary information (JSON)
+    chunks = Column(
+        JSON, nullable=True
+    )  # Chunk metadata including content and position info
     created_at = Column(DateTime, nullable=False, default=func.now())
     updated_at = Column(
         DateTime, nullable=False, default=func.now(), onupdate=func.now()

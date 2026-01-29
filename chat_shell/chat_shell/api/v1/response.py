@@ -130,6 +130,9 @@ async def _stream_response(
             "max_retries": request.model_config_data.max_retries,
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
+            # Model CRD reference for subscription creation
+            "model_name": request.model_config_data.model_name,
+            "model_namespace": request.model_config_data.model_namespace,
         }
 
         # Determine the message content

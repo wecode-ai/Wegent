@@ -4,6 +4,7 @@
 
 """Built-in tools module."""
 
+from .create_subscription import CreateSubscriptionTool
 from .data_table import DataTableTool
 from .evaluation import SubmitEvaluationResultTool
 from .file_reader import FileListSkill, FileReaderSkill
@@ -13,6 +14,7 @@ from .silent_exit import SilentExitException, SilentExitTool
 from .web_search import WebSearchTool
 
 __all__ = [
+    "CreateSubscriptionTool",
     "WebSearchTool",
     "KnowledgeBaseTool",
     "DataTableTool",

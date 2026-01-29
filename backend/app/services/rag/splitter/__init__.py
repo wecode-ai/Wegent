@@ -6,6 +6,7 @@
 Splitter module for document chunking.
 """
 
+from app.services.rag.splitter.smart import SmartSplitter
 from app.services.rag.splitter.splitter import (
     DocumentSplitter,
     SemanticSplitter,
@@ -16,4 +17,5 @@ __all__ = [
     "DocumentSplitter",
     "SemanticSplitter",
     "SentenceSplitter",
+    "SmartSplitter",
 ]

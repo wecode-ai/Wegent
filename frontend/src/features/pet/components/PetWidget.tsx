@@ -142,8 +142,8 @@ export function PetWidget() {
     [updatePet]
   )
 
-  // Don't render if no pet or not visible
-  if (!pet || !pet.is_visible) {
+  // Don't render if no pet, not visible, or on mobile
+  if (!pet || !pet.is_visible || isMobile) {
     return null
   }
 

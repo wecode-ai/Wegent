@@ -4,8 +4,8 @@
 
 """Add im_channels table
 
-Revision ID: w3x4y5z6a7b8
-Revises: v2w3x4y5z6a7
+Revision ID: x4y5z6a7b8c9
+Revises: w3x4y5z6a7b8
 Create Date: 2025-01-28
 
 """
@@ -14,8 +14,8 @@ from typing import Sequence, Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "w3x4y5z6a7b8"
-down_revision: Union[str, None] = "v2w3x4y5z6a7"
+revision: str = "x4y5z6a7b8c9"
+down_revision: Union[str, None] = "w3x4y5z6a7b8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -214,6 +214,26 @@ className="bg-surface border-border"       // Card/Panel
 className="bg-primary text-white"          // Primary button
 ```
 
+### Button Variants
+
+⚠️ **Primary action buttons in dialogs MUST use `variant="primary"`**
+
+When a dialog contains action buttons (e.g., Save, Create, Confirm), the main action button must explicitly use `variant="primary"` to ensure visual consistency and proper styling.
+
+```tsx
+// ✅ CORRECT - Primary action button in dialog
+<DialogFooter>
+  <Button variant="outline" onClick={onCancel}>Cancel</Button>
+  <Button variant="primary" onClick={onSave}>Save</Button>
+</DialogFooter>
+
+// ❌ WRONG - Missing variant on primary action
+<DialogFooter>
+  <Button variant="outline" onClick={onCancel}>Cancel</Button>
+  <Button onClick={onSave}>Save</Button>  // Missing variant="primary"
+</DialogFooter>
+```
+
 ### Typography
 
 | Element | Classes |

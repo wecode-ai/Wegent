@@ -260,6 +260,12 @@ export interface AdminPublicBot {
   ghost_name: string | null
   shell_name: string | null
   model_name: string | null
+  // Expanded Ghost fields for UI convenience
+  system_prompt: string | null
+  mcp_servers: Record<string, unknown> | null
+  skills: string[] | null
+  // Expanded Model fields for UI convenience
+  agent_config: Record<string, unknown> | null
 }
 
 export interface AdminPublicBotListResponse {
@@ -270,14 +276,26 @@ export interface AdminPublicBotListResponse {
 export interface AdminPublicBotCreate {
   name: string
   namespace?: string
-  json: Record<string, unknown>
+  json?: Record<string, unknown> // Raw JSON mode (optional)
+  // Form data mode fields (used when json is not provided)
+  shell_name?: string
+  system_prompt?: string
+  mcp_servers?: Record<string, unknown>
+  skills?: string[]
+  agent_config?: Record<string, unknown>
 }
 
 export interface AdminPublicBotUpdate {
   name?: string
   namespace?: string
-  json?: Record<string, unknown>
+  json?: Record<string, unknown> // Raw JSON mode (optional)
   is_active?: boolean
+  // Form data mode fields (used when json is not provided)
+  shell_name?: string
+  system_prompt?: string
+  mcp_servers?: Record<string, unknown>
+  skills?: string[]
+  agent_config?: Record<string, unknown>
 }
 
 // Public Ghost Types
@@ -812,6 +830,15 @@ export const adminApis = {
    */
   async deletePublicShell(shellId: number): Promise<void> {
     return apiClient.delete(`/admin/public-shells/${shellId}`)
+  },
+
+  // ==================== Admin Setup Wizard ====================
+
+  /**
+   * Mark admin setup wizard as completed
+   */
+  async markSetupComplete(): Promise<{ success: boolean; message: string }> {
+    return apiClient.post('/admin/setup-complete')
   },
 
   // ==================== IM Channel Management ====================
