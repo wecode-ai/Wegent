@@ -328,13 +328,45 @@ def _create_rag_fallback(
             f"{len(document_ids)} document_ids filter"
         )
     else:
-        # Create new KnowledgeBaseTool with document_ids filter
+        # Get KB configuration for call limits (use first KB's config)
+        max_calls_per_conversation = 10  # Default
+        exempt_calls_before_check = 5  # Default
+
+        if knowledge_base_ids:
+            try:
+                from app.services.knowledge.knowledge_service import KnowledgeService
+
+                first_kb = KnowledgeService.get_knowledge_base(
+                    db, knowledge_base_ids[0], user_id
+                )
+                if first_kb:
+                    spec = first_kb.json.get("spec", {})
+                    max_calls_per_conversation = spec.get("maxCallsPerConversation", 10)
+                    exempt_calls_before_check = spec.get("exemptCallsBeforeCheck", 5)
+
+                    # Validate config (safety check)
+                    if exempt_calls_before_check >= max_calls_per_conversation:
+                        logger.warning(
+                            f"[_create_rag_fallback] Invalid KB config for KB {knowledge_base_ids[0]}: "
+                            f"exemptCallsBeforeCheck ({exempt_calls_before_check}) >= "
+                            f"maxCallsPerConversation ({max_calls_per_conversation}). Using defaults."
+                        )
+                        max_calls_per_conversation = 10
+                        exempt_calls_before_check = 5
+            except Exception as e:
+                logger.warning(
+                    f"[_create_rag_fallback] Failed to fetch KB config, using defaults: {e}"
+                )
+
+        # Create new KnowledgeBaseTool with document_ids filter and call limits
         kb_tool = KnowledgeBaseTool(
             knowledge_base_ids=knowledge_base_ids,
             document_ids=document_ids,
             user_id=user_id,
             db_session=db,
             user_subtask_id=user_subtask_id,
+            max_calls_per_conversation=max_calls_per_conversation,
+            exempt_calls_before_check=exempt_calls_before_check,
         )
         extra_tools.append(kb_tool)
         logger.info(

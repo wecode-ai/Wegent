@@ -97,6 +97,16 @@ class KnowledgeBaseTool(BaseTool):
     # Current conversation messages for context calculation
     current_messages: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Tool call limit configuration (injected by backend when creating tool instance)
+    max_calls_per_conversation: int = Field(
+        default=DEFAULT_MAX_CALLS_PER_CONVERSATION,
+        description="Maximum number of KB tool calls allowed per conversation",
+    )
+    exempt_calls_before_check: int = Field(
+        default=DEFAULT_EXEMPT_CALLS_BEFORE_CHECK,
+        description="Number of calls exempt from token checking",
+    )
+
     # Injection strategy instance (lazy initialized)
     _injection_strategy: Optional[InjectionStrategy] = PrivateAttr(default=None)
 
@@ -122,12 +132,12 @@ class KnowledgeBaseTool(BaseTool):
     def _get_kb_limits(self) -> tuple[int, int]:
         """Get (max_calls, exempt_calls) for knowledge base tool calls.
 
-        Returns hardcoded default limits for all knowledge bases.
+        Returns limits injected by backend when creating the tool instance.
 
         Returns:
             Tuple of (max_calls_per_conversation, exempt_calls_before_check)
         """
-        return DEFAULT_MAX_CALLS_PER_CONVERSATION, DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
+        return self.max_calls_per_conversation, self.exempt_calls_before_check
 
     def _estimate_tokens_from_content(self, content: str) -> int:
         """Estimate tokens from text content.

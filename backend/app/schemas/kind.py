@@ -697,6 +697,32 @@ class KnowledgeBaseSpec(BaseModel):
         description="Model reference for summary generation. Required when summaryEnabled=True",
     )
 
+    # Knowledge base tool call limit configuration (injected to KnowledgeBaseTool instance)
+    maxCallsPerConversation: int = Field(
+        default=10,
+        ge=2,
+        le=50,
+        description="Maximum number of knowledge base tool calls allowed per conversation. "
+        "This value is injected to KnowledgeBaseTool when creating the tool instance.",
+    )
+    exemptCallsBeforeCheck: int = Field(
+        default=5,
+        ge=1,
+        description="Number of calls that are exempt from token checking. "
+        "Must be less than maxCallsPerConversation. "
+        "This value is injected to KnowledgeBaseTool when creating the tool instance.",
+    )
+
+    @model_validator(mode="after")
+    def validate_call_limits(self):
+        """Validate that exemptCallsBeforeCheck < maxCallsPerConversation"""
+        if self.exemptCallsBeforeCheck >= self.maxCallsPerConversation:
+            raise ValueError(
+                f"exemptCallsBeforeCheck ({self.exemptCallsBeforeCheck}) must be less than "
+                f"maxCallsPerConversation ({self.maxCallsPerConversation})"
+            )
+        return self
+
 
 class KnowledgeBaseStatus(Status):
     """KnowledgeBase status"""

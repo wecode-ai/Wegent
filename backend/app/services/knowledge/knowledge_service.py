@@ -404,6 +404,22 @@ class KnowledgeService:
         if "summary_model_ref" in data.model_fields_set:
             spec["summaryModelRef"] = data.summary_model_ref
 
+        # Update call limit configuration if provided
+        if data.max_calls_per_conversation is not None:
+            spec["maxCallsPerConversation"] = data.max_calls_per_conversation
+
+        if data.exempt_calls_before_check is not None:
+            spec["exemptCallsBeforeCheck"] = data.exempt_calls_before_check
+
+        # Validate call limits: exempt < max (additional backend validation)
+        max_calls = spec.get("maxCallsPerConversation", 10)
+        exempt_calls = spec.get("exemptCallsBeforeCheck", 5)
+        if exempt_calls >= max_calls:
+            raise ValueError(
+                f"exemptCallsBeforeCheck ({exempt_calls}) must be less than "
+                f"maxCallsPerConversation ({max_calls})"
+            )
+
         kb_json["spec"] = spec
         kb.json = kb_json
         # Mark JSON field as modified so SQLAlchemy detects the change
