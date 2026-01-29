@@ -9,7 +9,7 @@ const authFile = path.join(__dirname, '../.auth/user.json')
  * Global setup - run once before all tests
  * Authenticates and saves storage state for reuse
  */
-setup('authenticate', async ({ page }) => {
+setup('authenticate', async ({ page, request }) => {
   // Ensure .auth directory exists using async operations
   const authDir = path.dirname(authFile)
   try {
@@ -28,4 +28,31 @@ setup('authenticate', async ({ page }) => {
   await page.context().storageState({ path: authFile })
 
   console.log('Authentication successful, storage state saved')
+
+  // Mark admin setup as complete to prevent GlobalAdminSetupWizard from showing
+  // This is done via API to ensure it's completed before any tests run
+  try {
+    // Get auth token from localStorage
+    const authToken = await page.evaluate(() => {
+      return localStorage.getItem('auth_token')
+    })
+
+    if (authToken) {
+      const baseURL = process.env.E2E_API_URL || 'http://localhost:8000'
+      const response = await request.post(`${baseURL}/api/admin/setup-complete`, {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+      })
+      if (response.ok()) {
+        console.log('Admin setup marked as complete')
+      } else {
+        console.log('Admin setup API returned:', response.status(), '- may already be complete')
+      }
+    }
+  } catch (error) {
+    // Ignore errors - setup may already be complete or user may not be admin
+    console.log('Note: Could not mark admin setup as complete:', error)
+  }
 })
