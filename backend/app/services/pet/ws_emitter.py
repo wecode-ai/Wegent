@@ -8,12 +8,66 @@ This module provides WebSocket event emission methods for pet-related events.
 It wraps the global WebSocket emitter and provides typed methods for pet events.
 
 This keeps pet-related WebSocket logic within the pet module for better cohesion.
+
+Note: These functions handle event loop issues gracefully. When called from
+background tasks that may run in different event loop contexts, errors are
+logged but don't propagate to callers since pet events are non-critical.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+
+async def _safe_emit(emit_coro, event_name: str, user_id: int) -> bool:
+    """Safely execute an emit coroutine with event loop error handling.
+
+    Socket.IO's AsyncRedisManager creates Redis connections bound to the
+    event loop at initialization time. When emit is called from a different
+    event loop context (e.g., background tasks), it can cause
+    "Future attached to a different loop" errors.
+
+    This wrapper catches such errors and logs them without propagating,
+    since pet WebSocket events are non-critical.
+
+    Args:
+        emit_coro: The emit coroutine to execute
+        event_name: Event name for logging
+        user_id: User ID for logging
+
+    Returns:
+        True if emit succeeded, False otherwise
+    """
+    try:
+        await emit_coro
+        return True
+    except RuntimeError as e:
+        # Handle event loop mismatch errors
+        if "attached to a different loop" in str(e):
+            logger.warning(
+                "[PET_WS] Event loop mismatch for %s (user=%d), skipping emit: %s",
+                event_name,
+                user_id,
+                e,
+            )
+        else:
+            logger.error(
+                "[PET_WS] RuntimeError emitting %s (user=%d): %s",
+                event_name,
+                user_id,
+                e,
+            )
+        return False
+    except Exception as e:
+        logger.error(
+            "[PET_WS] Failed to emit %s (user=%d): %s",
+            event_name,
+            user_id,
+            e,
+        )
+        return False
 
 
 async def emit_pet_experience_gained(
@@ -41,7 +95,7 @@ async def emit_pet_experience_gained(
         logger.warning("[PET_WS] WebSocket emitter not initialized, skipping emit")
         return
 
-    await ws_emitter.sio.emit(
+    emit_coro = ws_emitter.sio.emit(
         ServerEvents.PET_EXPERIENCE_GAINED,
         {
             "amount": amount,
@@ -52,9 +106,11 @@ async def emit_pet_experience_gained(
         room=f"user:{user_id}",
         namespace=ws_emitter.namespace,
     )
-    logger.debug(
-        f"[PET_WS] emit pet:experience_gained user={user_id} amount={amount} total={total} source={source}"
-    )
+
+    if await _safe_emit(emit_coro, "pet:experience_gained", user_id):
+        logger.debug(
+            f"[PET_WS] emit pet:experience_gained user={user_id} amount={amount} total={total} source={source}"
+        )
 
 
 async def emit_pet_stage_evolved(
@@ -82,7 +138,7 @@ async def emit_pet_stage_evolved(
         logger.warning("[PET_WS] WebSocket emitter not initialized, skipping emit")
         return
 
-    await ws_emitter.sio.emit(
+    emit_coro = ws_emitter.sio.emit(
         ServerEvents.PET_STAGE_EVOLVED,
         {
             "old_stage": old_stage,
@@ -93,9 +149,11 @@ async def emit_pet_stage_evolved(
         room=f"user:{user_id}",
         namespace=ws_emitter.namespace,
     )
-    logger.info(
-        f"[PET_WS] emit pet:stage_evolved user={user_id} {old_stage_name} -> {new_stage_name}"
-    )
+
+    if await _safe_emit(emit_coro, "pet:stage_evolved", user_id):
+        logger.info(
+            f"[PET_WS] emit pet:stage_evolved user={user_id} {old_stage_name} -> {new_stage_name}"
+        )
 
 
 async def emit_pet_traits_updated(
@@ -117,7 +175,7 @@ async def emit_pet_traits_updated(
         logger.warning("[PET_WS] WebSocket emitter not initialized, skipping emit")
         return
 
-    await ws_emitter.sio.emit(
+    emit_coro = ws_emitter.sio.emit(
         ServerEvents.PET_TRAITS_UPDATED,
         {
             "traits": traits,
@@ -125,4 +183,6 @@ async def emit_pet_traits_updated(
         room=f"user:{user_id}",
         namespace=ws_emitter.namespace,
     )
-    logger.info(f"[PET_WS] emit pet:traits_updated user={user_id} traits={traits}")
+
+    if await _safe_emit(emit_coro, "pet:traits_updated", user_id):
+        logger.info(f"[PET_WS] emit pet:traits_updated user={user_id} traits={traits}")

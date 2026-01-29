@@ -1149,6 +1149,7 @@ class ExecutorKindsService(
             # Generate auth token for skills download
             # Use user's JWT token or generate a temporary one
             auth_token = None
+            task_token = None
             if user:
                 # Generate a JWT token for the user to access backend API
                 from app.core.config import settings
@@ -1167,6 +1168,38 @@ class ExecutorKindsService(
                     logger.warning(
                         f"Failed to generate auth token for user {user.id}: {e}"
                     )
+
+                # Generate task token for MCP Server authentication
+                try:
+                    from app.mcp_server.auth import create_task_token
+
+                    task_token = create_task_token(
+                        task_id=subtask.task_id,
+                        subtask_id=subtask.id,
+                        user_id=user.id,
+                        user_name=user.user_name,
+                        expires_delta_minutes=1440,  # 24 hours
+                    )
+                    logger.info(
+                        f"Successfully generated task token for task={subtask.task_id}, subtask={subtask.id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to generate task token: {e}")
+
+            # Generate system MCP configuration for subscription tasks
+            system_mcp_config = None
+            if is_subscription and task_token:
+                try:
+                    from app.mcp_server.server import get_mcp_system_config
+
+                    # Get backend URL from settings
+                    backend_url = settings.BACKEND_INTERNAL_URL
+                    system_mcp_config = get_mcp_system_config(backend_url, task_token)
+                    logger.info(
+                        f"Generated system MCP config for subscription task {subtask.task_id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to generate system MCP config: {e}")
 
             # Query attachments for this subtask using context service
             attachments_data = []
@@ -1236,6 +1269,8 @@ class ExecutorKindsService(
                     "git_url": git_url,
                     "prompt": aggregated_prompt,
                     "auth_token": auth_token,
+                    "task_token": task_token,  # For MCP Server authentication
+                    "system_mcp_config": system_mcp_config,  # System MCP for subscription tasks
                     "attachments": attachments_data,
                     "status": subtask.status,
                     "progress": subtask.progress,

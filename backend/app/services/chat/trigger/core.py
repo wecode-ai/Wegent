@@ -838,6 +838,49 @@ async def _stream_with_http_adapter(
         ws_config.bot_name, ws_config.bot_namespace, task_data
     )
 
+    # Inject system MCP for subscription tasks (provides silent_exit tool)
+    # For subscription tasks, we create a task token since there's no user auth_token
+    if is_subscription:
+        try:
+            from app.mcp_server.auth import create_task_token
+            from app.mcp_server.server import get_mcp_system_config
+
+            # Create task token for MCP Server authentication
+            # This is needed for subscription tasks which run in background without user JWT
+            task_token = create_task_token(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                user_id=stream_data.user_id,
+                user_name=stream_data.user_name,
+                expires_delta_minutes=1440,  # 24 hours
+            )
+
+            # Get backend URL from settings
+            backend_url = settings.BACKEND_INTERNAL_URL
+            system_mcp_config = get_mcp_system_config(backend_url, task_token)
+
+            # Convert system MCP config to list format expected by chat_shell
+            for name, config in system_mcp_config.items():
+                mcp_servers.append(
+                    {
+                        "name": name,
+                        "type": config.get("type", "streamable-http"),
+                        "url": config.get("url", ""),
+                        "auth": config.get("headers", {}),
+                    }
+                )
+            logger.info(
+                "[HTTP_ADAPTER] Injected system MCP for subscription task: task_id=%d, subtask_id=%d, mcp_servers=%s",
+                task_id,
+                subtask_id,
+                [s["name"] for s in mcp_servers],
+            )
+        except Exception as e:
+            logger.warning(
+                "[HTTP_ADAPTER] Failed to inject system MCP for subscription task: %s",
+                e,
+            )
+
     # Append skills with separate span
     _append_skills(skill_names, skill_configs)
 

@@ -62,8 +62,12 @@ async def lifespan(app: FastAPI):
     """
     logger = _logger
 
-    # ==================== STARTUP ====================
+    # ==================== MCP SERVER LIFESPAN ====================
+    # MCP servers need their session_manager.run() to be called within the lifespan
+    # This is required for the streamable HTTP transport to work properly
+    from app.mcp_server.server import knowledge_mcp_server, system_mcp_server
 
+    # ==================== STARTUP ====================
     # Try to get Redis client for distributed locking
     redis_client = None
     try:
@@ -247,7 +251,14 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
 
     # ==================== YIELD (app is running) ====================
-    yield
+    # MCP servers need their session_manager.run() to be active during the app lifecycle
+    # This is required for the streamable HTTP transport to work properly
+    # We use nested async context managers to ensure proper initialization and cleanup
+    async with system_mcp_server.session_manager.run():
+        logger.info("✓ System MCP server session manager started")
+        async with knowledge_mcp_server.session_manager.run():
+            logger.info("✓ Knowledge MCP server session manager started")
+            yield
 
     # ==================== SHUTDOWN ====================
     logger.info("=" * 60)
@@ -579,6 +590,29 @@ def create_app():
 
     # Include API routes
     app.include_router(api_router, prefix=settings.API_PREFIX)
+
+    # Mount MCP Server endpoints
+    # These provide system-level tools (silent_exit) and knowledge base tools
+    try:
+        from app.mcp_server.server import (
+            _create_knowledge_mcp_app,
+            _create_system_mcp_app,
+        )
+
+        # Mount system MCP server at /mcp/system
+        system_mcp_app = _create_system_mcp_app()
+        app.mount("/mcp/system", system_mcp_app)
+        logger.info("System MCP server mounted at /mcp/system")
+
+        # Mount knowledge MCP server at /mcp/knowledge
+        knowledge_mcp_app = _create_knowledge_mcp_app()
+        app.mount("/mcp/knowledge", knowledge_mcp_app)
+        logger.info("Knowledge MCP server mounted at /mcp/knowledge")
+    except Exception:
+        logger.exception("Failed to mount MCP servers")
+        # In production, fail fast to surface configuration problems early
+        if settings.ENVIRONMENT.lower() == "production":
+            raise
 
     return app
 
