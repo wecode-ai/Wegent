@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 TOKEN_WARNING_THRESHOLD = 0.70  # 70%: Strong warning but allow
 TOKEN_REJECT_THRESHOLD = 0.90  # 90%: Reject call
 
+# Token estimation heuristic (characters per token for ASCII text)
+TOKEN_CHARS_PER_TOKEN = 4  # ~4 chars/token for English, 1-2 for CJK
+
 # Default configuration values (used when KB spec doesn't specify)
 DEFAULT_MAX_CALLS_PER_CONVERSATION = 10
 DEFAULT_EXEMPT_CALLS_BEFORE_CHECK = 5
@@ -127,6 +130,14 @@ class KnowledgeBaseTool(BaseTool):
             )
         return self._injection_strategy
 
+    def _get_effective_context_window(self) -> int:
+        """Get effective context window size, using default if not provided.
+
+        Returns:
+            Context window size (uses InjectionStrategy.DEFAULT_CONTEXT_WINDOW if None)
+        """
+        return self.context_window or InjectionStrategy.DEFAULT_CONTEXT_WINDOW
+
     def _get_kb_limits(self) -> tuple[int, int]:
         """Get (max_calls, exempt_calls) for knowledge base tool calls.
 
@@ -186,7 +197,7 @@ class KnowledgeBaseTool(BaseTool):
         """
         # Simple heuristic - could be improved with tiktoken for better accuracy
         # or by detecting CJK characters and adjusting the ratio
-        return len(content) // 4
+        return len(content) // TOKEN_CHARS_PER_TOKEN
 
     def _check_call_limits(
         self, query: str
@@ -226,11 +237,8 @@ class KnowledgeBaseTool(BaseTool):
         # Check 2: Token threshold (only after exempt period)
         if current_call > exempt_calls:
             # Calculate current token usage percentage
-            usage_percent = (
-                self._accumulated_tokens / self.context_window
-                if self.context_window
-                else 0.0
-            )
+            effective_context_window = self._get_effective_context_window()
+            usage_percent = self._accumulated_tokens / effective_context_window
 
             # Token >= 90%: Reject (most severe)
             if usage_percent >= TOKEN_REJECT_THRESHOLD:
@@ -254,7 +262,7 @@ class KnowledgeBaseTool(BaseTool):
                     kb_name,
                     query[:50],
                     self._accumulated_tokens,
-                    self.context_window or 0,
+                    effective_context_window,
                     usage_percent * 100,
                 )
                 return True, None, "strong"
@@ -269,7 +277,7 @@ class KnowledgeBaseTool(BaseTool):
                     kb_name,
                     query[:50],
                     self._accumulated_tokens,
-                    self.context_window or 0,
+                    effective_context_window,
                     usage_percent * 100,
                 )
                 return (
@@ -312,11 +320,8 @@ class KnowledgeBaseTool(BaseTool):
         Returns:
             JSON string with rejection message
         """
-        usage_percent = (
-            (self._accumulated_tokens / self.context_window * 100)
-            if self.context_window
-            else 0.0
-        )
+        effective_context_window = self._get_effective_context_window()
+        usage_percent = (self._accumulated_tokens / effective_context_window) * 100
 
         if rejection_reason == "max_calls_exceeded":
             message = (
@@ -349,6 +354,9 @@ class KnowledgeBaseTool(BaseTool):
     ) -> str:
         """Build call statistics header with optional warning.
 
+        NOTE: This method should be called AFTER incrementing self._call_count,
+        as it uses the updated count to display the current call number.
+
         Args:
             warning_level: "normal" for default check period warning,
                           "strong" for high token usage warning,
@@ -359,18 +367,16 @@ class KnowledgeBaseTool(BaseTool):
             Formatted header string (prepended to search results)
         """
         max_calls, exempt_calls = self._get_kb_limits()
-        current_call = self._call_count + 1  # After this call completes
+        # Use self._call_count directly (caller already incremented it)
+        current_call = self._call_count
 
         header = f"[Knowledge Base Search - Call {current_call}/{max_calls}]\n"
         header += f"Retrieved {chunks_count} chunks from knowledge base.\n"
 
         if warning_level == "strong":
             # Strong warning: Token >= 70%
-            usage_percent = (
-                (self._accumulated_tokens / self.context_window * 100)
-                if self.context_window
-                else 0.0
-            )
+            effective_context_window = self._get_effective_context_window()
+            usage_percent = (self._accumulated_tokens / effective_context_window) * 100
             header += (
                 f"\n🚨 Strong Warning: Knowledge base content has consumed {usage_percent:.1f}% "
                 f"of the context window.\n"
