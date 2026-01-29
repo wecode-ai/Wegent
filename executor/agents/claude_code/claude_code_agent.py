@@ -604,12 +604,11 @@ class ClaudeCodeAgent(Agent):
         model_id = env.get("model_id", "")
 
         # Note: ANTHROPIC_SMALL_FAST_MODEL is deprecated in favor of ANTHROPIC_DEFAULT_HAIKU_MODEL.
-        # Claude Code SDK uses ANTHROPIC_API_KEY for authentication
         env_config = {
             "ANTHROPIC_MODEL": model_id,
             "ANTHROPIC_SMALL_FAST_MODEL": env.get("small_model", model_id),
             "ANTHROPIC_DEFAULT_HAIKU_MODEL": env.get("small_model", model_id),
-            "ANTHROPIC_API_KEY": env.get("api_key", ""),
+            "ANTHROPIC_AUTH_TOKEN": env.get("api_key", ""),
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": int(
                 os.getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "0")
             ),
