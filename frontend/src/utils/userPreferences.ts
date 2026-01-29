@@ -16,7 +16,7 @@ const STORAGE_KEYS = {
   LAST_REPO_NAME: 'wegent_last_repo_name',
 } as const
 
-export type TabType = 'chat' | 'code' | 'wiki'
+export type TabType = 'chat' | 'code' | 'wiki' | 'devices'
 
 /**
  * Save user's last active tab
@@ -35,7 +35,7 @@ export function saveLastTab(tab: TabType): void {
 export function getLastTab(): TabType | null {
   try {
     const tab = localStorage.getItem(STORAGE_KEYS.LAST_TAB)
-    return tab === 'chat' || tab === 'code' || tab === 'wiki' ? tab : null
+    return tab === 'chat' || tab === 'code' || tab === 'wiki' || tab === 'devices' ? tab : null
   } catch (error) {
     console.warn('Failed to get last tab from localStorage:', error)
     return null
@@ -80,9 +80,12 @@ export function getLastTeamId(): number | null {
 }
 
 /**
- * Save user's last selected team for a specific mode (chat/code/knowledge)
+ * Save user's last selected team for a specific mode (chat/code/knowledge/task)
  */
-export function saveLastTeamByMode(teamId: number, mode: 'chat' | 'code' | 'knowledge'): void {
+export function saveLastTeamByMode(
+  teamId: number,
+  mode: 'chat' | 'code' | 'knowledge' | 'task'
+): void {
   try {
     if (!teamId || isNaN(teamId)) {
       console.warn('[userPreferences] Invalid team ID, not saving:', teamId)
@@ -93,8 +96,11 @@ export function saveLastTeamByMode(teamId: number, mode: 'chat' | 'code' | 'know
       key = STORAGE_KEYS.LAST_TEAM_ID_CHAT
     } else if (mode === 'code') {
       key = STORAGE_KEYS.LAST_TEAM_ID_CODE
-    } else {
+    } else if (mode === 'knowledge') {
       key = STORAGE_KEYS.LAST_TEAM_ID_KNOWLEDGE
+    } else {
+      // 'task' mode - use code key as fallback since task mode typically uses code teams
+      key = STORAGE_KEYS.LAST_TEAM_ID_CODE
     }
     localStorage.setItem(key, String(teamId))
     // Also save to the generic key for backward compatibility
@@ -105,17 +111,20 @@ export function saveLastTeamByMode(teamId: number, mode: 'chat' | 'code' | 'know
 }
 
 /**
- * Get user's last selected team ID for a specific mode (chat/code/knowledge)
+ * Get user's last selected team ID for a specific mode (chat/code/knowledge/task)
  */
-export function getLastTeamIdByMode(mode: 'chat' | 'code' | 'knowledge'): number | null {
+export function getLastTeamIdByMode(mode: 'chat' | 'code' | 'knowledge' | 'task'): number | null {
   try {
     let key: string
     if (mode === 'chat') {
       key = STORAGE_KEYS.LAST_TEAM_ID_CHAT
     } else if (mode === 'code') {
       key = STORAGE_KEYS.LAST_TEAM_ID_CODE
-    } else {
+    } else if (mode === 'knowledge') {
       key = STORAGE_KEYS.LAST_TEAM_ID_KNOWLEDGE
+    } else {
+      // 'task' mode - use code key as fallback since task mode typically uses code teams
+      key = STORAGE_KEYS.LAST_TEAM_ID_CODE
     }
     const teamId = localStorage.getItem(key)
     if (!teamId || teamId === 'undefined' || teamId === 'null' || teamId === 'NaN') {

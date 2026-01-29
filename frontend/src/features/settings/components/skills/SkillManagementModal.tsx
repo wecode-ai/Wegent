@@ -7,7 +7,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { PencilIcon, TrashIcon, DownloadIcon, PackageIcon } from 'lucide-react'
 import LoadingState from '@/features/common/LoadingState'
-import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill, deleteSkill, downloadSkill } from '@/apis/skills'
+import {
+  fetchUnifiedSkillsList,
+  fetchPublicSkillsList,
+  UnifiedSkill,
+  deleteSkill,
+  downloadSkill,
+} from '@/apis/skills'
 import SkillUploadModal from './SkillUploadModal'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import { Button } from '@/components/ui/button'

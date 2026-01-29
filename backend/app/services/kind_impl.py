@@ -697,3 +697,76 @@ class RetrieverKindService(KindBaseService):
             logger.warning("Failed to decrypt sensitive data: %r", e)
 
         return result
+
+
+class DeviceKindService(KindBaseService):
+    """Service for Device resources (local device management)"""
+
+    def __init__(self):
+        super().__init__("Device")
+
+    def _validate_references(
+        self, db: Session, user_id: int, resource: Dict[str, Any]
+    ) -> None:
+        """Validate device-specific constraints"""
+        from app.schemas.kind import Device
+
+        device_crd = Device.model_validate(resource)
+
+        # If isDefault is True, we'll handle clearing other defaults in side effects
+        # No other references to validate for Device
+
+    def _perform_side_effects(
+        self,
+        db: Session,
+        user_id: int,
+        db_resource: Kind,
+        resource: Dict[str, Any],
+    ) -> None:
+        """Handle side effects after device creation"""
+        # If this device is default, clear default flag on other devices
+        if resource.get("spec", {}).get("isDefault"):
+            self._ensure_single_default(db, user_id, db_resource.name)
+
+    def _update_side_effects(
+        self,
+        db: Session,
+        user_id: int,
+        db_resource: Kind,
+        resource: Dict[str, Any],
+    ) -> None:
+        """Handle side effects after device update"""
+        # If this device is being set as default, clear default flag on others
+        if resource.get("spec", {}).get("isDefault"):
+            self._ensure_single_default(db, user_id, db_resource.name)
+
+    def _ensure_single_default(
+        self, db: Session, user_id: int, exclude_name: str
+    ) -> None:
+        """Ensure only one device can be default per user"""
+        from sqlalchemy import and_
+
+        # Find all other Device CRDs for this user that are default
+        devices = (
+            db.query(Kind)
+            .filter(
+                and_(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Device",
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                    Kind.name != exclude_name,
+                )
+            )
+            .all()
+        )
+
+        for device in devices:
+            device_json = device.json.copy()
+            if device_json.get("spec", {}).get("isDefault"):
+                device_json["spec"]["isDefault"] = False
+                device.json = device_json
+                db.add(device)
+                logger.info(
+                    f"Cleared isDefault flag on device: {device.name} for user: {user_id}"
+                )

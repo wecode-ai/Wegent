@@ -43,6 +43,10 @@ dependencies = [
     "opentelemetry-instrumentation-httpx>=0.48b0",
     "opentelemetry-instrumentation-requests>=0.48b0",
     "opentelemetry-instrumentation-system-metrics>=0.48b0",
+
+    # Local mode dependencies (Socket.IO for WebSocket communication)
+    "python-socketio[asyncio_client]>=5.11.0",
+    "aiohttp>=3.9.0",
 ]
 
 [dependency-groups]
@@ -52,6 +56,9 @@ dev = [
     "pytest-cov>=7.0.0",
     "pytest-mock>=3.15.1",
     "pytest-httpx>=0.36.0",
+]
+build = [
+    "pyinstaller>=6.0.0",
 ]
 
 [tool.black]

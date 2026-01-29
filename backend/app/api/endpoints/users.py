@@ -378,6 +378,7 @@ class DefaultTeamsResponse(BaseModel):
     chat: Optional[DefaultTeamConfig] = None
     code: Optional[DefaultTeamConfig] = None
     knowledge: Optional[DefaultTeamConfig] = None
+    task: Optional[DefaultTeamConfig] = None
 
 
 def parse_default_team_config(config_value: str) -> Optional[DefaultTeamConfig]:
@@ -400,7 +401,7 @@ async def get_default_teams(
     _current_user: User = Depends(security.get_current_user),  # noqa: ARG001
 ):
     """
-    Get default team configuration for each mode (chat, code, knowledge).
+    Get default team configuration for each mode (chat, code, knowledge, task).
     These are system-level configurations from environment variables.
     """
     from app.core.config import settings
@@ -409,6 +410,7 @@ async def get_default_teams(
         chat=parse_default_team_config(settings.DEFAULT_TEAM_CHAT),
         code=parse_default_team_config(settings.DEFAULT_TEAM_CODE),
         knowledge=parse_default_team_config(settings.DEFAULT_TEAM_KNOWLEDGE),
+        task=parse_default_team_config(settings.DEFAULT_TEAM_TASK),
     )
 
 
