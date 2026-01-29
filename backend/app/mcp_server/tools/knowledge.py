@@ -12,6 +12,8 @@ import base64
 import logging
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy.orm import Session
+
 from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.models.knowledge import DocumentStatus, KnowledgeDocument
@@ -249,7 +251,7 @@ def create_document(
 
 
 def _create_document_from_text(
-    db,
+    db: Session,
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
     name: str,
@@ -292,7 +294,7 @@ def _create_document_from_text(
 
 
 def _create_document_from_file(
-    db,
+    db: Session,
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
     name: str,
@@ -352,7 +354,7 @@ def _create_document_from_file(
 
 
 def _create_document_from_web(
-    db,
+    db: Session,
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
     name: str,

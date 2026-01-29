@@ -13,6 +13,7 @@ with the existing FastAPI application.
 """
 
 import contextlib
+import contextvars
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -78,13 +79,15 @@ knowledge_mcp_server = FastMCP(
 )
 
 
-# Store for request context (thread-local simulation for tool calls)
-_request_context: Dict[str, Any] = {}
+# Store for request context (using ContextVar for thread-safe concurrent request handling)
+_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = contextvars.ContextVar(
+    "_request_token_info", default=None
+)
 
 
 def _get_token_info_from_context() -> Optional[TaskTokenInfo]:
     """Get token info from request context."""
-    return _request_context.get("token_info")
+    return _request_token_info.get()
 
 
 @knowledge_mcp_server.tool()
@@ -252,26 +255,27 @@ def _create_knowledge_mcp_app() -> Starlette:
 
     async def auth_middleware(request: Request, call_next):
         """Middleware to extract and validate task token."""
-        global _request_context
-
         auth_header = request.headers.get("authorization", "")
         token = extract_token_from_header(auth_header)
 
+        token_info: Optional[TaskTokenInfo] = None
         if token:
             token_info = verify_task_token(token)
             if token_info:
-                _request_context["token_info"] = token_info
                 logger.debug(
                     f"[MCP:Knowledge] Authenticated user: {token_info.user_name}"
                 )
             else:
                 logger.warning("[MCP:Knowledge] Invalid task token")
-                _request_context["token_info"] = None
-        else:
-            _request_context["token_info"] = None
 
-        response = await call_next(request)
-        return response
+        # Set token info in context var for the duration of this request
+        token = _request_token_info.set(token_info)
+        try:
+            response = await call_next(request)
+            return response
+        finally:
+            # Reset context var after request completes
+            _request_token_info.reset(token)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette):
