@@ -130,6 +130,14 @@ class Settings(BaseSettings):
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
 
+    # Rate limiting configuration for OpenAPI endpoints
+    # Format: "requests/period" where period can be second, minute, hour, day
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_CREATE_RESPONSE: str = "60/minute"  # POST /api/v1/responses
+    RATE_LIMIT_GET_RESPONSE: str = "120/minute"  # GET /api/v1/responses/{id}
+    RATE_LIMIT_CANCEL_RESPONSE: str = "30/minute"  # POST /api/v1/responses/{id}/cancel
+    RATE_LIMIT_DELETE_RESPONSE: str = "30/minute"  # DELETE /api/v1/responses/{id}
+
     # Celery configuration
     CELERY_BROKER_URL: Optional[str] = None  # If None/empty, uses REDIS_URL
     CELERY_RESULT_BACKEND: Optional[str] = None  # If None/empty, uses REDIS_URL
