@@ -597,8 +597,11 @@ def create_app():
         knowledge_mcp_app = _create_knowledge_mcp_app()
         app.mount("/mcp/knowledge", knowledge_mcp_app)
         logger.info("Knowledge MCP server mounted at /mcp/knowledge")
-    except Exception as e:
-        logger.warning(f"Failed to mount MCP servers: {e}")
+    except Exception:
+        logger.exception("Failed to mount MCP servers")
+        # In production, fail fast to surface configuration problems early
+        if settings.ENVIRONMENT.lower() == "production":
+            raise
 
     return app
 
