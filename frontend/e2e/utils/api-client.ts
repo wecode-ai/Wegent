@@ -496,6 +496,14 @@ export class ApiClient {
     return this.call('DELETE', `/api/admin/public-models/${modelId}`)
   }
 
+  /**
+   * Mark admin setup as complete (admin only)
+   * This is used to dismiss the GlobalAdminSetupWizard in E2E tests
+   */
+  async markAdminSetupComplete(): Promise<ApiResponse> {
+    return this.call('POST', '/api/admin/setup-complete')
+  }
+
   // ==================== Utility Methods ====================
 
   /**

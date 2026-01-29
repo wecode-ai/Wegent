@@ -15,8 +15,38 @@ test.describe('Admin - Public Model Management', () => {
     // Login via API for API client operations
     await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
 
+    // Mark admin setup as complete via API to prevent GlobalAdminSetupWizard from showing
+    await apiClient.markAdminSetupComplete().catch(() => {
+      // Ignore errors - setup may already be complete
+    })
+
     // Navigate directly to admin page (already authenticated via global setup storageState)
     await adminPage.navigateToTab('public-models')
+
+    // Dismiss any remaining dialogs (e.g., setup wizard if it still shows)
+    const openDialog = page.locator('[role="dialog"][data-state="open"]')
+    if (await openDialog.isVisible({ timeout: 2000 }).catch(() => false)) {
+      // Look for skip button first (for setup wizard)
+      const skipButton = page.locator(
+        'button:has-text("Skip"), button:has-text("跳过"), button:has-text("稍后设置")'
+      )
+      if (await skipButton.isVisible({ timeout: 1000 }).catch(() => false)) {
+        await skipButton.click()
+        // Wait for confirm dialog
+        const confirmButton = page.locator(
+          '[role="alertdialog"] button:has-text("Skip"), [role="alertdialog"] button:has-text("跳过")'
+        )
+        if (await confirmButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await confirmButton.click()
+        }
+        await page.waitForTimeout(1000)
+      } else {
+        // Try to close by pressing Escape
+        await page.keyboard.press('Escape')
+      }
+      // Wait for dialog to close
+      await openDialog.waitFor({ state: 'detached', timeout: 5000 }).catch(() => {})
+    }
   })
 
   test.afterEach(async () => {

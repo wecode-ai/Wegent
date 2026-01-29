@@ -685,21 +685,15 @@ class ChatContext:
             backend_url,
         )
 
-        # Add SilentExitTool for subscription tasks
+        # Note: SilentExitTool has been removed.
+        # silent_exit functionality is now provided by Backend MCP Server.
+        # For subscription tasks, the system MCP server is loaded via MCP tools.
         logger.info(
             "[CHAT_CONTEXT] is_subscription=%s for task_id=%d, subtask_id=%d",
             self._request.is_subscription,
             self._request.task_id,
             self._request.subtask_id,
         )
-        if self._request.is_subscription:
-            from chat_shell.tools.builtin import SilentExitTool
-
-            extra_tools.append(SilentExitTool())
-            logger.info(
-                "[CHAT_CONTEXT] Added SilentExitTool for subscription task (task_id=%d)",
-                self._request.task_id,
-            )
 
         # === External Tools ===
 

@@ -580,6 +580,29 @@ def create_app():
     # Include API routes
     app.include_router(api_router, prefix=settings.API_PREFIX)
 
+    # Mount MCP Server endpoints
+    # These provide system-level tools (silent_exit) and knowledge base tools
+    try:
+        from app.mcp_server.server import (
+            _create_knowledge_mcp_app,
+            _create_system_mcp_app,
+        )
+
+        # Mount system MCP server at /mcp/system
+        system_mcp_app = _create_system_mcp_app()
+        app.mount("/mcp/system", system_mcp_app)
+        logger.info("System MCP server mounted at /mcp/system")
+
+        # Mount knowledge MCP server at /mcp/knowledge
+        knowledge_mcp_app = _create_knowledge_mcp_app()
+        app.mount("/mcp/knowledge", knowledge_mcp_app)
+        logger.info("Knowledge MCP server mounted at /mcp/knowledge")
+    except Exception:
+        logger.exception("Failed to mount MCP servers")
+        # In production, fail fast to surface configuration problems early
+        if settings.ENVIRONMENT.lower() == "production":
+            raise
+
     return app
 
 
