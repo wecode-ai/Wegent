@@ -586,3 +586,59 @@ class ElasticsearchBackend(BaseStorageBackend):
                 f"[Elasticsearch] Failed to get all chunks for KB {knowledge_id}: {e}"
             )
             return []
+
+    def verify_indexing(
+        self,
+        knowledge_id: str,
+        doc_ref: Optional[str] = None,
+        **kwargs,
+    ) -> int:
+        """
+        Verify that documents were actually indexed in Elasticsearch.
+
+        This method queries ES directly to confirm data exists, catching cases
+        where LlamaIndex's async_bulk silently fails.
+
+        Args:
+            knowledge_id: Knowledge base ID
+            doc_ref: Optional document reference ID to filter by
+            **kwargs: Additional parameters (e.g., user_id for per_user strategy)
+
+        Returns:
+            Number of documents/chunks found in Elasticsearch
+
+        Raises:
+            Exception: If ES query fails
+        """
+        index_name = self.get_index_name(knowledge_id, **kwargs)
+        es_client = Elasticsearch(self.url, **self.es_kwargs)
+
+        # Force refresh to ensure data is searchable
+        try:
+            es_client.indices.refresh(index=index_name)
+        except Exception as refresh_err:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.warning(f"[RAG Indexing] Index refresh failed: {refresh_err}")
+
+        # Build query to count documents
+        query_body: Dict[str, Any] = {
+            "query": {
+                "bool": {
+                    "must": [
+                        {"term": {"metadata.knowledge_id.keyword": knowledge_id}},
+                    ]
+                }
+            }
+        }
+
+        # Add doc_ref filter if provided
+        if doc_ref:
+            query_body["query"]["bool"]["must"].append(
+                {"term": {"metadata.doc_ref.keyword": doc_ref}}
+            )
+
+        # Count documents
+        count_response = es_client.count(index=index_name, body=query_body)
+        return count_response.get("count", 0)

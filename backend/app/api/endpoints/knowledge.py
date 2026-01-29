@@ -53,7 +53,7 @@ from app.services.knowledge import (
 )
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
-from shared.telemetry.decorators import trace_sync
+from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -348,6 +348,7 @@ def list_documents(
     response_model=KnowledgeDocumentResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@trace_async("create_document", "knowledge.api")
 async def create_document(
     knowledge_base_id: int,
     data: KnowledgeDocumentCreate,
@@ -699,8 +700,8 @@ def _index_document_background(
         kb_index_info: Pre-computed KB info (avoids redundant DB query if provided)
     """
     logger.info(
-        f"Background task started: indexing document for knowledge base {knowledge_base_id}, "
-        f"attachment {attachment_id}"
+        f"[RAG Indexing] Background task started: kb_id={knowledge_base_id}, "
+        f"attachment_id={attachment_id}, document_id={document_id}"
     )
 
     # Create a new database session for the background task
@@ -723,15 +724,21 @@ def _index_document_background(
         )
 
         if not retriever_crd:
+            logger.error(
+                f"[RAG Indexing] Retriever not found: name={retriever_name}, "
+                f"namespace={retriever_namespace}"
+            )
             raise ValueError(
                 f"Retriever {retriever_name} (namespace: {retriever_namespace}) not found"
             )
 
-        logger.info(f"Found retriever: {retriever_name}")
+        logger.info(f"[RAG Indexing] Found retriever: {retriever_name}")
 
         # Create storage backend from retriever
         storage_backend = create_storage_backend(retriever_crd)
-        logger.info(f"Created storage backend: {type(storage_backend).__name__}")
+        logger.info(
+            f"[RAG Indexing] Created storage backend: {type(storage_backend).__name__}"
+        )
 
         # Create document service
         doc_service = DocumentService(storage_backend=storage_backend)
@@ -743,6 +750,10 @@ def _index_document_background(
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
+            logger.info(
+                f"[RAG Indexing] Starting index_document: kb_id={knowledge_base_id}, "
+                f"index_owner_user_id={kb_info.index_owner_user_id}"
+            )
             result = loop.run_until_complete(
                 doc_service.index_document(
                     knowledge_id=knowledge_base_id,
@@ -755,13 +766,89 @@ def _index_document_background(
                     document_id=document_id,
                 )
             )
+            logger.info(f"[RAG Indexing] index_document returned: result={result}")
         finally:
             # Properly shutdown async generators and close the loop
             loop.run_until_complete(loop.shutdown_asyncgens())
             loop.close()
+
+        # Verify indexing result
+        indexed_count = result.get("indexed_count", 0)
+        index_name = result.get("index_name", "unknown")
+        status = result.get("status", "unknown")
+
         logger.info(
-            f"Successfully indexed document for knowledge base {knowledge_base_id}: {result}"
+            f"[RAG Indexing] Indexing completed: kb_id={knowledge_base_id}, "
+            f"document_id={document_id}, indexed_count={indexed_count}, "
+            f"index_name={index_name}, status={status}"
         )
+
+        # CRITICAL: Verify data was actually written to vector store
+        # LlamaIndex's async_bulk may silently fail (ignoring 'failed' count)
+        if indexed_count == 0:
+            logger.error(
+                f"[RAG Indexing] VERIFICATION FAILED: indexed_count=0 for "
+                f"kb_id={knowledge_base_id}, document_id={document_id}"
+            )
+            raise RuntimeError(
+                f"RAG indexing returned indexed_count=0 for document {document_id}"
+            )
+
+        # Additional verification: query vector store to confirm data exists
+        # This catches cases where LlamaIndex's async_bulk silently fails
+        # (ignoring the 'failed' count returned by Elasticsearch)
+        try:
+            verified_count = storage_backend.verify_indexing(
+                knowledge_id=knowledge_base_id,
+                doc_ref=str(document_id) if document_id else None,
+                user_id=kb_info.index_owner_user_id,
+            )
+            logger.info(
+                f"[RAG Indexing] Verification: expected_chunks={indexed_count}, "
+                f"actual_chunks={verified_count}, kb_id={knowledge_base_id}, "
+                f"document_id={document_id}"
+            )
+
+            # Check for complete failure (no chunks indexed)
+            if verified_count == 0:
+                logger.error(
+                    f"[RAG Indexing] COMPLETE FAILURE: No chunks found in vector store. "
+                    f"Expected {indexed_count} chunks but found 0. "
+                    f"kb_id={knowledge_base_id}, document_id={document_id}"
+                )
+                raise RuntimeError(
+                    f"RAG indexing complete failure: expected {indexed_count} chunks "
+                    f"but found 0 in vector store for document {document_id}"
+                )
+
+            # Check for partial failure (some chunks failed to index)
+            if verified_count < indexed_count:
+                logger.error(
+                    f"[RAG Indexing] PARTIAL FAILURE: Only {verified_count}/{indexed_count} "
+                    f"chunks were indexed. This indicates partial write failure in "
+                    f"Elasticsearch bulk operation. kb_id={knowledge_base_id}, "
+                    f"document_id={document_id}"
+                )
+                raise RuntimeError(
+                    f"RAG indexing partial failure: expected {indexed_count} chunks "
+                    f"but only {verified_count} were indexed for document {document_id}"
+                )
+
+            logger.info(
+                f"[RAG Indexing] Verification PASSED: all {verified_count} chunks "
+                f"successfully indexed for document_id={document_id}"
+            )
+
+        except RuntimeError:
+            # Re-raise our own RuntimeError exceptions
+            raise
+        except Exception as verify_err:
+            # Log other verification errors but don't fail the indexing
+            # (e.g., ES connection issues during verification)
+            logger.warning(
+                f"[RAG Indexing] Verification query failed (non-fatal): {verify_err}. "
+                f"Proceeding with status update but data integrity is uncertain."
+            )
 
         # Update document is_active to True and status to enabled after successful indexing
         # Also save chunk metadata to document if CHUNK_STORAGE_ENABLED is True
@@ -783,17 +870,17 @@ def _index_document_background(
                     if chunks_data:
                         doc.chunks = chunks_data
                         logger.info(
-                            f"Saved {chunks_data.get('total_count', 0)} chunks metadata "
+                            f"[RAG Indexing] Saved {chunks_data.get('total_count', 0)} chunks metadata "
                             f"for document {document_id}"
                         )
                 else:
                     logger.info(
-                        f"Skipping chunk storage for document {document_id} "
+                        f"[RAG Indexing] Skipping chunk storage for document {document_id} "
                         "(CHUNK_STORAGE_ENABLED=False)"
                     )
                 db.commit()
                 logger.info(
-                    f"Updated document {document_id} is_active to True and status to enabled after successful indexing"
+                    f"[RAG Indexing] Updated document {document_id} status to ENABLED"
                 )
 
                 # Trigger document summary generation if enabled
@@ -806,16 +893,22 @@ def _index_document_background(
                 )
     except Exception as e:
         logger.error(
-            f"Failed to index document for knowledge base {knowledge_base_id}: {str(e)}",
+            f"[RAG Indexing] FAILED: kb_id={knowledge_base_id}, document_id={document_id}, "
+            f"error={str(e)}",
             exc_info=True,
         )
-        # Don't raise exception to avoid blocking document creation
+        # Document status remains DISABLED (default) when indexing fails
+        # No need to update status - it was never set to ENABLED
     finally:
         # Always close the database session
         db.close()
-        logger.info(f"Background task completed for knowledge base {knowledge_base_id}")
+        logger.info(
+            f"[RAG Indexing] Background task completed: kb_id={knowledge_base_id}, "
+            f"document_id={document_id}"
+        )
 
 
+# Document-specific endpoints (without knowledge_base_id in path)
 # Document-specific endpoints (without knowledge_base_id in path)
 document_router = APIRouter()
 
