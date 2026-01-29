@@ -38,6 +38,7 @@ interface CreateKnowledgeBaseDialogProps {
     retrieval_config?: Partial<RetrievalConfig>
     summary_enabled?: boolean
     summary_model_ref?: SummaryModelRef | null
+    is_company?: boolean
   }) => Promise<void>
   loading?: boolean
   scope?: 'personal' | 'group' | 'all' | 'organization'
@@ -76,6 +77,7 @@ export function CreateKnowledgeBaseDialog({
   })
   const [error, setError] = useState('')
   const [accordionValue, setAccordionValue] = useState<string>('')
+  const [isCompany, setIsCompany] = useState(false)
 
   // Reset summaryEnabled when dialog opens based on kbType
   // This is necessary because useState initial value only applies on first mount,
@@ -129,6 +131,7 @@ export function CreateKnowledgeBaseDialog({
         retrieval_config: retrievalConfig,
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
+        is_company: isCompany,
       })
       setName('')
       setDescription('')
@@ -144,6 +147,7 @@ export function CreateKnowledgeBaseDialog({
           keyword_weight: 0.3,
         },
       })
+      setIsCompany(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common:error'))
     }
@@ -166,6 +170,7 @@ export function CreateKnowledgeBaseDialog({
           keyword_weight: 0.3,
         },
       })
+      setIsCompany(false)
       setError('')
       setAccordionValue('')
     }
@@ -238,6 +243,23 @@ export function CreateKnowledgeBaseDialog({
                 placeholder={t('knowledge:document.knowledgeBase.descriptionPlaceholder')}
                 maxLength={500}
                 rows={3}
+              />
+            </div>
+
+            {/* Company Knowledge Base Checkbox */}
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="is-company">
+                  {t('knowledge:document.knowledgeBase.companyKnowledgeBase')}
+                </Label>
+                <p className="text-xs text-text-muted">
+                  {t('knowledge:document.knowledgeBase.companyKnowledgeBaseDesc')}
+                </p>
+              </div>
+              <Switch
+                id="is-company"
+                checked={isCompany}
+                onCheckedChange={setIsCompany}
               />
             </div>
 

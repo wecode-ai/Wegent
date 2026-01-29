@@ -2194,7 +2194,7 @@ async def process_permission_request(
 
     Requires manage permission on the knowledge base.
     """
-    from app.models.permission_request import PermissionRequest
+    from app.models.permission import Permission
     from app.schemas.knowledge_notification import KnowledgeNotificationType
     from app.services.knowledge import permission_request_service
     from app.services.knowledge.notification_service import (
@@ -2203,18 +2203,14 @@ async def process_permission_request(
 
     try:
         # Get request info before processing for notification
-        request = (
-            db.query(PermissionRequest)
-            .filter(PermissionRequest.id == request_id)
-            .first()
-        )
+        request = db.query(Permission).filter(Permission.id == request_id).first()
         if not request:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Permission request not found",
             )
 
-        applicant = db.query(User).filter(User.id == request.applicant_user_id).first()
+        applicant = db.query(User).filter(User.id == request.user_id).first()
         kb = (
             db.query(Kind)
             .filter(Kind.id == request.kind_id, Kind.kind == "KnowledgeBase")
@@ -2236,7 +2232,7 @@ async def process_permission_request(
                 else KnowledgeNotificationType.PERMISSION_REQUEST_REJECTED
             )
             permission_type = (
-                data.granted_permission_type or request.requested_permission_type
+                data.granted_permission_type or request.permission_type
                 if data.action == "approve"
                 else None
             )

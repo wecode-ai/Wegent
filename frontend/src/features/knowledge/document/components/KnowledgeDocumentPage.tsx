@@ -182,6 +182,7 @@ export function KnowledgeDocumentPage() {
   }
 
   const handleCreate = async (data: {
+    is_company?: boolean
     name: string
     description?: string
     retrieval_config?: Parameters<typeof personalKb.create>[0]['retrieval_config']
@@ -196,6 +197,7 @@ export function KnowledgeDocumentPage() {
       summary_enabled: data.summary_enabled,
       summary_model_ref: data.summary_model_ref,
       kb_type: createKbType,
+      is_company: data.is_company,
     })
 
     // Save summary model to knowledge team's preference for notebook type

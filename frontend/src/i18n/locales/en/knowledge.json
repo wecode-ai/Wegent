@@ -146,6 +146,8 @@
       "nameTooLong": "Name must be 100 characters or less",
       "description": "Description",
       "descriptionPlaceholder": "Enter description (optional)",
+      "companyKnowledgeBase": "Company Knowledge Base",
+      "companyKnowledgeBaseDesc": "Mark as company knowledge base, displayed in company knowledge base list",
       "documentCount": "Documents",
       "empty": "No knowledge bases yet",
       "confirmDelete": "Are you sure you want to delete this knowledge base? This action cannot be undone.",

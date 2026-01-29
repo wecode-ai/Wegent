@@ -82,6 +82,8 @@ export interface KnowledgeBase {
   summary?: KnowledgeBaseSummary | null
   /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
   kb_type?: KnowledgeBaseType
+  /** Whether this is a company knowledge base */
+  is_company?: boolean
   created_at: string
   updated_at: string
 }
@@ -95,6 +97,8 @@ export interface KnowledgeBaseCreate {
   summary_model_ref?: SummaryModelRef | null
   /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
   kb_type?: KnowledgeBaseType
+  /** Whether this is a company knowledge base */
+  is_company?: boolean
 }
 
 export interface RetrievalConfigUpdate {

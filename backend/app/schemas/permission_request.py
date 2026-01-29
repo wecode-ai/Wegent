@@ -21,6 +21,7 @@ class PermissionRequestStatus(str, Enum):
     REJECTED = "rejected"
     CANCELLED = "cancelled"
     EXPIRED = "expired"
+    DISALLOW = "disallow"  # Added for unified permission status
 
 
 # ============== Permission Request Schemas ==============

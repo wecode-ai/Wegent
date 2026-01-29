@@ -146,6 +146,8 @@
       "nameTooLong": "名称不能超过100个字符",
       "description": "描述",
       "descriptionPlaceholder": "请输入描述（可选）",
+      "companyKnowledgeBase": "公司知识库",
+      "companyKnowledgeBaseDesc": "标记为公司知识库，可在公司知识库列表中展示",
       "documentCount": "文档数量",
       "empty": "暂无知识库",
       "confirmDelete": "确定要删除这个知识库吗？删除后无法恢复。",

@@ -9,18 +9,31 @@ Provides storage for explicit permission grants between users and resources.
 """
 
 from datetime import datetime
+from enum import Enum as PyEnum
 
 from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+)
+from sqlalchemy import Enum as SQLEnum
+from sqlalchemy import (
     Index,
     Integer,
     String,
     UniqueConstraint,
 )
+from sqlalchemy.sql import func
 
 from app.db.base import Base
+
+
+class PermissionStatus(str, PyEnum):
+    """Status of a permission record."""
+
+    PENDING = "pending"  # Permission request created, waiting for approval
+    APPROVED = "approved"  # Permission granted
+    DISALLOW = "disallow"  # Permission rejected
 
 
 class Permission(Base):
@@ -45,7 +58,18 @@ class Permission(Base):
     # User who granted this permission
     granted_by_user_id = Column(Integer, nullable=False)
     # When the permission was granted
-    granted_at = Column(DateTime, default=datetime.utcnow)
+    granted_at = Column(DateTime, nullable=False, server_default=func.now())
+    # Permission status: pending, approved, disallow
+    status = Column(
+        SQLEnum(
+            PermissionStatus,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="permissionstatus",
+        ),
+        nullable=False,
+        default=PermissionStatus.PENDING,
+        index=True,
+    )
     # Whether the permission is currently active
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
