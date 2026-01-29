@@ -137,14 +137,19 @@ class ChatSendPayload(BaseModel):
     git_repo_id: Optional[int] = Field(None, description="Git repository ID")
     git_domain: Optional[str] = Field(None, description="Git domain")
     branch_name: Optional[str] = Field(None, description="Git branch name")
-    task_type: Optional[Literal["chat", "code", "knowledge"]] = Field(
-        None, description="Task type: chat, code, or knowledge"
+    task_type: Optional[Literal["chat", "code", "knowledge", "task"]] = Field(
+        None, description="Task type: chat, code, knowledge, or task"
     )
     knowledge_base_id: Optional[int] = Field(
         None, description="Knowledge base ID for knowledge type tasks"
     )
     preload_skills: Optional[List[str]] = Field(
         None, description="List of skill names to preload into system prompt"
+    )
+    # Local device execution
+    device_id: Optional[str] = Field(
+        None,
+        description="Local device ID for task execution (if None, use cloud executor)",
     )
 
 
