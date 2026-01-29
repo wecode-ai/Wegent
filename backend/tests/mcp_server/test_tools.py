@@ -16,8 +16,11 @@ class TestSilentExitTool:
 
     def test_silent_exit_returns_marker(self):
         """Test that silent_exit returns the correct marker."""
-        # Mock the database session to avoid actual DB calls
-        with patch("app.mcp_server.tools.silent_exit.SessionLocal"):
+        # Mock at the db.session module level to avoid import order issues
+        with patch("app.db.session.SessionLocal") as mock_session_cls:
+            mock_session = MagicMock()
+            mock_session_cls.return_value = mock_session
+
             from app.mcp_server.tools.silent_exit import silent_exit
 
             result = silent_exit(reason="test reason")
@@ -28,7 +31,10 @@ class TestSilentExitTool:
 
     def test_silent_exit_empty_reason(self):
         """Test silent_exit with empty reason."""
-        with patch("app.mcp_server.tools.silent_exit.SessionLocal"):
+        with patch("app.db.session.SessionLocal") as mock_session_cls:
+            mock_session = MagicMock()
+            mock_session_cls.return_value = mock_session
+
             from app.mcp_server.tools.silent_exit import silent_exit
 
             result = silent_exit()
@@ -46,13 +52,14 @@ class TestSilentExitTool:
             user_name="testuser",
         )
 
-        # Mock SessionLocal to prevent actual DB connection
-        mock_session = MagicMock()
-        mock_session.query.return_value.filter.return_value.first.return_value = None
+        # Mock SessionLocal at db.session level to prevent actual DB connection
+        with patch("app.db.session.SessionLocal") as mock_session_cls:
+            mock_session = MagicMock()
+            mock_session.query.return_value.filter.return_value.first.return_value = (
+                None
+            )
+            mock_session_cls.return_value = mock_session
 
-        with patch(
-            "app.mcp_server.tools.silent_exit.SessionLocal", return_value=mock_session
-        ):
             from app.mcp_server.tools.silent_exit import silent_exit
 
             result = silent_exit(reason="completed", token_info=token_info)
