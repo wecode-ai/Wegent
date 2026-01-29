@@ -9,10 +9,12 @@ import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ToolGroup } from '../types'
 import { ToolBlock } from './ToolBlock'
+import { isRunningStatus } from '../utils/thinkingUtils'
 
 interface ToolBlockGroupProps {
   group: ToolGroup
   defaultExpanded?: boolean
+  taskStatus?: string
 }
 
 /**
@@ -23,9 +25,13 @@ interface ToolBlockGroupProps {
 export const ToolBlockGroup = memo(function ToolBlockGroup({
   group,
   defaultExpanded = true,
+  taskStatus,
 }: ToolBlockGroupProps) {
   const { t } = useTranslation('chat')
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
+
+  // Check if task is still running
+  const isRunning = isRunningStatus(taskStatus)
 
   // Count total tools
   const totalCount = group.tools.length
@@ -44,10 +50,18 @@ export const ToolBlockGroup = memo(function ToolBlockGroup({
             <ChevronRight className="h-4 w-4 text-text-muted" />
           )}
           <span className="text-sm font-medium text-text-primary">
-            {t('thinking.tool_group') || 'Tool Group'} ({totalCount}{' '}
-            {t('thinking.tools_count') || 'tools'})
+            {isRunning || !group.isComplete
+              ? t('chat:messages.using_tools') || 'Using Tools'
+              : t('chat:messages.used_tools') || 'Used Tools'}{' '}
+            ({totalCount} {t('chat:messages.times') || 'times'})
           </span>
         </div>
+        {/* Show status badge only when running - pulse animation on text */}
+        {(isRunning || !group.isComplete) && (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-xs border border-blue-500/20">
+            <span className="animate-pulse">{t('thinking.running') || '执行中'}</span>
+          </span>
+        )}
       </div>
 
       {/* Tools List */}

@@ -7,7 +7,7 @@
 import { memo } from 'react'
 import type { ThinkingStep } from './types'
 import { useToolExtraction } from './hooks/useToolExtraction'
-import { ToolBlock } from './components/ToolBlock'
+import { isRunningStatus } from './utils/thinkingUtils'
 import { ToolBlockGroup } from './components/ToolBlockGroup'
 
 interface ToolBlocksViewProps {
@@ -21,8 +21,11 @@ interface ToolBlocksViewProps {
  * Displays tool execution blocks separately from thinking timeline.
  * Extracts tools from thinking array and renders them as collapsible blocks.
  */
-const ToolBlocksView = memo(function ToolBlocksView({ thinking }: ToolBlocksViewProps) {
+const ToolBlocksView = memo(function ToolBlocksView({ thinking, taskStatus }: ToolBlocksViewProps) {
   const { toolGroups, hasTools } = useToolExtraction(thinking)
+
+  // Check if task is still running
+  const isRunning = isRunningStatus(taskStatus)
 
   if (!hasTools) {
     return null
@@ -31,13 +34,15 @@ const ToolBlocksView = memo(function ToolBlocksView({ thinking }: ToolBlocksView
   return (
     <div className="w-full mb-3" data-tool-blocks>
       {toolGroups.map(group => {
-        // Single tool - render as ToolBlock (collapsed by default)
-        if (group.tools.length === 1) {
-          return <ToolBlock key={group.id} tool={group.tools[0]} defaultExpanded={false} />
-        }
-
-        // Multiple tools - render as ToolBlockGroup (group expanded, but tools inside collapsed)
-        return <ToolBlockGroup key={group.id} group={group} defaultExpanded={true} />
+        const shouldExpand = isRunning || !group.isComplete
+        return (
+          <ToolBlockGroup
+            key={group.id}
+            group={group}
+            taskStatus={taskStatus}
+            defaultExpanded={shouldExpand}
+          />
+        )
       })}
     </div>
   )

@@ -1425,21 +1425,6 @@ const MessageBubble = memo(
         <div
           className={`flex ${containerWidthClass} flex-col ${isEditing ? 'items-start' : shouldAlignRight ? 'items-end' : 'items-start'}`}
         >
-          {/* Show thinking display for AI messages */}
-          {!isUserTypeMessage && msg.thinking && (
-            <ThinkingDisplay
-              thinking={msg.thinking}
-              taskStatus={msg.subtaskStatus}
-              shellType={msg.result?.shell_type}
-            />
-          )}
-          {/* Show reasoning display for DeepSeek R1 and similar models */}
-          {!isUserTypeMessage && (msg.reasoningContent || msg.result?.reasoning_content) && (
-            <ReasoningDisplay
-              reasoningContent={msg.reasoningContent || msg.result?.reasoning_content || ''}
-              isStreaming={msg.subtaskStatus === 'RUNNING' || msg.status === 'streaming'}
-            />
-          )}
           <div
             className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}
             onMouseUp={handleTextSelection}
@@ -1457,6 +1442,21 @@ const MessageBubble = memo(
                   </span>
                 )}
               </div>
+            )}
+            {/* Show thinking display for AI messages - after header */}
+            {!isUserTypeMessage && msg.thinking && (
+              <ThinkingDisplay
+                thinking={msg.thinking}
+                taskStatus={msg.subtaskStatus}
+                shellType={msg.result?.shell_type}
+              />
+            )}
+            {/* Show reasoning display for DeepSeek R1 and similar models */}
+            {!isUserTypeMessage && (msg.reasoningContent || msg.result?.reasoning_content) && (
+              <ReasoningDisplay
+                reasoningContent={msg.reasoningContent || msg.result?.reasoning_content || ''}
+                isStreaming={msg.subtaskStatus === 'RUNNING' || msg.status === 'streaming'}
+              />
             )}
             {/* Show header for other users' messages in group chat (left-aligned user messages) */}
             {isUserTypeMessage && !shouldAlignRight && msg.shouldShowSender && (
