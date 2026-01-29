@@ -242,6 +242,23 @@ async def lifespan(app: FastAPI):
     await get_pending_request_registry()
     logger.info("✓ PendingRequestRegistry initialized")
 
+    # Initialize IM Channel Manager and start enabled channels
+    # This enables DingTalk, Feishu, WeChat bot integrations
+    logger.info("Initializing IM Channel Manager...")
+    from app.services.channels import get_channel_manager
+
+    channel_manager = get_channel_manager()
+    db = SessionLocal()
+    try:
+        started_count = await channel_manager.start_all_enabled(db)
+        logger.info(
+            f"✓ IM Channel Manager initialized, {started_count} channels started"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to start IM channels: {e}")
+    finally:
+        db.close()
+
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
     logger.info("=" * 60)
@@ -287,11 +304,18 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("No active streams, proceeding with shutdown")
 
-    # Step 3: Stop background jobs
+    # Step 3: Stop IM Channel Manager
+    from app.services.channels import get_channel_manager
+
+    channel_manager = get_channel_manager()
+    stopped_count = await channel_manager.stop_all()
+    logger.info(f"✓ IM Channel Manager stopped, {stopped_count} channels stopped")
+
+    # Step 4: Stop background jobs
     stop_background_jobs(app)
     logger.info("✓ Background jobs stopped")
 
-    # Step 4: Stop scheduler backend
+    # Step 5: Stop scheduler backend
     from app.core.scheduler import get_active_scheduler, stop_scheduler
 
     scheduler = get_active_scheduler()
@@ -299,7 +323,7 @@ async def lifespan(app: FastAPI):
         stop_scheduler()
         logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' stopped")
 
-    # Step 5: Shutdown PendingRequestRegistry
+    # Step 6: Shutdown PendingRequestRegistry
     from chat_shell.tools import (
         shutdown_pending_request_registry,
     )
@@ -307,7 +331,7 @@ async def lifespan(app: FastAPI):
     await shutdown_pending_request_registry()
     logger.info("✓ PendingRequestRegistry shutdown completed")
 
-    # Step 6: Shutdown OpenTelemetry
+    # Step 7: Shutdown OpenTelemetry
     from shared.telemetry.config import get_otel_config
     from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 
