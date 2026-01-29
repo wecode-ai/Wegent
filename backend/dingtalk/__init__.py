@@ -3,18 +3,20 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-DingTalk authentication module.
-This module is loaded via side-effect import when AUTH_MODE=dingtalk.
+DingTalk module.
+
+This module provides:
+1. DingTalk OAuth authentication
+2. DingTalk register user mapper for enterprise user resolution
+
 """
 import logging
-import os
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Only register routes when DingTalk mode is enabled
-AUTH_MODE = os.getenv("AUTH_MODE", "local")
-
-if AUTH_MODE == "dingtalk":
+if settings.AUTH_MODE == "dingtalk":
     from app.api.router import api_router
     from dingtalk.api.auth import router as dingtalk_router
     from dingtalk.config import dingtalk_config
@@ -31,3 +33,10 @@ if AUTH_MODE == "dingtalk":
             dingtalk_router, prefix="/auth/dingtalk", tags=["auth", "dingtalk"]
         )
         logger.info("[DingTalk] Authentication module loaded successfully")
+
+# Register internal user mapper for enterprise user resolution
+from app.services.channels.dingtalk.user_mapping import set_user_mapper
+from dingtalk.user_mapper import ERPUserMapper
+
+set_user_mapper(ERPUserMapper())
+logger.info("[DingTalk] Enterprise user mapper (ERPUserMapper) registered")
