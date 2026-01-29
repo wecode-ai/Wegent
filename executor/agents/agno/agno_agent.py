@@ -35,6 +35,28 @@ from .team_builder import TeamBuilder
 from .thinking_step_manager import ThinkingStepManager
 
 db = SqliteDb(db_file="/tmp/agno_data.db")
+
+
+class SafeJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles non-serializable objects from agno library."""
+
+    def default(self, obj):
+        # Handle objects with __dict__ attribute
+        if hasattr(obj, "__dict__"):
+            return str(obj)
+        # Handle objects with model_dump method (Pydantic models)
+        if hasattr(obj, "model_dump"):
+            return str(obj)
+        # Handle objects with to_dict method
+        if hasattr(obj, "to_dict"):
+            return str(obj)
+        # Fallback: convert to string representation
+        try:
+            return str(obj)
+        except Exception:
+            return f"<non-serializable: {type(obj).__name__}>"
+
+
 logger = setup_logger("agno_agent")
 
 
@@ -537,7 +559,9 @@ class AgnoAgent(Agent):
             elif hasattr(result, "content") and getattr(result, "content") is not None:
                 result_content = str(getattr(result, "content"))
             elif hasattr(result, "to_dict"):
-                result_content = json.dumps(result.to_dict(), ensure_ascii=False)
+                result_content = json.dumps(
+                    result.to_dict(), ensure_ascii=False, cls=SafeJSONEncoder
+                )
             else:
                 result_content = str(result)
         except Exception:
@@ -944,7 +968,12 @@ class AgnoAgent(Agent):
                 debug_level=2,
             )
 
-            logger.info(f"agent run success. result:{json.dumps(result.to_dict())}")
+            try:
+                logger.info(
+                    f"agent run success. result:{json.dumps(result.to_dict(), cls=SafeJSONEncoder)}"
+                )
+            except (TypeError, ValueError) as e:
+                logger.info(f"agent run success. result: (serialization failed: {e})")
             result_content = self._normalize_result_content(result)
             return self._handle_execution_result(result_content, "agent execution")
 
@@ -1076,9 +1105,12 @@ class AgnoAgent(Agent):
                 **ext_config,
             )
 
-            logger.info(
-                f"team run success. result:{json.dumps(result.to_dict(), ensure_ascii=False)}"
-            )
+            try:
+                logger.info(
+                    f"team run success. result:{json.dumps(result.to_dict(), ensure_ascii=False, cls=SafeJSONEncoder)}"
+                )
+            except (TypeError, ValueError) as e:
+                logger.info(f"team run success. result: (serialization failed: {e})")
             result_content = self._normalize_result_content(result)
             return self._handle_execution_result(result_content, "team execution")
 
@@ -1186,9 +1218,14 @@ class AgnoAgent(Agent):
             run_response_event.event != "TeamRunContent"
             and run_response_event.event != "RunContent"
         ):
-            logger.info(
-                f"\nStreaming content: {json.dumps(run_response_event.to_dict(), ensure_ascii=False)}"
-            )
+            try:
+                logger.info(
+                    f"\nStreaming content: {json.dumps(run_response_event.to_dict(), ensure_ascii=False, cls=SafeJSONEncoder)}"
+                )
+            except (TypeError, ValueError) as e:
+                logger.info(
+                    f"\nStreaming content: {run_response_event.event} (serialization failed: {e})"
+                )
 
         if run_response_event.event == "TeamReasoningStep":
             reasoning = run_response_event.content
