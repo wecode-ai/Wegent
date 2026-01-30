@@ -59,5 +59,6 @@
   "arch_intel": "Intel",
   "security_warning": "Security notice: Do not share the command above, it contains your authentication credentials",
   "gatekeeper_hint": "First run may require allowing it in System Settings > Privacy & Security",
+  "token_expiry_hint": "The auth token expires in 7 days. Re-run the startup command to refresh it",
   "copy_success": "Copied to clipboard"
 }

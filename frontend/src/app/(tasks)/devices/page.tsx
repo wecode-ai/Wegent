@@ -162,10 +162,7 @@ export default function DevicesPage() {
   const authToken = useMemo(() => getToken() || '<YOUR_AUTH_TOKEN>', [])
 
   // Generate one-liner install command
-  const installCommand = useMemo(
-    () => `curl -fsSL ${INSTALL_SCRIPT_URL} | bash`,
-    []
-  )
+  const installCommand = useMemo(() => `curl -fsSL ${INSTALL_SCRIPT_URL} | bash`, [])
 
   // Generate run command
   const runCommand = useMemo(
@@ -406,9 +403,15 @@ export default function DevicesPage() {
                   </div>
 
                   {/* Gatekeeper hint */}
-                  <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg mb-3">
                     <span className="text-blue-600 shrink-0">💡</span>
                     <p className="text-sm text-blue-700">{t('gatekeeper_hint')}</p>
+                  </div>
+
+                  {/* Token expiry hint */}
+                  <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <span className="text-blue-600 shrink-0">🔄</span>
+                    <p className="text-sm text-blue-700">{t('token_expiry_hint')}</p>
                   </div>
 
                   {/* Guide link */}
