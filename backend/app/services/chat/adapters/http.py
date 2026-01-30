@@ -161,47 +161,8 @@ class HTTPAdapter(ChatInterface):
             "is_subscription": request.is_subscription,
         }
 
-        # Fetch KB configurations for HTTP mode injection
-        # This follows the same pattern as package mode
-        if request.knowledge_base_ids:
-            kb_configs = {}
-            try:
-                from app.services.knowledge.knowledge_service import KnowledgeService
-
-                for kb_id in request.knowledge_base_ids:
-                    try:
-                        kb_kind = KnowledgeService.get_knowledge_base(
-                            request.db_session, kb_id, request.user_id
-                        )
-                        if kb_kind:
-                            spec = kb_kind.json.get("spec", {})
-                            kb_configs[kb_id] = {
-                                "maxCallsPerConversation": spec.get(
-                                    "maxCallsPerConversation", 10
-                                ),
-                                "exemptCallsBeforeCheck": spec.get(
-                                    "exemptCallsBeforeCheck", 5
-                                ),
-                                "name": spec.get("name", f"KB-{kb_id}"),
-                            }
-                    except Exception as e:
-                        logger.warning(
-                            f"[HTTP_ADAPTER] Failed to fetch config for KB {kb_id}: {e}"
-                        )
-                        # Use defaults if fetch fails
-                        kb_configs[kb_id] = {
-                            "maxCallsPerConversation": 10,
-                            "exemptCallsBeforeCheck": 5,
-                            "name": f"KB-{kb_id}",
-                        }
-            except Exception as e:
-                logger.warning(
-                    f"[HTTP_ADAPTER] Failed to fetch KB configs: {e}, using empty config"
-                )
-                kb_configs = {}
-
-            # Add kb_configs to metadata for chat_shell injection
-            metadata["kb_configs"] = kb_configs
+        # KB configs (max_calls, exempt_calls, name) are now fetched by chat_shell from Backend API
+        # No need to inject them via metadata
 
         logger.info(
             "[HTTP_ADAPTER] Building metadata: is_subscription=%s, task_id=%d, subtask_id=%d",

@@ -151,48 +151,58 @@ async def internal_retrieve(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-class KnowledgeBaseSizeRequest(BaseModel):
-    """Request for getting knowledge base size."""
+class KnowledgeBaseInfoRequest(BaseModel):
+    """Request for getting knowledge base information."""
 
     knowledge_base_ids: list[int] = Field(..., description="List of knowledge base IDs")
 
 
-class KnowledgeBaseSizeInfo(BaseModel):
-    """Size information for a single knowledge base."""
+class KnowledgeBaseInfo(BaseModel):
+    """Complete information for a single knowledge base.
+
+    Includes size information, configuration, and metadata needed by chat_shell
+    for intelligent injection strategy and call limit enforcement.
+    """
 
     id: int
     total_file_size: int  # Total file size in bytes
     document_count: int  # Number of active documents
     estimated_tokens: int  # Estimated token count (file_size / 4)
+    max_calls_per_conversation: int  # Maximum tool calls allowed
+    exempt_calls_before_check: int  # Calls exempt from token checking
+    name: str  # Knowledge base name
 
 
-class KnowledgeBaseSizeResponse(BaseModel):
-    """Response for knowledge base size query."""
+class KnowledgeBaseInfoResponse(BaseModel):
+    """Response for knowledge base info query."""
 
-    items: list[KnowledgeBaseSizeInfo]
+    items: list[KnowledgeBaseInfo]
     total_file_size: int  # Sum of all KB sizes
     total_estimated_tokens: int  # Sum of all estimated tokens
 
 
-@router.post("/kb-size", response_model=KnowledgeBaseSizeResponse)
-async def get_knowledge_base_size(
-    request: KnowledgeBaseSizeRequest,
+@router.post("/kb-size", response_model=KnowledgeBaseInfoResponse)
+async def get_knowledge_base_info(
+    request: KnowledgeBaseInfoRequest,
     db: Session = Depends(get_db),
 ):
     """
-    Get size information for knowledge bases.
+    Get complete information for knowledge bases.
 
-    This endpoint returns the total file size and estimated token count
-    for the specified knowledge bases. Used by chat_shell to decide
-    whether to use direct injection or RAG retrieval.
+    This endpoint returns size information, configuration, and metadata
+    for the specified knowledge bases. Used by chat_shell for:
+    1. Deciding whether to use direct injection or RAG retrieval
+    2. Enforcing tool call limits per KB configuration
+    3. Displaying KB names in logs and UI
 
     Args:
         request: Request with knowledge base IDs
         db: Database session
 
     Returns:
-        Size information for each knowledge base
+        Complete information for each knowledge base
     """
+    from app.models.kind import Kind
     from app.services.knowledge import KnowledgeService
 
     items = []
@@ -201,17 +211,42 @@ async def get_knowledge_base_size(
 
     for kb_id in request.knowledge_base_ids:
         try:
+            # Get file size and document count
             file_size = KnowledgeService.get_total_file_size(db, kb_id)
             doc_count = KnowledgeService.get_active_document_count(db, kb_id)
             # Estimate tokens: approximately 4 characters per token for most models
             estimated_tokens = file_size // 4
 
+            # Get KB configuration from Kind spec
+            kb_kind = db.query(Kind).filter(Kind.id == kb_id, Kind.kind == "KnowledgeBase").first()
+
+            if kb_kind:
+                spec = kb_kind.json.get("spec", {})
+                max_calls = spec.get("maxCallsPerConversation", 10)
+                exempt_calls = spec.get("exemptCallsBeforeCheck", 5)
+                kb_name = spec.get("name", f"KB-{kb_id}")
+
+                # Validate config
+                if exempt_calls >= max_calls:
+                    logger.warning(
+                        "[internal_rag] Invalid KB config for KB %d: exempt=%d >= max=%d. Using defaults.",
+                        kb_id, exempt_calls, max_calls
+                    )
+                    max_calls, exempt_calls = 10, 5
+            else:
+                # KB not found, use defaults
+                logger.warning("[internal_rag] KB %d not found, using default config", kb_id)
+                max_calls, exempt_calls, kb_name = 10, 5, f"KB-{kb_id}"
+
             items.append(
-                KnowledgeBaseSizeInfo(
+                KnowledgeBaseInfo(
                     id=kb_id,
                     total_file_size=file_size,
                     document_count=doc_count,
                     estimated_tokens=estimated_tokens,
+                    max_calls_per_conversation=max_calls,
+                    exempt_calls_before_check=exempt_calls,
+                    name=kb_name,
                 )
             )
 
@@ -219,33 +254,39 @@ async def get_knowledge_base_size(
             total_estimated_tokens += estimated_tokens
 
             logger.info(
-                "[internal_rag] KB %d size: %d bytes, %d docs, ~%d tokens",
+                "[internal_rag] KB %d info: size=%d bytes, docs=%d, tokens=%d, limits=%d/%d, name=%s",
                 kb_id,
                 file_size,
                 doc_count,
                 estimated_tokens,
+                max_calls,
+                exempt_calls,
+                kb_name,
             )
 
         except Exception as e:
-            logger.warning("[internal_rag] Failed to get size for KB %d: %s", kb_id, e)
-            # Add zero values for failed KBs
+            logger.warning("[internal_rag] Failed to get info for KB %d: %s", kb_id, e)
+            # Add default values for failed KBs
             items.append(
-                KnowledgeBaseSizeInfo(
+                KnowledgeBaseInfo(
                     id=kb_id,
                     total_file_size=0,
                     document_count=0,
                     estimated_tokens=0,
+                    max_calls_per_conversation=10,  # Default
+                    exempt_calls_before_check=5,    # Default
+                    name=f"KB-{kb_id}",              # Default
                 )
             )
 
     logger.info(
-        "[internal_rag] Total KB size: %d bytes, ~%d tokens for %d KBs",
+        "[internal_rag] Total KB info: %d bytes, ~%d tokens for %d KBs",
         total_file_size,
         total_estimated_tokens,
         len(request.knowledge_base_ids),
     )
 
-    return KnowledgeBaseSizeResponse(
+    return KnowledgeBaseInfoResponse(
         items=items,
         total_file_size=total_file_size,
         total_estimated_tokens=total_estimated_tokens,
