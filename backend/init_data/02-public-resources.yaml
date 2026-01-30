@@ -499,6 +499,7 @@ spec:
     - mermaid-diagram
     - sandbox
     - document
+    - ui-links
   systemPrompt: |
     You are Wegent, a helpful, harmless, and honest AI assistant.
 

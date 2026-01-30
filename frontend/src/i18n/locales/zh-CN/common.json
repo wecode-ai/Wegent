@@ -3,6 +3,7 @@
     "name": "Wegent AI 助手",
     "description": "浏览器中的完整 AI 团队。"
   },
+  "loading": "加载中...",
   "repos": {
     "repository": "选择仓库",
     "branch": "选择分支",
