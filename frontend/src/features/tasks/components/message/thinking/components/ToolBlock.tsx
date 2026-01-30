@@ -44,12 +44,24 @@ export const ToolBlock = memo(function ToolBlock({
   // Check if this is an upload tool with downloadable attachment
   const isDownloadable = tool.toolName === 'Upload' && tool.status === 'done'
 
+  // Check if both input and output are empty
+  const hasInput =
+    tool.toolUse?.details?.input &&
+    (typeof tool.toolUse.details.input === 'string'
+      ? tool.toolUse.details.input.length > 0
+      : Object.keys(tool.toolUse.details.input).length > 0)
+  const hasOutput = tool.toolResult?.details?.output || tool.toolResult?.details?.content
+  const hasContent = hasInput || hasOutput
+  const isExpandable = hasContent
+
   return (
     <div className="border border-border rounded-lg bg-surface overflow-hidden mb-2">
       {/* Header */}
       <div
-        className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-fill-tert transition-colors"
-        onClick={() => setIsExpanded(!isExpanded)}
+        className={`flex items-center justify-between px-4 py-3 ${
+          isExpandable ? 'cursor-pointer hover:bg-fill-tert' : 'cursor-default'
+        } transition-colors`}
+        onClick={() => isExpandable && setIsExpanded(!isExpanded)}
       >
         <div className="flex items-center gap-2">
           <StatusIcon className={`h-4 w-4 ${statusColor}`} />
@@ -61,17 +73,21 @@ export const ToolBlock = memo(function ToolBlock({
               {t('thinking.downloadable') || 'Downloadable'}
             </span>
           )}
-          {/* Expand/collapse icon */}
-          {isExpanded ? (
-            <ChevronDown className="h-4 w-4 text-text-muted" />
-          ) : (
-            <ChevronRight className="h-4 w-4 text-text-muted" />
+          {/* Expand/collapse icon - only show if there's content to expand */}
+          {isExpandable && (
+            <>
+              {isExpanded ? (
+                <ChevronDown className="h-4 w-4 text-text-muted" />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-text-muted" />
+              )}
+            </>
           )}
         </div>
       </div>
 
       {/* Content (Specialized Renderer) */}
-      {isExpanded && (
+      {isExpanded && isExpandable && (
         <div className="px-4 py-3 border-t border-border bg-base">
           <ToolRenderer tool={tool} />
         </div>
