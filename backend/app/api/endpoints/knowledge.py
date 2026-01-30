@@ -64,6 +64,7 @@ router = APIRouter()
 
 
 @router.get("", response_model=KnowledgeBaseListResponse)
+@trace_sync("list_knowledge_bases", "knowledge.api")
 def list_knowledge_bases(
     scope: str = Query(
         default="all",
@@ -115,6 +116,7 @@ def list_knowledge_bases(
 
 
 @router.get("/accessible", response_model=AccessibleKnowledgeResponse)
+@trace_sync("get_accessible_knowledge", "knowledge.api")
 def get_accessible_knowledge(
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
@@ -150,6 +152,7 @@ def get_knowledge_config():
     response_model=KnowledgeBaseResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@trace_sync("create_knowledge_base", "knowledge.api")
 def create_knowledge_base(
     data: KnowledgeBaseCreate,
     current_user: User = Depends(security.get_current_user),
@@ -169,6 +172,15 @@ def create_knowledge_base(
         )
         # Commit the transaction to persist the knowledge base
         db.commit()
+        add_span_event(
+            "knowledge.base.created",
+            {
+                "kb_id": str(kb_id),
+                "name": data.name,
+                "namespace": data.namespace or "default",
+                "user_id": str(current_user.id),
+            },
+        )
         # Fetch the created knowledge base
         knowledge_base = KnowledgeService.get_knowledge_base(
             db=db,
@@ -197,6 +209,7 @@ def create_knowledge_base(
 
 
 @router.get("/{knowledge_base_id}", response_model=KnowledgeBaseResponse)
+@trace_sync("get_knowledge_base", "knowledge.api")
 def get_knowledge_base(
     knowledge_base_id: int,
     current_user: User = Depends(security.get_current_user),
@@ -221,6 +234,7 @@ def get_knowledge_base(
 
 
 @router.put("/{knowledge_base_id}", response_model=KnowledgeBaseResponse)
+@trace_sync("update_knowledge_base", "knowledge.api")
 def update_knowledge_base(
     knowledge_base_id: int,
     data: KnowledgeBaseUpdate,
@@ -253,6 +267,7 @@ def update_knowledge_base(
 
 
 @router.delete("/{knowledge_base_id}", status_code=status.HTTP_204_NO_CONTENT)
+@trace_sync("delete_knowledge_base", "knowledge.api")
 def delete_knowledge_base(
     knowledge_base_id: int,
     current_user: User = Depends(security.get_current_user),
@@ -272,6 +287,13 @@ def delete_knowledge_base(
                 detail="Knowledge base not found or access denied",
             )
 
+        add_span_event(
+            "knowledge.base.deleted",
+            {
+                "kb_id": str(knowledge_base_id),
+                "user_id": str(current_user.id),
+            },
+        )
         return None
     except ValueError as e:
         raise HTTPException(
@@ -281,6 +303,7 @@ def delete_knowledge_base(
 
 
 @router.patch("/{knowledge_base_id}/type", response_model=KnowledgeBaseResponse)
+@trace_sync("update_knowledge_base_type", "knowledge.api")
 def update_knowledge_base_type(
     knowledge_base_id: int,
     data: KnowledgeBaseTypeUpdate,
@@ -325,6 +348,7 @@ def update_knowledge_base_type(
     "/{knowledge_base_id}/documents",
     response_model=KnowledgeDocumentListResponse,
 )
+@trace_sync("list_documents", "knowledge.api")
 def list_documents(
     knowledge_base_id: int,
     current_user: User = Depends(security.get_current_user),
@@ -372,6 +396,15 @@ async def create_document(
             knowledge_base_id=knowledge_base_id,
             user_id=current_user.id,
             data=data,
+        )
+
+        add_span_event(
+            "knowledge.document.created",
+            {
+                "document_id": str(document.id),
+                "knowledge_base_id": str(knowledge_base_id),
+                "user_id": str(current_user.id),
+            },
         )
 
         # Get knowledge base to check for retrieval_config
@@ -438,9 +471,25 @@ async def create_document(
                     logger.info(
                         f"Scheduled RAG indexing for document {document.id} in knowledge base {knowledge_base_id}"
                     )
+                    add_span_event(
+                        "knowledge.rag.indexing.scheduled",
+                        {
+                            "document_id": str(document.id),
+                            "knowledge_base_id": str(knowledge_base_id),
+                            "retriever": retriever_name,
+                        },
+                    )
                 else:
                     logger.warning(
                         f"Knowledge base {knowledge_base_id} has incomplete retrieval_config, skipping RAG indexing"
+                    )
+                    add_span_event(
+                        "knowledge.rag.indexing.skipped",
+                        {
+                            "reason": "incomplete_config",
+                            "document_id": str(document.id),
+                            "knowledge_base_id": str(knowledge_base_id),
+                        },
                     )
 
         return KnowledgeDocumentResponse.model_validate(document)
@@ -704,6 +753,14 @@ def _index_document_background(
         f"[RAG Indexing] Background task started: kb_id={knowledge_base_id}, "
         f"attachment_id={attachment_id}, document_id={document_id}"
     )
+    add_span_event(
+        "rag.indexing.background.started",
+        {
+            "kb_id": str(knowledge_base_id),
+            "attachment_id": str(attachment_id),
+            "document_id": str(document_id),
+        },
+    )
 
     # Create a new database session for the background task
     db = SessionLocal()
@@ -714,6 +771,14 @@ def _index_document_background(
             knowledge_base_id=knowledge_base_id,
             user_id=user_id,
             kb_index_info=kb_index_info,
+        )
+        add_span_event(
+            "rag.indexing.kb_info.resolved",
+            {
+                "kb_id": str(knowledge_base_id),
+                "index_owner_user_id": str(kb_info.index_owner_user_id),
+                "summary_enabled": str(kb_info.summary_enabled),
+            },
         )
 
         # Get retriever from database
@@ -729,16 +794,36 @@ def _index_document_background(
                 f"[RAG Indexing] Retriever not found: name={retriever_name}, "
                 f"namespace={retriever_namespace}"
             )
+            add_span_event(
+                "rag.indexing.retriever.not_found",
+                {
+                    "retriever_name": retriever_name,
+                    "retriever_namespace": retriever_namespace,
+                },
+            )
             raise ValueError(
                 f"Retriever {retriever_name} (namespace: {retriever_namespace}) not found"
             )
 
         logger.info(f"[RAG Indexing] Found retriever: {retriever_name}")
+        add_span_event(
+            "rag.indexing.retriever.found",
+            {
+                "retriever_name": retriever_name,
+                "retriever_namespace": retriever_namespace,
+            },
+        )
 
         # Create storage backend from retriever
         storage_backend = create_storage_backend(retriever_crd)
         logger.info(
             f"[RAG Indexing] Created storage backend: {type(storage_backend).__name__}"
+        )
+        add_span_event(
+            "rag.indexing.storage_backend.created",
+            {
+                "backend_type": type(storage_backend).__name__,
+            },
         )
 
         # Create document service
@@ -754,6 +839,15 @@ def _index_document_background(
             logger.info(
                 f"[RAG Indexing] Starting index_document: kb_id={knowledge_base_id}, "
                 f"index_owner_user_id={kb_info.index_owner_user_id}"
+            )
+            add_span_event(
+                "rag.indexing.index_document.started",
+                {
+                    "kb_id": str(knowledge_base_id),
+                    "index_owner_user_id": str(kb_info.index_owner_user_id),
+                    "embedding_model_name": embedding_model_name,
+                    "embedding_model_namespace": embedding_model_namespace,
+                },
             )
             result = loop.run_until_complete(
                 doc_service.index_document(
@@ -776,12 +870,12 @@ def _index_document_background(
         # Verify indexing result
         indexed_count = result.get("indexed_count", 0)
         index_name = result.get("index_name", "unknown")
-        status = result.get("status", "unknown")
+        indexing_status = result.get("status", "unknown")
 
         logger.info(
             f"[RAG Indexing] Indexing completed: kb_id={knowledge_base_id}, "
             f"document_id={document_id}, indexed_count={indexed_count}, "
-            f"index_name={index_name}, status={status}"
+            f"index_name={index_name}, status={indexing_status}"
         )
         add_span_event(
             "rag.indexing.completed",
@@ -790,7 +884,7 @@ def _index_document_background(
                 "document_id": str(document_id),
                 "indexed_count": indexed_count,
                 "index_name": index_name,
-                "status": status,
+                "status": indexing_status,
             },
         )
 
@@ -826,6 +920,13 @@ def _index_document_background(
                 logger.info(
                     f"[RAG Indexing] Updated document {document_id} status to ENABLED"
                 )
+                add_span_event(
+                    "rag.indexing.document.status_updated",
+                    {
+                        "document_id": str(document_id),
+                        "status": "ENABLED",
+                    },
+                )
 
                 # Trigger document summary generation if enabled
                 _trigger_document_summary_if_enabled(
@@ -841,6 +942,14 @@ def _index_document_background(
             f"error={str(e)}",
             exc_info=True,
         )
+        add_span_event(
+            "rag.indexing.failed",
+            {
+                "kb_id": str(knowledge_base_id),
+                "document_id": str(document_id),
+                "error": str(e),
+            },
+        )
         # Document status remains DISABLED (default) when indexing fails
         # No need to update status - it was never set to ENABLED
     finally:
@@ -853,11 +962,11 @@ def _index_document_background(
 
 
 # Document-specific endpoints (without knowledge_base_id in path)
-# Document-specific endpoints (without knowledge_base_id in path)
 document_router = APIRouter()
 
 
 @document_router.put("/{document_id}", response_model=KnowledgeDocumentResponse)
+@trace_sync("update_document", "knowledge.api")
 def update_document(
     document_id: int,
     data: KnowledgeDocumentUpdate,
@@ -888,6 +997,7 @@ def update_document(
 
 
 @document_router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+@trace_sync("delete_document", "knowledge.api")
 def delete_document(
     document_id: int,
     background_tasks: BackgroundTasks,
@@ -907,6 +1017,15 @@ def delete_document(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Document not found or access denied",
             )
+
+        add_span_event(
+            "knowledge.document.deleted",
+            {
+                "document_id": str(document_id),
+                "kb_id": str(result.kb_id) if result.kb_id else "unknown",
+                "user_id": str(current_user.id),
+            },
+        )
 
         # Trigger KB summary update in background after successful deletion
         if result.kb_id is not None:
@@ -930,6 +1049,7 @@ def delete_document(
 
 
 @document_router.put("/{document_id}/content")
+@trace_async("update_document_content", "knowledge.api")
 async def update_document_content(
     document_id: int,
     data: DocumentContentUpdate,
@@ -962,6 +1082,15 @@ async def update_document_content(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Document not found or access denied",
             )
+
+        add_span_event(
+            "knowledge.document.content_updated",
+            {
+                "document_id": str(document_id),
+                "kb_id": str(document.kind_id),
+                "user_id": str(current_user.id),
+            },
+        )
 
         # Get knowledge base to check for retrieval_config and trigger RAG re-indexing
         knowledge_base = KnowledgeService.get_knowledge_base(
@@ -1123,6 +1252,7 @@ def get_document_detail_standalone(
 
 
 @document_router.post("/batch/delete", response_model=BatchOperationResult)
+@trace_sync("batch_delete_documents", "knowledge.api")
 def batch_delete_documents(
     data: BatchDocumentIds,
     background_tasks: BackgroundTasks,
@@ -1144,6 +1274,16 @@ def batch_delete_documents(
 
     result = batch_result.result
     kb_ids = batch_result.kb_ids
+
+    add_span_event(
+        "knowledge.documents.batch_deleted",
+        {
+            "success_count": str(result.success_count),
+            "failed_count": str(result.failed_count),
+            "kb_ids": str(list(kb_ids)) if kb_ids else "[]",
+            "user_id": str(current_user.id),
+        },
+    )
 
     # If all operations failed, raise an error
     if result.success_count == 0 and result.failed_count > 0:
@@ -1170,6 +1310,7 @@ def batch_delete_documents(
 
 
 @document_router.post("/batch/enable", response_model=BatchOperationResult)
+@trace_sync("batch_enable_documents", "knowledge.api")
 def batch_enable_documents(
     data: BatchDocumentIds,
     current_user: User = Depends(security.get_current_user),
@@ -1187,6 +1328,14 @@ def batch_enable_documents(
         document_ids=data.document_ids,
         user_id=current_user.id,
     )
+    add_span_event(
+        "knowledge.documents.batch_enabled",
+        {
+            "success_count": str(result.success_count),
+            "failed_count": str(result.failed_count),
+            "user_id": str(current_user.id),
+        },
+    )
     # If all operations failed, raise an error
     if result.success_count == 0 and result.failed_count > 0:
         raise HTTPException(
@@ -1197,6 +1346,7 @@ def batch_enable_documents(
 
 
 @document_router.post("/batch/disable", response_model=BatchOperationResult)
+@trace_sync("batch_disable_documents", "knowledge.api")
 def batch_disable_documents(
     data: BatchDocumentIds,
     current_user: User = Depends(security.get_current_user),
@@ -1214,6 +1364,14 @@ def batch_disable_documents(
         document_ids=data.document_ids,
         user_id=current_user.id,
     )
+    add_span_event(
+        "knowledge.documents.batch_disabled",
+        {
+            "success_count": str(result.success_count),
+            "failed_count": str(result.failed_count),
+            "user_id": str(current_user.id),
+        },
+    )
     # If all operations failed, raise an error
     if result.success_count == 0 and result.failed_count > 0:
         raise HTTPException(
@@ -1230,6 +1388,7 @@ qa_history_router = APIRouter()
 
 
 @qa_history_router.get("", response_model=QAHistoryResponse)
+@trace_sync("get_qa_history", "knowledge.api")
 def get_qa_history(
     start_time: datetime = Query(
         ...,
@@ -1305,6 +1464,7 @@ summary_router = APIRouter()
 
 
 @summary_router.get("/{kb_id}/summary")
+@trace_async("get_kb_summary", "knowledge.api")
 async def get_kb_summary(
     kb_id: int,
     current_user: User = Depends(security.get_current_user),
@@ -1336,6 +1496,7 @@ async def get_kb_summary(
 
 
 @summary_router.post("/{kb_id}/summary/refresh")
+@trace_async("refresh_kb_summary", "knowledge.api")
 async def refresh_kb_summary(
     kb_id: int,
     background_tasks: BackgroundTasks,
@@ -1372,6 +1533,7 @@ async def refresh_kb_summary(
 @summary_router.get(
     "/{kb_id}/documents/{doc_id}/detail", response_model=DocumentDetailResponse
 )
+@trace_async("get_document_detail", "knowledge.api")
 async def get_document_detail(
     kb_id: int,
     doc_id: int,
@@ -1475,6 +1637,7 @@ async def get_document_detail(
 
 
 @summary_router.get("/{kb_id}/documents/{doc_id}/summary")
+@trace_async("get_document_summary", "knowledge.api")
 async def get_document_summary(
     kb_id: int,
     doc_id: int,
@@ -1524,6 +1687,7 @@ async def get_document_summary(
 
 
 @summary_router.post("/{kb_id}/documents/{doc_id}/summary/refresh")
+@trace_async("refresh_document_summary", "knowledge.api")
 async def refresh_document_summary(
     kb_id: int,
     doc_id: int,

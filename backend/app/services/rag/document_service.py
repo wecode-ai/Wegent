@@ -20,6 +20,7 @@ from app.services.context import context_service
 from app.services.rag.embedding.factory import create_embedding_model_from_crd
 from app.services.rag.index import DocumentIndexer
 from app.services.rag.storage.base import BaseStorageBackend
+from shared.telemetry.decorators import add_span_event, trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,7 @@ class DocumentService:
 
         return binary_data, context.original_filename, context.file_extension
 
+    @trace_sync("document_service.index_document_sync", "rag.document_service")
     def _index_document_sync(
         self,
         knowledge_id: str,
@@ -141,6 +143,16 @@ class DocumentService:
         else:
             doc_ref = f"doc_{uuid.uuid4().hex[:12]}"
 
+        add_span_event(
+            "rag.document_service.indexing.started",
+            {
+                "knowledge_id": str(knowledge_id),
+                "doc_ref": doc_ref,
+                "attachment_id": str(attachment_id) if attachment_id else "None",
+                "embedding_model": embedding_model_name,
+            },
+        )
+
         # Create embedding model from CRD
         embed_model = create_embedding_model_from_crd(
             db=db,
@@ -148,11 +160,27 @@ class DocumentService:
             model_name=embedding_model_name,
             model_namespace=embedding_model_namespace,
         )
+        add_span_event(
+            "rag.document_service.embedding_model.created",
+            {
+                "model_name": embedding_model_name,
+                "model_namespace": embedding_model_namespace,
+            },
+        )
 
         if attachment_id is not None:
             # Get original binary data from attachment (supports MySQL and external storage)
             binary_data, filename, file_extension = self._get_attachment_binary(
                 db, attachment_id
+            )
+            add_span_event(
+                "rag.document_service.attachment.loaded",
+                {
+                    "attachment_id": str(attachment_id),
+                    "filename": filename,
+                    "file_extension": file_extension,
+                    "binary_size": str(len(binary_data)),
+                },
             )
 
             # Create indexer with file_extension for SmartSplitter to use correct strategy
@@ -194,6 +222,17 @@ class DocumentService:
                 doc_ref=doc_ref,
                 user_id=user_id,
             )
+
+        add_span_event(
+            "rag.document_service.indexing.completed",
+            {
+                "knowledge_id": str(knowledge_id),
+                "doc_ref": doc_ref,
+                "chunk_count": str(result.get("chunk_count", 0)),
+                "index_name": result.get("index_name", "unknown"),
+                "status": result.get("status", "unknown"),
+            },
+        )
 
         return result
 
