@@ -28,6 +28,7 @@ import {
   DeviceOnlinePayload,
   DeviceOfflinePayload,
   DeviceStatusPayload,
+  DeviceSlotUpdatePayload,
   ServerEvents,
 } from '@/types/socket'
 
@@ -150,6 +151,9 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
             name: data.name,
             status: data.status as DeviceInfo['status'],
             is_default: false,
+            slot_used: 0,
+            slot_max: 5,
+            running_tasks: [],
           },
         ]
       })
@@ -177,15 +181,34 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
       )
     }
 
+    // Device slot usage updated
+    const handleDeviceSlotUpdate = (data: DeviceSlotUpdatePayload) => {
+      console.log('[DeviceContext] device:slot_update', data)
+      setDevices(prev =>
+        prev.map(d =>
+          d.device_id === data.device_id
+            ? {
+                ...d,
+                slot_used: data.slot_used,
+                slot_max: data.slot_max,
+                running_tasks: data.running_tasks,
+              }
+            : d
+        )
+      )
+    }
+
     // Subscribe to device events
     socket.on(ServerEvents.DEVICE_ONLINE, handleDeviceOnline)
     socket.on(ServerEvents.DEVICE_OFFLINE, handleDeviceOffline)
     socket.on(ServerEvents.DEVICE_STATUS, handleDeviceStatus)
+    socket.on(ServerEvents.DEVICE_SLOT_UPDATE, handleDeviceSlotUpdate)
 
     return () => {
       socket.off(ServerEvents.DEVICE_ONLINE, handleDeviceOnline)
       socket.off(ServerEvents.DEVICE_OFFLINE, handleDeviceOffline)
       socket.off(ServerEvents.DEVICE_STATUS, handleDeviceStatus)
+      socket.off(ServerEvents.DEVICE_SLOT_UPDATE, handleDeviceSlotUpdate)
     }
   }, [socket, isConnected, selectedDeviceId])
 

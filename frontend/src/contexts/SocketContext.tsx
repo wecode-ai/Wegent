@@ -93,6 +93,8 @@ interface SocketContextType {
     partialContent?: string,
     shellType?: string
   ) => Promise<{ success: boolean; error?: string }>
+  /** Close a device task session via WebSocket */
+  closeTaskSession: (taskId: number) => Promise<{ success: boolean; error?: string }>
   /** Retry a failed message via WebSocket */
   retryMessage: (
     taskId: number,
@@ -506,6 +508,29 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   )
 
   /**
+   * Close a device task session via WebSocket
+   */
+  const closeTaskSession = useCallback(
+    async (taskId: number): Promise<{ success: boolean; error?: string }> => {
+      if (!socket?.connected) {
+        console.error('[Socket.IO] closeTaskSession failed - not connected')
+        return { success: false, error: 'Not connected to server' }
+      }
+
+      return new Promise(resolve => {
+        socket.emit(
+          'task:close-session',
+          { task_id: taskId },
+          (response: { success?: boolean; error?: string }) => {
+            resolve({ success: response.success ?? true, error: response.error })
+          }
+        )
+      })
+    },
+    [socket]
+  )
+
+  /**
    * Retry a failed message via WebSocket
    */
   const retryMessage = useCallback(
@@ -790,6 +815,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         leaveTask,
         sendChatMessage,
         cancelChatStream,
+        closeTaskSession,
         retryMessage,
         registerChatHandlers,
         registerTaskHandlers,
