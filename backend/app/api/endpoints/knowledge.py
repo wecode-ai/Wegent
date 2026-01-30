@@ -53,7 +53,13 @@ from app.services.knowledge import (
 )
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
-from shared.telemetry.decorators import add_span_event, trace_async, trace_sync
+from shared.telemetry.decorators import (
+    add_span_event,
+    capture_trace_context,
+    trace_async,
+    trace_background,
+    trace_sync,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -449,6 +455,9 @@ async def create_document(
                         summary_enabled=summary_enabled,
                     )
 
+                    # Capture trace context for propagation to background task
+                    trace_ctx = capture_trace_context()
+
                     # Schedule RAG indexing in background
                     # Note: We use a synchronous function that creates its own event loop
                     # because BackgroundTasks runs in a thread pool without an event loop.
@@ -467,6 +476,7 @@ async def create_document(
                         splitter_config=data.splitter_config,
                         document_id=document.id,
                         kb_index_info=kb_index_info,
+                        trace_context=trace_ctx,
                     )
                     logger.info(
                         f"Scheduled RAG indexing for document {document.id} in knowledge base {knowledge_base_id}"
@@ -712,7 +722,7 @@ def _trigger_document_summary_if_enabled(
         )
 
 
-@trace_sync("rag_indexing_background", "knowledge.worker")
+@trace_background("rag_indexing_background", "knowledge.worker")
 def _index_document_background(
     knowledge_base_id: str,
     attachment_id: int,
@@ -725,6 +735,7 @@ def _index_document_background(
     splitter_config: Optional[SplitterConfig] = None,
     document_id: Optional[int] = None,
     kb_index_info: Optional[KnowledgeBaseIndexInfo] = None,
+    trace_context: Optional[dict] = None,
 ):
     """
     Background task for RAG document indexing.
@@ -735,6 +746,10 @@ def _index_document_background(
 
     This function also creates its own database session because the request-scoped
     session will be closed after the HTTP response is sent.
+
+    The trace_context parameter is used by @trace_background decorator to restore
+    the parent trace context from the original HTTP request, enabling distributed
+    tracing across background tasks.
 
     Args:
         knowledge_base_id: Knowledge base ID
@@ -748,6 +763,7 @@ def _index_document_background(
         splitter_config: Optional splitter configuration
         document_id: Optional document ID to use as doc_ref
         kb_index_info: Pre-computed KB info (avoids redundant DB query if provided)
+        trace_context: Trace context for distributed tracing (captured via capture_trace_context())
     """
     logger.info(
         f"[RAG Indexing] Background task started: kb_id={knowledge_base_id}, "
@@ -849,6 +865,10 @@ def _index_document_background(
                     "embedding_model_namespace": embedding_model_namespace,
                 },
             )
+            # Capture current trace context to propagate to the async method
+            # This ensures the trace context from @trace_background is passed through
+            # asyncio.to_thread() to the synchronous indexing function
+            current_trace_ctx = capture_trace_context()
             result = loop.run_until_complete(
                 doc_service.index_document(
                     knowledge_id=knowledge_base_id,
@@ -859,6 +879,7 @@ def _index_document_background(
                     attachment_id=attachment_id,
                     splitter_config=splitter_config,
                     document_id=document_id,
+                    trace_context=current_trace_ctx,
                 )
             )
             logger.info(f"[RAG Indexing] index_document returned: result={result}")
@@ -1033,11 +1054,14 @@ def delete_document(
                 f"[KnowledgeAPI] Scheduling KB summary update after deletion: "
                 f"kb_id={result.kb_id}, document_id={document_id}"
             )
+            # Capture trace context for propagation to background task
+            trace_ctx = capture_trace_context()
             background_tasks.add_task(
                 _update_kb_summary_after_deletion,
                 kb_id=result.kb_id,
                 user_id=current_user.id,
                 user_name=current_user.user_name,
+                trace_context=trace_ctx,
             )
 
         return None
@@ -1130,6 +1154,9 @@ async def update_document_content(
                         summary_enabled=summary_enabled,
                     )
 
+                    # Capture trace context for propagation to background task
+                    trace_ctx = capture_trace_context()
+
                     # Schedule RAG re-indexing in background
                     background_tasks.add_task(
                         _index_document_background,
@@ -1148,6 +1175,7 @@ async def update_document_content(
                         ),
                         document_id=document.id,
                         kb_index_info=kb_index_info,
+                        trace_context=trace_ctx,
                     )
                     logger.info(
                         f"Scheduled RAG re-indexing for document {document.id} after content update"
@@ -1298,12 +1326,15 @@ def batch_delete_documents(
             f"[KnowledgeAPI] Scheduling KB summary updates after batch deletion: "
             f"kb_ids={kb_ids}, deleted_count={result.success_count}"
         )
+        # Capture trace context for propagation to background tasks
+        trace_ctx = capture_trace_context()
         for kb_id in kb_ids:
             background_tasks.add_task(
                 _update_kb_summary_after_deletion,
                 kb_id=kb_id,
                 user_id=current_user.id,
                 user_name=current_user.user_name,
+                trace_context=trace_ctx,
             )
 
     return result
@@ -1737,39 +1768,87 @@ async def refresh_document_summary(
     )
 
 
+@trace_async("kb_summary_refresh_background", "knowledge.worker")
 async def _run_kb_summary_refresh(kb_id: int, user_id: int, user_name: str):
     """Background task wrapper for KB summary refresh."""
-    from app.db.session import SessionLocal
     from app.services.knowledge import get_summary_service
+
+    add_span_event(
+        "kb.summary.refresh.started",
+        {
+            "kb_id": str(kb_id),
+            "user_id": str(user_id),
+        },
+    )
 
     # Create new session for background task
     new_db = SessionLocal()
     try:
         summary_service = get_summary_service(new_db)
         await summary_service.refresh_kb_summary(kb_id, user_id, user_name)
-    except Exception:
+        add_span_event(
+            "kb.summary.refresh.completed",
+            {
+                "kb_id": str(kb_id),
+            },
+        )
+    except Exception as e:
         logger.exception(f"Failed to refresh KB summary for kb_id={kb_id}")
+        add_span_event(
+            "kb.summary.refresh.failed",
+            {
+                "kb_id": str(kb_id),
+                "error": str(e),
+            },
+        )
     finally:
         new_db.close()
 
 
+@trace_async("document_summary_refresh_background", "knowledge.worker")
 async def _run_document_summary_refresh(doc_id: int, user_id: int, user_name: str):
     """Background task wrapper for document summary refresh."""
-    from app.db.session import SessionLocal
     from app.services.knowledge import get_summary_service
+
+    add_span_event(
+        "document.summary.refresh.started",
+        {
+            "doc_id": str(doc_id),
+            "user_id": str(user_id),
+        },
+    )
 
     # Create new session for background task
     new_db = SessionLocal()
     try:
         summary_service = get_summary_service(new_db)
         await summary_service.refresh_document_summary(doc_id, user_id, user_name)
-    except Exception:
+        add_span_event(
+            "document.summary.refresh.completed",
+            {
+                "doc_id": str(doc_id),
+            },
+        )
+    except Exception as e:
         logger.exception(f"Failed to refresh document summary for doc_id={doc_id}")
+        add_span_event(
+            "document.summary.refresh.failed",
+            {
+                "doc_id": str(doc_id),
+                "error": str(e),
+            },
+        )
     finally:
         new_db.close()
 
 
-def _update_kb_summary_after_deletion(kb_id: int, user_id: int, user_name: str):
+@trace_background("kb_summary_after_deletion_background", "knowledge.worker")
+def _update_kb_summary_after_deletion(
+    kb_id: int,
+    user_id: int,
+    user_name: str,
+    trace_context: Optional[dict] = None,
+):
     """
     Background task to update KB summary after document deletion.
 
