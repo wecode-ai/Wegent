@@ -98,6 +98,7 @@ export interface MessageBlock {
   content?: string // Text content for text blocks
   tool_use_id?: string // Tool call ID for tool blocks
   tool_name?: string // Tool name
+  display_name?: string // Display name for tool (optional, overrides tool_name if present)
   tool_input?: Record<string, unknown> // Tool input parameters
   tool_output?: unknown // Tool execution result
   status?: 'pending' | 'streaming' | 'done' | 'error' // Block status
@@ -111,6 +112,7 @@ export interface MessageBlock {
 export interface ToolPair {
   toolUseId: string
   toolName: string
+  displayName?: string // Optional display name that overrides toolName
   status: ToolStatus
   toolUse: ThinkingStep // tool_use type step
   toolResult?: ThinkingStep // tool_result type step (may be incomplete during streaming)

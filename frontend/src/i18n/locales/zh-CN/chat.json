@@ -187,6 +187,7 @@
     "tool_input": "输入",
     "tool_output": "输出",
     "tool_executing": "执行中...",
+    "downloadable": "可下载",
     "tools": {
       "bash": "执行命令",
       "read": "读取文件",

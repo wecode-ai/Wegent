@@ -16,6 +16,7 @@ import { WriteToolRenderer } from './tools/WriteToolRenderer'
 import { GrepToolRenderer } from './tools/GrepToolRenderer'
 import { GlobToolRenderer } from './tools/GlobToolRenderer'
 import { TodoWriteToolRenderer } from './tools/TodoWriteToolRenderer'
+import { UploadToolRenderer } from './tools/UploadToolRenderer'
 
 /**
  * ToolBlock Component
@@ -40,6 +41,9 @@ export const ToolBlock = memo(function ToolBlock({
   // Get specialized renderer
   const ToolRenderer = getToolRenderer(tool.toolName)
 
+  // Check if this is an upload tool with downloadable attachment
+  const isDownloadable = tool.toolName === 'Upload' && tool.status === 'done'
+
   return (
     <div className="border border-border rounded-lg bg-surface overflow-hidden mb-2">
       {/* Header */}
@@ -52,6 +56,11 @@ export const ToolBlock = memo(function ToolBlock({
           <span className="text-sm font-medium text-text-primary">{toolDisplayName}</span>
         </div>
         <div className="flex items-center gap-2">
+          {isDownloadable && (
+            <span className="text-xs text-primary bg-primary/10 px-2 py-0.5 rounded">
+              {t('thinking.downloadable') || 'Downloadable'}
+            </span>
+          )}
           {/* Expand/collapse icon */}
           {isExpanded ? (
             <ChevronDown className="h-4 w-4 text-text-muted" />
@@ -126,18 +135,14 @@ function getToolDisplayName(tool: ToolRendererProps['tool'], t: (key: string) =>
     web_search: t('thinking.tools.web_search') || 'Web Search',
   }
 
-  // If we have a known tool name, use it
+  // Priority 1: If we have a known tool name, use it
   if (displayNames[toolName]) {
     return displayNames[toolName]
   }
 
-  // For unknown tools, try to extract from title
-  if (tool.toolUse.title && typeof tool.toolUse.title === 'string') {
-    // Remove common prefixes like "正在", "使用", etc.
-    const cleanTitle = tool.toolUse.title.replace(/^(正在|使用|调用)/, '').trim()
-    if (cleanTitle && cleanTitle !== 'unknown') {
-      return cleanTitle
-    }
+  // Priority 2: Use displayName from tool block if available
+  if (tool.displayName) {
+    return tool.displayName
   }
 
   return toolName || 'Unknown Tool'
@@ -165,6 +170,8 @@ function getToolRenderer(
       return GlobToolRenderer
     case 'TodoWrite':
       return TodoWriteToolRenderer
+    case 'Upload':
+      return UploadToolRenderer
     default:
       return GenericToolRenderer
   }

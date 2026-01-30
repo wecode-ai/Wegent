@@ -123,8 +123,19 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
         app_data = task_crd.status.app.model_dump()
         logger.info(f"[convert_to_task_dict] Found app data: {app_data}")
     else:
+        # Build status dict without blocks for logging
+        status_info = None
+        if task_crd.status:
+            status_dict = task_crd.status.model_dump()
+            # Remove blocks field from result if it exists to avoid logging large data
+            if "result" in status_dict and isinstance(status_dict["result"], dict):
+                if "blocks" in status_dict["result"]:
+                    status_dict["result"].pop("blocks")
+                if "thinking" in status_dict["result"]:
+                    status_dict["result"].pop("thinking")
+            status_info = status_dict
         logger.info(
-            f"[convert_to_task_dict] No app data found. status={task_crd.status}, app={task_crd.status.app if task_crd.status else 'N/A'}"
+            f"[convert_to_task_dict] No app data found. status={status_info}, app={task_crd.status.app if task_crd.status else 'N/A'}"
         )
 
     return {

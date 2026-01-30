@@ -260,6 +260,7 @@ class StreamingState:
         tool_use_id: str,
         tool_name: str,
         tool_input: dict,
+        display_name: str = None,
     ) -> None:
         """Create tool block when tool call starts.
 
@@ -267,6 +268,7 @@ class StreamingState:
             tool_use_id: Unique identifier for the tool call
             tool_name: Name of the tool being called
             tool_input: Input parameters for the tool
+            display_name: Optional display name for the tool (overrides tool_name if present)
         """
         # Finalize current text block before starting tool (also resets block_offset)
         self.finalize_text_block()
@@ -280,6 +282,11 @@ class StreamingState:
             "status": "pending",
             "timestamp": time.time(),
         }
+
+        # Add display_name if provided
+        if display_name:
+            block["display_name"] = display_name
+
         self.add_block(block)
 
     def update_tool_block(

@@ -448,7 +448,6 @@ class HTTPAdapter(ChatInterface):
 
         if line.startswith("data:"):
             data_str = line[5:].strip()
-            logger.info("[HTTP_ADAPTER] SSE data line: %s", data_str[:100])
 
             # Check for [DONE] marker
             if data_str == "[DONE]":
@@ -526,8 +525,16 @@ class HTTPAdapter(ChatInterface):
                     logger.info(
                         "[HTTP_ADAPTER] Parsed %s event: data=%s, event_data=%s",
                         event_type.value,
-                        {k: v for k, v in data.items() if k != "output"},
-                        {k: v for k, v in event_data.items() if k != "output"},
+                        {
+                            k: v
+                            for k, v in data.items()
+                            if k not in ("output", "blocks")
+                        },
+                        {
+                            k: v
+                            for k, v in event_data.items()
+                            if k not in ("output", "blocks")
+                        },
                     )
                 elif event_type == ChatEventType.ERROR:
                     # Error event from chat_shell has {code, message, details} format

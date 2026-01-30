@@ -92,8 +92,17 @@ def _handle_tool_start(
         f"[TOOL_START] {tool_name} (run_id={run_id}, tool_use_id={tool_use_id})"
     )
 
-    # Build friendly title
+    # Build friendly title and extract display_name
     title = _build_tool_start_title(agent_builder, tool_name, serializable_input)
+
+    # Extract display_name from tool instance
+    tool_instance = None
+    if agent_builder.tool_registry:
+        tool_instance = agent_builder.tool_registry.get(tool_name)
+
+    display_name = (
+        getattr(tool_instance, "display_name", None) if tool_instance else None
+    )
 
     thinking_step = {
         "title": title,
@@ -112,7 +121,7 @@ def _handle_tool_start(
     state.add_thinking_step(thinking_step)
 
     # Add tool block for mixed content rendering
-    state.append_tool_block(tool_use_id, tool_name, serializable_input)
+    state.append_tool_block(tool_use_id, tool_name, serializable_input, display_name)
 
     # Emit chunk with thinking data synchronously using emit_json
     current_result = state.get_current_result(

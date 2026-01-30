@@ -1445,12 +1445,6 @@ const MessageBubble = memo(
                     ({t('messages.recovered') || '已恢复'})
                   </span>
                 )}
-                {/* DEBUG: Show blocks count if blocks exist */}
-                {msg.result?.blocks && msg.result.blocks.length > 0 && (
-                  <span className="text-amber-600 text-xs font-mono">
-                    [Blocks: {msg.result.blocks.length}]
-                  </span>
-                )}
               </div>
             )}
             {/* Show reasoning display for DeepSeek R1 and similar models */}

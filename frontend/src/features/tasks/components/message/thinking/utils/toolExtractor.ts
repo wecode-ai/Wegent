@@ -14,7 +14,7 @@ import type { ThinkingStep, ToolPair, ToolGroup, ToolStatus } from '../types'
  * Normalize tool names from Chat shell (Chinese) to standard English names
  * This ensures specialized renderers are invoked correctly
  */
-export function normalizeToolName(toolName: string, title?: string): string {
+export function normalizeToolName(toolName: string, _title?: string): string {
   // Direct mapping for known English names
   const englishTools = [
     'Bash',
@@ -27,32 +27,17 @@ export function normalizeToolName(toolName: string, title?: string): string {
     'Task',
     'WebFetch',
     'WebSearch',
+    'Upload',
   ]
   if (englishTools.includes(toolName)) {
     return toolName
   }
 
-  // Map Chinese tool names to English equivalents
-  const chineseToEnglish: Record<string, string> = {
-    读取文件: 'Read',
-    写入文件: 'Write',
-    编辑文件: 'Edit',
-    列出文件: 'Glob',
-    搜索代码: 'Grep',
-    执行命令: 'Bash',
-    更新任务: 'TodoWrite',
-    网页搜索: 'WebSearch',
-    知识库搜索: 'knowledge_base_search',
-  }
-
-  // Try to match from toolName first
-  if (chineseToEnglish[toolName]) {
-    return chineseToEnglish[toolName]
-  }
-
   // Try pattern matching for tool names
-  // Match patterns like: sandbox_read_file, sandbox_write_file, sandbox_list_files
   // Check specific patterns first, then broader patterns
+  if (toolName.includes('upload') || toolName.includes('Upload')) {
+    return 'Upload'
+  }
   if (toolName.includes('list') || toolName.includes('glob') || toolName.includes('find')) {
     return 'Glob'
   }
@@ -77,29 +62,6 @@ export function normalizeToolName(toolName: string, title?: string): string {
   }
   if (toolName.includes('web') && toolName.includes('search')) {
     return 'WebSearch'
-  }
-
-  // Try to extract from title if available
-  if (title && typeof title === 'string') {
-    // Remove common prefixes
-    const cleanTitle = title.replace(/^(正在|使用|调用)/, '').trim()
-    if (chineseToEnglish[cleanTitle]) {
-      return chineseToEnglish[cleanTitle]
-    }
-
-    // Try pattern matching on title
-    if (cleanTitle.includes('读取') || cleanTitle.includes('查看')) {
-      return 'Read'
-    }
-    if (cleanTitle.includes('写入') || cleanTitle.includes('创建')) {
-      return 'Write'
-    }
-    if (cleanTitle.includes('编辑') || cleanTitle.includes('修改')) {
-      return 'Edit'
-    }
-    if (cleanTitle.includes('列出') || cleanTitle.includes('查找')) {
-      return 'Glob'
-    }
   }
 
   // Return original if no mapping found

@@ -70,6 +70,7 @@ const MixedContentView = memo(function MixedContentView({
             const toolPair = {
               toolUseId: block.tool_use_id || block.id,
               toolName: normalizedToolName,
+              displayName: block.display_name, // Pass display_name from block
               status:
                 (block.status as 'pending' | 'streaming' | 'invoking' | 'done' | 'error') || 'done',
               toolUse: {
