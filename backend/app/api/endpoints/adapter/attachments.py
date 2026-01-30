@@ -12,13 +12,15 @@ import logging
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.models.subtask import Subtask
 from app.models.subtask_context import ContextType
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.subtask_context import (
     AttachmentDetailResponse,
@@ -27,10 +29,77 @@ from app.schemas.subtask_context import (
 )
 from app.services.attachment.parser import DocumentParseError, DocumentParser
 from app.services.context import context_service
+from app.services.shared_task import shared_task_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _validate_share_token_access(
+    db: Session, attachment_id: int, share_token: str
+) -> bool:
+    """
+    Validate that a share_token has access to a specific attachment.
+
+    This validates that:
+    1. The share_token is valid and decrypts to user_id#task_id
+    2. The attachment belongs to a subtask of the task in the token
+    3. The task owner matches the user_id in the token
+
+    Args:
+        db: Database session
+        attachment_id: The attachment ID to check access for
+        share_token: The encrypted share token
+
+    Returns:
+        True if access is granted, False otherwise
+    """
+    # Decode share token to get task info
+    share_info = shared_task_service.decode_share_token(share_token, db)
+    if not share_info:
+        return False
+
+    # Get the context (attachment)
+    context = context_service.get_context_optional(
+        db=db,
+        context_id=attachment_id,
+    )
+    if context is None:
+        return False
+
+    # Verify it's an attachment type
+    if context.context_type != ContextType.ATTACHMENT.value:
+        return False
+
+    # Get the subtask that this attachment belongs to
+    if context.subtask_id <= 0:
+        # Attachment not linked to a subtask, cannot verify ownership
+        return False
+
+    subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
+    if not subtask:
+        return False
+
+    # Verify the subtask belongs to the task in the token
+    if subtask.task_id != share_info.task_id:
+        return False
+
+    # Verify the task owner matches the user_id in the token
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == share_info.task_id,
+            TaskResource.user_id == share_info.user_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
+        )
+        .first()
+    )
+    if not task:
+        return False
+
+    return True
 
 
 @router.post("/upload", response_model=AttachmentResponse)
@@ -209,65 +278,88 @@ async def get_attachment(
 @router.get("/{attachment_id}/download")
 async def download_attachment(
     attachment_id: int,
+    share_token: Optional[str] = Query(
+        None, description="Share token for public access"
+    ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
 ):
     """
     Download the original file.
 
+    Supports two authentication methods:
+    1. JWT token (for logged-in users)
+    2. Share token (for public shared task viewers)
+
     Returns:
         File binary data with appropriate content type
     """
-    # Get context without user_id filter first
-    context = context_service.get_context_optional(
-        db=db,
-        context_id=attachment_id,
-    )
-    if context is None:
-        raise HTTPException(status_code=404, detail="Attachment not found")
+    has_access = False
 
-    # Verify it's an attachment type
-    if context.context_type != ContextType.ATTACHMENT.value:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    # Check access permission:
-    # 1. User is the uploader
-    # 2. User is the task owner
-    # 3. User is a member of the task that contains this attachment
-    has_access = context.user_id == current_user.id
-
-    if not has_access and context.subtask_id > 0:
-        # Check if user is a task owner or member
-        from app.models.subtask import Subtask
-        from app.models.task import TaskResource
-        from app.models.task_member import MemberStatus, TaskMember
-
-        subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
-        if subtask:
-            # Check if user is the task owner
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == subtask.task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.user_id == current_user.id,
-                )
-                .first()
+    # Method 1: Share token authentication (no login required)
+    if share_token:
+        has_access = _validate_share_token_access(db, attachment_id, share_token)
+        if has_access:
+            # Get context for share token access
+            context = context_service.get_context_optional(
+                db=db,
+                context_id=attachment_id,
             )
-            if task:
-                has_access = True
-            else:
-                # Check if user is a task member
-                task_member = (
-                    db.query(TaskMember)
+            if context is None:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+    # Method 2: JWT token authentication (existing logic)
+    elif current_user:
+        # Get context without user_id filter first
+        context = context_service.get_context_optional(
+            db=db,
+            context_id=attachment_id,
+        )
+        if context is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+
+        # Verify it's an attachment type
+        if context.context_type != ContextType.ATTACHMENT.value:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+
+        # Check access permission:
+        # 1. User is the uploader
+        # 2. User is the task owner
+        # 3. User is a member of the task that contains this attachment
+        has_access = context.user_id == current_user.id
+
+        if not has_access and context.subtask_id > 0:
+            # Check if user is a task owner or member
+            from app.models.task_member import MemberStatus, TaskMember
+
+            subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
+            if subtask:
+                # Check if user is the task owner
+                task = (
+                    db.query(TaskResource)
                     .filter(
-                        TaskMember.task_id == subtask.task_id,
-                        TaskMember.user_id == current_user.id,
-                        TaskMember.status == MemberStatus.ACTIVE,
+                        TaskResource.id == subtask.task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.user_id == current_user.id,
                     )
                     .first()
                 )
-                has_access = task_member is not None
+                if task:
+                    has_access = True
+                else:
+                    # Check if user is a task member
+                    task_member = (
+                        db.query(TaskMember)
+                        .filter(
+                            TaskMember.task_id == subtask.task_id,
+                            TaskMember.user_id == current_user.id,
+                            TaskMember.status == MemberStatus.ACTIVE,
+                        )
+                        .first()
+                    )
+                    has_access = task_member is not None
+    else:
+        # No authentication provided
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     if not has_access:
         raise HTTPException(status_code=404, detail="Attachment not found")
