@@ -51,7 +51,12 @@ ENV SHUTDOWN_REJECT_NEW_REQUESTS=true
 RUN sed -i '/\[tool\.uv\.sources\]/,/^$/d' pyproject.toml && \
     uv pip install --system --no-cache -r pyproject.toml
 
-RUN PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright playwright install chromium && playwright install-deps chromium
+# Install Playwright chromium browser
+# Try multiple mirror sources with fallback to official
+RUN (PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright playwright install chromium || \
+    PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright playwright install chromium || \
+    playwright install chromium) && \
+    playwright install-deps chromium
 
 # Copy application code
 COPY backend /app
