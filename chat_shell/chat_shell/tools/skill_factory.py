@@ -207,10 +207,14 @@ async def prepare_skill_tools(
         skill_user_id = skill_config.get("skill_user_id")
         mcp_servers = skill_config.get("mcpServers")
 
-        # Collect MCP servers from skill config
-        if mcp_servers:
+        # Check if this skill should be preloaded
+        # Only preloaded skills should have their tools and MCP servers loaded
+        should_preload = preload_skills is not None and skill_name in preload_skills
+
+        # Collect MCP servers from skill config - only for preloaded skills
+        if mcp_servers and should_preload:
             logger.info(
-                "[skill_factory] Skill '%s' has %d MCP server(s) configured",
+                "[skill_factory] Skill '%s' has %d MCP server(s) configured (preloaded)",
                 skill_name,
                 len(mcp_servers),
             )
@@ -218,14 +222,39 @@ async def prepare_skill_tools(
             for server_name, server_config in mcp_servers.items():
                 prefixed_name = f"{skill_name}_{server_name}"
                 skill_mcp_configs[prefixed_name] = server_config
+        elif mcp_servers and not should_preload:
+            logger.debug(
+                "[skill_factory] Skipping MCP servers for skill '%s' (not preloaded, "
+                "will be loaded when skill is loaded via load_skill tool)",
+                skill_name,
+            )
 
         if not tool_declarations:
             # No tools declared for this skill, skip tool creation
-            # but MCP servers may still be loaded above
+            # but MCP servers may still be loaded above for preloaded skills
+            # Still preload the skill prompt if it's in preload_skills list
+            if should_preload and load_skill_tool is not None:
+                skill_prompt = skill_config.get("prompt", "")
+                if skill_prompt:
+                    load_skill_tool.preload_skill_prompt(skill_name, skill_config)
+                    logger.info(
+                        "[skill_factory] Preloaded skill prompt for '%s' (no tools, in preload_skills list)",
+                        skill_name,
+                    )
+            continue
+
+        # Only create tools for preloaded skills
+        # Non-preloaded skills should use load_skill tool first to load the skill
+        if not should_preload:
+            logger.debug(
+                "[skill_factory] Skipping tool creation for skill '%s' (not preloaded, "
+                "tools will not be available until skill is loaded via load_skill tool)",
+                skill_name,
+            )
             continue
 
         logger.debug(
-            "[skill_factory] Processing skill '%s' with %d tool declarations",
+            "[skill_factory] Processing skill '%s' with %d tool declarations (preloaded)",
             skill_name,
             len(tool_declarations),
         )
@@ -304,11 +333,10 @@ async def prepare_skill_tools(
                 [t.name for t in skill_tools],
             )
 
-            # Preload skill prompt into LoadSkillTool if skill is in preload_skills list
+            # Preload skill prompt into LoadSkillTool
             # This ensures the skill prompt is injected into system message
-            # via prompt_modifier when the skill should be preloaded
-            should_preload = preload_skills is not None and skill_name in preload_skills
-            if load_skill_tool is not None and should_preload:
+            # via prompt_modifier
+            if load_skill_tool is not None:
                 skill_prompt = skill_config.get("prompt", "")
                 if skill_prompt:
                     load_skill_tool.preload_skill_prompt(skill_name, skill_config)
@@ -316,11 +344,6 @@ async def prepare_skill_tools(
                         "[skill_factory] Preloaded skill prompt for '%s' (in preload_skills list)",
                         skill_name,
                     )
-            elif not should_preload:
-                logger.debug(
-                    "[skill_factory] Skipped preload for skill '%s' (not in preload_skills list, will use load_skill tool)",
-                    skill_name,
-                )
 
     # Load MCP tools from all skills if any MCP servers are configured
     if skill_mcp_configs:
