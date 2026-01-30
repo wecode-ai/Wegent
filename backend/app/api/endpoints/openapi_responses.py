@@ -123,7 +123,7 @@ async def create_response(
     request: Request,
     request_body: ResponseCreateInput,
     db: Session = Depends(get_db),
-    auth_context: security.AuthContext = Depends(security.get_auth_context),
+    auth_context: security.AuthContext = Depends(security.get_auth_context_flexible),
 ):
     """
     Create a new response (execute a task).

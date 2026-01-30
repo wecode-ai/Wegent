@@ -1,0 +1,43 @@
+{
+  "name": "@wegent/browser-extension",
+  "version": "1.0.0",
+  "description": "Wegent Browser Extension - Send web content to AI chat and knowledge base",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:chrome": "vite build --mode chrome",
+    "build:safari": "npm run build:chrome && xcrun safari-web-extension-converter dist/chrome --project-location safari/WegentExtension --app-name Wegent --bundle-identifier io.wecode.wegent --no-prompt --no-open",
+    "preview": "vite preview",
+    "lint": "eslint . --ext .ts,.tsx",
+    "format": "prettier --write \"**/*.{ts,tsx,json,css}\""
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.5.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "socket.io-client": "^4.7.5",
+    "turndown": "^7.2.0",
+    "webextension-polyfill": "^0.12.0"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "@types/chrome": "^0.0.287",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/turndown": "^5.0.5",
+    "@types/webextension-polyfill": "^0.10.7",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.15.0",
+    "eslint-plugin-react": "^7.37.2",
+    "postcss": "^8.4.49",
+    "prettier": "^3.4.2",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

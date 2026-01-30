@@ -671,3 +671,138 @@ def get_current_user_flexible(
         Authenticated User object
     """
     return auth_context.user
+
+
+def get_auth_context_flexible(
+    db: Session = Depends(get_db),
+    token: Optional[str] = Depends(oauth2_scheme_optional),
+    api_key: str = Depends(get_api_key_from_header),
+    wegent_username: Optional[str] = Header(default=None, alias="wegent-username"),
+) -> AuthContext:
+    """
+    Flexible authentication: supports JWT token, personal API key, and service key.
+
+    Authentication priority:
+    1. API key (wg-* prefix) - uses get_auth_context logic
+    2. JWT token - uses get_current_user logic
+
+    This allows endpoints to accept both JWT tokens (from web UI/browser extension)
+    and API keys (from external API calls).
+
+    Args:
+        db: Database session
+        token: Optional JWT token from Authorization header
+        api_key: API key string (from X-API-Key, Authorization, or wegent-source header)
+        wegent_username: Username to impersonate (for service keys)
+
+    Returns:
+        AuthContext containing authenticated User and optional api_key_name
+
+    Raises:
+        HTTPException: If no authentication method succeeds
+    """
+    with _tracer.start_as_current_span("auth.get_auth_context_flexible") as span:
+        # Priority 1: Try API key authentication if present
+        if api_key:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_METHOD, "api_key")
+                span.set_attribute(SpanAttributes.AUTH_TOKEN_TYPE, "api_key")
+
+            # Parse api_key#username format
+            actual_api_key = api_key
+            username_from_key = None
+            if "#" in api_key:
+                parts = api_key.split("#", 1)
+                actual_api_key = parts[0]
+                username_from_key = parts[1] if len(parts) > 1 and parts[1] else None
+
+            key_hash = hashlib.sha256(actual_api_key.encode()).hexdigest()
+            api_key_record = (
+                db.query(APIKey)
+                .filter(
+                    APIKey.key_hash == key_hash,
+                    APIKey.is_active == True,
+                )
+                .first()
+            )
+
+            if api_key_record:
+                # Check expiration
+                if api_key_record.expires_at >= datetime.utcnow():
+                    # Update last_used_at
+                    api_key_record.last_used_at = datetime.utcnow()
+                    db.commit()
+
+                    # Personal key: return the key owner directly
+                    if api_key_record.key_type == KEY_TYPE_PERSONAL:
+                        user = userReader.get_by_id(db, api_key_record.user_id)
+                        if user and user.is_active:
+                            if is_telemetry_enabled():
+                                span.set_attribute(
+                                    SpanAttributes.AUTH_RESULT, "success"
+                                )
+                                span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                                set_user_context(
+                                    user_id=str(user.id), user_name=user.user_name
+                                )
+                            return AuthContext(
+                                user=user, api_key_name=api_key_record.name
+                            )
+
+                    # Service key: require username
+                    if api_key_record.key_type == KEY_TYPE_SERVICE:
+                        target_username = username_from_key or wegent_username
+                        if target_username and re.match(
+                            r"^[a-zA-Z0-9_-]+$", target_username
+                        ):
+                            user = userReader.get_by_name(db, target_username)
+                            if user and user.is_active:
+                                if is_telemetry_enabled():
+                                    span.set_attribute(
+                                        SpanAttributes.AUTH_RESULT, "success"
+                                    )
+                                    span.set_attribute(
+                                        SpanAttributes.USER_ID, str(user.id)
+                                    )
+                                    set_user_context(
+                                        user_id=str(user.id), user_name=user.user_name
+                                    )
+                                return AuthContext(
+                                    user=user, api_key_name=api_key_record.name
+                                )
+
+        # Priority 2: Try JWT token authentication
+        if token:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt")
+                span.set_attribute(SpanAttributes.AUTH_TOKEN_TYPE, "bearer")
+
+            try:
+                payload = jwt.decode(
+                    token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+                )
+                username: str = payload.get("sub")
+                if username:
+                    user = user_service.get_user_by_name(db=db, user_name=username)
+                    if user and user.is_active:
+                        if is_telemetry_enabled():
+                            span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                            span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                            set_user_context(
+                                user_id=str(user.id), user_name=user.user_name
+                            )
+                        return AuthContext(user=user, api_key_name=None)
+            except JWTError:
+                pass  # Fall through to error
+
+        # No valid authentication found
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+            span.set_attribute(
+                SpanAttributes.AUTH_FAILURE_REASON, "no_valid_credentials"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. Provide a valid JWT token or API key.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )

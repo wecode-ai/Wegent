@@ -818,7 +818,9 @@ stop_services() {
             local pid=$(cat "$pid_file")
             if kill -0 "$pid" 2>/dev/null; then
                 echo -e "  Stopping $service (PID: $pid)..."
-                kill "$pid" 2>/dev/null || true
+                # Kill the entire process group to handle --reload child processes
+                # Use negative PID to kill process group
+                kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
                 # Wait for process to exit
                 for i in {1..10}; do
                     if ! kill -0 "$pid" 2>/dev/null; then
@@ -828,18 +830,20 @@ stop_services() {
                 done
                 # Force terminate
                 if kill -0 "$pid" 2>/dev/null; then
-                    kill -9 "$pid" 2>/dev/null || true
+                    kill -9 -- -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
                 fi
             fi
             rm -f "$pid_file"
         fi
     done
 
-    # Clean up potentially remaining processes
-    pkill -f "uvicorn app.main:app" 2>/dev/null || true
-    pkill -f "uvicorn main:app.*8001" 2>/dev/null || true
-    pkill -f "uvicorn chat_shell.main:app" 2>/dev/null || true
-    pkill -f "npm run dev.*$WEGENT_FRONTEND_PORT" 2>/dev/null || true
+    # Clean up potentially remaining processes ONLY for this workspace
+    # Use SCRIPT_DIR to ensure we only kill processes started from this directory
+    # This prevents killing backend processes from other workspaces
+    pkill -f "uvicorn app.main:app.*--port $BACKEND_PORT" 2>/dev/null || true
+    pkill -f "uvicorn main:app.*--port $EXECUTOR_MANAGER_PORT" 2>/dev/null || true
+    pkill -f "uvicorn chat_shell.main:app.*--port $CHAT_SHELL_PORT" 2>/dev/null || true
+    pkill -f "PORT=$WEGENT_FRONTEND_PORT npm run dev" 2>/dev/null || true
 
     echo -e "${GREEN}All services stopped${NC}"
 }
