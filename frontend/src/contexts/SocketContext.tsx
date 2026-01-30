@@ -32,6 +32,8 @@ import {
   ChatErrorPayload,
   ChatCancelledPayload,
   ChatMessagePayload,
+  ChatBlockCreatedPayload,
+  ChatBlockUpdatedPayload,
   ChatSendPayload,
   ChatSendAck,
   TaskCreatedPayload,
@@ -128,6 +130,10 @@ export interface ChatEventHandlers {
   onChatCancelled?: (data: ChatCancelledPayload) => void
   /** Handler for chat:message event (other users' messages in group chat) */
   onChatMessage?: (data: ChatMessagePayload) => void
+  /** Handler for chat:block_created event (new block added) */
+  onBlockCreated?: (data: ChatBlockCreatedPayload) => void
+  /** Handler for chat:block_updated event (block content/status updated) */
+  onBlockUpdated?: (data: ChatBlockUpdatedPayload) => void
 }
 
 /** Task event handlers for task list updates */
@@ -590,8 +596,16 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         return () => {}
       }
 
-      const { onChatStart, onChatChunk, onChatDone, onChatError, onChatCancelled, onChatMessage } =
-        handlers
+      const {
+        onChatStart,
+        onChatChunk,
+        onChatDone,
+        onChatError,
+        onChatCancelled,
+        onChatMessage,
+        onBlockCreated,
+        onBlockUpdated,
+      } = handlers
 
       if (onChatStart) socket.on(ServerEvents.CHAT_START, onChatStart)
       if (onChatChunk) socket.on(ServerEvents.CHAT_CHUNK, onChatChunk)
@@ -599,6 +613,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       if (onChatError) socket.on(ServerEvents.CHAT_ERROR, onChatError)
       if (onChatCancelled) socket.on(ServerEvents.CHAT_CANCELLED, onChatCancelled)
       if (onChatMessage) socket.on(ServerEvents.CHAT_MESSAGE, onChatMessage)
+      if (onBlockCreated) socket.on(ServerEvents.CHAT_BLOCK_CREATED, onBlockCreated)
+      if (onBlockUpdated) socket.on(ServerEvents.CHAT_BLOCK_UPDATED, onBlockUpdated)
 
       // Return cleanup function
       return () => {
@@ -608,6 +624,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         if (onChatError) socket.off(ServerEvents.CHAT_ERROR, onChatError)
         if (onChatCancelled) socket.off(ServerEvents.CHAT_CANCELLED, onChatCancelled)
         if (onChatMessage) socket.off(ServerEvents.CHAT_MESSAGE, onChatMessage)
+        if (onBlockCreated) socket.off(ServerEvents.CHAT_BLOCK_CREATED, onBlockCreated)
+        if (onBlockUpdated) socket.off(ServerEvents.CHAT_BLOCK_UPDATED, onBlockUpdated)
       }
     },
     [socket]

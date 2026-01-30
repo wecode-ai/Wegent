@@ -64,6 +64,8 @@ class SSEToWebSocketConverter:
                     content=event.data.get("content", ""),
                     offset=event.data.get("offset", 0),
                     result=event.data.get("result"),
+                    block_id=event.data.get("block_id"),
+                    block_offset=event.data.get("block_offset"),
                 )
 
             elif event.type == ChatEventType.THINKING:
@@ -71,6 +73,7 @@ class SSEToWebSocketConverter:
                 result = {
                     "shell_type": "Chat",
                     "thinking": [event.data],
+                    "blocks": event.data.get("blocks", []),
                 }
                 await ws_emitter.emit_chat_chunk(
                     task_id=self.task_id,
@@ -152,6 +155,10 @@ class SSEToWebSocketConverter:
             "shell_type": "Chat",
             "thinking": [thinking_step],
         }
+
+        # Include blocks if present in data
+        if "blocks" in data:
+            result["blocks"] = data["blocks"]
 
         await ws_emitter.emit_chat_chunk(
             task_id=self.task_id,
