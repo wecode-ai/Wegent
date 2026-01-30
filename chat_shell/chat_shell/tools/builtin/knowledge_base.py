@@ -111,6 +111,9 @@ class KnowledgeBaseTool(BaseTool):
     # Cache for KB info (fetched once per conversation)
     _kb_info_cache: Optional[Dict[str, Any]] = PrivateAttr(default=None)
 
+    # Cached KB name for logging (extracted once from KB info)
+    _kb_name_cache: Optional[str] = PrivateAttr(default=None)
+
     @property
     def injection_strategy(self) -> InjectionStrategy:
         """Get or create injection strategy instance."""
@@ -340,15 +343,21 @@ class KnowledgeBaseTool(BaseTool):
         return True, None, None
 
     def _get_kb_name(self) -> str:
-        """Get the name of the first knowledge base.
+        """Get the name of the first knowledge base (cached).
 
-        Fetches from Backend API via _get_kb_info() (cached).
+        This method caches the KB name after first retrieval to avoid
+        repeated lookups in KB info dict during logging.
 
         Returns:
             KB name or "KB-{id}" as fallback
         """
+        # Return cached name if available
+        if self._kb_name_cache is not None:
+            return self._kb_name_cache
+
         if not self.knowledge_base_ids:
-            return "Unknown"
+            self._kb_name_cache = "Unknown"
+            return self._kb_name_cache
 
         first_kb_id = self.knowledge_base_ids[0]
 
@@ -359,10 +368,12 @@ class KnowledgeBaseTool(BaseTool):
         items = kb_info.get("items", [])
         for item in items:
             if item.get("id") == first_kb_id:
-                return item.get("name", f"KB-{first_kb_id}")
+                self._kb_name_cache = item.get("name", f"KB-{first_kb_id}")
+                return self._kb_name_cache
 
         # Fallback to ID-based name
-        return f"KB-{first_kb_id}"
+        self._kb_name_cache = f"KB-{first_kb_id}"
+        return self._kb_name_cache
 
     def _format_rejection_message(self, rejection_reason: str, max_calls: int) -> str:
         """Format rejection message based on reason.
