@@ -140,7 +140,9 @@ async def lifespan(app: FastAPI):
         auth_token = os.getenv("AUTH_TOKEN")
         task_id = os.getenv("TASK_ID")
         if auth_token and task_id:
-            logger.info(f"AUTH_TOKEN found, initializing Claude Code for sandbox {task_id}...")
+            logger.info(
+                f"AUTH_TOKEN found, initializing Claude Code for sandbox {task_id}..."
+            )
             _initialize_sandbox_claude(auth_token, task_id)
     except Exception as e:
         logger.warning(f"Failed to initialize Claude Code for sandbox: {e}")

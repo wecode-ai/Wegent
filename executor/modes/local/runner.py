@@ -59,6 +59,10 @@ class LocalRunner:
         self.current_task: Optional[Dict[str, Any]] = None
         self.current_agent: Optional[Any] = None
 
+        # Active sessions tracking (task_id -> session_info)
+        # Each task_id represents an active Claude Code session/process
+        self.active_sessions: Dict[int, Dict[str, Any]] = {}
+
         # Runner state
         self._running = False
         self._shutdown_event = asyncio.Event()
@@ -178,6 +182,9 @@ class LocalRunner:
             TaskEvents.CANCEL, self.task_handler.handle_task_cancel
         )
         self.websocket_client.on(
+            TaskEvents.CLOSE_SESSION, self.task_handler.handle_task_close_session
+        )
+        self.websocket_client.on(
             ChatEvents.MESSAGE, self.task_handler.handle_chat_message
         )
 
@@ -205,6 +212,78 @@ class LocalRunner:
         else:
             logger.warning(f"Cannot cancel task {task_id}: not currently running")
 
+    async def close_task_session(self, task_id: int) -> None:
+        """Close a task session completely, freeing up the slot.
+
+        This is different from cancel_task which only pauses execution.
+        close_task_session terminates the entire session and cleanup.
+
+        This method works even if the task is not currently running,
+        as it directly cleans up the ClaudeCode client by task_id.
+
+        Args:
+            task_id: Task ID to close
+        """
+        logger.info(f"Closing session for task: task_id={task_id}")
+
+        # If this is the current task, handle it
+        if self.current_task and self.current_task.get("task_id") == task_id:
+            # Cancel the task if agent supports it
+            if self.current_agent and hasattr(self.current_agent, "cancel_run"):
+                self.current_agent.cancel_run()
+
+            # Cleanup agent resources
+            if self.current_agent and hasattr(self.current_agent, "cleanup"):
+                try:
+                    self.current_agent.cleanup()
+                    logger.info(
+                        f"Cleaned up current agent resources for task {task_id}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Error cleaning up current agent for task {task_id}: {e}"
+                    )
+
+            # Clear current task
+            self.current_task = None
+            self.current_agent = None
+        else:
+            # Task is not currently running, but may have a lingering client
+            logger.info(
+                f"Task {task_id} is not currently running, attempting to cleanup client"
+            )
+
+        # Always try to cleanup ClaudeCode client for this task_id
+        try:
+            from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
+
+            logger.info(
+                f"[Runner] About to call cleanup_task_clients for task_id={task_id}"
+            )
+            # Cleanup any lingering client for this task_id
+            cleaned = await ClaudeCodeAgent.cleanup_task_clients(task_id)
+            logger.info(f"[Runner] cleanup_task_clients returned: cleaned={cleaned}")
+            if cleaned > 0:
+                logger.info(
+                    f"Cleaned up {cleaned} ClaudeCode client(s) for task {task_id}"
+                )
+            else:
+                logger.info(f"No ClaudeCode clients found for task {task_id}")
+        except Exception as e:
+            logger.error(
+                f"Error cleaning up ClaudeCode clients for task {task_id}: {e}",
+                exc_info=True,
+            )
+
+        logger.info(f"Task session closed: task_id={task_id}")
+
+        # Send heartbeat immediately to update slot usage on backend
+        try:
+            await self.websocket_client.send_heartbeat()
+            logger.info(f"Sent heartbeat after closing session for task {task_id}")
+        except Exception as e:
+            logger.error(f"Failed to send heartbeat after closing session: {e}")
+
     async def _send_cancel_callback(self, task_id: int) -> None:
         """Send CANCELLED status callback to Backend."""
         try:
@@ -230,6 +309,34 @@ class LocalRunner:
             logger.info(f"Cancel callback sent for task {task_id}")
         except Exception as e:
             logger.error(f"Failed to send cancel callback for task {task_id}: {e}")
+
+    async def _send_close_session_callback(self, task_id: int) -> None:
+        """Send session closed callback to Backend."""
+        try:
+            if not self.current_task:
+                return
+
+            subtask_id = self.current_task.get("subtask_id", -1)
+            task_title = self.current_task.get("task_title", "")
+            subtask_title = self.current_task.get("subtask_title", "")
+
+            await self.websocket_client.emit(
+                TaskEvents.PROGRESS,
+                {
+                    "task_id": task_id,
+                    "subtask_id": subtask_id,
+                    "task_title": task_title,
+                    "subtask_title": subtask_title,
+                    "progress": 100,
+                    "status": "completed",
+                    "message": "Session closed",
+                },
+            )
+            logger.info(f"Close session callback sent for task {task_id}")
+        except Exception as e:
+            logger.error(
+                f"Failed to send close session callback for task {task_id}: {e}"
+            )
 
     async def _task_loop(self) -> None:
         """Main task processing loop."""
@@ -286,6 +393,18 @@ class LocalRunner:
         # Create and initialize agent
         self.current_agent = ClaudeCodeAgent(task_data)
 
+        # Set callback to send heartbeat when Claude client is created
+        async def on_client_created():
+            try:
+                await self.websocket_client.send_heartbeat()
+                logger.info(
+                    f"[TaskStart] Sent heartbeat after Claude client created for task {task_id}"
+                )
+            except Exception as e:
+                logger.warning(f"[TaskStart] Failed to send heartbeat: {e}")
+
+        self.current_agent.on_client_created_callback = on_client_created
+
         def websocket_report_progress(
             progress: int,
             status: Optional[str] = None,
@@ -332,7 +451,7 @@ class LocalRunner:
             )
             return
 
-        # Execute the task
+        # Execute the task (Claude client will be created inside, triggering heartbeat callback)
         result = await self.current_agent.execute_async()
         logger.info(f"Task execution completed: task_id={task_id}, result={result}")
 

@@ -127,6 +127,9 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
             f"[convert_to_task_dict] No app data found. status={task_crd.status}, app={task_crd.status.app if task_crd.status else 'N/A'}"
         )
 
+    # Extract device_id from task spec
+    device_id = task_crd.spec.device_id if hasattr(task_crd.spec, "device_id") else None
+
     return {
         "id": task.id,
         "type": type_value,
@@ -151,6 +154,7 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
         "model_id": model_id,
         "is_group_chat": is_group_chat,
         "app": app_data,
+        "device_id": device_id,
     }
 
 
@@ -177,6 +181,9 @@ def convert_to_task_dict_optimized(
     task_type = (
         task_crd.metadata.labels and task_crd.metadata.labels.get("taskType") or "chat"
     )
+
+    # Extract device_id from task spec
+    device_id = task_crd.spec.device_id if hasattr(task_crd.spec, "device_id") else None
 
     return {
         "id": task.id,
@@ -205,6 +212,7 @@ def convert_to_task_dict_optimized(
             if task_crd.status and task_crd.status.app
             else None
         ),
+        "device_id": device_id,
     }
 
 

@@ -149,6 +149,7 @@ class TaskDetail(BaseModel):
     app: Optional[TaskApp] = (
         None  # App preview information (set by expose_service tool)
     )
+    device_id: Optional[str] = None  # Device ID used for execution (for task history)
 
     class Config:
         from_attributes = True

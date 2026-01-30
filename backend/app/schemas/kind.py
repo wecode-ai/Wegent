@@ -459,6 +459,7 @@ class TaskSpec(BaseModel):
     knowledgeBaseRefs: Optional[List[KnowledgeBaseTaskRef]] = (
         None  # Bound knowledge bases for group chat
     )
+    device_id: Optional[str] = None  # Device ID used for execution (for task history)
 
 
 class TaskApp(BaseModel):

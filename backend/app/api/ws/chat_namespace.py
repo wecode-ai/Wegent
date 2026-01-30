@@ -99,6 +99,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             "chat:retry": "on_chat_retry",
             "task:join": "on_task_join",
             "task:leave": "on_task_leave",
+            "task:close-session": "on_task_close_session",
             "history:sync": "on_history_sync",
             "skill:response": "on_skill_response",
         }
@@ -1006,6 +1007,109 @@ class ChatNamespace(socketio.AsyncNamespace):
         except Exception as e:
             logger.error(f"[WS] chat:cancel exception: {e}", exc_info=True)
             db.rollback()
+            return {"error": f"Internal server error: {str(e)}"}
+        finally:
+            db.close()
+
+    async def on_task_close_session(self, sid: str, data: dict) -> dict:
+        """
+        Handle task:close-session event.
+
+        Sends close-session WebSocket event to device to terminate the session
+        and free up the device slot.
+
+        Args:
+            sid: Socket ID
+            data: {"task_id": int}
+
+        Returns:
+            {"success": true} or {"error": "..."}
+        """
+        # Check token expiry before processing
+        if await self._check_token_expiry(sid):
+            return await self._handle_token_expired(sid)
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+
+        if not user_id:
+            logger.error("[WS] task:close-session error: Not authenticated")
+            return {"error": "Not authenticated"}
+
+        task_id = data.get("task_id")
+        if not task_id:
+            logger.error("[WS] task:close-session error: Missing task_id")
+            return {"error": "Missing task_id"}
+
+        db = SessionLocal()
+        try:
+            # Get the task to find the executor_name (device ID)
+            from app.models.task import TaskResource
+
+            task = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.id == task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
+                )
+                .first()
+            )
+
+            if not task:
+                logger.error(
+                    f"[WS] task:close-session error: Task not found task_id={task_id} user_id={user_id}"
+                )
+                return {"error": "Task not found"}
+
+            # Get the latest subtask to find executor_name
+            subtask = (
+                db.query(Subtask)
+                .filter(Subtask.task_id == task_id)
+                .order_by(Subtask.id.desc())
+                .first()
+            )
+
+            if not subtask or not subtask.executor_name:
+                logger.error(
+                    f"[WS] task:close-session error: No executor found for task_id={task_id}"
+                )
+                return {"error": "No executor found for this task"}
+
+            # Check if this is a device task
+            if not subtask.executor_name.startswith("device-"):
+                logger.error(
+                    f"[WS] task:close-session error: Not a device task, executor_name={subtask.executor_name}"
+                )
+                return {"error": "Not a device task"}
+
+            # Extract device_id from executor_name (format: "device-{device_id}")
+            device_id = subtask.executor_name[7:]  # Remove "device-" prefix
+            device_room = f"device:{user_id}:{device_id}"
+
+            logger.info(
+                f"[WS] task:close-session Sending task:close-session to device: "
+                f"device_id={device_id}, room={device_room}, task_id={task_id}"
+            )
+
+            from app.core.socketio import get_sio
+
+            sio = get_sio()
+            await sio.emit(
+                "task:close-session",
+                {"task_id": task_id},
+                room=device_room,
+                namespace="/local-executor",
+            )
+
+            logger.info(
+                f"[WS] task:close-session Successfully sent to device for task_id={task_id}"
+            )
+
+            return {"success": True}
+
+        except Exception as e:
+            logger.error(f"[WS] task:close-session exception: {e}", exc_info=True)
             return {"error": f"Internal server error: {str(e)}"}
         finally:
             db.close()

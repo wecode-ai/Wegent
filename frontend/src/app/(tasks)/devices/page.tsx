@@ -21,10 +21,13 @@ import { saveLastTab } from '@/utils/userPreferences'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useSocket } from '@/contexts/SocketContext'
 import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { getToken } from '@/apis/user'
 import { DeviceInfo } from '@/apis/devices'
+import { SlotIndicator } from '@/features/devices/components/SlotIndicator'
+import { RunningTasksList } from '@/features/devices/components/RunningTasksList'
 import {
   Monitor,
   RefreshCw,
@@ -47,6 +50,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -148,6 +152,7 @@ export default function DevicesPage() {
   const router = useRouter()
   const { clearAllStreams } = useChatStreamContext()
   const { setSelectedTask } = useTaskContext()
+  const { closeTaskSession } = useSocket()
   const isMobile = useIsMobile()
 
   // Environment variables for device setup
@@ -180,6 +185,25 @@ export default function DevicesPage() {
     setDefaultDevice,
     deleteDevice,
   } = useDevices()
+
+  // Handle cancelling/closing a task via WebSocket
+  // For running tasks: pauses execution
+  // For completed tasks: closes session and frees device slot
+  const handleCancelTask = async (taskId: number) => {
+    try {
+      const result = await closeTaskSession(taskId)
+      if (result.success) {
+        toast.success(t('close_session_success'))
+        // Refresh devices to update slot usage
+        await refreshDevices()
+      } else {
+        toast.error(result.error || t('close_session_error'))
+      }
+    } catch (error) {
+      console.error('Failed to close task session:', error)
+      toast.error(t('close_session_error'))
+    }
+  }
 
   // Sort devices: online first, then by default status, then by name
   const sortedDevices = useMemo(() => {
@@ -468,66 +492,106 @@ export default function DevicesPage() {
                   <div
                     key={device.device_id}
                     className={cn(
-                      'bg-surface border rounded-lg p-4 flex items-center justify-between',
+                      'bg-surface border rounded-lg p-4',
                       device.is_default ? 'border-primary' : 'border-border'
                     )}
                   >
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
-                        <Monitor className="w-5 h-5 text-primary" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className="font-medium text-text-primary">{device.name}</h4>
-                          {device.is_default && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-primary/10 text-primary rounded-full">
-                              <Star className="w-3 h-3 fill-current" />
-                              {t('default_device')}
-                            </span>
+                    {/* Device info row */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
+                          <Monitor className="w-5 h-5 text-primary" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-medium text-text-primary">{device.name}</h4>
+                            {device.is_default && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-primary/10 text-primary rounded-full">
+                                <Star className="w-3 h-3 fill-current" />
+                                {t('default_device')}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm text-text-muted">{device.device_id}</p>
+                          {/* Slot indicator - only show for online devices */}
+                          {device.status !== 'offline' && (
+                            <div className="mt-1">
+                              <SlotIndicator
+                                used={device.slot_used}
+                                max={device.slot_max}
+                                runningTasks={device.running_tasks}
+                              />
+                            </div>
                           )}
                         </div>
-                        <p className="text-sm text-text-muted">{device.device_id}</p>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={cn('w-2 h-2 rounded-full', getStatusColor(device.status))}
-                        />
-                        <span className="text-sm text-text-secondary">
-                          {getStatusText(device.status)}
-                        </span>
-                      </div>
-                      <Button
-                        variant="default"
-                        size="sm"
-                        onClick={() => handleStartTask(device.device_id)}
-                        disabled={device.status !== 'online'}
-                        className="flex items-center gap-2"
-                      >
-                        <Play className="w-4 h-4" />
-                        {t('start_task')}
-                      </Button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                            <MoreVertical className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {!device.is_default && (
-                            <DropdownMenuItem onClick={() => handleSetDefault(device)}>
-                              <Star className="w-4 h-4 mr-2" />
-                              {t('set_as_default')}
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={cn('w-2 h-2 rounded-full', getStatusColor(device.status))}
+                          />
+                          <span className="text-sm text-text-secondary">
+                            {getStatusText(device.status)}
+                          </span>
+                        </div>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div>
+                                <Button
+                                  variant="default"
+                                  size="sm"
+                                  onClick={() => handleStartTask(device.device_id)}
+                                  disabled={
+                                    device.status !== 'online' ||
+                                    device.slot_used >= device.slot_max
+                                  }
+                                  className="flex items-center gap-2"
+                                >
+                                  <Play className="w-4 h-4" />
+                                  {device.slot_used >= device.slot_max
+                                    ? t('slots_full')
+                                    : t('start_task')}
+                                </Button>
+                              </div>
+                            </TooltipTrigger>
+                            {device.slot_used >= device.slot_max && device.status === 'online' && (
+                              <TooltipContent>
+                                <p className="text-sm">{t('slots_full_hint')}</p>
+                              </TooltipContent>
+                            )}
+                          </Tooltip>
+                        </TooltipProvider>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                              <MoreVertical className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {!device.is_default && (
+                              <DropdownMenuItem onClick={() => handleSetDefault(device)}>
+                                <Star className="w-4 h-4 mr-2" />
+                                {t('set_as_default')}
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem danger onClick={() => handleDeleteDevice(device)}>
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              {t('delete_device')}
                             </DropdownMenuItem>
-                          )}
-                          <DropdownMenuItem danger onClick={() => handleDeleteDevice(device)}>
-                            <Trash2 className="w-4 h-4 mr-2" />
-                            {t('delete_device')}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </div>
+
+                    {/* Running tasks list */}
+                    {device.running_tasks.length > 0 && (
+                      <RunningTasksList
+                        tasks={device.running_tasks}
+                        deviceName={device.name}
+                        onCancelTask={handleCancelTask}
+                      />
+                    )}
                   </div>
                 ))}
               </div>

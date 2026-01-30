@@ -89,7 +89,9 @@ class ApiClient:
             )
             if response.status_code == 200:
                 return response
-            logger.warning(f"[ApiClient] GET {path} failed: HTTP {response.status_code}")
+            logger.warning(
+                f"[ApiClient] GET {path} failed: HTTP {response.status_code}"
+            )
             return None
         except requests.exceptions.Timeout:
             logger.warning(f"[ApiClient] GET {path} timeout")
@@ -155,14 +157,18 @@ def fetch_task_skills(task_id: str, auth_token: str) -> TaskSkillsInfo:
                 f"preload_skills={data.get('preload_skills', [])}"
             )
             return TaskSkillsInfo(
-                task_id=data.get("task_id", int(task_id) if str(task_id).isdigit() else -1),
+                task_id=data.get(
+                    "task_id", int(task_id) if str(task_id).isdigit() else -1
+                ),
                 team_id=data.get("team_id"),
                 team_namespace=data.get("team_namespace", "default"),
                 skills=data.get("skills", []),
                 preload_skills=data.get("preload_skills", []),
             )
         else:
-            logger.warning(f"[fetch_task_skills] API returned no response for task {task_id}")
+            logger.warning(
+                f"[fetch_task_skills] API returned no response for task {task_id}"
+            )
         return default_result
 
     except Exception as e:
@@ -258,7 +264,9 @@ class SkillDownloader:
             for skill_name in skills:
                 skill_path = os.path.join(self.skills_dir, skill_name)
                 if os.path.exists(skill_path):
-                    logger.info(f"[SkillDownloader] Skill '{skill_name}' exists, skipping")
+                    logger.info(
+                        f"[SkillDownloader] Skill '{skill_name}' exists, skipping"
+                    )
                 else:
                     skills_to_download.append(skill_name)
 
@@ -287,7 +295,9 @@ class SkillDownloader:
         else:
             logger.warning("[SkillDownloader] No skills were successfully deployed")
 
-        return SkillDownloadResult(success_count, len(skills_to_download), self.skills_dir)
+        return SkillDownloadResult(
+            success_count, len(skills_to_download), self.skills_dir
+        )
 
     def _clear_skills_dir(self, skills_to_replace: List[str]) -> None:
         """Clear skills directory or specific skills.
@@ -301,14 +311,18 @@ class SkillDownloader:
             # Clear entire skills directory
             if os.path.exists(self.skills_dir):
                 shutil.rmtree(self.skills_dir)
-                logger.info(f"[SkillDownloader] Cleared skills directory: {self.skills_dir}")
+                logger.info(
+                    f"[SkillDownloader] Cleared skills directory: {self.skills_dir}"
+                )
         else:
             # Only clear skills that will be replaced
             for skill_name in skills_to_replace:
                 skill_path = os.path.join(self.skills_dir, skill_name)
                 if os.path.exists(skill_path):
                     shutil.rmtree(skill_path)
-                    logger.info(f"[SkillDownloader] Removed skill for replacement: {skill_name}")
+                    logger.info(
+                        f"[SkillDownloader] Removed skill for replacement: {skill_name}"
+                    )
 
     def _download_single_skill(self, skill_name: str) -> bool:
         """Download and extract a single skill.
@@ -347,18 +361,24 @@ class SkillDownloader:
                 return False
 
             # Download skill ZIP
-            download_path = f"/api/v1/kinds/skills/{skill_id}/download?namespace={skill_namespace}"
+            download_path = (
+                f"/api/v1/kinds/skills/{skill_id}/download?namespace={skill_namespace}"
+            )
             response = self.client.get(download_path, timeout=self.DOWNLOAD_TIMEOUT)
 
             if not response:
-                logger.error(f"[SkillDownloader] Failed to download skill '{skill_name}'")
+                logger.error(
+                    f"[SkillDownloader] Failed to download skill '{skill_name}'"
+                )
                 return False
 
             # Extract ZIP
             return self._extract_skill_zip(skill_name, response.content)
 
         except Exception as e:
-            logger.warning(f"[SkillDownloader] Failed to download skill '{skill_name}': {e}")
+            logger.warning(
+                f"[SkillDownloader] Failed to download skill '{skill_name}': {e}"
+            )
             return False
 
     def _extract_skill_zip(self, skill_name: str, content: bytes) -> bool:
@@ -400,5 +420,7 @@ class SkillDownloader:
             logger.error(f"[SkillDownloader] Invalid ZIP file for skill '{skill_name}'")
             return False
         except Exception as e:
-            logger.error(f"[SkillDownloader] Error extracting skill '{skill_name}': {e}")
+            logger.error(
+                f"[SkillDownloader] Error extracting skill '{skill_name}': {e}"
+            )
             return False
