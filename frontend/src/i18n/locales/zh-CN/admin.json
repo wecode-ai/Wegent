@@ -647,6 +647,20 @@
       "model_deleted": "模型删除成功",
       "add_first_model": "添加您的第一个公共模型"
     },
+    "device_step": {
+      "title": "连接设备",
+      "description": "连接您的本地设备以执行 AI 任务。设备连接后将自动显示在下方。",
+      "install_command": "安装命令",
+      "install_hint": "在终端运行以下命令安装并连接设备：",
+      "copy_command": "复制",
+      "copied": "已复制!",
+      "view_guide": "查看安装指南",
+      "detecting": "等待设备连接...",
+      "device_connected": "设备已连接",
+      "device_name": "设备名称",
+      "no_device_hint": "运行上方命令后，设备将自动出现在此处",
+      "refresh": "刷新"
+    },
     "skill_step": {
       "title": "配置公共技能",
       "description": "上传所有用户可用的技能包（.zip）。技能为 AI 代理提供按需能力。",
