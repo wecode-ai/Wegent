@@ -347,7 +347,7 @@ class ClaudeCodeAgent(Agent):
                 env_values[env_key] = value
 
         if env_values:
-            logger.info(f"Set git environment variables: {env_values}")
+            logger.info("Set git environment variables")
 
         # Configure GitLab CLI authentication if git_domain is available
         git_domain = task_data.get("git_domain")
@@ -684,7 +684,6 @@ class ClaudeCodeAgent(Agent):
         settings_path = os.path.join(config_dir, "settings.json")
         with open(settings_path, "w") as f:
             json.dump(agent_config, f, indent=2)
-        logger.info(f"Saved Claude Code settings to {settings_path}")
 
         # Save claude.json config (user preferences)
         claude_json_config = {
@@ -800,9 +799,6 @@ class ClaudeCodeAgent(Agent):
                     "post_create_claude_model"
                 ](env_config, model_id, bot_config, user_name, git_url)
                 logger.info("Applied post_create_claude_model hook")
-                logger.info(
-                    f"Created Claude Code model config with hook: {mask_sensitive_data(final_claude_code_config_with_hook)}"
-                )
 
                 return final_claude_code_config_with_hook
             except Exception as e:
@@ -815,9 +811,6 @@ class ClaudeCodeAgent(Agent):
             ).lower()
             != "false",
         }
-        logger.info(
-            f"Created Claude Code model config: {mask_sensitive_data(final_claude_code_config)}"
-        )
 
         return final_claude_code_config
 
