@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { memo, useState } from 'react'
+import React, { memo, useState, useCallback } from 'react'
 import type {
   TaskDetail,
   Team,
@@ -49,6 +49,7 @@ import { useMessageFeedback } from '@/hooks/useMessageFeedback'
 import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartUrlRenderer'
 import { formatDateTime } from '@/utils/dateTime'
 import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
+import { fixMermaidCode } from '@/apis/chat'
 export interface Message {
   type: 'user' | 'ai'
   content: string
@@ -311,6 +312,23 @@ const MessageBubble = memo(
         }),
     })
 
+    // Handle Mermaid diagram fix request
+    const handleMermaidFixRequest = useCallback(
+      async (code: string, error: string): Promise<string | null> => {
+        try {
+          const response = await fixMermaidCode({ code, error })
+          if (response.success && response.fixed_code) {
+            return response.fixed_code
+          }
+          return null
+        } catch (err) {
+          console.error('Failed to request Mermaid fix:', err)
+          return null
+        }
+      },
+      []
+    )
+
     // Determine if this is a user-type message (for styling purposes)
     const isUserTypeMessage = msg.type === 'user'
 
@@ -517,6 +535,7 @@ const MessageBubble = memo(
         <EnhancedMarkdown
           source={normalizedResult}
           theme={theme}
+          onMermaidFixRequest={handleMermaidFixRequest}
           components={
             paragraphAction
               ? {
@@ -1337,6 +1356,7 @@ const MessageBubble = memo(
               <EnhancedMarkdown
                 source={contentToRender}
                 theme={theme}
+                onMermaidFixRequest={handleMermaidFixRequest}
                 components={{
                   a: ({ href, children }) => {
                     if (!href) {
