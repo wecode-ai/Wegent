@@ -100,14 +100,6 @@ class KnowledgeBaseTool(BaseTool):
     # Current conversation messages for context calculation
     current_messages: List[Dict[str, Any]] = Field(default_factory=list)
 
-    # Knowledge base call limit configuration (injected at construction time)
-    # Maps KB ID to config: {"maxCallsPerConversation": int, "exemptCallsBeforeCheck": int, "name": str}
-    # Follows same injection pattern as context_window, injection_mode, etc.
-    kb_configs: Optional[Dict[int, Dict[str, Any]]] = Field(
-        default=None,
-        description="Knowledge base configurations (max calls, exempt calls, name) - injected by Backend/chat_shell",
-    )
-
     # Injection strategy instance (lazy initialized)
     _injection_strategy: Optional[InjectionStrategy] = PrivateAttr(default=None)
 
@@ -115,6 +107,9 @@ class KnowledgeBaseTool(BaseTool):
     # These are instance variables that persist across multiple tool calls in the same conversation
     _call_count: int = PrivateAttr(default=0)
     _accumulated_tokens: int = PrivateAttr(default=0)
+
+    # Cache for KB info (fetched once per conversation)
+    _kb_info_cache: Optional[Dict[str, Any]] = PrivateAttr(default=None)
 
     @property
     def injection_strategy(self) -> InjectionStrategy:
@@ -138,14 +133,55 @@ class KnowledgeBaseTool(BaseTool):
         """
         return self.context_window or InjectionStrategy.DEFAULT_CONTEXT_WINDOW
 
+    def _get_kb_info_sync(self) -> Dict[str, Any]:
+        """Get KB info synchronously, using cache or fetching if needed.
+
+        This is a helper method for sync methods that need KB info.
+        It handles async/sync boundary by checking event loop state.
+
+        Returns:
+            KB info dict from cache or HTTP API
+
+        Note:
+            This method assumes cache is populated by _arun() at the start.
+            If cache is empty, it will attempt to fetch synchronously as fallback.
+        """
+        # Fast path: return cached data if available
+        if self._kb_info_cache is not None:
+            return self._kb_info_cache
+
+        # Slow path: cache not populated, need to fetch
+        # This should rarely happen if _arun() called _get_kb_info() first
+        logger.warning(
+            "[KnowledgeBaseTool] KB info cache not populated, fetching synchronously"
+        )
+
+        try:
+            import asyncio
+
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If event loop is running, we can't block
+                # Return empty dict and log warning
+                logger.warning(
+                    "[KnowledgeBaseTool] Cannot fetch KB info in running event loop, using defaults"
+                )
+                return {"items": []}
+            else:
+                # No running loop, fetch synchronously
+                return loop.run_until_complete(self._get_kb_info())
+        except RuntimeError:
+            # No event loop, create a new one
+            return asyncio.run(self._get_kb_info())
+
     def _get_kb_limits(self) -> tuple[int, int]:
         """Get (max_calls, exempt_calls) for knowledge base tool calls.
 
         Returns limits for the first knowledge base in the list. If multiple KBs
         are configured, we use the first one's limits to keep behavior simple.
 
-        Configuration is injected at tool construction time (from Backend or chat_shell),
-        following the same pattern as context_window and injection_mode.
+        Configuration is fetched from Backend API via _get_kb_info() and cached
+        for the lifetime of the tool instance.
 
         Returns:
             Tuple of (max_calls_per_conversation, exempt_calls_before_check)
@@ -153,33 +189,40 @@ class KnowledgeBaseTool(BaseTool):
         if not self.knowledge_base_ids:
             return DEFAULT_MAX_CALLS_PER_CONVERSATION, DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
 
-        # Use injected config if available
-        if self.kb_configs:
-            first_kb_id = self.knowledge_base_ids[0]
-            kb_spec = self.kb_configs.get(first_kb_id, {})
+        # Get KB info using helper method
+        kb_info = self._get_kb_info_sync()
 
-            max_calls = kb_spec.get(
-                "maxCallsPerConversation", DEFAULT_MAX_CALLS_PER_CONVERSATION
-            )
-            exempt_calls = kb_spec.get(
-                "exemptCallsBeforeCheck", DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
-            )
+        # Extract config for first KB
+        first_kb_id = self.knowledge_base_ids[0]
+        items = kb_info.get("items", [])
 
-            # Validate config
-            if exempt_calls >= max_calls:
-                logger.warning(
-                    f"[KnowledgeBaseTool] Invalid KB config for KB {first_kb_id}: "
-                    f"exempt_calls={exempt_calls} >= max_calls={max_calls}. Using defaults."
+        for item in items:
+            if item.get("id") == first_kb_id:
+                max_calls = item.get(
+                    "max_calls_per_conversation", DEFAULT_MAX_CALLS_PER_CONVERSATION
                 )
-                return (
-                    DEFAULT_MAX_CALLS_PER_CONVERSATION,
-                    DEFAULT_EXEMPT_CALLS_BEFORE_CHECK,
+                exempt_calls = item.get(
+                    "exempt_calls_before_check", DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
                 )
 
-            return max_calls, exempt_calls
+                # Validate config
+                if exempt_calls >= max_calls:
+                    logger.warning(
+                        f"[KnowledgeBaseTool] Invalid KB config for KB {first_kb_id}: "
+                        f"exempt_calls={exempt_calls} >= max_calls={max_calls}. Using defaults."
+                    )
+                    return (
+                        DEFAULT_MAX_CALLS_PER_CONVERSATION,
+                        DEFAULT_EXEMPT_CALLS_BEFORE_CHECK,
+                    )
 
-        # Fallback to defaults if no config injected
-        logger.debug("[KnowledgeBaseTool] No kb_configs injected, using default limits")
+                return max_calls, exempt_calls
+
+        # KB not found in response, use defaults
+        logger.debug(
+            "[KnowledgeBaseTool] No config found for KB %d, using default limits",
+            first_kb_id,
+        )
         return DEFAULT_MAX_CALLS_PER_CONVERSATION, DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
 
     def _estimate_tokens_from_content(self, content: str) -> int:
@@ -297,15 +340,26 @@ class KnowledgeBaseTool(BaseTool):
         return True, None, None
 
     def _get_kb_name(self) -> str:
-        """Get the name of the first knowledge base."""
+        """Get the name of the first knowledge base.
+
+        Fetches from Backend API via _get_kb_info() (cached).
+
+        Returns:
+            KB name or "KB-{id}" as fallback
+        """
         if not self.knowledge_base_ids:
             return "Unknown"
 
         first_kb_id = self.knowledge_base_ids[0]
 
-        # Use injected config if available
-        if self.kb_configs:
-            return self.kb_configs.get(first_kb_id, {}).get("name", f"KB-{first_kb_id}")
+        # Get KB info using helper method
+        kb_info = self._get_kb_info_sync()
+
+        # Extract name for first KB
+        items = kb_info.get("items", [])
+        for item in items:
+            if item.get("id") == first_kb_id:
+                return item.get("name", f"KB-{first_kb_id}")
 
         # Fallback to ID-based name
         return f"KB-{first_kb_id}"
@@ -409,6 +463,7 @@ class KnowledgeBaseTool(BaseTool):
         """Execute knowledge base search with intelligent injection strategy.
 
         The strategy is:
+        0. Fetch KB info (size, config, name) and populate cache if not already fetched
         1. Check call limits (count and token thresholds)
         2. If rejected, return rejection message
         3. Get the total file size of all knowledge bases
@@ -430,6 +485,10 @@ class KnowledgeBaseTool(BaseTool):
                 return json.dumps(
                     {"error": "No knowledge bases configured for this conversation."}
                 )
+
+            # Step 0: Fetch KB info to populate cache (if not already fetched)
+            # This ensures _get_kb_limits() and _get_kb_name() can access cached data
+            await self._get_kb_info()
 
             # Step 1: Check call limits BEFORE executing search
             max_calls, _exempt_calls = self._get_kb_limits()
@@ -453,11 +512,11 @@ class KnowledgeBaseTool(BaseTool):
                 )
             )
 
-            # Step 1: Get knowledge base size information to decide strategy
-            kb_size_info = await self._get_kb_size_info()
-            total_estimated_tokens = kb_size_info.get("total_estimated_tokens", 0)
+            # Step 2: Get knowledge base info to decide strategy (already cached from Step 0)
+            kb_info = await self._get_kb_info()
+            total_estimated_tokens = kb_info.get("total_estimated_tokens", 0)
 
-            # Step 2: Decide strategy based on estimated tokens vs context window
+            # Step 3: Decide strategy based on estimated tokens vs context window
             should_use_direct_injection = self._should_use_direct_injection(
                 total_estimated_tokens
             )
@@ -470,7 +529,7 @@ class KnowledgeBaseTool(BaseTool):
             )
 
             if should_use_direct_injection:
-                # Step 3a: Get all chunks and inject directly
+                # Step 4a: Get all chunks and inject directly
                 kb_chunks = await self._get_all_chunks_from_all_kbs(query)
 
                 if not kb_chunks:
@@ -585,51 +644,31 @@ class KnowledgeBaseTool(BaseTool):
 
         return should_inject
 
-    async def _get_kb_size_info(self) -> Dict[str, Any]:
-        """Get size information for all knowledge bases.
+    async def _get_kb_info(self) -> Dict[str, Any]:
+        """Get complete knowledge base information (cached).
+
+        Fetches KB size, configuration, and metadata from Backend API.
+        Results are cached for the lifetime of the tool instance (one conversation).
 
         Returns:
-            Dictionary with total_file_size and total_estimated_tokens
+            Dictionary with:
+                - total_file_size: Total file size in bytes
+                - total_estimated_tokens: Estimated token count
+                - items: List of KB info dicts with id, size, config, name
         """
-        # Try to import from backend if available
-        try:
-            from app.services.knowledge_service import KnowledgeService
+        # Return cached result if available
+        if self._kb_info_cache is not None:
+            return self._kb_info_cache
 
-            total_file_size = 0
-            total_estimated_tokens = 0
+        # Fetch via HTTP API (only mode supported)
+        self._kb_info_cache = await self._get_kb_info_via_http()
+        return self._kb_info_cache
 
-            for kb_id in self.knowledge_base_ids:
-                try:
-                    file_size = KnowledgeService.get_total_file_size(
-                        self.db_session, kb_id
-                    )
-                    total_file_size += file_size
-                    # Estimate tokens: approximately 4 characters per token
-                    total_estimated_tokens += file_size // 4
-                except Exception as e:
-                    logger.warning(
-                        f"[KnowledgeBaseTool] Failed to get size for KB {kb_id}: {e}"
-                    )
-
-            logger.info(
-                f"[KnowledgeBaseTool] KB size info: total_file_size={total_file_size} bytes, "
-                f"total_estimated_tokens={total_estimated_tokens}"
-            )
-
-            return {
-                "total_file_size": total_file_size,
-                "total_estimated_tokens": total_estimated_tokens,
-            }
-
-        except ImportError:
-            # Backend not available, try HTTP fallback
-            return await self._get_kb_size_info_via_http()
-
-    async def _get_kb_size_info_via_http(self) -> Dict[str, Any]:
-        """Get KB size information via HTTP API.
+    async def _get_kb_info_via_http(self) -> Dict[str, Any]:
+        """Get KB information via HTTP API.
 
         Returns:
-            Dictionary with total_file_size and total_estimated_tokens
+            Dictionary with total_file_size, total_estimated_tokens, and items list
         """
         import httpx
 
@@ -652,7 +691,7 @@ class KnowledgeBaseTool(BaseTool):
                 if response.status_code == 200:
                     data = response.json()
                     logger.info(
-                        f"[KnowledgeBaseTool] KB size info: "
+                        f"[KnowledgeBaseTool] KB info fetched: "
                         f"total_file_size={data.get('total_file_size', 0)} bytes, "
                         f"total_estimated_tokens={data.get('total_estimated_tokens', 0)} "
                         f"(via HTTP)"
@@ -660,17 +699,17 @@ class KnowledgeBaseTool(BaseTool):
                     return data
                 else:
                     logger.warning(
-                        f"[KnowledgeBaseTool] HTTP KB size request failed: {response.status_code}, "
-                        f"returning total_file_size=0, total_estimated_tokens=0"
+                        f"[KnowledgeBaseTool] HTTP KB info request failed: {response.status_code}, "
+                        f"returning defaults"
                     )
-                    return {"total_file_size": 0, "total_estimated_tokens": 0}
+                    return {"total_file_size": 0, "total_estimated_tokens": 0, "items": []}
 
         except Exception as e:
             logger.warning(
-                f"[KnowledgeBaseTool] HTTP KB size request error: {e}, "
-                f"returning total_file_size=0, total_estimated_tokens=0"
+                f"[KnowledgeBaseTool] HTTP KB info request error: {e}, "
+                f"returning defaults"
             )
-            return {"total_file_size": 0, "total_estimated_tokens": 0}
+            return {"total_file_size": 0, "total_estimated_tokens": 0, "items": []}
 
     async def _get_all_chunks_from_all_kbs(
         self, query: Optional[str] = None

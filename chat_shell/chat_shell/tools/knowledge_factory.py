@@ -25,7 +25,6 @@ async def prepare_knowledge_base_tools(
     is_user_selected: bool = True,
     document_ids: Optional[list[int]] = None,
     context_window: Optional[int] = None,
-    kb_configs: Optional[dict[int, dict]] = None,
     skip_prompt_enhancement: bool = False,
 ) -> tuple[list, str]:
     """
@@ -48,8 +47,6 @@ async def prepare_knowledge_base_tools(
             When set, only chunks from these specific documents will be returned.
         context_window: Optional context window size from Model CRD.
             Used by KnowledgeBaseTool for injection strategy decisions.
-        kb_configs: Optional KB call limit configurations (max calls, exempt calls, name).
-            Injected by Backend in both package mode and HTTP mode.
         skip_prompt_enhancement: If True, skip adding KB prompt instructions to system prompt.
             Used in HTTP mode when Backend has already added KB prompts to avoid duplication.
 
@@ -70,23 +67,19 @@ async def prepare_knowledge_base_tools(
 
     logger.info(
         "[knowledge_factory] Creating KnowledgeBaseTool for %d knowledge bases: %s, "
-        "is_user_selected=%s, document_ids=%s, context_window=%s, kb_configs=%s",
+        "is_user_selected=%s, document_ids=%s, context_window=%s",
         len(knowledge_base_ids),
         knowledge_base_ids,
         is_user_selected,
         document_ids,
         context_window,
-        kb_configs is not None,
     )
 
     # Import KnowledgeBaseTool
     from chat_shell.tools.builtin import KnowledgeBaseTool
 
     # Create KnowledgeBaseTool with the specified knowledge bases
-    # Pass user_subtask_id for persisting RAG results to context database
-    # Pass document_ids for filtering to specific documents
-    # Pass context_window from Model CRD for injection strategy decisions
-    # Pass kb_configs for call limit enforcement (injected by Backend)
+    # KB configs (max_calls, exempt_calls, name) are fetched from Backend API
     kb_tool = KnowledgeBaseTool(
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids or [],
@@ -94,7 +87,6 @@ async def prepare_knowledge_base_tools(
         db_session=db,
         user_subtask_id=user_subtask_id,
         context_window=context_window,
-        kb_configs=kb_configs,
     )
     extra_tools.append(kb_tool)
 
