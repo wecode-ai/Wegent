@@ -188,6 +188,7 @@
     "tool_output": "输出",
     "tool_executing": "执行中...",
     "downloadable": "可下载",
+    "processing": "正在处理...",
     "tools": {
       "bash": "执行命令",
       "read": "读取文件",

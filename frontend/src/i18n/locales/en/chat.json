@@ -210,6 +210,7 @@
     "tool_output": "Output",
     "tool_executing": "Executing...",
     "downloadable": "Downloadable",
+    "processing": "Processing...",
     "tools": {
       "bash": "Execute Command",
       "read": "Read File",

@@ -10,6 +10,7 @@ import { useToolExtraction } from './hooks/useToolExtraction'
 import { ToolBlock } from './components/ToolBlock'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { normalizeToolName } from './utils/toolExtractor'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface MixedContentViewProps {
   thinking: ThinkingStep[] | null
@@ -30,10 +31,11 @@ interface MixedContentViewProps {
 const MixedContentView = memo(function MixedContentView({
   thinking,
   content,
-  taskStatus: _taskStatus,
+  taskStatus,
   theme,
   blocks,
 }: MixedContentViewProps) {
+  const { t } = useTranslation('chat')
   // Extract tools from thinking (legacy mode)
   const { toolGroups } = useToolExtraction(thinking)
 
@@ -167,6 +169,25 @@ const MixedContentView = memo(function MixedContentView({
     return items
   }, [blocks, thinking, content, toolMap])
 
+  // Check if we should show "Processing..." indicator
+  const shouldShowProcessing = useMemo(() => {
+    // Only show if task is running
+    if (taskStatus !== 'RUNNING') {
+      return false
+    }
+
+    // Check if we have blocks and the last block is completed
+    if (blocks && blocks.length > 0) {
+      const lastBlock = blocks[blocks.length - 1]
+      // Show processing if last block is a completed tool
+      if (lastBlock.type === 'tool' && lastBlock.status === 'done') {
+        return true
+      }
+    }
+
+    return false
+  }, [taskStatus, blocks])
+
   // DEBUG: Log final rendering
   console.log('[MixedContentView] Final render:', {
     mixedItemsCount: mixedItems.length,
@@ -205,6 +226,14 @@ const MixedContentView = memo(function MixedContentView({
         }
         return null
       })}
+
+      {/* Show "Processing..." indicator when task is running and last block is complete */}
+      {shouldShowProcessing && (
+        <div className="flex items-center gap-2 text-xs text-text-muted italic px-2 py-1">
+          <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+          <span>{t('thinking.processing') || 'Processing...'}</span>
+        </div>
+      )}
     </div>
   )
 })
