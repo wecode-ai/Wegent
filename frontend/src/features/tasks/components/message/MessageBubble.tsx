@@ -32,7 +32,7 @@ import MarkdownEditor from '@uiw/react-markdown-editor'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { ReasoningDisplay } from './thinking'
 import MixedContentView from './thinking/MixedContentView'
-import ToolBlocksView from './thinking/ToolBlocksView'
+import ThinkingDisplay from './thinking/ThinkingDisplay'
 import ClarificationForm from '../clarification/ClarificationForm'
 import FinalPromptMessage from './FinalPromptMessage'
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary'
@@ -1458,8 +1458,12 @@ const MessageBubble = memo(
             {!isUserTypeMessage &&
               msg.thinking &&
               msg.thinking.length > 0 &&
-              !msg.result?.blocks && (
-                <ToolBlocksView thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
+              (!msg.result?.blocks || msg.result.blocks.length === 0) && (
+                <ThinkingDisplay
+                  thinking={msg.thinking}
+                  taskStatus={msg.subtaskStatus}
+                  shellType={msg.result?.shell_type}
+                />
               )}
             {/* Show header for other users' messages in group chat (left-aligned user messages) */}
             {isUserTypeMessage && !shouldAlignRight && msg.shouldShowSender && (
