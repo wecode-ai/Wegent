@@ -16,6 +16,7 @@ interface SettingsPanelProps {
 
 function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [serverUrl, setServerUrl] = useState('')
+  const [frontendUrl, setFrontendUrl] = useState('')
   const [defaultMode, setDefaultMode] = useState<'selection' | 'fullPage'>('selection')
   const [isSaving, setIsSaving] = useState(false)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
@@ -29,6 +30,9 @@ function SettingsPanel({ onClose }: SettingsPanelProps) {
     if (data.serverUrl) {
       setServerUrl(data.serverUrl)
     }
+    if (data.frontendUrl) {
+      setFrontendUrl(data.frontendUrl)
+    }
     if (data.defaultExtractionMode) {
       setDefaultMode(data.defaultExtractionMode)
     }
@@ -40,6 +44,7 @@ function SettingsPanel({ onClose }: SettingsPanelProps) {
 
     try {
       await setStorageValue('serverUrl', serverUrl)
+      await setStorageValue('frontendUrl', frontendUrl)
       await setStorageValue('defaultExtractionMode', defaultMode)
 
       setSaveMessage('Settings saved successfully!')
@@ -78,20 +83,37 @@ function SettingsPanel({ onClose }: SettingsPanelProps) {
       </div>
 
       <div className="space-y-4">
-        {/* Server URL */}
+        {/* Server URL (Backend API) */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-text-secondary">
-            Wegent Server URL
+            Backend API URL
           </label>
           <input
             type="url"
             value={serverUrl}
             onChange={(e) => setServerUrl(e.target.value)}
-            placeholder="https://wegent.example.com"
+            placeholder="http://localhost:8000"
             className="w-full rounded-lg border border-border bg-base px-3 py-2 text-sm text-text-primary placeholder:text-text-muted"
           />
           <p className="mt-1 text-xs text-text-muted">
-            The URL of your Wegent server (supports private deployments)
+            The URL of your Wegent backend API server
+          </p>
+        </div>
+
+        {/* Frontend URL */}
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-text-secondary">
+            Frontend URL
+          </label>
+          <input
+            type="url"
+            value={frontendUrl}
+            onChange={(e) => setFrontendUrl(e.target.value)}
+            placeholder="http://localhost:3000"
+            className="w-full rounded-lg border border-border bg-base px-3 py-2 text-sm text-text-primary placeholder:text-text-muted"
+          />
+          <p className="mt-1 text-xs text-text-muted">
+            The URL of your Wegent web UI (for opening chat pages)
           </p>
         </div>
 

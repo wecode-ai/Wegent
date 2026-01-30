@@ -11,6 +11,7 @@ import { getStorageValue } from '../storage'
 import type { ApiError } from './types'
 
 const DEFAULT_SERVER_URL = 'http://localhost:8000'
+const DEFAULT_FRONTEND_URL = 'http://localhost:3000'
 
 export class ExtensionApiError extends Error {
   status: number
@@ -25,11 +26,19 @@ export class ExtensionApiError extends Error {
 }
 
 /**
- * Get the configured server URL
+ * Get the configured server URL (backend API)
  */
 export async function getServerUrl(): Promise<string> {
   const url = await getStorageValue('serverUrl')
   return url || DEFAULT_SERVER_URL
+}
+
+/**
+ * Get the configured frontend URL (web UI)
+ */
+export async function getFrontendUrl(): Promise<string> {
+  const url = await getStorageValue('frontendUrl')
+  return url || DEFAULT_FRONTEND_URL
 }
 
 /**

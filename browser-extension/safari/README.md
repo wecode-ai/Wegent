@@ -2,16 +2,35 @@
 
 This directory contains the Safari Web Extension wrapper for the Wegent browser extension.
 
-## Building for Safari
+## ⚠️ Important: Safari Extension Loading
 
-Safari Web Extensions require an Xcode project wrapper. To create the Safari version:
+**Safari cannot directly load the `dist/chrome` or `dist/safari` directory like Chrome can.**
+
+Safari Web Extensions require an Xcode project wrapper. You must use Apple's `safari-web-extension-converter` tool to convert the Chrome extension into a Safari-compatible Xcode project.
+
+## Building for Safari
 
 ### Prerequisites
 
 - macOS with Xcode 14+
 - Safari 16+
+- Command Line Tools installed (`xcode-select --install`)
 
-### Steps
+### Quick Build (Recommended)
+
+Run the following command from the `browser-extension` directory:
+
+```bash
+npm run build:safari
+```
+
+This will:
+1. Build the Chrome extension to `dist/chrome`
+2. Convert it to a Safari Xcode project at `safari/WegentExtension`
+
+### Manual Steps
+
+If you prefer to run the steps manually:
 
 1. Build the Chrome extension first:
    ```bash
@@ -22,51 +41,64 @@ Safari Web Extensions require an Xcode project wrapper. To create the Safari ver
 
 2. Convert to Safari extension using Safari's conversion tool:
    ```bash
-   xcrun safari-web-extension-converter dist/chrome --project-location safari/WegentExtension
+   xcrun safari-web-extension-converter dist/chrome \
+     --project-location safari/WegentExtension \
+     --app-name Wegent \
+     --bundle-identifier io.wecode.wegent \
+     --no-prompt
    ```
 
 3. Open the generated Xcode project:
    ```bash
-   open safari/WegentExtension/Wegent.xcodeproj
+   open safari/WegentExtension/Wegent/Wegent.xcodeproj
    ```
 
-4. In Xcode:
-   - Update the bundle identifier to `io.wecode.wegent.safari-extension`
-   - Configure signing and capabilities
-   - Build and run
+### Xcode Configuration
 
-### Manual Setup (Alternative)
+In Xcode:
+1. Select the project in the navigator
+2. Update the bundle identifier if needed (default: `io.wecode.wegent`)
+3. Configure signing:
+   - Select your development team
+   - Enable "Automatically manage signing"
+4. Build and run (⌘R)
 
-If you prefer to create the project manually:
+## Testing in Safari
 
-1. Create a new Safari Web Extension project in Xcode
-2. Copy the contents from `dist/chrome` to the `Resources` folder
-3. Update `manifest.json` for Safari compatibility
-4. Configure the project settings
+1. Enable Developer menu in Safari:
+   - Safari → Settings → Advanced → "Show Develop menu in menu bar"
 
-## Safari-specific Considerations
+2. Allow unsigned extensions:
+   - Develop → Allow Unsigned Extensions
 
-### Manifest Differences
+3. Enable the extension:
+   - Safari → Settings → Extensions → Enable "Wegent"
 
-Safari Web Extensions use Manifest V2 with some V3 features. The conversion tool handles most differences, but you may need to adjust:
+## Troubleshooting
 
-- Background scripts (service workers are supported in Safari 16.4+)
-- Permission declarations
-- Content Security Policy
+### "Cannot load extension" error
+- Make sure you're loading the Xcode-built app, not the raw `dist/chrome` directory
+- Safari requires extensions to be packaged as macOS apps
 
-### Testing
+### Extension not appearing in Safari
+- Run the app from Xcode at least once
+- Check Safari → Settings → Extensions
 
-1. Enable Developer menu in Safari Preferences
-2. Allow unsigned extensions in Develop menu
-3. Enable the extension in Safari Extensions preferences
+### Service worker issues
+- Safari 16.4+ supports service workers in extensions
+- For older Safari versions, the converter may create a background page instead
 
 ## Distribution
 
-For App Store distribution:
+### For Development
+- Build and run from Xcode
+- Allow unsigned extensions in Safari Developer menu
+
+### For App Store
 1. Create an App ID in Apple Developer Portal
 2. Configure the Xcode project with proper certificates
-3. Submit through App Store Connect
+3. Archive and submit through App Store Connect
 
-For direct distribution:
-1. Export the extension as a `.safariextz` file
-2. Notarize with Apple for macOS
+### For Direct Distribution
+1. Export the app as a signed `.app` bundle
+2. Notarize with Apple for macOS distribution

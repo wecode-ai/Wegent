@@ -8,10 +8,10 @@
  */
 
 import browser from 'webextension-polyfill'
-
 export interface StorageData {
   token?: string
   serverUrl?: string
+  frontendUrl?: string
   defaultExtractionMode?: 'selection' | 'fullPage'
   defaultKnowledgeBaseId?: number
   user?: {
@@ -24,6 +24,7 @@ export interface StorageData {
 const STORAGE_KEYS = {
   TOKEN: 'wegent_token',
   SERVER_URL: 'wegent_server_url',
+  FRONTEND_URL: 'wegent_frontend_url',
   DEFAULT_EXTRACTION_MODE: 'wegent_default_extraction_mode',
   DEFAULT_KNOWLEDGE_BASE_ID: 'wegent_default_kb_id',
   USER: 'wegent_user',
@@ -67,6 +68,7 @@ export async function getAllStorageData(): Promise<StorageData> {
   return {
     token: result[STORAGE_KEYS.TOKEN],
     serverUrl: result[STORAGE_KEYS.SERVER_URL],
+    frontendUrl: result[STORAGE_KEYS.FRONTEND_URL],
     defaultExtractionMode: result[STORAGE_KEYS.DEFAULT_EXTRACTION_MODE],
     defaultKnowledgeBaseId: result[STORAGE_KEYS.DEFAULT_KNOWLEDGE_BASE_ID],
     user: result[STORAGE_KEYS.USER],
@@ -87,6 +89,7 @@ function getStorageKey(key: keyof StorageData): string {
   const keyMap: Record<keyof StorageData, string> = {
     token: STORAGE_KEYS.TOKEN,
     serverUrl: STORAGE_KEYS.SERVER_URL,
+    frontendUrl: STORAGE_KEYS.FRONTEND_URL,
     defaultExtractionMode: STORAGE_KEYS.DEFAULT_EXTRACTION_MODE,
     defaultKnowledgeBaseId: STORAGE_KEYS.DEFAULT_KNOWLEDGE_BASE_ID,
     user: STORAGE_KEYS.USER,
@@ -113,6 +116,9 @@ export function onStorageChange(
     }
     if (STORAGE_KEYS.SERVER_URL in changes) {
       mappedChanges.serverUrl = changes[STORAGE_KEYS.SERVER_URL].newValue
+    }
+    if (STORAGE_KEYS.FRONTEND_URL in changes) {
+      mappedChanges.frontendUrl = changes[STORAGE_KEYS.FRONTEND_URL].newValue
     }
     if (STORAGE_KEYS.DEFAULT_EXTRACTION_MODE in changes) {
       mappedChanges.defaultExtractionMode = changes[STORAGE_KEYS.DEFAULT_EXTRACTION_MODE].newValue

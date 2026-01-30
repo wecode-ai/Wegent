@@ -66,8 +66,8 @@ class TaskCreate(BaseModel):
     prompt: str
     type: Optional[str] = "online"  # online、offline
     task_type: Optional[str] = "chat"  # chat、code
-    auto_delete_executor: Optional[str] = "false"  # true、fasle
-    source: Optional[str] = "web"
+    auto_delete_executor: Optional[str] = "false"  # true、false
+    source: Optional[str] = "chat_shell"  # chat_shell (default), web, api, subscription
     # Model selection fields
     model_id: Optional[str] = None  # Model name (not database ID)
     force_override_bot_model: Optional[bool] = False

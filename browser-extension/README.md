@@ -28,7 +28,28 @@ A browser extension that allows you to send web content to Wegent AI chat and ad
 
 ### Safari
 
-See [safari/README.md](./safari/README.md) for Safari-specific instructions.
+⚠️ **Safari cannot directly load the `dist/chrome` directory.** Safari Web Extensions require an Xcode project wrapper.
+
+1. Build and convert to Safari Xcode project:
+   ```bash
+   cd browser-extension
+   npm install
+   npm run build:safari
+   ```
+
+2. Open the generated Xcode project:
+   ```bash
+   open safari/WegentExtension/Wegent/Wegent.xcodeproj
+   ```
+
+3. In Xcode:
+   - Configure signing (select your development team)
+   - Build and run (⌘R)
+
+4. Enable in Safari:
+   - Safari → Settings → Extensions → Enable "Wegent"
+
+See [safari/README.md](./safari/README.md) for detailed Safari-specific instructions.
 
 ## Usage
 

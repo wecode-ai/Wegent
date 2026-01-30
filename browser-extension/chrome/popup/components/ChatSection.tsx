@@ -2,10 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import browser from 'webextension-polyfill'
-import { uploadTextContent, createTaskId, createTask, sendChatMessage, getServerUrl } from '@shared/api'
+import {
+  createResponse,
+  extractTaskIdFromResponseId,
+  getFrontendUrl,
+  getUnifiedModels,
+} from '@shared/api'
 import type { ExtractedContent } from '@shared/extractor'
+import type { UnifiedModel } from '@shared/api/types'
 
 interface ChatSectionProps {
   content: ExtractedContent | null
@@ -17,6 +23,30 @@ function ChatSection({ content, defaultExpanded = false }: ChatSectionProps) {
   const [question, setQuestion] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [models, setModels] = useState<UnifiedModel[]>([])
+  const [selectedModel, setSelectedModel] = useState<string>('default#wegent-chat')
+  const [isLoadingModels, setIsLoadingModels] = useState(false)
+
+  // Load models when section expands
+  useEffect(() => {
+    if (isExpanded && models.length === 0) {
+      loadModels()
+    }
+  }, [isExpanded])
+
+  const loadModels = async () => {
+    setIsLoadingModels(true)
+    try {
+      // Filter models compatible with Chat shell type
+      const modelList = await getUnifiedModels('Chat')
+      setModels(modelList)
+    } catch (err) {
+      console.error('Failed to load models:', err)
+      // Keep default model if loading fails
+    } finally {
+      setIsLoadingModels(false)
+    }
+  }
 
   const handleSend = async () => {
     if (!content || !question.trim()) return
@@ -25,31 +55,34 @@ function ChatSection({ content, defaultExpanded = false }: ChatSectionProps) {
     setError(null)
 
     try {
-      // 1. Upload content as attachment
-      const filename = `${content.metadata.title || 'webpage'}_${Date.now()}.md`
-      const attachment = await uploadTextContent(content.markdown, filename)
+      // Build input text with question and webpage content
+      const title = content.metadata.title || 'Webpage Content'
+      const inputText = `${question}
 
-      // 2. Create a new task
-      const { task_id: taskId } = await createTaskId()
+---
+**Reference Content: ${title}**
+${content.metadata.url ? `Source: ${content.metadata.url}` : ''}
 
-      // 3. Create the task with default team (no team_id specified)
-      await createTask(taskId, {
-        prompt: question,
-        title: content.metadata.title || 'Web Content Chat',
+${content.markdown}
+`
+
+      // Create response using /v1/responses API with stream: true
+      // This returns immediately with task ID, allowing us to redirect quickly
+      // The model format is "namespace#team_name" or "namespace#team_name#model_id"
+      const response = await createResponse({
+        model: selectedModel,
+        input: inputText,
+        stream: true,
       })
 
-      // 4. Send the message via WebSocket
-      await sendChatMessage({
-        message: question,
-        task_id: taskId,
-        attachment_id: attachment.id,
-      })
+      // Extract task ID from response ID (format: "resp_{task_id}")
+      const taskId = extractTaskIdFromResponseId(response.id)
 
-      // 5. Open the chat page
-      const serverUrl = await getServerUrl()
+      // Open the chat page
+      const frontendUrl = await getFrontendUrl()
       await browser.runtime.sendMessage({
         type: 'OPEN_CHAT_PAGE',
-        data: { taskId, serverUrl },
+        data: { taskId, frontendUrl },
       })
 
       // Clear the form
@@ -104,6 +137,33 @@ function ChatSection({ content, defaultExpanded = false }: ChatSectionProps) {
       {/* Section Content */}
       {isExpanded && (
         <div className="animate-fadeIn px-4 pb-4">
+          {/* Model Selector */}
+          <div className="mb-3">
+            <label className="mb-1 block text-xs text-text-secondary">Model</label>
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              disabled={isLoading || isLoadingModels}
+              className="w-full rounded-lg border border-border bg-base px-3 py-2 text-sm text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <option value="default#wegent-chat">Default (wegent-chat)</option>
+              {models.map((model) => {
+                const modelValue =
+                  model.type === 'public'
+                    ? `default#wegent-chat#${model.name}`
+                    : `${model.namespace}#wegent-chat#${model.name}`
+                const displayName = model.displayName || model.name
+                const typeLabel = model.type === 'public' ? '' : ` (${model.type})`
+                return (
+                  <option key={`${model.type}-${model.name}`} value={modelValue}>
+                    {displayName}
+                    {typeLabel}
+                  </option>
+                )
+              })}
+            </select>
+          </div>
+
           {/* Question Input */}
           <textarea
             value={question}

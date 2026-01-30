@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:chrome": "vite build --mode chrome",
-    "build:safari": "vite build --mode safari",
+    "build:safari": "npm run build:chrome && xcrun safari-web-extension-converter dist/chrome --project-location safari/WegentExtension --app-name Wegent --bundle-identifier io.wecode.wegent --no-prompt --no-open",
     "preview": "vite preview",
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write \"**/*.{ts,tsx,json,css}\""

@@ -35,19 +35,49 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
 
-  // Check authentication status on mount
-  useEffect(() => {
-    checkAuth()
-    loadDefaultSettings()
-    checkPendingAction()
-  }, [])
+  // Define extractContent first to avoid TDZ (Temporal Dead Zone) issues in Safari
+  const extractContent = useCallback(
+    async (mode: ExtractionMode) => {
+      console.log('[Wegent Popup] extractContent called with mode:', mode)
+      setIsLoading(true)
+      setError(null)
 
-  // Extract content when mode changes
-  useEffect(() => {
-    if (isLoggedIn && !pendingAction?.text) {
-      extractContent(extractionMode)
-    }
-  }, [extractionMode, isLoggedIn, pendingAction?.text, extractContent])
+      try {
+        const messageType = mode === 'selection' ? 'GET_SELECTED_TEXT' : 'GET_PAGE_CONTENT'
+        console.log('[Wegent Popup] Sending message to service worker:', messageType)
+        const response = await browser.runtime.sendMessage({ type: messageType })
+        console.log('[Wegent Popup] Received response:', response)
+
+        if (response?.error) {
+          console.error('[Wegent Popup] Response contains error:', response.error)
+          throw new Error(response.error)
+        }
+
+        if (response?.success && response.data) {
+          console.log('[Wegent Popup] Content extracted successfully')
+          setContent(response.data)
+        } else if (mode === 'selection' && !response?.data) {
+          // No selection, try full page
+          console.log('[Wegent Popup] No selection found, trying full page extraction')
+          const pageResponse = await browser.runtime.sendMessage({
+            type: 'GET_PAGE_CONTENT',
+          })
+          console.log('[Wegent Popup] Full page response:', pageResponse)
+          if (pageResponse?.success && pageResponse.data) {
+            setContent(pageResponse.data)
+            setExtractionMode('fullPage')
+          }
+        }
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to extract content'
+        console.error('[Wegent Popup] Error extracting content:', errorMessage, err)
+        setError(errorMessage)
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [],
+  )
 
   const checkAuth = async () => {
     try {
@@ -93,39 +123,19 @@ function App() {
     }
   }
 
-  const extractContent = useCallback(
-    async (mode: ExtractionMode) => {
-      setIsLoading(true)
-      setError(null)
+  // Check authentication status on mount
+  useEffect(() => {
+    checkAuth()
+    loadDefaultSettings()
+    checkPendingAction()
+  }, [])
 
-      try {
-        const messageType = mode === 'selection' ? 'GET_SELECTED_TEXT' : 'GET_PAGE_CONTENT'
-        const response = await browser.runtime.sendMessage({ type: messageType })
-
-        if (response?.error) {
-          throw new Error(response.error)
-        }
-
-        if (response?.success && response.data) {
-          setContent(response.data)
-        } else if (mode === 'selection' && !response?.data) {
-          // No selection, try full page
-          const pageResponse = await browser.runtime.sendMessage({
-            type: 'GET_PAGE_CONTENT',
-          })
-          if (pageResponse?.success && pageResponse.data) {
-            setContent(pageResponse.data)
-            setExtractionMode('fullPage')
-          }
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to extract content')
-      } finally {
-        setIsLoading(false)
-      }
-    },
-    [],
-  )
+  // Extract content when mode changes
+  useEffect(() => {
+    if (isLoggedIn && !pendingAction?.text) {
+      extractContent(extractionMode)
+    }
+  }, [extractionMode, isLoggedIn, pendingAction?.text, extractContent])
 
   const handleLoginSuccess = () => {
     checkAuth()
@@ -176,7 +186,7 @@ function App() {
       {view === 'settings' ? (
         <SettingsPanel onClose={() => setView('main')} />
       ) : (
-        <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           {/* Content Preview */}
           <ContentPreview
             content={displayContent}

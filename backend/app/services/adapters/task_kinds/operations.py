@@ -320,7 +320,13 @@ class TaskOperationsMixin:
     def _get_team_for_new_task(
         self, db: Session, obj_in: TaskCreate, user: User
     ) -> Optional[Kind]:
-        """Get team for a new task."""
+        """Get team for a new task.
+
+        Priority:
+        1. team_id - if provided, look up by ID
+        2. team_name + team_namespace - if provided, look up by name
+        3. Default team from settings (DEFAULT_TEAM_CHAT) - fallback for browser extension etc.
+        """
         if obj_in.team_id:
             team_by_id = kindReader.get_by_id(db, KindType.TEAM, obj_in.team_id)
             if team_by_id:
@@ -338,6 +344,25 @@ class TaskOperationsMixin:
             return kindReader.get_by_name_and_namespace(
                 db, user.id, KindType.TEAM, obj_in.team_namespace, obj_in.team_name
             )
+
+        # Fallback to default team from settings
+        default_team_config = settings.DEFAULT_TEAM_CHAT
+        if default_team_config:
+            parts = default_team_config.strip().split("#", 1)
+            default_team_name = parts[0].strip()
+            default_team_namespace = parts[1].strip() if len(parts) > 1 else "default"
+            if default_team_name:
+                logger.info(
+                    f"No team specified, using default team: {default_team_name}#{default_team_namespace}"
+                )
+                return kindReader.get_by_name_and_namespace(
+                    db,
+                    user.id,
+                    KindType.TEAM,
+                    default_team_namespace,
+                    default_team_name,
+                )
+
         return None
 
     def update_task(
