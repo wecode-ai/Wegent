@@ -153,6 +153,22 @@ class ChatContext:
                 len(history),
             )
 
+            # Restore skill loading state from history (for skill retention across turns)
+            if self._load_skill_tool and history:
+                add_span_event("restoring_skill_state_from_history")
+                self._load_skill_tool.restore_from_history(history)
+                restored_skills = self._load_skill_tool.get_loaded_skills()
+                if restored_skills:
+                    add_span_event(
+                        "skill_state_restored",
+                        {"restored_skills": list(restored_skills)},
+                    )
+                    logger.info(
+                        "[CHAT_CONTEXT] Restored %d skills from history: %s",
+                        len(restored_skills),
+                        list(restored_skills),
+                    )
+
             # Build extra_tools from all sources (including builtin tools)
             add_span_event("building_extra_tools")
             extra_tools = self._build_extra_tools(kb_result, skill_tools, mcp_result)

@@ -99,6 +99,7 @@ class DatabaseHandler:
     ) -> None:
         """Synchronous subtask update (runs in thread pool)."""
         from app.models.subtask import Subtask, SubtaskStatus
+        from app.utils.thinking_sanitizer import sanitize_result_for_storage
 
         try:
             with _db_session() as db:
@@ -110,7 +111,9 @@ class DatabaseHandler:
                 subtask.updated_at = datetime.now()
 
                 if result is not None:
-                    subtask.result = result
+                    # Sanitize thinking data before storing to database
+                    sanitized_result = sanitize_result_for_storage(result)
+                    subtask.result = sanitized_result
                 if error is not None:
                     subtask.error_message = error
                 if status in _TERMINAL_STATUSES:
