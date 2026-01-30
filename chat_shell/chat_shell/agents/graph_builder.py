@@ -16,7 +16,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncGenerator
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -181,6 +181,78 @@ class LangGraphAgentBuilder:
 
         return prompt_modifier
 
+    def _find_load_skill_tool(self) -> Optional[Any]:
+        """Find the LoadSkillTool from registered tools.
+
+        Returns:
+            LoadSkillTool instance or None if not found
+        """
+        from ..tools.builtin import LoadSkillTool
+
+        for tool in self.tools:
+            if isinstance(tool, LoadSkillTool):
+                return tool
+        return None
+
+    def _create_model_configurator(self) -> tuple[Optional[Any], list[BaseTool]]:
+        """Create a model configurator function for dynamic tool selection.
+
+        This function is called before each model invocation to dynamically
+        select which tools are available based on loaded skills.
+
+        Returns:
+            A tuple of (callable that configures the model with tools, all tools for execution)
+            Returns (None, self.tools) if no dynamic tools
+        """
+        load_skill_tool = self._find_load_skill_tool()
+        if not load_skill_tool:
+            return None, self.tools
+
+        # Get all registered skill tools
+        all_skill_tools = load_skill_tool.get_all_registered_tools()
+        if not all_skill_tools:
+            return None, self.tools
+
+        # Create a set of skill tool names for quick lookup
+        skill_tool_names = {t.name for t in all_skill_tools}
+
+        # Separate base tools (non-skill tools) from skill tools
+        base_tools = [t for t in self.tools if t.name not in skill_tool_names]
+
+        # All tools = base tools + all skill tools (for execution)
+        # This ensures all tools are available for execution when model calls them
+        all_tools = base_tools + all_skill_tools
+
+        llm = self.llm
+
+        def configure_model(state: dict[str, Any], config: Any) -> Any:
+            """Configure the model with tools based on loaded skills.
+
+            This function dynamically selects tools based on which skills
+            have been loaded via load_skill tool.
+
+            Args:
+                state: The current agent state
+                config: Runtime configuration from LangGraph
+            """
+            # Get currently available skill tools (only for loaded skills)
+            available_skill_tools = load_skill_tool.get_available_tools()
+
+            # Combine base tools with available skill tools
+            selected_tools = base_tools + available_skill_tools
+
+            logger.debug(
+                "[configure_model] Selected %d tools: base=%d, skill=%d, loaded_skills=%s",
+                len(selected_tools),
+                len(base_tools),
+                len(available_skill_tools),
+                list(load_skill_tool.get_loaded_skills()),
+            )
+
+            return llm.bind_tools(selected_tools)
+
+        return configure_model, all_tools
+
     def _create_gemini_prompt_modifier(
         self, gemini_search_tool: GeminiSearchTool
     ) -> Callable:
@@ -254,6 +326,16 @@ class LangGraphAgentBuilder:
         add_span_event(
             "prompt_modifier_created",
             {"has_modifier": prompt_modifier is not None},
+        )
+
+        # Create model configurator for dynamic tool selection
+        model_configurator, all_tools = self._create_model_configurator()
+        add_span_event(
+            "model_configurator_created",
+            {
+                "has_configurator": model_configurator is not None,
+                "all_tools_count": len(all_tools),
+            },
         )
 
         # Track GeminiSearchTool instance for dynamic filtering
@@ -353,12 +435,23 @@ class LangGraphAgentBuilder:
 
             model_with_tools = gemini_model_callable
 
-        self._agent = create_react_agent(
-            model=model_with_tools,
-            tools=self.tools,
-            checkpointer=checkpointer,
-            prompt=prompt_modifier,
-        )
+        # If we have a model configurator, use it for dynamic tool selection
+        # Note: all_tools includes ALL possible tools (base + all skill tools) for execution
+        # while model_configurator controls which tools the model sees at each step
+        if model_configurator:
+            self._agent = create_react_agent(
+                model=model_configurator,
+                tools=all_tools,
+                checkpointer=checkpointer,
+                prompt=prompt_modifier,
+            )
+        else:
+            self._agent = create_react_agent(
+                model=model_with_tools,
+                tools=all_tools,
+                checkpointer=checkpointer,
+                prompt=prompt_modifier,
+            )
         add_span_event("react_agent_created")
 
         return self._agent

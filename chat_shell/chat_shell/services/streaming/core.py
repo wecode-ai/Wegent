@@ -42,6 +42,29 @@ def get_chat_semaphore() -> asyncio.Semaphore:
     return _chat_semaphore
 
 
+def should_display_tool_details(tool_name: str) -> bool:
+    """Check if a tool should display detailed input/output based on whitelist.
+
+    Uses substring matching - if any whitelist keyword is contained in the tool_name,
+    the tool will display details. For example, "read" will match "read_file", "file_read", etc.
+
+    Args:
+        tool_name: Name of the tool to check
+
+    Returns:
+        True if tool should display details, False otherwise
+    """
+    whitelist = settings.TOOL_DISPLAY_WHITELIST.strip()
+
+    # Empty string or "*" means all tools display details
+    if not whitelist or whitelist == "*":
+        return True
+
+    # Check if any whitelist keyword is contained in tool_name
+    whitelisted_keywords = [keyword.strip() for keyword in whitelist.split(",")]
+    return any(keyword in tool_name for keyword in whitelisted_keywords if keyword)
+
+
 class StorageHandlerProtocol(Protocol):
     """Protocol for storage handler operations."""
 
@@ -199,12 +222,6 @@ class StreamingState:
                     "status": details.get("status"),
                     "tool_name": details.get("tool_name") or details.get("name"),
                 }
-                # Preserve input for tool_use (tool parameters like file_path)
-                if details.get("input"):
-                    slim_details["input"] = details["input"]
-                # Preserve output/content for tool_result (tool execution results)
-                if details.get("output"):
-                    slim_details["output"] = details["output"]
                 if details.get("content"):
                     slim_details["content"] = details["content"]
                 # Preserve is_error for error handling
@@ -278,10 +295,13 @@ class StreamingState:
             "type": "tool",
             "tool_use_id": tool_use_id,
             "tool_name": tool_name,
-            "tool_input": tool_input,
             "status": "pending",
             "timestamp": time.time(),
         }
+
+        # Only include tool_input if tool is in whitelist
+        if should_display_tool_details(tool_name):
+            block["tool_input"] = tool_input
 
         # Add display_name if provided
         if display_name:
@@ -304,10 +324,20 @@ class StreamingState:
             status: Block status ('done' or 'error')
             is_error: Whether the tool execution failed
         """
+        # Find the tool block to get tool_name for whitelist checking
+        tool_name = None
+        for block in self.blocks:
+            if block.get("id") == tool_use_id:
+                tool_name = block.get("tool_name")
+                break
+
         updates = {
-            "tool_output": tool_output,
             "status": status,
         }
+
+        # Only include tool_output if tool is in whitelist
+        if tool_name and should_display_tool_details(tool_name):
+            updates["tool_output"] = tool_output
 
         if is_error:
             updates["type"] = "error"

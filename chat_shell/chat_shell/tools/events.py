@@ -11,6 +11,7 @@ including thinking step generation and event emission.
 import logging
 from typing import Any, Callable
 
+from chat_shell.services.streaming.core import should_display_tool_details
 from shared.telemetry.decorators import add_span_event, set_span_attribute
 
 logger = logging.getLogger(__name__)
@@ -114,9 +115,12 @@ def _handle_tool_start(
             "tool_name": tool_name,
             "name": tool_name,
             "status": "started",
-            "input": serializable_input,
         },
     }
+
+    # Only include input if tool is in whitelist
+    if should_display_tool_details(tool_name):
+        thinking_step["details"]["input"] = serializable_input
 
     state.add_thinking_step(thinking_step)
 
@@ -249,10 +253,14 @@ def _handle_tool_end(
             "type": "tool_result",
             "tool_name": tool_name,
             "status": status,
-            "output": serializable_output,
-            "content": serializable_output,
         },
     }
+
+    # Only include output if tool is in whitelist
+    if should_display_tool_details(tool_name):
+        result_step["details"]["output"] = serializable_output
+        result_step["details"]["content"] = serializable_output
+
     # Add error field if failed
     if status == "failed" and error_msg:
         result_step["details"]["error"] = error_msg
