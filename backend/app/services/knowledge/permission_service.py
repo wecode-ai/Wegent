@@ -26,8 +26,8 @@ def can_access_knowledge_base(db: Session, user_id: int, kb: Kind) -> bool:
     Check if user has access permission to a knowledge base.
 
     Permission logic:
-    1. Organization KB (namespace="organization"): All users have access
-    2. Group KB (namespace != "default" and != "organization"): Group members have access
+    1. Company KB (namespace="organization_knowledge"): All users have access
+    2. Group KB (namespace != "default" and != "organization_knowledge"): Group members have access
     3. Personal KB (namespace="default"): Owner or explicit grant
 
     Args:
@@ -40,12 +40,12 @@ def can_access_knowledge_base(db: Session, user_id: int, kb: Kind) -> bool:
     """
     namespace = kb.namespace
 
-    # 1. Organization KB - all users have access
-    if namespace == "organization":
+    # 1. Company KB - all users have access
+    if namespace == "organization_knowledge":
         return True
 
     # 2. Group KB - check group membership
-    if namespace != "default":
+    if namespace != "default" and namespace != "organization_knowledge":
         role = get_effective_role_in_group(db, user_id, namespace)
         return role is not None
 
@@ -77,7 +77,7 @@ def can_manage_knowledge_base(db: Session, user: User, kb: Kind) -> bool:
     - Deleting the knowledge base
 
     Permission logic:
-    1. Organization KB: Only system admins
+    1. Company KB: Only admin users and creator
     2. Group KB: Owner or Maintainer role
     3. Personal KB: Owner or explicit "manage" permission
 
@@ -91,12 +91,18 @@ def can_manage_knowledge_base(db: Session, user: User, kb: Kind) -> bool:
     """
     namespace = kb.namespace
 
-    # 1. Organization KB - only system admin
-    if namespace == "organization":
-        return user.role == "admin"
+    # 1. Company KB - admin or creator
+    if namespace == "organization_knowledge":
+        # Admin can manage any company KB
+        if user.role == "admin":
+            return True
+        # Creator can manage their own company KB
+        if kb.user_id == user.id:
+            return True
+        return False
 
     # 2. Group KB - Owner or Maintainer
-    if namespace != "default":
+    if namespace != "default" and namespace != "organization_knowledge":
         role = get_effective_role_in_group(db, user.id, namespace)
         return role in [GroupRole.Owner, GroupRole.Maintainer]
 
@@ -129,7 +135,7 @@ def can_write_knowledge_base(db: Session, user: User, kb: Kind) -> bool:
     - Deleting documents
 
     Permission logic:
-    1. Organization KB: Only system admins
+    1. Company KB: Only admin users and creator
     2. Group KB: Maintainer or higher role
     3. Personal KB: Owner or explicit "write" or "manage" permission
 
@@ -143,12 +149,18 @@ def can_write_knowledge_base(db: Session, user: User, kb: Kind) -> bool:
     """
     namespace = kb.namespace
 
-    # 1. Organization KB - only system admin
-    if namespace == "organization":
-        return user.role == "admin"
+    # 1. Company KB - admin or creator
+    if namespace == "organization_knowledge":
+        # Admin can write to any company KB
+        if user.role == "admin":
+            return True
+        # Creator can write to their own company KB
+        if kb.user_id == user.id:
+            return True
+        return False
 
     # 2. Group KB - Maintainer or higher
-    if namespace != "default":
+    if namespace != "default" and namespace != "organization_knowledge":
         role = get_effective_role_in_group(db, user.id, namespace)
         return role in [GroupRole.Owner, GroupRole.Maintainer]
 
@@ -193,14 +205,17 @@ def get_user_permission_type(db: Session, user: User, kb: Kind) -> Optional[str]
     """
     namespace = kb.namespace
 
-    # Organization KB
-    if namespace == "organization":
+    # Company KB
+    if namespace == "organization_knowledge":
         if user.role == "admin":
+            return "manage"
+        # Creator of company KB has manage permission
+        if kb.user_id == user.id:
             return "manage"
         return "read"  # All users have read access
 
     # Group KB - map group role to permission type
-    if namespace != "default":
+    if namespace != "default" and namespace != "organization_knowledge":
         role = get_effective_role_in_group(db, user.id, namespace)
         if role in [GroupRole.Owner, GroupRole.Maintainer]:
             return "manage"
@@ -259,14 +274,17 @@ def get_permission_source(db: Session, user: User, kb: Kind) -> str:
     """
     namespace = kb.namespace
 
-    # Organization KB
-    if namespace == "organization":
+    # Company KB
+    if namespace == "organization_knowledge":
         if user.role == "admin":
             return "system_admin"
+        # Creator of company KB
+        if kb.user_id == user.id:
+            return "owner"
         return "organization_member"
 
     # Group KB
-    if namespace != "default":
+    if namespace != "default" and namespace != "organization_knowledge":
         role = get_effective_role_in_group(db, user.id, namespace)
         if role is not None:
             return "group_role"
@@ -299,30 +317,26 @@ def get_or_create_organization_knowledge_base(
     """
     Get or create the organization knowledge base.
 
-    Only system admins can trigger creation of the organization KB.
-    All users can access the existing organization KB.
+    Note: This function is deprecated and kept for backward compatibility.
+    Company knowledge bases should use namespace="organization_knowledge" and are created
+    by users in the frontend, not during system initialization.
 
     Args:
         db: Database session
-        user: User object (must be admin to create)
+        user: User object (must be admin to create in old logic)
 
     Returns:
-        Organization knowledge base Kind object, or None if KB doesn't exist
+        Company knowledge base Kind object, or None if KB doesn't exist
         and user is not admin
-
-    Note:
-        The organization KB is typically created during system initialization.
-        If it doesn't exist and user is not admin, returns None instead of
-        raising an error to provide a better user experience.
     """
     from app.services.knowledge.knowledge_service import KnowledgeService
 
-    # Look for existing organization KB
+    # Look for existing company KB with organization_knowledge namespace
     existing = (
         db.query(Kind)
         .filter(
             Kind.kind == "KnowledgeBase",
-            Kind.namespace == "organization",
+            Kind.namespace == "organization_knowledge",
             Kind.is_active == True,
         )
         .first()
@@ -331,39 +345,6 @@ def get_or_create_organization_knowledge_base(
     if existing:
         return existing
 
-    # Only system admin can create
-    if user.role != "admin":
-        # Return None instead of raising error for better UX
-        # The organization KB should be created during system initialization
-        return None
-
-    # Create organization KB using KnowledgeService
-    kb_id = KnowledgeService.create_organization_knowledge_base(
-        db=db,
-        admin_user_id=user.id,
-    )
-
-    if kb_id is None:
-        # This shouldn't happen since we already checked for existing KB
-        # but handle it gracefully
-        return (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "KnowledgeBase",
-                Kind.namespace == "organization",
-                Kind.is_active == True,
-            )
-            .first()
-        )
-
-    db.commit()
-
-    # Return the created KB
-    return (
-        db.query(Kind)
-        .filter(
-            Kind.id == kb_id,
-            Kind.kind == "KnowledgeBase",
-        )
-        .first()
-    )
+    # In the new system, company KBs are created by users via the UI
+    # Return None instead of creating automatically
+    return None

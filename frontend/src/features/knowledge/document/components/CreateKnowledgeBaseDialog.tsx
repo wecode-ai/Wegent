@@ -77,7 +77,8 @@ export function CreateKnowledgeBaseDialog({
   })
   const [error, setError] = useState('')
   const [accordionValue, setAccordionValue] = useState<string>('')
-  const [isCompany, setIsCompany] = useState(false)
+  // Default isCompany based on scope: true for organization, false for personal
+  const [isCompany, setIsCompany] = useState(scope === 'organization')
 
   // Reset summaryEnabled when dialog opens based on kbType
   // This is necessary because useState initial value only applies on first mount,
@@ -85,8 +86,10 @@ export function CreateKnowledgeBaseDialog({
   useEffect(() => {
     if (open) {
       setSummaryEnabled(kbType === 'notebook')
+      // Reset isCompany based on scope when dialog opens
+      setIsCompany(scope === 'organization')
     }
-  }, [open, kbType])
+  }, [open, kbType, scope])
 
   // Note: Auto-selection of retriever and embedding model is handled by RetrievalSettingsSection
 

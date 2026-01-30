@@ -77,38 +77,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# ============== Organization Knowledge Base Endpoint ==============
-# NOTE: This endpoint MUST be defined BEFORE /{knowledge_base_id} routes
-# to prevent "organization" from being matched as a knowledge_base_id parameter
-
-
-@router.get("/organization", response_model=KnowledgeBaseResponse)
-def get_organization_knowledge_base(
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Get the organization knowledge base.
-
-    If the organization KB doesn't exist and user is admin, it will be created.
-    If the organization KB doesn't exist and user is not admin, returns 404.
-
-    Note: The organization KB is typically created during system initialization.
-    """
-    from app.services.knowledge.permission_service import (
-        get_or_create_organization_knowledge_base,
-    )
-
-    kb = get_or_create_organization_knowledge_base(db, current_user)
-    if kb is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Organization knowledge base not found. Please contact administrator.",
-        )
-    document_count = KnowledgeService.get_document_count(db, kb.id)
-    return KnowledgeBaseResponse.from_kind(kb, document_count)
-
-
 # ============== Knowledge Base Endpoints ==============
 
 

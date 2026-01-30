@@ -33,8 +33,6 @@ class Namespace(Base):
     visibility = Column(String(20), nullable=False, default="private")
     # Group description
     description = Column(Text, nullable=False, default="")
-    # Is company knowledge base namespace
-    is_company = Column(Boolean, nullable=False, default=False, index=True)
     # Is group active
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())

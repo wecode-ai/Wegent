@@ -171,13 +171,9 @@ class KnowledgeService:
         from app.models.user import User
 
         # Check permission based on namespace type
-        if data.namespace == "organization":
-            # Organization knowledge base: only admin users can create
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user or user.role != "admin":
-                raise ValueError(
-                    "Only admin users can create organization knowledge base"
-                )
+        if data.namespace == "organization_knowledge":
+            # Company knowledge base: any user can create
+            pass  # No permission check needed - all users can create company KB
         elif data.namespace != "default":
             # Team knowledge base: check group permission
             role = get_effective_role_in_group(db, user_id, data.namespace)
@@ -387,13 +383,13 @@ class KnowledgeService:
             )
 
         elif scope == ResourceScope.ORGANIZATION:
-            # Return all organization knowledge bases
-            # All authenticated users can access organization KBs
+            # Return all company knowledge bases
+            # All authenticated users can access company KBs
             return (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "KnowledgeBase",
-                    Kind.namespace == "organization",
+                    Kind.namespace == "organization_knowledge",
                     Kind.is_active == True,
                 )
                 .order_by(Kind.updated_at.desc())

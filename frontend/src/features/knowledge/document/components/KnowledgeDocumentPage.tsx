@@ -192,7 +192,7 @@ export function KnowledgeDocumentPage() {
     await personalKb.create({
       name: data.name,
       description: data.description,
-      namespace: createForGroup || 'default',
+      namespace: data.is_company ? 'organization_knowledge' : (createForGroup || 'default'),
       retrieval_config: data.retrieval_config,
       summary_enabled: data.summary_enabled,
       summary_model_ref: data.summary_model_ref,

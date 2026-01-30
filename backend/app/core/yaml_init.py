@@ -690,12 +690,14 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
 
     # Ensure organization knowledge base exists
     try:
-        logger.info("Ensuring organization knowledge base exists...")
-        org_kb_created = ensure_organization_knowledge_base(db, user_id)
-        logger.info(f"Organization knowledge base ready, created: {org_kb_created}")
+        logger.info("Ensuring organization_knowledge namespace exists...")
+        org_kb_created = ensure_organization_knowledge_namespace(db, user_id)
+        logger.info(
+            f"organization_knowledge namespace ready, created: {org_kb_created}"
+        )
     except Exception as e:
         logger.error(
-            f"Failed to create organization knowledge base: {e}", exc_info=True
+            f"Failed to create organization_knowledge namespace: {e}", exc_info=True
         )
         # Don't fail initialization, just log the error
 
