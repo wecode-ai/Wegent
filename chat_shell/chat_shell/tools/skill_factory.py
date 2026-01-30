@@ -145,9 +145,13 @@ async def prepare_skill_tools(
     """
     Prepare skill tools dynamically using SkillToolRegistry.
 
-    This function creates tool instances for all skills that have tool declarations
-    in their SKILL.md configuration. It uses the plugin-based SkillToolRegistry
-    to dynamically load and create tools.
+    This function creates tool instances for ALL skills that have tool declarations
+    in their SKILL.md configuration. Tools are grouped by skill name and stored
+    in the LoadSkillTool for dynamic tool selection at runtime.
+
+    For preloaded skills, their tools are immediately available.
+    For non-preloaded skills, tools are created but only become available
+    after the skill is loaded via load_skill tool.
 
     Additionally, if a skill has mcpServers configured, the MCP servers will be
     connected and their tools will be included in the returned tools list.
@@ -176,6 +180,7 @@ async def prepare_skill_tools(
     Returns:
         Tuple of (tools, mcp_clients) where:
         - tools: List of tool instances created from skill configurations and MCP servers
+                 (only preloaded skills' tools are in this list for immediate use)
         - mcp_clients: List of MCPClient instances that need to be cleaned up
     """
     from chat_shell.skills import SkillToolContext, SkillToolRegistry
@@ -195,7 +200,7 @@ async def prepare_skill_tools(
     # Get base URL for skill binary downloads
     remote_url = getattr(settings, "REMOTE_STORAGE_URL", "").rstrip("/")
 
-    # Collect all skill MCP server configs for batch loading
+    # Collect all skill MCP server configs for batch loading (only for preloaded skills)
     skill_mcp_configs: dict[str, dict[str, Any]] = {}
 
     # Process each skill configuration
@@ -208,7 +213,6 @@ async def prepare_skill_tools(
         mcp_servers = skill_config.get("mcpServers")
 
         # Check if this skill should be preloaded
-        # Only preloaded skills should have their tools and MCP servers loaded
         should_preload = preload_skills is not None and skill_name in preload_skills
 
         # Collect MCP servers from skill config - only for preloaded skills
@@ -243,18 +247,8 @@ async def prepare_skill_tools(
                     )
             continue
 
-        # Only create tools for preloaded skills
-        # Non-preloaded skills should use load_skill tool first to load the skill
-        if not should_preload:
-            logger.debug(
-                "[skill_factory] Skipping tool creation for skill '%s' (not preloaded, "
-                "tools will not be available until skill is loaded via load_skill tool)",
-                skill_name,
-            )
-            continue
-
         logger.debug(
-            "[skill_factory] Processing skill '%s' with %d tool declarations (preloaded)",
+            "[skill_factory] Processing skill '%s' with %d tool declarations",
             skill_name,
             len(tool_declarations),
         )
@@ -323,7 +317,6 @@ async def prepare_skill_tools(
 
         # Create tools using the registry
         skill_tools = registry.create_tools_for_skill(skill_config, context)
-        tools.extend(skill_tools)
 
         if skill_tools:
             logger.info(
@@ -333,17 +326,33 @@ async def prepare_skill_tools(
                 [t.name for t in skill_tools],
             )
 
-            # Preload skill prompt into LoadSkillTool
-            # This ensures the skill prompt is injected into system message
-            # via prompt_modifier
+            # Register tools with LoadSkillTool for dynamic tool selection
             if load_skill_tool is not None:
-                skill_prompt = skill_config.get("prompt", "")
-                if skill_prompt:
-                    load_skill_tool.preload_skill_prompt(skill_name, skill_config)
-                    logger.info(
-                        "[skill_factory] Preloaded skill prompt for '%s' (in preload_skills list)",
-                        skill_name,
-                    )
+                load_skill_tool.register_skill_tools(skill_name, skill_tools)
+                logger.debug(
+                    "[skill_factory] Registered %d tools for skill '%s' with LoadSkillTool",
+                    len(skill_tools),
+                    skill_name,
+                )
+
+            # For preloaded skills, add tools to the immediate tools list
+            # and preload the skill prompt
+            if should_preload:
+                tools.extend(skill_tools)
+                if load_skill_tool is not None:
+                    skill_prompt = skill_config.get("prompt", "")
+                    if skill_prompt:
+                        load_skill_tool.preload_skill_prompt(skill_name, skill_config)
+                        logger.info(
+                            "[skill_factory] Preloaded skill prompt for '%s' (in preload_skills list)",
+                            skill_name,
+                        )
+            else:
+                logger.debug(
+                    "[skill_factory] Skill '%s' tools registered but not immediately available "
+                    "(will be available after load_skill is called)",
+                    skill_name,
+                )
 
     # Load MCP tools from all skills if any MCP servers are configured
     if skill_mcp_configs:
