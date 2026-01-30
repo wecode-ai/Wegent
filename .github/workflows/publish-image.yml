@@ -474,7 +474,7 @@ jobs:
 
   build-executor-local-macos-amd64:
     needs: prepare-release
-    runs-on: macos-13  # Intel runner
+    runs-on: macos-13-large  # Intel runner (macos-13 standard runner is retired)
     permissions:
       contents: write
     steps:
