@@ -128,7 +128,7 @@ class Settings(BaseSettings):
     # Comma-separated list of keywords to match tool names (uses substring matching)
     # Empty string or "*" means all tools will display details
     # Example: "read,write,search" will match "read_file", "write_file", "web_search", etc.
-    TOOL_DISPLAY_WHITELIST: str = "read,write,upload,command"
+    TOOL_DISPLAY_WHITELIST: str = "read,write,upload,exec"
 
     @classmethod
     def settings_customise_sources(
