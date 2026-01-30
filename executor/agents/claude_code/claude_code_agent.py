@@ -1455,24 +1455,16 @@ class ClaudeCodeAgent(Agent):
         Returns:
             Number of clients cleaned up
         """
-        import sys
-
         cleaned_count = 0
         task_id_str = str(task_id)
         task_id_prefix = f"{task_id}:"
 
-        # Debug: Print to stderr to bypass logging
-        print(
-            f"[DEBUG-Cleanup] Starting cleanup for task_id={task_id}", file=sys.stderr
+        # Debug: Log cleanup start
+        logger.debug(f"[Cleanup] Starting cleanup for task_id={task_id}")
+        logger.debug(
+            f"[Cleanup] _session_id_map keys={list(cls._session_id_map.keys())}"
         )
-        print(
-            f"[DEBUG-Cleanup] _session_id_map keys={list(cls._session_id_map.keys())}",
-            file=sys.stderr,
-        )
-        print(
-            f"[DEBUG-Cleanup] _clients keys={list(cls._clients.keys())}",
-            file=sys.stderr,
-        )
+        logger.debug(f"[Cleanup] _clients keys={list(cls._clients.keys())}")
 
         # Debug: Log current state
         logger.info(
@@ -1483,60 +1475,45 @@ class ClaudeCodeAgent(Agent):
 
         # Step 1: Check _session_id_map to find all session_ids for this task
         internal_keys_to_cleanup = []
-        print(
-            f"[DEBUG-Cleanup] Checking _session_id_map for task_id_prefix={task_id_prefix}",
-            file=sys.stderr,
+        logger.debug(
+            f"[Cleanup] Checking _session_id_map for task_id_prefix={task_id_prefix}"
         )
         for internal_key, session_id in list(cls._session_id_map.items()):
-            print(
-                f"[DEBUG-Cleanup] Checking internal_key={internal_key}, session_id={session_id}",
-                file=sys.stderr,
+            logger.debug(
+                f"[Cleanup] Checking internal_key={internal_key}, session_id={session_id}"
             )
             if internal_key.startswith(task_id_prefix) or internal_key == task_id_str:
-                print(f"[DEBUG-Cleanup] MATCH! Adding to cleanup list", file=sys.stderr)
+                logger.debug(f"[Cleanup] MATCH! Adding to cleanup list")
                 internal_keys_to_cleanup.append((internal_key, session_id))
                 logger.info(
                     f"[Cleanup] Found internal_key={internal_key} -> session_id={session_id} for task {task_id}"
                 )
             else:
-                print(
-                    f"[DEBUG-Cleanup] NO MATCH for internal_key={internal_key}",
-                    file=sys.stderr,
-                )
+                logger.debug(f"[Cleanup] NO MATCH for internal_key={internal_key}")
 
-        print(
-            f"[DEBUG-Cleanup] internal_keys_to_cleanup={internal_keys_to_cleanup}",
-            file=sys.stderr,
-        )
+        logger.debug(f"[Cleanup] internal_keys_to_cleanup={internal_keys_to_cleanup}")
 
         # Clean up clients found in _session_id_map
-        print(
-            f"[DEBUG-Cleanup] Starting to clean up {len(internal_keys_to_cleanup)} clients",
-            file=sys.stderr,
+        logger.debug(
+            f"[Cleanup] Starting to clean up {len(internal_keys_to_cleanup)} clients"
         )
         for internal_key, session_id in internal_keys_to_cleanup:
-            print(
-                f"[DEBUG-Cleanup] Processing internal_key={internal_key}, session_id={session_id}",
-                file=sys.stderr,
+            logger.debug(
+                f"[Cleanup] Processing internal_key={internal_key}, session_id={session_id}"
             )
-            print(
-                f"[DEBUG-Cleanup] Checking if session_id in _clients: {session_id in cls._clients}",
-                file=sys.stderr,
+            logger.debug(
+                f"[Cleanup] Checking if session_id in _clients: {session_id in cls._clients}"
             )
             if session_id in cls._clients:
-                print(
-                    f"[DEBUG-Cleanup] Found client, attempting to terminate process...",
-                    file=sys.stderr,
+                logger.debug(
+                    f"[Cleanup] Found client, attempting to terminate process..."
                 )
                 try:
                     client = cls._clients[session_id]
 
                     # Directly terminate the process instead of using disconnect()
                     # disconnect() has cancel scope issues when called from different asyncio context
-                    print(
-                        f"[DEBUG-Cleanup] Accessing transport and process...",
-                        file=sys.stderr,
-                    )
+                    logger.debug(f"[Cleanup] Accessing transport and process...")
 
                     # Get the process from the transport
                     if hasattr(client, "_transport") and client._transport:
@@ -1544,82 +1521,63 @@ class ClaudeCodeAgent(Agent):
                         if hasattr(transport, "_process") and transport._process:
                             process = transport._process
                             pid = process.pid if hasattr(process, "pid") else None
-                            print(
-                                f"[DEBUG-Cleanup] Found process with PID={pid}",
-                                file=sys.stderr,
-                            )
+                            logger.debug(f"[Cleanup] Found process with PID={pid}")
 
                             # Try graceful termination first
                             try:
                                 process.terminate()
-                                print(
-                                    f"[DEBUG-Cleanup] Sent SIGTERM to process PID={pid}",
-                                    file=sys.stderr,
+                                logger.debug(
+                                    f"[Cleanup] Sent SIGTERM to process PID={pid}"
                                 )
 
                                 # Wait briefly for process to exit
                                 try:
                                     await asyncio.wait_for(process.wait(), timeout=2.0)
-                                    print(
-                                        f"[DEBUG-Cleanup] Process PID={pid} exited gracefully",
-                                        file=sys.stderr,
+                                    logger.debug(
+                                        f"[Cleanup] Process PID={pid} exited gracefully"
                                     )
                                 except asyncio.TimeoutError:
                                     # Force kill if it doesn't exit
-                                    print(
-                                        f"[DEBUG-Cleanup] Process didn't exit, sending SIGKILL...",
-                                        file=sys.stderr,
+                                    logger.debug(
+                                        f"[Cleanup] Process didn't exit, sending SIGKILL..."
                                     )
                                     process.kill()
                                     await asyncio.wait_for(process.wait(), timeout=1.0)
-                                    print(
-                                        f"[DEBUG-Cleanup] Process PID={pid} killed",
-                                        file=sys.stderr,
-                                    )
+                                    logger.debug(f"[Cleanup] Process PID={pid} killed")
 
                                 logger.info(
                                     f"Terminated Claude Code process for task_id={task_id}, session_id={session_id}, internal_key={internal_key}, PID={pid}"
                                 )
                             except Exception as proc_error:
-                                print(
-                                    f"[DEBUG-Cleanup] Error terminating process: {proc_error}",
-                                    file=sys.stderr,
+                                logger.debug(
+                                    f"[Cleanup] Error terminating process: {proc_error}"
                                 )
                                 logger.warning(
                                     f"Error terminating process for session_id={session_id}: {proc_error}"
                                 )
                         else:
-                            print(
-                                f"[DEBUG-Cleanup] No process found in transport",
-                                file=sys.stderr,
-                            )
+                            logger.debug(f"[Cleanup] No process found in transport")
                             logger.warning(
                                 f"No process found in transport for session_id={session_id}"
                             )
                     else:
-                        print(
-                            f"[DEBUG-Cleanup] No transport found in client",
-                            file=sys.stderr,
-                        )
+                        logger.debug(f"[Cleanup] No transport found in client")
                         logger.warning(
                             f"No transport found in client for session_id={session_id}"
                         )
 
                     # Remove from _clients dict
-                    print(f"[DEBUG-Cleanup] Removing from _clients...", file=sys.stderr)
+                    logger.debug(f"[Cleanup] Removing from _clients...")
                     del cls._clients[session_id]
-                    print(
-                        f"[DEBUG-Cleanup] Successfully cleaned up client!",
-                        file=sys.stderr,
-                    )
+                    logger.debug(f"[Cleanup] Successfully cleaned up client!")
                     cleaned_count += 1
                 except Exception as e:
-                    print(f"[DEBUG-Cleanup] ERROR closing client: {e}", file=sys.stderr)
+                    logger.debug(f"[Cleanup] ERROR closing client: {e}")
                     logger.exception(
                         f"Error closing client for session_id {session_id}: {str(e)}"
                     )
             else:
-                print(f"[DEBUG-Cleanup] session_id NOT in _clients!", file=sys.stderr)
+                logger.debug(f"[Cleanup] session_id NOT in _clients!")
                 logger.warning(
                     f"[Cleanup] session_id={session_id} not found in _clients for internal_key={internal_key}"
                 )
