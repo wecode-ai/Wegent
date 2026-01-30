@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class SandboxWriteFileInput(BaseModel):
-    """Input schema for sandbox_write_file tool."""
+    """Input schema for write_file tool."""
 
     file_path: str = Field(
         ...,
@@ -65,7 +65,7 @@ class SandboxWriteFileTool(BaseSandboxTool):
     using E2B SDK's file operations.
     """
 
-    name: str = "sandbox_write_file"
+    name: str = "write_file"
     display_name: str = "写入文件"
     description: str = """Write content to a file in the sandbox environment.
 

@@ -160,16 +160,19 @@ class AttachmentTruncationStrategy(CompressionStrategy):
     def name(self) -> str:
         return "attachment_truncation"
 
-    # Pattern to match attachment content blocks (supports both [Attachment N] and [File Content - xxx])
+    # Pattern to match attachment content blocks wrapped in <attachment> XML tags
+    # or legacy format without tags
     ATTACHMENT_PATTERN = re.compile(
-        r"\[(?:Attachment \d+|File Content)(?:\s*-\s*[^\]]+)?\](.*?)(?=\[(?:Attachment \d+|File Content)|$)",
+        r"(?:<attachment>)?\[(?:Attachment \d+|File Content|Document)(?:\s*[:-]\s*[^\]]+)?\](.*?)(?:</attachment>|(?=\[(?:Attachment \d+|File Content|Document)|<attachment>|$))",
         re.DOTALL,
     )
 
-    # Pattern for document content markers
+    # Pattern for document content markers (including XML tag)
     DOCUMENT_MARKERS = [
+        "<attachment>",  # New XML tag format
         "[Attachment",
         "[File Content",  # New format for file attachments
+        "[Document:",  # History loader format
         "--- Sheet:",
         "--- Slide",
         "[PDF Content]",

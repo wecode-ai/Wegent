@@ -459,6 +459,7 @@ class TaskSpec(BaseModel):
     knowledgeBaseRefs: Optional[List[KnowledgeBaseTaskRef]] = (
         None  # Bound knowledge bases for group chat
     )
+    device_id: Optional[str] = None  # Device ID used for execution (for task history)
 
 
 class TaskApp(BaseModel):
@@ -511,6 +512,24 @@ class BatchResponse(BaseModel):
 
 
 # Skill CRD schemas
+class SkillSource(BaseModel):
+    """Source information for skills imported from Git repositories"""
+
+    type: str = Field(
+        "upload",
+        description="Source type: 'upload' (manual upload) or 'git' (imported from Git repository)",
+    )
+    repo_url: Optional[str] = Field(
+        None, description="Git repository URL (for git source type)"
+    )
+    skill_path: Optional[str] = Field(
+        None, description="Path to skill in the repository (for git source type)"
+    )
+    imported_at: Optional[str] = Field(
+        None, description="Timestamp when the skill was imported (ISO format)"
+    )
+
+
 class SkillToolDeclaration(BaseModel):
     """Tool declaration in skill configuration.
 
@@ -581,6 +600,12 @@ class SkillSpec(BaseModel):
         "When the skill is loaded, these MCP servers will be connected "
         "and their tools will be available to the AI. "
         "Format follows the standard MCP server configuration schema.",
+    )
+    source: Optional[SkillSource] = Field(
+        None,
+        description="Source information for the skill. "
+        "Tracks where the skill was imported from (upload or git repository). "
+        "Used to enable updating skills from their original Git source.",
     )
 
 
@@ -782,3 +807,201 @@ class RetrieverList(BaseModel):
     apiVersion: str = "agent.wecode.io/v1"
     kind: str = "RetrieverList"
     items: List[Retriever]
+
+
+# Device CRD schemas
+class DeviceSpec(BaseModel):
+    """Device specification for local device registration"""
+
+    deviceId: str = Field(
+        ...,
+        description="Device unique identifier (self-generated, e.g., MAC/UUID)",
+    )
+    displayName: Optional[str] = Field(
+        None,
+        description="Human-readable device name",
+    )
+    isDefault: bool = Field(
+        default=False,
+        description="Whether this is the default device for the user",
+    )
+    capabilities: Optional[List[str]] = Field(
+        None,
+        description="Device capabilities/tags (e.g., 'gpu', 'high-memory')",
+    )
+
+
+class DeviceStatus(Status):
+    """Device status"""
+
+    state: str = "Available"  # Available, Unavailable
+    online: bool = False  # Derived from Redis at query time
+    deviceStatus: str = "offline"  # online, offline, busy (from Redis)
+    lastHeartbeat: Optional[datetime] = None
+
+
+class Device(BaseModel):
+    """Device CRD for local device management"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "Device"
+    metadata: ObjectMeta
+    spec: DeviceSpec
+    status: Optional[DeviceStatus] = None
+
+
+class DeviceList(BaseModel):
+    """Device list"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "DeviceList"
+    items: List[Device]
+
+
+# Git Skill Import schemas
+class GitSkillInfo(BaseModel):
+    """Information about a skill found in a Git repository"""
+
+    path: str = Field(
+        ..., description="Path in the repository (e.g., 'skills/pdf-reader')"
+    )
+    name: str = Field(
+        ..., description="Skill name extracted from path (directory name)"
+    )
+    description: str = Field(..., description="Description from SKILL.md frontmatter")
+    version: Optional[str] = Field(
+        None, description="Version from SKILL.md frontmatter"
+    )
+    author: Optional[str] = Field(None, description="Author from SKILL.md frontmatter")
+    display_name: Optional[str] = Field(
+        None, description="Display name from SKILL.md frontmatter"
+    )
+    tags: Optional[List[str]] = Field(
+        None, description="Tags from SKILL.md frontmatter"
+    )
+
+
+class GitScanResponse(BaseModel):
+    """Response from scanning a Git repository for skills"""
+
+    repo_url: str = Field(..., description="The scanned repository URL")
+    skills: List[GitSkillInfo] = Field(
+        default_factory=list, description="List of skills found in the repository"
+    )
+    total_count: int = Field(0, description="Total number of skills found")
+
+
+class GitImportRequest(BaseModel):
+    """Request to import skills from a Git repository"""
+
+    repo_url: str = Field(..., description="Git repository URL")
+    skill_paths: List[str] = Field(
+        ..., description="List of skill paths to import (e.g., ['skills/pdf-reader'])"
+    )
+    namespace: str = Field("default", description="Namespace for the imported skills")
+    overwrite_names: Optional[List[str]] = Field(
+        None,
+        description="List of skill names that can be overwritten if they already exist",
+    )
+
+
+class GitImportSuccessItem(BaseModel):
+    """Successfully imported skill information"""
+
+    name: str = Field(..., description="Skill name")
+    path: str = Field(..., description="Skill path in repository")
+    id: int = Field(..., description="Created/updated skill ID")
+    action: str = Field(..., description="Action taken: 'created' or 'updated'")
+
+
+class GitImportSkippedItem(BaseModel):
+    """Skipped skill information (due to name conflict)"""
+
+    name: str = Field(..., description="Skill name")
+    path: str = Field(..., description="Skill path in repository")
+    reason: str = Field(..., description="Reason for skipping")
+
+
+class GitImportFailedItem(BaseModel):
+    """Failed skill import information"""
+
+    name: str = Field(..., description="Skill name")
+    path: str = Field(..., description="Skill path in repository")
+    error: str = Field(..., description="Error message")
+
+
+class GitImportResponse(BaseModel):
+    """Response from importing skills from a Git repository"""
+
+    success: List[GitImportSuccessItem] = Field(
+        default_factory=list, description="Successfully imported skills"
+    )
+    skipped: List[GitImportSkippedItem] = Field(
+        default_factory=list, description="Skipped skills (due to name conflict)"
+    )
+    failed: List[GitImportFailedItem] = Field(
+        default_factory=list, description="Failed skill imports"
+    )
+    total_success: int = Field(
+        0, description="Total number of successfully imported skills"
+    )
+    total_skipped: int = Field(0, description="Total number of skipped skills")
+    total_failed: int = Field(0, description="Total number of failed imports")
+
+
+# Git Skill Batch Update schemas
+class GitBatchUpdateRequest(BaseModel):
+    """Request to batch update skills from their Git repository sources"""
+
+    skill_ids: List[int] = Field(
+        ...,
+        description="List of skill IDs to update from their Git sources. "
+        "Skills from the same repository will be updated together with a single download.",
+    )
+
+
+class GitBatchUpdateSuccessItem(BaseModel):
+    """Successfully updated skill information"""
+
+    id: int = Field(..., description="Skill ID")
+    name: str = Field(..., description="Skill name")
+    version: Optional[str] = Field(None, description="Updated skill version")
+    source: Optional[Dict[str, Any]] = Field(
+        None, description="Updated source information"
+    )
+
+
+class GitBatchUpdateSkippedItem(BaseModel):
+    """Skipped skill information (not found, not from git, etc.)"""
+
+    id: int = Field(..., description="Skill ID")
+    name: Optional[str] = Field(None, description="Skill name (if found)")
+    reason: str = Field(..., description="Reason for skipping")
+
+
+class GitBatchUpdateFailedItem(BaseModel):
+    """Failed skill update information"""
+
+    id: int = Field(..., description="Skill ID")
+    name: Optional[str] = Field(None, description="Skill name (if found)")
+    error: str = Field(..., description="Error message")
+
+
+class GitBatchUpdateResponse(BaseModel):
+    """Response from batch updating skills from Git repositories"""
+
+    success: List[GitBatchUpdateSuccessItem] = Field(
+        default_factory=list, description="Successfully updated skills"
+    )
+    skipped: List[GitBatchUpdateSkippedItem] = Field(
+        default_factory=list,
+        description="Skipped skills (not found, not from git, etc.)",
+    )
+    failed: List[GitBatchUpdateFailedItem] = Field(
+        default_factory=list, description="Failed skill updates"
+    )
+    total_success: int = Field(
+        0, description="Total number of successfully updated skills"
+    )
+    total_skipped: int = Field(0, description="Total number of skipped skills")
+    total_failed: int = Field(0, description="Total number of failed updates")

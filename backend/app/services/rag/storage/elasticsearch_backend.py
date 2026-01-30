@@ -29,6 +29,7 @@ from llama_index.vector_stores.elasticsearch import ElasticsearchStore
 
 from app.services.rag.retrieval.filters import parse_metadata_filters
 from app.services.rag.storage.base import BaseStorageBackend
+from shared.telemetry.decorators import add_span_event
 
 
 class ElasticsearchBackend(BaseStorageBackend):
@@ -137,6 +138,16 @@ class ElasticsearchBackend(BaseStorageBackend):
             We use 'doc_ref' in metadata to store our custom doc_xxx ID.
             LlamaIndex has its own internal 'document_id' field (ref_doc_id UUID).
         """
+        add_span_event(
+            "elasticsearch.index_with_metadata.started",
+            {
+                "knowledge_id": knowledge_id,
+                "doc_ref": doc_ref,
+                "source_file": source_file,
+                "node_count": len(nodes),
+            },
+        )
+
         # Add metadata to nodes
         for idx, node in enumerate(nodes):
             node.metadata.update(
@@ -149,18 +160,51 @@ class ElasticsearchBackend(BaseStorageBackend):
                 }
             )
 
+        add_span_event(
+            "elasticsearch.metadata_added",
+            {
+                "node_count": len(nodes),
+                "doc_ref": doc_ref,
+            },
+        )
+
         # Get index name
         index_name = self.get_index_name(knowledge_id, **kwargs)
+
+        add_span_event(
+            "elasticsearch.index_name_resolved",
+            {
+                "index_name": index_name,
+                "knowledge_id": knowledge_id,
+            },
+        )
 
         # Index nodes
         vector_store = self.create_vector_store(index_name)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+        add_span_event(
+            "elasticsearch.vector_store_created",
+            {
+                "index_name": index_name,
+            },
+        )
 
         VectorStoreIndex(
             nodes,
             storage_context=storage_context,
             embed_model=embed_model,
             show_progress=True,
+        )
+
+        add_span_event(
+            "elasticsearch.index_with_metadata.completed",
+            {
+                "indexed_count": len(nodes),
+                "index_name": index_name,
+                "doc_ref": doc_ref,
+                "status": "success",
+            },
         )
 
         return {

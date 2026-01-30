@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class SandboxCommandInput(BaseModel):
-    """Input schema for sandbox_command tool."""
+    """Input schema for exec tool."""
 
     command: str = Field(
         ...,
@@ -61,7 +61,7 @@ class SandboxCommandTool(BaseSandboxTool):
     sandbox environment using the E2B SDK.
     """
 
-    name: str = "sandbox_command"
+    name: str = "exec"
     display_name: str = "执行命令"
     description: str = """Execute a command in an isolated sandbox environment.
 

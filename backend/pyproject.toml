@@ -105,8 +105,12 @@ dependencies = [
     "croniter>=2.0.0",
     # Web scraping with JavaScript rendering support
     "crawl4ai>=0.4.0",
+    # Pin Playwright to version synced by npmmirror (v1200 = Chromium 143.0.7499.4)
+    "playwright==1.52.0",
     # WebSocket support
     "python-socketio>=5.10.0",
+    # DingTalk Stream SDK for IM channel integration
+    "dingtalk-stream>=0.24.0",
     # RAG (Retrieval-Augmented Generation) dependencies
     "llama-index-core>=0.12.0",
     "llama-index-vector-stores-elasticsearch>=0.4.0",

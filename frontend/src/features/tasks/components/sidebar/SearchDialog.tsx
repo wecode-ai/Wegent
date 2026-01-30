@@ -31,7 +31,7 @@ interface SearchDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   shortcutDisplayText?: string
-  pageType?: 'chat' | 'code' | 'knowledge'
+  pageType?: 'chat' | 'code' | 'knowledge' | 'task'
 }
 
 export default function SearchDialog({

@@ -94,7 +94,7 @@ function StreamingMessageBubble({
   // Use typewriter effect for streaming content
   const displayContent = useTypewriter(message.content || '')
 
-  const hasContent = Boolean(message.content && message.content.trim())
+  const hasContent = Boolean((message.content && message.content.trim()) || message.result?.blocks)
   const isStreaming = message.status === 'streaming'
   // Check if we have thinking data (for executor tasks like Claude Code)
   const hasThinking = Boolean(
@@ -410,6 +410,8 @@ export default function MessagesArea({
     selectedTaskDetail?.id,
     toast,
     correctionAttempted, // Add this dependency so useEffect re-runs when retry button is clicked
+    correctionLoading,
+    correctionResults,
   ])
 
   // Register correction WebSocket event handlers for real-time progress updates

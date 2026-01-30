@@ -646,6 +646,7 @@ def get_bot_system_prompt(
     Get the system prompt for a Bot.
 
     Combines Ghost's system prompt with team member's additional prompt.
+    The combined prompt is wrapped in <base_prompt> XML tags.
 
     Args:
         db: Database session
@@ -654,7 +655,7 @@ def get_bot_system_prompt(
         team_member_prompt: Optional additional prompt from team member config
 
     Returns:
-        Combined system prompt string
+        Combined system prompt string wrapped in <base_prompt> tags
     """
     from app.schemas.kind import Ghost
 
@@ -684,5 +685,9 @@ def get_bot_system_prompt(
             system_prompt = f"{system_prompt}\n\n{team_member_prompt}"
         else:
             system_prompt = team_member_prompt
+
+    # Wrap in <base_prompt> tags for structured prompt identification
+    if system_prompt:
+        system_prompt = f"<base_prompt>\n{system_prompt}\n</base_prompt>"
 
     return system_prompt

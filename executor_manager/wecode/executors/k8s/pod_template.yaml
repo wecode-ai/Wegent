@@ -58,6 +58,10 @@ spec:
         {% endif %}
         - name: EXECUTOR_NAME
           value: {{ executor_name }}
+        - name: AUTH_TOKEN
+          value: {{ auth_token }}
+        - name: TASK_ID
+          value: "{{ task_id }}"    
         - name: EXECUTOR_NAMESPACE
           value: {{ namespace }}
         - name: TZ

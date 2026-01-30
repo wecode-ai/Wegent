@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useRef, useCallback, useEffect } from 'react'
+import { useRef, useCallback, useEffect, useState } from 'react'
 
 /**
  * Threshold in pixels for determining if user is near the bottom of the scroll container.
@@ -55,6 +55,12 @@ export interface UseScrollManagementReturn {
   isUserNearBottomRef: React.RefObject<boolean>
 
   /**
+   * Whether to show the scroll-to-bottom indicator button.
+   * True when user has scrolled up and is not near the bottom.
+   */
+  showScrollIndicator: boolean
+
+  /**
    * Function to scroll to the bottom of the container.
    * @param force - If true, scrolls regardless of user position.
    */
@@ -88,6 +94,8 @@ export function useScrollManagement({
 }: UseScrollManagementOptions): UseScrollManagementReturn {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const isUserNearBottomRef = useRef<boolean>(true)
+  // State for showing/hiding the scroll-to-bottom indicator
+  const [showScrollIndicator, setShowScrollIndicator] = useState(false)
 
   /**
    * Scrolls the container to the bottom.
@@ -106,6 +114,7 @@ export function useScrollManagement({
           container.scrollTop = container.scrollHeight
           if (force) {
             isUserNearBottomRef.current = true
+            setShowScrollIndicator(false)
           }
         }
       })
@@ -127,6 +136,7 @@ export function useScrollManagement({
    *
    * This replaces the original useEffect at lines 400-414 in ChatArea.tsx.
    * Updates isUserNearBottomRef based on scroll position.
+   * Also updates showScrollIndicator state for UI display.
    */
   useEffect(() => {
     const container = scrollContainerRef.current
@@ -135,7 +145,10 @@ export function useScrollManagement({
     const handleScroll = () => {
       const distanceFromBottom =
         container.scrollHeight - container.scrollTop - container.clientHeight
-      isUserNearBottomRef.current = distanceFromBottom <= AUTO_SCROLL_THRESHOLD
+      const isNearBottom = distanceFromBottom <= AUTO_SCROLL_THRESHOLD
+      isUserNearBottomRef.current = isNearBottom
+      // Show indicator when user has scrolled up (not near bottom)
+      setShowScrollIndicator(!isNearBottom && hasMessages)
     }
 
     container.addEventListener('scroll', handleScroll)
@@ -177,6 +190,7 @@ export function useScrollManagement({
   return {
     scrollContainerRef,
     isUserNearBottomRef,
+    showScrollIndicator,
     scrollToBottom,
     handleMessagesContentChange,
   }

@@ -17,6 +17,7 @@ import { Check, Copy, Code, ChevronDown, ChevronUp } from 'lucide-react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { createSchemeAwareUrlTransform } from '@/lib/scheme'
+import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRenderer'
 
 import 'katex/dist/katex.min.css'
 
@@ -424,11 +425,8 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   // Default components with link handling and code block rendering
   const defaultComponents = useMemo(
     (): Components => ({
-      a: ({ href, children, ...props }) => (
-        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-          {children}
-        </a>
-      ),
+      // Merge smart components for attachment and image handling
+      ...createSmartMarkdownComponents({ enableImagePreview: true }),
       // Restore list styles that Tailwind preflight resets
       ul: ({ children, ...props }) => (
         <ul

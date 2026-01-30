@@ -147,40 +147,32 @@ class K8sExecutor(Executor):
         error_msg = ""
         callback_status = TaskStatus.RUNNING.value
 
+        # Initialize executor_name to None - will be set later if needed
+        executor_name = None
+        should_create_new_pod = not task.get("executor_name")
+
         if task.get("executor_name"):
             executor_name = task.get("executor_name")
-            pod_result = self.get_pods_by_executor_name(executor_name)
-            pod_list = pod_result.get("pods", [])
-            logger.info(pod_list)
-            if len(pod_list) > 0:
-                ip = pod_list[0].get("ip")
-                response = self._send_task_to_container(task=task, host=ip, port=8080)
-                # Check HTTP status code for success
-                if response.status_code == 200:
-                    # Task sent successfully to existing pod, register for heartbeat monitoring
-                    # This handles re-execution cases where Redis keys were cleaned up after first completion
-                    self.register_task_for_heartbeat(
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                        executor_name=executor_name,
-                        task_type=task.get("type", "online"),
-                        context=f"existing executor: {executor_name}",
-                    )
-                else:
-                    status = "failed"
-                    progress = 100
-                    error_msg = response.json().get("error_msg", "Request failed")
-                    callback_status = TaskStatus.FAILED.value
+            result = self._submit_to_existing_executor(
+                task=task,
+                executor_name=executor_name,
+                task_id=task_id,
+                subtask_id=subtask_id,
+            )
+            # If pod completed, need to create a new pod
+            if result["status"] == "pod_completed":
+                should_create_new_pod = True
             else:
-                status = "failed"
-                progress = 100
-                error_msg = "Agent is deleted. Please new task and submit it again."
-                callback_status = TaskStatus.FAILED.value
-        else:
-            # Check if pod exists by executor_name, if exists, send task directly via HTTP interface
-            executor_name = None
+                status = result["status"]
+                progress = result["progress"]
+                error_msg = result["error_msg"]
+                callback_status = result["callback_status"]
+
+        if should_create_new_pod:
+            # Create new pod, reuse executor_name if pod was completed, otherwise generate new one
             try:
-                executor_name = generate_executor_name(task_id, subtask_id, user_name)
+                if not executor_name:
+                    executor_name = generate_executor_name(task_id, subtask_id, user_name)
 
                 user_pod_count = self.get_user_pods(user_name=user_name)
                 logger.info(f"User {user_name} has {user_pod_count} pods.")
@@ -303,6 +295,107 @@ class K8sExecutor(Executor):
                 "error_msg": error_msg,
                 "pod_name": executor_name,
                 "executor_name": executor_name,
+            }
+
+    def _submit_to_existing_executor(
+        self,
+        task: Dict[str, Any],
+        executor_name: str,
+        task_id: str,
+        subtask_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Submit task to an existing executor pod.
+
+        Validates pod status before sending the task. If pod is not running
+        or has no IP, returns an error indicating the executor needs to be recreated.
+
+        Args:
+            task: Task information
+            executor_name: Name of the existing executor
+            task_id: Task ID
+            subtask_id: Subtask ID
+
+        Returns:
+            Dict with status, progress, error_msg, and callback_status
+        """
+        pod_result = self.get_pods_by_executor_name(executor_name)
+        pod_list = pod_result.get("pods", [])
+        logger.info(f"Found pods for executor {executor_name}: {pod_list}")
+
+        if not pod_list:
+            return {
+                "status": "failed",
+                "progress": 100,
+                "error_msg": "Executor is deleted. Please create a new session.",
+                "callback_status": TaskStatus.FAILED.value,
+            }
+
+        pod = pod_list[0]
+        pod_name = pod.get("name")
+        ip = pod.get("ip")
+        pod_status = pod.get("status")
+
+        # If pod is Succeeded (completed), delete it and signal to create new pod
+        if pod_status == "Succeeded":
+            logger.info(
+                f"Pod {executor_name} has completed (status: {pod_status}), "
+                "deleting and signaling to create new pod"
+            )
+            self.delete_executor(pod_name)
+            return {
+                "status": "pod_completed",
+                "progress": 30,
+                "error_msg": "",
+                "callback_status": TaskStatus.RUNNING.value,
+            }
+
+        # Check if pod is in Running state
+        if pod_status != "Running":
+            logger.warning(
+                f"Pod {executor_name} exists but is not running (status: {pod_status})"
+            )
+            return {
+                "status": "failed",
+                "progress": 100,
+                "error_msg": "Executor is deleted. Please create a new session.",
+                "callback_status": TaskStatus.FAILED.value,
+            }
+
+        if not ip:
+            logger.warning(f"Pod {executor_name} has no IP address")
+            return {
+                "status": "failed",
+                "progress": 100,
+                "error_msg": "Executor is deleted. Please create a new session.",
+                "callback_status": TaskStatus.FAILED.value,
+            }
+
+        # Send task to the running pod
+        response = self._send_task_to_container(task=task, host=ip, port=8080)
+
+        if response.status_code == 200:
+            # Task sent successfully, register for heartbeat monitoring
+            self.register_task_for_heartbeat(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                executor_name=executor_name,
+                task_type=task.get("type", "online"),
+                context=f"existing executor: {executor_name}",
+            )
+            return {
+                "status": "success",
+                "progress": 30,
+                "error_msg": "",
+                "callback_status": TaskStatus.RUNNING.value,
+            }
+        else:
+            error_msg = response.json().get("error_msg", "Request failed")
+            return {
+                "status": "failed",
+                "progress": 100,
+                "error_msg": error_msg,
+                "callback_status": TaskStatus.FAILED.value,
             }
 
     def _send_task_to_container(

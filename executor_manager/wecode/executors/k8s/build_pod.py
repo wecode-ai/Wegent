@@ -127,6 +127,7 @@ def build_pod_configuration(
         "namespace": namespace,
         "task_str": json.dumps(task),
         "image": container_image,
+        "auth_token": task.get("auth_token"),
         "task_id": task_id,
         "task_type": task.get("type", "online"),
         "mode": mode,

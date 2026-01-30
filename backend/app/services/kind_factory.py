@@ -10,6 +10,7 @@ from typing import Dict, Type
 from app.services.kind_base import KindBaseService
 from app.services.kind_impl import (
     BotKindService,
+    DeviceKindService,
     GhostKindService,
     KnowledgeBaseKindService,
     ModelKindService,
@@ -54,5 +55,7 @@ class KindServiceFactory:
             return KnowledgeBaseKindService()
         elif kind == "Retriever":
             return RetrieverKindService()
+        elif kind == "Device":
+            return DeviceKindService()
         else:
             raise ValueError(f"Unknown kind: {kind}")

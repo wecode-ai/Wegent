@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 # Table context prompt template - will be dynamically generated with table info
 TABLE_PROMPT_TEMPLATE = """
 
+<table_context>
 # IMPORTANT: Data Table Context - HIGHEST PRIORITY
 
 The user has selected data table(s) for this conversation. This indicates that the user's request is related to these tables.
@@ -52,7 +53,9 @@ The user has selected data table(s) for this conversation. This indicates that t
 2. Analyze the returned data based on user's request
 3. Present the results
 
-The user explicitly selected these table(s) - prioritize table operations over any other tools."""
+The user explicitly selected these table(s) - prioritize table operations over any other tools.
+</table_context>
+"""
 
 
 def build_table_prompt(table_contexts: List[dict]) -> str:
@@ -159,20 +162,30 @@ def _build_vision_structure(
     Build multi-vision structure for image contexts.
 
     Args:
-        text_contents: List of text content strings
+        text_contents: List of text content strings (attachment contents without XML tags)
         image_contents: List of image content dictionaries
 
     Returns:
         Vision structure dictionary
     """
-    combined_text = ""
-    if text_contents:
-        combined_text = "\n".join(text_contents) + "\n\n"
+    # Collect all attachment content parts (text documents and image headers)
+    all_attachment_parts = []
 
-    # Add image metadata headers to text
+    # Add text attachment contents
+    if text_contents:
+        all_attachment_parts.extend(text_contents)
+
+    # Add image metadata headers (inside the attachment tag)
     for img in image_contents:
         if "image_header" in img:
-            combined_text += img["image_header"] + "\n\n"
+            all_attachment_parts.append(img["image_header"])
+
+    # Build combined text with all attachments wrapped in a single <attachment> tag
+    combined_text = ""
+    if all_attachment_parts:
+        combined_text = (
+            "<attachment>\n" + "\n\n".join(all_attachment_parts) + "\n</attachment>\n\n"
+        )
 
     combined_text += f"[User Question]:\n{message}"
 
@@ -188,13 +201,16 @@ def _combine_text_contents(text_contents: List[str], message: str) -> str:
     Combine text contents with user message.
 
     Args:
-        text_contents: List of text content strings
+        text_contents: List of text content strings (attachment contents without XML tags)
         message: Original user message
 
     Returns:
-        Combined message string
+        Combined message string with all attachments wrapped in a single <attachment> XML tag
     """
-    combined_contents = "\n".join(text_contents)
+    # Wrap all attachment contents in a single <attachment> XML tag
+    combined_contents = (
+        "<attachment>\n" + "\n\n".join(text_contents) + "\n</attachment>\n\n"
+    )
     return f"{combined_contents}[User Question]:\n{message}"
 
 
@@ -240,7 +256,8 @@ def _process_attachment_context(
             }
         )
     else:
-        # Text document - get formatted content
+        # Text document - get formatted content with attachment index
+        # The content is wrapped in <attachment> XML tags by context_service
         doc_prefix = context_service.build_document_text_prefix(context)
         if doc_prefix:
             text_contents.append(f"[Attachment {idx}]\n{doc_prefix}")
@@ -843,9 +860,12 @@ async def _process_attachment_contexts_for_message(
     if image_contents:
         return _build_vision_structure(text_contents, image_contents, message)
 
-    # If only text contents, combine them
+    # If only text contents, combine them with <attachment> XML tag
     if text_contents:
-        combined_contents = "\n".join(text_contents)
+        # Wrap all attachment contents in a single <attachment> XML tag
+        combined_contents = (
+            "<attachment>\n" + "\n\n".join(text_contents) + "\n</attachment>\n\n"
+        )
         return f"{combined_contents}[User Question]:\n{message}"
 
     return message
@@ -937,29 +957,31 @@ def _prepare_kb_tools_from_contexts(
     )
     extra_tools.append(kb_tool)
 
-    # Choose prompt based on whether KB is user-selected or inherited from task
+    # Get historical knowledge base meta info if available
+    kb_meta_info = ""
+    if task_id:
+        kb_meta_info = _build_historical_kb_meta_prompt(db, task_id)
+
+    # Choose prompt template based on whether KB is user-selected or inherited from task
+    # Use the shared prompts which already include XML tags
+    # Inject KB meta list into the template using format method
+    # This ensures the KB list appears inside the <knowledge_base> tag
     if is_user_selected_kb:
         # Strict mode: User explicitly selected KB for this message
-        kb_instruction = KB_PROMPT_STRICT
+        kb_instruction = KB_PROMPT_STRICT.format(kb_meta_list=kb_meta_info)
         logger.info(
             "[_prepare_kb_tools_from_contexts] Using STRICT mode prompt "
             "(user explicitly selected KB)"
         )
     else:
         # Relaxed mode: KB inherited from task, AI can use general knowledge as fallback
-        kb_instruction = KB_PROMPT_RELAXED
+        kb_instruction = KB_PROMPT_RELAXED.format(kb_meta_list=kb_meta_info)
         logger.info(
             "[_prepare_kb_tools_from_contexts] Using RELAXED mode prompt "
             "(KB inherited from task)"
         )
 
     enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
-
-    # Add historical knowledge base meta info if available
-    if task_id:
-        kb_meta_prompt = _build_historical_kb_meta_prompt(db, task_id)
-        if kb_meta_prompt:
-            enhanced_system_prompt = f"{enhanced_system_prompt}{kb_meta_prompt}"
 
     return extra_tools, enhanced_system_prompt
 

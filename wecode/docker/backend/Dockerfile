@@ -7,10 +7,18 @@ FROM registry.api.weibo.com/wecode/python:3.12-slim
 # Set working directory
 WORKDIR /app
 
-# Configure Aliyun Debian mirror and install tzdata, libmagic (required by python-magic),
-# tesseract-ocr (required by pytesseract), and poppler-utils (required by pdf2image)
+# Configure Aliyun Debian mirror and install system dependencies:
+# - tzdata: timezone configuration
+# - libmagic1: required by python-magic
+# - tesseract-ocr: required by pytesseract
+# - poppler-utils: required by pdf2image
+# - Playwright chromium dependencies (for Debian Trixie, manually install as playwright install-deps uses obsolete package names)
 RUN sed -i 's|http://deb.debian.org|http://mirrors.cloud.aliyuncs.com|g' /etc/apt/sources.list.d/debian.sources && \
-    apt-get update && apt-get install -y tzdata libmagic1 tesseract-ocr poppler-utils && \
+    apt-get update && apt-get install -y \
+    tzdata libmagic1 tesseract-ocr poppler-utils \
+    libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxkbcommon0 \
+    libatspi2.0-0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
+    fonts-unifont fonts-liberation fonts-noto-color-emoji && \
     ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
     echo "Asia/Shanghai" > /etc/timezone && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -51,7 +59,10 @@ ENV SHUTDOWN_REJECT_NEW_REQUESTS=true
 RUN sed -i '/\[tool\.uv\.sources\]/,/^$/d' pyproject.toml && \
     uv pip install --system --no-cache -r pyproject.toml
 
-RUN PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright playwright install chromium && playwright install-deps chromium
+# Install Playwright chromium browser from npmmirror
+# Playwright version is pinned in pyproject.toml to ensure mirror compatibility
+# Dependencies are already installed above (playwright install-deps uses obsolete package names on Debian Trixie)
+RUN PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright playwright install chromium
 
 # Copy application code
 COPY backend /app

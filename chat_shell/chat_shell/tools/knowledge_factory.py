@@ -116,13 +116,15 @@ async def prepare_knowledge_base_tools(
             "[knowledge_factory] Using RELAXED mode prompt (KB inherited from task)"
         )
 
-    enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
-
-    # Add historical knowledge base meta info if available
+    # Get historical knowledge base meta info if available
+    kb_meta_prompt = ""
     if task_id:
         kb_meta_prompt = await _build_historical_kb_meta_prompt(db, task_id)
-        if kb_meta_prompt:
-            enhanced_system_prompt = f"{enhanced_system_prompt}{kb_meta_prompt}"
+
+    # Inject KB meta list into the template using format method
+    # This ensures the KB list appears inside the <knowledge_base> tag
+    kb_instruction_with_meta = kb_instruction.format(kb_meta_list=kb_meta_prompt)
+    enhanced_system_prompt = f"{base_system_prompt}{kb_instruction_with_meta}"
 
     return extra_tools, enhanced_system_prompt
 

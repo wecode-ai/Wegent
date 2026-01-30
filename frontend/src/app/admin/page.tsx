@@ -24,6 +24,7 @@ import ApiKeyManagement from '@/features/admin/components/ApiKeyManagement'
 import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel'
 import BackgroundExecutionMonitorPanel from '@/features/admin/components/BackgroundExecutionMonitorPanel'
 import GlobalAdminSetupWizard from '@/features/admin/components/GlobalAdminSetupWizard'
+import IMChannelList from '@/features/admin/components/IMChannelList'
 import { UserProvider, useUser } from '@/features/common/UserContext'
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
@@ -79,6 +80,7 @@ function AdminContent() {
         'public-bots',
         'api-keys',
         'system-config',
+        'im-channels',
         'monitor',
       ].includes(tab)
     ) {
@@ -143,6 +145,8 @@ function AdminContent() {
         return <ApiKeyManagement />
       case 'system-config':
         return <SystemConfigPanel />
+      case 'im-channels':
+        return <IMChannelList />
       case 'monitor':
         return <BackgroundExecutionMonitorPanel />
       default:

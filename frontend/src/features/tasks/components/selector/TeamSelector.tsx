@@ -41,7 +41,7 @@ interface TeamSelectorProps {
   // Optional: hide the settings footer link
   hideSettingsLink?: boolean
   // Optional: current mode for filtering teams by bind_mode
-  currentMode?: 'chat' | 'code'
+  currentMode?: 'chat' | 'code' | 'task'
   // Optional: whether to open the dropdown by default
   defaultOpen?: boolean
 }
