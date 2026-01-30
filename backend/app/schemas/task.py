@@ -217,3 +217,17 @@ class PipelineStageInfo(BaseModel):
     current_stage_name: str  # Name of current stage (bot name)
     is_pending_confirmation: bool  # Whether waiting for user confirmation
     stages: list[dict]  # List of {index, name, require_confirmation, status}
+
+
+class TaskSkillsResponse(BaseModel):
+    """Response for GET /tasks/{task_id}/skills endpoint.
+
+    Returns all skills associated with a task through the chain:
+    task → team → bots → ghosts → skills
+    """
+
+    task_id: int
+    team_id: Optional[int] = None
+    team_namespace: str = "default"
+    skills: List[str] = []  # All bot skills (deduplicated)
+    preload_skills: List[str] = []  # Skills to preload
