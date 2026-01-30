@@ -6,14 +6,14 @@
 
 import { memo } from 'react'
 import type { ThinkingDisplayProps } from './types'
-import SimpleThinkingView from './SimpleThinkingView'
 import DetailedThinkingView from './DetailedThinkingView'
+import ToolBlocksView from './ToolBlocksView'
 
 /**
  * Main thinking display component that routes to the appropriate view
  * based on the shell type.
  *
- * - Chat shell type: Uses SimpleThinkingView (collapsible timeline)
+ * - Chat shell type: Only shows ToolBlocksView (no detailed timeline)
  * - ClaudeCode/Agno/Other: Uses DetailedThinkingView (full thinking process)
  */
 const ThinkingDisplay = memo(function ThinkingDisplay({
@@ -26,9 +26,9 @@ const ThinkingDisplay = memo(function ThinkingDisplay({
     return null
   }
 
-  // Route to appropriate view based on shell type
+  // Chat shell: Only show tool blocks
   if (shellType === 'Chat') {
-    return <SimpleThinkingView thinking={thinking} taskStatus={taskStatus} />
+    return <ToolBlocksView thinking={thinking} taskStatus={taskStatus} />
   }
 
   // Default to detailed view for ClaudeCode, Agno, and other shell types

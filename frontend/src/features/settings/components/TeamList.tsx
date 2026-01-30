@@ -220,7 +220,7 @@ export default function TeamList({
   }
 
   // Get target page based on team's bind_mode and current filter
-  const getTargetPage = (team: Team): 'chat' | 'code' | 'knowledge' => {
+  const getTargetPage = (team: Team): 'chat' | 'code' | 'knowledge' | 'task' => {
     const bindMode = team.bind_mode || ['chat', 'code']
     // If team only supports one mode, use that
     if (bindMode.length === 1) {

@@ -19,9 +19,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# Default API base URL for attachment downloads
-# This follows the same pattern as skill downloads
-DEFAULT_API_BASE_URL = "http://wegent-backend:8000"
+
+# Re-export get_api_base_url for backward compatibility
+from executor.services.api_client import get_api_base_url  # noqa: E402
 
 
 @dataclass
@@ -59,10 +59,8 @@ class AttachmentDownloader:
         self.subtask_id = subtask_id
         self.auth_token = auth_token
         self.headers = {"Authorization": f"Bearer {auth_token}"}
-        # Get API base URL from environment, similar to skill downloads
-        self.api_base_url = os.getenv("TASK_API_DOMAIN", DEFAULT_API_BASE_URL).rstrip(
-            "/"
-        )
+        # Get API base URL based on executor mode
+        self.api_base_url = get_api_base_url()
 
     def get_attachments_dir(self) -> str:
         """
@@ -104,6 +102,10 @@ class AttachmentDownloader:
         if not attachments:
             logger.debug("No attachments to download")
             return AttachmentDownloadResult(success=[], failed=[])
+
+        logger.info(
+            f"Downloading {len(attachments)} attachments, api_base_url={self.api_base_url}"
+        )
 
         # Create attachments directory
         attachments_dir = self.get_attachments_dir()

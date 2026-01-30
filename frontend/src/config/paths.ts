@@ -32,6 +32,9 @@ export const paths = {
   wiki: {
     getHref: () => '/knowledge',
   },
+  devices: {
+    getHref: () => '/devices',
+  },
   feed: {
     getHref: () => '/feed',
   },

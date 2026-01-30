@@ -27,7 +27,7 @@ MAX_UPLOAD_SIZE = 100 * 1024 * 1024
 
 
 class SandboxUploadAttachmentInput(BaseModel):
-    """Input schema for sandbox_upload_attachment tool."""
+    """Input schema for upload_attachment tool."""
 
     file_path: str = Field(
         ...,
@@ -67,7 +67,7 @@ class SandboxUploadAttachmentTool(BaseSandboxTool):
     attachment storage via the /api/attachments/upload endpoint.
     """
 
-    name: str = "sandbox_upload_attachment"
+    name: str = "upload_attachment"
     display_name: str = "上传文件"
     description: str = """Upload a file from sandbox to Wegent and get a download URL.
 

@@ -37,6 +37,7 @@ from app.schemas.task import (
     TaskInDB,
     TaskListResponse,
     TaskLiteListResponse,
+    TaskSkillsResponse,
     TaskUpdate,
 )
 from app.services.adapters.task_kinds import task_kinds_service
@@ -209,6 +210,25 @@ def get_task(
 ):
     """Get specified task details with related entities"""
     return task_kinds_service.get_task_detail(
+        db=db, task_id=task_id, user_id=current_user.id
+    )
+
+
+@router.get("/{task_id}/skills", response_model=TaskSkillsResponse)
+def get_task_skills(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get all skills associated with a task.
+
+    Follows the chain: task → team → bots → ghosts → skills
+
+    Returns:
+        TaskSkillsResponse with task_id, team_id, team_namespace,
+        skills list (deduplicated), and preload_skills list.
+    """
+    return task_kinds_service.get_task_skills(
         db=db, task_id=task_id, user_id=current_user.id
     )
 

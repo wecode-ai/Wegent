@@ -191,7 +191,9 @@ class Agent:
         logger.info("username: {username} git token: {git_token}")
         logger.info(user_config)
 
-        project_path = os.path.join(config.WORKSPACE_ROOT, str(self.task_id), repo_name)
+        project_path = os.path.join(
+            config.get_workspace_root(), str(self.task_id), repo_name
+        )
         if self.project_path is None:
             self.project_path = project_path
 

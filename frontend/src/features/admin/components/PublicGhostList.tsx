@@ -399,7 +399,7 @@ const PublicGhostList: React.FC = () => {
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleCreateGhost} disabled={saving}>
+            <Button variant="primary" onClick={handleCreateGhost} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('common.create')}
             </Button>
@@ -466,7 +466,7 @@ const PublicGhostList: React.FC = () => {
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleUpdateGhost} disabled={saving}>
+            <Button variant="primary" onClick={handleUpdateGhost} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('common.save')}
             </Button>

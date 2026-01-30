@@ -27,7 +27,7 @@ const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18
 
 export interface UseChatAreaStateOptions {
   teams: Team[]
-  taskType: 'chat' | 'code' | 'knowledge'
+  taskType: 'chat' | 'code' | 'knowledge' | 'task'
   selectedTeamForNewTask?: Team | null
   /**
    * Initial knowledge base to pre-select when starting a new chat from knowledge page.

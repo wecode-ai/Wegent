@@ -12,6 +12,7 @@
     "public_shells": "公共 Shell",
     "api_keys": "密钥管理",
     "system_config": "系统配置",
+    "im_channels": "IM 渠道",
     "monitor": "监控"
   },
   "stats": {
@@ -27,7 +28,8 @@
     "save": "保存",
     "delete": "删除",
     "reset": "重置",
-    "loading": "加载中..."
+    "loading": "加载中...",
+    "done": "完成"
   },
   "users": {
     "title": "用户管理",
@@ -418,6 +420,10 @@
     "edit_team": "编辑智能体",
     "delete_team": "删除智能体",
     "member_count": "{{count}} 个机器人",
+    "tabs": {
+      "basic": "基础",
+      "advanced": "高级"
+    },
     "status": {
       "active": "启用",
       "inactive": "禁用"
@@ -645,11 +651,48 @@
       "title": "配置公共技能",
       "description": "上传所有用户可用的技能包（.zip）。技能为 AI 代理提供按需能力。",
       "no_skills": "尚未配置公共技能",
+      "add_skill": "添加技能",
+      "add_skill_description": "上传 ZIP 包或从 Git 仓库导入技能",
+      "upload_tab": "上传",
+      "git_import_tab": "Git 导入",
       "upload_skill": "上传技能",
       "skill_uploaded": "技能上传成功",
       "skill_deleted": "技能删除成功",
       "drag_drop_hint": "将 .zip 文件拖放到此处，或点击浏览",
-      "file_requirements": "技能包必须是包含 SKILL.md 的 .zip 文件"
+      "file_requirements": "技能包必须是包含 SKILL.md 的 .zip 文件",
+      "skill_name": "技能名称",
+      "skill_name_placeholder": "请输入技能名称",
+      "skill_name_hint": "技能的唯一标识符（例如：mermaid-diagram）",
+      "zip_package": "ZIP 包",
+      "max_file_size": "最大文件大小：10MB",
+      "uploading": "上传中...",
+      "requirements": "要求",
+      "requirement_zip": "文件必须是 ZIP 压缩包",
+      "requirement_folder": "必须包含以技能名称命名的文件夹",
+      "requirement_skill_md": "必须包含 SKILL.md 元数据文件",
+      "requirement_size": "最大文件大小：10MB",
+      "git_url_label": "Git 仓库地址",
+      "git_url_placeholder": "https://github.com/owner/repo",
+      "git_url_hint": "支持 GitHub、GitLab、Gitee 和 Gitea 仓库",
+      "git_scan_button": "扫描",
+      "git_scanning": "扫描中...",
+      "git_invalid_url": "请输入有效的 Git 仓库地址",
+      "git_no_skills_found": "未在仓库中找到技能",
+      "git_no_skills_hint": "确保仓库中包含带有 SKILL.md 文件的技能目录",
+      "git_repo_not_found": "仓库不存在或无法访问",
+      "git_download_failed": "下载仓库失败",
+      "git_skills_found": "找到 {{count}} 个技能",
+      "git_select_all": "全选",
+      "git_deselect_all": "取消全选",
+      "git_import_selected": "导入选中的技能",
+      "git_conflict_title": "技能名称冲突",
+      "git_conflict_description": "以下技能已存在。选择要覆盖的技能：",
+      "git_import_confirm": "确认导入",
+      "git_import_result_title": "导入完成",
+      "git_import_success": "成功导入 {{count}} 个技能",
+      "git_import_skipped": "跳过 {{count}} 个技能（已存在）",
+      "git_import_failed": "{{count}} 个技能导入失败",
+      "git_import_failed_details": "失败详情"
     },
     "success": {
       "completed": "设置完成！您现在可以开始使用 Wegent。",
@@ -658,6 +701,75 @@
     "errors": {
       "load_status_failed": "检查设置状态失败",
       "complete_failed": "完成设置失败"
+    }
+  },
+  "im_channels": {
+    "title": "IM 渠道管理",
+    "description": "管理 IM 平台集成（钉钉、飞书）",
+    "create_description": "创建新的 IM 渠道集成。配置平台凭据和默认智能体。",
+    "loading": "加载渠道中...",
+    "no_channels": "暂无 IM 渠道配置",
+    "no_default_team": "无默认智能体",
+    "default_team": "默认智能体",
+    "create_channel": "创建渠道",
+    "edit_channel": "编辑渠道",
+    "delete_channel": "删除渠道",
+    "restart_channel": "重启连接",
+    "types": {
+      "dingtalk": "钉钉",
+      "feishu": "飞书",
+      "not_supported": "暂不支持"
+    },
+    "status": {
+      "enabled": "已启用",
+      "disabled": "已禁用"
+    },
+    "connection": {
+      "connected": "已连接",
+      "disconnected": "未连接"
+    },
+    "form": {
+      "name": "渠道名称",
+      "name_placeholder": "请输入渠道名称",
+      "channel_type": "渠道类型",
+      "client_id": "Client ID",
+      "client_id_placeholder": "请输入平台 Client ID",
+      "client_secret": "Client Secret",
+      "client_secret_placeholder": "请输入平台 Client Secret",
+      "client_secret_edit_placeholder": "请输入新的 Client Secret（留空保持不变）",
+      "leave_empty_to_keep": "留空保持不变",
+      "default_team": "默认智能体",
+      "default_team_placeholder": "选择默认智能体",
+      "no_default_team": "无默认智能体",
+      "default_model": "默认模型",
+      "default_model_placeholder": "选择默认模型",
+      "no_default_model": "使用智能体默认模型",
+      "team_no_model_warning": "该智能体没有配置模型，必须选择一个默认模型",
+      "is_enabled": "启用渠道"
+    },
+    "confirm": {
+      "delete_title": "删除渠道",
+      "delete_message": "确定要删除 IM 渠道 \"{{name}}\" 吗？此操作无法撤销。"
+    },
+    "success": {
+      "created": "IM 渠道创建成功",
+      "updated": "IM 渠道更新成功",
+      "deleted": "IM 渠道删除成功",
+      "enabled": "IM 渠道已启用",
+      "disabled": "IM 渠道已禁用",
+      "restarted": "IM 渠道已重启"
+    },
+    "errors": {
+      "load_failed": "加载 IM 渠道失败",
+      "create_failed": "创建 IM 渠道失败",
+      "update_failed": "更新 IM 渠道失败",
+      "delete_failed": "删除 IM 渠道失败",
+      "toggle_failed": "切换 IM 渠道状态失败",
+      "restart_failed": "重启 IM 渠道失败",
+      "name_required": "渠道名称不能为空",
+      "config_required": "Client ID 和 Client Secret 不能为空",
+      "team_required": "必须选择一个默认智能体",
+      "model_required_for_team": "所选智能体没有配置模型，必须选择一个默认模型"
     }
   }
 }

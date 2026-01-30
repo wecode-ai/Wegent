@@ -26,6 +26,7 @@ from executor.agents.base import Agent
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
 from executor.agents.claude_code.response_processor import process_response
 from executor.config import config
+from executor.services.attachment_downloader import get_api_base_url
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
 from executor.utils.mcp_utils import (
@@ -36,7 +37,12 @@ from shared.logger import setup_logger
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
-from shared.utils.crypto import decrypt_git_token, is_token_encrypted
+from shared.utils.crypto import (
+    decrypt_git_token,
+    decrypt_sensitive_data,
+    is_data_encrypted,
+    is_token_encrypted,
+)
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = setup_logger("claude_code_agent")
@@ -74,6 +80,119 @@ class ClaudeCodeAgent(Agent):
 
     def get_name(self) -> str:
         return "ClaudeCode"
+
+    @staticmethod
+    def _get_session_id_file_path(task_id: int) -> str:
+        """Get the path to the session ID file for a task.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            Path to the session ID file
+        """
+        workspace_root = config.get_workspace_root()
+        task_dir = os.path.join(workspace_root, str(task_id))
+        return os.path.join(task_dir, ".claude_session_id")
+
+    @classmethod
+    def _load_saved_session_id(cls, task_id: int) -> str | None:
+        """Load saved Claude session ID for a task.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            Saved session ID or None if not found
+        """
+        session_file = cls._get_session_id_file_path(task_id)
+        try:
+            if os.path.exists(session_file):
+                with open(session_file, "r", encoding="utf-8") as f:
+                    session_id = f.read().strip()
+                    if session_id:
+                        logger.info(
+                            f"Loaded saved Claude session ID for task {task_id}: {session_id}"
+                        )
+                        return session_id
+        except Exception as e:
+            logger.warning(f"Failed to load saved session ID for task {task_id}: {e}")
+        return None
+
+    @classmethod
+    def _save_session_id(cls, task_id: int, claude_session_id: str) -> None:
+        """Save Claude session ID for a task.
+
+        Args:
+            task_id: Task ID
+            claude_session_id: Claude's actual session ID
+        """
+        session_file = cls._get_session_id_file_path(task_id)
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(session_file), exist_ok=True)
+
+            with open(session_file, "w", encoding="utf-8") as f:
+                f.write(claude_session_id)
+            logger.info(
+                f"Saved Claude session ID for task {task_id}: {claude_session_id}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save session ID for task {task_id}: {e}")
+
+    @classmethod
+    def get_active_task_ids(cls) -> list[int]:
+        """Get list of active task IDs.
+
+        Each task_id represents an active Claude Code session/process.
+        Session keys can be in format:
+        - "task_id:bot_id" for initial connections
+        - "subtask_id" when new_session=True (subtask_id as session_id)
+
+        To get correct task_ids, we need to:
+        1. Check _session_id_map to find internal_key -> session_id mappings
+        2. Extract task_id from internal_key (format: "task_id:bot_id")
+
+        Returns:
+            List of active task IDs
+        """
+        task_ids = []
+
+        # Use _session_id_map to correctly map session_id back to task_id
+        # internal_key format: "task_id:bot_id", session_id can be "task_id:bot_id" or "subtask_id"
+        for internal_key in cls._session_id_map.keys():
+            try:
+                # Extract task_id from internal_key (format: "task_id:bot_id" or "task_id")
+                task_id_str = internal_key.split(":")[0]
+                task_id = int(task_id_str)
+                if task_id not in task_ids:
+                    task_ids.append(task_id)
+            except (ValueError, IndexError):
+                continue
+
+        # Also check _clients directly for session_ids in "task_id:bot_id" format
+        # (these may not have corresponding _session_id_map entries)
+        for session_id in cls._clients.keys():
+            try:
+                # Only process if it looks like "task_id:bot_id" format
+                if ":" in session_id:
+                    task_id_str = session_id.split(":")[0]
+                    task_id = int(task_id_str)
+                    if task_id not in task_ids:
+                        task_ids.append(task_id)
+            except (ValueError, IndexError):
+                continue
+
+        return task_ids
+
+    @classmethod
+    def get_active_session_count(cls) -> int:
+        """Get the number of active Claude Code sessions.
+
+        Returns:
+            Number of active sessions (same as number of active tasks)
+        """
+        return len(cls.get_active_task_ids())
 
     @classmethod
     def _load_hooks(cls):
@@ -197,6 +316,13 @@ class ClaudeCodeAgent(Agent):
         # Silent exit tracking for subscription tasks
         self.is_silent_exit: bool = False
         self.silent_exit_reason: str = ""
+
+        # Config directory and env config for Local mode (populated in initialize())
+        self._claude_config_dir: str = ""
+        self._claude_env_config: Dict[str, Any] = {}
+
+        # Callback for when client is created (used for heartbeat updates)
+        self.on_client_created_callback: Optional[callable] = None
 
     def _set_git_env_variables(self, task_data: Dict[str, Any]) -> None:
         """
@@ -487,7 +613,7 @@ class ClaudeCodeAgent(Agent):
     def initialize(self) -> TaskStatus:
         """
         Initialize the Claude Code Agent with configuration from task_data.
-        Saves the bot configuration to ~/.claude/settings.json if available.
+        Generates config files to task workspace directory and passes via settings parameter.
 
         Returns:
             TaskStatus: Initialization status
@@ -512,34 +638,8 @@ class ClaudeCodeAgent(Agent):
                     bot_config, user_name=user_name, git_url=git_url
                 )
                 if agent_config:
-                    # Ensure ~/.claude directory exists
-                    claude_dir = os.path.expanduser("~/.claude")
-                    Path(claude_dir).mkdir(parents=True, exist_ok=True)
-
-                    # Save config to settings.json
-                    settings_path = os.path.join(claude_dir, "settings.json")
-                    with open(settings_path, "w") as f:
-                        json.dump(agent_config, f, indent=2)
-                    logger.info(f"Saved Claude Code settings to {settings_path}")
-
-                    # Save claude.json config
-                    claude_json_path = os.path.expanduser("~/.claude.json")
-                    claude_json_config = {
-                        "numStartups": 2,
-                        "installMethod": "unknown",
-                        "autoUpdates": True,
-                        "sonnet45MigrationComplete": True,
-                        "userID": _generate_claude_code_user_id(),
-                        "hasCompletedOnboarding": True,
-                        "lastOnboardingVersion": "2.0.14",
-                        "bypassPermissionsModeAccepted": True,
-                        "hasOpusPlanDefault": False,
-                        "lastReleaseNotesSeen": "2.0.14",
-                        "isQualifiedForDataSharing": False,
-                    }
-                    with open(claude_json_path, "w") as f:
-                        json.dump(claude_json_config, f, indent=2)
-                    logger.info(f"Saved Claude Code config to {claude_json_path}")
+                    # Generate config files to task workspace directory
+                    self._save_claude_config_files(agent_config)
 
                     # Download and deploy Skills if configured
                     self._download_and_deploy_skills(bot_config)
@@ -553,6 +653,103 @@ class ClaudeCodeAgent(Agent):
                 title_key="thinking.initialize_failed", report_immediately=False
             )
             return TaskStatus.FAILED
+
+    def _save_claude_config_files(self, agent_config: Dict[str, Any]) -> None:
+        """
+        Save Claude config files to appropriate directory based on execution mode.
+
+        - Docker mode: saves to ~/.claude/ (SDK reads from default location)
+        - Local mode: saves to task workspace directory, file path passed via
+          SDK's 'settings' parameter in _create_and_connect_client() to avoid
+          modifying user's personal ~/.claude/ config
+
+        Args:
+            agent_config: The agent configuration dictionary
+        """
+        # Determine config directory based on mode
+        if config.EXECUTOR_MODE == "local":
+            # Local mode: save to task workspace directory (avoid modifying user's ~/.claude/)
+            config_dir = os.path.join(
+                config.get_workspace_root(), str(self.task_id), ".claude"
+            )
+            claude_json_path = os.path.join(config_dir, "claude.json")
+        else:
+            # Docker mode: save to user's ~/.claude directory (original behavior)
+            config_dir = os.path.expanduser("~/.claude")
+            claude_json_path = os.path.expanduser("~/.claude.json")
+
+        Path(config_dir).mkdir(parents=True, exist_ok=True)
+
+        # Save settings.json
+        settings_path = os.path.join(config_dir, "settings.json")
+        with open(settings_path, "w") as f:
+            json.dump(agent_config, f, indent=2)
+        logger.info(f"Saved Claude Code settings to {settings_path}")
+
+        # Save claude.json config (user preferences)
+        claude_json_config = {
+            "numStartups": 2,
+            "installMethod": "unknown",
+            "autoUpdates": True,
+            "sonnet45MigrationComplete": True,
+            "userID": _generate_claude_code_user_id(),
+            "hasCompletedOnboarding": True,
+            "lastOnboardingVersion": "2.0.14",
+            "bypassPermissionsModeAccepted": True,
+            "hasOpusPlanDefault": False,
+            "lastReleaseNotesSeen": "2.0.14",
+            "isQualifiedForDataSharing": False,
+        }
+        with open(claude_json_path, "w") as f:
+            json.dump(claude_json_config, f, indent=2)
+        logger.info(f"Saved Claude Code config to {claude_json_path}")
+
+        # Store config directory for Local mode
+        self._claude_config_dir = config_dir
+        self._claude_env_config = agent_config.get("env", {})
+
+    def _resolve_env_value(self, value: str) -> str:
+        """Resolve a value that may be an environment variable template or encrypted.
+
+        Handles different formats:
+        1. ${VAR_NAME} - environment variable template, replace with os.environ value
+        2. Encrypted value - decrypt using decrypt_sensitive_data
+        3. Plain value - use as-is
+
+        Args:
+            value: The value to resolve
+
+        Returns:
+            The resolved value
+        """
+        import re
+
+        if not value:
+            return value
+
+        # Check for ${VAR_NAME} pattern and replace with env var
+        env_var_pattern = r"^\$\{([^}]+)\}$"
+        match = re.match(env_var_pattern, value)
+        if match:
+            var_name = match.group(1)
+            resolved = os.environ.get(var_name, "")
+            if resolved:
+                logger.info(f"Resolved env var ${{{var_name}}} from environment")
+            else:
+                logger.warning(f"Environment variable {var_name} not found")
+            return resolved
+
+        # Check if encrypted and decrypt
+        if is_data_encrypted(value):
+            decrypted = decrypt_sensitive_data(value)
+            if decrypted:
+                logger.info("Decrypted sensitive data")
+                return decrypted
+            logger.warning("Failed to decrypt sensitive data")
+            return ""
+
+        # Return as-is
+        return value
 
     def _create_claude_model(
         self, bot_config: Dict[str, Any], user_name: str = None, git_url: str = None
@@ -568,12 +765,19 @@ class ClaudeCodeAgent(Agent):
 
         model_id = env.get("model_id", "")
 
+        # Extract API key and handle different formats:
+        # 1. ${VAR_NAME} - environment variable template, replace with os.environ value
+        # 2. Encrypted value - decrypt using decrypt_sensitive_data
+        # 3. Plain value - use as-is
+        api_key = env.get("api_key", "")
+        api_key = self._resolve_env_value(api_key)
+
         # Note: ANTHROPIC_SMALL_FAST_MODEL is deprecated in favor of ANTHROPIC_DEFAULT_HAIKU_MODEL.
         env_config = {
             "ANTHROPIC_MODEL": model_id,
             "ANTHROPIC_SMALL_FAST_MODEL": env.get("small_model", model_id),
             "ANTHROPIC_DEFAULT_HAIKU_MODEL": env.get("small_model", model_id),
-            "ANTHROPIC_AUTH_TOKEN": env.get("api_key", ""),
+            "ANTHROPIC_AUTH_TOKEN": api_key,
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": int(
                 os.getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "0")
             ),
@@ -1032,6 +1236,8 @@ class ClaudeCodeAgent(Agent):
         Create and connect a new Claude SDK client.
         Sets up the working directory if needed, creates the client with options,
         connects it, and stores it in the cache.
+
+        Config files are generated in initialize() and passed via 'settings' parameter.
         """
         logger.info(f"Creating new Claude client for session_id: {self.session_id}")
         logger.info(
@@ -1040,9 +1246,35 @@ class ClaudeCodeAgent(Agent):
 
         # Ensure working directory exists
         if self.options.get("cwd") is None or self.options.get("cwd") == "":
-            cwd = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
+            cwd = os.path.join(config.get_workspace_root(), str(self.task_id))
             os.makedirs(cwd, exist_ok=True)
             self.options["cwd"] = cwd
+
+        # In Local mode, configure SDK to use task-specific config directory
+        # to avoid modifying user's personal ~/.claude/ config
+        if config.EXECUTOR_MODE == "local" and self._claude_config_dir:
+            # Pass env config (contains ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL, etc.)
+            if self._claude_env_config:
+                existing_env = self.options.get("env", {})
+                merged_env = {**existing_env, **self._claude_env_config}
+                self.options["env"] = {k: str(v) for k, v in merged_env.items()}
+
+            # Set CLAUDE_CONFIG_DIR env var to redirect all config reads/writes
+            # This affects settings.json, claude.json, and skills locations
+            # Note: Keep setting_sources as ["user", "project", "local"] so SDK
+            # reads config from CLAUDE_CONFIG_DIR instead of default ~/.claude/
+            env = self.options.get("env", {})
+            env["CLAUDE_CONFIG_DIR"] = self._claude_config_dir
+            self.options["env"] = env
+            logger.info(f"Local mode: using config dir {self._claude_config_dir}")
+
+        # Check if there's a saved session ID to resume
+        saved_session_id = self._load_saved_session_id(self.task_id)
+        if saved_session_id:
+            logger.info(
+                f"Resuming Claude session for task {self.task_id}: {saved_session_id}"
+            )
+            self.options["resume"] = saved_session_id
 
         # Create client with options
         if self.options:
@@ -1056,6 +1288,24 @@ class ClaudeCodeAgent(Agent):
 
         # Store client connection for reuse
         self._clients[self.session_id] = self.client
+
+        # Update session_id_map for tracking (for both initial and new sessions)
+        # This ensures cleanup_task_clients can find all clients by task_id
+        if hasattr(self, "_internal_session_key"):
+            self._session_id_map[self._internal_session_key] = self.session_id
+            logger.info(
+                f"Updated _session_id_map: {self._internal_session_key} -> {self.session_id}"
+            )
+
+        # Trigger callback to notify that client is created (e.g., for heartbeat update)
+        if self.on_client_created_callback:
+            try:
+                if asyncio.iscoroutinefunction(self.on_client_created_callback):
+                    await self.on_client_created_callback()
+                else:
+                    self.on_client_created_callback()
+            except Exception as e:
+                logger.warning(f"Error in on_client_created_callback: {e}")
 
         # Register client as a resource for cleanup
         self.resource_manager.register_resource(
@@ -1161,7 +1411,7 @@ class ClaudeCodeAgent(Agent):
         try:
             if session_id in cls._clients:
                 client = cls._clients[session_id]
-                await client.close()
+                await client.disconnect()
                 del cls._clients[session_id]
                 logger.info(f"Closed Claude client for session_id: {session_id}")
                 return TaskStatus.SUCCESS
@@ -1179,13 +1429,213 @@ class ClaudeCodeAgent(Agent):
         """
         for session_id, client in list(cls._clients.items()):
             try:
-                await client.close()
+                await client.disconnect()
                 logger.info(f"Closed Claude client for session_id: {session_id}")
             except Exception as e:
                 logger.exception(
                     f"Error closing client for session_id {session_id}: {str(e)}"
                 )
         cls._clients.clear()
+
+    @classmethod
+    async def cleanup_task_clients(cls, task_id: int) -> int:
+        """
+        Close all client connections for a specific task_id.
+
+        Session keys can be in two formats:
+        1. "task_id:bot_id" - for initial connections
+        2. "subtask_id" - when new_session=True, uses subtask_id as session_id
+
+        We check both _session_id_map (to find mapped session_ids) and
+        _clients directly (for any remaining matches).
+
+        Args:
+            task_id: Task ID to cleanup clients for
+
+        Returns:
+            Number of clients cleaned up
+        """
+        cleaned_count = 0
+        task_id_str = str(task_id)
+        task_id_prefix = f"{task_id}:"
+
+        # Debug: Log cleanup start
+        logger.debug(f"[Cleanup] Starting cleanup for task_id={task_id}")
+        logger.debug(
+            f"[Cleanup] _session_id_map keys={list(cls._session_id_map.keys())}"
+        )
+        logger.debug(f"[Cleanup] _clients keys={list(cls._clients.keys())}")
+
+        # Debug: Log current state
+        logger.info(
+            f"[Cleanup] Starting cleanup for task_id={task_id}, "
+            f"_session_id_map keys={list(cls._session_id_map.keys())}, "
+            f"_clients keys={list(cls._clients.keys())}"
+        )
+
+        # Step 1: Check _session_id_map to find all session_ids for this task
+        internal_keys_to_cleanup = []
+        logger.debug(
+            f"[Cleanup] Checking _session_id_map for task_id_prefix={task_id_prefix}"
+        )
+        for internal_key, session_id in list(cls._session_id_map.items()):
+            logger.debug(
+                f"[Cleanup] Checking internal_key={internal_key}, session_id={session_id}"
+            )
+            if internal_key.startswith(task_id_prefix) or internal_key == task_id_str:
+                logger.debug(f"[Cleanup] MATCH! Adding to cleanup list")
+                internal_keys_to_cleanup.append((internal_key, session_id))
+                logger.info(
+                    f"[Cleanup] Found internal_key={internal_key} -> session_id={session_id} for task {task_id}"
+                )
+            else:
+                logger.debug(f"[Cleanup] NO MATCH for internal_key={internal_key}")
+
+        logger.debug(f"[Cleanup] internal_keys_to_cleanup={internal_keys_to_cleanup}")
+
+        # Clean up clients found in _session_id_map
+        logger.debug(
+            f"[Cleanup] Starting to clean up {len(internal_keys_to_cleanup)} clients"
+        )
+        for internal_key, session_id in internal_keys_to_cleanup:
+            logger.debug(
+                f"[Cleanup] Processing internal_key={internal_key}, session_id={session_id}"
+            )
+            logger.debug(
+                f"[Cleanup] Checking if session_id in _clients: {session_id in cls._clients}"
+            )
+            if session_id in cls._clients:
+                logger.debug(
+                    f"[Cleanup] Found client, attempting to terminate process..."
+                )
+                try:
+                    client = cls._clients[session_id]
+
+                    # Directly terminate the process instead of using disconnect()
+                    # disconnect() has cancel scope issues when called from different asyncio context
+                    logger.debug(f"[Cleanup] Accessing transport and process...")
+
+                    # Get the process from the transport
+                    if hasattr(client, "_transport") and client._transport:
+                        transport = client._transport
+                        if hasattr(transport, "_process") and transport._process:
+                            process = transport._process
+                            pid = process.pid if hasattr(process, "pid") else None
+                            logger.debug(f"[Cleanup] Found process with PID={pid}")
+
+                            # Try graceful termination first
+                            try:
+                                process.terminate()
+                                logger.debug(
+                                    f"[Cleanup] Sent SIGTERM to process PID={pid}"
+                                )
+
+                                # Wait briefly for process to exit
+                                try:
+                                    await asyncio.wait_for(process.wait(), timeout=2.0)
+                                    logger.debug(
+                                        f"[Cleanup] Process PID={pid} exited gracefully"
+                                    )
+                                except asyncio.TimeoutError:
+                                    # Force kill if it doesn't exit
+                                    logger.debug(
+                                        f"[Cleanup] Process didn't exit, sending SIGKILL..."
+                                    )
+                                    process.kill()
+                                    await asyncio.wait_for(process.wait(), timeout=1.0)
+                                    logger.debug(f"[Cleanup] Process PID={pid} killed")
+
+                                logger.info(
+                                    f"Terminated Claude Code process for task_id={task_id}, session_id={session_id}, internal_key={internal_key}, PID={pid}"
+                                )
+                            except Exception as proc_error:
+                                logger.debug(
+                                    f"[Cleanup] Error terminating process: {proc_error}"
+                                )
+                                logger.warning(
+                                    f"Error terminating process for session_id={session_id}: {proc_error}"
+                                )
+                        else:
+                            logger.debug(f"[Cleanup] No process found in transport")
+                            logger.warning(
+                                f"No process found in transport for session_id={session_id}"
+                            )
+                    else:
+                        logger.debug(f"[Cleanup] No transport found in client")
+                        logger.warning(
+                            f"No transport found in client for session_id={session_id}"
+                        )
+
+                    # Remove from _clients dict
+                    logger.debug(f"[Cleanup] Removing from _clients...")
+                    del cls._clients[session_id]
+                    logger.debug(f"[Cleanup] Successfully cleaned up client!")
+                    cleaned_count += 1
+                except Exception as e:
+                    logger.debug(f"[Cleanup] ERROR closing client: {e}")
+                    logger.exception(
+                        f"Error closing client for session_id {session_id}: {str(e)}"
+                    )
+            else:
+                logger.debug(f"[Cleanup] session_id NOT in _clients!")
+                logger.warning(
+                    f"[Cleanup] session_id={session_id} not found in _clients for internal_key={internal_key}"
+                )
+            # Clean up the mapping
+            try:
+                del cls._session_id_map[internal_key]
+            except KeyError:
+                pass
+
+        # Step 2: Also check _clients directly for any session_id that matches task_id pattern
+        for session_id in list(cls._clients.keys()):
+            if session_id.startswith(task_id_prefix) or session_id == task_id_str:
+                if session_id not in [sid for _, sid in internal_keys_to_cleanup]:
+                    try:
+                        client = cls._clients[session_id]
+
+                        # Directly terminate the process
+                        if hasattr(client, "_transport") and client._transport:
+                            transport = client._transport
+                            if hasattr(transport, "_process") and transport._process:
+                                process = transport._process
+                                pid = process.pid if hasattr(process, "pid") else None
+
+                                try:
+                                    process.terminate()
+                                    try:
+                                        await asyncio.wait_for(
+                                            process.wait(), timeout=2.0
+                                        )
+                                    except asyncio.TimeoutError:
+                                        process.kill()
+                                        await asyncio.wait_for(
+                                            process.wait(), timeout=1.0
+                                        )
+
+                                    logger.info(
+                                        f"Terminated Claude Code process (direct match) for task_id={task_id}, session_id={session_id}, PID={pid}"
+                                    )
+                                except Exception as proc_error:
+                                    logger.warning(
+                                        f"Error terminating process (direct match) for session_id={session_id}: {proc_error}"
+                                    )
+
+                        del cls._clients[session_id]
+                        cleaned_count += 1
+                    except Exception as e:
+                        logger.exception(
+                            f"Error closing client for session_id {session_id}: {str(e)}"
+                        )
+
+        if cleaned_count > 0:
+            logger.info(f"Cleaned up {cleaned_count} client(s) for task_id={task_id}")
+        else:
+            logger.warning(
+                f"[Cleanup] No clients found to cleanup for task_id={task_id}"
+            )
+
+        return cleaned_count
 
     def cancel_run(self) -> bool:
         """
@@ -1304,8 +1754,6 @@ class ClaudeCodeAgent(Agent):
             custom_rules: Dictionary of {file_path: content} for custom instruction files
         """
         try:
-            import shutil
-
             claudecode_dir = os.path.join(project_path, ".claudecode")
 
             # Create .claudecode directory if it doesn't exist
@@ -1450,7 +1898,7 @@ class ClaudeCodeAgent(Agent):
             # Attachments should be stored in WORKSPACE_ROOT/task_id, not in the project path
             # This ensures attachments are accessible at /workspace/{task_id}:executor:attachments/...
             # instead of /workspace/{task_id}/{repo_name}/{task_id}:executor:attachments/...
-            workspace = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
+            workspace = os.path.join(config.get_workspace_root(), str(self.task_id))
 
             # Import and use attachment downloader
             from executor.services.attachment_downloader import AttachmentDownloader
@@ -1514,12 +1962,20 @@ class ClaudeCodeAgent(Agent):
 
     def _download_and_deploy_skills(self, bot_config: Dict[str, Any]) -> None:
         """
-        Download Skills from Backend API and deploy to ~/.claude/skills/.
+        Download Skills from Backend API and deploy to skills directory.
+
+        - Docker mode: deploys to ~/.claude/skills/
+        - Local mode: deploys to task config directory (same as CLAUDE_CONFIG_DIR)
+          to avoid modifying user's personal skills
+
+        Uses shared SkillDownloader from api_client module.
 
         Args:
             bot_config: Bot configuration containing skills list
         """
         try:
+            from executor.services.api_client import SkillDownloader
+
             # Extract skills list from bot_config (skills is at top level, not in spec)
             skills = bot_config.get("skills", [])
             if not skills:
@@ -1528,131 +1984,42 @@ class ClaudeCodeAgent(Agent):
 
             logger.info(f"Found {len(skills)} skills to deploy: {skills}")
 
-            # Prepare skills directory
-            skills_dir = os.path.expanduser("~/.claude/skills")
+            # Determine skills directory based on mode
+            if config.EXECUTOR_MODE == "local" and hasattr(self, "_claude_config_dir"):
+                # Local mode: use task config directory (follows CLAUDE_CONFIG_DIR)
+                skills_dir = os.path.join(self._claude_config_dir, "skills")
+            else:
+                # Docker mode: use default ~/.claude/skills
+                skills_dir = os.path.expanduser("~/.claude/skills")
 
-            # Clear existing skills directory
-            if os.path.exists(skills_dir):
-                import shutil
-
-                shutil.rmtree(skills_dir)
-                logger.info(f"Cleared existing skills directory: {skills_dir}")
-
-            Path(skills_dir).mkdir(parents=True, exist_ok=True)
-
-            # Get API base URL and auth token from task_data
-            api_base_url = os.getenv(
-                "TASK_API_DOMAIN", "http://wegent-backend:8000"
-            ).rstrip("/")
+            # Get auth token
             auth_token = self.task_data.get("auth_token")
-
             if not auth_token:
                 logger.warning("No auth token available, cannot download skills")
                 return
 
-            logger.info(f"Auth token available for skills download")
-
-            # Download each skill
-            import io
-            import shutil
-            import zipfile
-
-            import requests
-
-            success_count = 0
             # Get team namespace for skill lookup
             team_namespace = self.task_data.get("team_namespace", "default")
-            for skill_name in skills:
-                try:
-                    logger.info(f"Downloading skill: {skill_name}")
 
-                    # Get skill by name with namespace parameter
-                    # Query order: user's default namespace -> team's namespace -> public
-                    list_url = f"{api_base_url}/api/v1/kinds/skills?name={skill_name}&namespace={team_namespace}"
-                    headers = {"Authorization": f"Bearer {auth_token}"}
+            # Create downloader and deploy skills
+            downloader = SkillDownloader(
+                auth_token=auth_token,
+                team_namespace=team_namespace,
+                skills_dir=skills_dir,
+            )
 
-                    response = requests.get(list_url, headers=headers, timeout=30)
-                    if response.status_code != 200:
-                        logger.error(
-                            f"Failed to query skill '{skill_name}': HTTP {response.status_code}"
-                        )
-                        continue
+            # In Local mode, skip existing skills; in Docker mode, clear cache based on config
+            is_local_mode = config.EXECUTOR_MODE == "local"
+            result = downloader.download_and_deploy(
+                skills=skills,
+                clear_cache=not is_local_mode,  # Clear cache only in Docker mode
+                skip_existing=is_local_mode,  # Skip existing only in Local mode
+            )
 
-                    skills_data = response.json()
-                    skill_items = skills_data.get("items", [])
-
-                    if not skill_items:
-                        logger.error(f"Skill '{skill_name}' not found")
-                        continue
-
-                    # Extract skill ID and namespace from labels
-                    skill_item = skill_items[0]
-                    skill_id = (
-                        skill_item.get("metadata", {}).get("labels", {}).get("id")
-                    )
-                    skill_namespace = skill_item.get("metadata", {}).get(
-                        "namespace", "default"
-                    )
-
-                    if not skill_id:
-                        logger.error(f"Skill '{skill_name}' has no ID in metadata")
-                        continue
-
-                    # Download skill ZIP with namespace parameter for group skill support
-                    download_url = f"{api_base_url}/api/v1/kinds/skills/{skill_id}/download?namespace={skill_namespace}"
-                    response = requests.get(download_url, headers=headers, timeout=60)
-
-                    if response.status_code != 200:
-                        logger.error(
-                            f"Failed to download skill '{skill_name}': HTTP {response.status_code}"
-                        )
-                        continue
-
-                    # Extract ZIP to ~/.claude/skills/
-                    # The ZIP structure is: skill-name.zip -> skill-name/SKILL.md
-                    # We extract to skills_dir, which will create skills_dir/skill-name/
-                    import zipfile
-
-                    with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
-                        # Security check: prevent Zip Slip attacks
-                        for file_info in zip_file.filelist:
-                            if (
-                                file_info.filename.startswith("/")
-                                or ".." in file_info.filename
-                            ):
-                                logger.error(
-                                    f"Unsafe file path in skill ZIP: {file_info.filename}"
-                                )
-                                break
-                        else:
-                            # Extract all files to skills_dir
-                            # This will create skills_dir/skill-name/ automatically
-                            zip_file.extractall(skills_dir)
-                            skill_target_dir = os.path.join(skills_dir, skill_name)
-
-                            # Verify the skill folder was created
-                            if os.path.exists(skill_target_dir) and os.path.isdir(
-                                skill_target_dir
-                            ):
-                                logger.info(
-                                    f"Deployed skill '{skill_name}' to {skill_target_dir}"
-                                )
-                                success_count += 1
-                            else:
-                                logger.error(
-                                    f"Skill folder '{skill_name}' not found after extraction"
-                                )
-
-                except Exception as e:
-                    logger.warning(f"Failed to download skill '{skill_name}': {str(e)}")
-                    continue
-
-            if success_count > 0:
-                logger.info(
-                    f"Successfully deployed {success_count}/{len(skills)} skills to {skills_dir}"
-                )
-            else:
-                logger.warning("No skills were successfully deployed")
+            logger.info(
+                f"Skills deployment complete: {result.success_count}/{result.total_count} "
+                f"deployed to {result.skills_dir}"
+            )
 
         except Exception as e:
             logger.error(f"Error in _download_and_deploy_skills: {str(e)}")
@@ -1688,7 +2055,7 @@ class ClaudeCodeAgent(Agent):
         target_path = self.project_path or self.options.get("cwd")
         if not target_path:
             # Create default workspace directory
-            target_path = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
+            target_path = os.path.join(config.get_workspace_root(), str(self.task_id))
             os.makedirs(target_path, exist_ok=True)
             # Also update options["cwd"] so Claude Code uses this directory
             self.options["cwd"] = target_path

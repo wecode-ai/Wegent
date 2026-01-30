@@ -12,6 +12,7 @@ import { QuickAccessCards } from './QuickAccessCards'
 import { SloganDisplay } from './SloganDisplay'
 import { ChatInputCard } from '../input/ChatInputCard'
 import PipelineStageIndicator from './PipelineStageIndicator'
+import { ScrollToBottomIndicator } from './ScrollToBottomIndicator'
 import type { PipelineStageInfo } from '@/apis/tasks'
 import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers } from './useChatStreamHandlers'
@@ -41,7 +42,7 @@ interface ChatAreaProps {
   isTeamsLoading: boolean
   selectedTeamForNewTask?: Team | null
   showRepositorySelector?: boolean
-  taskType?: 'chat' | 'code' | 'knowledge'
+  taskType?: 'chat' | 'code' | 'knowledge' | 'task'
   onShareButtonRender?: (button: React.ReactNode) => void
   onRefreshTeams?: () => Promise<Team[]>
   /** Initial knowledge base to pre-select when starting a new chat from knowledge page */
@@ -57,6 +58,8 @@ interface ChatAreaProps {
   knowledgeBaseId?: number
   /** Selected document IDs from DocumentPanel (for notebook mode context injection) */
   selectedDocumentIds?: number[]
+  /** Reason why input is disabled (e.g., device offline). If set, input will be disabled and show this message. */
+  disabledReason?: string
 }
 
 /**
@@ -75,6 +78,7 @@ function ChatAreaContent({
   onTaskCreated,
   knowledgeBaseId,
   selectedDocumentIds,
+  disabledReason,
 }: ChatAreaProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -128,14 +132,31 @@ function ChatAreaContent({
 
   // Filter teams by bind_mode based on current mode
   const filteredTeams = useMemo(() => {
+    console.log('[ChatArea] Filtering teams:', {
+      taskType,
+      totalTeams: teams.length,
+      teamsBindModes: teams.map(t => ({ name: t.name, bind_mode: t.bind_mode })),
+    })
     const teamsWithValidBindMode = teams.filter(team => {
       if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
       return true
     })
-    return teamsWithValidBindMode.filter(team => {
+    const result = teamsWithValidBindMode.filter(team => {
       if (!team.bind_mode) return true
-      return team.bind_mode.includes(taskType)
+      const included = team.bind_mode.includes(taskType as 'chat' | 'code' | 'knowledge' | 'task')
+      console.log('[ChatArea] Team filter:', {
+        name: team.name,
+        bind_mode: team.bind_mode,
+        taskType,
+        included,
+      })
+      return included
     })
+    console.log(
+      '[ChatArea] Filtered teams result:',
+      result.map(t => t.name)
+    )
+    return result
   }, [teams, taskType])
 
   // Extract values for dependency array
@@ -256,6 +277,7 @@ function ChatAreaContent({
   const {
     scrollContainerRef,
     isUserNearBottomRef,
+    showScrollIndicator,
     scrollToBottom,
     handleMessagesContentChange: _baseHandleMessagesContentChange,
   } = useScrollManagement({
@@ -367,12 +389,14 @@ function ChatAreaContent({
   // Unified canSubmit flag
   const canSubmit = useMemo(() => {
     return (
+      !disabledReason &&
       !chatState.isLoading &&
       !streamHandlers.isStreaming &&
       !isModelSelectionRequired &&
       chatState.isAttachmentReadyToSend
     )
   }, [
+    disabledReason,
     chatState.isLoading,
     streamHandlers.isStreaming,
     isModelSelectionRequired,
@@ -606,6 +630,8 @@ function ChatAreaContent({
     hasNoTeams: filteredTeams.length === 0,
     // Knowledge base ID to exclude from context selector (used in notebook mode)
     knowledgeBaseId,
+    // Reason why input is disabled (shown as placeholder)
+    disabledReason,
   }
 
   return (
@@ -719,7 +745,22 @@ function ChatAreaContent({
               width: floatingMetrics.width,
             }}
           >
-            <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
+            {/* Bottom gradient fade effect - text fades as it approaches the input */}
+            <div
+              className="absolute top-0 left-0 right-0 h-12 -translate-y-full pointer-events-none"
+              style={{
+                background:
+                  'linear-gradient(to top, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.8) 40%, rgb(var(--color-bg-base) / 0) 100%)',
+              }}
+            />
+            {/* Scroll to bottom indicator */}
+            <div className="absolute -top-2 left-1/2 -translate-x-1/2 -translate-y-full pointer-events-auto">
+              <ScrollToBottomIndicator
+                visible={showScrollIndicator}
+                onClick={() => scrollToBottom(true)}
+              />
+            </div>
+            <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4 bg-base">
               <ChatInputCard {...inputCardProps} />
             </div>
           </div>

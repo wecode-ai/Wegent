@@ -117,23 +117,47 @@ def _team_to_response(team: Kind) -> PublicTeamResponse:
 @trace_async()
 async def list_public_teams(
     page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=1000),
+    chat_only: bool = Query(False, description="Filter to only return chat-type teams"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
     """
     Get list of all public teams with pagination
+
+    Args:
+        page: Page number
+        limit: Number of items per page
+        chat_only: If True, only return teams that use Chat shell type
     """
     query = db.query(Kind).filter(Kind.user_id == 0, Kind.kind == "Team")
-    total = query.count()
 
-    # Apply SQL-level pagination
-    paginated_teams = (
-        query.order_by(Kind.updated_at.desc())
-        .offset((page - 1) * limit)
-        .limit(limit)
-        .all()
-    )
+    if chat_only:
+        # Filter to only return teams that support direct chat
+        from app.services.chat.config import should_use_direct_chat
+
+        all_teams = query.all()
+        filtered_teams = [
+            team
+            for team in all_teams
+            if should_use_direct_chat(db, team, 0)  # user_id=0 for public resources
+        ]
+        total = len(filtered_teams)
+
+        # Apply pagination in memory
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paginated_teams = filtered_teams[start_idx:end_idx]
+    else:
+        total = query.count()
+
+        # Apply SQL-level pagination
+        paginated_teams = (
+            query.order_by(Kind.updated_at.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        )
 
     return PublicTeamListResponse(
         total=total,

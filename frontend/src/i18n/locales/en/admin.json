@@ -12,6 +12,7 @@
     "public_shells": "Public Shells",
     "api_keys": "API Keys",
     "system_config": "System Config",
+    "im_channels": "IM Channels",
     "monitor": "Monitor"
   },
   "stats": {
@@ -27,7 +28,8 @@
     "save": "Save",
     "delete": "Delete",
     "reset": "Reset",
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "done": "Done"
   },
   "users": {
     "title": "User Management",
@@ -418,6 +420,10 @@
     "edit_team": "Edit Agent",
     "delete_team": "Delete Agent",
     "member_count": "{{count}} Bot(s)",
+    "tabs": {
+      "basic": "Basic",
+      "advanced": "Advanced"
+    },
     "status": {
       "active": "Active",
       "inactive": "Inactive"
@@ -645,11 +651,48 @@
       "title": "Configure Public Skills",
       "description": "Upload skill packages (.zip) that will be available to all users. Skills provide on-demand capabilities to AI agents.",
       "no_skills": "No public skills configured yet",
+      "add_skill": "Add Skill",
+      "add_skill_description": "Upload a ZIP package or import from a Git repository",
+      "upload_tab": "Upload",
+      "git_import_tab": "Git Import",
       "upload_skill": "Upload Skill",
       "skill_uploaded": "Skill uploaded successfully",
       "skill_deleted": "Skill deleted successfully",
       "drag_drop_hint": "Drag and drop a .zip file here, or click to browse",
-      "file_requirements": "Skill package must be a .zip file containing SKILL.md"
+      "file_requirements": "Skill package must be a .zip file containing SKILL.md",
+      "skill_name": "Skill Name",
+      "skill_name_placeholder": "Enter skill name",
+      "skill_name_hint": "A unique identifier for this skill (e.g., mermaid-diagram)",
+      "zip_package": "ZIP Package",
+      "max_file_size": "Maximum file size: 10MB",
+      "uploading": "Uploading...",
+      "requirements": "Requirements",
+      "requirement_zip": "File must be a ZIP archive",
+      "requirement_folder": "Must contain a folder with the skill name",
+      "requirement_skill_md": "Must include SKILL.md with metadata",
+      "requirement_size": "Maximum file size: 10MB",
+      "git_url_label": "Git Repository URL",
+      "git_url_placeholder": "https://github.com/owner/repo",
+      "git_url_hint": "Supports GitHub, GitLab, Gitee, and Gitea repositories",
+      "git_scan_button": "Scan",
+      "git_scanning": "Scanning...",
+      "git_invalid_url": "Please enter a valid Git repository URL",
+      "git_no_skills_found": "No skills found in repository",
+      "git_no_skills_hint": "Make sure the repository contains skill directories with SKILL.md files",
+      "git_repo_not_found": "Repository not found or not accessible",
+      "git_download_failed": "Failed to download repository",
+      "git_skills_found": "Found {{count}} skill(s)",
+      "git_select_all": "Select All",
+      "git_deselect_all": "Deselect All",
+      "git_import_selected": "Import Selected",
+      "git_conflict_title": "Skill Name Conflict",
+      "git_conflict_description": "The following skills already exist. Select which ones to overwrite:",
+      "git_import_confirm": "Confirm Import",
+      "git_import_result_title": "Import Complete",
+      "git_import_success": "Successfully imported {{count}} skill(s)",
+      "git_import_skipped": "Skipped {{count}} skill(s) (already exist)",
+      "git_import_failed": "{{count}} skill(s) failed to import",
+      "git_import_failed_details": "Failure details"
     },
     "success": {
       "completed": "Setup completed successfully! You can now start using Wegent.",
@@ -658,6 +701,75 @@
     "errors": {
       "load_status_failed": "Failed to check setup status",
       "complete_failed": "Failed to complete setup"
+    }
+  },
+  "im_channels": {
+    "title": "IM Channel Management",
+    "description": "Manage IM platform integrations (DingTalk, Feishu)",
+    "create_description": "Create a new IM channel integration. Configure platform credentials and default agent.",
+    "loading": "Loading channels...",
+    "no_channels": "No IM channels configured",
+    "no_default_team": "No default agent",
+    "default_team": "Default Agent",
+    "create_channel": "Create Channel",
+    "edit_channel": "Edit Channel",
+    "delete_channel": "Delete Channel",
+    "restart_channel": "Restart Connection",
+    "types": {
+      "dingtalk": "DingTalk",
+      "feishu": "Feishu",
+      "not_supported": "Not supported"
+    },
+    "status": {
+      "enabled": "Enabled",
+      "disabled": "Disabled"
+    },
+    "connection": {
+      "connected": "Connected",
+      "disconnected": "Disconnected"
+    },
+    "form": {
+      "name": "Channel Name",
+      "name_placeholder": "Enter channel name",
+      "channel_type": "Channel Type",
+      "client_id": "Client ID",
+      "client_id_placeholder": "Enter the platform Client ID",
+      "client_secret": "Client Secret",
+      "client_secret_placeholder": "Enter the platform Client Secret",
+      "client_secret_edit_placeholder": "Enter new Client Secret (leave empty to keep existing)",
+      "leave_empty_to_keep": "Leave empty to keep existing",
+      "default_team": "Default Agent",
+      "default_team_placeholder": "Select default agent",
+      "no_default_team": "No default agent",
+      "default_model": "Default Model",
+      "default_model_placeholder": "Select default model",
+      "no_default_model": "Use agent's default model",
+      "team_no_model_warning": "The selected agent has no model configured. You must select a default model.",
+      "is_enabled": "Enable Channel"
+    },
+    "confirm": {
+      "delete_title": "Delete Channel",
+      "delete_message": "Are you sure you want to delete IM channel \"{{name}}\"? This action cannot be undone."
+    },
+    "success": {
+      "created": "IM channel created successfully",
+      "updated": "IM channel updated successfully",
+      "deleted": "IM channel deleted successfully",
+      "enabled": "IM channel enabled",
+      "disabled": "IM channel disabled",
+      "restarted": "IM channel restarted"
+    },
+    "errors": {
+      "load_failed": "Failed to load IM channels",
+      "create_failed": "Failed to create IM channel",
+      "update_failed": "Failed to update IM channel",
+      "delete_failed": "Failed to delete IM channel",
+      "toggle_failed": "Failed to toggle IM channel status",
+      "restart_failed": "Failed to restart IM channel",
+      "name_required": "Channel name is required",
+      "config_required": "Client ID and Client Secret are required",
+      "team_required": "A default agent must be selected",
+      "model_required_for_team": "The selected agent has no model configured. You must select a default model."
     }
   }
 }

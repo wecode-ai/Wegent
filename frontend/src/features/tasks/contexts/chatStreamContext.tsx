@@ -46,10 +46,13 @@ import {
   ChatErrorPayload,
   ChatCancelledPayload,
   ChatMessagePayload,
+  ChatBlockCreatedPayload,
+  ChatBlockUpdatedPayload,
   SkillRequestPayload,
   SkillResponsePayload,
 } from '@/types/socket'
 import type { TaskDetailSubtask, Team } from '@/types/api'
+import type { MessageBlock } from '../components/message/thinking/types'
 import DOMPurify from 'dompurify'
 
 /**
@@ -114,6 +117,8 @@ export interface UnifiedMessage {
     }>
     /** Reasoning content from models like DeepSeek R1 */
     reasoning_content?: string
+    /** Message blocks for mixed rendering (new format) */
+    blocks?: MessageBlock[]
   }
   /** Knowledge base source references (for RAG citations) */
   sources?: Array<{
@@ -207,9 +212,11 @@ export interface ChatMessageRequest {
   git_repo_id?: number
   git_domain?: string
   branch_name?: string
-  task_type?: 'chat' | 'code' | 'knowledge'
+  task_type?: 'chat' | 'code' | 'knowledge' | 'task'
   // Knowledge base ID for knowledge type tasks
   knowledge_base_id?: number
+  // Local device ID for task execution (optional, when undefined use cloud executor)
+  device_id?: string
 }
 
 /**
@@ -241,6 +248,8 @@ interface ChatStreamContextType {
   isTaskStreaming: (taskId: number) => boolean
   /** Get all currently streaming task IDs */
   getStreamingTaskIds: () => number[]
+  /** Map of task states for direct access (for useUnifiedMessages reactivity) */
+  streamStates: Map<number, StreamState>
   /** Send a chat message (returns task ID) */
   sendMessage: (
     request: ChatMessageRequest,
@@ -503,9 +512,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Handle chat:chunk event from WebSocket
    * Accumulate streaming content for the specific AI message in the unified messages Map
    * For executor tasks, also update the result field (contains thinking, workbench)
+   *
+   * NEW: Supports block-based streaming:
+   * - If block_id + block_offset is present: use offset-based content merging for specific text block
+   * - If block_id (without block_offset) is present: append content to specific text block (legacy)
+   * - If result.blocks is present: merge tool blocks (complete replacement)
    */
   const handleChatChunk = useCallback((data: ChatChunkPayload) => {
-    const { subtask_id, content, result, sources } = data
+    const { subtask_id, content, result, sources, block_id, block_offset: _block_offset } = data
 
     // Find task ID from subtask
     let taskId = subtaskToTaskRef.current.get(subtask_id)
@@ -542,7 +556,9 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         // IMPORTANT: Merge result instead of replacing to preserve thinking data
         const updatedMessage: UnifiedMessage = {
           ...existingMessage,
-          content: existingMessage.content + content,
+          // NEW: Only append content to legacy content field if no block_id
+          // When using blocks, content accumulation is handled via blocks
+          content: block_id ? existingMessage.content : existingMessage.content + content,
         }
 
         // Handle reasoning content from DeepSeek R1 and similar models
@@ -559,6 +575,63 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           updatedMessage.reasoningContent = result.reasoning_content
         }
 
+        // OPTIMIZATION: Incremental blocks merging with block_id support
+        // Backend now sends either:
+        // 1. block_id + block_offset + content: offset-based content merge for specific text block (NEW)
+        // 2. block_id + content (no block_offset): append content to specific text block (LEGACY)
+        // 3. result.blocks: tool blocks for complete merge (by block.id)
+        // This logic runs REGARDLESS of whether result is present
+        const mergedBlocks = (() => {
+          const existingBlocks = existingMessage.result?.blocks || []
+          const newResult = result as UnifiedMessage['result']
+          const incomingBlocks = newResult?.blocks || []
+
+          // Case 1: block_id provided - text block content update (direct append, no offset)
+          if (block_id && content) {
+            const blocksMap = new Map(existingBlocks.map(b => [b.id, b]))
+            const targetBlock = blocksMap.get(block_id)
+
+            if (targetBlock && targetBlock.type === 'text') {
+              // Direct append mode - ignore block_offset
+              const updatedBlock = {
+                ...targetBlock,
+                content: (targetBlock.content || '') + content,
+              }
+              blocksMap.set(block_id, updatedBlock)
+            } else if (!targetBlock) {
+              // Create new text block if doesn't exist
+              const newBlock = {
+                id: block_id,
+                type: 'text' as const,
+                content: content,
+                status: 'streaming' as const,
+                timestamp: Date.now(),
+              }
+              blocksMap.set(block_id, newBlock)
+            }
+
+            const result = Array.from(blocksMap.values())
+            return result
+          }
+
+          // Case 2: No incoming blocks - keep existing
+          if (incomingBlocks.length === 0) {
+            return existingBlocks
+          }
+
+          // Case 3: Tool blocks - merge by block.id (complete replacement)
+          // Create a map of existing blocks for efficient lookup
+          const blocksMap = new Map(existingBlocks.map(b => [b.id, b]))
+
+          // Merge incoming blocks: update existing or add new
+          incomingBlocks.forEach(incomingBlock => {
+            blocksMap.set(incomingBlock.id, incomingBlock)
+          })
+
+          // Convert map back to array, preserving order
+          return Array.from(blocksMap.values())
+        })()
+
         // If result is provided (executor tasks), merge it with existing result
         // This prevents losing thinking data when result is partially updated
         if (result) {
@@ -574,6 +647,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               newResult && newResult.thinking
                 ? newResult.thinking
                 : existingMessage.result?.thinking,
+            // Use merged blocks from above
+            blocks: mergedBlocks,
             // Keep accumulated reasoning_content
             reasoning_content:
               newResult?.reasoning_content || existingMessage.result?.reasoning_content,
@@ -581,6 +656,13 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             // Backend may not include shell_type in every chat:chunk
             // This MUST be last to override any undefined from newResult
             shell_type: newResult?.shell_type || existingMessage.result?.shell_type,
+          }
+        } else if (block_id && content) {
+          // No result provided but block_id + content exists
+          // Create or update result with merged blocks
+          updatedMessage.result = {
+            ...existingMessage.result,
+            blocks: mergedBlocks,
           }
         }
         // Extract sources from either top-level or result.sources
@@ -681,12 +763,21 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           messageId: message_id,
           // Set sources if provided (check both top-level and result.sources)
           sources: finalSources || existingMessage.sources,
-          // IMPORTANT: Update result field to preserve thinking data from incremental updates
-          // Merge with existing result to keep accumulated thinking data
+          // IMPORTANT: Update result field to preserve thinking/blocks data from incremental updates
+          // For chat:done event, use the final blocks array if provided (full sync)
+          // Otherwise preserve accumulated blocks from incremental updates
           result: result
             ? {
                 ...existingMessage.result,
                 ...(result as UnifiedMessage['result']),
+                // Explicitly preserve thinking if not provided in done event
+                thinking:
+                  (result as UnifiedMessage['result'])?.thinking ||
+                  existingMessage.result?.thinking,
+                // For blocks: if done event has blocks, use it (final sync)
+                // Otherwise preserve accumulated blocks from chat:chunk incremental updates
+                blocks:
+                  (result as UnifiedMessage['result'])?.blocks || existingMessage.result?.blocks,
               }
             : existingMessage.result,
         })
@@ -905,6 +996,132 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  /**
+   * Handle chat:block_created event from WebSocket
+   * This creates a new block in the AI message's blocks array
+   */
+  const handleBlockCreated = useCallback((data: ChatBlockCreatedPayload) => {
+    const { subtask_id, block } = data
+
+    console.log('[ChatStreamContext][block_created] ✅ Block created:', {
+      subtask_id,
+      block_id: block.id,
+      block_type: block.type,
+      tool_name: block.tool_name,
+      block,
+    })
+
+    // Find task ID from subtask
+    const taskId = subtaskToTaskRef.current.get(subtask_id)
+    if (!taskId) {
+      console.warn('[ChatStreamContext][block_created] Unknown subtask:', subtask_id)
+      return
+    }
+
+    const aiMessageId = generateMessageId('ai', subtask_id)
+
+    // Add the block to the AI message's blocks array
+    setStreamStates(prev => {
+      const newMap = new Map(prev)
+      const currentState = newMap.get(taskId)
+      if (!currentState) {
+        console.warn('[ChatStreamContext][block_created] No state for task:', taskId)
+        return prev
+      }
+
+      const existingMessage = currentState.messages.get(aiMessageId)
+      if (!existingMessage) {
+        console.warn('[ChatStreamContext][block_created] AI message not found:', aiMessageId)
+        return prev
+      }
+
+      const newMessages = new Map(currentState.messages)
+      const currentBlocks = existingMessage.result?.blocks || []
+
+      newMessages.set(aiMessageId, {
+        ...existingMessage,
+        result: {
+          ...existingMessage.result,
+          blocks: [...currentBlocks, block as MessageBlock],
+        },
+      })
+
+      newMap.set(taskId, {
+        ...currentState,
+        messages: newMessages,
+      })
+      return newMap
+    })
+  }, [])
+
+  /**
+   * Handle chat:block_updated event from WebSocket
+   * This updates an existing block in the AI message's blocks array
+   */
+  const handleBlockUpdated = useCallback((data: ChatBlockUpdatedPayload) => {
+    const { subtask_id, block_id, content, tool_output, status } = data
+
+    console.log('[ChatStreamContext][block_updated] ✅ Block updated:', {
+      subtask_id,
+      block_id,
+      status,
+      has_content: !!content,
+      has_tool_output: tool_output !== undefined,
+    })
+
+    // Find task ID from subtask
+    const taskId = subtaskToTaskRef.current.get(subtask_id)
+    if (!taskId) {
+      console.warn('[ChatStreamContext][block_updated] Unknown subtask:', subtask_id)
+      return
+    }
+
+    const aiMessageId = generateMessageId('ai', subtask_id)
+
+    // Update the specific block in the AI message's blocks array
+    setStreamStates(prev => {
+      const newMap = new Map(prev)
+      const currentState = newMap.get(taskId)
+      if (!currentState) return prev
+
+      const existingMessage = currentState.messages.get(aiMessageId)
+      if (!existingMessage || !existingMessage.result?.blocks) {
+        console.warn(
+          '[ChatStreamContext][block_updated] AI message or blocks not found:',
+          aiMessageId
+        )
+        return prev
+      }
+
+      const newMessages = new Map(currentState.messages)
+      const updatedBlocks = existingMessage.result.blocks.map(block => {
+        if (block.id === block_id) {
+          return {
+            ...block,
+            ...(content !== undefined && { content }),
+            ...(tool_output !== undefined && { tool_output }),
+            ...(status !== undefined && { status }),
+          }
+        }
+        return block
+      })
+
+      newMessages.set(aiMessageId, {
+        ...existingMessage,
+        result: {
+          ...existingMessage.result,
+          blocks: updatedBlocks,
+        },
+      })
+
+      newMap.set(taskId, {
+        ...currentState,
+        messages: newMessages,
+      })
+      return newMap
+    })
+  }, [])
+
   // Register WebSocket event handlers
   useEffect(() => {
     const handlers: ChatEventHandlers = {
@@ -914,6 +1131,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       onChatError: handleChatError,
       onChatCancelled: handleChatCancelled,
       onChatMessage: handleChatMessage,
+      onBlockCreated: handleBlockCreated,
+      onBlockUpdated: handleBlockUpdated,
     }
 
     const cleanup = registerChatHandlers(handlers)
@@ -926,6 +1145,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     handleChatError,
     handleChatCancelled,
     handleChatMessage,
+    handleBlockCreated,
+    handleBlockUpdated,
   ])
 
   /**
@@ -1233,6 +1454,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         task_type: request.task_type,
         // Knowledge base ID for knowledge type tasks
         knowledge_base_id: request.knowledge_base_id,
+        // Local device ID for task execution
+        device_id: request.device_id,
       }
 
       try {
@@ -2020,6 +2243,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         getStreamState,
         isTaskStreaming,
         getStreamingTaskIds,
+        streamStates,
         sendMessage,
         stopStream,
         resetStream,

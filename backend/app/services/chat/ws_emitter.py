@@ -17,9 +17,7 @@ from typing import Any, Dict, Optional
 
 import socketio
 
-from app.api.ws.events import (
-    ServerEvents,
-)
+from app.api.ws.events import ServerEvents
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +86,8 @@ class WebSocketEmitter:
         content: str,
         offset: int,
         result: Optional[Dict[str, Any]] = None,
+        block_id: Optional[str] = None,
+        block_offset: Optional[int] = None,
     ) -> None:
         """
         Emit chat:chunk event to task room.
@@ -98,15 +98,51 @@ class WebSocketEmitter:
             content: Content chunk (for text streaming)
             offset: Current offset in the full response
             result: Optional full result data (for executor tasks with thinking/workbench)
+            block_id: Optional block ID for text block streaming (append content to specific block)
+            block_offset: Optional character offset within the current text block
         """
         payload = {
             "subtask_id": subtask_id,
             "content": content,
             "offset": offset,
         }
+        # Include block_id if provided (for text block streaming)
+        if block_id is not None:
+            payload["block_id"] = block_id
+
+        # Include block_offset if provided (for incremental rendering)
+        if block_offset is not None:
+            payload["block_offset"] = block_offset
+
         # Include full result if provided (for executor tasks)
         if result is not None:
             payload["result"] = result
+
+        # DEBUG: Log WebSocket emit with blocks info
+        logger.info(
+            "[WS_EMITTER] emit_chat_chunk: subtask_id=%d, has_result=%s, has_blocks=%s, blocks_count=%d, block_id=%s, block_offset=%s",
+            subtask_id,
+            result is not None,
+            result.get("blocks") is not None if result else False,
+            len(result.get("blocks", [])) if result and result.get("blocks") else 0,
+            block_id,
+            block_offset,
+        )
+        if result and result.get("blocks"):
+            logger.info(
+                "[WS_EMITTER] blocks detail: %s",
+                [
+                    {
+                        "id": b.get("id"),
+                        "type": b.get("type"),
+                        "status": b.get("status"),
+                        "tool_name": (
+                            b.get("tool_name") if b.get("type") == "tool" else None
+                        ),
+                    }
+                    for b in result["blocks"]
+                ],
+            )
 
         await self.sio.emit(
             ServerEvents.CHAT_CHUNK,
@@ -807,6 +843,39 @@ class WebSocketEmitter:
         logger.debug(
             f"[WS] emit flow:execution_update SENT to room user:{user_id} execution={execution_id} status={status}"
         )
+
+    # ============================================================
+    # Custom Events (for Block Architecture and other extensions)
+    # ============================================================
+
+    async def emit_custom_event(
+        self,
+        task_id: int,
+        event_type: str,
+        data: Dict[str, Any],
+        skip_sid: Optional[str] = None,
+    ) -> None:
+        """
+        Emit a custom event to task room.
+
+        This is a generic method for emitting custom event types that don't have
+        dedicated methods. Primarily used for Block architecture events
+        (chat:block_created, chat:block_updated).
+
+        Args:
+            task_id: Task ID
+            event_type: Event type (e.g., "chat:block_created", "chat:block_updated")
+            data: Event payload data
+            skip_sid: Optional socket ID to exclude
+        """
+        await self.sio.emit(
+            event_type,
+            data,
+            room=f"task:{task_id}",
+            skip_sid=skip_sid,
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit {event_type} task={task_id}")
 
 
 # Global emitter instance (lazy initialized)

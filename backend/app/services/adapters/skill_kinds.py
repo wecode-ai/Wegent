@@ -30,6 +30,7 @@ class SkillKindsService:
         file_content: bytes,
         file_name: str,
         user_id: int,
+        source: Optional[Dict[str, Any]] = None,
     ) -> Skill:
         """
         Create a new Skill with ZIP package.
@@ -44,6 +45,7 @@ class SkillKindsService:
             file_content: ZIP file binary content
             file_name: Original file name
             user_id: User ID
+            source: Optional source information (for git-imported skills)
 
         Returns:
             Created Skill CRD
@@ -90,6 +92,7 @@ class SkillKindsService:
                 "provider": metadata.get("provider"),
                 "mcpServers": metadata.get("mcpServers"),
                 "preload": metadata.get("preload", False),
+                "source": source,
             },
             "status": {
                 "state": "Available",
@@ -332,6 +335,7 @@ class SkillKindsService:
         user_id: int,
         file_content: bytes,
         file_name: str,
+        source: Optional[Dict[str, Any]] = None,
     ) -> Skill:
         """
         Update Skill ZIP package.
@@ -342,6 +346,7 @@ class SkillKindsService:
             user_id: User ID
             file_content: New ZIP file content
             file_name: New file name
+            source: Optional source information (for git-imported skills)
 
         Returns:
             Updated Skill CRD
@@ -384,6 +389,9 @@ class SkillKindsService:
                 "preload": metadata.get("preload", False),
             }
         )
+        # Update source if provided (for git-imported skills)
+        if source is not None:
+            skill_json["spec"]["source"] = source
         skill_json["status"].update(
             {"fileSize": metadata["file_size"], "fileHash": metadata["file_hash"]}
         )

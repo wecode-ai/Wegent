@@ -32,13 +32,33 @@ DEFAULT_CONTEXT_WINDOW = 128000
 # Maximum ratio of context window that can be used for document injection
 MAX_INJECTION_RATIO = 0.5
 
-# Prompt template for selected documents context
-SELECTED_DOCUMENTS_PROMPT = """
+# Prompt template for selected documents context (direct injection mode)
+SELECTED_DOCUMENTS_PROMPT_TEMPLATE = """
+<selected_documents>
 # Reference Documents
 
 The following documents have been selected as context for this conversation.
 Please use this information to answer the user's questions.
 
+{documents_content}
+</selected_documents>
+"""
+
+# Prompt template for selected documents RAG mode
+SELECTED_DOCUMENTS_RAG_PROMPT = """
+
+<selected_documents>
+# Selected Documents Context
+
+The user has selected specific documents from the knowledge base for this conversation.
+You MUST use the `knowledge_base_search` tool to retrieve information from these documents.
+The search will automatically filter to only the selected documents.
+
+## Required Workflow:
+1. Call `knowledge_base_search` with the user's query
+2. Base your answer on the retrieved information
+3. If no relevant information is found, clearly state that the selected documents don't contain relevant information
+</selected_documents>
 """
 
 
@@ -266,16 +286,18 @@ def _inject_documents_directly(
             doc_header += f" ({doc['file_extension']})"
         doc_parts.append(f"{doc_header}\n\n{doc['content']}")
 
-    documents_text = SELECTED_DOCUMENTS_PROMPT + "\n\n".join(doc_parts) + "\n\n"
+    documents_text = SELECTED_DOCUMENTS_PROMPT_TEMPLATE.format(
+        documents_content="\n\n".join(doc_parts)
+    )
 
     # Inject into message
     if isinstance(message, dict) and message.get("type") == "multi_vision":
         # Vision structure - prepend to text
-        message["text"] = documents_text + message["text"]
+        message["text"] = documents_text + "\n\n" + message["text"]
         final_message = message
     else:
         # String message - prepend documents
-        final_message = documents_text + f"[User Question]:\n{message}"
+        final_message = documents_text + f"\n\n[User Question]:\n{message}"
 
     logger.info(
         f"[_inject_documents_directly] Injected {len(documents_content)} documents "
@@ -342,21 +364,6 @@ def _create_rag_fallback(
             f"{len(knowledge_base_ids)} KBs with {len(document_ids)} document_ids filter"
         )
 
-    # Add prompt instruction for RAG mode
-    rag_prompt = """
-
-# Selected Documents Context
-
-The user has selected specific documents from the knowledge base for this conversation.
-You MUST use the `knowledge_base_search` tool to retrieve information from these documents.
-The search will automatically filter to only the selected documents.
-
-## Required Workflow:
-1. Call `knowledge_base_search` with the user's query
-2. Base your answer on the retrieved information
-3. If no relevant information is found, clearly state that the selected documents don't contain relevant information
-"""
-
-    enhanced_prompt = base_system_prompt + rag_prompt
+    enhanced_prompt = base_system_prompt + SELECTED_DOCUMENTS_RAG_PROMPT
 
     return message, enhanced_prompt, extra_tools

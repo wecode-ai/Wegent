@@ -9,7 +9,13 @@ These models are used by both Backend and chat_shell services.
 """
 
 from .base import Base
-from .enums import ContextStatus, ContextType, SenderType, SubtaskRole, SubtaskStatus
+from .enums import (
+    ContextStatus,
+    ContextType,
+    SenderType,
+    SubtaskRole,
+    SubtaskStatus,
+)
 from .kind import Kind
 from .skill_binary import SkillBinary
 from .subtask import Subtask

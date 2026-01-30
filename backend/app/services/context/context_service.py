@@ -578,7 +578,7 @@ class ContextService:
             context: SubtaskContext record with extracted_text
 
         Returns:
-            Formatted text prefix, or None if no extracted text
+            Formatted text prefix without XML tags, or None if no extracted text
         """
         if not context.extracted_text:
             return None
@@ -609,6 +609,7 @@ class ContextService:
 
         prefix += f"{context.extracted_text}\n\n"
 
+        # Wrap in <attachment> XML tags
         return prefix
 
     def build_message_with_attachment(
@@ -783,11 +784,14 @@ class ContextService:
         """
         Build a text prefix containing knowledge base retrieval content.
 
+        Note: This method returns raw content without XML tags. The caller is responsible
+        for wrapping multiple KB contents in a single <knowledge_base> XML tag.
+
         Args:
             context: SubtaskContext record with extracted_text from RAG
 
         Returns:
-            Formatted text prefix, or None if no extracted text
+            Formatted text prefix without XML tags, or None if no extracted text
         """
         if not context.extracted_text:
             return None
@@ -807,12 +811,14 @@ class ContextService:
             source_names.append(f"... and {len(sources) - 5} more")
         sources_str = ", ".join(source_names) if source_names else "N/A"
 
-        # Build the prefix
-        prefix = f"[Knowledge Base - {kb_name}]:\n"
-        prefix += f"(Sources: {sources_str})\n"
-        prefix += f"{context.extracted_text}\n\n"
+        # Build the content parts (without XML tags)
+        parts = [
+            f"[Knowledge Base - {kb_name}]:",
+            f"(Sources: {sources_str})",
+            context.extracted_text,
+        ]
 
-        return prefix
+        return "\n".join(parts)
 
     def get_knowledge_base_contexts_by_subtask(
         self,

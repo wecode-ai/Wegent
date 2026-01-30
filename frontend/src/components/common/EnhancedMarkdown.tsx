@@ -16,8 +16,8 @@ import katex from 'katex'
 import { Check, Copy, Code, ChevronDown, ChevronUp } from 'lucide-react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { createSchemeAwareUrlTransform, SchemeLink } from '@/lib/scheme'
-import AttachmentEmbed from '@/components/common/AttachmentEmbed'
+import { createSchemeAwareUrlTransform } from '@/lib/scheme'
+import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRenderer'
 
 import 'katex/dist/katex.min.css'
 
@@ -423,13 +423,10 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   }, [processedSource])
 
   // Default components with link handling and code block rendering
-  const defaultComponents = useMemo(() => {
-    const baseComponents: Components = {
-      a: ({ href, children, ...props }) => (
-        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-          {children}
-        </a>
-      ),
+  const defaultComponents = useMemo(
+    (): Components => ({
+      // Merge smart components for attachment and image handling
+      ...createSmartMarkdownComponents({ enableImagePreview: true }),
       // Restore list styles that Tailwind preflight resets
       ul: ({ children, ...props }) => (
         <ul
@@ -479,44 +476,10 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
       },
       // Override pre to avoid double wrapping
       pre: ({ children }) => <>{children}</>,
-      // Override p to use div to allow block-level custom elements like attachment-embed
-      p: ({ children, ...props }) => (
-        <div className="wmde-markdown-p" {...props}>
-          {children}
-        </div>
-      ),
       ...components,
-    }
-
-    // Custom element components (not in standard Components type)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const customComponents: Record<string, React.ComponentType<any>> = {
-      'attachment-embed': ({ 'data-id': dataId, id }: { 'data-id'?: string; id?: string }) => {
-        const parsedId = Number(dataId || id)
-        if (!Number.isFinite(parsedId) || parsedId <= 0) {
-          return null
-        }
-        return <AttachmentEmbed attachmentId={parsedId} theme={theme} />
-      },
-      'scheme-link': ({
-        'data-href': dataHref,
-        href,
-        children,
-      }: {
-        'data-href'?: string
-        href?: string
-        children?: React.ReactNode
-      }) => {
-        const targetHref = dataHref || href
-        if (!targetHref) {
-          return <span>{children}</span>
-        }
-        return <SchemeLink href={targetHref}>{children || targetHref}</SchemeLink>
-      },
-    }
-
-    return { ...baseComponents, ...customComponents } as Components
-  }, [components, theme])
+    }),
+    [components, theme]
+  )
 
   // Configure remark/rehype plugins based on content
   const remarkPlugins = useMemo(() => {
@@ -548,7 +511,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   }, [hasMath])
 
   // URL transform to allow wegent:// scheme URLs
-  const urlTransform = useMemo(() => createSchemeAwareUrlTransform(['wegent:', 'attachment:']), [])
+  const urlTransform = useMemo(() => createSchemeAwareUrlTransform(['wegent:']), [])
 
   // Render markdown content
   const renderMarkdown = (content: string) => (
