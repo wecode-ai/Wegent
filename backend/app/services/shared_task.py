@@ -316,14 +316,17 @@ class SharedTaskService:
         branch_name: Optional[str] = None,
     ) -> Kind:
         """Copy task and all its subtasks to new user"""
+        from sqlalchemy import or_
+
         from app.schemas.kind import Task, Team, Workspace
 
         # Get the new team to get its name and namespace
+        # Support both user's own teams and public teams (user_id=0)
         new_team = (
             db.query(Kind)
             .filter(
                 Kind.id == new_team_id,
-                Kind.user_id == new_user_id,
+                or_(Kind.user_id == new_user_id, Kind.user_id == 0),
                 Kind.kind == "Team",
                 Kind.is_active == True,
             )

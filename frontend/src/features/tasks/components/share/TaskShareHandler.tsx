@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { taskApis, TaskShareInfo } from '@/apis/tasks'
 import { teamApis } from '@/apis/team'
 import { githubApis } from '@/apis/github'
+import { userApis } from '@/apis/user'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import Modal from '@/features/common/Modal'
@@ -22,7 +23,7 @@ import ModelSelector, {
 } from '../selector/ModelSelector'
 import RepositorySelector from '../selector/RepositorySelector'
 import BranchSelector from '../selector/BranchSelector'
-import { Check } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp } from 'lucide-react'
 import { UsersIcon } from '@heroicons/react/24/outline'
 import { cn } from '@/lib/utils'
 import {
@@ -34,7 +35,7 @@ import {
   CommandList,
 } from '@/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
+import type { Team, GitRepoInfo, GitBranch, DefaultTeamsResponse } from '@/types/api'
 
 interface TaskShareHandlerProps {
   onTaskCopied?: () => void
@@ -64,9 +65,25 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
   // Repository and branch selection for code tasks
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
   const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null)
+  // Default teams configuration (used in fetchShareInfoAndTeams)
+  const [_defaultTeamsConfig, setDefaultTeamsConfig] = useState<DefaultTeamsResponse | null>(null)
+  // Team selector collapsed state (default collapsed)
+  const [isTeamSelectorCollapsed, setIsTeamSelectorCollapsed] = useState(true)
 
   const isSelfShare = shareInfo && user && shareInfo.user_id === user.id
   const isCodeTask = shareInfo?.task_type === 'code'
+
+  // Filter teams to only show chat-compatible teams
+  const chatCompatibleTeams = useMemo(() => {
+    return teams.filter(team => {
+      // If bind_mode is not set, consider it compatible with all modes
+      if (!team.bind_mode || team.bind_mode.length === 0) {
+        return true
+      }
+      // Only show teams that have 'chat' in their bind_mode
+      return team.bind_mode.includes('chat')
+    })
+  }, [teams])
 
   // Find the selected team with full details
   const selectedTeam = useMemo(() => {
@@ -105,18 +122,45 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
     const fetchShareInfoAndTeams = async () => {
       setIsLoading(true)
       try {
-        // Fetch share info and teams in parallel
-        const [info, teamsResponse] = await Promise.all([
+        // Fetch share info, teams, and default teams config in parallel
+        const [info, teamsResponse, defaultTeams] = await Promise.all([
           taskApis.getTaskShareInfo(taskShareToken),
           teamApis.getTeams({ page: 1, limit: 100 }),
+          userApis.getDefaultTeams(),
         ])
 
         setShareInfo(info)
         setTeams(teamsResponse.items)
+        setDefaultTeamsConfig(defaultTeams)
 
-        // Auto-select first team
-        if (teamsResponse.items.length > 0) {
-          setSelectedTeamId(teamsResponse.items[0].id)
+        // Filter to chat-compatible teams
+        const chatTeams = teamsResponse.items.filter(team => {
+          if (!team.bind_mode || team.bind_mode.length === 0) {
+            return true
+          }
+          return team.bind_mode.includes('chat')
+        })
+
+        // Try to select the default chat team from system config
+        let selectedId: number | null = null
+        if (defaultTeams?.chat) {
+          const defaultChatTeam = chatTeams.find(
+            team =>
+              team.name === defaultTeams.chat!.name &&
+              (team.namespace || 'default') === (defaultTeams.chat!.namespace || 'default')
+          )
+          if (defaultChatTeam) {
+            selectedId = defaultChatTeam.id
+          }
+        }
+
+        // Fallback to first chat-compatible team if no default found
+        if (!selectedId && chatTeams.length > 0) {
+          selectedId = chatTeams[0].id
+        }
+
+        if (selectedId) {
+          setSelectedTeamId(selectedId)
         }
 
         setIsModalOpen(true)
@@ -347,110 +391,136 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
               </AlertDescription>
             </Alert>
 
-            {/* Team Selection */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-text-primary">
-                {t('shared-task:handler_select_team_label')}
-              </label>
-              <Popover open={isTeamSelectorOpen} onOpenChange={setIsTeamSelectorOpen}>
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    role="combobox"
-                    aria-expanded={isTeamSelectorOpen}
-                    disabled={isCopying || teams.length === 0}
-                    className={cn(
-                      'flex h-10 w-full items-center justify-between rounded-md',
-                      'border border-border bg-background px-3 py-2 text-sm',
-                      'text-text-primary',
-                      'hover:bg-hover transition-colors',
-                      'focus:outline-none focus:ring-2 focus:ring-primary',
-                      'disabled:cursor-not-allowed disabled:opacity-50'
-                    )}
-                  >
-                    <span className="truncate">
-                      {selectedTeam
-                        ? selectedTeam.name
-                        : t('shared-task:handler_select_team_label')}
-                    </span>
-                    <svg
-                      className="ml-2 h-4 w-4 shrink-0 opacity-50"
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  </button>
-                </PopoverTrigger>
+            {/* Team Selection - Collapsible */}
+            <div className="border border-border rounded-lg overflow-hidden">
+              {/* Collapsed header showing selected team */}
+              <button
+                type="button"
+                onClick={() => setIsTeamSelectorCollapsed(!isTeamSelectorCollapsed)}
+                className={cn(
+                  'flex w-full items-center justify-between px-3 py-2.5',
+                  'bg-surface/50 hover:bg-hover transition-colors',
+                  'text-sm text-text-primary'
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <UsersIcon className="w-4 h-4 flex-shrink-0 text-text-muted" />
+                  <span className="font-medium">{t('shared-task:handler_select_team_label')}:</span>
+                  <span className="text-primary font-medium">
+                    {selectedTeam?.name || t('shared-task:handler_no_team_selected')}
+                  </span>
+                </div>
+                {isTeamSelectorCollapsed ? (
+                  <ChevronDown className="h-4 w-4 text-text-muted" />
+                ) : (
+                  <ChevronUp className="h-4 w-4 text-text-muted" />
+                )}
+              </button>
 
-                <PopoverContent
-                  className={cn(
-                    'p-0 w-[var(--radix-popover-trigger-width)] border border-border bg-background',
-                    'shadow-lg rounded-md overflow-hidden'
-                  )}
-                  align="start"
-                  sideOffset={4}
-                >
-                  <Command className="border-0">
-                    <CommandInput
-                      placeholder={t('common:teams.search_placeholder')}
-                      value={teamSearchValue}
-                      onValueChange={setTeamSearchValue}
-                      className="h-10 border-b border-border"
-                    />
-                    <CommandList className="max-h-[200px] overflow-y-auto">
-                      {teams.length === 0 ? (
-                        <div className="py-6 text-center text-sm text-text-muted">
-                          {t('shared-task:handler_no_teams')}
-                        </div>
-                      ) : (
-                        <>
-                          <CommandEmpty className="py-6 text-center text-sm text-text-muted">
-                            {t('common:branches.no_match')}
-                          </CommandEmpty>
-                          <CommandGroup>
-                            {teams.map(team => (
-                              <CommandItem
-                                key={team.id}
-                                value={`${team.id} ${team.name}`}
-                                onSelect={() => {
-                                  setSelectedTeamId(team.id)
-                                  setIsTeamSelectorOpen(false)
-                                }}
-                                className={cn(
-                                  'flex items-center gap-2 px-3 py-2 text-sm cursor-pointer',
-                                  'hover:bg-hover',
-                                  selectedTeamId === team.id && 'bg-primary/5'
-                                )}
-                              >
-                                <Check
-                                  className={cn(
-                                    'h-4 w-4 shrink-0',
-                                    selectedTeamId === team.id
-                                      ? 'opacity-100 text-primary'
-                                      : 'opacity-0'
-                                  )}
-                                />
-                                <UsersIcon className="w-4 h-4 flex-shrink-0 text-text-muted" />
-                                <span className="truncate">{team.name}</span>
-                              </CommandItem>
-                            ))}
-                          </CommandGroup>
-                        </>
+              {/* Expanded team selector */}
+              {!isTeamSelectorCollapsed && (
+                <div className="p-3 border-t border-border bg-background">
+                  <Popover open={isTeamSelectorOpen} onOpenChange={setIsTeamSelectorOpen}>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        role="combobox"
+                        aria-expanded={isTeamSelectorOpen}
+                        disabled={isCopying || chatCompatibleTeams.length === 0}
+                        className={cn(
+                          'flex h-10 w-full items-center justify-between rounded-md',
+                          'border border-border bg-background px-3 py-2 text-sm',
+                          'text-text-primary',
+                          'hover:bg-hover transition-colors',
+                          'focus:outline-none focus:ring-2 focus:ring-primary',
+                          'disabled:cursor-not-allowed disabled:opacity-50'
+                        )}
+                      >
+                        <span className="truncate">
+                          {selectedTeam
+                            ? selectedTeam.name
+                            : t('shared-task:handler_select_team_label')}
+                        </span>
+                        <svg
+                          className="ml-2 h-4 w-4 shrink-0 opacity-50"
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 20 20"
+                          fill="currentColor"
+                        >
+                          <path
+                            fillRule="evenodd"
+                            d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
+                      </button>
+                    </PopoverTrigger>
+
+                    <PopoverContent
+                      className={cn(
+                        'p-0 w-[var(--radix-popover-trigger-width)] border border-border bg-background',
+                        'shadow-lg rounded-md overflow-hidden'
                       )}
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
-              {teams.length === 0 && (
-                <p className="text-sm text-destructive">
-                  {t('shared-task:handler_create_team_hint')}
-                </p>
+                      align="start"
+                      sideOffset={4}
+                    >
+                      <Command className="border-0">
+                        <CommandInput
+                          placeholder={t('common:teams.search_placeholder')}
+                          value={teamSearchValue}
+                          onValueChange={setTeamSearchValue}
+                          className="h-10 border-b border-border"
+                        />
+                        <CommandList className="max-h-[200px] overflow-y-auto">
+                          {chatCompatibleTeams.length === 0 ? (
+                            <div className="py-6 text-center text-sm text-text-muted">
+                              {t('shared-task:handler_no_teams')}
+                            </div>
+                          ) : (
+                            <>
+                              <CommandEmpty className="py-6 text-center text-sm text-text-muted">
+                                {t('common:branches.no_match')}
+                              </CommandEmpty>
+                              <CommandGroup>
+                                {chatCompatibleTeams.map(team => (
+                                  <CommandItem
+                                    key={team.id}
+                                    value={`${team.id} ${team.name}`}
+                                    onSelect={() => {
+                                      setSelectedTeamId(team.id)
+                                      setIsTeamSelectorOpen(false)
+                                    }}
+                                    className={cn(
+                                      'flex items-center gap-2 px-3 py-2 text-sm cursor-pointer',
+                                      'hover:bg-hover',
+                                      selectedTeamId === team.id && 'bg-primary/5'
+                                    )}
+                                  >
+                                    <Check
+                                      className={cn(
+                                        'h-4 w-4 shrink-0',
+                                        selectedTeamId === team.id
+                                          ? 'opacity-100 text-primary'
+                                          : 'opacity-0'
+                                      )}
+                                    />
+                                    <UsersIcon className="w-4 h-4 flex-shrink-0 text-text-muted" />
+                                    <span className="truncate">{team.name}</span>
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </>
+                          )}
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                  {chatCompatibleTeams.length === 0 && (
+                    <p className="text-sm text-destructive mt-2">
+                      {t('shared-task:handler_create_team_hint')}
+                    </p>
+                  )}
+                </div>
               )}
             </div>
 
@@ -540,12 +610,12 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
         </Button>
         <Button
           onClick={handleConfirmCopy}
-          variant="default"
+          variant="primary"
           size="sm"
           disabled={
             !!isSelfShare ||
             isCopying ||
-            teams.length === 0 ||
+            chatCompatibleTeams.length === 0 ||
             isModelSelectionRequired ||
             isRepoSelectionRequired
           }

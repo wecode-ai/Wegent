@@ -47,6 +47,7 @@
   "handler_copy_description": "复制此任务将把",
   "handler_copy_description_suffix": "及其所有对话历史添加到您的任务列表。您可以继续对话。",
   "handler_select_team_label": "选择智能体",
+  "handler_no_team_selected": "未选择智能体",
   "handler_no_teams": "没有可用的智能体",
   "handler_create_team_hint": "您需要至少创建一个智能体才能复制此任务。",
   "handler_copying": "复制中...",
