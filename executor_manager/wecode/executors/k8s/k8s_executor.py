@@ -147,6 +147,8 @@ class K8sExecutor(Executor):
         error_msg = ""
         callback_status = TaskStatus.RUNNING.value
 
+        # Initialize executor_name to None - will be set later if needed
+        executor_name = None
         should_create_new_pod = not task.get("executor_name")
 
         if task.get("executor_name"):
