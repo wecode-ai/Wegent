@@ -286,6 +286,16 @@ class SandboxManager(metaclass=SingletonMeta):
         task_id = sandbox.metadata.get("task_id", 0)
         subtask_id = sandbox.metadata.get("subtask_id", 0)
 
+        # Extract skills from bot_config for skill download in executor
+        # bot_config can be a list or a dict
+        skills = []
+        if isinstance(bot_config, list) and len(bot_config) > 0:
+            # bot_config is a list of bot configurations
+            skills = bot_config[0].get("skills", [])
+        elif isinstance(bot_config, dict):
+            # bot_config is a single bot configuration
+            skills = bot_config.get("skills", [])
+
         # Build minimal task structure for sandbox
         # The container will wait for execution requests
         task = {
@@ -305,7 +315,7 @@ class SandboxManager(metaclass=SingletonMeta):
                     "agent_config": bot_config,
                     "system_prompt": "",
                     "mcp_servers": {},
-                    "skills": [],
+                    "skills": skills,  # Pass skills for download in executor
                     "role": "",
                 }
             ],
@@ -329,6 +339,11 @@ class SandboxManager(metaclass=SingletonMeta):
                 ),
             },
         }
+
+        # Add auth_token from metadata for skill download authentication
+        auth_token = sandbox.metadata.get("auth_token")
+        if auth_token:
+            task["auth_token"] = auth_token
 
         # Add workspace info if provided
         workspace_ref = sandbox.metadata.get("workspace_ref")

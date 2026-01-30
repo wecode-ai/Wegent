@@ -63,6 +63,7 @@ class SandboxToolProvider(SkillToolProvider):
             "user_id": context.user_id,
             "user_name": context.user_name,
             "bot_config": config.get("bot_config", []),
+            "auth_token": context.auth_token,  # Pass auth_token for skill download in sandbox
             "default_shell_type": config.get("default_shell_type", "ClaudeCode"),
             "timeout": config.get("timeout", 7200),
         }

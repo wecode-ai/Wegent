@@ -207,6 +207,7 @@ class SandboxManager:
         user_name: str,
         timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         bot_config: list = None,
+        auth_token: str = "",
     ):
         """Initialize sandbox manager.
 
@@ -218,12 +219,14 @@ class SandboxManager:
             user_name: Username for sandbox metadata
             timeout: Sandbox timeout in seconds (default: 30 minutes)
             bot_config: Bot configuration list (optional)
+            auth_token: JWT token for API authentication (optional)
         """
         self.task_id = task_id
         self.user_id = user_id
         self.user_name = user_name
         self.timeout = timeout
         self.bot_config = bot_config or []
+        self.auth_token = auth_token
 
         # Ensure E2B SDK is patched
         patch_e2b_sdk()
@@ -236,6 +239,7 @@ class SandboxManager:
         user_name: str,
         timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         bot_config: list = None,
+        auth_token: str = "",
     ) -> "SandboxManager":
         """Get or create a singleton SandboxManager instance for the given task_id.
 
@@ -245,6 +249,7 @@ class SandboxManager:
             user_name: Username for sandbox metadata
             timeout: Sandbox timeout in seconds (default: 30 minutes)
             bot_config: Bot configuration list (optional)
+            auth_token: JWT token for API authentication (optional)
 
         Returns:
             SandboxManager instance for the task_id
@@ -252,7 +257,7 @@ class SandboxManager:
         if task_id not in cls._instances:
             logger.info(f"[SandboxManager] Creating new instance for task_id={task_id}")
             cls._instances[task_id] = cls(
-                task_id, user_id, user_name, timeout, bot_config
+                task_id, user_id, user_name, timeout, bot_config, auth_token
             )
         else:
             logger.debug(
@@ -325,6 +330,10 @@ class SandboxManager:
             if self.bot_config:
                 metadata["bot_config"] = json.dumps(self.bot_config, ensure_ascii=False)
 
+            # Pass auth_token for skill download authentication in executor
+            if self.auth_token:
+                metadata["auth_token"] = self.auth_token
+
             # Use native async API - no need for run_in_executor
             sandbox = await AsyncSandbox.create(
                 template=shell_type,
@@ -383,6 +392,7 @@ try:
             user_id: User ID for sandbox metadata
             user_name: Username for sandbox metadata
             bot_config: Bot configuration list
+            auth_token: JWT token for API authentication
             default_shell_type: Default shell type (ClaudeCode, Agno, etc.)
             timeout: Execution timeout in seconds
         """
@@ -394,6 +404,7 @@ try:
         user_id: int = 0
         user_name: str = ""
         bot_config: list = []  # Bot config list [{shell_type, agent_config}, ...]
+        auth_token: str = ""  # JWT token for API authentication
 
         # Configuration
         default_shell_type: str = "ClaudeCode"
@@ -417,6 +428,7 @@ try:
                 user_name=self.user_name,
                 timeout=DEFAULT_SANDBOX_TIMEOUT,
                 bot_config=self.bot_config,
+                auth_token=self.auth_token,
             )
 
         def kill_sandbox(self) -> None:
