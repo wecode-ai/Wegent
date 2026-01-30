@@ -30,7 +30,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import MarkdownEditor from '@uiw/react-markdown-editor'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
-import { ThinkingDisplay, ReasoningDisplay } from './thinking'
+import { ReasoningDisplay } from './thinking'
+import MixedContentView from './thinking/MixedContentView'
+import ToolBlocksView from './thinking/ToolBlocksView'
 import ClarificationForm from '../clarification/ClarificationForm'
 import FinalPromptMessage from './FinalPromptMessage'
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary'
@@ -44,6 +46,7 @@ import RegenerateModelPopover from './RegenerateModelPopover'
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api'
 import type { SourceReference } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
+import type { MessageBlock } from './thinking/types'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { useMessageFeedback } from '@/hooks/useMessageFeedback'
 import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartUrlRenderer'
@@ -74,6 +77,7 @@ export interface Message {
     shell_type?: string // Shell type (Chat, ClaudeCode, Agno, etc.)
     sources?: SourceReference[] // RAG knowledge base sources
     reasoning_content?: string // Reasoning content from DeepSeek R1 etc.
+    blocks?: MessageBlock[] // Message blocks for mixed rendering (new format)
   }
   /** @deprecated Use contexts instead */
   attachments?: Attachment[]
@@ -1425,21 +1429,6 @@ const MessageBubble = memo(
         <div
           className={`flex ${containerWidthClass} flex-col ${isEditing ? 'items-start' : shouldAlignRight ? 'items-end' : 'items-start'}`}
         >
-          {/* Show thinking display for AI messages */}
-          {!isUserTypeMessage && msg.thinking && (
-            <ThinkingDisplay
-              thinking={msg.thinking}
-              taskStatus={msg.subtaskStatus}
-              shellType={msg.result?.shell_type}
-            />
-          )}
-          {/* Show reasoning display for DeepSeek R1 and similar models */}
-          {!isUserTypeMessage && (msg.reasoningContent || msg.result?.reasoning_content) && (
-            <ReasoningDisplay
-              reasoningContent={msg.reasoningContent || msg.result?.reasoning_content || ''}
-              isStreaming={msg.subtaskStatus === 'RUNNING' || msg.status === 'streaming'}
-            />
-          )}
           <div
             className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}
             onMouseUp={handleTextSelection}
@@ -1458,6 +1447,20 @@ const MessageBubble = memo(
                 )}
               </div>
             )}
+            {/* Show reasoning display for DeepSeek R1 and similar models */}
+            {!isUserTypeMessage && (msg.reasoningContent || msg.result?.reasoning_content) && (
+              <ReasoningDisplay
+                reasoningContent={msg.reasoningContent || msg.result?.reasoning_content || ''}
+                isStreaming={msg.subtaskStatus === 'RUNNING' || msg.status === 'streaming'}
+              />
+            )}
+            {/* Show tool blocks for messages with thinking but no blocks */}
+            {!isUserTypeMessage &&
+              msg.thinking &&
+              msg.thinking.length > 0 &&
+              !msg.result?.blocks && (
+                <ToolBlocksView thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
+              )}
             {/* Show header for other users' messages in group chat (left-aligned user messages) */}
             {isUserTypeMessage && !shouldAlignRight && msg.shouldShowSender && (
               <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
@@ -1485,9 +1488,22 @@ const MessageBubble = memo(
             ) : (
               <>
                 {/* Show recovered content if available, otherwise show normal content */}
-                {msg.recoveredContent && msg.subtaskStatus === 'RUNNING'
-                  ? renderRecoveredContent()
-                  : renderMessageBody(msg, index)}
+                {msg.recoveredContent && msg.subtaskStatus === 'RUNNING' ? (
+                  renderRecoveredContent()
+                ) : !isUserTypeMessage && msg.result?.blocks && msg.result.blocks.length > 0 ? (
+                  /* For AI messages with blocks data, use mixed content view to interleave text and tools */
+                  <>
+                    <MixedContentView
+                      thinking={msg.thinking ?? null}
+                      content={msg.content || ''}
+                      taskStatus={msg.subtaskStatus}
+                      theme={theme}
+                      blocks={msg.result.blocks}
+                    />
+                  </>
+                ) : (
+                  <>{renderMessageBody(msg, index)}</>
+                )}
               </>
             )}
             {/* Show incomplete notice for completed but incomplete messages */}
@@ -1607,6 +1623,25 @@ const MessageBubble = memo(
     const nextReasoningLen =
       nextProps.msg.reasoningContent?.length || nextProps.msg.result?.reasoning_content?.length || 0
 
+    // Compare blocks array length for mixed content rendering
+    const prevBlocksLen = prevProps.msg.result?.blocks?.length || 0
+    const nextBlocksLen = nextProps.msg.result?.blocks?.length || 0
+
+    // CRITICAL FIX: Compare blocks content hash (id + status + has_output)
+    // Comparing only length is not enough - we need to detect when block status/content changes
+    const prevBlocksHash =
+      prevProps.msg.result?.blocks
+        ?.map(
+          b => `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : b.content?.length || 0}`
+        )
+        .join('|') || ''
+    const nextBlocksHash =
+      nextProps.msg.result?.blocks
+        ?.map(
+          b => `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : b.content?.length || 0}`
+        )
+        .join('|') || ''
+
     const shouldSkipRender =
       prevProps.msg.content === nextProps.msg.content &&
       prevProps.msg.subtaskStatus === nextProps.msg.subtaskStatus &&
@@ -1616,6 +1651,7 @@ const MessageBubble = memo(
       prevProps.msg.isRecovered === nextProps.msg.isRecovered &&
       prevProps.msg.isIncomplete === nextProps.msg.isIncomplete &&
       prevProps.msg.isWaiting === nextProps.msg.isWaiting &&
+      prevProps.msg.result === nextProps.msg.result &&
       prevProps.isWaiting === nextProps.isWaiting &&
       prevProps.theme === nextProps.theme &&
       prevProps.onTextSelect === nextProps.onTextSelect &&
@@ -1625,6 +1661,8 @@ const MessageBubble = memo(
       prevThinkingLen === nextThinkingLen &&
       prevSourcesLen === nextSourcesLen &&
       prevReasoningLen === nextReasoningLen &&
+      prevBlocksLen === nextBlocksLen &&
+      prevBlocksHash === nextBlocksHash && // CRITICAL: Compare block content changes
       prevProps.msg.status === nextProps.msg.status &&
       prevProps.msg.error === nextProps.msg.error &&
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&

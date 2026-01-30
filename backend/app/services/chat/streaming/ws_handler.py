@@ -219,8 +219,10 @@ class WebSocketStreamingHandler:
                 len(extra_tools),
             )
 
-            # Create tool event handler
-            handle_tool_event = create_tool_event_handler(state, emitter, agent_builder)
+            # Create tool event handler with core for block event emission
+            handle_tool_event = create_tool_event_handler(
+                state, emitter, agent_builder, core
+            )
 
             # Stream tokens
             token_count = 0

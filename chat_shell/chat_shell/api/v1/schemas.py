@@ -5,9 +5,8 @@ Defines request and response schemas for /v1/response API.
 Design inspired by Anthropic Messages API + OpenAI Responses API.
 """
 
-from datetime import datetime
 from enum import Enum
-from typing import Any, Literal, Optional, Union
+from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -379,6 +378,21 @@ class ContentDelta(BaseModel):
     type: str = Field("text", description="Content type: text or image")
     text: Optional[str] = Field(None, description="Text content")
     data: Optional[str] = Field(None, description="Base64 image data")
+    # NEW: Include full result for streaming mixed content rendering
+    result: Optional[dict] = Field(
+        None,
+        description="Full result data including thinking, blocks, sources for real-time rendering",
+    )
+    # NEW: Block ID for text block streaming (incremental append to specific block)
+    block_id: Optional[str] = Field(
+        None,
+        description="Block ID for text streaming - identifies which text block to append content to",
+    )
+    # NEW: Block offset for incremental rendering within current text block
+    block_offset: Optional[int] = Field(
+        None,
+        description="Character offset within the current text block for incremental rendering",
+    )
 
 
 class ThinkingDelta(BaseModel):
@@ -400,6 +414,9 @@ class ToolStart(BaseModel):
     name: str = Field(..., description="Tool name")
     input: dict = Field(..., description="Tool input")
     display_name: Optional[str] = Field(None, description="Display name for UI")
+    blocks: Optional[list[dict[str, Any]]] = Field(
+        None, description="Current message blocks for mixed content rendering"
+    )
 
 
 class ToolProgress(BaseModel):
@@ -420,6 +437,9 @@ class ToolDone(BaseModel):
     sources: Optional[list[dict]] = Field(None, description="Source references")
     display_name: Optional[str] = Field(
         None, description="Display name for UI (updates title on completion)"
+    )
+    blocks: Optional[list[dict[str, Any]]] = Field(
+        None, description="Current message blocks for mixed content rendering"
     )
 
 
@@ -491,6 +511,9 @@ class ResponseDone(BaseModel):
         ..., description="Stop reason: end_turn, tool_use, max_tokens"
     )
     sources: Optional[list[SourceItem]] = Field(None, description="Source references")
+    blocks: Optional[list[dict[str, Any]]] = Field(
+        None, description="Message blocks for mixed text/tool rendering"
+    )
     silent_exit: Optional[bool] = Field(
         None,
         description="Whether this was a silent exit (subscription task decided not to respond)",
