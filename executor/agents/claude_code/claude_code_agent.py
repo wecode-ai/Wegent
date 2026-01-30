@@ -1968,10 +1968,14 @@ class ClaudeCodeAgent(Agent):
         - Local mode: deploys to task config directory (same as CLAUDE_CONFIG_DIR)
           to avoid modifying user's personal skills
 
+        Uses shared SkillDownloader from api_client module.
+
         Args:
             bot_config: Bot configuration containing skills list
         """
         try:
+            from executor.services.api_client import SkillDownloader
+
             # Extract skills list from bot_config (skills is at top level, not in spec)
             skills = bot_config.get("skills", [])
             if not skills:
@@ -1988,164 +1992,34 @@ class ClaudeCodeAgent(Agent):
                 # Docker mode: use default ~/.claude/skills
                 skills_dir = os.path.expanduser("~/.claude/skills")
 
-            # In Local mode, only download missing skills (don't delete existing ones)
-            if config.EXECUTOR_MODE == "local":
-                # Filter out skills that already exist locally
-                missing_skills = []
-                for skill_name in skills:
-                    skill_path = os.path.join(skills_dir, skill_name)
-                    if os.path.exists(skill_path):
-                        logger.info(
-                            f"Local mode: skill '{skill_name}' already exists, skipping"
-                        )
-                    else:
-                        missing_skills.append(skill_name)
-
-                if not missing_skills:
-                    logger.info("Local mode: all required skills already exist locally")
-                    return
-
-                logger.info(
-                    f"Local mode: need to download {len(missing_skills)} missing skills: {missing_skills}"
-                )
-                skills = missing_skills  # Only download missing skills
-            else:
-                # Docker mode: Handle skills directory based on SKILL_CLEAR_CACHE config
-                if config.SKILL_CLEAR_CACHE:
-                    # Clear existing skills directory (default behavior)
-                    if os.path.exists(skills_dir):
-                        import shutil
-
-                        shutil.rmtree(skills_dir)
-                        logger.info(f"Cleared existing skills directory: {skills_dir}")
-                else:
-                    # Only clear skills that will be replaced
-                    logger.info(
-                        f"Skill cache mode enabled, will only replace existing skills"
-                    )
-                    for skill_name in skills:
-                        skill_path = os.path.join(skills_dir, skill_name)
-                        if os.path.exists(skill_path):
-                            import shutil
-
-                            shutil.rmtree(skill_path)
-                            logger.info(
-                                f"Removed existing skill for replacement: {skill_name}"
-                            )
-
-            Path(skills_dir).mkdir(parents=True, exist_ok=True)
-
-            # Get API base URL (handles local vs docker mode) and auth token
-            api_base_url = get_api_base_url()
+            # Get auth token
             auth_token = self.task_data.get("auth_token")
-
             if not auth_token:
                 logger.warning("No auth token available, cannot download skills")
                 return
 
-            logger.info(f"Skills download: api_base_url={api_base_url}")
-
-            # Download each skill
-            import io
-            import shutil
-            import zipfile
-
-            import requests
-
-            success_count = 0
             # Get team namespace for skill lookup
             team_namespace = self.task_data.get("team_namespace", "default")
-            for skill_name in skills:
-                try:
-                    logger.info(f"Downloading skill: {skill_name}")
 
-                    # Get skill by name with namespace parameter
-                    # Query order: user's default namespace -> team's namespace -> public
-                    list_url = f"{api_base_url}/api/v1/kinds/skills?name={skill_name}&namespace={team_namespace}"
-                    headers = {"Authorization": f"Bearer {auth_token}"}
+            # Create downloader and deploy skills
+            downloader = SkillDownloader(
+                auth_token=auth_token,
+                team_namespace=team_namespace,
+                skills_dir=skills_dir,
+            )
 
-                    response = requests.get(list_url, headers=headers, timeout=30)
-                    if response.status_code != 200:
-                        logger.error(
-                            f"Failed to query skill '{skill_name}': HTTP {response.status_code}"
-                        )
-                        continue
+            # In Local mode, skip existing skills; in Docker mode, clear cache based on config
+            is_local_mode = config.EXECUTOR_MODE == "local"
+            result = downloader.download_and_deploy(
+                skills=skills,
+                clear_cache=not is_local_mode,  # Clear cache only in Docker mode
+                skip_existing=is_local_mode,  # Skip existing only in Local mode
+            )
 
-                    skills_data = response.json()
-                    skill_items = skills_data.get("items", [])
-
-                    if not skill_items:
-                        logger.error(f"Skill '{skill_name}' not found")
-                        continue
-
-                    # Extract skill ID and namespace from labels
-                    skill_item = skill_items[0]
-                    skill_id = (
-                        skill_item.get("metadata", {}).get("labels", {}).get("id")
-                    )
-                    skill_namespace = skill_item.get("metadata", {}).get(
-                        "namespace", "default"
-                    )
-
-                    if not skill_id:
-                        logger.error(f"Skill '{skill_name}' has no ID in metadata")
-                        continue
-
-                    # Download skill ZIP with namespace parameter for group skill support
-                    download_url = f"{api_base_url}/api/v1/kinds/skills/{skill_id}/download?namespace={skill_namespace}"
-                    response = requests.get(download_url, headers=headers, timeout=60)
-
-                    if response.status_code != 200:
-                        logger.error(
-                            f"Failed to download skill '{skill_name}': HTTP {response.status_code}"
-                        )
-                        continue
-
-                    # Extract ZIP to ~/.claude/skills/
-                    # The ZIP structure is: skill-name.zip -> skill-name/SKILL.md
-                    # We extract to skills_dir, which will create skills_dir/skill-name/
-                    import zipfile
-
-                    with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
-                        # Security check: prevent Zip Slip attacks
-                        for file_info in zip_file.filelist:
-                            if (
-                                file_info.filename.startswith("/")
-                                or ".." in file_info.filename
-                            ):
-                                logger.error(
-                                    f"Unsafe file path in skill ZIP: {file_info.filename}"
-                                )
-                                break
-                        else:
-                            # Extract all files to skills_dir
-                            # This will create skills_dir/skill-name/ automatically
-                            zip_file.extractall(skills_dir)
-                            skill_target_dir = os.path.join(skills_dir, skill_name)
-
-                            # Verify the skill folder was created
-                            if os.path.exists(skill_target_dir) and os.path.isdir(
-                                skill_target_dir
-                            ):
-                                logger.info(
-                                    f"Deployed skill '{skill_name}' to {skill_target_dir}"
-                                )
-                                success_count += 1
-                            else:
-                                logger.error(
-                                    f"Skill folder '{skill_name}' not found after extraction"
-                                )
-
-                except Exception as e:
-                    logger.warning(f"Failed to download skill '{skill_name}': {str(e)}")
-                    continue
-
-            if success_count > 0:
-                logger.info(
-                    f"Successfully deployed {success_count}/{len(skills)} skills to {skills_dir}"
-                )
-            else:
-                logger.warning("No skills were successfully deployed")
+            logger.info(
+                f"Skills deployment complete: {result.success_count}/{result.total_count} "
+                f"deployed to {result.skills_dir}"
+            )
 
         except Exception as e:
             logger.error(f"Error in _download_and_deploy_skills: {str(e)}")

@@ -99,12 +99,13 @@ class AttachmentPromptProcessor:
             success_attachments: Successfully downloaded attachments
 
         Returns:
-            Context string describing available attachments and their paths
+            Context string describing available attachments and their paths,
+            wrapped in <attachment> tags
         """
         if not success_attachments:
             return ""
 
-        context_lines = ["\n\n📎 Available attachments:"]
+        context_lines = ["📎 Available attachments:"]
         for att in success_attachments:
             filename = att.get("original_filename", "unknown")
             local_path = att.get("local_path", "")
@@ -123,7 +124,7 @@ class AttachmentPromptProcessor:
                 f"- {filename} ({mime_type}, {size_str}): {local_path}"
             )
 
-        return "\n".join(context_lines)
+        return "\n\n<attachment>\n" + "\n".join(context_lines) + "\n</attachment>"
 
     @classmethod
     def build_image_content_blocks(
