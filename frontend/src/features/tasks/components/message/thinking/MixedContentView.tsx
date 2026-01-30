@@ -179,27 +179,26 @@ const MixedContentView = memo(function MixedContentView({
     // Check if we have blocks and the last block is completed
     if (blocks && blocks.length > 0) {
       const lastBlock = blocks[blocks.length - 1]
-      // Show processing if last block is a completed tool
+      // Check last block
       if (lastBlock.type === 'tool' && lastBlock.status === 'done') {
         return true
+      }
+
+      // If last block is empty text, check second-to-last block
+      if (
+        lastBlock.type === 'text' &&
+        (!lastBlock.content || lastBlock.content.trim() === '') &&
+        blocks.length > 1
+      ) {
+        const secondLastBlock = blocks[blocks.length - 2]
+        if (secondLastBlock.type === 'tool' && secondLastBlock.status === 'done') {
+          return true
+        }
       }
     }
 
     return false
   }, [taskStatus, blocks])
-
-  // DEBUG: Log final rendering
-  console.log('[MixedContentView] Final render:', {
-    mixedItemsCount: mixedItems.length,
-    mixedItemsTypes: mixedItems.map(item => (item as { type?: string } | null | undefined)?.type),
-    willRenderCount: mixedItems.filter(item => {
-      if (!item) return false
-      if (item.type === 'content') {
-        return !!(item.content && typeof item.content === 'string' && item.content.trim())
-      }
-      return true
-    }).length,
-  })
 
   return (
     <div className="space-y-3">
