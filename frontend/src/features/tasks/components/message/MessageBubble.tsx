@@ -433,13 +433,21 @@ const MessageBubble = memo(
         )
       }
 
-      const isAttachmentEmbedElement = (node: React.ReactNode): boolean =>
-        React.isValidElement(node) && Boolean(node.props?.['data-attachment-embed'])
+      const isAttachmentEmbedElement = (node: React.ReactNode): boolean => {
+        if (!React.isValidElement(node)) return false
+        if (node.type === AttachmentEmbed) return true
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const props = (node.props as any) || {}
+        return Boolean(props['data-attachment-embed'] || props['data-id'] || props.id)
+      }
 
       const renderParagraph = (children: React.ReactNode) => {
         const childArray = React.Children.toArray(children)
-        if (childArray.length === 1 && isAttachmentEmbedElement(childArray[0])) {
-          return <div>{childArray[0]}</div>
+        // If the paragraph contains any block-level elements like AttachmentEmbed,
+        // we must use <div> instead of <p> to avoid invalid HTML nesting (<div> inside <p>)
+        // which causes hydration errors.
+        if (childArray.some(child => isAttachmentEmbedElement(child))) {
+          return <div>{children}</div>
         }
         const text = extractText(children)
         return wrapWithAction(<p>{children}</p>, text)
@@ -473,7 +481,66 @@ const MessageBubble = memo(
         return <SmartImage src={src} alt={alt} />
       }
 
-      return {
+      // Standard components that match react-markdown's Components type
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const baseComponents: Record<string, React.ComponentType<any>> = {
+        a: ({ href, children }: { href?: string; children?: React.ReactNode }) =>
+          renderLink(href, children),
+        img: ({ src, alt }: { src?: string; alt?: string }) => renderImage(src, alt),
+        p: ({ children }: { children?: React.ReactNode }) => renderParagraph(children),
+        h1: ({ children }: { children?: React.ReactNode }) => {
+          const text = extractText(children)
+          return (wrapWithAction(<h1>{children}</h1>, text) ?? (
+            <h1>{children}</h1>
+          )) as React.ReactElement
+        },
+        h2: ({ children }: { children?: React.ReactNode }) => {
+          const text = extractText(children)
+          return (wrapWithAction(<h2>{children}</h2>, text) ?? (
+            <h2>{children}</h2>
+          )) as React.ReactElement
+        },
+        h3: ({ children }: { children?: React.ReactNode }) => {
+          const text = extractText(children)
+          return (wrapWithAction(<h3>{children}</h3>, text) ?? (
+            <h3>{children}</h3>
+          )) as React.ReactElement
+        },
+        h4: ({ children }: { children?: React.ReactNode }) => {
+          const text = extractText(children)
+          return (wrapWithAction(<h4>{children}</h4>, text) ?? (
+            <h4>{children}</h4>
+          )) as React.ReactElement
+        },
+        h5: ({ children }: { children?: React.ReactNode }) => {
+          const text = extractText(children)
+          return (wrapWithAction(<h5>{children}</h5>, text) ?? (
+            <h5>{children}</h5>
+          )) as React.ReactElement
+        },
+        h6: ({ children }: { children?: React.ReactNode }) => {
+          const text = extractText(children)
+          return (wrapWithAction(<h6>{children}</h6>, text) ?? (
+            <h6>{children}</h6>
+          )) as React.ReactElement
+        },
+        li: ({ children }: { children?: React.ReactNode }) => {
+          const text = extractText(children)
+          return (wrapWithAction(<li>{children}</li>, text) ?? (
+            <li>{children}</li>
+          )) as React.ReactElement
+        },
+        blockquote: ({ children }: { children?: React.ReactNode }) => {
+          const text = extractText(children)
+          return (wrapWithAction(<blockquote>{children}</blockquote>, text) ?? (
+            <blockquote>{children}</blockquote>
+          )) as React.ReactElement
+        },
+      }
+
+      // Custom element components (not in standard Components type)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const customComponents: Record<string, React.ComponentType<any>> = {
         'attachment-embed': ({ 'data-id': dataId, id }: { 'data-id'?: string; id?: string }) => {
           const parsedId = Number(dataId || id)
           if (!Number.isFinite(parsedId) || parsedId <= 0) {
@@ -496,52 +563,24 @@ const MessageBubble = memo(
           }
           return <SchemeLink href={targetHref}>{children || targetHref}</SchemeLink>
         },
-        a: ({ href, children }: { href?: string; children: React.ReactNode }) =>
-          renderLink(href, children),
-        img: ({ src, alt }: { src?: string; alt?: string }) => renderImage(src, alt),
-        p: ({ children }: { children: React.ReactNode }) => renderParagraph(children),
-        h1: ({ children }: { children: React.ReactNode }) => {
-          const text = extractText(children)
-          return wrapWithAction(<h1>{children}</h1>, text)
-        },
-        h2: ({ children }: { children: React.ReactNode }) => {
-          const text = extractText(children)
-          return wrapWithAction(<h2>{children}</h2>, text)
-        },
-        h3: ({ children }: { children: React.ReactNode }) => {
-          const text = extractText(children)
-          return wrapWithAction(<h3>{children}</h3>, text)
-        },
-        h4: ({ children }: { children: React.ReactNode }) => {
-          const text = extractText(children)
-          return wrapWithAction(<h4>{children}</h4>, text)
-        },
-        h5: ({ children }: { children: React.ReactNode }) => {
-          const text = extractText(children)
-          return wrapWithAction(<h5>{children}</h5>, text)
-        },
-        h6: ({ children }: { children: React.ReactNode }) => {
-          const text = extractText(children)
-          return wrapWithAction(<h6>{children}</h6>, text)
-        },
-        li: ({ children }: { children: React.ReactNode }) => {
-          const text = extractText(children)
-          return wrapWithAction(<li>{children}</li>, text)
-        },
-        blockquote: ({ children }: { children: React.ReactNode }) => {
-          const text = extractText(children)
-          return wrapWithAction(<blockquote>{children}</blockquote>, text)
-        },
       }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return { ...baseComponents, ...customComponents } as Record<string, React.ComponentType<any>>
     }
 
+    // Note: We intentionally don't include isStreaming in dependencies to avoid
+    // hydration mismatches between SSR and client. The isStreaming value is
+    // accessed via closure when the component actually renders.
     const markdownComponents = useMemo(
       () => buildMarkdownComponents(paragraphAction),
-      [paragraphAction, isStreaming, theme]
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [paragraphAction, theme]
     )
     const markdownComponentsNoAction = useMemo(
       () => buildMarkdownComponents(undefined),
-      [isStreaming, theme]
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [theme]
     )
 
     const renderProgressBar = (status: string, progress: number) => {

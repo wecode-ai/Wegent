@@ -1,49 +1,41 @@
 ---
-description: "Provide UI link helpers for attachment:// and wegent:// so models can return clickable UI links."
+description: "告诉AI如何直接输出附件链接，无需调用任何工具"
 displayName: "UI 链接"
 version: "1.0.0"
 author: "Wegent Team"
 tags: ["ui", "links", "attachment", "scheme"]
 bindShells: ["Chat"]
-provider:
-  module: provider
-  class: UiLinksToolProvider
-tools:
-  - name: ui_attachment_link
-    provider: ui-links
-    config:
-      api_base_url: ""
-  - name: ui_wegent_link
-    provider: ui-links
 ---
 
-# UI Links Skill
+# UI 链接
 
-Generate UI-ready Markdown links for the frontend to render:
+**本技能没有工具，不需要调用任何工具。**
 
-## Tools
+## 直接输出附件链接
 
-### ui_attachment_link
-Return `![Attachment](attachment://{id})` for an attachment ID. The tool validates
-that the attachment exists and is accessible to the current user.
+当对话中提到附件ID时，直接输出以下格式的markdown，**不需要先加载技能，不需要调用任何工具**：
 
-**Parameters**
-- `attachment_id` (required): Attachment ID
-- `alt_text` (optional): Alt text used in the Markdown image link
-
-**Example**
-```json
-{"attachment_id": 123, "alt_text": "Attachment"}
+```markdown
+![描述](attachment://ID)
 ```
 
-### ui_wegent_link
-Return `[Open](wegent://...)` for a Wegent scheme URL.
+**示例：**
+- 用户说"看看附件106" → 直接回复：`![附件106](attachment://106)`
+- 用户说"显示图片" → 直接回复：`![图片](attachment://123)`
 
-**Parameters**
-- `scheme_url` (required): Wegent scheme URL, e.g. `wegent://open/chat`
-- `label` (optional): Link label
+**不要做的事：**
+- ❌ 不要调用 `load_skill` 来加载本技能
+- ❌ 不要使用任何工具
+- ❌ 不要把 `![...](attachment://...)` 包裹在代码块里（除非用户要求看代码）
 
-**Example**
-```json
-{"scheme_url": "wegent://open/chat", "label": "Open"}
+**要做的事：**
+- ✅ 直接输出 `![描述](attachment://ID)` 作为回复内容
+- ✅ 前端会自动渲染成附件预览
+
+## Wegent链接
+
+```markdown
+[链接文字](wegent://路径)
 ```
+
+例如：`[打开设置](wegent://open/settings)`

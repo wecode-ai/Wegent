@@ -131,13 +131,21 @@ export function createSmartMarkdownComponents(options?: {
 }) {
   const { enableImagePreview = true, theme = 'light' } = options || {}
 
-  const isAttachmentEmbedElement = (node: React.ReactNode): boolean =>
-    React.isValidElement(node) && Boolean(node.props?.['data-attachment-embed'])
+  const isAttachmentEmbedElement = (node: React.ReactNode): boolean => {
+    if (!React.isValidElement(node)) return false
+    if (node.type === AttachmentEmbed) return true
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const props = (node.props as any) || {}
+    return Boolean(props['data-attachment-embed'] || props['data-id'] || props.id)
+  }
 
   const renderParagraph = (children?: React.ReactNode) => {
     const childArray = React.Children.toArray(children)
-    if (childArray.length === 1 && isAttachmentEmbedElement(childArray[0])) {
-      return <div>{childArray[0]}</div>
+    // If the paragraph contains any block-level elements like AttachmentEmbed,
+    // we must use <div> instead of <p> to avoid invalid HTML nesting (<div> inside <p>)
+    // which causes hydration errors.
+    if (childArray.some(child => isAttachmentEmbedElement(child))) {
+      return <div>{children}</div>
     }
     return <p>{children}</p>
   }
@@ -205,7 +213,7 @@ export function createSmartMarkdownComponents(options?: {
 
     // Custom image renderer
     img: ({ src, alt, ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => {
-      const attachmentSchemeId = parseAttachmentSchemeUrl(src)
+      const attachmentSchemeId = parseAttachmentSchemeUrl(src as string | undefined)
       if (attachmentSchemeId) {
         return <AttachmentEmbed attachmentId={attachmentSchemeId} theme={theme} />
       }
@@ -220,7 +228,7 @@ export function createSmartMarkdownComponents(options?: {
       return <SmartImage src={src} alt={alt} />
     },
 
-    p: ({ children }) => renderParagraph(children),
+    p: ({ children }: { children?: React.ReactNode }) => renderParagraph(children),
   }
 }
 
