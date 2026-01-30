@@ -232,6 +232,7 @@ Upload a file from sandbox to Wegent and get a download URL for users.
 - Upload generated documents (PDF, Word, etc.) for user download
 - Share files created in the sandbox with users
 - Export results from sandbox to Wegent storage
+- User can not access file directly, you MUST use upload_attachment tool for sending file to user.
 
 **Parameters:**
 - `file_path` (required): Path to the file in sandbox to upload
