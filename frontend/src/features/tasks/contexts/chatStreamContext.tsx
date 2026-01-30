@@ -510,30 +510,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Handle chat:chunk event from WebSocket
    * Accumulate streaming content for the specific AI message in the unified messages Map
    * For executor tasks, also update the result field (contains thinking, workbench)
+   *
+   * NEW: Supports block-based streaming:
+   * - If block_id + block_offset is present: use offset-based content merging for specific text block
+   * - If block_id (without block_offset) is present: append content to specific text block (legacy)
+   * - If result.blocks is present: merge tool blocks (complete replacement)
    */
   const handleChatChunk = useCallback((data: ChatChunkPayload) => {
-    const { subtask_id, content, result, sources } = data
-
-    // Temporary DEBUG: Check if blocks are being received
-    if (result?.blocks && result.blocks.length > 0) {
-      console.log('[ChatStreamContext][chat:chunk] ✅ Blocks received:', {
-        subtask_id,
-        blocksCount: result.blocks.length,
-        blocks: result.blocks.map(b => ({
-          id: b.id,
-          type: b.type,
-          status: b.status,
-          tool_name: b.tool_name,
-        })),
-      })
-    } else {
-      console.log('[ChatStreamContext][chat:chunk] ❌ No blocks in chunk:', {
-        subtask_id,
-        hasResult: !!result,
-        hasThinking: !!result?.thinking,
-        resultKeys: result ? Object.keys(result) : [],
-      })
-    }
+    const { subtask_id, content, result, sources, block_id, block_offset } = data
 
     // Find task ID from subtask
     let taskId = subtaskToTaskRef.current.get(subtask_id)
@@ -570,7 +554,9 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         // IMPORTANT: Merge result instead of replacing to preserve thinking data
         const updatedMessage: UnifiedMessage = {
           ...existingMessage,
-          content: existingMessage.content + content,
+          // NEW: Only append content to legacy content field if no block_id
+          // When using blocks, content accumulation is handled via blocks
+          content: block_id ? existingMessage.content : existingMessage.content + content,
         }
 
         // Handle reasoning content from DeepSeek R1 and similar models
@@ -587,6 +573,116 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           updatedMessage.reasoningContent = result.reasoning_content
         }
 
+        // OPTIMIZATION: Incremental blocks merging with block_id support
+        // Backend now sends either:
+        // 1. block_id + block_offset + content: offset-based content merge for specific text block (NEW)
+        // 2. block_id + content (no block_offset): append content to specific text block (LEGACY)
+        // 3. result.blocks: tool blocks for complete merge (by block.id)
+        // This logic runs REGARDLESS of whether result is present
+        const mergedBlocks = (() => {
+          const existingBlocks = existingMessage.result?.blocks || []
+          const newResult = result as UnifiedMessage['result']
+          const incomingBlocks = newResult?.blocks || []
+
+          // Case 1: block_id provided - text block content update
+          if (block_id && content) {
+            console.log('[ChatStreamContext] Block-based streaming:', {
+              subtask_id,
+              block_id,
+              block_offset,
+              content_len: content.length,
+              existing_blocks_count: existingBlocks.length,
+              mode: block_offset !== undefined ? 'offset-based' : 'append',
+            })
+
+            const blocksMap = new Map(existingBlocks.map(b => [b.id, b]))
+            const targetBlock = blocksMap.get(block_id)
+
+            if (targetBlock && targetBlock.type === 'text') {
+              // Mode 1: Offset-based merge (NEW)
+              if (block_offset !== undefined) {
+                const currentContent = targetBlock.content || ''
+                // Use block_offset to merge content at specific position
+                // If block_offset <= current length, replace from that position
+                // Otherwise, append (fallback for network issues)
+                const updatedContent =
+                  block_offset <= currentContent.length
+                    ? currentContent.substring(0, block_offset) + content
+                    : currentContent + content
+
+                const updatedBlock = {
+                  ...targetBlock,
+                  content: updatedContent,
+                }
+                blocksMap.set(block_id, updatedBlock)
+                console.log('[ChatStreamContext] ✅ Merged text block (offset-based):', {
+                  block_id,
+                  block_offset,
+                  old_content_len: currentContent.length,
+                  new_content_len: updatedContent.length,
+                  merged_chars: content.length,
+                })
+              } else {
+                // Mode 2: Append mode (LEGACY)
+                const updatedBlock = {
+                  ...targetBlock,
+                  content: (targetBlock.content || '') + content,
+                }
+                blocksMap.set(block_id, updatedBlock)
+                console.log('[ChatStreamContext] ✅ Appended to text block (legacy):', {
+                  block_id,
+                  old_content_len: targetBlock.content?.length || 0,
+                  new_content_len: updatedBlock.content.length,
+                  appended_chars: content.length,
+                })
+              }
+            } else if (!targetBlock) {
+              // Create new text block if doesn't exist
+              const newBlock = {
+                id: block_id,
+                type: 'text' as const,
+                content: content,
+                status: 'streaming' as const,
+                timestamp: Date.now(),
+              }
+              blocksMap.set(block_id, newBlock)
+              console.log('[ChatStreamContext] ✅ Created new text block:', {
+                block_id,
+                content_len: content.length,
+              })
+            }
+
+            const result = Array.from(blocksMap.values())
+            console.log('[ChatStreamContext] Blocks after merge:', {
+              total_blocks: result.length,
+              blocks: result.map(b => ({
+                id: b.id,
+                type: b.type,
+                content_len: b.content?.length || 0,
+                status: b.status,
+              })),
+            })
+            return result
+          }
+
+          // Case 2: No incoming blocks - keep existing
+          if (incomingBlocks.length === 0) {
+            return existingBlocks
+          }
+
+          // Case 3: Tool blocks - merge by block.id (complete replacement)
+          // Create a map of existing blocks for efficient lookup
+          const blocksMap = new Map(existingBlocks.map(b => [b.id, b]))
+
+          // Merge incoming blocks: update existing or add new
+          incomingBlocks.forEach(incomingBlock => {
+            blocksMap.set(incomingBlock.id, incomingBlock)
+          })
+
+          // Convert map back to array, preserving order
+          return Array.from(blocksMap.values())
+        })()
+
         // If result is provided (executor tasks), merge it with existing result
         // This prevents losing thinking data when result is partially updated
         if (result) {
@@ -602,11 +698,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
               newResult && newResult.thinking
                 ? newResult.thinking
                 : existingMessage.result?.thinking,
-            // Special handling for blocks array:
-            // If new result has blocks, use it (backend sends full array)
-            // Otherwise keep existing blocks to prevent data loss
-            blocks:
-              newResult && newResult.blocks ? newResult.blocks : existingMessage.result?.blocks,
+            // Use merged blocks from above
+            blocks: mergedBlocks,
             // Keep accumulated reasoning_content
             reasoning_content:
               newResult?.reasoning_content || existingMessage.result?.reasoning_content,
@@ -614,6 +707,13 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             // Backend may not include shell_type in every chat:chunk
             // This MUST be last to override any undefined from newResult
             shell_type: newResult?.shell_type || existingMessage.result?.shell_type,
+          }
+        } else if (block_id && content) {
+          // No result provided but block_id + content exists
+          // Create or update result with merged blocks
+          updatedMessage.result = {
+            ...existingMessage.result,
+            blocks: mergedBlocks,
           }
         }
         // Extract sources from either top-level or result.sources
@@ -715,15 +815,18 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           // Set sources if provided (check both top-level and result.sources)
           sources: finalSources || existingMessage.sources,
           // IMPORTANT: Update result field to preserve thinking/blocks data from incremental updates
-          // Merge with existing result to keep accumulated thinking/blocks data
+          // For chat:done event, use the final blocks array if provided (full sync)
+          // Otherwise preserve accumulated blocks from incremental updates
           result: result
             ? {
                 ...existingMessage.result,
                 ...(result as UnifiedMessage['result']),
-                // Explicitly preserve blocks and thinking if not provided in done event
+                // Explicitly preserve thinking if not provided in done event
                 thinking:
                   (result as UnifiedMessage['result'])?.thinking ||
                   existingMessage.result?.thinking,
+                // For blocks: if done event has blocks, use it (final sync)
+                // Otherwise preserve accumulated blocks from chat:chunk incremental updates
                 blocks:
                   (result as UnifiedMessage['result'])?.blocks || existingMessage.result?.blocks,
               }

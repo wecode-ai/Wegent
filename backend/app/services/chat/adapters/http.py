@@ -448,6 +448,7 @@ class HTTPAdapter(ChatInterface):
 
         if line.startswith("data:"):
             data_str = line[5:].strip()
+            logger.info("[HTTP_ADAPTER] SSE data line: %s", data_str[:100])
 
             # Check for [DONE] marker
             if data_str == "[DONE]":
@@ -469,6 +470,12 @@ class HTTPAdapter(ChatInterface):
                     text = data.get("text", "")
                     if text:
                         event_data["content"] = text
+                    # Extract block_id for text block streaming
+                    if data.get("block_id"):
+                        event_data["block_id"] = data["block_id"]
+                    # Extract block_offset for incremental rendering
+                    if data.get("block_offset") is not None:
+                        event_data["block_offset"] = data["block_offset"]
                     # Extract result with blocks for real-time mixed content rendering
                     # chat_shell's CHUNK events include the full blocks array for streaming display
                     if data.get("result"):
@@ -508,6 +515,7 @@ class HTTPAdapter(ChatInterface):
                     event_data["display_name"] = data.get(
                         "display_name", data.get("name", "")
                     )
+                    event_data["blocks"] = data.get("blocks", [])
                     if event_type == ChatEventType.TOOL_START:
                         event_data["input"] = data.get("input", {})
                     else:  # TOOL_RESULT

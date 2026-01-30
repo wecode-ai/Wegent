@@ -20,7 +20,6 @@ def create_tool_event_handler(
     state: Any,
     emitter: Any,
     agent_builder: Any,
-    core: Any = None,
 ) -> Callable[[str, dict], None]:
     """Create a tool event handler function.
 
@@ -28,7 +27,6 @@ def create_tool_event_handler(
         state: Streaming state to update
         emitter: Stream emitter for events
         agent_builder: Agent builder for tool registry access
-        core: Optional StreamingCore instance for block event emission
 
     Returns:
         Tool event handler function
@@ -41,11 +39,11 @@ def create_tool_event_handler(
 
         if kind == "tool_start":
             _handle_tool_start(
-                state, emitter, agent_builder, tool_name, run_id, event_data, core
+                state, emitter, agent_builder, tool_name, run_id, event_data
             )
         elif kind == "tool_end":
             _handle_tool_end(
-                state, emitter, agent_builder, tool_name, run_id, event_data, core
+                state, emitter, agent_builder, tool_name, run_id, event_data
             )
 
     return handle_tool_event
@@ -58,9 +56,13 @@ def _handle_tool_start(
     tool_name: str,
     run_id: str,
     event_data: dict,
-    core: Any = None,
 ) -> None:
     """Handle tool start event."""
+    logger.info(
+        "[TOOL_START] _handle_tool_start called: tool_name=%s, run_id=%s",
+        tool_name,
+        run_id,
+    )
     # Extract tool input for better display
     tool_input = event_data.get("data", {}).get("input", {})
 
@@ -97,7 +99,7 @@ def _handle_tool_start(
         "title": title,
         "next_action": "continue",
         "run_id": run_id,  # Keep for backward compatibility
-        "tool_use_id": tool_use_id,  # NEW: Standard identifier
+        "tool_use_id": tool_use_id,  # Standard identifier
         "details": {
             "type": "tool_use",
             "tool_name": tool_name,
@@ -109,36 +111,10 @@ def _handle_tool_start(
 
     state.add_thinking_step(thinking_step)
 
-    # Emit block event if core is available (Block architecture)
-    if core is not None:
-        import asyncio
-
-        # Schedule async block event emission
-        # Use run_coroutine_threadsafe to call async method from sync context
-        try:
-            # Try to get the running event loop (we're in chat_shell's async context)
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                # Fallback to get_event_loop if no running loop
-                loop = asyncio.get_event_loop()
-
-            asyncio.run_coroutine_threadsafe(
-                core.emit_tool_block(
-                    tool_use_id=tool_use_id,
-                    tool_name=tool_name,
-                    tool_input=serializable_input,
-                ),
-                loop,
-            )
-            logger.debug(
-                f"[BLOCK] Scheduled emit_tool_block for {tool_name} (tool_use_id={tool_use_id})"
-            )
-        except Exception as e:
-            logger.warning(f"[BLOCK] Failed to emit tool block: {e}")
+    # Add tool block for mixed content rendering
+    state.append_tool_block(tool_use_id, tool_name, serializable_input)
 
     # Emit chunk with thinking data synchronously using emit_json
-    # Note: emit_json is sync method, emit_chunk is async but we're in sync callback
     current_result = state.get_current_result(
         include_value=False, slim_thinking=True, include_blocks=True
     )
@@ -159,7 +135,6 @@ def _handle_tool_end(
     tool_name: str,
     run_id: str,
     event_data: dict,
-    core: Any = None,
 ) -> None:
     """Handle tool end event."""
     # Extract and serialize tool output
@@ -260,7 +235,7 @@ def _handle_tool_end(
         "title": title,
         "next_action": "continue",
         "run_id": run_id,  # Keep for backward compatibility
-        "tool_use_id": tool_use_id,  # NEW: Standard identifier
+        "tool_use_id": tool_use_id,  # Standard identifier
         "details": {
             "type": "tool_result",
             "tool_name": tool_name,
@@ -278,40 +253,15 @@ def _handle_tool_end(
     else:
         state.add_thinking_step(result_step)
 
-    # Emit block update if core is available (Block architecture)
-    if core is not None:
-        import asyncio
-
-        # Schedule async block update emission and WAIT for it to complete
-        try:
-            # Try to get the running event loop (we're in chat_shell's async context)
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                # Fallback to get_event_loop if no running loop
-                loop = asyncio.get_event_loop()
-
-            # CRITICAL: Wait for the update to complete before emitting chunk
-            # This ensures tool_output is included in the blocks when we call get_current_result
-            future = asyncio.run_coroutine_threadsafe(
-                core.update_tool_block(
-                    tool_use_id=tool_use_id,
-                    tool_output=serializable_output,
-                    status="done" if status == "completed" else "error",
-                    is_error=(status == "failed"),
-                ),
-                loop,
-            )
-            # Wait for the update to complete (with timeout to avoid hanging)
-            future.result(timeout=5.0)
-            logger.debug(
-                f"[BLOCK] Completed update_tool_block for {tool_name} (tool_use_id={tool_use_id})"
-            )
-        except Exception as e:
-            logger.warning(f"[BLOCK] Failed to update tool block: {e}")
+    # Update tool block with output and status
+    state.update_tool_block(
+        tool_use_id,
+        tool_output=serializable_output,
+        status="done" if status == "completed" else "error",
+        is_error=(status == "failed"),
+    )
 
     # Emit chunk with thinking data synchronously using emit_json
-    # This now includes the updated blocks with tool_output
     current_result = state.get_current_result(
         include_value=False, slim_thinking=True, include_blocks=True
     )

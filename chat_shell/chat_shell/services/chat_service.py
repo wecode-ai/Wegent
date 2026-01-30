@@ -230,9 +230,7 @@ class ChatService(ChatInterface):
             t2 = time.perf_counter()
             agent_builder = agent.create_agent_builder(agent_config)
 
-            on_tool_event = create_tool_event_handler(
-                state, emitter, agent_builder, core
-            )
+            on_tool_event = create_tool_event_handler(state, emitter, agent_builder)
             logger.debug(
                 "[CHAT_SERVICE] Created tool event handler, agent_builder=%s",
                 type(agent_builder).__name__,

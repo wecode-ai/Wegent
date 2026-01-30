@@ -88,6 +88,8 @@ class WebSocketEmitter:
         content: str,
         offset: int,
         result: Optional[Dict[str, Any]] = None,
+        block_id: Optional[str] = None,
+        block_offset: Optional[int] = None,
     ) -> None:
         """
         Emit chat:chunk event to task room.
@@ -98,23 +100,35 @@ class WebSocketEmitter:
             content: Content chunk (for text streaming)
             offset: Current offset in the full response
             result: Optional full result data (for executor tasks with thinking/workbench)
+            block_id: Optional block ID for text block streaming (append content to specific block)
+            block_offset: Optional character offset within the current text block
         """
         payload = {
             "subtask_id": subtask_id,
             "content": content,
             "offset": offset,
         }
+        # Include block_id if provided (for text block streaming)
+        if block_id is not None:
+            payload["block_id"] = block_id
+
+        # Include block_offset if provided (for incremental rendering)
+        if block_offset is not None:
+            payload["block_offset"] = block_offset
+
         # Include full result if provided (for executor tasks)
         if result is not None:
             payload["result"] = result
 
         # DEBUG: Log WebSocket emit with blocks info
         logger.info(
-            "[WS_EMITTER] emit_chat_chunk: subtask_id=%d, has_result=%s, has_blocks=%s, blocks_count=%d",
+            "[WS_EMITTER] emit_chat_chunk: subtask_id=%d, has_result=%s, has_blocks=%s, blocks_count=%d, block_id=%s, block_offset=%s",
             subtask_id,
             result is not None,
             result.get("blocks") is not None if result else False,
             len(result.get("blocks", [])) if result and result.get("blocks") else 0,
+            block_id,
+            block_offset,
         )
         if result and result.get("blocks"):
             logger.info(

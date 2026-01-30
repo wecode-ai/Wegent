@@ -49,21 +49,9 @@ const MixedContentView = memo(function MixedContentView({
 
   // Build mixed content array - prefer blocks if available
   const mixedItems = useMemo(() => {
-    // Temporary DEBUG: Log rendering mode selection
-    console.log('[MixedContentView] Rendering mode selection:', {
-      hasBlocks: !!blocks && blocks.length > 0,
-      blocksCount: blocks?.length || 0,
-      hasThinking: !!thinking && thinking.length > 0,
-      thinkingCount: thinking?.length || 0,
-      hasContent: !!content,
-      contentLength: content?.length || 0,
-      willUseBlockMode: !!blocks && blocks.length > 0,
-    })
-
     // NEW: Block-based rendering (preferred)
     if (blocks && blocks.length > 0) {
-      console.log('[MixedContentView] ✅ Using BLOCK-based rendering')
-      return blocks
+      const mapped = blocks
         .map(block => {
           if (block.type === 'text') {
             return {
@@ -116,10 +104,14 @@ const MixedContentView = memo(function MixedContentView({
           return null
         })
         .filter(Boolean)
+      console.log('[MixedContentView] After mapping and filtering:', {
+        mappedCount: mapped.length,
+        mappedTypes: mapped.map(m => (m as { type: string }).type),
+      })
+      return mapped
     }
 
     // LEGACY: Thinking-based rendering (fallback for old messages)
-    console.log('[MixedContentView] ⚠️ Using THINKING-based rendering (fallback)')
     if (!thinking?.length) {
       // No thinking data, just show content if not empty
       if (content && content.trim()) {
@@ -166,22 +158,28 @@ const MixedContentView = memo(function MixedContentView({
     }
 
     return items
-  }, [
-    // Dependency optimization: Use computed key instead of raw array reference
-    // This prevents unnecessary re-renders when array reference changes but content is the same
-    blocks
-      ?.map(b => `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : b.content?.length}`)
-      .join('|'),
-    thinking,
-    content,
-    toolMap,
-  ])
+  }, [blocks, thinking, content, toolMap])
+
+  // DEBUG: Log final rendering
+  console.log('[MixedContentView] Final render:', {
+    mixedItemsCount: mixedItems.length,
+    mixedItemsTypes: mixedItems.map(item => (item as { type?: string } | null | undefined)?.type),
+    willRenderCount: mixedItems.filter(item => {
+      if (!item) return false
+      if (item.type === 'content') {
+        return !!(item.content && typeof item.content === 'string' && item.content.trim())
+      }
+      return true
+    }).length,
+  })
 
   return (
     <div className="space-y-3">
       {mixedItems.map((item, index) => {
         // Null check after filter
-        if (!item) return null
+        if (!item) {
+          return null
+        }
 
         if (item.type === 'content') {
           // Skip empty content or non-string content

@@ -78,6 +78,7 @@ class StreamingState:
     current_text_block_id: Optional[str] = (
         None  # Track current text block for streaming
     )
+    block_offset: int = 0  # Track character offset within current text block
 
     # TTFT tracking
     stream_start_time: Optional[float] = None
@@ -216,6 +217,96 @@ class StreamingState:
             slimmed.append(slim_step)
         return slimmed
 
+    def append_text_block(self, text: str) -> None:
+        """Create or update text block for streaming content.
+
+        Args:
+            text: Text content to add to the current text block
+        """
+        import uuid
+
+        if self.current_text_block_id is None:
+            # Create new text block, reset block_offset to 0
+            block_id = str(uuid.uuid4())
+            block = {
+                "id": block_id,
+                "type": "text",
+                "content": text,
+                "status": "streaming",
+                "timestamp": time.time(),
+            }
+            self.add_block(block)
+            self.current_text_block_id = block_id
+            self.block_offset = 0  # Reset block offset for new text block
+        else:
+            # Update existing text block by appending content
+            for block in self.blocks:
+                if block.get("id") == self.current_text_block_id:
+                    block["content"] = block.get("content", "") + text
+                    break
+
+        # Update block_offset after adding text
+        self.block_offset += len(text)
+
+    def finalize_text_block(self) -> None:
+        """Mark current text block as complete and reset block_offset."""
+        if self.current_text_block_id:
+            self.update_block(self.current_text_block_id, {"status": "done"})
+            self.current_text_block_id = None
+            self.block_offset = 0  # Reset block offset when finalizing
+
+    def append_tool_block(
+        self,
+        tool_use_id: str,
+        tool_name: str,
+        tool_input: dict,
+    ) -> None:
+        """Create tool block when tool call starts.
+
+        Args:
+            tool_use_id: Unique identifier for the tool call
+            tool_name: Name of the tool being called
+            tool_input: Input parameters for the tool
+        """
+        # Finalize current text block before starting tool (also resets block_offset)
+        self.finalize_text_block()
+
+        block = {
+            "id": tool_use_id,
+            "type": "tool",
+            "tool_use_id": tool_use_id,
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "status": "pending",
+            "timestamp": time.time(),
+        }
+        self.add_block(block)
+
+    def update_tool_block(
+        self,
+        tool_use_id: str,
+        tool_output: Any = None,
+        status: str = "done",
+        is_error: bool = False,
+    ) -> None:
+        """Update tool block when tool execution completes.
+
+        Args:
+            tool_use_id: Unique identifier for the tool call
+            tool_output: Output result from the tool
+            status: Block status ('done' or 'error')
+            is_error: Whether the tool execution failed
+        """
+        updates = {
+            "tool_output": tool_output,
+            "status": status,
+        }
+
+        if is_error:
+            updates["type"] = "error"
+
+        self.update_block(tool_use_id, updates)
+
 
 @dataclass
 class StreamingConfig:
@@ -249,8 +340,13 @@ class StreamingCore:
         self.state = state
         self.config = config or StreamingConfig()
 
-        # Use provided storage handler or set to None
-        self._storage = storage_handler
+        # Use provided storage handler or import default
+        if storage_handler is None:
+            from chat_shell.services.storage.session import session_manager
+
+            self._storage = storage_handler
+        else:
+            self._storage = storage_handler
 
         self._semaphore = get_chat_semaphore()
         self._acquired = False
@@ -315,132 +411,6 @@ class StreamingCore:
         """Check if streaming has been cancelled."""
         return self._cancel_event is not None and self._cancel_event.is_set()
 
-    async def emit_text_block(self, text: str) -> None:
-        """Create or update text block for streaming content.
-
-        Args:
-            text: Text content to add to the current text block
-        """
-        import uuid
-
-        if self.state.current_text_block_id is None:
-            # Create new text block
-            block_id = str(uuid.uuid4())
-            block = {
-                "id": block_id,
-                "type": "text",
-                "content": text,
-                "status": "streaming",
-                "timestamp": time.time(),
-            }
-            self.state.add_block(block)
-            self.state.current_text_block_id = block_id
-
-            logger.debug(
-                "[BLOCK] Created text block: block_id=%s subtask=%d content_len=%d",
-                block_id,
-                self.state.subtask_id,
-                len(text),
-            )
-        else:
-            # Update existing text block by appending content
-            for block in self.state.blocks:
-                if block.get("id") == self.state.current_text_block_id:
-                    block["content"] = block.get("content", "") + text
-                    break
-
-    async def finalize_text_block(self) -> None:
-        """Mark current text block as complete."""
-        if self.state.current_text_block_id:
-            self.state.update_block(
-                self.state.current_text_block_id, {"status": "done"}
-            )
-            self.state.current_text_block_id = None
-
-    async def emit_tool_block(
-        self,
-        tool_use_id: str,
-        tool_name: str,
-        tool_input: dict,
-    ) -> None:
-        """Create tool block when tool call starts.
-
-        Args:
-            tool_use_id: Unique identifier for the tool call
-            tool_name: Name of the tool being called
-            tool_input: Input parameters for the tool
-        """
-        # Finalize current text block before starting tool
-        await self.finalize_text_block()
-
-        block = {
-            "id": tool_use_id,
-            "type": "tool",
-            "tool_use_id": tool_use_id,
-            "tool_name": tool_name,
-            "tool_input": tool_input,
-            "status": "pending",
-            "timestamp": time.time(),
-        }
-        self.state.add_block(block)
-
-        logger.debug(
-            "[BLOCK] Created tool block: tool=%s tool_use_id=%s subtask=%d",
-            tool_name,
-            tool_use_id,
-            self.state.subtask_id,
-        )
-
-    async def update_tool_block(
-        self,
-        tool_use_id: str,
-        tool_output: Any = None,
-        status: str = "done",
-        is_error: bool = False,
-    ) -> None:
-        """Update tool block when tool execution completes.
-
-        Args:
-            tool_use_id: Unique identifier for the tool call
-            tool_output: Output result from the tool
-            status: Block status ('done' or 'error')
-            is_error: Whether the tool execution failed
-        """
-        updates = {
-            "tool_output": tool_output,
-            "status": status,
-        }
-
-        if is_error:
-            updates["type"] = "error"
-
-        logger.debug(
-            "[BLOCK] Updating tool block: tool_use_id=%s, has_output=%s, status=%s, existing_blocks=%d",
-            tool_use_id,
-            tool_output is not None,
-            status,
-            len(self.state.blocks),
-        )
-        self.state.update_block(tool_use_id, updates)
-
-        # Verify update was successful
-        block_found = any(b.get("id") == tool_use_id for b in self.state.blocks)
-        if block_found:
-            updated_block = next(
-                b for b in self.state.blocks if b.get("id") == tool_use_id
-            )
-            logger.debug(
-                "[BLOCK] Tool block updated successfully: id=%s, status=%s, has_tool_output=%s",
-                tool_use_id,
-                updated_block.get("status"),
-                "tool_output" in updated_block,
-            )
-        else:
-            logger.error(
-                "[BLOCK] Tool block update FAILED: id=%s not found in blocks",
-                tool_use_id,
-            )
-
     async def process_token(self, token: str) -> bool:
         """Process a single token from the stream.
 
@@ -499,19 +469,29 @@ class StreamingCore:
         self.state.append_content(token)
 
         # Create or update text block for mixed content rendering
-        await self.emit_text_block(token)
+        self.state.append_text_block(token)
 
         is_chat_mode = self.state.shell_type == "Chat"
+
+        block_id = self.state.current_text_block_id
+        current_block_offset = self.state.block_offset
+
+        # IMPORTANT: Do NOT include blocks in result for text streaming
+        # Only include blocks when tool events occur (via tool_start/tool_end handlers)
         result = self.state.get_current_result(
             include_value=False,
             include_thinking=not is_chat_mode,
-            include_blocks=True,  # Include blocks for mixed content rendering
+            include_blocks=False,  # Don't send blocks for text streaming
         )
+
         await self.emitter.emit_chunk(
             token,
             self.state.offset - len(token),
             self.state.subtask_id,
             result=result,
+            block_id=block_id,  # Send block_id for text block streaming
+            block_offset=current_block_offset
+            - len(token),  # Send block_offset for incremental rendering
         )
 
         return True
@@ -519,7 +499,7 @@ class StreamingCore:
     async def finalize(self) -> dict:
         """Finalize streaming and return results."""
         # Finalize any remaining text block
-        await self.finalize_text_block()
+        self.state.finalize_text_block()
 
         is_chat_mode = self.state.shell_type == "Chat"
         result = self.state.get_current_result(

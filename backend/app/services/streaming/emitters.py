@@ -55,6 +55,7 @@ class StreamEmitter(ABC):
         offset: int,
         subtask_id: int,
         result: dict[str, Any] | None = None,
+        block_id: str | None = None,
     ) -> None:
         """Emit a content chunk with optional result data (thinking, workbench).
 
@@ -63,6 +64,7 @@ class StreamEmitter(ABC):
             offset: Current offset in the full response
             subtask_id: Subtask ID
             result: Optional full result data (for thinking/workbench display)
+            block_id: Optional block ID for text block streaming (append content to specific block)
         """
         pass
 
@@ -116,11 +118,14 @@ class SSEEmitter(StreamEmitter):
         offset: int,
         subtask_id: int,
         result: dict[str, Any] | None = None,
+        block_id: str | None = None,
     ) -> None:
         """Emit chunk as SSE data with optional result."""
         payload = {"content": content, "done": False}
         if result is not None:
             payload["result"] = result
+        if block_id is not None:
+            payload["block_id"] = block_id
         self._events.append(self.format_sse(payload))
 
     async def emit_done(
@@ -196,6 +201,7 @@ class WebSocketEmitter(StreamEmitter):
         offset: int,
         subtask_id: int,
         result: dict[str, Any] | None = None,
+        block_id: str | None = None,
     ) -> None:
         """Emit chat:chunk event using global emitter with optional result data.
 
@@ -204,11 +210,12 @@ class WebSocketEmitter(StreamEmitter):
         from app.services.chat.ws_emitter import get_ws_emitter
 
         logger.debug(
-            "[WS_EMITTER] emit_chunk: subtask_id=%d, offset=%d, content_len=%d, has_result=%s",
+            "[WS_EMITTER] emit_chunk: subtask_id=%d, offset=%d, content_len=%d, has_result=%s, block_id=%s",
             subtask_id,
             offset,
             len(content),
             result is not None,
+            block_id,
         )
         emitter = get_ws_emitter()
         await emitter.emit_chat_chunk(
@@ -217,6 +224,7 @@ class WebSocketEmitter(StreamEmitter):
             content=content,
             offset=offset,
             result=result,
+            block_id=block_id,
         )
 
     async def emit_done(
@@ -286,6 +294,7 @@ class WebSocketEmitter(StreamEmitter):
         content = data.get("content", "")
         offset = data.get("offset", 0)
         result = data.get("result")
+        block_id = data.get("block_id")
 
         # Get the main event loop
         loop = get_main_event_loop()
@@ -301,12 +310,14 @@ class WebSocketEmitter(StreamEmitter):
                 content=content,
                 offset=offset,
                 result=result,
+                block_id=block_id,
             ),
             loop,
         )
         logger.debug(
-            "[WS_EMITTER] emit_json: scheduled chunk emission for subtask=%d",
+            "[WS_EMITTER] emit_json: scheduled chunk emission for subtask=%d, block_id=%s",
             subtask_id,
+            block_id,
         )
 
     async def emit_event(self, event_type: str, data: dict[str, Any]) -> None:

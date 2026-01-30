@@ -141,7 +141,7 @@ export function useUnifiedMessages({
   isGroupChat,
   pendingTaskId,
 }: UseUnifiedMessagesOptions): UseUnifiedMessagesResult {
-  const { getStreamState, syncBackendMessages, resumeStream, streamStates } = useChatStreamContext()
+  const { getStreamState, syncBackendMessages, resumeStream } = useChatStreamContext()
   const { selectedTaskDetail } = useTaskContext()
   const { user } = useUser()
 
@@ -308,18 +308,6 @@ export function useUnifiedMessages({
         reasoningContent: msg.reasoningContent || msg.result?.reasoning_content,
       }
 
-      // DEBUG: Log if this message has blocks
-      if (msg.result?.blocks && msg.result.blocks.length > 0) {
-        console.log('[useUnifiedMessages] Message with blocks:', {
-          id: msg.id,
-          subtaskId: msg.subtaskId,
-          blocksCount: msg.result.blocks.length,
-          blocks: msg.result.blocks.map(b => ({ id: b.id, type: b.type, status: b.status })),
-          displayMsg_hasBlocks: !!displayMsg.result?.blocks,
-          displayMsg_blocksCount: displayMsg.result?.blocks?.length || 0,
-        })
-      }
-
       messages.push(displayMsg)
 
       // Track pending user messages
@@ -371,7 +359,7 @@ export function useUnifiedMessages({
       subtasksMap,
       pendingMessages,
     }
-  }, [effectiveTaskId, streamStates, team?.name, isGroupChat, user?.id])
+  }, [effectiveTaskId, streamState, team?.name, isGroupChat, user?.id])
 
   return result
 }

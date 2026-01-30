@@ -1485,19 +1485,6 @@ const MessageBubble = memo(
               />
             ) : (
               <>
-                {/* DEBUG: Log view selection */}
-                {console.log('[MessageBubble] View selection:', {
-                  subtaskId: msg.subtaskId,
-                  isUserType: isUserTypeMessage,
-                  hasThinking: !!(msg.thinking && msg.thinking.length > 0),
-                  hasBlocks: !!(msg.result?.blocks && msg.result.blocks.length > 0),
-                  thinkingLen: msg.thinking?.length || 0,
-                  blocksLen: msg.result?.blocks?.length || 0,
-                  willUseMixedView:
-                    !isUserTypeMessage &&
-                    ((msg.thinking && msg.thinking.length > 0) ||
-                      (msg.result?.blocks && msg.result.blocks.length > 0)),
-                })}
                 {/* Show recovered content if available, otherwise show normal content */}
                 {msg.recoveredContent && msg.subtaskStatus === 'RUNNING' ? (
                   renderRecoveredContent()
@@ -1506,23 +1493,6 @@ const MessageBubble = memo(
                     (msg.result?.blocks && msg.result.blocks.length > 0)) ? (
                   /* For AI messages with thinking/blocks data, use mixed content view to interleave text and tools */
                   <>
-                    {/* Temporary DEBUG: Check what data is available */}
-                    {console.log(
-                      '[MessageBubble] Rendering decision for subtask',
-                      msg.subtaskId,
-                      ':',
-                      {
-                        hasThinking: !!msg.thinking && msg.thinking.length > 0,
-                        thinkingCount: msg.thinking?.length || 0,
-                        hasBlocks: !!msg.result?.blocks && msg.result.blocks.length > 0,
-                        blocksCount: msg.result?.blocks?.length || 0,
-                        hasResult: !!msg.result,
-                        willUseMixedView: true,
-                        // ⚠️ CRITICAL DEBUG: Check the full result structure
-                        resultKeys: msg.result ? Object.keys(msg.result) : [],
-                        fullResult: msg.result,
-                      }
-                    )}
                     <MixedContentView
                       thinking={msg.thinking ?? null}
                       content={msg.content || ''}
@@ -1532,22 +1502,7 @@ const MessageBubble = memo(
                     />
                   </>
                 ) : (
-                  <>
-                    {/* Temporary DEBUG: Check why not using MixedContentView */}
-                    {!isUserTypeMessage &&
-                      console.log(
-                        '[MessageBubble] NOT using MixedContentView for subtask',
-                        msg.subtaskId,
-                        ':',
-                        {
-                          isUserTypeMessage,
-                          hasThinking: !!msg.thinking && msg.thinking.length > 0,
-                          hasBlocks: !!msg.result?.blocks && msg.result.blocks.length > 0,
-                          msg: { thinking: msg.thinking, result: msg.result },
-                        }
-                      )}
-                    {renderMessageBody(msg, index)}
-                  </>
+                  <>{renderMessageBody(msg, index)}</>
                 )}
               </>
             )}
@@ -1696,6 +1651,7 @@ const MessageBubble = memo(
       prevProps.msg.isRecovered === nextProps.msg.isRecovered &&
       prevProps.msg.isIncomplete === nextProps.msg.isIncomplete &&
       prevProps.msg.isWaiting === nextProps.msg.isWaiting &&
+      prevProps.msg.result === nextProps.msg.result &&
       prevProps.isWaiting === nextProps.isWaiting &&
       prevProps.theme === nextProps.theme &&
       prevProps.onTextSelect === nextProps.onTextSelect &&
@@ -1713,18 +1669,6 @@ const MessageBubble = memo(
       prevProps.isEditing === nextProps.isEditing &&
       prevProps.isLastAiMessage === nextProps.isLastAiMessage &&
       prevProps.isRegenerating === nextProps.isRegenerating
-
-    // DEBUG: Log shouldSkipRender decision
-    console.log('[MessageBubble][memo] Comparison result:', {
-      subtaskId: nextProps.msg.subtaskId,
-      shouldSkipRender,
-      prevBlocksLen,
-      nextBlocksLen,
-      prevBlocksHash: prevBlocksHash.substring(0, 100) + (prevBlocksHash.length > 100 ? '...' : ''),
-      nextBlocksHash: nextBlocksHash.substring(0, 100) + (nextBlocksHash.length > 100 ? '...' : ''),
-      blocksHashChanged: prevBlocksHash !== nextBlocksHash,
-      contentChanged: prevProps.msg.content !== nextProps.msg.content,
-    })
 
     return shouldSkipRender
   }

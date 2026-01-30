@@ -171,6 +171,10 @@ export interface ChatChunkPayload {
   subtask_id: number
   content: string
   offset: number
+  /** Optional block ID for text block streaming (append content to specific block) */
+  block_id?: string
+  /** Optional block offset for offset-based content merging within a specific block */
+  block_offset?: number
   /** Full result data for executor tasks (contains thinking, workbench) */
   result?: {
     value?: string

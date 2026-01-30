@@ -979,58 +979,24 @@ async def _stream_with_http_adapter(
                         )
 
                     full_response += chunk_text
+                    await emitter.emit_chat_chunk(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        block_id=event.data.get("block_id"),
+                        block_offset=event.data.get("block_offset"),
+                        content=chunk_text,
+                        offset=offset,
+                    )
                     offset += len(chunk_text)
 
-                # Extract result with blocks for real-time mixed content rendering
-                # CHUNK events from chat_shell include the full blocks array for streaming display
-                result = event.data.get("result")
-                if result and result.get("blocks"):
-                    logger.info(
-                        "[HTTP_ADAPTER] CHUNK event with blocks: count=%d, blocks=%s",
-                        len(result["blocks"]),
-                        [
-                            {
-                                "id": b.get("id"),
-                                "type": b.get("type"),
-                                "status": b.get("status"),
-                                "tool_name": (
-                                    b.get("tool_name")
-                                    if b.get("type") == "tool"
-                                    else None
-                                ),
-                                "has_tool_output": (
-                                    "tool_output" in b
-                                    if b.get("type") == "tool"
-                                    else None
-                                ),
-                            }
-                            for b in result["blocks"]
-                        ],
-                    )
-
-                # Emit chunk with content and blocks (if present)
-                logger.info(
-                    "[HTTP_ADAPTER] emit_chat_chunk: subtask_id=%d, has_result=%s, has_blocks=%s",
-                    subtask_id,
-                    result is not None,
-                    result.get("blocks") is not None if result else False,
-                )
-                await emitter.emit_chat_chunk(
-                    task_id=task_id,
-                    subtask_id=subtask_id,
-                    content=chunk_text,
-                    offset=offset - len(chunk_text) if chunk_text else offset,
-                    result=result,  # Include result with blocks for real-time rendering
-                )
-
-                # Periodic save to Redis for streaming recovery
-                # This allows page refresh to recover streaming content
-                current_time = asyncio.get_event_loop().time()
-                if current_time - last_redis_save >= redis_save_interval:
-                    await session_manager.save_streaming_content(
-                        subtask_id, full_response
-                    )
-                    last_redis_save = current_time
+                    # Periodic save to Redis for streaming recovery
+                    # This allows page refresh to recover streaming content
+                    current_time = asyncio.get_event_loop().time()
+                    if current_time - last_redis_save >= redis_save_interval:
+                        await session_manager.save_streaming_content(
+                            subtask_id, full_response
+                        )
+                        last_redis_save = current_time
 
             elif event.type == ChatEventType.THINKING:
                 # Thinking token - emit as chunk with special handling
@@ -1047,6 +1013,7 @@ async def _stream_with_http_adapter(
                 tool_name = event.data.get("name", event.data.get("tool_name", ""))
                 tool_input = event.data.get("input", event.data.get("tool_input", {}))
                 display_name = event.data.get("display_name", tool_name)
+                blocks = event.data.get("blocks", [])
 
                 logger.info(
                     "[HTTP_ADAPTER] TOOL_START: id=%s, name=%s, display_name=%s, event.data=%s",
@@ -1075,6 +1042,7 @@ async def _stream_with_http_adapter(
                 result_data = {
                     "shell_type": "Chat",
                     "thinking": thinking_steps.copy(),
+                    "blocks": blocks,
                 }
                 await emitter.emit_chat_chunk(
                     task_id=task_id,
@@ -1091,6 +1059,7 @@ async def _stream_with_http_adapter(
                 tool_output = event.data.get(
                     "output", event.data.get("tool_output", "")
                 )
+                blocks = event.data.get("blocks", [])
 
                 logger.info(
                     "[HTTP_ADAPTER] TOOL_RESULT: id=%s, name=%s, event.data=%s",
@@ -1159,6 +1128,7 @@ async def _stream_with_http_adapter(
                 result_data = {
                     "shell_type": "Chat",
                     "thinking": thinking_steps.copy(),
+                    "blocks": blocks,
                 }
                 await emitter.emit_chat_chunk(
                     task_id=task_id,
@@ -1191,16 +1161,6 @@ async def _stream_with_http_adapter(
                     )
                 else:
                     logger.info("[HTTP_ADAPTER] No sources in result")
-
-                # Preserve blocks from result (mixed content rendering)
-                # Blocks are passed through from chat_shell's ResponseDone event
-                if result.get("blocks"):
-                    logger.info(
-                        "[HTTP_ADAPTER] Blocks in result: %d blocks",
-                        len(result["blocks"]),
-                    )
-                else:
-                    logger.info("[HTTP_ADAPTER] No blocks in result")
 
                 # Update subtask status to COMPLETED in database
                 # This is critical for persistence - without this, messages show as "running" after refresh
@@ -1531,10 +1491,8 @@ async def _stream_with_bridge(
             len(extra_tools),
         )
 
-        # Create tool event handler with core for block event emission
-        handle_tool_event = create_tool_event_handler(
-            state, emitter, agent_builder, core
-        )
+        # Create tool event handler
+        handle_tool_event = create_tool_event_handler(state, emitter, agent_builder)
 
         # Stream tokens
         token_count = 0

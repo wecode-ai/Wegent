@@ -375,31 +375,24 @@ async def _stream_response(
             if event.type == ChatEventType.CHUNK:
                 chunk_text = event.data.get("content", "")
 
-                # Check for thinking data, sources, and blocks in result
+                # Check for thinking data, sources, blocks, and block_id in result
                 result = event.data.get("result")
+                block_id = event.data.get(
+                    "block_id"
+                )  # Extract block_id for text block streaming
+                block_offset = event.data.get(
+                    "block_offset"
+                )  # Extract block_offset for incremental rendering
                 logger.debug(
                     "[RESPONSE] CHUNK event: content_len=%d, has_result=%s, "
-                    "thinking_count=%d, blocks_count=%d",
+                    "thinking_count=%d, blocks_count=%d, block_id=%s, block_offset=%s",
                     len(chunk_text),
                     result is not None,
                     len(result.get("thinking", [])) if result else 0,
                     len(result.get("blocks", [])) if result else 0,
+                    block_id,
+                    block_offset,
                 )
-
-                # Log blocks detail if present
-                if result and result.get("blocks"):
-                    logger.info(
-                        "[RESPONSE] CHUNK with blocks: subtask_id=%d, blocks=%s",
-                        subtask_id,
-                        [
-                            {
-                                "id": b.get("id"),
-                                "type": b.get("type"),
-                                "status": b.get("status"),
-                            }
-                            for b in result["blocks"]
-                        ],
-                    )
 
                 # Send content.delta event with result (including blocks for real-time mixed content)
                 if chunk_text:
@@ -410,6 +403,8 @@ async def _stream_response(
                             type="text",
                             text=chunk_text,
                             result=result,  # Include result for real-time mixed content rendering
+                            block_id=block_id,  # Include block_id for text block streaming
+                            block_offset=block_offset,  # Include block_offset for incremental rendering
                         ).model_dump(exclude_none=True),
                     )
 
@@ -424,11 +419,6 @@ async def _stream_response(
                         }
                         if key not in existing_keys:
                             accumulated_sources.append(source)
-                # Accumulate blocks from result (mixed content rendering)
-                if result and result.get("blocks"):
-                    # Replace accumulated_blocks with latest blocks array
-                    # Each chunk contains the full blocks array, not incremental updates
-                    accumulated_blocks = result["blocks"]
                 if result and result.get("thinking"):
                     for step in result["thinking"]:
                         details = step.get("details", {})
@@ -436,6 +426,7 @@ async def _stream_response(
                         tool_name = details.get("tool_name", details.get("name", ""))
                         run_id = step.get("run_id", "")
                         title = step.get("title", "")
+                        blocks = result.get("blocks", [])
 
                         # Create unique key for this tool event
                         event_key = f"{run_id}:{status}"
@@ -459,6 +450,7 @@ async def _stream_response(
                                     name=tool_name,
                                     input=details.get("input", {}),
                                     display_name=step.get("title", tool_name),
+                                    blocks=blocks,
                                 ).model_dump(),
                             )
                         elif status in ("completed", "failed"):
@@ -487,6 +479,7 @@ async def _stream_response(
                                     ),
                                     sources=None,
                                     display_name=title if status == "failed" else None,
+                                    blocks=blocks,
                                 ).model_dump(),
                             )
 
@@ -506,6 +499,7 @@ async def _stream_response(
                         name=event.data.get("tool_name", ""),
                         input=event.data.get("tool_input", {}),
                         display_name=event.data.get("tool_name"),
+                        blocks=event.data.get("blocks", []),
                     ).model_dump(),
                 )
 
@@ -515,6 +509,7 @@ async def _stream_response(
                     ToolDone(
                         id=event.data.get("tool_call_id", ""),
                         output=event.data.get("tool_output"),
+                        blocks=event.data.get("blocks", []),
                         duration_ms=None,
                         error=None,
                         sources=None,
