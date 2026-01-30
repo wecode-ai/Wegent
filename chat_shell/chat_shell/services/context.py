@@ -677,8 +677,9 @@ class ChatContext:
         model_namespace = "default"
         if self._request.model_config:
             model_name = self._request.model_config.get("model_name")
-            model_namespace = self._request.model_config.get(
-                "model_namespace", "default"
+            # Use `or "default"` to handle both missing key and None value
+            model_namespace = (
+                self._request.model_config.get("model_namespace") or "default"
             )
 
         create_subscription_tool = CreateSubscriptionTool(
