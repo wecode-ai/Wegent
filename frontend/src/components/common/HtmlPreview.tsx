@@ -6,7 +6,7 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { X, AlertCircle, FileCode, Loader2 } from 'lucide-react'
+import { X, AlertCircle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getToken } from '@/apis/user'
@@ -17,10 +17,6 @@ interface HtmlPreviewProps {
   attachmentId: number
   /** Filename for display */
   filename?: string
-  /** Maximum width of the thumbnail */
-  maxWidth?: number
-  /** Maximum height of the thumbnail */
-  maxHeight?: number
 }
 
 /**
@@ -111,16 +107,116 @@ function HtmlLightbox({
 }
 
 /**
- * HtmlPreview component for rendering HTML file URLs in chat messages.
- * Shows an inline thumbnail that can be clicked to open a preview modal.
- * Downloads HTML content on click to avoid authentication issues.
+ * HtmlThumbnail component - Renders a live preview of HTML in a small iframe
+ * Uses CSS transform to scale content to fit the thumbnail container
  */
-export default function HtmlPreview({
-  attachmentId,
+function HtmlThumbnail({
+  blobUrl,
   filename,
-  maxWidth = 600,
-  maxHeight = 400,
-}: HtmlPreviewProps) {
+  onClick,
+}: {
+  blobUrl: string
+  filename?: string
+  onClick: () => void
+}) {
+  const [isLoading, setIsLoading] = useState(true)
+  const [hasError, setHasError] = useState(false)
+  const [scale, setScale] = useState(0.3125) // Default: 400 / 1280
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Calculate scale based on container size
+  useEffect(() => {
+    const calculateScale = () => {
+      if (containerRef.current) {
+        const containerWidth = containerRef.current.clientWidth
+        // Scale to fit container, assuming content is 1280px wide (common slide width)
+        // Add a small margin by using slightly larger denominator
+        const newScale = containerWidth / 1280
+        setScale(newScale)
+      }
+    }
+
+    calculateScale()
+
+    // Recalculate on resize
+    const observer = new ResizeObserver(calculateScale)
+    if (containerRef.current) {
+      observer.observe(containerRef.current)
+    }
+
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <div
+      className="relative rounded-lg overflow-hidden border border-border hover:border-primary transition-colors cursor-pointer bg-white"
+      onClick={onClick}
+      style={{ width: '100%', maxWidth: '400px' }}
+    >
+      {/* Container with 16:9 aspect ratio */}
+      <div ref={containerRef} className="relative w-full" style={{ aspectRatio: '16/9' }}>
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-surface">
+            <Loader2 className="h-6 w-6 text-primary animate-spin" />
+          </div>
+        )}
+
+        {hasError ? (
+          <div className="absolute inset-0 flex items-center justify-center bg-surface">
+            <div className="flex flex-col items-center gap-1 text-text-secondary">
+              <AlertCircle className="h-8 w-8" />
+              <span className="text-xs">Failed to load</span>
+            </div>
+          </div>
+        ) : (
+          <div
+            className="absolute inset-0 overflow-hidden"
+            style={
+              {
+                // Use CSS transform to scale the iframe content to fit the container
+                // This allows fixed-size HTML content (like 1280x720 slides) to fit in a small thumbnail
+              }
+            }
+          >
+            <iframe
+              src={blobUrl}
+              title={filename || 'HTML Preview'}
+              className={`border-0 bg-white ${isLoading ? 'opacity-0' : 'opacity-100'}`}
+              onLoad={() => setIsLoading(false)}
+              onError={() => {
+                setHasError(true)
+                setIsLoading(false)
+              }}
+              sandbox="allow-scripts allow-same-origin"
+              style={{
+                // Prevent interaction in thumbnail mode
+                pointerEvents: 'none',
+                backgroundColor: 'white',
+                // Use transform scale to fit content into container
+                // Content is assumed to be 1280x720 (standard slide size)
+                transform: `scale(${scale})`,
+                transformOrigin: 'top left',
+                width: '1280px',
+                height: '720px',
+              }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Filename overlay at bottom */}
+      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent px-3 py-2">
+        <p className="text-white text-xs truncate">{filename || 'HTML Preview'}</p>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * HtmlPreview component for rendering HTML file URLs in chat messages.
+ * Shows an inline thumbnail with live HTML preview that can be clicked to open a preview modal.
+ */
+export default function HtmlPreview({ attachmentId, filename }: HtmlPreviewProps) {
   const { t } = useTranslation('common')
   const [showLightbox, setShowLightbox] = useState(false)
   const [isDownloading, setIsDownloading] = useState(false)
@@ -137,50 +233,48 @@ export default function HtmlPreview({
     }
   }, [blobUrl])
 
-  const downloadHtml = useCallback(async () => {
-    if (downloadStarted.current) return
-    downloadStarted.current = true
-    setIsDownloading(true)
-    setError(false)
+  // Download HTML on component mount (for thumbnail preview)
+  useEffect(() => {
+    if (blobUrl || error || isDownloading) return
 
-    try {
-      const token = getToken()
-      const response = await fetch(getAttachmentDownloadUrl(attachmentId), {
-        headers: {
-          ...(token && { Authorization: `Bearer ${token}` }),
-        },
-      })
+    const downloadHtml = async () => {
+      if (downloadStarted.current) return
+      downloadStarted.current = true
+      setIsDownloading(true)
+      setError(false)
 
-      if (!response.ok) {
-        throw new Error(`Failed to download HTML: ${response.status}`)
+      try {
+        const token = getToken()
+        const response = await fetch(getAttachmentDownloadUrl(attachmentId), {
+          headers: {
+            ...(token && { Authorization: `Bearer ${token}` }),
+          },
+        })
+
+        if (!response.ok) {
+          throw new Error(`Failed to download HTML: ${response.status}`)
+        }
+
+        const blob = await response.blob()
+        // Force text/html MIME type to ensure browser renders it instead of downloading
+        const htmlBlob = new Blob([blob], { type: 'text/html' })
+        const url = URL.createObjectURL(htmlBlob)
+        setBlobUrl(url)
+      } catch (err) {
+        console.error('Failed to download HTML:', err)
+        setError(true)
+      } finally {
+        setIsDownloading(false)
       }
-
-      const blob = await response.blob()
-      // Force text/html MIME type to ensure browser renders it instead of downloading
-      const htmlBlob = new Blob([blob], { type: 'text/html' })
-      const url = URL.createObjectURL(htmlBlob)
-      setBlobUrl(url)
-      setShowLightbox(true)
-    } catch (err) {
-      console.error('Failed to download HTML:', err)
-      setError(true)
-    } finally {
-      setIsDownloading(false)
-      downloadStarted.current = false
     }
-  }, [attachmentId])
+
+    downloadHtml()
+  }, [attachmentId, blobUrl, error, isDownloading])
 
   const handleClick = useCallback(() => {
     if (error) return
-
-    if (blobUrl) {
-      // Already downloaded, just show
-      setShowLightbox(true)
-    } else {
-      // Download first
-      downloadHtml()
-    }
-  }, [blobUrl, error, downloadHtml])
+    setShowLightbox(true)
+  }, [error])
 
   const handleCloseLightbox = useCallback(() => {
     setShowLightbox(false)
@@ -197,44 +291,33 @@ export default function HtmlPreview({
     )
   }
 
+  // While downloading, show a placeholder
+  if (!blobUrl) {
+    return (
+      <div
+        className="relative rounded-lg overflow-hidden border border-border bg-surface"
+        style={{ maxWidth: '400px' }}
+      >
+        <div
+          className="relative w-full flex flex-col items-center justify-center"
+          style={{ aspectRatio: '16/9' }}
+        >
+          <Loader2 className="h-8 w-8 text-primary animate-spin mb-2" />
+          <span className="text-xs text-text-secondary">{t('loading')}</span>
+        </div>
+        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent px-3 py-2">
+          <p className="text-white text-xs truncate">{filename || 'HTML Preview'}</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
-      {/* Thumbnail preview - similar to image preview style */}
-      <span className="relative inline-block my-2">
-        <span
-          className={`cursor-pointer rounded-lg overflow-hidden border border-border hover:border-primary transition-colors block bg-surface ${
-            isDownloading ? 'opacity-70' : ''
-          }`}
-          onClick={handleClick}
-          style={{ maxWidth, maxHeight }}
-        >
-          {/* HTML thumbnail with aspect ratio 16:9 */}
-          <div
-            className="relative bg-gradient-to-br from-surface to-muted flex flex-col items-center justify-center"
-            style={{
-              width: '100%',
-              aspectRatio: '16/9',
-              minWidth: '200px',
-              maxWidth: `${maxWidth}px`,
-            }}
-          >
-            {/* Icon and filename */}
-            <div className="flex flex-col items-center gap-2 p-4">
-              {isDownloading ? (
-                <Loader2 className="h-10 w-10 text-primary animate-spin" />
-              ) : (
-                <FileCode className="h-10 w-10 text-primary opacity-80" />
-              )}
-              <span className="text-xs text-text-secondary text-center truncate max-w-[150px]">
-                {filename || t('attachment.html_preview')}
-              </span>
-              <span className="text-[10px] text-text-muted">
-                {isDownloading ? t('loading') : t('attachment.click_to_preview')}
-              </span>
-            </div>
-          </div>
-        </span>
-      </span>
+      {/* Thumbnail preview with live HTML rendering */}
+      <div className="my-2">
+        <HtmlThumbnail blobUrl={blobUrl} filename={filename} onClick={handleClick} />
+      </div>
 
       {/* Lightbox modal - rendered via Portal to avoid HTML nesting issues */}
       {showLightbox &&
