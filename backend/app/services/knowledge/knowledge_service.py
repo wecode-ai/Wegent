@@ -825,28 +825,37 @@ class KnowledgeService:
 
         from app.services.adapters.retriever_kinds import retriever_kinds_service
         from app.services.context import context_service
-        from app.services.rag.document_service import DocumentService
         from app.services.rag.storage.factory import create_storage_backend
 
         logger = logging.getLogger(__name__)
 
-        def run_async(coro):
+        def _ensure_event_loop() -> asyncio.AbstractEventLoop:
             """
-            Run an async coroutine safely, handling the case where
-            an event loop is already running (e.g., in FastAPI async context).
+            Ensure there is a valid, open event loop in the current thread.
+
+            LlamaIndex's ElasticsearchStore uses nest_asyncio and internally calls
+            asyncio.get_event_loop().run_until_complete(). This function ensures
+            a valid event loop exists before those calls to avoid "Event loop is closed" errors.
+
+            This is thread-safe because asyncio.set_event_loop() is thread-local.
+            Each thread maintains its own event loop, so setting it in one thread
+            does not affect other threads.
+
+            Returns:
+                A valid, open event loop
             """
             try:
-                loop = asyncio.get_running_loop()
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    # Event loop exists but is closed, create a new one
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                return loop
             except RuntimeError:
-                # No running event loop, safe to use asyncio.run()
-                return asyncio.run(coro)
-            else:
-                # Event loop is already running, create a new task
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, coro)
-                    return future.result()
+                # No event loop in current thread, create one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                return loop
 
         doc = KnowledgeService.get_document(db, document_id, user_id)
         if not doc:
@@ -900,11 +909,6 @@ class KnowledgeService:
                             # Create storage backend from retriever
                             storage_backend = create_storage_backend(retriever_crd)
 
-                            # Create document service
-                            doc_service = DocumentService(
-                                storage_backend=storage_backend
-                            )
-
                             # Get the correct user_id for index naming
                             # For group knowledge bases, use the KB creator's user_id
                             # This ensures we delete from the same index where documents were stored
@@ -914,13 +918,17 @@ class KnowledgeService:
                                 # Group knowledge base - use KB creator's user_id
                                 index_owner_user_id = kb.user_id
 
-                            # Delete RAG index using the correct user_id
-                            run_async(
-                                doc_service.delete_document(
-                                    knowledge_id=str(kind_id),
-                                    doc_ref=doc_ref,
-                                    user_id=index_owner_user_id,
-                                )
+                            # Ensure a valid event loop exists before calling storage_backend.delete_document
+                            # LlamaIndex's ElasticsearchStore uses nest_asyncio and internally calls
+                            # asyncio.get_event_loop().run_until_complete(), which requires a valid loop
+                            _ensure_event_loop()
+
+                            # Delete RAG index using the synchronous storage backend method
+                            # storage_backend.delete_document is synchronous but internally uses async operations
+                            storage_backend.delete_document(
+                                knowledge_id=str(kind_id),
+                                doc_ref=doc_ref,
+                                user_id=index_owner_user_id,
                             )
                             logger.info(
                                 f"Deleted RAG index for doc_ref '{doc_ref}' in knowledge base {kind_id} "
