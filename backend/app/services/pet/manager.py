@@ -578,6 +578,7 @@ class PetService:
         resource = pet.json.copy()
         resource["spec"] = spec
         pet.json = resource
+        flag_modified(pet, "json")
         pet.updated_at = datetime.now()
 
         db.commit()
