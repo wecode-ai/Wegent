@@ -2,16 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Browser automation skill package using Playwright."""
+"""Browser automation skill package using Playwright.
 
-# Import base module first to ensure common utilities are available
-from . import _base
+Architecture:
+- tools/ - Python tool definitions (sent to LLM)
+- scripts/ - JS scripts executed in sandbox (Playwright Node.js API)
+
+All browser operations are executed in isolated sandbox containers.
+"""
 
 __all__ = [
-    "_base",
-    "navigate_tool",
-    "click_tool",
-    "fill_tool",
-    "screenshot_tool",
+    "tools",
+    "scripts",
     "provider",
 ]

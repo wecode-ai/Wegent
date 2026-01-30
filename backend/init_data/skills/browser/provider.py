@@ -8,11 +8,11 @@ This module provides the BrowserToolProvider class that creates
 various browser automation tool instances for navigating pages,
 clicking elements, filling forms, and taking screenshots.
 
-The tools use Playwright for browser automation:
-- Chromium browser in headless mode
-- Page navigation and interaction
-- Screenshot capture
+Architecture:
+- tools/ - Python tool definitions (sent to LLM)
+- scripts/ - JS scripts executed in sandbox (Playwright Node.js API)
 
+All browser operations are executed in an isolated sandbox container.
 This provider is dynamically loaded from the skill directory at runtime.
 """
 
@@ -44,7 +44,7 @@ class BrowserToolProvider(SkillToolProvider):
           - name: browser_screenshot
             provider: browser
             config:
-              max_file_size: 10485760
+              default_timeout: 30
     """
 
     def _prepare_base_params(
@@ -67,8 +67,7 @@ class BrowserToolProvider(SkillToolProvider):
             "ws_emitter": context.ws_emitter,
             "user_id": context.user_id,
             "user_name": context.user_name,
-            "default_timeout": config.get("default_timeout", 30000),
-            "headless": config.get("headless", True),
+            "default_timeout": config.get("default_timeout", 30),
         }
 
     @property
@@ -106,8 +105,7 @@ class BrowserToolProvider(SkillToolProvider):
             tool_name: Name of the tool to create
             context: Context with dependencies (task_id, subtask_id, ws_emitter, user_id)
             tool_config: Optional configuration with keys:
-                - default_timeout: Default timeout in milliseconds (default: 30000)
-                - headless: Run browser in headless mode (default: True)
+                - default_timeout: Default timeout in seconds (default: 30)
 
         Returns:
             Configured tool instance
@@ -123,39 +121,26 @@ class BrowserToolProvider(SkillToolProvider):
 
         # Prepare common parameters for all tools
         base_params = self._prepare_base_params(context, tool_config)
-        config = tool_config or {}
 
         if tool_name == "browser_navigate":
-            from .navigate_tool import BrowserNavigateTool
+            from .tools.navigate import BrowserNavigateTool
 
-            tool_instance = BrowserNavigateTool(
-                **base_params,
-                navigation_timeout=config.get("navigation_timeout", 30),
-            )
+            tool_instance = BrowserNavigateTool(**base_params)
 
         elif tool_name == "browser_click":
-            from .click_tool import BrowserClickTool
+            from .tools.click import BrowserClickTool
 
-            tool_instance = BrowserClickTool(
-                **base_params,
-                element_timeout=config.get("element_timeout", 10),
-            )
+            tool_instance = BrowserClickTool(**base_params)
 
         elif tool_name == "browser_fill":
-            from .fill_tool import BrowserFillTool
+            from .tools.fill import BrowserFillTool
 
-            tool_instance = BrowserFillTool(
-                **base_params,
-                element_timeout=config.get("element_timeout", 10),
-            )
+            tool_instance = BrowserFillTool(**base_params)
 
         elif tool_name == "browser_screenshot":
-            from .screenshot_tool import BrowserScreenshotTool
+            from .tools.screenshot import BrowserScreenshotTool
 
-            tool_instance = BrowserScreenshotTool(
-                **base_params,
-                max_file_size=config.get("max_file_size", 10485760),  # 10MB default
-            )
+            tool_instance = BrowserScreenshotTool(**base_params)
 
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
@@ -186,20 +171,6 @@ class BrowserToolProvider(SkillToolProvider):
             if not isinstance(timeout, (int, float)):
                 return False
             if timeout <= 0:
-                return False
-
-        # Validate headless if present
-        headless = tool_config.get("headless")
-        if headless is not None:
-            if not isinstance(headless, bool):
-                return False
-
-        # Validate max_file_size if present
-        max_file_size = tool_config.get("max_file_size")
-        if max_file_size is not None:
-            if not isinstance(max_file_size, int):
-                return False
-            if max_file_size <= 0:
                 return False
 
         return True

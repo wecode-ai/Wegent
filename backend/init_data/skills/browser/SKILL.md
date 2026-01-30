@@ -1,9 +1,9 @@
 ---
 description: "Provides browser automation capabilities in sandbox environment using Playwright framework. Supports page navigation, element interaction, form filling, and screenshot capture. Ideal for web scraping, form automation, and webpage screenshots."
 displayName: "Browser Automation"
-version: "1.0.0"
+version: "2.0.0"
 author: "Wegent Team"
-tags: ["browser", "automation", "playwright", "web-scraping"]
+tags: ["browser", "automation", "playwright", "web-scraping", "sandbox"]
 bindShells: ["Chat"]
 dependencies:
   - sandbox
@@ -12,8 +12,6 @@ provider:
   class: BrowserToolProvider
 config:
   default_timeout: 30
-  screenshot_max_size: 10485760
-  headless: true
 tools:
   - name: browser_navigate
     provider: browser
@@ -23,13 +21,46 @@ tools:
     provider: browser
   - name: browser_screenshot
     provider: browser
-    config:
-      max_file_size: 10485760
 ---
 
 # Browser Automation
 
-Execute browser automation tasks securely in isolated sandbox containers using **Playwright** framework.
+Execute browser automation tasks securely in isolated sandbox containers using **Playwright** framework (Node.js).
+
+## Architecture
+
+This skill uses a two-layer architecture for secure sandbox execution:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Chat Shell (Host)                       │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │  tools/                                                  ││
+│  │  ├── _base.py      # BaseBrowserTool (sandbox executor) ││
+│  │  ├── navigate.py   # BrowserNavigateTool definition     ││
+│  │  ├── click.py      # BrowserClickTool definition        ││
+│  │  ├── fill.py       # BrowserFillTool definition         ││
+│  │  └── screenshot.py # BrowserScreenshotTool definition   ││
+│  └─────────────────────────────────────────────────────────┘│
+│                            │                                 │
+│                            │ sandbox.commands.run()          │
+│                            ▼                                 │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │                    Sandbox Container                     ││
+│  │  scripts/                                                ││
+│  │  ├── navigate.js   # Playwright navigation script       ││
+│  │  ├── click.js      # Playwright click script            ││
+│  │  ├── fill.js       # Playwright fill script             ││
+│  │  └── screenshot.js # Playwright screenshot script       ││
+│  └─────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key Points:**
+- `tools/` - Python tool definitions sent to LLM, handles sandbox interaction
+- `scripts/` - JavaScript scripts executed in sandbox using Playwright Node.js API
+- All browser operations run in isolated sandbox containers
+- Arguments are passed via base64-encoded JSON to avoid shell escaping issues
 
 ## Core Capabilities
 
@@ -53,10 +84,10 @@ Use this skill when you need to:
 
 ## Prerequisites
 
-Before using browser tools, **Playwright must be installed** in the sandbox environment. The browser tools will automatically attempt to install Playwright if not present, but you can also install it manually:
+Before using browser tools, **Playwright must be installed** in the sandbox environment. The browser tools will automatically attempt to install Playwright if not present:
 
 ```bash
-pip install playwright && playwright install chromium --with-deps
+npm install playwright && npx playwright install chromium --with-deps
 ```
 
 **Note**: The first browser operation may take longer as it needs to install Playwright and the Chromium browser.
@@ -84,7 +115,7 @@ Navigate to a URL or perform navigation actions (back, forward, reload).
 - `success`: Whether navigation succeeded
 - `url`: Current page URL after navigation
 - `title`: Page title
-- `status`: Page load status
+- `status`: HTTP status code
 
 **Example - Open a webpage:**
 ```json
@@ -233,12 +264,7 @@ Take a screenshot of the current page or a specific element.
 **Returns:**
 - `success`: Whether screenshot was captured
 - `file_path`: Path where screenshot was saved
-- `width`: Image width in pixels
-- `height`: Image height in pixels
 - `file_size`: File size in bytes
-
-**Limits:**
-- Maximum file size: 10MB
 
 **Example - Full page screenshot:**
 ```json
@@ -338,26 +364,25 @@ Take a screenshot of the current page or a specific element.
 
 ### Configuration
 - **Browser**: Chromium (headless mode)
-- **Framework**: Playwright
+- **Framework**: Playwright (Node.js)
 - **Running Mode**: Headless (no display required)
+- **Execution**: Isolated sandbox container
 
 ### Session Management
-- Browser instance is created on first tool call
-- Subsequent calls in the same session reuse the browser
-- Browser state (cookies, localStorage) persists within session
-- Browser is automatically cleaned up when sandbox terminates
+- Each browser operation creates a new browser instance
+- Browser is closed after each operation completes
+- For stateful operations, use the same sandbox session
 
 ### Resource Limits
 - **Navigation timeout**: 30 seconds (default)
 - **Element timeout**: 10 seconds (default)
-- **Screenshot max size**: 10MB
 - **Browser memory**: Limited by sandbox container
 
 ### Security Features
 - Browser runs in isolated Docker container
 - Headless mode prevents display server requirements
 - Timeout protection prevents resource exhaustion
-- Browser instance destroyed with sandbox cleanup
+- Browser instance destroyed after each operation
 
 ---
 
@@ -376,7 +401,7 @@ Take a screenshot of the current page or a specific element.
 
 ### Playwright Not Installed
 **Cause**: Playwright or Chromium not installed in sandbox
-**Solution**: Run `pip install playwright && playwright install chromium --with-deps`
+**Solution**: The tool will automatically install Playwright. If it fails, check sandbox network connectivity.
 
 ### Element Not Found
 **Cause**: Selector doesn't match any element, or element not yet loaded
@@ -392,13 +417,6 @@ Take a screenshot of the current page or a specific element.
 - Use `wait_until: domcontentloaded` for faster waiting
 - Check if the URL is accessible
 
-### Screenshot Too Large
-**Cause**: Full page screenshot exceeds 10MB limit
-**Solution**:
-- Use viewport-only screenshot (disable full_page)
-- Use JPEG format with lower quality
-- Screenshot specific elements instead
-
 ### Click Not Working
 **Cause**: Element is hidden, overlapped, or not clickable
 **Solution**:
@@ -411,7 +429,7 @@ Take a screenshot of the current page or a specific element.
 ## Technical Support
 
 When troubleshooting browser automation issues:
-- Check Playwright installation status
+- Check Playwright installation status in sandbox
 - Verify selector syntax
 - Review page structure for dynamic content
 - Check network connectivity for target URLs
