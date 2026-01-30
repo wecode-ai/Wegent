@@ -47,6 +47,8 @@
   "delete_error": "Failed to delete device",
   "local_executor_title": "Run Local Executor",
   "local_executor_description": "Run Executor on your Mac to execute AI tasks",
+  "step_install": "Install wegent-executor",
+  "step_install_desc": "Run the one-liner install script, automatically downloads and installs to ~/.wegent-executor/bin/",
   "step_download": "Download wegent-executor",
   "step_download_desc": "Download the executable for your Mac from GitHub",
   "step_permission": "Set executable permission",

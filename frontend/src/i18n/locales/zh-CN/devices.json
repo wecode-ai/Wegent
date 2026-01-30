@@ -47,6 +47,8 @@
   "delete_error": "删除设备失败",
   "local_executor_title": "运行本地 Executor",
   "local_executor_description": "在您的 Mac 上运行 Executor 以执行 AI 任务",
+  "step_install": "安装 wegent-executor",
+  "step_install_desc": "运行一键安装脚本，自动下载并安装到 ~/.wegent-executor/bin/",
   "step_download": "下载 wegent-executor",
   "step_download_desc": "从 GitHub 下载适用于您 Mac 的可执行文件",
   "step_permission": "设置可执行权限",

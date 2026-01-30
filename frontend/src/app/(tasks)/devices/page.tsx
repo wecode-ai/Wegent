@@ -50,7 +50,9 @@ import {
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
-type MacArch = 'arm64' | 'amd64'
+// Install script URL
+const INSTALL_SCRIPT_URL =
+  'https://github.com/wecode-ai/Wegent/releases/latest/download/install.sh'
 
 // Helper function to get backend URL dynamically
 const getBackendUrl = (): string => {
@@ -111,13 +113,11 @@ function CommandStep({
   title,
   description,
   command,
-  children,
 }: {
   stepNumber: number
   title: string
   description: string
   command: string
-  children?: React.ReactNode
 }) {
   const stepCircles = ['①', '②', '③', '④', '⑤']
 
@@ -130,7 +130,6 @@ function CommandStep({
           <p className="text-sm text-text-muted">{description}</p>
         </div>
       </div>
-      {children}
       <div className="bg-gray-900 rounded-lg px-5 py-4 ml-8">
         <div className="flex items-start gap-3">
           <span className="text-gray-500 select-none pt-0.5">$</span>
@@ -140,44 +139,6 @@ function CommandStep({
           <CopyButton text={command} />
         </div>
       </div>
-    </div>
-  )
-}
-
-// Component for architecture selection tabs
-function ArchSelector({
-  arch,
-  onChange,
-  t,
-}: {
-  arch: MacArch
-  onChange: (arch: MacArch) => void
-  t: (key: string) => string
-}) {
-  return (
-    <div className="flex gap-2 ml-8 mb-2">
-      <button
-        onClick={() => onChange('arm64')}
-        className={cn(
-          'px-3 py-1.5 text-sm rounded-md transition-colors',
-          arch === 'arm64'
-            ? 'bg-primary text-white'
-            : 'bg-gray-100 text-text-secondary hover:bg-gray-200'
-        )}
-      >
-        {t('arch_apple_silicon')}
-      </button>
-      <button
-        onClick={() => onChange('amd64')}
-        className={cn(
-          'px-3 py-1.5 text-sm rounded-md transition-colors',
-          arch === 'amd64'
-            ? 'bg-primary text-white'
-            : 'bg-gray-100 text-text-secondary hover:bg-gray-200'
-        )}
-      >
-        {t('arch_intel')}
-      </button>
     </div>
   )
 }
@@ -194,33 +155,22 @@ export default function DevicesPage() {
   const communityUrl = process.env.NEXT_PUBLIC_COMMUNITY_URL || ''
   const faqUrl = process.env.NEXT_PUBLIC_FAQ_URL || ''
 
-  // Architecture selection state
-  const [arch, setArch] = useState<MacArch>('arm64')
-
-  // Generate dynamic download URL based on architecture
-  const downloadUrl = useMemo(
-    () =>
-      `https://github.com/wecode-ai/Wegent/releases/latest/download/wegent-executor-macos-${arch}`,
-    [arch]
-  )
-
   // Generate dynamic backend URL
   const backendUrl = useMemo(() => getBackendUrl(), [])
 
   // Get auth token
   const authToken = useMemo(() => getToken() || '<YOUR_AUTH_TOKEN>', [])
 
-  // Generate commands
-  const downloadCommand = useMemo(
-    () => `curl -L -o wegent-executor ${downloadUrl}`,
-    [downloadUrl]
+  // Generate one-liner install command
+  const installCommand = useMemo(
+    () => `curl -fsSL ${INSTALL_SCRIPT_URL} | bash`,
+    []
   )
 
-  const permissionCommand = 'chmod +x wegent-executor'
-
+  // Generate run command
   const runCommand = useMemo(
     () =>
-      `EXECUTOR_MODE=local \\\nWEGENT_BACKEND_URL=${backendUrl} \\\nWEGENT_AUTH_TOKEN=${authToken} \\\n./wegent-executor`,
+      `EXECUTOR_MODE=local \\\nWEGENT_BACKEND_URL=${backendUrl} \\\nWEGENT_AUTH_TOKEN=${authToken} \\\n~/.wegent-executor/bin/wegent-executor`,
     [backendUrl, authToken]
   )
 
@@ -415,7 +365,7 @@ export default function DevicesPage() {
               </div>
             )}
 
-            {/* Empty state with multi-step installation guide */}
+            {/* Empty state with simplified two-step installation guide */}
             {!isLoading && devices.length === 0 && (
               <div className="flex flex-col items-center justify-center py-8">
                 {/* Main card */}
@@ -433,27 +383,17 @@ export default function DevicesPage() {
                     </div>
                   </div>
 
-                  {/* Step 1: Download */}
+                  {/* Step 1: Install */}
                   <CommandStep
                     stepNumber={1}
-                    title={t('step_download')}
-                    description={t('step_download_desc')}
-                    command={downloadCommand}
-                  >
-                    <ArchSelector arch={arch} onChange={setArch} t={t} />
-                  </CommandStep>
-
-                  {/* Step 2: Set permission */}
-                  <CommandStep
-                    stepNumber={2}
-                    title={t('step_permission')}
-                    description={t('step_permission_desc')}
-                    command={permissionCommand}
+                    title={t('step_install')}
+                    description={t('step_install_desc')}
+                    command={installCommand}
                   />
 
-                  {/* Step 3: Run */}
+                  {/* Step 2: Run */}
                   <CommandStep
-                    stepNumber={3}
+                    stepNumber={2}
                     title={t('step_run')}
                     description={t('step_run_desc')}
                     command={runCommand}
