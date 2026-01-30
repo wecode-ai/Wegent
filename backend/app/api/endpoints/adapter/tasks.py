@@ -370,24 +370,31 @@ def join_shared_task(
     This creates a new task with all the subtasks (messages) from the shared task.
     """
     from app.models.kind import Kind
+    from app.services.readers.kinds import KindType, kindReader
 
-    # If team_id is provided, validate it belongs to the user
+    # If team_id is provided, validate user has access to the team
     if request.team_id:
-        user_team = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == current_user.id,
-                Kind.kind == "Team",
-                Kind.id == request.team_id,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-
-        if not user_team:
+        # First get the team by ID
+        team = kindReader.get_by_id(db, KindType.TEAM, request.team_id)
+        if not team:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid team_id or team does not belong to you",
+                detail="Invalid team_id or team not found",
+            )
+
+        # Check if user has access to this team:
+        # 1. User owns the team
+        # 2. Team is public (user_id=0)
+        # 3. Team is shared to user (via sharedTeamReader)
+        # 4. Team is in a group namespace user has access to
+        user_team = kindReader.get_by_name_and_namespace(
+            db, current_user.id, KindType.TEAM, team.namespace, team.name
+        )
+
+        if not user_team or user_team.id != request.team_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid team_id or you don't have access to this team",
             )
     else:
         # Get user's first active team if not specified
