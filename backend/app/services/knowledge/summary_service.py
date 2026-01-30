@@ -229,7 +229,7 @@ class SummaryService:
 
     @staticmethod
     def _truncate_prompt_if_needed(content: Optional[str], label: str) -> str:
-        """Ensure prompt payload stays within TEXT(64KB) byte limit with headroom for system prompt."""
+        """Ensure prompt payload stays within MAX_DOCUMENT_CONTENT_LENGTH (~50KB) with headroom for system prompt."""
         if not content:
             return ""
 

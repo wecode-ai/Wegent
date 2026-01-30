@@ -500,6 +500,10 @@ class KnowledgeBaseTool(BaseTool):
                 # Return rejection message without incrementing call count
                 return self._format_rejection_message(rejection_reason, max_calls)
 
+            # Increment call count IMMEDIATELY after passing limit check
+            # This ensures accurate counting even if the search operation fails later
+            self._call_count += 1
+
             # Note: db_session may be None in HTTP mode (chat_shell running independently)
             # In that case, we use HTTP API to communicate with backend
 
@@ -1065,8 +1069,7 @@ class KnowledgeBaseTool(BaseTool):
         # Extract chunks used for persistence
         chunks_used = injection_result.get("chunks_used", [])
 
-        # Update call count and accumulated tokens
-        self._call_count += 1
+        # Update accumulated tokens (call count already incremented in _arun)
         injected_content = injection_result.get("injected_content", "")
         self._accumulated_tokens += self._estimate_tokens_from_content(injected_content)
 
@@ -1174,8 +1177,7 @@ class KnowledgeBaseTool(BaseTool):
         # Limit total results
         all_chunks = all_chunks[:max_results]
 
-        # Update call count and accumulated tokens
-        self._call_count += 1
+        # Update accumulated tokens (call count already incremented in _arun)
         total_content = "\n".join([chunk["content"] for chunk in all_chunks])
         self._accumulated_tokens += self._estimate_tokens_from_content(total_content)
 
