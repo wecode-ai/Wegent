@@ -112,7 +112,10 @@ class WebSocketProgressReporter:
                 "result": result,
                 "message": message,
             }
-            logger.info(f"Reporting result: {data}")
+            # Truncate data to 20 characters for logging
+            data_str = str(data)
+            truncated_data = data_str[:20] + "..." if len(data_str) > 20 else data_str
+            logger.info(f"Reporting result: {truncated_data}")
             await self.client.emit(TaskEvents.RESULT, data)
             logger.info(f"Result reported: task_id={self.task_id}, status={status}")
         except Exception as e:
