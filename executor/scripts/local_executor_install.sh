@@ -7,10 +7,10 @@
 # This script downloads and installs the wegent-executor binary for macOS.
 #
 # Usage:
-#   curl -fsSL https://github.com/wecode-ai/Wegent/releases/latest/download/install.sh | bash
+#   curl -fsSL https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh | bash
 #
 # Or with a specific version:
-#   curl -fsSL https://github.com/wecode-ai/Wegent/releases/download/v1.0.0/install.sh | bash -s -- --version v1.0.0
+#   curl -fsSL https://github.com/wecode-ai/Wegent/releases/download/v1.0.0/local_executor_install.sh | bash -s -- --version v1.0.0
 
 set -euo pipefail
 

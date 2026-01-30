@@ -52,7 +52,7 @@ import { toast } from 'sonner'
 
 // Install script URL
 const INSTALL_SCRIPT_URL =
-  'https://github.com/wecode-ai/Wegent/releases/latest/download/install.sh'
+  'https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh'
 
 // Helper function to get backend URL dynamically
 const getBackendUrl = (): string => {

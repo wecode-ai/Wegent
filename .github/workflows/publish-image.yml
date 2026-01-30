@@ -655,4 +655,4 @@ jobs:
           files: |
             ./executor-binaries/wegent-executor-macos-arm64
             ./executor-binaries/wegent-executor-macos-amd64
-            ./executor/scripts/install.sh
+            ./executor/scripts/local_executor_install.sh
