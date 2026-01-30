@@ -55,11 +55,19 @@ const InlineMessageEdit: React.FC<InlineMessageEditProps> = ({
     }
   }, [])
 
-  // Auto-resize textarea
+  // Auto-resize textarea with max height limit
+  const MAX_HEIGHT = 300 // Maximum height in pixels before scrolling
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
+      const scrollHeight = textareaRef.current.scrollHeight
+      if (scrollHeight > MAX_HEIGHT) {
+        textareaRef.current.style.height = `${MAX_HEIGHT}px`
+        textareaRef.current.style.overflowY = 'auto'
+      } else {
+        textareaRef.current.style.height = `${scrollHeight}px`
+        textareaRef.current.style.overflowY = 'hidden'
+      }
     }
   }, [content])
 
@@ -115,7 +123,7 @@ const InlineMessageEdit: React.FC<InlineMessageEditProps> = ({
         onChange={e => setContent(e.target.value)}
         onKeyDown={handleKeyDown}
         disabled={isSaving}
-        className="min-h-[60px] resize-none bg-fill-sec border-border-muted focus:border-primary"
+        className="min-h-[60px] max-h-[300px] resize-none bg-fill-sec border-border-muted focus:border-primary overflow-y-auto"
         placeholder={t('chat:placeholder.input')}
       />
       <div className="flex justify-end gap-2">
