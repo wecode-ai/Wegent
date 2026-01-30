@@ -32,6 +32,7 @@ import MarkdownEditor from '@uiw/react-markdown-editor'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { ReasoningDisplay } from './thinking'
 import MixedContentView from './thinking/MixedContentView'
+import ToolBlocksView from './thinking/ToolBlocksView'
 import ClarificationForm from '../clarification/ClarificationForm'
 import FinalPromptMessage from './FinalPromptMessage'
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary'
@@ -1459,6 +1460,13 @@ const MessageBubble = memo(
                 isStreaming={msg.subtaskStatus === 'RUNNING' || msg.status === 'streaming'}
               />
             )}
+            {/* Show tool blocks for messages with thinking but no blocks */}
+            {!isUserTypeMessage &&
+              msg.thinking &&
+              msg.thinking.length > 0 &&
+              !msg.result?.blocks && (
+                <ToolBlocksView thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
+              )}
             {/* Show header for other users' messages in group chat (left-aligned user messages) */}
             {isUserTypeMessage && !shouldAlignRight && msg.shouldShowSender && (
               <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
@@ -1488,17 +1496,15 @@ const MessageBubble = memo(
                 {/* Show recovered content if available, otherwise show normal content */}
                 {msg.recoveredContent && msg.subtaskStatus === 'RUNNING' ? (
                   renderRecoveredContent()
-                ) : !isUserTypeMessage &&
-                  ((msg.thinking && msg.thinking.length > 0) ||
-                    (msg.result?.blocks && msg.result.blocks.length > 0)) ? (
-                  /* For AI messages with thinking/blocks data, use mixed content view to interleave text and tools */
+                ) : !isUserTypeMessage && msg.result?.blocks && msg.result.blocks.length > 0 ? (
+                  /* For AI messages with blocks data, use mixed content view to interleave text and tools */
                   <>
                     <MixedContentView
                       thinking={msg.thinking ?? null}
                       content={msg.content || ''}
                       taskStatus={msg.subtaskStatus}
                       theme={theme}
-                      blocks={msg.result?.blocks}
+                      blocks={msg.result.blocks}
                     />
                   </>
                 ) : (

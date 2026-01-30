@@ -9,6 +9,7 @@ import type { ThinkingStep, MessageBlock, ToolPair } from './types'
 import { useToolExtraction } from './hooks/useToolExtraction'
 import { ToolBlock } from './components/ToolBlock'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
+import { normalizeToolName } from './utils/toolExtractor'
 
 interface MixedContentViewProps {
   thinking: ThinkingStep[] | null
@@ -61,30 +62,35 @@ const MixedContentView = memo(function MixedContentView({
             }
           } else if (block.type === 'tool') {
             // Convert MessageBlock to ToolPair format for ToolBlock component
+            // Normalize tool name to match preset components (e.g., sandbox_write_file -> Write)
+            const normalizedToolName = normalizeToolName(
+              block.tool_name || 'unknown',
+              block.tool_name
+            )
             const toolPair = {
               toolUseId: block.tool_use_id || block.id,
-              toolName: block.tool_name || 'unknown',
+              toolName: normalizedToolName,
               status:
                 (block.status as 'pending' | 'streaming' | 'invoking' | 'done' | 'error') || 'done',
               toolUse: {
-                title: `Using ${block.tool_name}`,
+                title: `Using ${normalizedToolName}`,
                 next_action: 'continue',
                 tool_use_id: block.tool_use_id,
                 details: {
                   type: 'tool_use',
-                  tool_name: block.tool_name,
+                  tool_name: normalizedToolName,
                   status: 'started',
                   input: block.tool_input,
                 },
               },
               toolResult: block.tool_output
                 ? {
-                    title: `Result from ${block.tool_name}`,
+                    title: `Result from ${normalizedToolName}`,
                     next_action: 'continue',
                     tool_use_id: block.tool_use_id,
                     details: {
                       type: 'tool_result',
-                      tool_name: block.tool_name,
+                      tool_name: normalizedToolName,
                       status: block.status === 'error' ? 'failed' : 'completed',
                       content:
                         typeof block.tool_output === 'string'

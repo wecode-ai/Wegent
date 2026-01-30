@@ -468,13 +468,15 @@ class StreamingCore:
         # Regular content
         self.state.append_content(token)
 
+        # Save current block_offset BEFORE updating text block
+        old_block_offset = self.state.block_offset
+
         # Create or update text block for mixed content rendering
         self.state.append_text_block(token)
 
         is_chat_mode = self.state.shell_type == "Chat"
 
         block_id = self.state.current_text_block_id
-        current_block_offset = self.state.block_offset
 
         # IMPORTANT: Do NOT include blocks in result for text streaming
         # Only include blocks when tool events occur (via tool_start/tool_end handlers)
@@ -490,8 +492,7 @@ class StreamingCore:
             self.state.subtask_id,
             result=result,
             block_id=block_id,  # Send block_id for text block streaming
-            block_offset=current_block_offset
-            - len(token),  # Send block_offset for incremental rendering
+            block_offset=old_block_offset,  # Use offset before append_text_block
         )
 
         return True

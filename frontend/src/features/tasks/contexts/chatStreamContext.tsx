@@ -517,7 +517,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * - If result.blocks is present: merge tool blocks (complete replacement)
    */
   const handleChatChunk = useCallback((data: ChatChunkPayload) => {
-    const { subtask_id, content, result, sources, block_id, block_offset } = data
+    const { subtask_id, content, result, sources, block_id, block_offset: _block_offset } = data
 
     // Find task ID from subtask
     let taskId = subtaskToTaskRef.current.get(subtask_id)
@@ -584,58 +584,18 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           const newResult = result as UnifiedMessage['result']
           const incomingBlocks = newResult?.blocks || []
 
-          // Case 1: block_id provided - text block content update
+          // Case 1: block_id provided - text block content update (direct append, no offset)
           if (block_id && content) {
-            console.log('[ChatStreamContext] Block-based streaming:', {
-              subtask_id,
-              block_id,
-              block_offset,
-              content_len: content.length,
-              existing_blocks_count: existingBlocks.length,
-              mode: block_offset !== undefined ? 'offset-based' : 'append',
-            })
-
             const blocksMap = new Map(existingBlocks.map(b => [b.id, b]))
             const targetBlock = blocksMap.get(block_id)
 
             if (targetBlock && targetBlock.type === 'text') {
-              // Mode 1: Offset-based merge (NEW)
-              if (block_offset !== undefined) {
-                const currentContent = targetBlock.content || ''
-                // Use block_offset to merge content at specific position
-                // If block_offset <= current length, replace from that position
-                // Otherwise, append (fallback for network issues)
-                const updatedContent =
-                  block_offset <= currentContent.length
-                    ? currentContent.substring(0, block_offset) + content
-                    : currentContent + content
-
-                const updatedBlock = {
-                  ...targetBlock,
-                  content: updatedContent,
-                }
-                blocksMap.set(block_id, updatedBlock)
-                console.log('[ChatStreamContext] ✅ Merged text block (offset-based):', {
-                  block_id,
-                  block_offset,
-                  old_content_len: currentContent.length,
-                  new_content_len: updatedContent.length,
-                  merged_chars: content.length,
-                })
-              } else {
-                // Mode 2: Append mode (LEGACY)
-                const updatedBlock = {
-                  ...targetBlock,
-                  content: (targetBlock.content || '') + content,
-                }
-                blocksMap.set(block_id, updatedBlock)
-                console.log('[ChatStreamContext] ✅ Appended to text block (legacy):', {
-                  block_id,
-                  old_content_len: targetBlock.content?.length || 0,
-                  new_content_len: updatedBlock.content.length,
-                  appended_chars: content.length,
-                })
+              // Direct append mode - ignore block_offset
+              const updatedBlock = {
+                ...targetBlock,
+                content: (targetBlock.content || '') + content,
               }
+              blocksMap.set(block_id, updatedBlock)
             } else if (!targetBlock) {
               // Create new text block if doesn't exist
               const newBlock = {
@@ -646,22 +606,9 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
                 timestamp: Date.now(),
               }
               blocksMap.set(block_id, newBlock)
-              console.log('[ChatStreamContext] ✅ Created new text block:', {
-                block_id,
-                content_len: content.length,
-              })
             }
 
             const result = Array.from(blocksMap.values())
-            console.log('[ChatStreamContext] Blocks after merge:', {
-              total_blocks: result.length,
-              blocks: result.map(b => ({
-                id: b.id,
-                type: b.type,
-                content_len: b.content?.length || 0,
-                status: b.status,
-              })),
-            })
             return result
           }
 

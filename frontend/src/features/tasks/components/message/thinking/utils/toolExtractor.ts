@@ -14,7 +14,7 @@ import type { ThinkingStep, ToolPair, ToolGroup, ToolStatus } from '../types'
  * Normalize tool names from Chat shell (Chinese) to standard English names
  * This ensures specialized renderers are invoked correctly
  */
-function normalizeToolName(toolName: string, title?: string): string {
+export function normalizeToolName(toolName: string, title?: string): string {
   // Direct mapping for known English names
   const englishTools = [
     'Bash',
