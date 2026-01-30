@@ -264,6 +264,23 @@
   "tabs": {
     "all": "全部"
   },
+  "notification_settings": {
+    "title": "通知设置",
+    "description": "配置当「{{name}}」执行时如何通知您",
+    "level_label": "通知级别",
+    "level_silent": "静默",
+    "level_silent_desc": "执行但不在时间线显示",
+    "level_default": "默认",
+    "level_default_desc": "在动态时间线中显示",
+    "level_notify": "通知",
+    "level_notify_desc": "通过 Messager 渠道发送通知",
+    "channels_label": "通知渠道",
+    "no_channels": "暂无可用的 Messager 渠道",
+    "not_bound": "未绑定",
+    "bind_hint": "要使用未绑定的渠道，请先通过该渠道发送一条消息",
+    "save_success": "通知设置已保存",
+    "save_failed": "保存通知设置失败"
+  },
   "feed": {
     "title": "动态",
     "empty_title": "还没有动态",

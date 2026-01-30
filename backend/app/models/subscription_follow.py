@@ -18,9 +18,18 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
 )
 
 from app.db.base import Base
+
+
+class NotificationLevel(str, Enum):
+    """Notification level enumeration for subscription followers."""
+
+    SILENT = "silent"  # Execute but mark as COMPLETED_SILENT, hidden from timeline
+    DEFAULT = "default"  # Normal behavior, shows in Feed timeline
+    NOTIFY = "notify"  # Send notification via Messager channels
 
 
 class FollowType(str, Enum):
@@ -74,6 +83,10 @@ class SubscriptionFollow(Base):
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
+
+    # Notification settings (JSON)
+    # Structure: {"notification_level": "default", "notification_channel_ids": [1, 2]}
+    config = Column(Text, nullable=True)
 
     __table_args__ = (
         # Index for querying followers of a subscription

@@ -23,12 +23,18 @@ from app.models.user import User
 from app.schemas.subscription import (
     DiscoverSubscriptionsListResponse,
     FollowingSubscriptionsListResponse,
+    FollowSettingsResponse,
+    FollowSubscriptionRequest,
     InviteNamespaceRequest,
     InviteUserRequest,
     SubscriptionFollowersListResponse,
     SubscriptionInvitationsListResponse,
+    UpdateFollowSettingsRequest,
 )
 from app.services.subscription.follow_service import subscription_follow_service
+from app.services.subscription.notification_service import (
+    subscription_notification_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +47,7 @@ router = APIRouter()
 @router.post("/{subscription_id}/follow", status_code=status.HTTP_200_OK)
 def follow_subscription(
     subscription_id: int,
+    request: Optional[FollowSubscriptionRequest] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -48,12 +55,20 @@ def follow_subscription(
     Follow a public subscription.
 
     Users can follow public subscriptions to see their execution results
-    in their Feed timeline.
+    in their Feed timeline. Optionally specify notification settings.
     """
+    notification_level = None
+    notification_channel_ids = None
+    if request:
+        notification_level = request.notification_level
+        notification_channel_ids = request.notification_channel_ids
+
     return subscription_follow_service.follow_subscription(
         db=db,
         subscription_id=subscription_id,
         user_id=current_user.id,
+        notification_level=notification_level,
+        notification_channel_ids=notification_channel_ids,
     )
 
 
@@ -117,6 +132,54 @@ def get_followers_count(
         subscription_id=subscription_id,
     )
     return {"count": count}
+
+
+# ========== Follow Settings Endpoints ==========
+
+
+@router.get("/{subscription_id}/follow/settings", response_model=FollowSettingsResponse)
+def get_follow_settings(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get notification settings for a subscription follow.
+
+    Returns the current notification level, selected channels, and
+    all available Messager channels with binding status.
+    """
+    return subscription_notification_service.get_follow_settings(
+        db=db,
+        subscription_id=subscription_id,
+        user_id=current_user.id,
+    )
+
+
+@router.put("/{subscription_id}/follow/settings", response_model=FollowSettingsResponse)
+def update_follow_settings(
+    subscription_id: int,
+    request: UpdateFollowSettingsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Update notification settings for a subscription follow.
+
+    Allows changing the notification level and selecting notification channels.
+    """
+    try:
+        return subscription_notification_service.update_follow_settings(
+            db=db,
+            subscription_id=subscription_id,
+            user_id=current_user.id,
+            notification_level=request.notification_level,
+            notification_channel_ids=request.notification_channel_ids,
+        )
+    except ValueError as e:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ========== Invitation Endpoints ==========

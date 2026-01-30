@@ -23,6 +23,7 @@ from app.models.namespace_member import NamespaceMember
 from app.models.subscription_follow import (
     FollowType,
     InvitationStatus,
+    NotificationLevel,
     SubscriptionFollow,
     SubscriptionShareNamespace,
 )
@@ -35,8 +36,10 @@ from app.schemas.subscription import (
 )
 from app.schemas.subscription import FollowType as SchemaFollowType
 from app.schemas.subscription import InvitationStatus as SchemaInvitationStatus
+from app.schemas.subscription import NotificationLevel as SchemaNotificationLevel
 from app.schemas.subscription import (
     Subscription,
+    SubscriptionFollowConfig,
     SubscriptionFollowerResponse,
     SubscriptionFollowersListResponse,
     SubscriptionInDB,
@@ -63,6 +66,8 @@ class SubscriptionFollowService:
         *,
         subscription_id: int,
         user_id: int,
+        notification_level: Optional[SchemaNotificationLevel] = None,
+        notification_channel_ids: Optional[List[int]] = None,
     ) -> dict:
         """
         Follow a public subscription.
@@ -71,6 +76,8 @@ class SubscriptionFollowService:
             db: Database session
             subscription_id: ID of the subscription to follow
             user_id: ID of the user following
+            notification_level: Optional notification level setting
+            notification_channel_ids: Optional Messager channel IDs for notify level
 
         Returns:
             Success message
@@ -125,6 +132,15 @@ class SubscriptionFollowService:
                 status_code=400, detail="Already following this subscription"
             )
 
+        # Build config JSON if notification settings provided
+        config_json = None
+        if notification_level is not None:
+            config = SubscriptionFollowConfig(
+                notification_level=notification_level,
+                notification_channel_ids=notification_channel_ids,
+            )
+            config_json = config.model_dump_json()
+
         # Create follow record
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         follow = SubscriptionFollow(
@@ -137,12 +153,14 @@ class SubscriptionFollowService:
             responded_at=now,  # Use current time as default
             created_at=now,
             updated_at=now,
+            config=config_json,
         )
         db.add(follow)
         db.commit()
 
         logger.info(
             f"[SubscriptionFollow] User {user_id} followed subscription {subscription_id}"
+            f", notification_level={notification_level}"
         )
 
         return {"message": "Successfully followed subscription"}

@@ -18,6 +18,7 @@ import type {
   SubscriptionUpdateRequest,
   DiscoverSubscriptionsListResponse,
   FollowingSubscriptionsListResponse,
+  FollowSubscriptionRequest,
   InviteUserRequest,
   InviteNamespaceRequest,
   SubscriptionFollowersListResponse,
@@ -28,6 +29,8 @@ import type {
   RentalSubscriptionResponse,
   RentalSubscriptionsListResponse,
   RentalCountResponse,
+  FollowSettingsResponse,
+  UpdateFollowSettingsRequest,
 } from '@/types/subscription'
 import type { PaginationParams } from '@/types/api'
 
@@ -154,8 +157,11 @@ export const subscriptionApis = {
   /**
    * Follow a public subscription
    */
-  async followSubscription(subscriptionId: number): Promise<{ message: string }> {
-    return apiClient.post(`/subscriptions/${subscriptionId}/follow`)
+  async followSubscription(
+    subscriptionId: number,
+    request?: FollowSubscriptionRequest
+  ): Promise<{ message: string }> {
+    return apiClient.post(`/subscriptions/${subscriptionId}/follow`, request || {})
   },
 
   /**
@@ -163,6 +169,23 @@ export const subscriptionApis = {
    */
   async unfollowSubscription(subscriptionId: number): Promise<{ message: string }> {
     return apiClient.delete(`/subscriptions/${subscriptionId}/follow`)
+  },
+
+  /**
+   * Get follow settings for a subscription
+   */
+  async getFollowSettings(subscriptionId: number): Promise<FollowSettingsResponse> {
+    return apiClient.get(`/subscriptions/${subscriptionId}/follow/settings`)
+  },
+
+  /**
+   * Update follow settings for a subscription
+   */
+  async updateFollowSettings(
+    subscriptionId: number,
+    request: UpdateFollowSettingsRequest
+  ): Promise<FollowSettingsResponse> {
+    return apiClient.put(`/subscriptions/${subscriptionId}/follow/settings`, request)
   },
 
   /**
