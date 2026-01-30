@@ -5,6 +5,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { DeviceRunningTask } from '@/apis/devices'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -22,6 +23,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { TaskStatus } from '@/types/api'
 
 interface RunningTasksListProps {
   tasks: DeviceRunningTask[]
@@ -37,12 +40,43 @@ export function RunningTasksList({
   className,
 }: RunningTasksListProps) {
   const { t, i18n } = useTranslation('devices')
+  const router = useRouter()
+  const { setSelectedTask } = useTaskContext()
   const [isExpanded, setIsExpanded] = useState(tasks.length > 0)
   const [cancellingTaskId, setCancellingTaskId] = useState<number | null>(null)
   const [taskToCancel, setTaskToCancel] = useState<DeviceRunningTask | null>(null)
 
-  const handleCancelClick = (task: DeviceRunningTask) => {
+  const handleCancelClick = (e: React.MouseEvent, task: DeviceRunningTask) => {
+    e.stopPropagation() // Prevent triggering task click
     setTaskToCancel(task)
+  }
+
+  const handleTaskClick = (task: DeviceRunningTask) => {
+    // Convert DeviceRunningTask to Task format for setSelectedTask
+    setSelectedTask({
+      id: task.task_id,
+      title: task.title,
+      team_id: 0,
+      git_url: '',
+      git_repo: '',
+      git_repo_id: 0,
+      git_domain: '',
+      branch_name: '',
+      prompt: '',
+      status: task.status.toUpperCase() as TaskStatus,
+      task_type: 'chat',
+      progress: 0,
+      batch: 0,
+      result: {},
+      error_message: '',
+      user_id: 0,
+      user_name: '',
+      created_at: task.created_at || '',
+      updated_at: '',
+      completed_at: '',
+      is_group_chat: false,
+    })
+    router.push(`/devices/chat?taskId=${task.task_id}`)
   }
 
   const handleConfirmCancel = async () => {
@@ -111,7 +145,8 @@ export function RunningTasksList({
             {tasks.map(task => (
               <div
                 key={task.task_id}
-                className="flex items-center justify-between px-3 py-2 bg-surface rounded-md border border-border"
+                onClick={() => handleTaskClick(task)}
+                className="flex items-center justify-between px-3 py-2 bg-surface rounded-md border border-border hover:border-primary hover:bg-primary/5 cursor-pointer transition-colors"
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -136,7 +171,7 @@ export function RunningTasksList({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleCancelClick(task)}
+                    onClick={e => handleCancelClick(e, task)}
                     disabled={cancellingTaskId === task.task_id}
                     className="ml-2 h-8 w-8 p-0 text-text-muted hover:text-red-600 hover:bg-red-50"
                   >
