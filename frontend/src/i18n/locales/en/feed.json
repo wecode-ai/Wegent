@@ -264,6 +264,23 @@
   "unfollow_confirm_message": "Are you sure you want to unfollow \"{{name}}\"?",
   "followed_at": "Followed at",
   "shared_by": "Shared by",
+  "notification_settings": {
+    "title": "Notification Settings",
+    "description": "Configure how you want to be notified when \"{{name}}\" executes",
+    "level_label": "Notification Level",
+    "level_silent": "Silent",
+    "level_silent_desc": "Execute but hide from timeline",
+    "level_default": "Default",
+    "level_default_desc": "Show in Feed timeline",
+    "level_notify": "Notify",
+    "level_notify_desc": "Send notification via Messager channels",
+    "channels_label": "Notification Channels",
+    "no_channels": "No Messager channels available",
+    "not_bound": "Not bound",
+    "bind_hint": "To use unbound channels, send a message via that channel first",
+    "save_success": "Notification settings saved",
+    "save_failed": "Failed to save notification settings"
+  },
   "feed": {
     "title": "Feed",
     "empty_title": "No activities yet",

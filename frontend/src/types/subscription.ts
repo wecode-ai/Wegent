@@ -377,3 +377,42 @@ export interface RentalCountResponse {
   subscription_id: number
   rental_count: number
 }
+
+// ========== Notification Level Types ==========
+
+// Notification level enumeration
+export type NotificationLevel = 'silent' | 'default' | 'notify'
+
+// Subscription follow config
+export interface SubscriptionFollowConfig {
+  notification_level: NotificationLevel
+  notification_channel_ids?: number[]
+}
+
+// Follow subscription request with notification settings
+export interface FollowSubscriptionRequest {
+  notification_level?: NotificationLevel
+  notification_channel_ids?: number[]
+}
+
+// Update follow settings request
+export interface UpdateFollowSettingsRequest {
+  notification_level: NotificationLevel
+  notification_channel_ids?: number[]
+}
+
+// Notification channel info
+export interface NotificationChannelInfo {
+  id: number
+  name: string
+  channel_type: string
+  is_bound: boolean
+}
+
+// Follow settings response
+export interface FollowSettingsResponse {
+  notification_level: NotificationLevel
+  notification_channel_ids: number[]
+  notification_channels: NotificationChannelInfo[]
+  available_channels: NotificationChannelInfo[]
+}

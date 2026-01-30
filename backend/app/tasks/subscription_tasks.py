@@ -1209,12 +1209,39 @@ def execute_subscription_task(
                     from app.schemas.subscription import BackgroundExecutionStatus
                     from app.services.subscription import subscription_service
 
+                    result_summary = f"Task {task_id} created and AI response triggered"
                     subscription_service.update_execution_status(
                         db,
                         execution_id=execution_id,
                         status=BackgroundExecutionStatus.COMPLETED,
-                        result_summary=f"Task {task_id} created and AI response triggered",
+                        result_summary=result_summary,
                     )
+
+                    # Dispatch notifications to followers
+                    try:
+                        from app.services.subscription.notification_dispatcher import (
+                            subscription_notification_dispatcher,
+                        )
+
+                        subscription_display_name = (
+                            ctx.subscription_crd.spec.displayName
+                            or ctx.subscription.name
+                        )
+                        loop.run_until_complete(
+                            subscription_notification_dispatcher.dispatch_execution_notifications(
+                                db,
+                                subscription_id=subscription_id,
+                                execution_id=execution_id,
+                                subscription_display_name=subscription_display_name,
+                                result_summary=result_summary,
+                                status=BackgroundExecutionStatus.COMPLETED.value,
+                            )
+                        )
+                    except Exception as notify_error:
+                        logger.warning(
+                            f"[subscription_tasks] Failed to dispatch notifications for "
+                            f"subscription {subscription_id}: {notify_error}"
+                        )
 
             finally:
                 loop.close()
