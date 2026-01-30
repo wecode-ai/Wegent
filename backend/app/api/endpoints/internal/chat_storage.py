@@ -342,15 +342,37 @@ def _build_user_message_content(
                     )
                 break
 
-    # Combine all text parts: attachments first, then knowledge bases
-    all_text_parts = attachment_text_parts + kb_text_parts
-    if all_text_parts:
-        combined_prefix = "".join(all_text_parts)
-        text_content = f"{combined_prefix}{text_content}"
-
-    # Return multimodal content if we have vision parts
+    # Combine text parts with proper XML tags
+    # For vision parts (images), attachment_text_parts contains image metadata headers
+    # which need to be wrapped in <attachment> tags for consistency with first upload
     if vision_parts:
+        # Image attachments: wrap metadata headers in <attachment> tag
+        combined_prefix = ""
+        if attachment_text_parts:
+            headers_text = "\n\n".join(attachment_text_parts)
+            combined_prefix += f"<attachment>\n\n{headers_text}\n</attachment>\n\n"
+        if kb_text_parts:
+            combined_prefix += (
+                "<knowledge_base>\n\n"
+                + "\n\n".join(kb_text_parts)
+                + "</knowledge_base>\n\n"
+            )
+        if combined_prefix:
+            text_content = f"{combined_prefix}{text_content}"
         return [{"type": "text", "text": text_content}, *vision_parts]
+
+    # Non-image attachments: wrap in <attachment> tag, knowledge bases in <knowledge_base> tag
+    combined_prefix = ""
+    if attachment_text_parts:
+        combined_prefix += (
+            "<attachment>" + "\n\n".join(attachment_text_parts) + "</attachment>\n\n"
+        )
+    if kb_text_parts:
+        combined_prefix += (
+            "<knowledge_base>" + "\n\n".join(kb_text_parts) + "</knowledge_base>\n\n"
+        )
+    if combined_prefix:
+        text_content = f"{combined_prefix}{text_content}"
 
     return text_content
 
