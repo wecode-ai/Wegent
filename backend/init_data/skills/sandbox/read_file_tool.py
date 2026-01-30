@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class SandboxReadFileInput(BaseModel):
-    """Input schema for sandbox_read_file tool."""
+    """Input schema for read_file tool."""
 
     file_path: str = Field(
         ...,
@@ -57,7 +57,7 @@ class SandboxReadFileTool(BaseSandboxTool):
     using E2B SDK's file operations.
     """
 
-    name: str = "sandbox_read_file"
+    name: str = "read_file"
     display_name: str = "读取文件"
     description: str = """Read the contents of a file from the sandbox environment.
 

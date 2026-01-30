@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class SandboxListFilesInput(BaseModel):
-    """Input schema for sandbox_list_files tool."""
+    """Input schema for list_files tool."""
 
     path: Optional[str] = Field(
         default="/home/user",
@@ -56,7 +56,7 @@ class SandboxListFilesTool(BaseSandboxTool):
     using the native E2B filesystem API.
     """
 
-    name: str = "sandbox_list_files"
+    name: str = "list_files"
     display_name: str = "列出文件"
     description: str = """List files and directories in the sandbox environment.
 

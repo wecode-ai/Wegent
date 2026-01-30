@@ -417,8 +417,16 @@ class WebSocketClient:
             raise ConnectionError("WebSocket not connected")
 
         try:
-            heartbeat_data = {"device_id": self.device_id}
-            logger.debug(
+            # Get active task IDs from ClaudeCodeAgent
+            from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
+
+            running_task_ids = ClaudeCodeAgent.get_active_task_ids()
+
+            heartbeat_data = {
+                "device_id": self.device_id,
+                "running_task_ids": running_task_ids,
+            }
+            logger.info(
                 f"Sending device:heartbeat to /local-executor: {heartbeat_data}"
             )
             response = await self.sio.call(

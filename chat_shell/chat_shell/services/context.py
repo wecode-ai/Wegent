@@ -323,8 +323,9 @@ class ChatContext:
             return False
 
         # Check for KB prompt markers in system_prompt
-        # Using both old (# IMPORTANT:) and new (## Knowledge Base) markers for compatibility
+        # Using both XML tag and legacy markers for compatibility
         kb_prompt_markers = [
+            "<knowledge_base>",
             "## Knowledge Base Requirement",
             "## Knowledge Base Available",
             "# IMPORTANT: Knowledge Base Requirement",

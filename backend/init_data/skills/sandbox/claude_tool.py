@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class SandboxClaudeInput(BaseModel):
-    """Input schema for sandbox_claude tool."""
+    """Input schema for sub_claude_agent tool."""
 
     prompt: str = Field(
         ...,
@@ -71,12 +71,12 @@ class SandboxClaudeTool(BaseSandboxTool):
     streaming output to frontend via WebSocket.
     """
 
-    name: str = "sandbox_claude"
+    name: str = "sub_claude_agent"
     display_name: str = "执行 Claude 命令"
     description: str = """Execute a Claude command in an isolated sandbox environment.
 
 ⚠️ ONLY use when user EXPLICITLY requests Claude by name (e.g., "use Claude to...", "let Claude help me...").
-DO NOT use for normal sandbox operations - use sandbox_command, sandbox_read_file, etc. instead.
+DO NOT use for normal sandbox operations - use exec, read_file, etc. instead.
 
 Parameters:
 - prompt (required): Task prompt for Claude

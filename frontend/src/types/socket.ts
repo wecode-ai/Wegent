@@ -69,6 +69,7 @@ export const ServerEvents = {
   DEVICE_ONLINE: 'device:online',
   DEVICE_OFFLINE: 'device:offline',
   DEVICE_STATUS: 'device:status',
+  DEVICE_SLOT_UPDATE: 'device:slot_update',
 } as const
 
 // Client -> Server Skill events
@@ -574,6 +575,23 @@ export interface DeviceOfflinePayload {
 export interface DeviceStatusPayload {
   device_id: string
   status: DeviceStatus
+}
+
+/** Running task info for slot updates */
+export interface DeviceRunningTaskWs {
+  task_id: number
+  subtask_id: number
+  title: string
+  status: string
+  created_at?: string
+}
+
+/** Payload for device:slot_update event */
+export interface DeviceSlotUpdatePayload {
+  device_id: string
+  slot_used: number
+  slot_max: number
+  running_tasks: DeviceRunningTaskWs[]
 }
 
 /**

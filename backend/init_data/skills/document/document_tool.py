@@ -60,9 +60,9 @@ What you receive:
 - Validation criteria for each step
 
 What you MUST do:
-1. Execute step 1 using sandbox_list_files (check marketplace)
-2. Execute step 2 using sandbox_command (install if needed)
-3. Execute step 3 using sandbox_read_file (read skill documentation)
+1. Execute step 1 using list_files (check marketplace)
+2. Execute step 2 using exec (install if needed)
+3. Execute step 3 using read_file (read skill documentation)
 4. Only AFTER step 3, follow the loaded skill instructions
 
 DO NOT generate documents based on your existing knowledge without loading the skill first.
@@ -155,7 +155,7 @@ Example:
                         "DO NOT proceed to generate documents without reading this file.\n"
                         "The content field will contain Anthropic's official skill documentation."
                     ),
-                    "tool": "sandbox_read_file",
+                    "tool": "read_file",
                     "arguments": {"file_path": skill_path},
                     "expected_outcome": "success=true and content field contains the skill documentation",
                     "validation": "Verify content is not empty and contains skill instructions",
@@ -206,13 +206,13 @@ Example:
                         "Check if dependencies are already installed (most common ones are pre-installed)",
                         "Only install additional dependencies if explicitly required by the documentation",
                         "Follow the code patterns and examples in the documentation",
-                        "Use sandbox_write_file to create Python scripts",
-                        "Use sandbox_command to execute generation scripts",
-                        "Use sandbox_list_files to verify output files",
+                        "Use write_file to create Python scripts",
+                        "Use exec to execute generation scripts",
+                        "Use list_files to verify output files",
                     ],
                     "forbidden": [
                         "❌ DO NOT use 'claude' command - it's not available for all models",
-                        "❌ DO NOT use 'sandbox_claude' tool for document generation",
+                        "❌ DO NOT use 'sub_claude_agent' tool for document generation",
                         "❌ DO NOT skip reading the documentation and generate based on your knowledge",
                         "❌ DO NOT use outdated patterns not specified in the documentation",
                         "❌ DO NOT assume you know the correct approach without reading",
@@ -221,7 +221,7 @@ Example:
                 "step_3_UPLOAD_AND_RETURN_URL": {
                     "description": "Upload the generated document and return download URL to user",
                     "mandatory": True,
-                    "tool": "sandbox_upload_attachment",
+                    "tool": "upload_attachment",
                     "arguments_template": {
                         "file_path": "/home/user/documents/{generated_file_path}",
                     },
@@ -254,7 +254,7 @@ Example:
                 f"🔴 MANDATORY INSTRUCTIONS FOR {document_type.upper()} GENERATION 🔴\n\n"
                 f"You MUST execute these steps IN ORDER:\n\n"
                 f"1️⃣ STEP 1: ⚠️ READ SKILL DOCUMENTATION ⚠️ (NEVER SKIP THIS)\n"
-                f"   → Call: sandbox_read_file(file_path='{skill_path}')\n"
+                f"   → Call: read_file(file_path='{skill_path}')\n"
                 f"   → Read the 'content' field - this contains Anthropic's LATEST instructions\n"
                 f"   → This is MANDATORY - your knowledge may be outdated\n\n"
                 f"2️⃣ STEP 2: Follow the loaded instructions\n"
@@ -264,10 +264,10 @@ Example:
                 f"   → Most common dependencies are already pre-installed (python-pptx, openpyxl, pandas, python-docx, reportlab, pandoc, docx, LibreOffice, Chromium, etc.)\n"
                 f"   → Only install additional dependencies if explicitly required\n"
                 f"   → ⚠️ DO NOT use 'claude' command - it's not available for all models\n"
-                f"   → ⚠️ DO NOT use 'sandbox_claude' tool for document generation\n"
+                f"   → ⚠️ DO NOT use 'sub_claude_agent' tool for document generation\n"
                 f"   → Generate the document following the loaded instructions\n\n"
                 f"3️⃣ STEP 3: ⚠️ UPLOAD AND RETURN URL ⚠️ (MANDATORY)\n"
-                f"   → Call: sandbox_upload_attachment(file_path='{{generated_file_path}}')\n"
+                f"   → Call: upload_attachment(file_path='{{generated_file_path}}')\n"
                 f"   → Get the 'download_url' from response\n"
                 f"   → ⚠️ CRITICAL: Put the download link on its own line with no other text\n"
                 f"   → ✅ Correct format: 'Document generated!\\n\\n[Click to Download]({{download_url}})'\n"
@@ -275,7 +275,7 @@ Example:
                 f"   → Frontend will automatically render the link as an interactive card\n\n"
                 f"⚠️ DO NOT generate {document_type.upper()} files before completing step 1!\n"
                 f"⚠️ DO NOT skip step 3 - users cannot access sandbox files directly!\n"
-                f"⚠️ DO NOT use 'claude' command or 'sandbox_claude' tool for document generation!\n"
+                f"⚠️ DO NOT use 'claude' command or 'sub_claude_agent' tool for document generation!\n"
                 f"⚠️ Your existing knowledge may be OUTDATED - trust the loaded documentation!"
             ),
         }

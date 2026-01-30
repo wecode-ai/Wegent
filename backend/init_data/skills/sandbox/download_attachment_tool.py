@@ -24,7 +24,7 @@ DEFAULT_API_BASE_URL = "http://backend:8000"
 
 
 class SandboxDownloadAttachmentInput(BaseModel):
-    """Input schema for sandbox_download_attachment tool."""
+    """Input schema for download_attachment tool."""
 
     attachment_url: str = Field(
         ...,
@@ -64,7 +64,7 @@ class SandboxDownloadAttachmentTool(BaseSandboxTool):
     sandbox environment via the /api/attachments/{id}/download endpoint.
     """
 
-    name: str = "sandbox_download_attachment"
+    name: str = "download_attachment"
     display_name: str = "下载文件"
     description: str = """Download a file from Wegent attachment URL to sandbox.
 

@@ -218,7 +218,8 @@ class LoadSkillTool(BaseTool):
         for dynamic prompt modification.
 
         Returns:
-            Combined string of all loaded skill prompts, or empty string if none loaded
+            Combined string of all loaded skill prompts wrapped in <skill> tags,
+            or empty string if none loaded
         """
         if not self._loaded_skill_prompts:
             logger.debug("[LoadSkillTool.get_combined_skill_prompt] No loaded skills")
@@ -229,8 +230,9 @@ class LoadSkillTool(BaseTool):
             parts.append(f"\n\n## Skill: {skill_name}\n\n{prompt}")
 
         return (
-            "\n\n# Loaded Skill Instructions\n\nThe following skills have been loaded. "
+            "\n\n<skill>\n# Loaded Skill Instructions\n\nThe following skills have been loaded. "
             + "".join(parts)
+            + "\n</skill>"
         )
 
     # Alias for backward compatibility

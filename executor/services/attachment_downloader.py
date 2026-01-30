@@ -17,20 +17,11 @@ from typing import Any, Dict, List
 
 import requests
 
-from executor.config import config
-
 logger = logging.getLogger(__name__)
 
 
-def get_api_base_url() -> str:
-    """Get API base URL for attachment downloads.
-
-    In local mode, use WEGENT_BACKEND_URL.
-    In docker mode, use TASK_API_DOMAIN or default to http://wegent-backend:8000.
-    """
-    if config.EXECUTOR_MODE == "local":
-        return config.WEGENT_BACKEND_URL.rstrip("/")
-    return os.getenv("TASK_API_DOMAIN", "http://wegent-backend:8000").rstrip("/")
+# Re-export get_api_base_url for backward compatibility
+from executor.services.api_client import get_api_base_url  # noqa: E402
 
 
 @dataclass

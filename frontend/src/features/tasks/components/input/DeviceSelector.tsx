@@ -149,7 +149,8 @@ export function DeviceSelector({ className, disabled }: DeviceSelectorProps) {
                 {t('online_devices')}
               </DropdownMenuLabel>
               {onlineDevices.map(device => {
-                const isDisabled = device.status === 'busy'
+                const isFull = device.slot_used >= device.slot_max
+                const isDisabled = device.status === 'busy' || isFull
                 const isSelected = selectedDeviceId === device.device_id
 
                 return (
@@ -166,6 +167,12 @@ export function DeviceSelector({ className, disabled }: DeviceSelectorProps) {
                       >
                         <Monitor className="w-4 h-4" />
                         <span className="flex-1 truncate">{device.name}</span>
+                        {/* Slot usage indicator */}
+                        <span
+                          className={cn('text-xs', isFull ? 'text-red-500' : 'text-text-muted')}
+                        >
+                          {device.slot_used}/{device.slot_max}
+                        </span>
                         {device.is_default && (
                           <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
                         )}
@@ -177,7 +184,7 @@ export function DeviceSelector({ className, disabled }: DeviceSelectorProps) {
                     </TooltipTrigger>
                     {isDisabled && (
                       <TooltipContent side="right">
-                        <p>{t('device_busy_hint')}</p>
+                        <p>{isFull ? t('slots_full_hint') : t('device_busy_hint')}</p>
                       </TooltipContent>
                     )}
                   </Tooltip>
