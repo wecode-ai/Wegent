@@ -39,6 +39,7 @@ from app.schemas.device import (
     DeviceRegisterPayload,
     DeviceStatusEvent,
     DeviceStatusPayload,
+    WorkspaceSyncPayload,
 )
 from app.services.chat.access import get_token_expiry, verify_jwt_token
 from app.services.chat.ws_emitter import get_ws_emitter
@@ -415,6 +416,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             "device:status": "on_device_status",
             "task:progress": "on_task_progress",
             "task:complete": "on_task_complete",
+            "workspace:sync": "on_workspace_sync",
         }
 
     @trace_websocket_event(
@@ -591,7 +593,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         Args:
             sid: Socket ID
-            data: {"device_id": str, "name": str}
+            data: {"device_id": str, "name": str, "executor_version": str?}
 
         Returns:
             {"success": True, "device_id": str} or {"error": str}
@@ -610,7 +612,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         logger.info(
             f"[Device WS] device:register user={user_id}, device_id={payload.device_id}, "
-            f"name={payload.name}"
+            f"name={payload.name}, version={payload.executor_version}"
         )
 
         # Database operation: quick in, quick out
@@ -624,6 +626,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             device_id=payload.device_id,
             socket_id=sid,
             name=payload.name,
+            executor_version=payload.executor_version,
         )
 
         # Update session with device_id
@@ -648,14 +651,14 @@ class DeviceNamespace(socketio.AsyncNamespace):
         """
         Handle device:heartbeat event.
 
-        Refreshes the device's online status in Redis and updates MySQL.
+        Refreshes the device's online status in Redis and updates system stats.
 
         Args:
             sid: Socket ID
-            data: {"device_id": str}
+            data: {"device_id": str, "executor_version": str?, "system_stats": dict?, "task_stats": dict?}
 
         Returns:
-            {"success": True} or {"error": str}
+            {"success": True, "version_info": dict} or {"error": str}
         """
         try:
             payload = DeviceHeartbeatPayload(**data)
@@ -672,8 +675,14 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if session_device_id != payload.device_id:
             return {"error": "Device ID mismatch"}
 
-        # Refresh Redis TTL
-        await device_service.refresh_device_heartbeat(user_id, payload.device_id)
+        # Refresh Redis TTL and update stats
+        result = await device_service.refresh_device_heartbeat(
+            user_id,
+            payload.device_id,
+            executor_version=payload.executor_version,
+            system_stats=payload.system_stats,
+            task_stats=payload.task_stats,
+        )
 
         # Database operation: quick in, quick out
         _update_device_heartbeat(user_id, payload.device_id)
@@ -682,7 +691,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             f"[Device WS] Heartbeat received: user={user_id}, device={payload.device_id}"
         )
 
-        return {"success": True}
+        return result
 
     async def on_device_status(self, sid: str, data: dict) -> dict:
         """
@@ -865,6 +874,47 @@ class DeviceNamespace(socketio.AsyncNamespace):
         )
 
         return {"success": True}
+
+    async def on_workspace_sync(self, sid: str, data: dict) -> dict:
+        """
+        Handle workspace:sync event.
+
+        Returns list of valid task IDs for the user so executor can
+        detect and cleanup orphan workspaces.
+
+        Args:
+            sid: Socket ID
+            data: {"device_id": str}
+
+        Returns:
+            {"success": True, "task_ids": List[int]} or {"error": str}
+        """
+        try:
+            payload = WorkspaceSyncPayload(**data)
+        except Exception as e:
+            return {"error": f"Invalid payload: {e}"}
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        session_device_id = session.get("device_id")
+
+        if not user_id:
+            return {"error": "Not authenticated"}
+
+        if session_device_id != payload.device_id:
+            return {"error": "Device ID mismatch"}
+
+        # Get valid task IDs for the user
+        try:
+            with _db_session() as db:
+                task_ids = device_service.get_user_task_ids(db, user_id)
+            logger.info(
+                f"[Device WS] workspace:sync user={user_id}, returned {len(task_ids)} task IDs"
+            )
+            return {"success": True, "task_ids": task_ids}
+        except Exception as e:
+            logger.error(f"[Device WS] workspace:sync error: {e}")
+            return {"error": str(e)}
 
     # ============================================================
     # Broadcast Helpers

@@ -13,6 +13,29 @@ import { apiClient } from './client'
 
 export type DeviceStatus = 'online' | 'offline' | 'busy'
 
+export type VersionStatus = 'up_to_date' | 'update_available' | 'incompatible'
+
+export interface SystemStats {
+  memory_used_mb: number
+  memory_total_mb: number
+  memory_percent: number
+  disk_used_gb: number
+  disk_total_gb: number
+  disk_free_gb: number
+  disk_percent: number
+  workspace_size_mb: number
+  workspace_count: number
+  log_size_mb: number
+  cpu_percent: number
+  uptime_seconds: number
+}
+
+export interface TaskStats {
+  running_tasks: number
+  queued_tasks: number
+  completed_today: number
+}
+
 export interface DeviceInfo {
   id: number
   device_id: string
@@ -21,6 +44,10 @@ export interface DeviceInfo {
   is_default: boolean
   last_heartbeat?: string
   capabilities?: string[]
+  executor_version?: string
+  version_status?: VersionStatus
+  system_stats?: SystemStats
+  task_stats?: TaskStats
 }
 
 export interface DeviceListResponse {

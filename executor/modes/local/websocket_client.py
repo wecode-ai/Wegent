@@ -17,11 +17,12 @@ import re
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import socketio
 
 from executor.config import config
+from executor.modes.local.version import get_executor_version
 from shared.logger import setup_logger
 
 logger = setup_logger("websocket_client")
@@ -370,6 +371,7 @@ class WebSocketClient:
             register_data = {
                 "device_id": self.device_id,
                 "name": self.device_name,
+                "executor_version": get_executor_version(),
             }
             logger.info(f"Sending device:register to /local-executor: {register_data}")
 
@@ -404,20 +406,39 @@ class WebSocketClient:
             logger.error(f"Device registration error: {e}")
             return False
 
-    async def send_heartbeat(self, timeout: float = 5.0) -> bool:
+    async def send_heartbeat(
+        self,
+        timeout: float = 5.0,
+        system_stats: Optional[Dict[str, Any]] = None,
+        task_stats: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Send heartbeat to Backend using call (request-response).
 
         Args:
             timeout: Timeout for heartbeat response.
+            system_stats: Optional system resource statistics.
+            task_stats: Optional task execution statistics.
 
         Returns:
-            True if heartbeat acknowledged, False otherwise.
+            Response dict with version info, or empty dict if failed.
         """
         if not self._connected:
             raise ConnectionError("WebSocket not connected")
 
         try:
-            heartbeat_data = {"device_id": self.device_id}
+            heartbeat_data = {
+                "device_id": self.device_id,
+                "executor_version": get_executor_version(),
+            }
+
+            # Add system stats if provided
+            if system_stats:
+                heartbeat_data["system_stats"] = system_stats
+
+            # Add task stats if provided
+            if task_stats:
+                heartbeat_data["task_stats"] = task_stats
+
             logger.debug(
                 f"Sending device:heartbeat to /local-executor: {heartbeat_data}"
             )
@@ -431,7 +452,7 @@ class WebSocketClient:
 
             if response and response.get("success"):
                 logger.debug(f"Heartbeat OK for device {self.device_id}")
-                return True
+                return response
             else:
                 error = (
                     response.get("error", "Unknown error")
@@ -439,14 +460,55 @@ class WebSocketClient:
                     else "No response"
                 )
                 logger.warning(f"Heartbeat failed: {error}")
-                return False
+                return {}
 
         except asyncio.TimeoutError:
             logger.warning("Heartbeat timeout")
-            return False
+            return {}
         except Exception as e:
             logger.warning(f"Heartbeat error: {e}")
-            return False
+            return {}
+
+    async def request_valid_task_ids(self, timeout: float = 10.0) -> List[str]:
+        """Request list of valid task IDs from Backend for orphan workspace detection.
+
+        Args:
+            timeout: Timeout for response.
+
+        Returns:
+            List of valid task IDs, or empty list if failed.
+        """
+        if not self._connected:
+            logger.warning("Cannot request task IDs: not connected")
+            return []
+
+        try:
+            response = await self.sio.call(
+                "workspace:sync",
+                {"device_id": self.device_id},
+                namespace="/local-executor",
+                timeout=timeout,
+            )
+
+            if response and response.get("success"):
+                task_ids = response.get("task_ids", [])
+                logger.info(f"Received {len(task_ids)} valid task IDs from backend")
+                return [str(tid) for tid in task_ids]
+            else:
+                error = (
+                    response.get("error", "Unknown error")
+                    if response
+                    else "No response"
+                )
+                logger.warning(f"Failed to get valid task IDs: {error}")
+                return []
+
+        except asyncio.TimeoutError:
+            logger.warning("Request valid task IDs timeout")
+            return []
+        except Exception as e:
+            logger.warning(f"Request valid task IDs error: {e}")
+            return []
 
     async def disconnect(self) -> None:
         """Disconnect from the WebSocket server."""

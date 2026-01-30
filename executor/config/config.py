@@ -134,3 +134,39 @@ WEGENT_EXECUTOR_LOG_DIR = os.environ.get(
 WEGENT_EXECUTOR_LOG_FILE = os.environ.get("WEGENT_EXECUTOR_LOG_FILE", "executor.log")
 WEGENT_EXECUTOR_LOG_MAX_SIZE = _get_int_env("WEGENT_EXECUTOR_LOG_MAX_SIZE", 10)  # MB
 WEGENT_EXECUTOR_LOG_BACKUP_COUNT = _get_int_env("WEGENT_EXECUTOR_LOG_BACKUP_COUNT", 5)
+
+# Log cleanup configuration
+# Time-based: delete logs older than this many days
+WEGENT_EXECUTOR_LOG_RETENTION_DAYS = _get_int_env(
+    "WEGENT_EXECUTOR_LOG_RETENTION_DAYS", 7
+)
+# Size-based: if total log size exceeds this, delete oldest files first
+WEGENT_EXECUTOR_LOG_MAX_TOTAL_SIZE = _get_int_env(
+    "WEGENT_EXECUTOR_LOG_MAX_TOTAL_SIZE", 100
+)  # MB
+
+# Client cache TTL configuration
+# Claude SDK clients older than this will be cleaned up
+WEGENT_EXECUTOR_CLIENT_TTL_SECONDS = _get_int_env(
+    "WEGENT_EXECUTOR_CLIENT_TTL_SECONDS", 3600
+)  # 1 hour
+
+# Task execution resource limits
+# Maximum number of concurrent tasks (default 1 = serial execution)
+WEGENT_EXECUTOR_MAX_CONCURRENT_TASKS = _get_int_env(
+    "WEGENT_EXECUTOR_MAX_CONCURRENT_TASKS", 1
+)
+# Maximum execution time for a single task in seconds
+WEGENT_EXECUTOR_TASK_TIMEOUT_SECONDS = _get_int_env(
+    "WEGENT_EXECUTOR_TASK_TIMEOUT_SECONDS", 3600
+)  # 1 hour
+# Maximum number of tasks in queue
+WEGENT_EXECUTOR_QUEUE_SIZE_LIMIT = _get_int_env("WEGENT_EXECUTOR_QUEUE_SIZE_LIMIT", 10)
+
+# Auto-restart configuration
+WEGENT_EXECUTOR_AUTO_RESTART_ENABLED = os.environ.get(
+    "WEGENT_EXECUTOR_AUTO_RESTART_ENABLED", "true"
+).lower() in ("true", "1", "yes")
+WEGENT_EXECUTOR_MAX_RESTARTS_PER_HOUR = _get_int_env(
+    "WEGENT_EXECUTOR_MAX_RESTARTS_PER_HOUR", 3
+)

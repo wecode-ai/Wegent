@@ -16,13 +16,16 @@ import os
 import signal
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from executor.config import config
+from executor.modes.local.cleanup import CleanupScheduler, WorkspaceCleaner
 from executor.modes.local.events import ChatEvents, TaskEvents
 from executor.modes.local.handlers import TaskHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
+from executor.modes.local.monitor import ClientCacheManager, SystemStatsCollector
 from executor.modes.local.progress_reporter import WebSocketProgressReporter
+from executor.modes.local.version import VersionReporter, get_executor_version
 from executor.modes.local.websocket_client import WebSocketClient
 from shared.logger import setup_logger
 from shared.status import TaskStatus
@@ -39,6 +42,8 @@ class LocalRunner:
     - Task queue for serial task execution (one task at a time)
     - Heartbeat service for connection health monitoring
     - Graceful shutdown handling via SIGINT/SIGTERM
+    - Automatic log cleanup and workspace management
+    - Version reporting and system stats monitoring
     """
 
     def __init__(self):
@@ -46,8 +51,8 @@ class LocalRunner:
         # WebSocket client
         self.websocket_client = WebSocketClient()
 
-        # Heartbeat service
-        self.heartbeat_service = LocalHeartbeatService(self.websocket_client)
+        # Heartbeat service (will be initialized with stats collector)
+        self.heartbeat_service: Optional[LocalHeartbeatService] = None
 
         # Event handlers
         self.task_handler = TaskHandler(self)
@@ -65,6 +70,16 @@ class LocalRunner:
 
         # File logging handler (for cleanup on shutdown)
         self._file_handler: Optional[logging.Handler] = None
+
+        # Monitoring and cleanup components
+        self.stats_collector = SystemStatsCollector()
+        self.version_reporter = VersionReporter()
+        self.workspace_cleaner = WorkspaceCleaner()
+        self.cleanup_scheduler: Optional[CleanupScheduler] = None
+        self.client_cache_manager = ClientCacheManager()
+
+        # Task stats tracking
+        self._completed_tasks_today = 0
 
     def _handle_signal(self, signum: int, frame: Any) -> None:
         """Handle shutdown signals."""
@@ -85,14 +100,17 @@ class LocalRunner:
         1. Sets up file logging for local mode
         2. Sets up signal handlers
         3. Creates workspace directory
-        4. Connects to Backend WebSocket
-        5. Registers the device
-        6. Starts heartbeat service
-        7. Runs the task processing loop
+        4. Starts cleanup scheduler
+        5. Connects to Backend WebSocket
+        6. Registers the device
+        7. Starts heartbeat service with stats collection
+        8. Starts client cache manager
+        9. Runs the task processing loop
         """
         self._setup_file_logging()
 
         logger.info("Starting Local Executor Runner...")
+        logger.info(f"Executor Version: {get_executor_version()}")
         logger.info(f"Backend URL: {config.WEGENT_BACKEND_URL}")
         logger.info(f"Auth Token: {'***' if config.WEGENT_AUTH_TOKEN else 'NOT SET'}")
         logger.info(f"Workspace Root: {config.LOCAL_WORKSPACE_ROOT}")
@@ -113,6 +131,12 @@ class LocalRunner:
                 signal.signal(sig, self._handle_signal)
 
         try:
+            # Start cleanup scheduler with workspace sync callback
+            self.cleanup_scheduler = CleanupScheduler(
+                workspace_sync_callback=self._get_valid_task_ids
+            )
+            await self.cleanup_scheduler.start()
+
             # Register WebSocket event handlers
             self._register_handlers()
 
@@ -142,8 +166,20 @@ class LocalRunner:
                 f"name={self.websocket_client.device_name}"
             )
 
-            # Start heartbeat service
+            # Initialize heartbeat service with stats collector
+            self.heartbeat_service = LocalHeartbeatService(
+                self.websocket_client,
+                stats_collector=self.stats_collector,
+                version_reporter=self.version_reporter,
+                get_task_stats=self._get_task_stats,
+            )
             await self.heartbeat_service.start()
+
+            # Start client cache manager
+            await self.client_cache_manager.start()
+
+            # Sync workspaces on startup
+            await self._sync_workspaces_on_startup()
 
             # Run task processing loop
             await self._task_loop()
@@ -153,12 +189,45 @@ class LocalRunner:
         finally:
             await self._shutdown()
 
+    async def _get_valid_task_ids(self) -> List[str]:
+        """Get valid task IDs from backend for workspace sync."""
+        if not self.websocket_client.connected:
+            return []
+        return await self.websocket_client.request_valid_task_ids()
+
+    async def _sync_workspaces_on_startup(self) -> None:
+        """Sync workspaces with backend on startup."""
+        try:
+            valid_task_ids = await self._get_valid_task_ids()
+            if valid_task_ids is not None:
+                cleaned = self.workspace_cleaner.cleanup_orphans(valid_task_ids)
+                if cleaned > 0:
+                    logger.info(
+                        f"Startup workspace cleanup: removed {cleaned} orphan workspaces"
+                    )
+        except Exception as e:
+            logger.error(f"Startup workspace sync failed: {e}")
+
+    def _get_task_stats(self) -> Dict[str, int]:
+        """Get current task statistics for heartbeat."""
+        running = 1 if self.current_task else 0
+        queued = self.task_queue.qsize()
+        return self.stats_collector.collect_task_stats(running, queued)
+
     async def _shutdown(self) -> None:
         """Perform graceful shutdown."""
         logger.info("Shutting down Local Executor Runner...")
 
+        # Stop cleanup scheduler
+        if self.cleanup_scheduler:
+            await self.cleanup_scheduler.stop()
+
+        # Stop client cache manager
+        await self.client_cache_manager.stop()
+
         # Stop heartbeat service
-        await self.heartbeat_service.stop()
+        if self.heartbeat_service:
+            await self.heartbeat_service.stop()
 
         # Disconnect WebSocket
         await self.websocket_client.disconnect()

@@ -8,11 +8,13 @@ Device service for managing local device connections and state.
 This service handles:
 - Device registration and authentication via Kind CRD
 - Online state management via Redis
-- Heartbeat monitoring
+- Heartbeat monitoring with system stats
 - Task routing to devices
+- Version management
 """
 
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -28,6 +30,16 @@ logger = logging.getLogger(__name__)
 DEVICE_ONLINE_KEY_PREFIX = "device:online:"
 DEVICE_ONLINE_TTL = 90  # seconds (heartbeat interval 30s x 3)
 
+# Version configuration keys
+EXECUTOR_LATEST_VERSION_KEY = "system:executor:latest_version"
+EXECUTOR_MIN_COMPATIBLE_VERSION_KEY = "system:executor:min_compatible_version"
+
+# Default version values (from environment)
+DEFAULT_EXECUTOR_LATEST_VERSION = os.environ.get("EXECUTOR_LATEST_VERSION", "1.0.0")
+DEFAULT_EXECUTOR_MIN_COMPATIBLE_VERSION = os.environ.get(
+    "EXECUTOR_MIN_COMPATIBLE_VERSION", "1.0.0"
+)
+
 
 class DeviceService:
     """Service for managing local device connections and state."""
@@ -39,7 +51,12 @@ class DeviceService:
 
     @staticmethod
     async def set_device_online(
-        user_id: int, device_id: str, socket_id: str, name: str, status: str = "online"
+        user_id: int,
+        device_id: str,
+        socket_id: str,
+        name: str,
+        status: str = "online",
+        executor_version: Optional[str] = None,
     ) -> bool:
         """
         Set device online status in Redis.
@@ -50,6 +67,7 @@ class DeviceService:
             socket_id: WebSocket session ID
             name: Device name
             status: Device status (online, busy)
+            executor_version: Executor software version
 
         Returns:
             True if set successfully
@@ -60,36 +78,60 @@ class DeviceService:
             "name": name,
             "status": status,
             "last_heartbeat": datetime.now().isoformat(),
+            "executor_version": executor_version,
+            "system_stats": None,
+            "task_stats": None,
         }
         result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
         logger.info(f"[DeviceService] set_device_online: key={key}, result={result}")
         return result
 
     @staticmethod
-    async def refresh_device_heartbeat(user_id: int, device_id: str) -> bool:
+    async def refresh_device_heartbeat(
+        user_id: int,
+        device_id: str,
+        executor_version: Optional[str] = None,
+        system_stats: Optional[Dict[str, Any]] = None,
+        task_stats: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """
-        Refresh device heartbeat in Redis (extend TTL).
+        Refresh device heartbeat in Redis (extend TTL) and update stats.
 
         Args:
             user_id: Device owner user ID
             device_id: Device unique identifier
+            executor_version: Executor software version
+            system_stats: System resource statistics
+            task_stats: Task execution statistics
 
         Returns:
-            True if refreshed successfully
+            Dict with success status and version info
         """
         key = DeviceService.generate_online_key(user_id, device_id)
         data = await cache_manager.get(key)
         if data:
             data["last_heartbeat"] = datetime.now().isoformat()
+            if executor_version:
+                data["executor_version"] = executor_version
+            if system_stats:
+                data["system_stats"] = system_stats
+            if task_stats:
+                data["task_stats"] = task_stats
+
             result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
             logger.debug(
                 f"[DeviceService] refresh_device_heartbeat: key={key}, result={result}"
             )
-            return result
+
+            # Get version info for response
+            version_info = await DeviceService.get_version_info(executor_version)
+
+            return {"success": result, "version_info": version_info}
+
         logger.warning(
             f"[DeviceService] refresh_device_heartbeat: key={key} not found in Redis"
         )
-        return False
+        return {"success": False}
 
     @staticmethod
     async def set_device_offline(user_id: int, device_id: str) -> bool:
@@ -208,6 +250,15 @@ class DeviceService:
             # Get online status from Redis
             online_info = await DeviceService.get_device_online_info(user_id, device_id)
 
+            # Get version status if online
+            executor_version = (
+                online_info.get("executor_version") if online_info else None
+            )
+            version_status = None
+            if executor_version:
+                version_info = await DeviceService.get_version_info(executor_version)
+                version_status = version_info.get("version_status")
+
             result.append(
                 {
                     "id": device_kind.id,
@@ -223,6 +274,14 @@ class DeviceService:
                         online_info.get("last_heartbeat") if online_info else None
                     ),
                     "capabilities": spec.get("capabilities"),
+                    "executor_version": executor_version,
+                    "version_status": version_status,
+                    "system_stats": (
+                        online_info.get("system_stats") if online_info else None
+                    ),
+                    "task_stats": (
+                        online_info.get("task_stats") if online_info else None
+                    ),
                 }
             )
 
@@ -465,6 +524,107 @@ class DeviceService:
             )
             .first()
         )
+
+    @staticmethod
+    async def get_version_info(executor_version: Optional[str]) -> Dict[str, Any]:
+        """
+        Get version comparison info for an executor.
+
+        Args:
+            executor_version: Current executor version
+
+        Returns:
+            Dict with latest_version, version_status, min_compatible_version
+        """
+        # Get version config from Redis (with fallback to defaults)
+        latest_version = await cache_manager.get(EXECUTOR_LATEST_VERSION_KEY)
+        if not latest_version:
+            latest_version = DEFAULT_EXECUTOR_LATEST_VERSION
+            # Initialize Redis with default values
+            await cache_manager.set(EXECUTOR_LATEST_VERSION_KEY, latest_version)
+
+        min_compatible = await cache_manager.get(EXECUTOR_MIN_COMPATIBLE_VERSION_KEY)
+        if not min_compatible:
+            min_compatible = DEFAULT_EXECUTOR_MIN_COMPATIBLE_VERSION
+            await cache_manager.set(EXECUTOR_MIN_COMPATIBLE_VERSION_KEY, min_compatible)
+
+        # Determine version status
+        version_status = "up_to_date"
+        if executor_version:
+            version_status = DeviceService._compare_versions(
+                executor_version, latest_version, min_compatible
+            )
+
+        return {
+            "latest_version": latest_version,
+            "version_status": version_status,
+            "min_compatible_version": min_compatible,
+        }
+
+    @staticmethod
+    def _compare_versions(current: str, latest: str, min_compatible: str) -> str:
+        """
+        Compare version strings and return status.
+
+        Args:
+            current: Current version
+            latest: Latest available version
+            min_compatible: Minimum compatible version
+
+        Returns:
+            "up_to_date", "update_available", or "incompatible"
+        """
+        try:
+            current_parts = [int(x) for x in current.split(".")]
+            latest_parts = [int(x) for x in latest.split(".")]
+            min_parts = [int(x) for x in min_compatible.split(".")]
+
+            # Pad to same length
+            max_len = max(len(current_parts), len(latest_parts), len(min_parts))
+            current_parts += [0] * (max_len - len(current_parts))
+            latest_parts += [0] * (max_len - len(latest_parts))
+            min_parts += [0] * (max_len - len(min_parts))
+
+            # Check if below minimum
+            if current_parts < min_parts:
+                return "incompatible"
+
+            # Check if current is latest
+            if current_parts >= latest_parts:
+                return "up_to_date"
+
+            return "update_available"
+
+        except (ValueError, AttributeError):
+            # If version parsing fails, assume compatible
+            return "up_to_date"
+
+    @staticmethod
+    def get_user_task_ids(db: Session, user_id: int) -> List[int]:
+        """
+        Get all active task IDs for a user.
+
+        Args:
+            db: Database session
+            user_id: User ID
+
+        Returns:
+            List of task IDs
+        """
+        from app.models.task import TaskResource
+
+        tasks = (
+            db.query(TaskResource.id)
+            .filter(
+                and_(
+                    TaskResource.user_id == user_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
+                )
+            )
+            .all()
+        )
+        return [t.id for t in tasks]
 
 
 # Singleton instance
