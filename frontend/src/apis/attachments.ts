@@ -45,7 +45,7 @@ export interface AttachmentDetailResponse extends AttachmentResponse {
  * Attachment preview response with extracted text snippet
  */
 export interface AttachmentPreviewResponse extends AttachmentDetailResponse {
-  preview_type: 'text' | 'image' | 'none'
+  preview_type: 'text' | 'image' | 'html' | 'none'
   preview_text?: string | null
   download_url: string
 }
@@ -128,6 +128,8 @@ export const SUPPORTED_EXTENSIONS = [
   '.csv',
   '.txt',
   '.md',
+  '.html',
+  '.htm',
   '.jpg',
   '.jpeg',
   '.png',
@@ -204,6 +206,7 @@ export const SUPPORTED_MIME_TYPES = [
   'text/csv',
   'text/plain',
   'text/markdown',
+  'text/html',
   'image/jpeg',
   'image/png',
   'image/gif',
@@ -281,6 +284,9 @@ export function getFileIcon(extension: string): string {
     case '.bmp':
     case '.webp':
       return '🖼️'
+    case '.html':
+    case '.htm':
+      return '🌐'
     default:
       // Check for code files
       if (CODE_FILE_EXTENSIONS.includes(ext)) {
@@ -301,11 +307,24 @@ export function getFileIcon(extension: string): string {
 export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 
 /**
+ * HTML file extensions
+ */
+export const HTML_EXTENSIONS = ['.html', '.htm']
+
+/**
  * Check if a file extension is an image type
  */
 export function isImageExtension(extension: string): boolean {
   const ext = extension.toLowerCase()
   return IMAGE_EXTENSIONS.includes(ext)
+}
+
+/**
+ * Check if a file extension is an HTML type
+ */
+export function isHtmlExtension(extension: string): boolean {
+  const ext = extension.toLowerCase()
+  return HTML_EXTENSIONS.includes(ext)
 }
 
 /**

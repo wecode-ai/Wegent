@@ -1136,7 +1136,9 @@
     "truncation": {
       "notice": "⚠️ Content too long, auto-truncated ({{original}} chars → {{truncated}} chars)"
     },
-    "supported_types": "PDF, Word, Excel, TXT, Markdown, Images, Code files",
+    "supported_types": "PDF, Word, Excel, TXT, Markdown, Images, HTML, Code files",
+    "html_preview": "HTML Preview",
+    "click_to_preview": "Click to preview",
     "characters": "chars",
     "upload_tooltip": "Supported file types: Documents (PDF, Word, PPT, Excel), Images, Code files and text files\nMax file size: {{size}} MB"
   },

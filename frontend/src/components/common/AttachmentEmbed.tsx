@@ -9,10 +9,11 @@ import { Loader2, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import ImagePreview from '@/components/common/ImagePreview'
+import HtmlPreview from '@/components/common/HtmlPreview'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useAttachmentPreview } from '@/hooks/useAttachmentPreview'
 import { useAttachmentImage } from '@/hooks/useAttachmentImage'
-import { downloadAttachment, isImageExtension } from '@/apis/attachments'
+import { downloadAttachment, isImageExtension, isHtmlExtension } from '@/apis/attachments'
 
 interface AttachmentEmbedProps {
   attachmentId: number
@@ -27,6 +28,12 @@ export default function AttachmentEmbed({ attachmentId, theme = 'light' }: Attac
     if (!data) return false
     if (data.preview_type === 'image') return true
     return isImageExtension(data.file_extension)
+  }, [data])
+
+  const isHtml = useMemo(() => {
+    if (!data) return false
+    if (data.preview_type === 'html') return true
+    return isHtmlExtension(data.file_extension)
   }, [data])
 
   const {
@@ -89,6 +96,8 @@ export default function AttachmentEmbed({ attachmentId, theme = 'light' }: Attac
         ) : (
           <div className="text-sm text-text-muted">{t('attachment.preview.unavailable')}</div>
         )
+      ) : isHtml ? (
+        <HtmlPreview attachmentId={attachmentId} filename={data.filename} />
       ) : previewText ? (
         <>
           <EnhancedMarkdown
