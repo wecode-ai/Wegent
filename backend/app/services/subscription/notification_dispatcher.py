@@ -284,7 +284,9 @@ class SubscriptionNotificationDispatcher:
                 return
 
             # Create a subtask in the user's Messager conversation
-            from app.models.task import Subtask, TaskResource
+            from app.models.task import TaskResource
+            from shared.models.db.enums import SubtaskRole, SubtaskStatus
+            from shared.models.db.subtask import Subtask
 
             task = (
                 db.query(TaskResource).filter(TaskResource.id == int(task_id)).first()
@@ -294,6 +296,10 @@ class SubscriptionNotificationDispatcher:
                     f"[SubscriptionNotificationDispatcher] Task {task_id} not found"
                 )
                 return
+
+            # Get task metadata to populate subtask fields
+            task_json = task.json
+            team_id = task_json.get("spec", {}).get("teamRef", {}).get("id", 0)
 
             # Create notification subtask
             now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -306,12 +312,15 @@ class SubscriptionNotificationDispatcher:
 
             notification_subtask = Subtask(
                 task_id=int(task_id),
+                user_id=user_id,
+                team_id=team_id,
+                title="Subscription Notification",
+                bot_ids=[],
                 sender_type="SYSTEM",
-                role="assistant",
-                content=message,
-                status="COMPLETED",
-                result=json.dumps(result_json),
-                started_at=now,
+                role=SubtaskRole.ASSISTANT,
+                prompt=message,
+                status=SubtaskStatus.COMPLETED,
+                result=result_json,
                 completed_at=now,
                 created_at=now,
                 updated_at=now,
