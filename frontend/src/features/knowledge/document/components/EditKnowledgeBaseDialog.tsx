@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
+import { Slider } from '@/components/ui/slider'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
@@ -56,6 +57,9 @@ export function EditKnowledgeBaseDialog({
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({})
 
+  // Call limit configuration state
+  const [maxCalls, setMaxCalls] = useState(10)
+  const [exemptCalls, setExemptCalls] = useState(5)
   useEffect(() => {
     if (knowledgeBase) {
       setName(knowledgeBase.name)
@@ -68,6 +72,9 @@ export function EditKnowledgeBaseDialog({
       if (knowledgeBase.retrieval_config) {
         setRetrievalConfig(knowledgeBase.retrieval_config)
       }
+      // Initialize call limits from knowledge base
+      setMaxCalls(knowledgeBase.max_calls_per_conversation)
+      setExemptCalls(knowledgeBase.exempt_calls_before_check)
     }
   }, [knowledgeBase])
 
@@ -96,6 +103,12 @@ export function EditKnowledgeBaseDialog({
       return
     }
 
+    // Validate call limits
+    if (exemptCalls >= maxCalls) {
+      setError(t('knowledge:document.callLimits.validationError'))
+      return
+    }
+
     try {
       // Build update data
       const updateData: KnowledgeBaseUpdate = {
@@ -103,6 +116,8 @@ export function EditKnowledgeBaseDialog({
         description: description.trim(), // Allow empty string to clear description
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
+        max_calls_per_conversation: maxCalls,
+        exempt_calls_before_check: exemptCalls,
       }
 
       // Add retrieval config update if advanced settings were modified
@@ -216,6 +231,58 @@ export function EditKnowledgeBaseDialog({
                   />
                 </div>
               )}
+            </div>
+
+            {/* Call Limits Configuration */}
+            <div className="space-y-3 border-b border-border pb-4">
+              <div className="space-y-0.5">
+                <Label className="text-sm font-medium">
+                  {t('knowledge:document.callLimits.title')}
+                </Label>
+                <p className="text-xs text-text-muted">
+                  {t('knowledge:document.callLimits.description')}
+                </p>
+              </div>
+              <div className="space-y-4 pt-2">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="max-calls">
+                      {t('knowledge:document.callLimits.maxCalls')}
+                    </Label>
+                    <span className="text-sm text-text-secondary">{maxCalls}</span>
+                  </div>
+                  <Slider
+                    id="max-calls"
+                    value={[maxCalls]}
+                    onValueChange={values => setMaxCalls(values[0])}
+                    min={2}
+                    max={50}
+                    step={1}
+                  />
+                  <p className="text-xs text-text-muted">
+                    {t('knowledge:document.callLimits.maxCallsHint')}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="exempt-calls">
+                      {t('knowledge:document.callLimits.exemptCalls')}
+                    </Label>
+                    <span className="text-sm text-text-secondary">{exemptCalls}</span>
+                  </div>
+                  <Slider
+                    id="exempt-calls"
+                    value={[exemptCalls]}
+                    onValueChange={values => setExemptCalls(values[0])}
+                    min={1}
+                    max={maxCalls - 1}
+                    step={1}
+                  />
+                  <p className="text-xs text-text-muted">
+                    {t('knowledge:document.callLimits.exemptCallsHint')}
+                  </p>
+                </div>
+              </div>
             </div>
 
             {/* Advanced Settings (Partially Editable) */}

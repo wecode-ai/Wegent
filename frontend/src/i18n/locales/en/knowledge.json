@@ -302,6 +302,15 @@
       "modelPlaceholder": "Search models...",
       "noModel": "No model selected"
     },
+    "callLimits": {
+      "title": "Call Limits",
+      "description": "Limit the number of knowledge base tool calls per conversation to control token usage",
+      "maxCalls": "Maximum Calls",
+      "maxCallsHint": "Maximum number of knowledge base tool calls allowed per conversation (2-50)",
+      "exemptCalls": "Exempt Calls",
+      "exemptCallsHint": "Number of calls exempt from token checking (must be less than maximum calls)",
+      "validationError": "Exempt calls must be less than maximum calls"
+    },
     "retrievalTest": {
       "button": "Retrieval Test",
       "title": "Retrieval Test",
