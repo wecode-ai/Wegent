@@ -37,6 +37,9 @@ from app.services.group_permission import (
     get_effective_role_in_group,
     get_user_groups,
 )
+from app.services.knowledge.knowledge_permission_service import (
+    KnowledgePermissionService,
+)
 
 
 @dataclass
@@ -217,8 +220,14 @@ class KnowledgeService:
 
         # Check access permission
         if kb.namespace == "default":
+            # Check if user is owner or has approved permission
             if kb.user_id != user_id:
-                return None
+                # Check if user has approved permission via knowledge_base_permissions table
+                has_access, _, _ = KnowledgePermissionService.check_permission(
+                    db, knowledge_base_id, user_id
+                )
+                if not has_access:
+                    return None
         else:
             role = get_effective_role_in_group(db, user_id, kb.namespace)
             if role is None:
@@ -291,6 +300,25 @@ class KnowledgeService:
                 .all()
             )
 
+            # Get knowledge bases shared with user via permissions
+            from app.models.knowledge_permission import ApprovalStatus
+
+            shared = (
+                db.query(Kind)
+                .join(
+                    KnowledgeBasePermission,
+                    Kind.id == KnowledgeBasePermission.knowledge_base_id,
+                )
+                .filter(
+                    Kind.kind == "KnowledgeBase",
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                    KnowledgeBasePermission.user_id == user_id,
+                    KnowledgeBasePermission.approval_status == ApprovalStatus.APPROVED.value,
+                )
+                .all()
+            )
+
             # Get team knowledge bases from accessible groups
             accessible_groups = get_user_groups(db, user_id)
             team = (
@@ -307,7 +335,7 @@ class KnowledgeService:
                 else []
             )
 
-            return personal + team
+            return personal + shared + team
 
     @staticmethod
     def update_knowledge_base(
@@ -343,6 +371,15 @@ class KnowledgeService:
                 raise ValueError(
                     "Only Owner or Maintainer can update knowledge base in this group"
                 )
+        else:
+            # For personal KB, check if user has edit/manage permission
+            if kb.user_id != user_id:
+                if not KnowledgePermissionService.check_edit_permission(
+                    db, knowledge_base_id, user_id
+                ):
+                    raise ValueError(
+                        "User does not have permission to update this knowledge base"
+                    )
 
         # Get current spec
         kb_json = kb.json
@@ -650,6 +687,15 @@ class KnowledgeService:
                 raise ValueError(
                     "Only Owner or Maintainer can add documents to this knowledge base"
                 )
+        else:
+            # For personal KB, check if user has edit/manage permission
+            if kb.user_id != user_id:
+                if not KnowledgePermissionService.check_edit_permission(
+                    db, knowledge_base_id, user_id
+                ):
+                    raise ValueError(
+                        "User does not have permission to add documents to this knowledge base"
+                    )
 
         # Check document limit for notebook mode knowledge base
         kb_spec = kb.json.get("spec", {})
@@ -786,6 +832,14 @@ class KnowledgeService:
                 raise ValueError(
                     "Only Owner or Maintainer can update documents in this knowledge base"
                 )
+        elif kb and kb.namespace == "default" and kb.user_id != user_id:
+            # For personal KB, check if user has edit/manage permission
+            if not KnowledgePermissionService.check_edit_permission(
+                db, doc.kind_id, user_id
+            ):
+                raise ValueError(
+                    "User does not have permission to update documents in this knowledge base"
+                )
 
         if data.name is not None:
             doc.name = data.name
@@ -864,6 +918,14 @@ class KnowledgeService:
             ):
                 raise ValueError(
                     "Only Owner or Maintainer can delete documents from this knowledge base"
+                )
+        elif kb and kb.namespace == "default" and kb.user_id != user_id:
+            # For personal KB, check if user has edit/manage permission
+            if not KnowledgePermissionService.check_edit_permission(
+                db, doc.kind_id, user_id
+            ):
+                raise ValueError(
+                    "User does not have permission to delete documents from this knowledge base"
                 )
 
         # Store document_id (used as doc_ref in RAG), kind_id, and attachment_id before deletion for cleanup

@@ -406,5 +406,43 @@
     "summaryFailedHint": "点击重试按钮重新生成摘要",
     "summaryRetry": "重试",
     "summaryRetrying": "重试中..."
+  },
+  "share": {
+    "title": "请求访问",
+    "kb_not_found": "知识库未找到",
+    "fetch_error": "加载知识库信息失败",
+    "error_title": "错误",
+    "login_required": "请登录以请求访问此知识库",
+    "permission_level": "权限级别",
+    "permission_view": "查看 - 可以查看文档和使用问答",
+    "permission_edit": "编辑 - 可以查看、编辑文档，添加/删除文档",
+    "permission_manage": "管理 - 可以执行所有操作 + 管理其他用户的权限",
+    "request_access": "请求访问",
+    "request_error": "请求访问失败，请重试",
+    "success_title": "已提交访问请求",
+    "success_description": "您的访问请求已提交，知识库所有者将审核您的请求。",
+    "go_to_knowledge": "前往知识库"
+  },
+  "permissions": {
+    "title": "权限管理",
+    "pending_requests": "待审核请求",
+    "approved_users": "已授权用户",
+    "no_pending_requests": "没有待审核的请求",
+    "no_approved_users": "没有已授权的用户",
+    "fetch_error": "加载权限失败",
+    "approve_error": "批准请求失败",
+    "reject_error": "拒绝请求失败",
+    "remove_error": "移除权限失败",
+    "update_error": "更新权限失败",
+    "approve_success": "请求已批准",
+    "reject_success": "请求已拒绝",
+    "remove_success": "权限已移除",
+    "update_success": "权限已更新",
+    "unknown_user": "未知用户",
+    "change_level": "更改权限级别",
+    "remove_access": "移除访问权限",
+    "level_view": "查看",
+    "level_edit": "编辑",
+    "level_manage": "管理"
   }
 }

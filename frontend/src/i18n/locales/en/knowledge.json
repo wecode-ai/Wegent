@@ -406,5 +406,43 @@
     "summaryFailedHint": "Click retry to regenerate summary",
     "summaryRetry": "Retry",
     "summaryRetrying": "Retrying..."
+  },
+  "share": {
+    "title": "Request Access",
+    "kb_not_found": "Knowledge base not found",
+    "fetch_error": "Failed to load knowledge base information",
+    "error_title": "Error",
+    "login_required": "Please log in to request access to this knowledge base",
+    "permission_level": "Permission Level",
+    "permission_view": "View - Can view documents and use QA",
+    "permission_edit": "Edit - Can view, edit documents, add/delete documents",
+    "permission_manage": "Manage - Can do everything + manage other users' permissions",
+    "request_access": "Request Access",
+    "request_error": "Failed to request access. Please try again.",
+    "success_title": "Access Requested",
+    "success_description": "Your access request has been submitted. The knowledge base owner will review your request.",
+    "go_to_knowledge": "Go to Knowledge Bases"
+  },
+  "permissions": {
+    "title": "Permissions",
+    "pending_requests": "Pending Requests",
+    "approved_users": "Approved Users",
+    "no_pending_requests": "No pending requests",
+    "no_approved_users": "No approved users",
+    "fetch_error": "Failed to load permissions",
+    "approve_error": "Failed to approve request",
+    "reject_error": "Failed to reject request",
+    "remove_error": "Failed to remove permission",
+    "update_error": "Failed to update permission",
+    "approve_success": "Request approved successfully",
+    "reject_success": "Request rejected",
+    "remove_success": "Permission removed successfully",
+    "update_success": "Permission updated successfully",
+    "unknown_user": "Unknown User",
+    "change_level": "Change Permission Level",
+    "remove_access": "Remove Access",
+    "level_view": "View",
+    "level_edit": "Edit",
+    "level_manage": "Manage"
   }
 }

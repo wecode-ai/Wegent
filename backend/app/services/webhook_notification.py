@@ -28,6 +28,35 @@ class Notification(BaseModel):
     detail_url: str
 
 
+class KnowledgeAccessNotification(BaseModel):
+    """Knowledge base access notification data model"""
+
+    user_name: str
+    event: str
+    kb_id: int
+    kb_name: str
+    requester_user_id: int
+    requester_user_name: str
+    requested_permission: str
+    request_time: str
+    detail_url: str
+
+
+class KnowledgeApprovalNotification(BaseModel):
+    """Knowledge base approval notification data model"""
+
+    user_name: str
+    event: str
+    kb_id: int
+    kb_name: str
+    user_id: int
+    user_name_str: str
+    permission_level: str
+    approved_by: str
+    approved_time: str
+    detail_url: str
+
+
 class WebhookNotificationService:
     """Webhook notification service for task events"""
 
@@ -91,6 +120,43 @@ class WebhookNotificationService:
             },
         }
 
+        return payload
+
+    def _build_knowledge_access_payload(
+        self, notification: KnowledgeAccessNotification
+    ) -> Dict[str, Any]:
+        """Build knowledge base access request notification payload"""
+        payload = {
+            "event": notification.event,
+            "data": {
+                "kb_id": notification.kb_id,
+                "kb_name": notification.kb_name,
+                "requester_user_id": notification.requester_user_id,
+                "requester_user_name": notification.requester_user_name,
+                "requested_permission": notification.requested_permission,
+                "request_time": notification.request_time,
+                "detail_url": notification.detail_url,
+            },
+        }
+        return payload
+
+    def _build_knowledge_approval_payload(
+        self, notification: KnowledgeApprovalNotification
+    ) -> Dict[str, Any]:
+        """Build knowledge base approval notification payload"""
+        payload = {
+            "event": notification.event,
+            "data": {
+                "kb_id": notification.kb_id,
+                "kb_name": notification.kb_name,
+                "user_id": notification.user_id,
+                "user_name": notification.user_name_str,
+                "permission_level": notification.permission_level,
+                "approved_by": notification.approved_by,
+                "approved_time": notification.approved_time,
+                "detail_url": notification.detail_url,
+            },
+        }
         return payload
 
     async def send_notification(self, notification: Notification) -> bool:
@@ -179,6 +245,96 @@ class WebhookNotificationService:
             return False
         except Exception as e:
             logger.error(f"Error sending webhook notification: {str(e)}")
+            return False
+
+    def send_knowledge_access_notification(
+        self, notification: KnowledgeAccessNotification
+    ) -> bool:
+        """Send knowledge base access request notification synchronously"""
+        if not self.enabled or not self.endpoint_url:
+            logger.info("Webhook notification is disabled or endpoint not configured")
+            return False
+
+        try:
+            payload = self._build_knowledge_access_payload(notification)
+            headers = {**self.headers, **self._get_auth_headers()}
+            # Replace username placeholder in headers
+            headers = self._replace_username_placeholder(headers, notification.user_name)
+
+            logger.info(f"Sending knowledge access webhook notification to {self.endpoint_url}")
+            logger.info(f"Payload: {payload}")
+
+            if self.http_method == "POST":
+                response = requests.post(
+                    self.endpoint_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=self.timeout,
+                )
+            elif self.http_method == "PUT":
+                response = requests.put(
+                    self.endpoint_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=self.timeout,
+                )
+            else:
+                logger.error(f"Unsupported HTTP method: {self.http_method}")
+                return False
+
+            response.raise_for_status()
+            logger.info(
+                f"Knowledge access webhook notification sent successfully for {notification.event}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Error sending knowledge access webhook notification: {str(e)}")
+            return False
+
+    def send_knowledge_approval_notification(
+        self, notification: KnowledgeApprovalNotification
+    ) -> bool:
+        """Send knowledge base approval notification synchronously"""
+        if not self.enabled or not self.endpoint_url:
+            logger.info("Webhook notification is disabled or endpoint not configured")
+            return False
+
+        try:
+            payload = self._build_knowledge_approval_payload(notification)
+            headers = {**self.headers, **self._get_auth_headers()}
+            # Replace username placeholder in headers
+            headers = self._replace_username_placeholder(headers, notification.user_name)
+
+            logger.info(f"Sending knowledge approval webhook notification to {self.endpoint_url}")
+            logger.info(f"Payload: {payload}")
+
+            if self.http_method == "POST":
+                response = requests.post(
+                    self.endpoint_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=self.timeout,
+                )
+            elif self.http_method == "PUT":
+                response = requests.put(
+                    self.endpoint_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=self.timeout,
+                )
+            else:
+                logger.error(f"Unsupported HTTP method: {self.http_method}")
+                return False
+
+            response.raise_for_status()
+            logger.info(
+                f"Knowledge approval webhook notification sent successfully for {notification.event}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Error sending knowledge approval webhook notification: {str(e)}")
             return False
 
 

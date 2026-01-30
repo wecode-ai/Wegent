@@ -11,6 +11,11 @@ Models with relationships should be imported after their related models.
 from app.models.api_key import APIKey
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
+from app.models.knowledge_permission import (
+    ApprovalStatus,
+    KnowledgeBasePermission,
+    PermissionLevel,
+)
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
 from app.models.project import Project
@@ -47,6 +52,9 @@ __all__ = [
     "APIKey",
     "TaskMember",
     "KnowledgeDocument",
+    "KnowledgeBasePermission",
+    "PermissionLevel",
+    "ApprovalStatus",
     "Project",
     "SubscriptionFollow",
     "SubscriptionShareNamespace",

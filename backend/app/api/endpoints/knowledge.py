@@ -39,6 +39,14 @@ from app.schemas.knowledge import (
     KnowledgeDocumentUpdate,
     ResourceScope,
 )
+from app.schemas.knowledge_permission import (
+    PermissionAction,
+    PermissionLevelUpdate,
+    PermissionListResponse,
+    PermissionRequestCreate,
+    PermissionResponse,
+    ShareLinkResponse,
+)
 from app.schemas.knowledge_qa_history import QAHistoryResponse
 from app.schemas.rag import (
     SemanticSplitterConfig,
@@ -50,6 +58,9 @@ from app.services.knowledge import (
     KnowledgeBaseQAService,
     KnowledgeService,
     knowledge_base_qa_service,
+)
+from app.services.knowledge.knowledge_permission_service import (
+    KnowledgePermissionService,
 )
 from app.services.rag.document_service import DocumentService
 from app.services.rag.storage.factory import create_storage_backend
@@ -1766,3 +1777,207 @@ def get_document_chunk(
         document_id=document.id,
         kb_id=document.kind_id,
     )
+
+
+# ============== Knowledge Base Permission Endpoints ==============
+
+
+@router.get("/{knowledge_base_id}/share", response_model=ShareLinkResponse)
+def get_share_link(
+    knowledge_base_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Get share link for a knowledge base.
+
+    Returns the share URL that can be used to request access to the knowledge base.
+    No authentication required for accessing the share page.
+    """
+    # Verify knowledge base exists
+    kb = KnowledgePermissionService.get_knowledge_base(db, knowledge_base_id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+
+    return ShareLinkResponse(share_url=f"/knowledge/{knowledge_base_id}/share")
+
+
+@router.post(
+    "/{knowledge_base_id}/permissions/request",
+    response_model=PermissionResponse,
+)
+def request_access(
+    knowledge_base_id: int,
+    data: PermissionRequestCreate,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Request access to a knowledge base.
+
+    Creates a permission request with pending status.
+    The KB owner will be notified and can approve or reject the request.
+    """
+    try:
+        permission = KnowledgePermissionService.request_access(
+            db=db,
+            kb_id=knowledge_base_id,
+            user_id=current_user.id,
+            data=data,
+        )
+        return KnowledgePermissionService.build_permission_response(db, permission)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@router.get("/{knowledge_base_id}/permissions", response_model=PermissionListResponse)
+def list_permissions(
+    knowledge_base_id: int,
+    status: Optional[str] = Query(
+        None,
+        description="Filter by approval status: pending, approved, or rejected",
+    ),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Page size"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    List permissions for a knowledge base.
+
+    Only accessible to KB owner and users with manage permission.
+    Can filter by approval status.
+    """
+    try:
+        # Parse status filter
+        approval_status = None
+        if status:
+            from app.models.knowledge_permission import ApprovalStatus
+
+            try:
+                approval_status = ApprovalStatus(status)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid status: {status}",
+                )
+
+        permissions, total = KnowledgePermissionService.list_permissions(
+            db=db,
+            kb_id=knowledge_base_id,
+            user_id=current_user.id,
+            status=approval_status,
+            page=page,
+            page_size=page_size,
+        )
+
+        return PermissionListResponse(
+            total=total,
+            items=[
+                KnowledgePermissionService.build_permission_response(db, p)
+                for p in permissions
+            ],
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
+
+
+@router.put(
+    "/{knowledge_base_id}/permissions/{permission_id}",
+    response_model=PermissionResponse,
+)
+def approve_or_reject_request(
+    knowledge_base_id: int,
+    permission_id: int,
+    data: PermissionAction,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Approve or reject a permission request.
+
+    Only accessible to KB owner and users with manage permission.
+    """
+    try:
+        permission = KnowledgePermissionService.approve_or_reject_request(
+            db=db,
+            kb_id=knowledge_base_id,
+            permission_id=permission_id,
+            user_id=current_user.id,
+            data=data,
+        )
+        return KnowledgePermissionService.build_permission_response(db, permission)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@router.delete("/{knowledge_base_id}/permissions/{permission_id}")
+def remove_permission(
+    knowledge_base_id: int,
+    permission_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Remove a user's permission from a knowledge base.
+
+    Only accessible to KB owner and users with manage permission.
+    Cannot remove the KB owner's permission.
+    """
+    try:
+        KnowledgePermissionService.remove_permission(
+            db=db,
+            kb_id=knowledge_base_id,
+            permission_id=permission_id,
+            user_id=current_user.id,
+        )
+        return {"message": "Permission removed successfully"}
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@router.patch(
+    "/{knowledge_base_id}/permissions/{permission_id}",
+    response_model=PermissionResponse,
+)
+def update_permission_level(
+    knowledge_base_id: int,
+    permission_id: int,
+    data: PermissionLevelUpdate,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Update a user's permission level.
+
+    Only accessible to KB owner and users with manage permission.
+    Cannot update the KB owner's permission level.
+    """
+    try:
+        permission = KnowledgePermissionService.update_permission_level(
+            db=db,
+            kb_id=knowledge_base_id,
+            permission_id=permission_id,
+            user_id=current_user.id,
+            data=data,
+        )
+        return KnowledgePermissionService.build_permission_response(db, permission)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
