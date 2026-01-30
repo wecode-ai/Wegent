@@ -187,10 +187,10 @@ Example:
                 # Screenshot specific element
                 element = page.locator(selector)
                 await element.wait_for(timeout=self.default_timeout)
-                screenshot_bytes = await element.screenshot(**screenshot_options)
+                await element.screenshot(**screenshot_options)
             else:
                 # Screenshot page
-                screenshot_bytes = await page.screenshot(**screenshot_options)
+                await page.screenshot(**screenshot_options)
 
             execution_time = time.time() - start_time
 

@@ -13,8 +13,9 @@ This module provides shared functionality for browser automation tools using Pla
 import asyncio
 import json
 import logging
-import os
-from typing import Any, Optional
+import sys
+from threading import Lock
+from typing import Any, ClassVar, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -37,15 +38,15 @@ class BrowserSessionManager:
     """
 
     # Class-level dictionary to store singleton instances per task_id
-    _instances: dict[int, "BrowserSessionManager"] = {}
-    _lock = asyncio.Lock()
+    _instances: ClassVar[dict[int, "BrowserSessionManager"]] = {}
+    _lock: ClassVar[Lock] = Lock()
 
     def __init__(
         self,
         task_id: int,
         headless: bool = True,
         default_timeout: int = DEFAULT_BROWSER_TIMEOUT,
-    ):
+    ) -> None:
         """Initialize browser session manager.
 
         Note: Don't call this directly, use get_instance() instead.
@@ -83,19 +84,20 @@ class BrowserSessionManager:
         Returns:
             BrowserSessionManager instance for the task_id
         """
-        if task_id not in cls._instances:
-            logger.info(
-                f"[BrowserSessionManager] Creating new instance for task_id={task_id}"
-            )
-            cls._instances[task_id] = cls(task_id, headless, default_timeout)
-        else:
-            logger.debug(
-                f"[BrowserSessionManager] Reusing existing instance for task_id={task_id}"
-            )
-        return cls._instances[task_id]
+        with cls._lock:
+            if task_id not in cls._instances:
+                logger.info(
+                    f"[BrowserSessionManager] Creating new instance for task_id={task_id}"
+                )
+                cls._instances[task_id] = cls(task_id, headless, default_timeout)
+            else:
+                logger.debug(
+                    f"[BrowserSessionManager] Reusing existing instance for task_id={task_id}"
+                )
+            return cls._instances[task_id]
 
     @classmethod
-    def remove_instance(cls, task_id: int) -> None:
+    async def remove_instance(cls, task_id: int) -> None:
         """Remove the BrowserSessionManager instance for the given task_id.
 
         This should be called when the task is completed to clean up resources.
@@ -103,14 +105,18 @@ class BrowserSessionManager:
         Args:
             task_id: Task ID to remove
         """
-        if task_id in cls._instances:
-            logger.info(
-                f"[BrowserSessionManager] Removing instance for task_id={task_id}"
-            )
-            instance = cls._instances[task_id]
-            # Cleanup is async, but we'll schedule it
-            asyncio.create_task(instance.close())
-            del cls._instances[task_id]
+        instance = None
+        with cls._lock:
+            if task_id in cls._instances:
+                logger.info(
+                    f"[BrowserSessionManager] Removing instance for task_id={task_id}"
+                )
+                instance = cls._instances[task_id]
+                del cls._instances[task_id]
+
+        # Cleanup async outside the lock
+        if instance:
+            await instance.close()
 
     async def ensure_playwright_installed(self) -> tuple[bool, Optional[str]]:
         """Ensure Playwright and Chromium are installed.
@@ -131,11 +137,12 @@ class BrowserSessionManager:
                 logger.info(
                     "[BrowserSessionManager] Playwright not found, installing..."
                 )
-                # Install playwright using pip
+                # Install playwright using pip via sys.executable to avoid PATH issues
                 import subprocess
 
-                result = subprocess.run(
-                    ["pip", "install", "playwright"],
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    [sys.executable, "-m", "pip", "install", "playwright"],
                     capture_output=True,
                     text=True,
                     timeout=300,
@@ -147,8 +154,16 @@ class BrowserSessionManager:
                 logger.info(
                     "[BrowserSessionManager] Installing Chromium browser with dependencies..."
                 )
-                result = subprocess.run(
-                    ["playwright", "install", "chromium", "--with-deps"],
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    [
+                        sys.executable,
+                        "-m",
+                        "playwright",
+                        "install",
+                        "chromium",
+                        "--with-deps",
+                    ],
                     capture_output=True,
                     text=True,
                     timeout=600,
@@ -338,7 +353,10 @@ try:
             return json.dumps(response, ensure_ascii=False, indent=2)
 
         async def _emit_tool_status(
-            self, status: str, message: str = "", result: dict = None
+            self,
+            status: str,
+            message: str = "",
+            result: Optional[dict[str, Any]] = None,
         ) -> None:
             """Emit tool status update to frontend via WebSocket.
 
