@@ -218,7 +218,11 @@ async def get_knowledge_base_info(
             estimated_tokens = file_size // 4
 
             # Get KB configuration from Kind spec
-            kb_kind = db.query(Kind).filter(Kind.id == kb_id, Kind.kind == "KnowledgeBase").first()
+            kb_kind = (
+                db.query(Kind)
+                .filter(Kind.id == kb_id, Kind.kind == "KnowledgeBase")
+                .first()
+            )
 
             if kb_kind:
                 spec = kb_kind.json.get("spec", {})
@@ -230,12 +234,16 @@ async def get_knowledge_base_info(
                 if exempt_calls >= max_calls:
                     logger.warning(
                         "[internal_rag] Invalid KB config for KB %d: exempt=%d >= max=%d. Using defaults.",
-                        kb_id, exempt_calls, max_calls
+                        kb_id,
+                        exempt_calls,
+                        max_calls,
                     )
                     max_calls, exempt_calls = 10, 5
             else:
                 # KB not found, use defaults
-                logger.warning("[internal_rag] KB %d not found, using default config", kb_id)
+                logger.warning(
+                    "[internal_rag] KB %d not found, using default config", kb_id
+                )
                 max_calls, exempt_calls, kb_name = 10, 5, f"KB-{kb_id}"
 
             items.append(
@@ -274,8 +282,8 @@ async def get_knowledge_base_info(
                     document_count=0,
                     estimated_tokens=0,
                     max_calls_per_conversation=10,  # Default
-                    exempt_calls_before_check=5,    # Default
-                    name=f"KB-{kb_id}",              # Default
+                    exempt_calls_before_check=5,  # Default
+                    name=f"KB-{kb_id}",  # Default
                 )
             )
 

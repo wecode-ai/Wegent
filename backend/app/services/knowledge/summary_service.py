@@ -206,6 +206,9 @@ class SummaryService:
                     user_id=user_id,
                     user_name=user_name,
                 )
+                processed_config.setdefault("model_name", model_name)
+                processed_config.setdefault("model_namespace", model_namespace)
+                processed_config.setdefault("model_type", model_type)
                 logger.info(
                     f"[SummaryService] Model config processed successfully: "
                     f"model_id={processed_config.get('model_id')}, "
@@ -223,6 +226,32 @@ class SummaryService:
         return None
 
     # ==================== Document Summary ====================
+
+    @staticmethod
+    def _truncate_prompt_if_needed(content: Optional[str], label: str) -> str:
+        """Ensure prompt payload stays within TEXT(64KB) byte limit with headroom for system prompt."""
+        if not content:
+            return ""
+
+        max_bytes = MAX_DOCUMENT_CONTENT_LENGTH
+
+        safety_margin = max(2048, int(max_bytes * 0.1))
+        effective_limit = max(1024, max_bytes - safety_margin)
+
+        encoded = content.encode("utf-8")
+        if len(encoded) <= effective_limit:
+            return content
+
+        logger.warning(
+            "[SummaryService] %s content too long (%d bytes), truncating to %d",
+            label,
+            len(encoded),
+            effective_limit,
+        )
+
+        truncated_bytes = encoded[:effective_limit]
+        truncated_content = truncated_bytes.decode("utf-8", errors="ignore")
+        return truncated_content + "\n\n[Content truncated due to length limit...]"
 
     async def trigger_document_summary(
         self, document_id: int, user_id: int, user_name: str
@@ -299,6 +328,12 @@ class SummaryService:
             f"document_id={document_id}, name={document.name}, "
             f"source_type={document.source_type}, kb_id={document.kind_id}"
         )
+        logger.info(
+            "[SummaryService] Using summary model config: name=%s, namespace=%s, type=%s",
+            model_config.get("model_name"),
+            model_config.get("model_namespace"),
+            model_config.get("model_type"),
+        )
 
         try:
             # 6. Update status to generating
@@ -324,6 +359,10 @@ class SummaryService:
                 f"document_id={document_id}, content_length={len(content)}"
             )
 
+            truncated_content = self._truncate_prompt_if_needed(
+                content, "Document summary"
+            )
+
             # 8. Execute summary generation
             logger.info(
                 f"[SummaryService] Starting summary generation: document_id={document_id}"
@@ -331,7 +370,7 @@ class SummaryService:
             executor = BackgroundChatExecutor(self.db, user_id)
             result = await executor.execute(
                 system_prompt=DOCUMENT_SUMMARY_PROMPT,
-                user_message=f"Please generate a summary for the following document:\n\n{content}",
+                user_message=f"Please generate a summary for the following document:\n\n{truncated_content}",
                 config=BackgroundTaskConfig(
                     task_type="summary",
                     summary_type="document",
@@ -492,6 +531,11 @@ class SummaryService:
             f"kb_id={kb_id}, completed_count={aggregation.completed_count}"
         )
 
+        truncated_aggregation = self._truncate_prompt_if_needed(
+            aggregation.aggregated_text,
+            "KB summary",
+        )
+
         # 4. Get model configuration from knowledge base
         # Only needed if we have documents to summarize
         model_config = self._get_model_config_from_kb(kb, user_id, user_name)
@@ -526,7 +570,11 @@ class SummaryService:
             executor = BackgroundChatExecutor(self.db, user_id)
             result = await executor.execute(
                 system_prompt=KB_SUMMARY_PROMPT,
-                user_message=f"Please generate a comprehensive summary for the knowledge base based on the following document summaries:\n\n{aggregation.aggregated_text}",
+                user_message=(
+                    "Please generate a comprehensive summary for the knowledge base "
+                    "based on the following document summaries:\n\n"
+                    f"{truncated_aggregation}"
+                ),
                 config=BackgroundTaskConfig(
                     task_type="summary",
                     summary_type="knowledge_base",

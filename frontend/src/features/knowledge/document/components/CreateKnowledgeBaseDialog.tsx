@@ -14,20 +14,10 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Switch } from '@/components/ui/switch'
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from '@/components/ui/accordion'
 import { useTranslation } from '@/hooks/useTranslation'
-import { RetrievalSettingsSection, type RetrievalConfig } from './RetrievalSettingsSection'
-import { SummaryModelSelector } from './SummaryModelSelector'
-import type { SummaryModelRef, KnowledgeBaseType } from '@/types/knowledge'
+import type { SummaryModelRef, KnowledgeBaseType, RetrievalConfig } from '@/types/knowledge'
+import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 
 interface CreateKnowledgeBaseDialogProps {
   open: boolean
@@ -38,6 +28,8 @@ interface CreateKnowledgeBaseDialogProps {
     retrieval_config?: Partial<RetrievalConfig>
     summary_enabled?: boolean
     summary_model_ref?: SummaryModelRef | null
+    max_calls_per_conversation: number
+    exempt_calls_before_check: number
   }) => Promise<void>
   loading?: boolean
   scope?: 'personal' | 'group' | 'all'
@@ -76,6 +68,8 @@ export function CreateKnowledgeBaseDialog({
   })
   const [error, setError] = useState('')
   const [accordionValue, setAccordionValue] = useState<string>('')
+  const [maxCalls, setMaxCalls] = useState(10)
+  const [exemptCalls, setExemptCalls] = useState(5)
 
   // Reset summaryEnabled when dialog opens based on kbType
   // This is necessary because useState initial value only applies on first mount,
@@ -109,6 +103,13 @@ export function CreateKnowledgeBaseDialog({
       return
     }
 
+    // Validate call limits
+    if (exemptCalls >= maxCalls) {
+      setError(t('knowledge:document.callLimits.validationError'))
+      setAccordionValue('advanced')
+      return
+    }
+
     // Validate retrieval config - retriever and embedding model are required
     if (!retrievalConfig.retriever_name) {
       setError(t('knowledge:document.retrieval.noRetriever'))
@@ -129,6 +130,8 @@ export function CreateKnowledgeBaseDialog({
         retrieval_config: retrievalConfig,
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
+        max_calls_per_conversation: maxCalls,
+        exempt_calls_before_check: exemptCalls,
       })
       setName('')
       setDescription('')
@@ -144,6 +147,8 @@ export function CreateKnowledgeBaseDialog({
           keyword_weight: 0.3,
         },
       })
+      setMaxCalls(10)
+      setExemptCalls(5)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common:error'))
     }
@@ -166,6 +171,8 @@ export function CreateKnowledgeBaseDialog({
           keyword_weight: 0.3,
         },
       })
+      setMaxCalls(10)
+      setExemptCalls(5)
       setError('')
       setAccordionValue('')
     }
@@ -183,134 +190,75 @@ export function CreateKnowledgeBaseDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="max-h-[80vh] overflow-y-auto">
           <div className="space-y-4 py-4">
-            {/* Knowledge Base Type Display (read-only) */}
-            <div className="space-y-2">
-              <Label>{t('knowledge:document.knowledgeBase.type')}</Label>
-              <div
-                className={`flex items-center gap-3 p-3 rounded-md border ${
-                  isNotebook ? 'bg-primary/5 border-primary/20' : 'bg-muted border-border'
-                }`}
-              >
-                <div
-                  className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center ${
-                    isNotebook ? 'bg-primary/10 text-primary' : 'bg-surface text-text-secondary'
-                  }`}
-                >
-                  {isNotebook ? (
-                    <BookOpen className="w-4 h-4" />
-                  ) : (
-                    <FolderOpen className="w-4 h-4" />
-                  )}
-                </div>
-                <div>
-                  <div className="font-medium text-sm">
-                    {isNotebook
-                      ? t('knowledge:document.knowledgeBase.typeNotebook')
-                      : t('knowledge:document.knowledgeBase.typeClassic')}
+            <KnowledgeBaseForm
+              typeSection={
+                <div className="space-y-2">
+                  <Label>{t('knowledge:document.knowledgeBase.type')}</Label>
+                  <div
+                    className={`flex items-center gap-3 p-3 rounded-md border ${
+                      isNotebook ? 'bg-primary/5 border-primary/20' : 'bg-muted border-border'
+                    }`}
+                  >
+                    <div
+                      className={`flex-shrink-0 w-8 h-8 rounded-md flex items-center justify-center ${
+                        isNotebook ? 'bg-primary/10 text-primary' : 'bg-surface text-text-secondary'
+                      }`}
+                    >
+                      {isNotebook ? (
+                        <BookOpen className="w-4 h-4" />
+                      ) : (
+                        <FolderOpen className="w-4 h-4" />
+                      )}
+                    </div>
+                    <div>
+                      <div className="font-medium text-sm">
+                        {isNotebook
+                          ? t('knowledge:document.knowledgeBase.typeNotebook')
+                          : t('knowledge:document.knowledgeBase.typeClassic')}
+                      </div>
+                      <div className="text-xs text-text-muted">
+                        {isNotebook
+                          ? t('knowledge:document.knowledgeBase.notebookDesc')
+                          : t('knowledge:document.knowledgeBase.classicDesc')}
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-xs text-text-muted">
-                    {isNotebook
-                      ? t('knowledge:document.knowledgeBase.notebookDesc')
-                      : t('knowledge:document.knowledgeBase.classicDesc')}
-                  </div>
                 </div>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="name">{t('knowledge:document.knowledgeBase.name')}</Label>
-              <Input
-                id="name"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder={t('knowledge:document.knowledgeBase.namePlaceholder')}
-                maxLength={100}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="description">
-                {t('knowledge:document.knowledgeBase.description')}
-              </Label>
-              <Textarea
-                id="description"
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                placeholder={t('knowledge:document.knowledgeBase.descriptionPlaceholder')}
-                maxLength={500}
-                rows={3}
-              />
-            </div>
-
-            {/* Summary Settings - moved outside accordion */}
-            <div className="space-y-3 border-b border-border pb-4">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label htmlFor="summary-enabled">
-                    {t('knowledge:document.summary.enableLabel')}
-                  </Label>
-                  <p className="text-xs text-text-muted">
-                    {t('knowledge:document.summary.enableDescription')}
-                  </p>
-                </div>
-                <Switch
-                  id="summary-enabled"
-                  checked={summaryEnabled}
-                  onCheckedChange={checked => {
-                    setSummaryEnabled(checked)
-                    if (!checked) {
-                      setSummaryModelRef(null)
-                      setSummaryModelError('')
-                    }
-                  }}
-                />
-              </div>
-              {summaryEnabled && (
-                <div className="space-y-2 pt-2">
-                  <Label>{t('knowledge:document.summary.selectModel')}</Label>
-                  <SummaryModelSelector
-                    value={summaryModelRef}
-                    onChange={value => {
-                      setSummaryModelRef(value)
-                      setSummaryModelError('')
-                    }}
-                    error={summaryModelError}
-                    knowledgeDefaultTeamId={knowledgeDefaultTeamId}
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Advanced Settings */}
-            <Accordion
-              type="single"
-              collapsible
-              className="border-none"
-              value={accordionValue}
-              onValueChange={setAccordionValue}
-            >
-              <AccordionItem value="advanced" className="border-none">
-                <AccordionTrigger className="text-sm font-medium hover:no-underline">
-                  {t('knowledge:document.advancedSettings.title')}
-                </AccordionTrigger>
-                <AccordionContent
-                  forceMount
-                  className={accordionValue !== 'advanced' ? 'hidden' : ''}
-                >
-                  <div className="space-y-4 pt-2">
-                    <p className="text-xs text-text-muted">
-                      {t('knowledge:document.advancedSettings.collapsed')}
-                    </p>
-
-                    <RetrievalSettingsSection
-                      config={retrievalConfig}
-                      onChange={setRetrievalConfig}
-                      scope={scope}
-                      groupName={groupName}
-                    />
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
+              }
+              name={name}
+              description={description}
+              onNameChange={value => setName(value)}
+              onDescriptionChange={value => setDescription(value)}
+              summaryEnabled={summaryEnabled}
+              onSummaryEnabledChange={checked => {
+                setSummaryEnabled(checked)
+                if (!checked) {
+                  setSummaryModelRef(null)
+                  setSummaryModelError('')
+                }
+              }}
+              summaryModelRef={summaryModelRef}
+              summaryModelError={summaryModelError}
+              onSummaryModelChange={value => {
+                setSummaryModelRef(value)
+                setSummaryModelError('')
+              }}
+              knowledgeDefaultTeamId={knowledgeDefaultTeamId}
+              callLimits={{ maxCalls, exemptCalls }}
+              onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
+                setMaxCalls(nextMax)
+                setExemptCalls(nextExempt)
+              }}
+              advancedVariant="accordion"
+              advancedOpen={accordionValue === 'advanced'}
+              onAdvancedOpenChange={open => setAccordionValue(open ? 'advanced' : '')}
+              advancedDescription={t('knowledge:document.advancedSettings.collapsed')}
+              showRetrievalSection={true}
+              retrievalConfig={retrievalConfig}
+              onRetrievalConfigChange={setRetrievalConfig}
+              retrievalScope={scope}
+              retrievalGroupName={groupName}
+            />
 
             {error && <p className="text-sm text-error">{error}</p>}
           </div>
