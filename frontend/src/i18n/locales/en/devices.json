@@ -44,5 +44,18 @@
   "set_default_success": "{{name}} has been set as the default device",
   "set_default_error": "Failed to set default device",
   "delete_success": "{{name}} has been deleted",
-  "delete_error": "Failed to delete device"
+  "delete_error": "Failed to delete device",
+  "local_executor_title": "Run Local Executor",
+  "local_executor_description": "Run Executor on your Mac to execute AI tasks",
+  "step_download": "Download wegent-executor",
+  "step_download_desc": "Download the executable for your Mac from GitHub",
+  "step_permission": "Set executable permission",
+  "step_permission_desc": "Grant execution permission to the file",
+  "step_run": "Run",
+  "step_run_desc": "Start Executor with the following command",
+  "arch_apple_silicon": "Apple Silicon (M1/M2/M3)",
+  "arch_intel": "Intel",
+  "security_warning": "Security notice: Do not share the command above, it contains your authentication credentials",
+  "gatekeeper_hint": "First run may require allowing it in System Settings > Privacy & Security",
+  "copy_success": "Copied to clipboard"
 }
