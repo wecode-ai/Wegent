@@ -25,11 +25,7 @@ import {
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { subscriptionApis } from '@/apis/subscription'
-import type {
-  NotificationLevel,
-  NotificationChannelInfo,
-  FollowSettingsResponse,
-} from '@/types/subscription'
+import type { NotificationLevel, FollowSettingsResponse } from '@/types/subscription'
 
 interface FollowNotificationSettingsDialogProps {
   subscriptionId: number
@@ -56,13 +52,7 @@ export function FollowNotificationSettingsDialog({
   const [selectedChannels, setSelectedChannels] = useState<number[]>([])
 
   // Load settings when dialog opens
-  useEffect(() => {
-    if (open && subscriptionId) {
-      loadSettings()
-    }
-  }, [open, subscriptionId])
-
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     try {
       setLoading(true)
       const response = await subscriptionApis.getFollowSettings(subscriptionId)
@@ -75,7 +65,13 @@ export function FollowNotificationSettingsDialog({
     } finally {
       setLoading(false)
     }
-  }
+  }, [subscriptionId, t])
+
+  useEffect(() => {
+    if (open && subscriptionId) {
+      loadSettings()
+    }
+  }, [open, subscriptionId, loadSettings])
 
   // Handle save
   const handleSave = useCallback(async () => {
@@ -103,20 +99,8 @@ export function FollowNotificationSettingsDialog({
     )
   }, [])
 
-  // Get icon for notification level
-  const getLevelIcon = (level: NotificationLevel) => {
-    switch (level) {
-      case 'silent':
-        return <BellOff className="h-4 w-4" />
-      case 'default':
-        return <Bell className="h-4 w-4" />
-      case 'notify':
-        return <BellRing className="h-4 w-4" />
-    }
-  }
-
   // Get channel type icon
-  const getChannelIcon = (channelType: string) => {
+  const getChannelIcon = (_channelType: string) => {
     // For now, use a generic message icon
     // Can be extended to show specific icons for dingtalk, feishu, etc.
     return <MessageSquare className="h-4 w-4" />
