@@ -327,6 +327,8 @@ class SandboxManager:
                 metadata["workspace_ref"] = workspace_ref
 
             # Include auth_token for skill downloads in sandbox
+            # print "auth_token" in metadata:
+            logger.info("=============auth_token is:" + str(self.auth_token))
             if self.auth_token:
                 metadata["auth_token"] = self.auth_token
 
