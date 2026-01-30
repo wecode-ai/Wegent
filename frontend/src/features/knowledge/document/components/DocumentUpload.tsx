@@ -70,6 +70,8 @@ interface DocumentUploadProps {
   kbType?: string
   /** Current document count in the knowledge base */
   currentDocumentCount?: number
+  /** Knowledge base namespace - used to restrict document sources for company KB */
+  namespace?: string
 }
 
 export function DocumentUpload({
@@ -80,6 +82,7 @@ export function DocumentUpload({
   onWebAdd,
   kbType = 'classic',
   currentDocumentCount = 0,
+  namespace,
 }: DocumentUploadProps) {
   const { t } = useTranslation('knowledge')
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -699,7 +702,7 @@ export function DocumentUpload({
                 size="sm"
                 className="h-9 px-4"
                 onClick={() => setUploadMode('table')}
-                disabled={state.isUploading}
+                disabled={state.isUploading || namespace === 'organization_knowledge'}
               >
                 <Link className="w-4 h-4 mr-2" />
                 {t('document.upload.addTable')}
@@ -727,7 +730,7 @@ export function DocumentUpload({
         </div>
 
         {/* Web URL Input Section - inline style like the reference image */}
-        {onWebAdd && (
+        {onWebAdd && namespace !== 'organization_knowledge' && (
           <div className="mt-4 border border-dashed border-border rounded-lg bg-surface/50">
             <div className="p-6 flex flex-col items-center justify-center min-h-[120px]">
               <p className="text-text-primary font-medium text-sm mb-4">

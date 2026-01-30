@@ -738,6 +738,7 @@ export function DocumentList({
         onWebAdd={handleWebAdd}
         kbType={knowledgeBase.kb_type}
         currentDocumentCount={documents.length}
+        namespace={knowledgeBase.namespace}
       />
 
       <EditDocumentDialog
