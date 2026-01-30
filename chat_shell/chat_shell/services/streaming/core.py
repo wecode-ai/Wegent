@@ -339,9 +339,6 @@ class StreamingState:
         if tool_name and should_display_tool_details(tool_name):
             updates["tool_output"] = tool_output
 
-        if is_error:
-            updates["type"] = "error"
-
         self.update_block(tool_use_id, updates)
 
 
