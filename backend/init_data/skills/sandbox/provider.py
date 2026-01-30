@@ -32,13 +32,13 @@ class SandboxToolProvider(SkillToolProvider):
 
     Example SKILL.md configuration:
         tools:
-          - name: sandbox_command
+          - name: exec
             provider: sandbox
-          - name: sandbox_claude
+          - name: sub_claude_agent
             provider: sandbox
             config:
               command_timeout: 1800
-          - name: sandbox_list_files
+          - name: list_files
             provider: sandbox
     """
 
@@ -84,13 +84,13 @@ class SandboxToolProvider(SkillToolProvider):
             List containing supported tool names
         """
         return [
-            "sandbox_command",
-            "sandbox_claude",
-            "sandbox_list_files",
-            "sandbox_read_file",
-            "sandbox_write_file",
-            "sandbox_upload_attachment",
-            "sandbox_download_attachment",
+            "exec",
+            "sub_claude_agent",
+            "list_files",
+            "read_file",
+            "write_file",
+            "upload_attachment",
+            "download_attachment",
         ]
 
     def create_tool(
@@ -128,7 +128,7 @@ class SandboxToolProvider(SkillToolProvider):
         base_params = self._prepare_base_params(context, tool_config)
         config = tool_config or {}
 
-        if tool_name == "sandbox_command":
+        if tool_name == "exec":
             from .command_tool import SandboxCommandTool
 
             tool_instance = SandboxCommandTool(
@@ -136,7 +136,7 @@ class SandboxToolProvider(SkillToolProvider):
                 default_command_timeout=config.get("command_timeout", 300),
             )
 
-        elif tool_name == "sandbox_claude":
+        elif tool_name == "sub_claude_agent":
             from .claude_tool import SandboxClaudeTool
 
             tool_instance = SandboxClaudeTool(
@@ -144,12 +144,12 @@ class SandboxToolProvider(SkillToolProvider):
                 default_command_timeout=config.get("command_timeout", 1800),
             )
 
-        elif tool_name == "sandbox_list_files":
+        elif tool_name == "list_files":
             from .list_files_tool import SandboxListFilesTool
 
             tool_instance = SandboxListFilesTool(**base_params)
 
-        elif tool_name == "sandbox_read_file":
+        elif tool_name == "read_file":
             from .read_file_tool import SandboxReadFileTool
 
             tool_instance = SandboxReadFileTool(
@@ -157,7 +157,7 @@ class SandboxToolProvider(SkillToolProvider):
                 max_size=config.get("max_file_size", 1048576),  # 1MB default
             )
 
-        elif tool_name == "sandbox_write_file":
+        elif tool_name == "write_file":
             from .write_file_tool import SandboxWriteFileTool
 
             tool_instance = SandboxWriteFileTool(
@@ -165,7 +165,7 @@ class SandboxToolProvider(SkillToolProvider):
                 max_size=config.get("max_file_size", 10485760),  # 10MB default
             )
 
-        elif tool_name == "sandbox_upload_attachment":
+        elif tool_name == "upload_attachment":
             from .upload_attachment_tool import SandboxUploadAttachmentTool
 
             tool_instance = SandboxUploadAttachmentTool(
@@ -175,7 +175,7 @@ class SandboxToolProvider(SkillToolProvider):
                 api_base_url=config.get("api_base_url", ""),
             )
 
-        elif tool_name == "sandbox_download_attachment":
+        elif tool_name == "download_attachment":
             from .download_attachment_tool import SandboxDownloadAttachmentTool
 
             tool_instance = SandboxDownloadAttachmentTool(
