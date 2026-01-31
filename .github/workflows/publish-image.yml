@@ -474,7 +474,7 @@ jobs:
 
   build-executor-local-macos-amd64:
     needs: prepare-release
-    runs-on: macos-15  # Intel runner (macos-13 is retired)
+    runs-on: macos-14  # Apple Silicon runner with cross-compilation for Intel
     permissions:
       contents: write
     steps:
@@ -483,7 +483,7 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Python
+      - name: Set up Python (universal2 for cross-compilation)
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -491,11 +491,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Install dependencies and build
+      - name: Install dependencies and build for Intel (x86_64)
         working-directory: executor
         run: |
           uv sync --group build
-          uv run python scripts/build_local.py
+          uv run python scripts/build_local.py --target-arch x86_64
 
       - name: Rename binary with platform suffix
         run: |
