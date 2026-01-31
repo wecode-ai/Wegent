@@ -59,6 +59,9 @@ version: "1.0.0"
 author: "Author Name"
 tags: ["tag1", "tag2"]
 bindShells: ["Chat", "ClaudeCode"]  # Compatible shell types
+dependencies:                        # Skill dependencies (loaded automatically)
+  - base-skill
+  - utility-skill
 provider:
   module: provider                   # Python module name (without .py)
   class: MyToolProvider              # Provider class name
@@ -67,8 +70,6 @@ tools:
     provider: provider_name
     config:
       timeout: 30
-dependencies:
-  - app.chat_shell.tools.pending_requests
 ---
 
 # Skill Prompt Content
@@ -87,9 +88,75 @@ when the skill is loaded by the LLM...
 | `author` | No | Author name |
 | `tags` | No | Tags for categorization |
 | `bindShells` | No | Compatible Shell types (e.g., "Chat", "ClaudeCode") |
+| `dependencies` | No | List of skill names this skill depends on (auto-loaded) |
 | `provider` | No | Provider configuration for dynamic tools |
 | `tools` | No | Tool declarations |
-| `dependencies` | No | Python module dependencies |
+
+---
+
+## Skill Dependencies
+
+Skills can declare dependencies on other skills. When a skill with dependencies is loaded, all its dependencies are automatically loaded first in topological order.
+
+### Defining Dependencies
+
+In your SKILL.md frontmatter:
+
+```yaml
+---
+description: "Advanced React patterns and optimization"
+dependencies:
+  - react-basics          # This skill will be loaded first
+  - typescript-fundamentals
+bindShells:
+  - ClaudeCode
+  - Chat
+---
+```
+
+### Dependency Features
+
+1. **Automatic Loading**: When you load a skill, all its dependencies are automatically loaded first
+2. **Topological Order**: Dependencies are resolved in correct order (dependencies before dependents)
+3. **Deduplication**: Each skill is only loaded once, even if multiple skills depend on it
+4. **Circular Detection**: The system validates and rejects circular dependencies during skill upload
+5. **Missing Detection**: All dependencies must exist before a skill can be uploaded
+
+### Batch Loading
+
+The `load_skill` tool supports loading multiple skills at once:
+
+```python
+# Load single skill (backward compatible)
+load_skill(skill_names="advanced-react")
+
+# Load multiple skills at once
+load_skill(skill_names=["react-basics", "typescript-fundamentals", "advanced-react"])
+```
+
+### Validation Errors
+
+When uploading a skill with invalid dependencies:
+
+```json
+{
+  "code": "DEPENDENCY_VALIDATION_FAILED",
+  "message": "Skill dependency validation failed",
+  "missing_dependencies": ["nonexistent-skill"],
+  "circular_dependency": null
+}
+```
+
+Or for circular dependencies:
+
+```json
+{
+  "code": "DEPENDENCY_VALIDATION_FAILED",
+  "message": "Skill dependency validation failed",
+  "missing_dependencies": [],
+  "circular_dependency": ["skill-a", "skill-b", "skill-c", "skill-a"]
+}
+```
 
 ---
 

@@ -607,6 +607,12 @@ class SkillSpec(BaseModel):
         "Tracks where the skill was imported from (upload or git repository). "
         "Used to enable updating skills from their original Git source.",
     )
+    dependencies: Optional[List[str]] = Field(
+        None,
+        description="List of skill names that this skill depends on. "
+        "When this skill is loaded, all dependencies will be automatically "
+        "loaded first in topological order.",
+    )
 
 
 class SkillStatus(Status):

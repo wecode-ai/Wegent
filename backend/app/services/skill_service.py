@@ -9,10 +9,133 @@ import hashlib
 import io
 import re
 import zipfile
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import yaml
 from fastapi import HTTPException
+
+
+class SkillDependencyValidator:
+    """Validator for skill dependencies.
+
+    Provides methods to:
+    - Validate that all dependencies exist in the system
+    - Detect circular dependencies using graph traversal
+    """
+
+    @staticmethod
+    def validate_dependencies(
+        skill_name: str,
+        dependencies: List[str],
+        find_skill_func,
+        db,
+        user_id: int,
+        namespace: str = "default",
+    ) -> Tuple[List[str], Optional[List[str]]]:
+        """
+        Validate skill dependencies.
+
+        Args:
+            skill_name: Name of the skill being validated
+            dependencies: List of dependency skill names
+            find_skill_func: Function to find a skill by name
+            db: Database session
+            user_id: User ID for skill lookup
+            namespace: Namespace for group skill lookup
+
+        Returns:
+            Tuple of (missing_dependencies, circular_dependency_chain)
+            - missing_dependencies: List of dependencies that don't exist
+            - circular_dependency_chain: List showing the circular path, or None
+
+        Note:
+            If circular_dependency_chain is not None, it shows the cycle path
+            e.g., ["skill-a", "skill-b", "skill-c", "skill-a"]
+        """
+        missing = []
+
+        # Check existence of each dependency
+        for dep_name in dependencies:
+            skill = find_skill_func(dep_name, db, user_id, namespace)
+            if not skill:
+                missing.append(dep_name)
+
+        if missing:
+            return missing, None
+
+        # Check for circular dependencies using DFS
+        circular_chain = SkillDependencyValidator._detect_circular_dependencies(
+            skill_name, dependencies, find_skill_func, db, user_id, namespace
+        )
+
+        return [], circular_chain
+
+    @staticmethod
+    def _detect_circular_dependencies(
+        skill_name: str,
+        dependencies: List[str],
+        find_skill_func,
+        db,
+        user_id: int,
+        namespace: str,
+    ) -> Optional[List[str]]:
+        """
+        Detect circular dependencies using DFS.
+
+        Args:
+            skill_name: Name of the skill being checked
+            dependencies: Direct dependencies of the skill
+            find_skill_func: Function to find a skill by name
+            db: Database session
+            user_id: User ID
+            namespace: Namespace
+
+        Returns:
+            List showing the circular path if found, None otherwise
+        """
+        # Build a dependency graph starting from this skill
+        # We'll treat the new skill's dependencies as if it's already in the graph
+
+        def get_skill_dependencies(name: str) -> List[str]:
+            """Get dependencies for an existing skill."""
+            if name == skill_name:
+                return dependencies
+
+            skill = find_skill_func(name, db, user_id, namespace)
+            if not skill or not skill.json:
+                return []
+
+            # Get dependencies directly from JSON to avoid full model validation
+            spec = skill.json.get("spec", {})
+            return spec.get("dependencies") or []
+
+        # DFS to detect cycle
+        visited: Set[str] = set()
+        rec_stack: Set[str] = set()  # Recursion stack for cycle detection
+        path: List[str] = []  # Track path for reporting
+
+        def dfs(node: str) -> Optional[List[str]]:
+            """DFS traversal to detect cycles."""
+            visited.add(node)
+            rec_stack.add(node)
+            path.append(node)
+
+            for dep in get_skill_dependencies(node):
+                if dep not in visited:
+                    result = dfs(dep)
+                    if result:
+                        return result
+                elif dep in rec_stack:
+                    # Found a cycle - build the cycle path
+                    cycle_start = path.index(dep)
+                    cycle_path = path[cycle_start:] + [dep]
+                    return cycle_path
+
+            path.pop()
+            rec_stack.remove(node)
+            return None
+
+        return dfs(skill_name)
 
 
 class SkillValidator:
@@ -146,6 +269,9 @@ class SkillValidator:
                     "mcpServers": metadata.get(
                         "mcpServers"
                     ),  # MCP servers for skill-level tools
+                    "dependencies": metadata.get(
+                        "dependencies"
+                    ),  # Skill dependencies for auto-loading
                     "preload": preload,  # Whether to preload into system prompt
                     "file_size": file_size,
                     "file_hash": file_hash,
