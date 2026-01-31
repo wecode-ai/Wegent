@@ -6,6 +6,9 @@
 
 These tools provide Unix-like commands (kb_ls, kb_head) for AI to explore
 knowledge base contents when RAG search doesn't find relevant results.
+
+These tools share the same call limit (max_calls_per_conversation) with
+knowledge_base_search tool to prevent excessive knowledge base access.
 """
 
 import json
@@ -14,9 +17,65 @@ from typing import Any, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 logger = logging.getLogger(__name__)
+
+# Default configuration values (same as knowledge_base.py)
+DEFAULT_MAX_CALLS_PER_CONVERSATION = 10
+
+
+class KBToolCallCounter:
+    """Shared call counter for KB exploration tools (kb_ls, kb_head).
+
+    This counter is shared across kb_ls and kb_head tools to enforce
+    the max_calls_per_conversation limit. The counter is separate from
+    knowledge_base_search's counter since exploration tools are secondary.
+
+    Note: While knowledge_base_search has its own internal counter with
+    token-based warnings, kb_ls and kb_head share this simpler counter
+    that only enforces the hard max limit.
+    """
+
+    def __init__(self, max_calls: int = DEFAULT_MAX_CALLS_PER_CONVERSATION):
+        self.max_calls = max_calls
+        self.call_count = 0
+
+    def check_and_increment(self) -> tuple[bool, Optional[str]]:
+        """Check if call is allowed and increment counter.
+
+        Returns:
+            Tuple of (allowed, error_message)
+            - allowed: True if call should proceed
+            - error_message: JSON string with rejection info if not allowed
+        """
+        if self.call_count >= self.max_calls:
+            logger.warning(
+                "[KBToolCallCounter] Call REJECTED | Reason: max_calls_exceeded | "
+                "Call count: %d/%d",
+                self.call_count + 1,
+                self.max_calls,
+            )
+            return False, json.dumps(
+                {
+                    "status": "rejected",
+                    "reason": "max_calls_exceeded",
+                    "message": f"🚫 Call Rejected: Maximum knowledge base tool call limit ({self.max_calls}) "
+                    f"reached for this conversation. You have made {self.call_count} calls. "
+                    f"Please use the information you've already gathered to answer the user's question.",
+                    "call_count": self.call_count,
+                    "max_calls": self.max_calls,
+                },
+                ensure_ascii=False,
+            )
+
+        self.call_count += 1
+        logger.info(
+            "[KBToolCallCounter] Call %d/%d allowed",
+            self.call_count,
+            self.max_calls,
+        )
+        return True, None
 
 
 def _format_file_size(size_bytes: int) -> str:
@@ -55,6 +114,8 @@ class KbLsTool(BaseTool):
 
     Similar to 'ls -l' command. Use when RAG search doesn't find relevant
     content and you need to explore what documents are available.
+
+    This tool shares call limits with kb_head via a shared counter.
     """
 
     name: str = "kb_ls"
@@ -70,6 +131,9 @@ class KbLsTool(BaseTool):
 
     # Database session (optional, used in package mode)
     db_session: Optional[Any] = None
+
+    # Shared call counter (set when creating the tool, shared with kb_head)
+    _call_counter: Optional[KBToolCallCounter] = PrivateAttr(default=None)
 
     def _run(
         self,
@@ -94,6 +158,12 @@ class KbLsTool(BaseTool):
             JSON string with document list
         """
         try:
+            # Check call limit if counter is set
+            if self._call_counter:
+                allowed, error_msg = self._call_counter.check_and_increment()
+                if not allowed:
+                    return error_msg
+
             # Validate knowledge base ID is in allowed list
             if (
                 self.knowledge_base_ids
@@ -251,6 +321,8 @@ class KbHeadTool(BaseTool):
 
     Similar to 'head -c' command. Returns partial content starting from
     the specified offset. Use has_more flag to check if more content exists.
+
+    This tool shares call limits with kb_ls via a shared counter.
     """
 
     name: str = "kb_head"
@@ -266,6 +338,9 @@ class KbHeadTool(BaseTool):
 
     # Database session (optional, used in package mode)
     db_session: Optional[Any] = None
+
+    # Shared call counter (set when creating the tool, shared with kb_ls)
+    _call_counter: Optional[KBToolCallCounter] = PrivateAttr(default=None)
 
     def _run(
         self,
@@ -296,6 +371,12 @@ class KbHeadTool(BaseTool):
             JSON string with document contents
         """
         try:
+            # Check call limit if counter is set
+            if self._call_counter:
+                allowed, error_msg = self._call_counter.check_and_increment()
+                if not allowed:
+                    return error_msg
+
             if not document_ids:
                 return json.dumps(
                     {"error": "No document IDs provided"}, ensure_ascii=False

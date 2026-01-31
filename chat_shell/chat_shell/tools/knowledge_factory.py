@@ -76,7 +76,12 @@ async def prepare_knowledge_base_tools(
     )
 
     # Import knowledge base tools
-    from chat_shell.tools.builtin import KbHeadTool, KbLsTool, KnowledgeBaseTool
+    from chat_shell.tools.builtin import (
+        KBToolCallCounter,
+        KbHeadTool,
+        KbLsTool,
+        KnowledgeBaseTool,
+    )
 
     # Create KnowledgeBaseTool with the specified knowledge bases
     # KB configs (max_calls, exempt_calls, name) are fetched from Backend API
@@ -93,16 +98,27 @@ async def prepare_knowledge_base_tools(
     )
     extra_tools.append(kb_tool)
 
+    # Create shared call counter for exploration tools (kb_ls and kb_head)
+    # These tools share the same max_calls_per_conversation limit
+    # The max_calls value will be fetched from KB config via HTTP API
+    # For now, use default value; actual limit will be enforced at runtime
+    exploration_call_counter = KBToolCallCounter()
+
     # Create exploration tools (kb_ls and kb_head)
     # These are secondary tools for when RAG search doesn't find relevant results
+    # They share a call counter to enforce combined call limits
     kb_ls_tool = KbLsTool(
         knowledge_base_ids=knowledge_base_ids,
         db_session=db,
     )
+    kb_ls_tool._call_counter = exploration_call_counter
+
     kb_head_tool = KbHeadTool(
         knowledge_base_ids=knowledge_base_ids,
         db_session=db,
     )
+    kb_head_tool._call_counter = exploration_call_counter
+
     extra_tools.extend([kb_ls_tool, kb_head_tool])
 
     logger.info(
