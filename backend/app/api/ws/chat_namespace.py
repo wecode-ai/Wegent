@@ -283,18 +283,26 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         Handle task:join event.
 
-        Joins the client to a task room and returns streaming info if active.
+        Joins the client to a task room and returns streaming info and subtasks.
+        This allows the frontend to immediately sync messages without a separate API call.
+
+        Supports incremental sync via after_message_id parameter:
+        - If after_message_id is provided, only returns messages after that ID (for reconnect)
+        - If after_message_id is None, returns all messages (for initial join)
 
         Args:
             sid: Socket ID
-            data: {"task_id": int}
+            data: {"task_id": int, "after_message_id": int?}
 
         Returns:
-            {"streaming": {...}} or {"streaming": None} or {"error": "..."}
+            {"streaming": {...}, "subtasks": [...]} or {"error": "..."}
         """
         payload = data  # Already validated by decorator
 
-        logger.info(f"[WS] task:join received: sid={sid}, task_id={payload.task_id}")
+        logger.info(
+            f"[WS] task:join received: sid={sid}, task_id={payload.task_id}, "
+            f"after_message_id={payload.after_message_id}"
+        )
 
         # Check token expiry before processing
         if await self._check_token_expiry(sid):
@@ -322,6 +330,90 @@ class ChatNamespace(socketio.AsyncNamespace):
             f"[WS] User {user_id} joined task room {payload.task_id} (room={task_room}, sid={sid})"
         )
 
+        # Get subtasks for immediate message sync
+        # If after_message_id is provided, only fetch messages after that ID (incremental sync)
+        # Otherwise, fetch all messages (initial join)
+        subtasks_dict = None
+        db = SessionLocal()
+        try:
+            if payload.after_message_id is not None:
+                # Incremental sync: only fetch messages after the cursor
+                from app.services.context import context_service
+
+                subtasks = (
+                    db.query(Subtask)
+                    .filter(
+                        Subtask.task_id == payload.task_id,
+                        Subtask.message_id > payload.after_message_id,
+                    )
+                    .order_by(Subtask.message_id.asc())
+                    .all()
+                )
+
+                # Convert to dict format matching task detail API
+                subtasks_dict = []
+                for st in subtasks:
+                    # Get contexts for this subtask
+                    contexts_briefs = context_service.get_briefs_by_subtask(db, st.id)
+                    contexts_list = [
+                        ctx.model_dump(mode="json") for ctx in contexts_briefs
+                    ]
+
+                    subtask_dict = {
+                        "id": st.id,
+                        "message_id": st.message_id,
+                        "role": st.role.value,
+                        "prompt": st.prompt,
+                        "result": st.result,
+                        "status": st.status.value,
+                        "progress": st.progress,
+                        "created_at": (
+                            st.created_at.isoformat() if st.created_at else None
+                        ),
+                        "updated_at": (
+                            st.updated_at.isoformat() if st.updated_at else None
+                        ),
+                        "completed_at": (
+                            st.completed_at.isoformat() if st.completed_at else None
+                        ),
+                        "contexts": contexts_list,
+                        "sender": None,
+                    }
+
+                    # Add sender info for user messages
+                    if st.role == SubtaskRole.USER and st.user_id:
+                        user = db.query(User).filter(User.id == st.user_id).first()
+                        if user:
+                            subtask_dict["sender"] = {
+                                "user_id": user.id,
+                                "user_name": user.user_name,
+                                "avatar": user.avatar,
+                            }
+
+                    subtasks_dict.append(subtask_dict)
+
+                logger.info(
+                    f"[WS] task:join incremental sync: fetched {len(subtasks_dict)} new messages "
+                    f"after message_id={payload.after_message_id} for task_id={payload.task_id}"
+                )
+            else:
+                # Full sync: fetch all messages using existing service
+                from app.services.adapters.task_kinds import task_kinds_service
+
+                task_detail = task_kinds_service.get_task_detail(
+                    db, task_id=payload.task_id, user_id=user_id
+                )
+                subtasks_dict = task_detail.get("subtasks")
+                logger.info(
+                    f"[WS] task:join full sync: fetched {len(subtasks_dict) if subtasks_dict else 0} "
+                    f"subtasks for task_id={payload.task_id}"
+                )
+        except Exception as e:
+            logger.exception(f"[WS] task:join error fetching subtasks: {e}")
+            # Continue without subtasks - frontend can fall back to API call
+        finally:
+            db.close()
+
         # Check for active streaming
         logger.info(
             f"[WS] task:join checking for active streaming, task_id={payload.task_id}"
@@ -346,13 +438,14 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "subtask_id": subtask_id,
                     "offset": offset,
                     "cached_content": cached_content or "",
-                }
+                },
+                "subtasks": subtasks_dict,
             }
 
         logger.info(
             f"[WS] task:join no active streaming found for task_id={payload.task_id}"
         )
-        return {"streaming": None}
+        return {"streaming": None, "subtasks": subtasks_dict}
 
     @auto_task_context(TaskLeavePayload)
     async def on_task_leave(self, sid: str, data: dict) -> dict:

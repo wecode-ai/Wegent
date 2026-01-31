@@ -12,6 +12,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.exceptions import ValidationException
 from app.models.kind import Kind
 from app.models.knowledge import (
     DocumentStatus,
@@ -403,6 +404,22 @@ class KnowledgeService:
         # Use model_fields_set to detect if the field was explicitly passed
         if "summary_model_ref" in data.model_fields_set:
             spec["summaryModelRef"] = data.summary_model_ref
+
+        # Update call limit configuration if provided
+        if data.max_calls_per_conversation is not None:
+            spec["maxCallsPerConversation"] = data.max_calls_per_conversation
+
+        if data.exempt_calls_before_check is not None:
+            spec["exemptCallsBeforeCheck"] = data.exempt_calls_before_check
+
+        # Validate call limits: exempt < max (additional backend validation)
+        max_calls = spec.get("maxCallsPerConversation", 10)
+        exempt_calls = spec.get("exemptCallsBeforeCheck", 5)
+        if exempt_calls >= max_calls:
+            raise ValidationException(
+                f"exemptCallsBeforeCheck ({exempt_calls}) must be less than "
+                f"maxCallsPerConversation ({max_calls})"
+            )
 
         kb_json["spec"] = spec
         kb.json = kb_json

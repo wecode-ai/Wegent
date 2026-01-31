@@ -105,6 +105,7 @@ class WebSocketEmitter:
             "subtask_id": subtask_id,
             "content": content,
             "offset": offset,
+            "task_id": task_id,  # Add task_id for page refresh recovery
         }
         # Include block_id if provided (for text block streaming)
         if block_id is not None:
@@ -206,6 +207,7 @@ class WebSocketEmitter:
         payload = {
             "subtask_id": subtask_id,
             "error": error,
+            "task_id": task_id,  # Add task_id for page refresh recovery
         }
         if error_type is not None:
             payload["type"] = error_type

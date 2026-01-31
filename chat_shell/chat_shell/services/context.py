@@ -304,6 +304,7 @@ class ChatContext:
                 "skipping KB prompt enhancement"
             )
 
+        # KB configs (max_calls, exempt_calls, name) are now fetched by KnowledgeBaseTool from Backend API
         result = await prepare_knowledge_base_tools(
             knowledge_base_ids=self._request.knowledge_base_ids,
             user_id=self._request.user_id,

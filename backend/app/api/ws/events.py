@@ -197,6 +197,10 @@ class TaskJoinPayload(BaseModel):
     """Payload for task:join event."""
 
     task_id: int = Field(..., description="Task ID to join")
+    after_message_id: Optional[int] = Field(
+        None,
+        description="If provided, only return messages after this message_id (for incremental sync on reconnect)",
+    )
 
 
 class TaskLeavePayload(BaseModel):
@@ -239,6 +243,7 @@ class ChatChunkPayload(BaseModel):
     subtask_id: int
     content: str
     offset: int
+    task_id: Optional[int] = None  # Add task_id for page refresh recovery
     sources: Optional[List[SourceReference]] = Field(
         None, description="Knowledge base source references (for RAG citations)"
     )
@@ -529,6 +534,9 @@ class TaskJoinAck(BaseModel):
     """ACK response for task:join event."""
 
     streaming: Optional[Dict[str, Any]] = None
+    subtasks: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Subtasks data for immediate message sync"
+    )
     error: Optional[str] = None
 
 
