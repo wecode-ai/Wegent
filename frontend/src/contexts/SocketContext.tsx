@@ -74,16 +74,27 @@ interface SocketContextType {
   connect: (token: string) => void
   /** Disconnect from server */
   disconnect: () => void
-  /** Join a task room. If forceRefresh is true, always emit task:join to get streaming status */
+  /**
+   * Join a task room.
+   * @param taskId - Task ID to join
+   * @param options - Join options
+   * @param options.forceRefresh - If true, always emit task:join to get streaming status
+   * @param options.afterMessageId - If provided, only return messages after this ID (for incremental sync)
+   */
   joinTask: (
     taskId: number,
-    forceRefresh?: boolean
+    options?: {
+      forceRefresh?: boolean
+      afterMessageId?: number
+    }
   ) => Promise<{
     streaming?: {
       subtask_id: number
       offset: number
       cached_content: string
     }
+    /** Subtasks data for immediate message sync (same format as task detail API) */
+    subtasks?: Array<Record<string, unknown>>
     error?: string
   }>
   /** Leave a task room */
@@ -389,20 +400,28 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    * Prevents duplicate joins by checking if already joined
    * If reconnected, always rejoin to ensure backend state is synced
    * @param taskId - The task ID to join
-   * @param forceRefresh - If true, always emit task:join to get latest streaming status
+   * @param options - Join options
+   * @param options.forceRefresh - If true, always emit task:join to get streaming status
+   * @param options.afterMessageId - If provided, only return messages after this ID (for incremental sync)
    */
   const joinTask = useCallback(
     async (
       taskId: number,
-      forceRefresh: boolean = false
+      options?: {
+        forceRefresh?: boolean
+        afterMessageId?: number
+      }
     ): Promise<{
       streaming?: {
         subtask_id: number
         offset: number
         cached_content: string
       }
+      subtasks?: Array<Record<string, unknown>>
       error?: string
     }> => {
+      const { forceRefresh = false, afterMessageId } = options || {}
+
       // Use socketRef for reliable access (socket state may be stale)
       const currentSocket = socketRef.current
       if (!currentSocket?.connected) {
@@ -412,8 +431,10 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // Check if already joined this task room to prevent duplicate joins
       // Exception 1: If we just reconnected, always rejoin to sync backend state
       // Exception 2: If forceRefresh is true, always request to get streaming status
+      // Exception 3: If afterMessageId is provided, this is an incremental sync request
       const alreadyJoined = joinedTasksRef.current.has(taskId)
-      const shouldSkip = alreadyJoined && !hasReconnectedRef.current && !forceRefresh
+      const shouldSkip =
+        alreadyJoined && !hasReconnectedRef.current && !forceRefresh && afterMessageId === undefined
 
       if (shouldSkip) {
         console.log('[Socket.IO] joinTask skipped - already joined, taskId:', taskId)
@@ -430,16 +451,26 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // could pass the above check before any callback completes
       joinedTasksRef.current.add(taskId)
 
+      // Build payload with optional after_message_id for incremental sync
+      const payload: { task_id: number; after_message_id?: number } = { task_id: taskId }
+      if (afterMessageId !== undefined) {
+        payload.after_message_id = afterMessageId
+        console.log(
+          `[Socket.IO] joinTask with incremental sync: taskId=${taskId}, afterMessageId=${afterMessageId}`
+        )
+      }
+
       return new Promise(resolve => {
         currentSocket.emit(
           'task:join',
-          { task_id: taskId },
+          payload,
           (response: {
             streaming?: {
               subtask_id: number
               offset: number
               cached_content: string
             }
+            subtasks?: Array<Record<string, unknown>>
             error?: string
           }) => {
             // If there was an error, remove from the set so it can be retried

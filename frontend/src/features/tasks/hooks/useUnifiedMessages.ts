@@ -186,7 +186,6 @@ export function useUnifiedMessages({
   const { user } = useUser()
 
   const taskId = selectedTaskDetail?.id
-  const subtasks = selectedTaskDetail?.subtasks
 
   // Determine effective task ID for querying state machine:
   // - Use taskId (from selectedTaskDetail) if available
@@ -212,15 +211,18 @@ export function useUnifiedMessages({
     isInitialized,
   } = useTaskStateMachine(effectiveTaskId, syncOptions)
 
-  // Trigger recovery when task changes or subtasks update
+  // Trigger recovery when task changes
+  // Subtasks are now fetched from joinTask response, not passed as parameter
+  // IMPORTANT: Do NOT recover if already streaming - this would interrupt the stream
   useEffect(() => {
-    if (!effectiveTaskId || !subtasks || !isInitialized) return
+    if (!effectiveTaskId || !isInitialized) return
 
     // Only recover for positive task IDs (real tasks, not pending)
-    if (effectiveTaskId > 0 && subtasks.length > 0) {
-      recover({ subtasks })
+    // Skip recovery if already streaming to avoid interrupting active streams
+    if (effectiveTaskId > 0 && !isStreaming) {
+      recover()
     }
-  }, [effectiveTaskId, subtasks, isInitialized, recover])
+  }, [effectiveTaskId, isInitialized, recover, isStreaming])
 
   // Build unified message list from state machine messages
   const result = useMemo<UseUnifiedMessagesResult>(() => {

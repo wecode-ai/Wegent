@@ -17,7 +17,7 @@ import { taskApis } from '@/apis/tasks'
 import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
-import { taskStateManager } from '../../state'
+import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
 import type { Model } from '../selector/ModelSelector'
 import type { Team, GitRepoInfo, GitBranch, Attachment, SubtaskContextBrief } from '@/types/api'
 import type { ContextItem } from '@/types/context'
@@ -168,7 +168,6 @@ export function useChatStreamHandlers({
     useTaskContext()
 
   const {
-    isTaskStreaming,
     sendMessage: contextSendMessage,
     stopStream: contextStopStream,
     clearVersion,
@@ -200,28 +199,30 @@ export function useChatStreamHandlers({
   // Get current display task ID
   const currentDisplayTaskId = selectedTaskDetail?.id
 
-  // Get task state from state machine
-  const taskState = useMemo(() => {
-    const taskId = currentDisplayTaskId || pendingTaskId
-    if (!taskId || !taskStateManager.isInitialized()) return null
-    const machine = taskStateManager.get(taskId)
-    return machine?.getState() || null
+  // Determine effective task ID for state machine subscription
+  // Use currentDisplayTaskId if available, otherwise use pendingTaskId
+  const effectiveTaskIdForState = useMemo(() => {
+    return currentDisplayTaskId || pendingTaskId || undefined
   }, [currentDisplayTaskId, pendingTaskId])
 
-  // Check streaming states
-  const _isStreamingTaskActive = pendingTaskId ? isTaskStreaming(pendingTaskId) : false
-  const isContextStreaming = taskState?.status === 'streaming'
+  // Use useTaskStateMachine to properly subscribe to state changes
+  // This ensures isStreaming updates when chat:done is received
+  // IMPORTANT: All streaming state comes from the state machine - no local state variables
+  const { state: taskState, isStreaming } = useTaskStateMachine(effectiveTaskIdForState)
 
-  const isSubtaskStreaming = useMemo(() => {
-    if (!selectedTaskDetail?.subtasks) return false
-    return selectedTaskDetail.subtasks.some(
-      subtask => subtask.role === 'assistant' && subtask.status === 'RUNNING'
-    )
-  }, [selectedTaskDetail?.subtasks])
+  // DEBUG: Log streaming state changes
+  console.log('[useChatStreamHandlers] Streaming state:', {
+    effectiveTaskIdForState,
+    currentDisplayTaskId,
+    pendingTaskId,
+    isStreaming,
+    taskStateStatus: taskState?.status,
+    taskStateStreamingSubtaskId: taskState?.streamingSubtaskId,
+  })
 
-  const isStreaming = isSubtaskStreaming || isContextStreaming
+  // Alias for backward compatibility - both refer to the same state machine value
+  const isSubtaskStreaming = isStreaming
   const isStopping = taskState?.isStopping || false
-
   // Check for pending user messages
   const hasPendingUserMessage = useMemo(() => {
     if (localPendingMessage) return true
@@ -233,21 +234,18 @@ export function useChatStreamHandlers({
   }, [localPendingMessage, taskState?.messages])
 
   // Stop stream wrapper
+  // Note: subtasks parameter is no longer passed to contextStopStream
+  // The streaming subtask info is now obtained from TaskStateMachine state
   const stopStream = useCallback(async () => {
     const taskIdToStop = currentDisplayTaskId || pendingTaskId
 
     if (taskIdToStop && taskIdToStop > 0) {
       const team =
         typeof selectedTaskDetail?.team === 'object' ? selectedTaskDetail.team : undefined
-      await contextStopStream(taskIdToStop, selectedTaskDetail?.subtasks, team)
+      // Pass undefined for subtasks - contextStopStream will get streaming info from state machine
+      await contextStopStream(taskIdToStop, undefined, team)
     }
-  }, [
-    currentDisplayTaskId,
-    pendingTaskId,
-    contextStopStream,
-    selectedTaskDetail?.subtasks,
-    selectedTaskDetail?.team,
-  ])
+  }, [currentDisplayTaskId, pendingTaskId, contextStopStream, selectedTaskDetail?.team])
 
   // Group chat handlers
   const handleNewMessages = useCallback(
@@ -399,6 +397,14 @@ export function useChatStreamHandlers({
       resetAttachment()
       resetContexts?.()
 
+      // For new tasks, set pendingTaskId to immediateTaskId immediately
+      // This ensures useTaskStateMachine subscribes to the temp state machine
+      // and can track streaming state from the start
+      const immediateTaskId = selectedTaskDetail?.id || -Date.now()
+      if (!selectedTaskDetail?.id) {
+        setPendingTaskId(immediateTaskId)
+      }
+
       // Model ID handling
       const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name
 
@@ -410,8 +416,6 @@ export function useChatStreamHandlers({
       }
 
       try {
-        const immediateTaskId = selectedTaskDetail?.id || -Date.now()
-
         // Convert selected contexts to backend format
         // Each context item contains type and data fields
         const contextItems: Array<{

@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { taskApis } from '@/apis/tasks'
+import { subtaskApis } from '@/apis/subtasks'
 import type { TaskDetail, TaskDetailSubtask } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
@@ -102,18 +103,24 @@ export function SubscriptionConversationDialog({
   const { theme } = useTheme()
   const router = useRouter()
   const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null)
+  const [subtasks, setSubtasks] = useState<TaskDetailSubtask[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Fetch task detail when dialog opens
+  // Fetch task detail and subtasks when dialog opens
   useEffect(() => {
     if (open && taskId) {
       setLoading(true)
       setError(null)
-      taskApis
-        .getTaskDetail(taskId)
-        .then((detail: TaskDetail) => {
+
+      // Fetch both task detail and subtasks in parallel
+      Promise.all([
+        taskApis.getTaskDetail(taskId),
+        subtaskApis.listSubtasks({ taskId, limit: 100, fromLatest: false }),
+      ])
+        .then(([detail, subtasksResponse]) => {
           setTaskDetail(detail)
+          setSubtasks(subtasksResponse.items)
         })
         .catch((err: Error) => {
           console.error('[SubscriptionConversationDialog] Failed to load task:', err)
@@ -129,6 +136,7 @@ export function SubscriptionConversationDialog({
   useEffect(() => {
     if (!open) {
       setTaskDetail(null)
+      setSubtasks([])
       setError(null)
     }
   }, [open])
@@ -141,9 +149,8 @@ export function SubscriptionConversationDialog({
   }, [taskId, router, onOpenChange])
 
   // Sort subtasks by message_id
-  const sortedSubtasks = taskDetail?.subtasks
-    ? [...taskDetail.subtasks].sort((a, b) => a.message_id - b.message_id)
-    : []
+  const sortedSubtasks =
+    subtasks.length > 0 ? [...subtasks].sort((a, b) => a.message_id - b.message_id) : []
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

@@ -306,19 +306,21 @@ export default function MessagesArea({
   )
 
   // Load persisted correction data from subtask.result when task detail changes
+  // Load persisted correction data from messages when they change
+  // Note: Now using messages from useUnifiedMessages instead of selectedTaskDetail.subtasks
   useEffect(() => {
-    if (!selectedTaskDetail?.subtasks) return
+    if (messages.length === 0) return
 
     const savedResults = new Map<number, CorrectionResponse>()
 
-    selectedTaskDetail.subtasks.forEach(subtask => {
-      // Only check assistant (AI) messages
-      if (subtask.role !== 'ASSISTANT') return
+    messages.forEach(msg => {
+      // Only check AI messages with subtaskId
+      if (msg.type !== 'ai' || !msg.subtaskId) return
 
-      // Extract correction data from subtask.result.correction
-      const correction = extractCorrectionFromResult(subtask.result)
+      // Extract correction data from message result.correction
+      const correction = extractCorrectionFromResult(msg.result)
       if (correction) {
-        savedResults.set(subtask.id, correctionDataToResponse(correction, subtask.id))
+        savedResults.set(msg.subtaskId, correctionDataToResponse(correction, msg.subtaskId))
       }
     })
 
@@ -333,8 +335,7 @@ export default function MessagesArea({
         return merged
       })
     }
-  }, [selectedTaskDetail?.subtasks])
-
+  }, [messages])
   // Trigger correction when AI message completes
   useEffect(() => {
     if (!enableCorrectionMode || !correctionModelId || !selectedTaskDetail?.id) return

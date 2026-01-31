@@ -964,6 +964,20 @@ async def _stream_with_http_adapter(
     first_token_received = False
 
     try:
+        # Update subtask status to RUNNING immediately for chat_shell mode
+        # Unlike executor mode (which waits for executor_manager to pick up the task),
+        # chat_shell processes the request directly, so we set RUNNING status here
+        from app.services.chat.storage.db import db_handler
+
+        await db_handler.update_subtask_status(
+            subtask_id=subtask_id,
+            status="RUNNING",
+        )
+        logger.info(
+            "[HTTP_ADAPTER] Updated subtask status to RUNNING: subtask_id=%d",
+            subtask_id,
+        )
+
         # Stream events from chat_shell and forward to WebSocket
         async for event in adapter.chat(chat_request):
             # Check for cancellation (both local event and Redis flag)
@@ -1412,6 +1426,20 @@ async def _stream_with_bridge(
         if not await core.acquire_resources():
             await bridge.stop()
             return
+
+        # Update subtask status to RUNNING immediately for chat_shell mode
+        # Unlike executor mode (which waits for executor_manager to pick up the task),
+        # chat_shell processes the request directly, so we set RUNNING status here
+        from app.services.chat.storage.db import db_handler
+
+        await db_handler.update_subtask_status(
+            subtask_id=subtask_id,
+            status="RUNNING",
+        )
+        logger.info(
+            "[BRIDGE] Updated subtask status to RUNNING: subtask_id=%d",
+            subtask_id,
+        )
 
         # Prepare extra tools
         extra_tools: list[BaseTool] = (

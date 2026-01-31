@@ -147,6 +147,16 @@ class TaskStateManagerImpl {
    * This is needed when a new task is created - the UI uses a negative temp ID
    * until the server returns the real task ID.
    *
+   * IMPORTANT: This method makes BOTH the temp and real task IDs point to the
+   * SAME state machine instance. This ensures:
+   * - All WebSocket events (chat:start, chat:done, etc.) work with either ID
+   * - Components using either ID will get the same state machine
+   * - No state copying is needed - both IDs reference the same machine
+   * - The streaming state is preserved automatically
+   *
+   * The temp ID mapping is kept so that components still using the temp ID
+   * (e.g., useTaskStateMachine with pendingTaskId) will continue to work.
+   *
    * @param tempTaskId - The temporary (negative) task ID
    * @param realTaskId - The real (positive) task ID from server
    */
@@ -157,27 +167,40 @@ class TaskStateManagerImpl {
       return
     }
 
-    // Get state from temp machine
-    const tempState = tempMachine.getState()
-
-    // Create or get the real machine
-    const realMachine = this.getOrCreate(realTaskId)
-
-    // Transfer messages from temp to real that don't already exist
-    const realState = realMachine.getState()
-    for (const [msgId, msg] of tempState.messages) {
-      if (!realState.messages.has(msgId)) {
-        realMachine.addUserMessage(msg)
-      }
+    // Check if real machine already exists (shouldn't happen normally)
+    const existingRealMachine = this.machines.get(realTaskId)
+    if (existingRealMachine && existingRealMachine !== tempMachine) {
+      console.warn('[TaskStateManager] Real machine already exists, cleaning up temp machine', {
+        tempTaskId,
+        realTaskId,
+      })
+      // Clean up temp machine, keep real machine
+      tempMachine.leave()
+      this.machines.delete(tempTaskId)
+      return
     }
 
-    // Transfer sync options
-    realMachine.setSyncOptions(tempMachine.getSyncOptions())
+    // Make real task ID point to the same state machine instance
+    // IMPORTANT: Keep BOTH mappings so components using either ID work correctly
+    // This is the key: both IDs now reference the SAME machine
+    this.machines.set(realTaskId, tempMachine)
+    // DO NOT delete tempTaskId mapping - components may still be using it
+    // this.machines.delete(tempTaskId)  // REMOVED - keep both mappings
 
-    // Clean up temp machine
-    this.cleanup(tempTaskId)
-
-    console.log('[TaskStateManager] Migrated state from', tempTaskId, 'to', realTaskId)
+    const state = tempMachine.getState()
+    console.log(
+      '[TaskStateManager] Migrated state: both',
+      tempTaskId,
+      'and',
+      realTaskId,
+      'now point to same machine',
+      {
+        status: state.status,
+        streamingSubtaskId: state.streamingSubtaskId,
+        messagesCount: state.messages.size,
+        isStopping: state.isStopping,
+      }
+    )
   }
 
   /**

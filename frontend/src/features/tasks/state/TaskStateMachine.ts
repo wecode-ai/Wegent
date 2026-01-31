@@ -97,6 +97,17 @@ export interface StreamingInfo {
 }
 
 /**
+ * Pending chunk event to be applied after sync completes
+ */
+interface PendingChunkEvent {
+  subtaskId: number
+  content: string
+  result?: UnifiedMessage['result']
+  sources?: UnifiedMessage['sources']
+  blockId?: string
+}
+
+/**
  * Task state data
  */
 export interface TaskStateData {
@@ -113,8 +124,8 @@ export interface TaskStateData {
  * State machine events
  */
 type Event =
-  | { type: 'RECOVER'; force?: boolean; subtasks?: TaskDetailSubtask[] }
-  | { type: 'JOIN_SUCCESS'; streamingInfo?: StreamingInfo }
+  | { type: 'RECOVER'; force?: boolean }
+  | { type: 'JOIN_SUCCESS'; streamingInfo?: StreamingInfo; subtasks?: TaskDetailSubtask[] }
   | { type: 'JOIN_FAILURE'; error: string }
   | { type: 'SYNC_DONE' }
   | { type: 'SYNC_DONE_STREAMING'; subtaskId: number }
@@ -164,9 +175,14 @@ export type StateListener = (state: TaskStateData) => void
 export interface TaskStateMachineDeps {
   joinTask: (
     taskId: number,
-    forceRefresh?: boolean
+    options?: {
+      forceRefresh?: boolean
+      afterMessageId?: number
+    }
   ) => Promise<{
     streaming?: StreamingInfo
+    /** Subtasks data for immediate message sync (same format as task detail API) */
+    subtasks?: Array<Record<string, unknown>>
     error?: string
   }>
   isConnected: () => boolean
@@ -188,11 +204,14 @@ export function generateMessageId(type: 'user' | 'ai', subtaskId?: number): stri
 export class TaskStateMachine {
   private state: TaskStateData
   private listeners: Set<StateListener> = new Set()
-  private pendingRecovery: { subtasks?: TaskDetailSubtask[] } | null = null
+  private pendingRecovery: boolean = false
   private lastRecoveryTime: number = 0
   private recoveryDebounceMs: number = 1000
   private deps: TaskStateMachineDeps
   private syncOptions: SyncOptions = {}
+  // Queue for chunk events received during syncing state
+  // These will be applied after sync completes
+  private pendingChunks: PendingChunkEvent[] = []
 
   constructor(taskId: number, deps: TaskStateMachineDeps) {
     this.state = {
@@ -240,12 +259,13 @@ export class TaskStateMachine {
 
   /**
    * Trigger message recovery
+   *
+   * Subtasks are now fetched from joinTask response, not passed as parameter.
    */
-  async recover(options?: { subtasks?: TaskDetailSubtask[]; force?: boolean }): Promise<void> {
+  async recover(options?: { force?: boolean }): Promise<void> {
     const event: Event = {
       type: 'RECOVER',
       force: options?.force,
-      subtasks: options?.subtasks,
     }
     await this.dispatch(event)
   }
@@ -389,6 +409,8 @@ export class TaskStateMachine {
             status: 'syncing',
             streamingInfo: event.streamingInfo || null,
           }
+          // Sync messages immediately using subtasks from joinTask response
+          await this.doSync(event.subtasks)
         }
         break
 
@@ -450,7 +472,8 @@ export class TaskStateMachine {
           error: null,
           isStopping: false,
         }
-        this.pendingRecovery = null
+        this.pendingRecovery = false
+        this.pendingChunks = [] // Clear pending chunks queue on leave
         break
     }
 
@@ -463,56 +486,73 @@ export class TaskStateMachine {
         this.state.status === 'streaming' ||
         this.state.status === 'error')
     ) {
-      const pending = this.pendingRecovery
-      this.pendingRecovery = null
-      await this.recover({ subtasks: pending.subtasks, force: true })
+      this.pendingRecovery = false
+      await this.recover({ force: true })
     }
   }
 
   /**
    * Handle RECOVER event
+   *
+   * Subtasks are fetched from joinTask response and passed to JOIN_SUCCESS event.
+   * The doSync is called in JOIN_SUCCESS handler with the subtasks.
    */
   private async handleRecover(event: Extract<Event, { type: 'RECOVER' }>): Promise<void> {
     // Queue if in joining/syncing state
     if (this.state.status === 'joining' || this.state.status === 'syncing') {
-      console.log('[TaskStateMachine] Queuing RECOVER during', this.state.status)
-      this.pendingRecovery = { subtasks: event.subtasks }
+      this.pendingRecovery = true
       return
     }
 
     // Debounce check
     const now = Date.now()
     if (!event.force && now - this.lastRecoveryTime < this.recoveryDebounceMs) {
-      console.log('[TaskStateMachine] RECOVER debounced')
       return
     }
     this.lastRecoveryTime = now
 
     // Check WebSocket connection
     if (!this.deps.isConnected()) {
-      console.log('[TaskStateMachine] WebSocket not connected, skipping RECOVER')
       return
     }
-
-    console.log('[TaskStateMachine] Starting RECOVER for task', this.state.taskId)
 
     // Transition to joining
     this.state = { ...this.state, status: 'joining', error: null }
     this.notifyListeners()
 
     try {
-      // Join WebSocket room and get streaming info
-      const response = await this.deps.joinTask(this.state.taskId, true)
+      // Calculate max messageId from existing messages for incremental sync
+      // This allows the backend to only return messages after this ID on reconnect
+      let maxMessageId: number | undefined
+      for (const msg of this.state.messages.values()) {
+        if (
+          msg.messageId !== undefined &&
+          (maxMessageId === undefined || msg.messageId > maxMessageId)
+        ) {
+          maxMessageId = msg.messageId
+        }
+      }
+
+      // Join WebSocket room and get streaming info + subtasks
+      // Pass afterMessageId for incremental sync on reconnect
+      const response = await this.deps.joinTask(this.state.taskId, {
+        forceRefresh: true,
+        afterMessageId: maxMessageId,
+      })
 
       if (response.error) {
         await this.dispatch({ type: 'JOIN_FAILURE', error: response.error })
         return
       }
 
-      await this.dispatch({ type: 'JOIN_SUCCESS', streamingInfo: response.streaming })
+      // Pass subtasks to JOIN_SUCCESS event for immediate sync
+      const subtasks = response.subtasks as TaskDetailSubtask[] | undefined
 
-      // Sync messages from backend subtasks
-      await this.doSync(event.subtasks)
+      await this.dispatch({
+        type: 'JOIN_SUCCESS',
+        streamingInfo: response.streaming,
+        subtasks,
+      })
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error'
       await this.dispatch({ type: 'JOIN_FAILURE', error: errorMsg })
@@ -526,6 +566,47 @@ export class TaskStateMachine {
     try {
       if (subtasks && subtasks.length > 0) {
         this.buildMessages(subtasks)
+      }
+
+      // CRITICAL: If streamingInfo exists but no streaming message was created,
+      // create one now. This handles the case where:
+      // 1. User joins room while streaming is in progress
+      // 2. Backend returns streamingInfo with subtask_id and cached_content
+      // 3. But subtasks array doesn't contain this subtask yet (race condition)
+      // Without this, subsequent CHAT_CHUNK events would be ignored
+      const streamingInfo = this.state.streamingInfo
+      if (streamingInfo && streamingInfo.subtask_id) {
+        const aiMessageId = generateMessageId('ai', streamingInfo.subtask_id)
+        const existingMessage = this.state.messages.get(aiMessageId)
+
+        // Create message if it doesn't exist
+        if (!existingMessage) {
+          const newMessages = new Map(this.state.messages)
+          newMessages.set(aiMessageId, {
+            id: aiMessageId,
+            type: 'ai',
+            status: 'streaming',
+            content: streamingInfo.cached_content || '',
+            timestamp: Date.now(),
+            subtaskId: streamingInfo.subtask_id,
+          })
+          this.state = { ...this.state, messages: newMessages }
+        } else if (
+          existingMessage.status === 'streaming' &&
+          streamingInfo.cached_content &&
+          streamingInfo.cached_content.length > existingMessage.content.length
+        ) {
+          // Update existing message with longer cached_content from Redis
+          // This handles the case where the message was created from subtasks
+          // but Redis has more recent content
+
+          const newMessages = new Map(this.state.messages)
+          newMessages.set(aiMessageId, {
+            ...existingMessage,
+            content: streamingInfo.cached_content,
+          })
+          this.state = { ...this.state, messages: newMessages }
+        }
       }
 
       // Check if any message is streaming
@@ -542,10 +623,134 @@ export class TaskStateMachine {
       } else {
         await this.dispatch({ type: 'SYNC_DONE' })
       }
+
+      // Apply pending chunks that were queued during sync
+      // This ensures chunks received during joining/syncing are not lost
+      this.applyPendingChunks()
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Sync failed'
       await this.dispatch({ type: 'SYNC_ERROR', error: errorMsg })
     }
+  }
+
+  /**
+   * Apply pending chunk events that were queued during sync
+   */
+  private applyPendingChunks(): void {
+    if (this.pendingChunks.length === 0) {
+      return
+    }
+
+    // Process each pending chunk
+    for (const chunk of this.pendingChunks) {
+      const aiMessageId = generateMessageId('ai', chunk.subtaskId)
+      const existingMessage = this.state.messages.get(aiMessageId)
+
+      if (!existingMessage) {
+        console.warn('[TaskStateMachine] Pending chunk skipped - message not found', {
+          subtaskId: chunk.subtaskId,
+          taskId: this.state.taskId,
+        })
+        continue
+      }
+
+      // Apply the chunk to the message
+      // CRITICAL FIX: Always append content to message.content, regardless of block_id
+      // This ensures that cached_content + new chunks are all in message.content
+      const newMessages = new Map(this.state.messages)
+      const updatedMessage: UnifiedMessage = {
+        ...existingMessage,
+        content: existingMessage.content + chunk.content,
+      }
+
+      // Handle reasoning content
+      if (chunk.result?.reasoning_chunk) {
+        updatedMessage.reasoningContent =
+          (existingMessage.reasoningContent || '') + chunk.result.reasoning_chunk
+      } else if (chunk.result?.reasoning_content) {
+        updatedMessage.reasoningContent = chunk.result.reasoning_content
+      }
+
+      // Handle blocks
+      const mergedBlocks = this.mergeBlocksFromPendingChunk(existingMessage, chunk)
+
+      if (chunk.result) {
+        updatedMessage.result = {
+          ...existingMessage.result,
+          ...chunk.result,
+          thinking: chunk.result.thinking || existingMessage.result?.thinking,
+          blocks: mergedBlocks,
+          reasoning_content:
+            chunk.result.reasoning_content || existingMessage.result?.reasoning_content,
+          shell_type: chunk.result.shell_type || existingMessage.result?.shell_type,
+        }
+      } else if (chunk.blockId && chunk.content) {
+        updatedMessage.result = {
+          ...existingMessage.result,
+          blocks: mergedBlocks,
+        }
+      }
+
+      if (chunk.sources) {
+        updatedMessage.sources = chunk.sources
+      }
+
+      newMessages.set(aiMessageId, updatedMessage)
+      this.state = { ...this.state, messages: newMessages }
+    }
+
+    // Clear the pending chunks queue
+    this.pendingChunks = []
+    this.notifyListeners()
+  }
+
+  /**
+   * Merge blocks for pending chunk (similar to mergeBlocks but for PendingChunkEvent)
+   */
+  private mergeBlocksFromPendingChunk(
+    existingMessage: UnifiedMessage,
+    chunk: PendingChunkEvent
+  ): MessageBlock[] {
+    const existingBlocks = existingMessage.result?.blocks || []
+    const incomingBlocks = chunk.result?.blocks || []
+
+    // Case 1: block_id with content - text block update
+    if (chunk.blockId && chunk.content) {
+      const blocksMap = new Map(existingBlocks.map(b => [b.id, b]))
+      const targetBlock = blocksMap.get(chunk.blockId)
+
+      if (targetBlock && targetBlock.type === 'text') {
+        const updatedBlock = {
+          ...targetBlock,
+          content: (targetBlock.content || '') + chunk.content,
+        }
+        blocksMap.set(chunk.blockId, updatedBlock)
+      } else if (!targetBlock) {
+        const newBlock: MessageBlock = {
+          id: chunk.blockId,
+          type: 'text',
+          content: chunk.content,
+          status: 'streaming',
+          timestamp: Date.now(),
+        }
+        blocksMap.set(chunk.blockId, newBlock)
+      }
+
+      return Array.from(blocksMap.values())
+    }
+
+    // Case 2: No incoming blocks - keep existing
+    if (incomingBlocks.length === 0) {
+      return existingBlocks
+    }
+
+    // Case 3: Tool blocks - merge by block.id
+    const blocksMap = new Map(existingBlocks.map(b => [b.id, b]))
+    incomingBlocks.forEach(incomingBlock => {
+      blocksMap.set(incomingBlock.id, incomingBlock)
+    })
+
+    return Array.from(blocksMap.values())
   }
 
   /**
@@ -625,12 +830,10 @@ export class TaskStateMachine {
 
         // Content priority: Redis > existing > backend
         let bestContent = backendContent
-        let bestContentSource = 'backend'
 
         // Check existing message content
         if (existingAiMessage && existingAiMessage.content.length > bestContent.length) {
           bestContent = existingAiMessage.content
-          bestContentSource = 'existing'
         }
 
         // Check Redis cached content
@@ -641,14 +844,7 @@ export class TaskStateMachine {
           streamingInfo.cached_content.length > bestContent.length
         ) {
           bestContent = streamingInfo.cached_content
-          bestContentSource = 'redis'
         }
-
-        console.log('[TaskStateMachine] RUNNING AI message content priority', {
-          subtaskId: subtask.id,
-          source: bestContentSource,
-          length: bestContent.length,
-        })
 
         messages.set(messageId, {
           id: messageId,
@@ -744,21 +940,65 @@ export class TaskStateMachine {
   }
 
   /**
+   * Get AI message for a subtask if it exists.
+   * All messages should be created by server events (chat:start), not by frontend.
+   *
+   * @param subtaskId - The subtask ID
+   * @returns The existing message or undefined
+   */
+  private getAiMessage(subtaskId: number): UnifiedMessage | undefined {
+    const aiMessageId = generateMessageId('ai', subtaskId)
+    const existingMessage = this.state.messages.get(aiMessageId)
+
+    return existingMessage
+  }
+
+  /**
    * Handle CHAT_CHUNK event
    */
   private handleChatChunkEvent(event: Extract<Event, { type: 'CHAT_CHUNK' }>): void {
     const aiMessageId = generateMessageId('ai', event.subtaskId)
-    const existingMessage = this.state.messages.get(aiMessageId)
 
+    // If in joining/syncing state, queue the chunk for later processing
+    // This handles the race condition where chunks arrive before sync completes
+    if (this.state.status === 'joining' || this.state.status === 'syncing') {
+      this.pendingChunks.push({
+        subtaskId: event.subtaskId,
+        content: event.content,
+        result: event.result,
+        sources: event.sources,
+        blockId: event.blockId,
+      })
+      return
+    }
+
+    // Get existing message - all messages should be created by server (chat:start)
+    const existingMessage = this.getAiMessage(event.subtaskId)
+
+    // If message doesn't exist, ignore this chunk
+    // This can happen if chat:start was missed or not yet received
     if (!existingMessage) {
-      console.warn('[TaskStateMachine] CHAT_CHUNK for unknown message', event.subtaskId)
+      console.warn(
+        '[TaskStateMachine] CHAT_CHUNK ignored - message not found, waiting for chat:start',
+        {
+          subtaskId: event.subtaskId,
+          taskId: this.state.taskId,
+        }
+      )
       return
     }
 
     const newMessages = new Map(this.state.messages)
+    // CRITICAL FIX: Always append content to message.content, regardless of block_id
+    // This ensures that:
+    // 1. When page refreshes, cached_content is in message.content
+    // 2. New chunks are appended to message.content
+    // 3. UI can render from either message.content or result.blocks
+    // Previously, when block_id existed, content was only added to blocks, causing
+    // the UI to lose the cached_content after page refresh
     const updatedMessage: UnifiedMessage = {
       ...existingMessage,
-      content: event.blockId ? existingMessage.content : existingMessage.content + event.content,
+      content: existingMessage.content + event.content,
     }
 
     // Handle reasoning content
@@ -795,6 +1035,10 @@ export class TaskStateMachine {
 
     newMessages.set(aiMessageId, updatedMessage)
     this.state = { ...this.state, messages: newMessages }
+
+    // CRITICAL: Notify listeners after updating state
+    // Without this, UI won't update when receiving chunks
+    this.notifyListeners()
   }
 
   /**
@@ -851,11 +1095,23 @@ export class TaskStateMachine {
    */
   private handleChatDoneEvent(event: Extract<Event, { type: 'CHAT_DONE' }>): void {
     const aiMessageId = generateMessageId('ai', event.subtaskId)
-    const existingMessage = this.state.messages.get(aiMessageId)
+    let existingMessage = this.state.messages.get(aiMessageId)
 
     if (!existingMessage) {
-      console.warn('[TaskStateMachine] CHAT_DONE for unknown message', event.subtaskId)
-      return
+      // Page refresh recovery: create AI message if it doesn't exist
+      // This handles the case where chat:start/chunk were sent before page refresh
+      // and we only receive chat:done after reconnecting
+
+      existingMessage = {
+        id: aiMessageId,
+        type: 'ai',
+        status: 'streaming', // Will be updated below
+        content: event.content || (event.result?.value as string) || '',
+        timestamp: Date.now(),
+        subtaskId: event.subtaskId,
+        result: event.result,
+        sources: event.sources,
+      }
     }
 
     const finalStatus = event.hasError ? 'error' : 'completed'
@@ -960,6 +1216,7 @@ export class TaskStateMachine {
    */
   private notifyListeners(): void {
     const stateCopy = this.getState()
+
     this.listeners.forEach(listener => {
       try {
         listener(stateCopy)

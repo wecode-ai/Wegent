@@ -188,8 +188,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
   // Ref to track temporary task ID to real task ID mapping
   const tempToRealTaskIdRef = useRef<Map<number, number>>(new Map())
-  // Ref to track which subtask belongs to which task
-  const subtaskToTaskRef = useRef<Map<number, number>>(new Map())
   // Ref to track isConnected state for TaskStateManager initialization
   const isConnectedRef = useRef(isConnected)
   useEffect(() => {
@@ -244,82 +242,43 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   const handleChatStart = useCallback((data: ChatStartPayload) => {
     const { task_id, subtask_id, shell_type } = data
 
-    // Track subtask to task mapping
-    if (subtask_id) {
-      subtaskToTaskRef.current.set(subtask_id, task_id)
-    }
-
     // Get or create state machine and dispatch event
     const machine = taskStateManager.getOrCreate(task_id)
     machine.handleChatStart(subtask_id, shell_type)
-
-    // Handle temp task ID migration
-    for (const [tempId] of tempToRealTaskIdRef.current) {
-      if (tempToRealTaskIdRef.current.get(tempId) === task_id) {
-        // Already mapped
-        break
-      }
-    }
   }, [])
 
   /**
    * Handle chat:chunk event from WebSocket
+   * Uses task_id from event payload directly (no subtaskToTaskRef needed)
    */
   const handleChatChunk = useCallback((data: ChatChunkPayload) => {
-    const { subtask_id, content, result, sources, block_id } = data
-
-    // Find task ID from subtask
-    let taskId = subtaskToTaskRef.current.get(subtask_id)
-
-    // Resolve temp ID if needed
-    if (taskId && taskId < 0) {
-      const realId = tempToRealTaskIdRef.current.get(taskId)
-      if (realId) {
-        taskId = realId
-        subtaskToTaskRef.current.set(subtask_id, realId)
-      }
-    }
+    const { subtask_id, content, result, sources, block_id, task_id: taskId } = data
 
     if (!taskId) {
-      console.warn('[ChatStreamContext] Received chunk for unknown subtask:', subtask_id)
+      console.warn('[ChatStreamContext] Received chunk without task_id:', subtask_id)
       return
     }
 
-    const machine = taskStateManager.get(taskId)
-    if (machine) {
-      machine.handleChatChunk(
-        subtask_id,
-        content,
-        result as UnifiedMessage['result'],
-        sources,
-        block_id
-      )
-    }
+    // Get or create state machine (handles page refresh recovery)
+    const machine = taskStateManager.getOrCreate(taskId)
+    machine.handleChatChunk(
+      subtask_id,
+      content,
+      result as UnifiedMessage['result'],
+      sources,
+      block_id
+    )
   }, [])
 
   /**
    * Handle chat:done event from WebSocket
+   * Uses task_id from event payload directly
    */
   const handleChatDone = useCallback((data: ChatDonePayload) => {
-    const { task_id: eventTaskId, subtask_id, result, message_id, sources } = data
-
-    // Find task ID
-    let taskId = subtaskToTaskRef.current.get(subtask_id)
-    if (taskId && taskId < 0) {
-      const realId = tempToRealTaskIdRef.current.get(taskId)
-      if (realId) {
-        taskId = realId
-        subtaskToTaskRef.current.set(subtask_id, realId)
-      }
-    }
-
-    if (!taskId && eventTaskId) {
-      taskId = eventTaskId
-      subtaskToTaskRef.current.set(subtask_id, taskId)
-    }
+    const { task_id: taskId, subtask_id, result, message_id, sources } = data
 
     if (!taskId) {
-      console.warn('[ChatStreamContext][chat:done] Unknown subtask:', subtask_id)
+      console.warn('[ChatStreamContext][chat:done] Missing task_id for subtask:', subtask_id)
       return
     }
 
@@ -343,22 +302,13 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
   /**
    * Handle chat:error event from WebSocket
+   * Uses task_id from event payload directly
    */
   const handleChatError = useCallback((data: ChatErrorPayload) => {
-    const { subtask_id, error, message_id } = data
-
-    // Find task ID
-    let taskId = subtaskToTaskRef.current.get(subtask_id)
-    if (taskId && taskId < 0) {
-      const realId = tempToRealTaskIdRef.current.get(taskId)
-      if (realId) {
-        taskId = realId
-        subtaskToTaskRef.current.set(subtask_id, realId)
-      }
-    }
+    const { subtask_id, error, message_id, task_id: taskId } = data
 
     if (!taskId) {
-      console.warn('[ChatStreamContext] Received error for unknown subtask:', subtask_id)
+      console.warn('[ChatStreamContext] Received error without task_id:', subtask_id)
       return
     }
 
@@ -376,18 +326,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
   /**
    * Handle chat:cancelled event from WebSocket
+   * Uses task_id from event payload directly
    */
   const handleChatCancelled = useCallback((data: ChatCancelledPayload) => {
-    const { task_id: eventTaskId, subtask_id } = data
+    const { task_id: taskId, subtask_id } = data
 
-    const taskId = eventTaskId || subtaskToTaskRef.current.get(subtask_id)
     if (!taskId) {
-      console.warn('[ChatStreamContext] Received cancelled for unknown subtask:', subtask_id)
+      console.warn('[ChatStreamContext] Received cancelled without task_id:', subtask_id)
       return
-    }
-
-    if (subtask_id && taskId) {
-      subtaskToTaskRef.current.set(subtask_id, taskId)
     }
 
     const machine = taskStateManager.get(taskId)
@@ -398,10 +344,11 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
   /**
    * Handle chat:message event from WebSocket (group chat)
+   * Uses task_id from event payload directly
    */
   const handleChatMessage = useCallback((data: ChatMessagePayload) => {
     const {
-      task_id,
+      task_id: taskId,
       subtask_id,
       message_id,
       role,
@@ -412,11 +359,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       contexts,
     } = data
 
-    // Track subtask to task mapping
-    subtaskToTaskRef.current.set(subtask_id, task_id)
-
     // Get or create state machine
-    const machine = taskStateManager.getOrCreate(task_id)
+    const machine = taskStateManager.getOrCreate(taskId)
 
     // Generate message ID based on role
     const isUserMessage = role === 'user' || role?.toUpperCase() === 'USER'
@@ -449,18 +393,16 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
   /**
    * Handle chat:block_created event from WebSocket
+   * Uses task_id from event payload directly
    */
   const handleBlockCreated = useCallback((data: ChatBlockCreatedPayload) => {
-    const { subtask_id, block } = data
+    const { task_id: taskId, subtask_id, block } = data
 
-    const taskId = subtaskToTaskRef.current.get(subtask_id)
     if (!taskId) {
-      console.warn('[ChatStreamContext][block_created] Unknown subtask:', subtask_id)
+      console.warn('[ChatStreamContext][block_created] Missing task_id for subtask:', subtask_id)
       return
     }
 
-    // Block created events add a new block to the result.blocks array
-    // This is handled via handleChatChunk with the block in result.blocks
     const machine = taskStateManager.get(taskId)
     if (machine) {
       machine.handleChatChunk(
@@ -475,13 +417,13 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
   /**
    * Handle chat:block_updated event from WebSocket
+   * Uses task_id from event payload directly
    */
   const handleBlockUpdated = useCallback((data: ChatBlockUpdatedPayload) => {
-    const { subtask_id, block_id, content, tool_output, status } = data
+    const { task_id: taskId, subtask_id, block_id, content, tool_output, status } = data
 
-    const taskId = subtaskToTaskRef.current.get(subtask_id)
     if (!taskId) {
-      console.warn('[ChatStreamContext][block_updated] Unknown subtask:', subtask_id)
+      console.warn('[ChatStreamContext][block_updated] Missing task_id for subtask:', subtask_id)
       return
     }
 
@@ -493,7 +435,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       ...(status !== undefined && { status }),
     }
 
-    // Send via handleChatChunk with blocks array
     const machine = taskStateManager.get(taskId)
     if (machine) {
       machine.handleChatChunk(
@@ -800,11 +741,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           await joinTask(request.task_id)
         }
 
-        // Track subtask to task mapping
-        if (subtaskId) {
-          subtaskToTaskRef.current.set(subtaskId, realTaskId)
-        }
-
         // Callback
         const finalTaskId = realTaskId > 0 ? realTaskId : immediateTaskId
         options?.onMessageSent?.(userMessageId, finalTaskId, subtaskId || 0)
@@ -899,13 +835,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     taskStateManager.cleanup(taskId)
     callbacksRef.current.delete(taskId)
 
-    // Clean up subtask mappings
-    subtaskToTaskRef.current.forEach((tid, subtaskId) => {
-      if (tid === taskId) {
-        subtaskToTaskRef.current.delete(subtaskId)
-      }
-    })
-
     // Clean up temp to real mapping
     tempToRealTaskIdRef.current.forEach((realId, tempId) => {
       if (realId === taskId || tempId === taskId) {
@@ -920,7 +849,6 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   const clearAllStreams = useCallback((): void => {
     taskStateManager.cleanupAll()
     callbacksRef.current.clear()
-    subtaskToTaskRef.current.clear()
     tempToRealTaskIdRef.current.clear()
     setClearVersion(v => v + 1)
   }, [])

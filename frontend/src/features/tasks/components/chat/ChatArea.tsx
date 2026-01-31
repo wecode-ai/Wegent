@@ -106,10 +106,19 @@ function ChatAreaContent({
   })
 
   // Compute subtask info for scroll management
-  const subtaskList = selectedTaskDetail?.subtasks ?? []
-  const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null
-  const lastSubtaskId = lastSubtask?.id ?? null
-  const lastSubtaskUpdatedAt = lastSubtask?.updated_at || lastSubtask?.completed_at || null
+  // Note: Now using taskState from state machine instead of selectedTaskDetail.subtasks
+  // The state machine messages are the single source of truth
+  const lastSubtaskId = useMemo(() => {
+    if (!taskState?.messages || taskState.messages.size === 0) return null
+    let maxSubtaskId: number | null = null
+    for (const msg of taskState.messages.values()) {
+      if (msg.subtaskId && (maxSubtaskId === null || msg.subtaskId > maxSubtaskId)) {
+        maxSubtaskId = msg.subtaskId
+      }
+    }
+    return maxSubtaskId
+  }, [taskState?.messages])
+  const lastSubtaskUpdatedAt = null // No longer needed from subtasks, scroll management uses other signals
   // Determine if there are messages to display (computed early for hooks)
   // Uses state machine messages as the single source of truth, not selectedTaskDetail.subtasks
   const hasMessagesForHooks = useMemo(() => {
@@ -342,16 +351,17 @@ function ChatAreaContent({
   })
 
   // Determine if there are messages to display (full computation)
+  // Note: Now using taskState.messages from state machine instead of selectedTaskDetail.subtasks
   const hasMessages = useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id
     const hasNewTaskStream =
       !selectedTaskDetail?.id && streamHandlers.pendingTaskId && streamHandlers.isStreaming
-    const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0
     const hasLocalPending = streamHandlers.localPendingMessage !== null
-    // Use taskState from state machine
+    // Use taskState from state machine (single source of truth)
     const hasUnifiedMessages = taskState?.messages && taskState.messages.size > 0
 
-    if (hasSelectedTask && hasSubtasks) {
+    // If we have a selected task with messages in state machine, show messages
+    if (hasSelectedTask && hasUnifiedMessages) {
       return true
     }
 

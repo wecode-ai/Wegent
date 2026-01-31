@@ -21,8 +21,8 @@ export interface UseTaskStateMachineResult {
   isStreaming: boolean
   /** Current task status */
   status: TaskStateData['status'] | null
-  /** Trigger recovery */
-  recover: (options?: { subtasks?: unknown[]; force?: boolean }) => Promise<void>
+  /** Trigger recovery - subtasks are now fetched from joinTask response */
+  recover: (options?: { force?: boolean }) => Promise<void>
   /** Whether the state machine is initialized */
   isInitialized: boolean
 }
@@ -39,6 +39,7 @@ export function useTaskStateMachine(
   // Check if manager is initialized
   const isInitialized = taskStateManager.isInitialized()
 
+  // Subscribe to state changes
   // Subscribe to state changes
   useEffect(() => {
     if (!taskId || !isInitialized) {
@@ -59,9 +60,13 @@ export function useTaskStateMachine(
 
     // Subscribe to updates
     const unsubscribe = machine.subscribe(newState => {
+      console.log('[useTaskStateMachine] Received state update', {
+        taskId,
+        status: newState.status,
+        messagesSize: newState.messages.size,
+      })
       setState(newState)
     })
-
     return () => {
       unsubscribe()
     }
@@ -87,14 +92,13 @@ export function useTaskStateMachine(
     }
   }, [taskId, isInitialized, syncOptions])
 
-  // Recover function
+  // Recover function - subtasks are now fetched from joinTask response
   const recover = useCallback(
-    async (options?: { subtasks?: unknown[]; force?: boolean }) => {
+    async (options?: { force?: boolean }) => {
       if (!taskId || !isInitialized) return
 
       const machine = taskStateManager.getOrCreate(taskId)
       await machine.recover({
-        subtasks: options?.subtasks as import('@/types/api').TaskDetailSubtask[],
         force: options?.force,
       })
     },

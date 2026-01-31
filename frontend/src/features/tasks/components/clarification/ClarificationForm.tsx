@@ -11,8 +11,9 @@ import { Textarea } from '@/components/ui/textarea'
 import type { ClarificationData, ClarificationAnswer } from '@/types/api'
 import ClarificationQuestion from './ClarificationQuestion'
 import { useTranslation } from '@/hooks/useTranslation'
-import { TaskContext } from '../../contexts/taskContext'
 import { ChatStreamContext } from '../../contexts/chatStreamContext'
+import { TaskContext } from '../../contexts/taskContext'
+import { taskStateManager } from '../../state'
 import { useToast } from '@/hooks/use-toast'
 
 interface ClarificationFormProps {
@@ -35,14 +36,14 @@ export default function ClarificationForm({
   const { t } = useTranslation()
   const { toast } = useToast()
 
-  // Use context directly - it will be undefined if not within TaskContextProvider (e.g., shared task page)
-  const taskContext = useContext(TaskContext)
-  const selectedTaskDetail = taskContext?.selectedTaskDetail ?? null
-
   // Get isTaskStreaming from ChatStreamContext to check if task is currently streaming
   // Use useContext directly to avoid throwing error when outside ChatStreamProvider
   const chatStreamContext = useContext(ChatStreamContext)
   const isTaskStreaming = chatStreamContext?.isTaskStreaming ?? null
+
+  // Get selectedTaskDetail from TaskContext to access the task's state machine
+  const taskContext = useContext(TaskContext)
+  const selectedTaskDetail = taskContext?.selectedTaskDetail ?? null
 
   const [answers, setAnswers] = useState<
     Map<string, { answer_type: 'choice' | 'custom'; value: string | string[] }>
@@ -56,29 +57,49 @@ export default function ClarificationForm({
   // Toggle raw content view
   const [showRawContent, setShowRawContent] = useState(false)
 
+  // Get messages from TaskStateMachine (single source of truth)
+  // This ensures ClarificationForm can correctly determine if it has been answered
+  const messages = useMemo(() => {
+    const currentTaskId = selectedTaskDetail?.id || taskId
+    if (!currentTaskId || !taskStateManager.isInitialized()) return []
+
+    const machine = taskStateManager.get(currentTaskId)
+    const taskState = machine?.getState()
+    if (!taskState?.messages || taskState.messages.size === 0) return []
+
+    // Convert Map to array and sort by id
+    return Array.from(taskState.messages.values())
+      .sort((a, b) => {
+        const aId = typeof a.id === 'string' ? parseInt(a.id, 10) : a.id
+        const bId = typeof b.id === 'string' ? parseInt(b.id, 10) : b.id
+        return aId - bId
+      })
+      .map(msg => ({ type: msg.type }))
+  }, [selectedTaskDetail?.id, taskId])
+
   // Check if this clarification has been answered
-  // Check if there's a USER message after this clarification's message index
+  // Check if there's a user message after this clarification's message index
   const isSubmitted = useMemo(() => {
-    if (!selectedTaskDetail?.subtasks || selectedTaskDetail.subtasks.length === 0) return false
+    if (messages.length === 0) return false
 
     console.log('[ClarificationForm] Checking submission status:', {
       currentMessageIndex,
-      totalMessages: selectedTaskDetail.subtasks.length,
+      totalMessages: messages.length,
       questionIds: data.questions.map(q => q.question_id),
     })
 
-    // Check if there's any USER message after the current message index
-    const subtasksAfter = selectedTaskDetail.subtasks.slice(currentMessageIndex + 1)
+    // Check if there's any user message after the current message index
+    const messagesAfter = messages.slice(currentMessageIndex + 1)
     console.log(
-      '[ClarificationForm] Subtasks after current message:',
-      subtasksAfter.map((s: { id: number; role: string }) => ({ id: s.id, role: s.role }))
+      '[ClarificationForm] Messages after current:',
+      messagesAfter.map((m, idx) => ({ index: currentMessageIndex + 1 + idx, type: m.type }))
     )
 
-    const hasUserMessageAfter = subtasksAfter.some((sub: { role: string }) => sub.role === 'USER')
-    console.log('[ClarificationForm] Has USER message after:', hasUserMessageAfter)
+    const hasUserMessageAfter = messagesAfter.some(msg => msg.type === 'user')
+    console.log('[ClarificationForm] Has user message after:', hasUserMessageAfter)
 
     return hasUserMessageAfter
-  }, [selectedTaskDetail?.subtasks, currentMessageIndex, data.questions])
+  }, [messages, currentMessageIndex, data.questions])
 
   // Initialize default answers for questions with recommended options
   useEffect(() => {

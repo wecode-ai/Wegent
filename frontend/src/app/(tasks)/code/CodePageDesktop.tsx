@@ -194,19 +194,7 @@ export function CodePageDesktop() {
       }
     }
 
-    // Fallback to selectedTaskDetail (API polling data)
-    if (selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0) {
-      const latestSubtask = selectedTaskDetail.subtasks[selectedTaskDetail.subtasks.length - 1]
-      if (latestSubtask?.result && typeof latestSubtask.result === 'object') {
-        const result = latestSubtask.result as { thinking?: unknown[] }
-        const thinking =
-          result.thinking && Array.isArray(result.thinking)
-            ? (result.thinking as ThinkingStep[])
-            : null
-        return { thinkingData: thinking, workbenchData: selectedTaskDetail?.workbench || null }
-      }
-    }
-
+    // Fallback to selectedTaskDetail workbench data only (subtasks are now managed by TaskStateMachine)
     return { thinkingData: null, workbenchData: selectedTaskDetail?.workbench || null }
   }, [selectedTaskDetail])
 
