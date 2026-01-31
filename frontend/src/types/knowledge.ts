@@ -91,6 +91,10 @@ export interface KnowledgeBase {
   summary?: KnowledgeBaseSummary | null
   /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
   kb_type?: KnowledgeBaseType
+  /** Maximum number of knowledge base tool calls allowed per conversation */
+  max_calls_per_conversation: number
+  /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
+  exempt_calls_before_check: number
   created_at: string
   updated_at: string
 }
@@ -104,6 +108,10 @@ export interface KnowledgeBaseCreate {
   summary_model_ref?: SummaryModelRef | null
   /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
   kb_type?: KnowledgeBaseType
+  /** Maximum number of knowledge base tool calls allowed per conversation */
+  max_calls_per_conversation?: number
+  /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
+  exempt_calls_before_check?: number
 }
 
 export interface RetrievalConfigUpdate {
@@ -122,6 +130,10 @@ export interface KnowledgeBaseUpdate {
   retrieval_config?: RetrievalConfigUpdate
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
+  /** Maximum number of knowledge base tool calls allowed per conversation */
+  max_calls_per_conversation?: number
+  /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
+  exempt_calls_before_check?: number
 }
 
 export interface KnowledgeBaseListResponse {

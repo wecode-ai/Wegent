@@ -13,11 +13,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Switch } from '@/components/ui/switch'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   KnowledgeBase,
@@ -25,8 +21,7 @@ import type {
   RetrievalConfigUpdate,
   SummaryModelRef,
 } from '@/types/knowledge'
-import { RetrievalSettingsSection, RetrievalConfig } from './RetrievalSettingsSection'
-import { SummaryModelSelector } from './SummaryModelSelector'
+import type { RetrievalConfig } from './RetrievalSettingsSection'
 
 interface EditKnowledgeBaseDialogProps {
   open: boolean
@@ -56,6 +51,9 @@ export function EditKnowledgeBaseDialog({
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [retrievalConfig, setRetrievalConfig] = useState<Partial<RetrievalConfig>>({})
 
+  // Call limit configuration state
+  const [maxCalls, setMaxCalls] = useState(10)
+  const [exemptCalls, setExemptCalls] = useState(5)
   useEffect(() => {
     if (knowledgeBase) {
       setName(knowledgeBase.name)
@@ -68,6 +66,9 @@ export function EditKnowledgeBaseDialog({
       if (knowledgeBase.retrieval_config) {
         setRetrievalConfig(knowledgeBase.retrieval_config)
       }
+      // Initialize call limits from knowledge base
+      setMaxCalls(knowledgeBase.max_calls_per_conversation)
+      setExemptCalls(knowledgeBase.exempt_calls_before_check)
     }
   }, [knowledgeBase])
 
@@ -96,6 +97,12 @@ export function EditKnowledgeBaseDialog({
       return
     }
 
+    // Validate call limits
+    if (exemptCalls >= maxCalls) {
+      setError(t('knowledge:document.callLimits.validationError'))
+      return
+    }
+
     try {
       // Build update data
       const updateData: KnowledgeBaseUpdate = {
@@ -103,6 +110,8 @@ export function EditKnowledgeBaseDialog({
         description: description.trim(), // Allow empty string to clear description
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
+        max_calls_per_conversation: maxCalls,
+        exempt_calls_before_check: exemptCalls,
       }
 
       // Add retrieval config update if advanced settings were modified
@@ -151,101 +160,42 @@ export function EditKnowledgeBaseDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-name">{t('knowledge:document.knowledgeBase.name')}</Label>
-              <Input
-                id="edit-name"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder={t('knowledge:document.knowledgeBase.namePlaceholder')}
-                maxLength={100}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-description">
-                {t('knowledge:document.knowledgeBase.description')}
-              </Label>
-              <Textarea
-                id="edit-description"
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                placeholder={t('knowledge:document.knowledgeBase.descriptionPlaceholder')}
-                maxLength={500}
-                rows={3}
-              />
-            </div>
-
-            {/* Summary Settings - moved outside advanced settings */}
-            <div className="space-y-3 border-b border-border pb-4">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label htmlFor="edit-summary-enabled">
-                    {t('knowledge:document.summary.enableLabel')}
-                  </Label>
-                  <p className="text-xs text-text-muted">
-                    {t('knowledge:document.summary.enableDescription')}
-                  </p>
-                </div>
-                <Switch
-                  id="edit-summary-enabled"
-                  checked={summaryEnabled}
-                  onCheckedChange={checked => {
-                    setSummaryEnabled(checked)
-                    if (!checked) {
-                      setSummaryModelRef(null)
-                      setSummaryModelError('')
-                    }
-                  }}
-                />
-              </div>
-              {summaryEnabled && (
-                <div className="space-y-2 pt-2">
-                  <Label>{t('knowledge:document.summary.selectModel')}</Label>
-                  <SummaryModelSelector
-                    value={summaryModelRef}
-                    onChange={value => {
-                      setSummaryModelRef(value)
-                      setSummaryModelError('')
-                    }}
-                    error={summaryModelError}
-                    knowledgeDefaultTeamId={
-                      // Only pass teamId when KB has no existing summary_model_ref
-                      // Priority: existing KB config > cached preference
-                      !knowledgeBase?.summary_model_ref ? knowledgeDefaultTeamId : undefined
-                    }
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Advanced Settings (Partially Editable) */}
-            {knowledgeBase?.retrieval_config && (
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAdvanced(!showAdvanced)}
-                  className="flex items-center gap-2 text-sm font-medium text-text-primary hover:text-primary transition-colors"
-                >
-                  {showAdvanced ? (
-                    <ChevronDown className="w-4 h-4" />
-                  ) : (
-                    <ChevronRight className="w-4 h-4" />
-                  )}
-                  {t('knowledge:document.advancedSettings.title')}
-                </button>
-
-                {showAdvanced && (
-                  <div className="mt-4 p-4 bg-bg-muted rounded-lg border border-border space-y-4">
-                    <RetrievalSettingsSection
-                      config={retrievalConfig}
-                      onChange={handleRetrievalConfigChange}
-                      readOnly={false}
-                      partialReadOnly={true}
-                    />
-                  </div>
-                )}
-              </div>
-            )}
+            <KnowledgeBaseForm
+              name={name}
+              description={description}
+              onNameChange={value => setName(value)}
+              onDescriptionChange={value => setDescription(value)}
+              summaryEnabled={summaryEnabled}
+              onSummaryEnabledChange={checked => {
+                setSummaryEnabled(checked)
+                if (!checked) {
+                  setSummaryModelRef(null)
+                  setSummaryModelError('')
+                }
+              }}
+              summaryModelRef={summaryModelRef}
+              summaryModelError={summaryModelError}
+              onSummaryModelChange={value => {
+                setSummaryModelRef(value)
+                setSummaryModelError('')
+              }}
+              knowledgeDefaultTeamId={
+                !knowledgeBase?.summary_model_ref ? knowledgeDefaultTeamId : undefined
+              }
+              callLimits={{ maxCalls, exemptCalls }}
+              onCallLimitsChange={({ maxCalls: nextMax, exemptCalls: nextExempt }) => {
+                setMaxCalls(nextMax)
+                setExemptCalls(nextExempt)
+              }}
+              advancedVariant="collapsible"
+              advancedOpen={showAdvanced}
+              onAdvancedOpenChange={setShowAdvanced}
+              showRetrievalSection={!!knowledgeBase?.retrieval_config}
+              retrievalConfig={retrievalConfig}
+              onRetrievalConfigChange={handleRetrievalConfigChange}
+              retrievalReadOnly={false}
+              retrievalPartialReadOnly={true}
+            />
 
             {error && <p className="text-sm text-error">{error}</p>}
           </div>

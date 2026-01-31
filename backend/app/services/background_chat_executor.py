@@ -140,6 +140,13 @@ class BackgroundChatExecutor:
                 f"task_id={task.id}"
             )
 
+            logger.info(
+                "[BackgroundChatExecutor] Model config summary: name=%s, namespace=%s, type=%s",
+                model_config.get("model_name"),
+                model_config.get("model_namespace"),
+                model_config.get("model_type"),
+            )
+
             accumulated_content = ""
             chunk_count = 0
             async for event in self._adapter.chat(chat_request):

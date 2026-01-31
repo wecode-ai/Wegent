@@ -41,7 +41,6 @@ import { TaskMembersPanel } from '../group-chat'
 import { useUser } from '@/features/common/UserContext'
 import { useUnifiedMessages, type DisplayMessage } from '../../hooks/useUnifiedMessages'
 import { useChatStreamContext } from '../../contexts/chatStreamContext'
-import { useStreamingVisibilityRecovery } from '../../hooks/useStreamingVisibilityRecovery'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
@@ -210,19 +209,11 @@ export default function MessagesArea({
 
   // Use unified messages hook - SINGLE SOURCE OF TRUTH
   // Pass pendingTaskId to query messages when selectedTaskDetail.id is not yet available
+  // State machine handles recovery automatically (page refresh, reconnect, visibility)
   const { messages, streamingSubtaskIds, isStreaming } = useUnifiedMessages({
     team: selectedTeam || null,
     isGroupChat,
     pendingTaskId,
-  })
-
-  // Use streaming visibility recovery hook to sync state when user returns from background
-  // This handles the case where WebSocket missed events while page was hidden
-  useStreamingVisibilityRecovery({
-    taskId: selectedTaskDetail?.id,
-    isStreaming,
-    minHiddenTime: 3000, // Recover if page was hidden for more than 3 seconds
-    enabled: true,
   })
 
   // Task share modal state
@@ -315,19 +306,21 @@ export default function MessagesArea({
   )
 
   // Load persisted correction data from subtask.result when task detail changes
+  // Load persisted correction data from messages when they change
+  // Note: Now using messages from useUnifiedMessages instead of selectedTaskDetail.subtasks
   useEffect(() => {
-    if (!selectedTaskDetail?.subtasks) return
+    if (messages.length === 0) return
 
     const savedResults = new Map<number, CorrectionResponse>()
 
-    selectedTaskDetail.subtasks.forEach(subtask => {
-      // Only check assistant (AI) messages
-      if (subtask.role !== 'ASSISTANT') return
+    messages.forEach(msg => {
+      // Only check AI messages with subtaskId
+      if (msg.type !== 'ai' || !msg.subtaskId) return
 
-      // Extract correction data from subtask.result.correction
-      const correction = extractCorrectionFromResult(subtask.result)
+      // Extract correction data from message result.correction
+      const correction = extractCorrectionFromResult(msg.result)
       if (correction) {
-        savedResults.set(subtask.id, correctionDataToResponse(correction, subtask.id))
+        savedResults.set(msg.subtaskId, correctionDataToResponse(correction, msg.subtaskId))
       }
     })
 
@@ -342,8 +335,7 @@ export default function MessagesArea({
         return merged
       })
     }
-  }, [selectedTaskDetail?.subtasks])
-
+  }, [messages])
   // Trigger correction when AI message completes
   useEffect(() => {
     if (!enableCorrectionMode || !correctionModelId || !selectedTaskDetail?.id) return
