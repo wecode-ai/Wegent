@@ -5,10 +5,12 @@
 'use client'
 
 import { useEffect, useMemo, useState, useCallback } from 'react'
+import { AlertTriangle } from 'lucide-react'
 import { Label } from '@/components/ui/label'
 import { SearchableSelect } from '@/components/ui/searchable-select'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Slider, DualWeightSlider } from '@/components/ui/slider'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRetrievers } from '../hooks/useRetrievers'
 import { useEmbeddingModels } from '../hooks/useEmbeddingModels'
@@ -246,23 +248,49 @@ export function RetrievalSettingsSection({
   // Other settings are only disabled when readOnly is true (not partialReadOnly)
   const isOtherSettingsDisabled = readOnly
 
+  // Check if RAG is unavailable (no retrievers or no embedding models)
+  const noRetrieversAvailable = !loadingRetrievers && retrievers.length === 0
+  const noModelsAvailable = !loadingModels && embeddingModels.length === 0
+  const ragUnavailable = noRetrieversAvailable || noModelsAvailable
+
+  // When RAG is unavailable, all controls should be disabled
+  const isAllDisabledDueToRag = ragUnavailable && !readOnly && !partialReadOnly
+
   return (
     <div className="space-y-4">
+      {/* RAG Unavailable Warning */}
+      {ragUnavailable && !loadingRetrievers && !loadingModels && (
+        <Alert variant="warning" className="border-warning/50 bg-warning/5">
+          <AlertTriangle className="h-4 w-4 text-warning" />
+          <AlertDescription className="text-sm">
+            <p className="font-medium mb-1">{t('document.retrieval.ragUnavailable')}</p>
+            <p className="text-text-muted text-xs mb-2">
+              {t('document.retrieval.ragUnavailableHint')}
+            </p>
+            <Link
+              href="/settings?section=personal&tab=personal-retrievers"
+              className="text-xs text-primary hover:underline"
+            >
+              {t('document.goToSettings')}
+            </Link>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Retriever Selection */}
       <div className="space-y-2">
         <Label htmlFor="retriever">{t('document.retrieval.retriever')}</Label>
         {loadingRetrievers ? (
           <div className="text-sm text-text-secondary">{t('common:actions.loading')}</div>
         ) : retrievers.length === 0 ? (
-          <div className="space-y-2">
-            <p className="text-sm text-warning">{t('document.retrieval.noRetriever')}</p>
-            <Link
-              href="/settings?section=personal&tab=personal-retrievers"
-              className="text-sm text-primary hover:underline"
-            >
-              {t('document.goToSettings')}
-            </Link>
-          </div>
+          <SearchableSelect
+            value=""
+            onValueChange={() => {}}
+            placeholder={t('document.retrieval.retrieverSelect')}
+            searchPlaceholder={t('document.retrieval.searchPlaceholder')}
+            disabled={true}
+            items={[]}
+          />
         ) : (
           <>
             <SearchableSelect
@@ -270,7 +298,7 @@ export function RetrievalSettingsSection({
               onValueChange={handleRetrieverChange}
               placeholder={t('document.retrieval.retrieverSelect')}
               searchPlaceholder={t('document.retrieval.searchPlaceholder')}
-              disabled={isRetrieverDisabled}
+              disabled={isRetrieverDisabled || isAllDisabledDueToRag}
               items={retrievers.map(retriever => ({
                 value: getRetrieverKey(retriever.name, retriever.namespace),
                 label: formatRetrieverLabel(retriever),
@@ -287,15 +315,14 @@ export function RetrievalSettingsSection({
         {loadingModels ? (
           <div className="text-sm text-text-secondary">{t('common:actions.loading')}</div>
         ) : embeddingModels.length === 0 ? (
-          <div className="space-y-2">
-            <p className="text-sm text-warning">{t('document.retrieval.noEmbeddingModel')}</p>
-            <Link
-              href="/settings?section=personal&tab=personal-models"
-              className="text-sm text-primary hover:underline"
-            >
-              {t('document.goToSettings')}
-            </Link>
-          </div>
+          <SearchableSelect
+            value=""
+            onValueChange={() => {}}
+            placeholder={t('document.retrieval.embeddingModelSelect')}
+            searchPlaceholder={t('document.retrieval.searchPlaceholder')}
+            disabled={true}
+            items={[]}
+          />
         ) : (
           <>
             <SearchableSelect
@@ -303,7 +330,7 @@ export function RetrievalSettingsSection({
               onValueChange={handleEmbeddingModelChange}
               placeholder={t('document.retrieval.embeddingModelSelect')}
               searchPlaceholder={t('document.retrieval.searchPlaceholder')}
-              disabled={isEmbeddingDisabled}
+              disabled={isEmbeddingDisabled || isAllDisabledDueToRag}
               items={embeddingModels.map(model => ({
                 value: model.name,
                 label: formatModelLabel(model),
@@ -320,7 +347,7 @@ export function RetrievalSettingsSection({
         <RadioGroup
           value={config.retrieval_mode || 'vector'}
           onValueChange={handleRetrievalModeChange}
-          disabled={isOtherSettingsDisabled}
+          disabled={isOtherSettingsDisabled || isAllDisabledDueToRag}
         >
           {availableModes.includes('vector') && (
             <div className="flex items-center space-x-2">
@@ -362,7 +389,7 @@ export function RetrievalSettingsSection({
           min={1}
           max={10}
           step={1}
-          disabled={isOtherSettingsDisabled}
+          disabled={isOtherSettingsDisabled || isAllDisabledDueToRag}
         />
         <p className="text-xs text-text-muted">{t('document.retrieval.topKHint')}</p>
       </div>
@@ -382,7 +409,7 @@ export function RetrievalSettingsSection({
           min={0}
           max={1}
           step={0.05}
-          disabled={isOtherSettingsDisabled}
+          disabled={isOtherSettingsDisabled || isAllDisabledDueToRag}
         />
         <p className="text-xs text-text-muted">{t('document.retrieval.scoreThresholdHint')}</p>
       </div>
@@ -396,7 +423,7 @@ export function RetrievalSettingsSection({
             onChange={handleWeightChange}
             leftLabel={t('document.retrieval.semanticWeight')}
             rightLabel={t('document.retrieval.keywordWeight')}
-            disabled={isOtherSettingsDisabled}
+            disabled={isOtherSettingsDisabled || isAllDisabledDueToRag}
           />
           <p className="text-xs text-text-muted">{t('document.retrieval.weightSum')}</p>
         </div>

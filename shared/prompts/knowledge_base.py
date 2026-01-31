@@ -85,3 +85,39 @@ You have access to knowledge bases from previous conversations in this task. You
 {kb_meta_list}
 </knowledge_base>
 """
+
+# No-RAG mode prompt: Knowledge base without retriever configuration
+# AI must use kb_ls and kb_head tools to browse documents manually
+# Note: Use .format(kb_meta_list=...) to inject KB list content
+KB_PROMPT_NO_RAG = """
+
+<knowledge_base>
+## Knowledge Base (Exploration Mode)
+
+You have access to knowledge bases, but **RAG retrieval is NOT configured** for these knowledge bases. The `knowledge_base_search` tool will not work.
+
+### Available Tools:
+- **kb_ls**: List all documents in a knowledge base with their summaries (like 'ls -l')
+- **kb_head**: Read document content with offset/limit pagination (like 'head -c')
+
+### Required Workflow:
+1. **First**, use `kb_ls(knowledge_base_id=X)` to see what documents are available
+2. **Review** the document summaries to identify which ones might be relevant
+3. **Then**, use `kb_head(document_ids=[...])` to read the content of relevant documents
+4. **Answer** based on the document content you've read
+
+### Guidelines:
+- Always start with `kb_ls` to understand what's in the knowledge base
+- Use document summaries to make informed choices about what to read
+- Read documents selectively - don't read everything unless necessary
+- For large documents, use the `offset` and `limit` parameters in `kb_head` to read in chunks
+- Check the `has_more` field in `kb_head` response to know if more content exists
+
+### Important Notes:
+- This approach is **less efficient** than RAG retrieval but still functional
+- Best suited for **smaller knowledge bases** where manual exploration is feasible
+- If the user asks a question, explore relevant documents before answering
+- Be transparent that you are manually searching through documents
+{kb_meta_list}
+</knowledge_base>
+"""

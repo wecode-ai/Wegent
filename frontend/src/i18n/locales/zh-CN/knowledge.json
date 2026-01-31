@@ -266,6 +266,8 @@
       "embeddingModelSelect": "选择 Embedding 模型",
       "embeddingModelHint": "用于生成向量嵌入的模型",
       "noEmbeddingModel": "暂无 Embedding 模型，请先在设置中配置",
+      "ragUnavailable": "RAG 检索功能不可用",
+      "ragUnavailableHint": "您仍然可以创建知识库。AI 将使用 kb_ls/kb_head 工具手动浏览文档内容（效率低于 RAG 检索）。",
       "retrievalMode": "检索方式",
       "vector": "向量检索",
       "keyword": "全文检索",
