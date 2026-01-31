@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Import shared types from kind.py to avoid duplication
 from app.schemas.kind import (
@@ -112,6 +112,32 @@ class KnowledgeBaseUpdate(BaseModel):
         description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
     )
 
+    # Knowledge base tool call limit configuration
+    max_calls_per_conversation: Optional[int] = Field(
+        None,
+        ge=2,
+        le=50,
+        description="Maximum number of knowledge base tool calls allowed per conversation",
+    )
+    exempt_calls_before_check: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Number of calls exempt from token checking (must be < max_calls_per_conversation)",
+    )
+
+    @model_validator(mode="after")
+    def validate_call_limits(self):
+        """Validate that exempt_calls_before_check < max_calls_per_conversation"""
+        if (
+            self.exempt_calls_before_check is not None
+            and self.max_calls_per_conversation is not None
+        ):
+            if self.exempt_calls_before_check >= self.max_calls_per_conversation:
+                raise ValueError(
+                    "exempt_calls_before_check must be less than max_calls_per_conversation"
+                )
+        return self
+
 
 class KnowledgeBaseTypeUpdate(BaseModel):
     """Schema for updating knowledge base type (notebook <-> classic conversion)."""
@@ -152,6 +178,11 @@ class KnowledgeBaseResponse(BaseModel):
         None,
         description="Knowledge base summary (short_summary, long_summary, topics, etc.)",
     )
+
+    # Knowledge base tool call limit configuration
+    max_calls_per_conversation: int = Field(default=10)
+    exempt_calls_before_check: int = Field(default=5)
+
     created_at: datetime
     updated_at: datetime
 
@@ -170,6 +201,22 @@ class KnowledgeBaseResponse(BaseModel):
         summary_model_ref = spec.get("summaryModelRef")
         # Extract kb_type from spec, default to 'notebook' for backward compatibility
         kb_type = spec.get("kbType", "notebook")
+
+        # Extract call limit configuration with defaults for backward compatibility
+        max_calls = spec.get("maxCallsPerConversation", 10)
+        exempt_calls = spec.get("exemptCallsBeforeCheck", 5)
+
+        # Validate: exempt_calls must be < max_calls
+        if exempt_calls >= max_calls:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"Invalid KB config for {kind.id}: exemptCallsBeforeCheck ({exempt_calls}) "
+                f">= maxCallsPerConversation ({max_calls}). Using default values."
+            )
+            max_calls, exempt_calls = 10, 5
+
         return cls(
             id=kind.id,
             name=spec.get("name", ""),
@@ -182,6 +229,8 @@ class KnowledgeBaseResponse(BaseModel):
             summary_enabled=spec.get("summaryEnabled", False),
             summary_model_ref=summary_model_ref,
             summary=summary,
+            max_calls_per_conversation=max_calls,
+            exempt_calls_before_check=exempt_calls,
             is_active=kind.is_active,
             created_at=kind.created_at,
             updated_at=kind.updated_at,
