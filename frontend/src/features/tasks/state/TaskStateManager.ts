@@ -163,27 +163,16 @@ class TaskStateManagerImpl {
     // Create or get the real machine
     const realMachine = this.getOrCreate(realTaskId)
 
-    // Transfer messages from temp to real
-    // The real machine might already have some state from chat:start event
+    // Transfer messages from temp to real that don't already exist
     const realState = realMachine.getState()
-    const mergedMessages = new Map(realState.messages)
-
-    // Add messages from temp that don't exist in real
     for (const [msgId, msg] of tempState.messages) {
-      if (!mergedMessages.has(msgId)) {
-        mergedMessages.set(msgId, msg)
-      }
-    }
-
-    // Update real machine with merged messages
-    for (const [msgId, msg] of mergedMessages) {
       if (!realState.messages.has(msgId)) {
         realMachine.addUserMessage(msg)
       }
     }
 
     // Transfer sync options
-    realMachine.setSyncOptions(tempMachine['syncOptions'] || {})
+    realMachine.setSyncOptions(tempMachine.getSyncOptions())
 
     // Clean up temp machine
     this.cleanup(tempTaskId)

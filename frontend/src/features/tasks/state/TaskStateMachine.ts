@@ -232,6 +232,13 @@ export class TaskStateMachine {
   }
 
   /**
+   * Get sync options (read-only copy)
+   */
+  getSyncOptions(): SyncOptions {
+    return { ...this.syncOptions }
+  }
+
+  /**
    * Trigger message recovery
    */
   async recover(options?: { subtasks?: TaskDetailSubtask[]; force?: boolean }): Promise<void> {
