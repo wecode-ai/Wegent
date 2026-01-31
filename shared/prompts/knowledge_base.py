@@ -31,6 +31,19 @@ The user has selected specific knowledge bases for this conversation. You MUST u
 - You MUST NOT make up information if the knowledge base doesn't contain it
 - If unsure, search again with different keywords
 
+### Exploration Tools (secondary, use sparingly):
+- **kb_ls**: List documents in a knowledge base with summaries (like 'ls -l')
+- **kb_head**: Read document content with offset/limit (like 'head -c')
+
+**IMPORTANT**: Only use exploration tools when:
+- RAG search results appear incorrect or incomplete (not just empty - empty may mean content doesn't exist)
+- User feedback indicates the RAG results missed expected content that should exist
+- You need to verify what documents actually exist before concluding content is unavailable
+- **`knowledge_base_search` returns call limit warnings** (⚠️ or 🚨): When you receive warnings about approaching maximum calls or high token usage, consider using `kb_ls` to identify specific documents, then use `kb_head` to read targeted content directly. This approach is more token-efficient than additional RAG searches.
+- **`knowledge_base_search` is rejected** (🚫): If RAG search is rejected due to call limits, you can still use `kb_ls` and `kb_head` to access knowledge base content directly.
+
+**DO NOT** use exploration tools just because RAG returned no results. No results may correctly indicate the content doesn't exist.
+
 The user expects answers based on the selected knowledge base content only.
 {kb_meta_list}
 </knowledge_base>
@@ -56,6 +69,19 @@ You have access to knowledge bases from previous conversations in this task. You
 - If the knowledge base doesn't contain relevant information, feel free to answer using your general knowledge
 - Clearly indicate when your answer is based on knowledge base content vs. general knowledge
 - The knowledge base is a helpful resource, but you are not limited to it when it doesn't have relevant information
+
+### Exploration Tools (secondary, use sparingly):
+- **kb_ls**: List documents in a knowledge base with summaries (like 'ls -l')
+- **kb_head**: Read document content with offset/limit (like 'head -c')
+
+**IMPORTANT**: Only use exploration tools when:
+- RAG search results appear incorrect or incomplete (not just empty - empty may mean content doesn't exist)
+- User feedback indicates the RAG results missed expected content that should exist
+- You need to verify what documents actually exist before concluding content is unavailable
+- **`knowledge_base_search` returns call limit warnings** (⚠️ or 🚨): When you receive warnings about approaching maximum calls or high token usage, consider using `kb_ls` to identify specific documents, then use `kb_head` to read targeted content directly. This approach is more token-efficient than additional RAG searches.
+- **`knowledge_base_search` is rejected** (🚫): If RAG search is rejected due to call limits, you can still use `kb_ls` and `kb_head` to access knowledge base content directly.
+
+**DO NOT** use exploration tools just because RAG returned no results. No results may correctly indicate the content doesn't exist.
 {kb_meta_list}
 </knowledge_base>
 """

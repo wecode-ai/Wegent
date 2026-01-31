@@ -30,8 +30,8 @@ async def prepare_knowledge_base_tools(
     """
     Prepare knowledge base tools and enhanced system prompt.
 
-    This function encapsulates the logic for creating KnowledgeBaseTool
-    and enhancing the system prompt with knowledge base instructions.
+    This function encapsulates the logic for creating KnowledgeBaseTool,
+    KbLsTool, KbHeadTool and enhancing the system prompt with knowledge base instructions.
 
     Args:
         knowledge_base_ids: Optional list of knowledge base IDs
@@ -66,7 +66,7 @@ async def prepare_knowledge_base_tools(
         return extra_tools, enhanced_system_prompt
 
     logger.info(
-        "[knowledge_factory] Creating KnowledgeBaseTool for %d knowledge bases: %s, "
+        "[knowledge_factory] Creating KB tools for %d knowledge bases: %s, "
         "is_user_selected=%s, document_ids=%s, context_window=%s",
         len(knowledge_base_ids),
         knowledge_base_ids,
@@ -75,11 +75,19 @@ async def prepare_knowledge_base_tools(
         context_window,
     )
 
-    # Import KnowledgeBaseTool
-    from chat_shell.tools.builtin import KnowledgeBaseTool
+    # Import knowledge base tools
+    from chat_shell.tools.builtin import (
+        KBToolCallCounter,
+        KbHeadTool,
+        KbLsTool,
+        KnowledgeBaseTool,
+    )
 
     # Create KnowledgeBaseTool with the specified knowledge bases
     # KB configs (max_calls, exempt_calls, name) are fetched from Backend API
+    # Pass user_subtask_id for persisting RAG results to context database
+    # Pass document_ids for filtering to specific documents
+    # Pass context_window from Model CRD for injection strategy decisions
     kb_tool = KnowledgeBaseTool(
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids or [],
@@ -89,6 +97,33 @@ async def prepare_knowledge_base_tools(
         context_window=context_window,
     )
     extra_tools.append(kb_tool)
+
+    # Create shared call counter for exploration tools (kb_ls and kb_head)
+    # These tools share the same max_calls_per_conversation limit
+    # The max_calls value will be fetched from KB config via HTTP API
+    # For now, use default value; actual limit will be enforced at runtime
+    exploration_call_counter = KBToolCallCounter()
+
+    # Create exploration tools (kb_ls and kb_head)
+    # These are secondary tools for when RAG search doesn't find relevant results
+    # They share a call counter to enforce combined call limits
+    kb_ls_tool = KbLsTool(
+        knowledge_base_ids=knowledge_base_ids,
+        db_session=db,
+    )
+    kb_ls_tool._call_counter = exploration_call_counter
+
+    kb_head_tool = KbHeadTool(
+        knowledge_base_ids=knowledge_base_ids,
+        db_session=db,
+    )
+    kb_head_tool._call_counter = exploration_call_counter
+
+    extra_tools.extend([kb_ls_tool, kb_head_tool])
+
+    logger.info(
+        "[knowledge_factory] Created 3 KB tools: knowledge_base_search, kb_ls, kb_head"
+    )
 
     # Skip prompt enhancement if Backend has already added KB prompts (HTTP mode)
     if skip_prompt_enhancement:
