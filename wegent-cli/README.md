@@ -4,17 +4,118 @@ A kubectl-style CLI for managing Wegent resources.
 
 ## Installation
 
+### Quick Install (Recommended)
+
+Install both wegent CLI and executor binary with a single command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/wegent-cli/install-cli.sh | bash
+```
+
+This script will automatically:
+- Detect your platform (Linux/macOS/Windows) and architecture (amd64/arm64)
+- Try to install wegent CLI from PyPI via pip/pipx
+- If PyPI is not available, download from GitHub releases
+- If no release wheel found, clone repository and install from source
+- Download and install the latest executor binary to `~/.wegent/bin/`
+- Verify the installation
+
+**Requirements:**
+- Python 3.10 or higher
+- pip3 or pipx
+- curl
+- git (for source installation fallback)
+
+### Manual Installation
+
+#### Option 1: Install from PyPI (when published)
+
+```bash
+# Install via pip
+pip install wegent
+
+# Or install via pipx (recommended for better isolation)
+pipx install wegent
+```
+
+#### Option 2: Install from GitHub Release
+
+```bash
+# Download and install wheel from GitHub releases
+pip install https://github.com/wecode-ai/Wegent/releases/download/v1.1.0/wegent-1.1.0-py3-none-any.whl
+```
+
+#### Option 3: Install from Source
+
+```bash
+# Clone repository
+git clone https://github.com/wecode-ai/Wegent.git
+cd Wegent/wegent-cli
+
+# Install
+pip install .
+
+# Or install in editable mode for development
+pip install -e .
+```
+
+#### Install Executor Binary
+
+After installing CLI, download and install the executor binary:
+
+```bash
+wegent executor update
+```
+
+### Development Installation
+
 ```bash
 cd wegent-cli
 pip install -e .
 ```
 
-Or install directly:
+### Troubleshooting
+
+#### Pip Version Issues
+
+If you encounter issues with editable install on older pip versions (< 21.3), upgrade pip first:
 
 ```bash
-pip install -r requirements.txt
-python -m wegent.cli
+pip install --upgrade pip
+pip install -e .
 ```
+
+#### New Commands Not Appearing After Update
+
+If you've updated the code but new commands don't appear when running `wegent --help`:
+
+1. **Clear Python bytecode cache:**
+   ```bash
+   find wegent-cli -name "*.pyc" -delete
+   find wegent-cli -type d -name "__pycache__" -exec rm -r {} + 2>/dev/null || true
+   ```
+
+2. **Reinstall in editable mode:**
+   ```bash
+   cd wegent-cli
+   pip uninstall wegent -y
+   pip install -e . --no-cache-dir
+   ```
+
+3. **Rehash shell and pyenv (if using pyenv):**
+   ```bash
+   hash -r
+   pyenv rehash  # if using pyenv
+   ```
+
+4. **Check for conflicting installations:**
+   ```bash
+   # If you still have issues, check for old installation paths
+   python -c "import wegent.cli; import inspect; print(inspect.getsourcefile(wegent.cli))"
+
+   # The output should point to your current project directory
+   # If it points elsewhere, you may have a conflicting installation
+   ```
 
 ## Quick Start
 
@@ -138,6 +239,58 @@ wegent delete ghost my-ghost -y
 
 ```bash
 wegent api-resources
+```
+
+### Manage Local Executor
+
+```bash
+# Start executor in foreground
+wegent executor start
+
+# Start executor in background (daemon mode)
+wegent executor start -d
+# or
+wegent executor start --detach
+
+# Stop executor
+wegent executor stop
+
+# Restart executor
+wegent executor restart
+wegent executor restart -d    # Restart in background
+
+# Check installed executor version
+wegent executor version
+
+# Install/update executor binary to latest version
+# (skips download if already up-to-date)
+wegent executor update
+
+# Force reinstall even if up-to-date
+wegent executor update --force
+
+# Install specific version
+wegent executor update -v v1.0.0
+# or
+wegent executor update --version v1.0.0
+
+# Rollback to previous version
+wegent executor rollback
+```
+
+**Executor file locations:**
+- Binary: `~/.wegent/bin/wegent-executor`
+- Version info: `~/.wegent/bin/.executor-version`
+- Logs: `~/.wegent/logs/executor.log`
+- PID file: `~/.wegent/run/executor.pid`
+
+### Upgrade CLI
+
+```bash
+# Upgrade wegent CLI to latest version
+# - For git installations: runs 'git pull'
+# - For pip installations: runs 'pip install --upgrade wegent-cli'
+wegent upgrade
 ```
 
 ## Resource Types
