@@ -144,6 +144,16 @@ class SourceSubscriptionRef(BaseModel):
     namespace: str = Field("default", description="Source subscription namespace")
 
 
+class KnowledgeBaseSubscriptionRef(BaseModel):
+    """Reference to a KnowledgeBase for Subscription."""
+
+    id: Optional[int] = Field(
+        None, description="Knowledge base Kind.id (primary reference)"
+    )
+    name: str = Field(..., description="Knowledge base name")
+    namespace: str = Field("default", description="Knowledge base namespace")
+
+
 # CRD spec and status
 class SubscriptionSpec(BaseModel):
     """Subscription CRD specification."""
@@ -205,6 +215,16 @@ class SubscriptionSpec(BaseModel):
         None,
         description="Reference to source subscription (for rentals). "
         "When set, this subscription is a rental instance.",
+    )
+    # Knowledge base references
+    knowledgeBaseRefs: Optional[List[KnowledgeBaseSubscriptionRef]] = Field(
+        None,
+        description="References to knowledge bases for this subscription",
+    )
+    # Notification settings
+    enableNotification: bool = Field(
+        False,
+        description="Whether to send notification when execution completes",
     )
 
 
@@ -312,6 +332,16 @@ class SubscriptionBase(BaseModel):
         le=50,
         description="Number of recent messages to include as context (0-50)",
     )
+    # Knowledge base references
+    knowledge_base_refs: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description="References to knowledge bases for this subscription",
+    )
+    # Notification settings
+    enable_notification: bool = Field(
+        False,
+        description="Whether to send notification when execution completes",
+    )
 
 
 class SubscriptionCreate(SubscriptionBase):
@@ -346,6 +376,10 @@ class SubscriptionUpdate(BaseModel):
     # History preservation settings
     preserve_history: Optional[bool] = None
     history_message_count: Optional[int] = Field(None, ge=0, le=50)
+    # Knowledge base references
+    knowledge_base_refs: Optional[List[Dict[str, Any]]] = None
+    # Notification settings
+    enable_notification: Optional[bool] = None
 
 
 class SubscriptionInDB(SubscriptionBase):

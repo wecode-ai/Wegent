@@ -311,15 +311,30 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
 
     Args:
         execution_id: The BackgroundExecution ID to update on completion/error
+        user_id: The user ID for notification
+        subscription_id: The subscription ID for notification
+        enable_notification: Whether to send notification on completion
     """
 
-    def __init__(self, execution_id: int):
+    def __init__(
+        self,
+        execution_id: int,
+        user_id: Optional[int] = None,
+        subscription_id: Optional[int] = None,
+        enable_notification: bool = False,
+    ):
         """Initialize SubscriptionEventEmitter.
 
         Args:
             execution_id: The BackgroundExecution ID to update
+            user_id: The user ID for notification
+            subscription_id: The subscription ID for notification
+            enable_notification: Whether to send notification on completion
         """
         self.execution_id = execution_id
+        self.user_id = user_id
+        self.subscription_id = subscription_id
+        self.enable_notification = enable_notification
 
     async def emit_chat_done(
         self,
@@ -356,6 +371,13 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
             result_summary=extract_result_summary(result),
         )
 
+        # Send notification if enabled
+        if self.enable_notification:
+            await self._send_notification(
+                status=status,
+                result_summary=extract_result_summary(result),
+            )
+
     async def emit_chat_error(
         self,
         task_id: int,
@@ -374,6 +396,13 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
             status="FAILED",
             error_message=error,
         )
+
+        # Send notification if enabled
+        if self.enable_notification:
+            await self._send_notification(
+                status="FAILED",
+                error_message=error,
+            )
 
     async def emit_chat_cancelled(
         self,
@@ -422,6 +451,129 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
             logger.error(
                 f"[SubscriptionEmitter] Failed to update execution {self.execution_id} "
                 f"status to {status}: {e}"
+            )
+
+    async def _send_notification(
+        self,
+        status: str,
+        result_summary: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """Send webhook notification for subscription execution completion.
+
+        Args:
+            status: Execution status (COMPLETED, COMPLETED_SILENT, FAILED)
+            result_summary: Optional result summary for COMPLETED status
+            error_message: Optional error message for FAILED status
+        """
+        try:
+            from datetime import datetime
+
+            from app.core.config import settings
+            from app.db.session import get_db_session
+            from app.services.webhook_notification import (
+                Notification,
+                webhook_notification_service,
+            )
+
+            with get_db_session() as db:
+                # Get subscription and execution details
+                from app.models.kind import Kind
+                from app.models.subscription import BackgroundExecution
+                from app.models.user import User
+
+                execution = (
+                    db.query(BackgroundExecution)
+                    .filter(BackgroundExecution.id == self.execution_id)
+                    .first()
+                )
+
+                if not execution:
+                    logger.warning(
+                        f"[SubscriptionEmitter] Execution {self.execution_id} not found for notification"
+                    )
+                    return
+
+                subscription = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == execution.subscription_id,
+                        Kind.kind == "Subscription",
+                    )
+                    .first()
+                )
+
+                if not subscription:
+                    logger.warning(
+                        f"[SubscriptionEmitter] Subscription {execution.subscription_id} not found for notification"
+                    )
+                    return
+
+                user = db.query(User).filter(User.id == execution.user_id).first()
+                user_name = user.user_name if user else "Unknown"
+
+                # Get subscription display name
+                from app.schemas.subscription import Subscription
+
+                subscription_crd = Subscription.model_validate(subscription.json)
+                subscription_name = (
+                    subscription_crd.spec.displayName or subscription.name
+                )
+
+                # Build description
+                description = (
+                    result_summary
+                    if result_summary
+                    else f"Subscription execution {status.lower()}"
+                )
+                if len(description) > 100:
+                    description = description[:100] + "..."
+
+                # Build task URL
+                task_url = (
+                    f"{settings.FRONTEND_URL}/subscription?taskId={execution.task_id}"
+                )
+
+                # Build notification
+                notification = Notification(
+                    user_name=user_name,
+                    event="subscription.end",
+                    id=str(self.execution_id),
+                    start_time=(
+                        execution.started_at.strftime("%Y-%m-%d %H:%M:%S")
+                        if execution.started_at
+                        else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    ),
+                    end_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    description=description,
+                    status=status if status != "COMPLETED_SILENT" else "COMPLETED",
+                    detail_url=task_url if execution.task_id else None,
+                )
+
+                # Send notification asynchronously in background thread
+                import threading
+
+                def send_notification_background():
+                    try:
+                        webhook_notification_service.send_notification_sync(
+                            notification
+                        )
+                        logger.info(
+                            f"[SubscriptionEmitter] Notification sent for execution {self.execution_id}"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"[SubscriptionEmitter] Failed to send notification for execution {self.execution_id}: {e}"
+                        )
+
+                thread = threading.Thread(
+                    target=send_notification_background, daemon=True
+                )
+                thread.start()
+
+        except Exception as e:
+            logger.error(
+                f"[SubscriptionEmitter] Failed to send notification for execution {self.execution_id}: {e}"
             )
 
 

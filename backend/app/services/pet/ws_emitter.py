@@ -8,12 +8,53 @@ This module provides WebSocket event emission methods for pet-related events.
 It wraps the global WebSocket emitter and provides typed methods for pet events.
 
 This keeps pet-related WebSocket logic within the pet module for better cohesion.
+
+Note: This module handles cross-event-loop execution automatically. When called
+from a different thread/event loop (e.g., Celery tasks), it uses
+run_coroutine_threadsafe to schedule operations on the main event loop.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_to_main_loop(coro) -> None:
+    """Schedule a coroutine to run on the main event loop.
+
+    This function handles the case where pet events are emitted from
+    different threads or event loops (e.g., Celery tasks). It uses
+    run_coroutine_threadsafe to safely schedule the operation on the
+    main event loop where Socket.IO was initialized.
+
+    Args:
+        coro: Coroutine to execute on the main event loop
+    """
+    from app.services.chat.ws_emitter import get_main_event_loop
+
+    main_loop = get_main_event_loop()
+    if not main_loop:
+        logger.warning("[PET_WS] Main event loop not available, skipping emit")
+        return
+
+    try:
+        # Check if we're already in the main loop
+        current_loop = asyncio.get_running_loop()
+        if current_loop is main_loop:
+            # Same loop - just create task
+            asyncio.create_task(coro)
+            return
+    except RuntimeError:
+        # No running loop - we're in a sync context
+        pass
+
+    # Different loop or no loop - use threadsafe scheduling
+    try:
+        asyncio.run_coroutine_threadsafe(coro, main_loop)
+    except Exception as e:
+        logger.error(f"[PET_WS] Failed to schedule emit on main loop: {e}")
 
 
 async def emit_pet_experience_gained(
@@ -41,20 +82,23 @@ async def emit_pet_experience_gained(
         logger.warning("[PET_WS] WebSocket emitter not initialized, skipping emit")
         return
 
-    await ws_emitter.sio.emit(
-        ServerEvents.PET_EXPERIENCE_GAINED,
-        {
-            "amount": amount,
-            "total": total,
-            "source": source,
-            "multiplier": multiplier,
-        },
-        room=f"user:{user_id}",
-        namespace=ws_emitter.namespace,
-    )
-    logger.debug(
-        f"[PET_WS] emit pet:experience_gained user={user_id} amount={amount} total={total} source={source}"
-    )
+    async def _emit():
+        await ws_emitter.sio.emit(
+            ServerEvents.PET_EXPERIENCE_GAINED,
+            {
+                "amount": amount,
+                "total": total,
+                "source": source,
+                "multiplier": multiplier,
+            },
+            room=f"user:{user_id}",
+            namespace=ws_emitter.namespace,
+        )
+        logger.debug(
+            f"[PET_WS] emit pet:experience_gained user={user_id} amount={amount} total={total} source={source}"
+        )
+
+    _emit_to_main_loop(_emit())
 
 
 async def emit_pet_stage_evolved(
@@ -82,20 +126,23 @@ async def emit_pet_stage_evolved(
         logger.warning("[PET_WS] WebSocket emitter not initialized, skipping emit")
         return
 
-    await ws_emitter.sio.emit(
-        ServerEvents.PET_STAGE_EVOLVED,
-        {
-            "old_stage": old_stage,
-            "new_stage": new_stage,
-            "old_stage_name": old_stage_name,
-            "new_stage_name": new_stage_name,
-        },
-        room=f"user:{user_id}",
-        namespace=ws_emitter.namespace,
-    )
-    logger.info(
-        f"[PET_WS] emit pet:stage_evolved user={user_id} {old_stage_name} -> {new_stage_name}"
-    )
+    async def _emit():
+        await ws_emitter.sio.emit(
+            ServerEvents.PET_STAGE_EVOLVED,
+            {
+                "old_stage": old_stage,
+                "new_stage": new_stage,
+                "old_stage_name": old_stage_name,
+                "new_stage_name": new_stage_name,
+            },
+            room=f"user:{user_id}",
+            namespace=ws_emitter.namespace,
+        )
+        logger.info(
+            f"[PET_WS] emit pet:stage_evolved user={user_id} {old_stage_name} -> {new_stage_name}"
+        )
+
+    _emit_to_main_loop(_emit())
 
 
 async def emit_pet_traits_updated(
@@ -117,12 +164,15 @@ async def emit_pet_traits_updated(
         logger.warning("[PET_WS] WebSocket emitter not initialized, skipping emit")
         return
 
-    await ws_emitter.sio.emit(
-        ServerEvents.PET_TRAITS_UPDATED,
-        {
-            "traits": traits,
-        },
-        room=f"user:{user_id}",
-        namespace=ws_emitter.namespace,
-    )
-    logger.info(f"[PET_WS] emit pet:traits_updated user={user_id} traits={traits}")
+    async def _emit():
+        await ws_emitter.sio.emit(
+            ServerEvents.PET_TRAITS_UPDATED,
+            {
+                "traits": traits,
+            },
+            room=f"user:{user_id}",
+            namespace=ws_emitter.namespace,
+        )
+        logger.info(f"[PET_WS] emit pet:traits_updated user={user_id} traits={traits}")
+
+    _emit_to_main_loop(_emit())

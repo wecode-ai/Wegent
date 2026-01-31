@@ -56,75 +56,105 @@ async def prepare_knowledge_base_tools(
     extra_tools = []
     enhanced_system_prompt = base_system_prompt
 
-    if not knowledge_base_ids:
-        # Even without current knowledge bases, check for historical KB meta
-        # Skip if in HTTP mode with prompt enhancement already done by Backend
-        if task_id and not skip_prompt_enhancement:
-            kb_meta_prompt = await _build_historical_kb_meta_prompt(db, task_id)
-            if kb_meta_prompt:
-                enhanced_system_prompt = f"{base_system_prompt}{kb_meta_prompt}"
-        return extra_tools, enhanced_system_prompt
-
     logger.info(
-        "[knowledge_factory] Creating KnowledgeBaseTool for %d knowledge bases: %s, "
-        "is_user_selected=%s, document_ids=%s, context_window=%s",
-        len(knowledge_base_ids),
+        "[knowledge_factory] ===== prepare_knowledge_base_tools START ===== "
+        "knowledge_base_ids=%s, user_id=%s, task_id=%s, user_subtask_id=%s",
         knowledge_base_ids,
-        is_user_selected,
-        document_ids,
-        context_window,
+        user_id,
+        task_id,
+        user_subtask_id,
     )
 
-    # Import KnowledgeBaseTool
-    from chat_shell.tools.builtin import KnowledgeBaseTool
+    try:
+        if not knowledge_base_ids:
+            # Even without current knowledge bases, check for historical KB meta
+            # Skip if in HTTP mode with prompt enhancement already done by Backend
+            if task_id and not skip_prompt_enhancement:
+                kb_meta_prompt = await _build_historical_kb_meta_prompt(db, task_id)
+                if kb_meta_prompt:
+                    enhanced_system_prompt = f"{base_system_prompt}{kb_meta_prompt}"
+            logger.info(
+                "[knowledge_factory] ===== prepare_knowledge_base_tools END (no KB IDs) ====="
+            )
+            return extra_tools, enhanced_system_prompt
 
-    # Create KnowledgeBaseTool with the specified knowledge bases
-    # KB configs (max_calls, exempt_calls, name) are fetched from Backend API
-    kb_tool = KnowledgeBaseTool(
-        knowledge_base_ids=knowledge_base_ids,
-        document_ids=document_ids or [],
-        user_id=user_id,
-        db_session=db,
-        user_subtask_id=user_subtask_id,
-        context_window=context_window,
-    )
-    extra_tools.append(kb_tool)
-
-    # Skip prompt enhancement if Backend has already added KB prompts (HTTP mode)
-    if skip_prompt_enhancement:
         logger.info(
-            "[knowledge_factory] Skipping KB prompt enhancement (already done by Backend)"
+            "[knowledge_factory] Creating KnowledgeBaseTool for %d knowledge bases: %s, "
+            "is_user_selected=%s, document_ids=%s, context_window=%s",
+            len(knowledge_base_ids),
+            knowledge_base_ids,
+            is_user_selected,
+            document_ids,
+            context_window,
         )
+
+        # Import KnowledgeBaseTool
+        from chat_shell.tools.builtin import KnowledgeBaseTool
+
+        # Create KnowledgeBaseTool with the specified knowledge bases
+        # KB configs (max_calls, exempt_calls, name) are fetched from Backend API
+        kb_tool = KnowledgeBaseTool(
+            knowledge_base_ids=knowledge_base_ids,
+            document_ids=document_ids or [],
+            user_id=user_id,
+            db_session=db,
+            user_subtask_id=user_subtask_id,
+            context_window=context_window,
+        )
+        extra_tools.append(kb_tool)
+
+        # Skip prompt enhancement if Backend has already added KB prompts (HTTP mode)
+        if skip_prompt_enhancement:
+            logger.info(
+                "[knowledge_factory] Skipping KB prompt enhancement (already done by Backend)"
+            )
+            logger.info(
+                "[knowledge_factory] ===== prepare_knowledge_base_tools END (skipped enhancement) ====="
+            )
+            return extra_tools, enhanced_system_prompt
+
+        # Import shared prompt constants from chat_shell prompts module
+        from chat_shell.prompts import KB_PROMPT_RELAXED, KB_PROMPT_STRICT
+
+        # Choose prompt based on whether KB is user-selected or inherited from task
+        if is_user_selected:
+            # Strict mode: User explicitly selected KB for this message
+            kb_instruction = KB_PROMPT_STRICT
+            logger.info(
+                "[knowledge_factory] Using STRICT mode prompt (user explicitly selected KB)"
+            )
+        else:
+            # Relaxed mode: KB inherited from task, AI can use general knowledge as fallback
+            kb_instruction = KB_PROMPT_RELAXED
+            logger.info(
+                "[knowledge_factory] Using RELAXED mode prompt (KB inherited from task)"
+            )
+
+        # Get historical knowledge base meta info if available
+        kb_meta_prompt = ""
+        if task_id:
+            kb_meta_prompt = await _build_historical_kb_meta_prompt(db, task_id)
+
+        # Inject KB meta list into the template using format method
+        # This ensures the KB list appears inside the <knowledge_base> tag
+        kb_instruction_with_meta = kb_instruction.format(kb_meta_list=kb_meta_prompt)
+        enhanced_system_prompt = f"{base_system_prompt}{kb_instruction_with_meta}"
+
+        logger.info(
+            "[knowledge_factory] ===== prepare_knowledge_base_tools END ===== "
+            "tools_count=%d, prompt_length=%d",
+            len(extra_tools),
+            len(enhanced_system_prompt),
+        )
+
         return extra_tools, enhanced_system_prompt
-
-    # Import shared prompt constants from chat_shell prompts module
-    from chat_shell.prompts import KB_PROMPT_RELAXED, KB_PROMPT_STRICT
-
-    # Choose prompt based on whether KB is user-selected or inherited from task
-    if is_user_selected:
-        # Strict mode: User explicitly selected KB for this message
-        kb_instruction = KB_PROMPT_STRICT
-        logger.info(
-            "[knowledge_factory] Using STRICT mode prompt (user explicitly selected KB)"
+    except Exception as e:
+        logger.error(
+            "[knowledge_factory] ===== prepare_knowledge_base_tools ERROR =====: %s",
+            e,
+            exc_info=True,
         )
-    else:
-        # Relaxed mode: KB inherited from task, AI can use general knowledge as fallback
-        kb_instruction = KB_PROMPT_RELAXED
-        logger.info(
-            "[knowledge_factory] Using RELAXED mode prompt (KB inherited from task)"
-        )
-
-    # Get historical knowledge base meta info if available
-    kb_meta_prompt = ""
-    if task_id:
-        kb_meta_prompt = await _build_historical_kb_meta_prompt(db, task_id)
-
-    # Inject KB meta list into the template using format method
-    # This ensures the KB list appears inside the <knowledge_base> tag
-    kb_instruction_with_meta = kb_instruction.format(kb_meta_list=kb_meta_prompt)
-    enhanced_system_prompt = f"{base_system_prompt}{kb_instruction_with_meta}"
-
-    return extra_tools, enhanced_system_prompt
+        raise
 
 
 async def _build_historical_kb_meta_prompt(
