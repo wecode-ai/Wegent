@@ -41,7 +41,6 @@ import { TaskMembersPanel } from '../group-chat'
 import { useUser } from '@/features/common/UserContext'
 import { useUnifiedMessages, type DisplayMessage } from '../../hooks/useUnifiedMessages'
 import { useChatStreamContext } from '../../contexts/chatStreamContext'
-import { useStreamingVisibilityRecovery } from '../../hooks/useStreamingVisibilityRecovery'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
@@ -210,19 +209,11 @@ export default function MessagesArea({
 
   // Use unified messages hook - SINGLE SOURCE OF TRUTH
   // Pass pendingTaskId to query messages when selectedTaskDetail.id is not yet available
+  // State machine handles recovery automatically (page refresh, reconnect, visibility)
   const { messages, streamingSubtaskIds, isStreaming } = useUnifiedMessages({
     team: selectedTeam || null,
     isGroupChat,
     pendingTaskId,
-  })
-
-  // Use streaming visibility recovery hook to sync state when user returns from background
-  // This handles the case where WebSocket missed events while page was hidden
-  useStreamingVisibilityRecovery({
-    taskId: selectedTaskDetail?.id,
-    isStreaming,
-    minHiddenTime: 3000, // Recover if page was hidden for more than 3 seconds
-    enabled: true,
   })
 
   // Task share modal state

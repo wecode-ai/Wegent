@@ -5,7 +5,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useTaskContext } from '../../contexts/taskContext'
-import { useChatStreamContext, computeIsStreaming } from '../../contexts/chatStreamContext'
+import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { useSocket } from '@/contexts/SocketContext'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useToast } from '@/hooks/use-toast'
@@ -17,6 +17,7 @@ import { taskApis } from '@/apis/tasks'
 import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
+import { taskStateManager } from '../../state'
 import type { Model } from '../selector/ModelSelector'
 import type { Team, GitRepoInfo, GitBranch, Attachment, SubtaskContextBrief } from '@/types/api'
 import type { ContextItem } from '@/types/context'
@@ -79,11 +80,6 @@ export interface ChatStreamHandlers {
   // Stream state
   /** Pending task ID - can be tempTaskId (negative) or taskId (positive) before selectedTaskDetail updates */
   pendingTaskId: number | null
-  currentStreamState: ReturnType<typeof useChatStreamContext>['getStreamState'] extends (
-    id: number
-  ) => infer R
-    ? R
-    : never
   isStreaming: boolean
   isSubtaskStreaming: boolean
   isStopping: boolean
@@ -172,11 +168,9 @@ export function useChatStreamHandlers({
     useTaskContext()
 
   const {
-    getStreamState,
     isTaskStreaming,
     sendMessage: contextSendMessage,
     stopStream: contextStopStream,
-    resumeStream: contextResumeStream,
     clearVersion,
   } = useChatStreamContext()
 
@@ -206,20 +200,17 @@ export function useChatStreamHandlers({
   // Get current display task ID
   const currentDisplayTaskId = selectedTaskDetail?.id
 
-  // Get stream state for the currently displayed task
-  const currentStreamState = useMemo(() => {
-    if (!currentDisplayTaskId) {
-      if (pendingTaskId) {
-        return getStreamState(pendingTaskId)
-      }
-      return undefined
-    }
-    return getStreamState(currentDisplayTaskId)
-  }, [currentDisplayTaskId, pendingTaskId, getStreamState])
+  // Get task state from state machine
+  const taskState = useMemo(() => {
+    const taskId = currentDisplayTaskId || pendingTaskId
+    if (!taskId || !taskStateManager.isInitialized()) return null
+    const machine = taskStateManager.get(taskId)
+    return machine?.getState() || null
+  }, [currentDisplayTaskId, pendingTaskId])
 
   // Check streaming states
   const _isStreamingTaskActive = pendingTaskId ? isTaskStreaming(pendingTaskId) : false
-  const isContextStreaming = computeIsStreaming(currentStreamState?.messages)
+  const isContextStreaming = taskState?.status === 'streaming'
 
   const isSubtaskStreaming = useMemo(() => {
     if (!selectedTaskDetail?.subtasks) return false
@@ -229,17 +220,17 @@ export function useChatStreamHandlers({
   }, [selectedTaskDetail?.subtasks])
 
   const isStreaming = isSubtaskStreaming || isContextStreaming
-  const isStopping = currentStreamState?.isStopping || false
+  const isStopping = taskState?.isStopping || false
 
   // Check for pending user messages
   const hasPendingUserMessage = useMemo(() => {
     if (localPendingMessage) return true
-    if (!currentStreamState?.messages) return false
-    for (const msg of currentStreamState.messages.values()) {
+    if (!taskState?.messages) return false
+    for (const msg of taskState.messages.values()) {
       if (msg.type === 'user' && msg.status === 'pending') return true
     }
     return false
-  }, [localPendingMessage, currentStreamState?.messages])
+  }, [localPendingMessage, taskState?.messages])
 
   // Stop stream wrapper
   const stopStream = useCallback(async () => {
@@ -320,36 +311,11 @@ export function useChatStreamHandlers({
     previousTaskIdRef.current = currentTaskId
   }, [selectedTaskDetail?.id, resetStreamingState])
 
-  // Try to resume streaming on task change
-  useEffect(() => {
-    const taskId = selectedTaskDetail?.id
-    if (!taskId) return
-    if (isStreaming) return
-    if (!selectedTeam || !isChatShell(selectedTeam)) return
-
-    const tryResumeStream = async () => {
-      const resumed = await contextResumeStream(taskId, {
-        onComplete: (_completedTaskId, _subtaskId) => {
-          refreshSelectedTaskDetail(false)
-        },
-        onError: error => {
-          console.error('[ChatStreamHandlers] Resumed stream error', error)
-        },
-      })
-
-      if (resumed) {
-        setPendingTaskId(taskId)
-      }
-    }
-
-    tryResumeStream()
-  }, [
-    selectedTaskDetail?.id,
-    selectedTeam,
-    isStreaming,
-    contextResumeStream,
-    refreshSelectedTaskDetail,
-  ])
+  // Note: Stream recovery is now handled by TaskStateMachine via useUnifiedMessages
+  // The state machine automatically recovers streaming state when:
+  // - Task is selected (via recover() in useUnifiedMessages)
+  // - Page becomes visible (via usePageVisibility in chatStreamContext)
+  // - WebSocket reconnects (via TaskStateManager.recoverAll())
 
   // Helper: create retry button
   const createRetryButton = useCallback(
@@ -655,6 +621,7 @@ export function useChatStreamHandlers({
       onTaskCreated,
       selectedDocumentIds,
       selectedDeviceId,
+      effectiveRequiresWorkspace,
     ]
   )
 
@@ -890,6 +857,7 @@ export function useChatStreamHandlers({
       externalApiParams,
       onTaskCreated,
       t,
+      effectiveRequiresWorkspace,
     ]
   )
 
@@ -1024,7 +992,6 @@ export function useChatStreamHandlers({
   return {
     // Stream state
     pendingTaskId,
-    currentStreamState,
     isStreaming,
     isSubtaskStreaming,
     isStopping,

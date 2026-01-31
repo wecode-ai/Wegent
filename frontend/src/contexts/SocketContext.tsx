@@ -54,6 +54,7 @@ import {
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config'
 import { paths } from '@/config/paths'
 import { POST_LOGIN_REDIRECT_KEY } from '@/features/login/constants'
+import { taskStateManager } from '@/features/tasks/state'
 
 const SOCKETIO_PATH = '/socket.io'
 
@@ -270,6 +271,14 @@ export function SocketProvider({ children }: { children: ReactNode }) {
           }
         })
       })
+
+      // Trigger recovery for all active tasks via TaskStateManager
+      // This handles message state recovery after WebSocket reconnection
+      if (taskStateManager.isInitialized()) {
+        taskStateManager.recoverAll().catch(err => {
+          console.error('[Socket.IO] Error recovering tasks after reconnect:', err)
+        })
+      }
 
       // Notify all registered reconnect callbacks
       // This is the single source of truth for reconnection events
