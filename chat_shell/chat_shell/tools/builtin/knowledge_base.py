@@ -488,7 +488,33 @@ class KnowledgeBaseTool(BaseTool):
 
             # Step 0: Fetch KB info to populate cache (if not already fetched)
             # This ensures _get_kb_limits() and _get_kb_name() can access cached data
-            await self._get_kb_info()
+            kb_info = await self._get_kb_info()
+
+            # Step 0.5: Check if any KB has RAG enabled
+            # If no KB has RAG configured, return helpful error message
+            items = kb_info.get("items", [])
+            rag_enabled_kbs = [
+                item for item in items if item.get("rag_enabled", False)
+            ]
+
+            if not rag_enabled_kbs:
+                kb_names = [item.get("name", f"KB-{item.get('id')}") for item in items]
+                logger.warning(
+                    f"[KnowledgeBaseTool] RAG not configured for any KB. KBs: {kb_names}"
+                )
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "error_code": "rag_not_configured",
+                        "message": "RAG retrieval is not available for this knowledge base. "
+                        "The knowledge base was created without a retriever configuration. "
+                        "Please use kb_ls to list documents and kb_head to read document contents instead.",
+                        "suggestion": f"Use kb_ls(knowledge_base_id={self.knowledge_base_ids[0]}) to list available documents, "
+                        "then use kb_head(document_ids=[...]) to read specific documents.",
+                        "knowledge_base_ids": self.knowledge_base_ids,
+                    },
+                    ensure_ascii=False,
+                )
 
             # Step 1: Check call limits BEFORE executing search
             max_calls, _exempt_calls = self._get_kb_limits()
@@ -517,7 +543,7 @@ class KnowledgeBaseTool(BaseTool):
             )
 
             # Step 2: Get knowledge base info to decide strategy (already cached from Step 0)
-            kb_info = await self._get_kb_info()
+            # kb_info is already fetched at Step 0, no need to fetch again
             total_estimated_tokens = kb_info.get("total_estimated_tokens", 0)
 
             # Step 3: Decide strategy based on estimated tokens vs context window

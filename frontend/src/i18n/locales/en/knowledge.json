@@ -266,6 +266,8 @@
       "embeddingModelSelect": "Select an embedding model",
       "embeddingModelHint": "Model for generating vector embeddings",
       "noEmbeddingModel": "No embedding model available. Please configure one in Settings.",
+      "ragUnavailable": "RAG retrieval is not available",
+      "ragUnavailableHint": "You can still create the knowledge base. AI will use kb_ls/kb_head tools to browse document contents manually (less efficient than RAG search).",
       "retrievalMode": "Retrieval Mode",
       "vector": "Vector Search",
       "keyword": "Full-Text Search",

@@ -117,10 +117,19 @@ async def prepare_knowledge_base_tools(
         return extra_tools, enhanced_system_prompt
 
     # Import shared prompt constants from chat_shell prompts module
-    from chat_shell.prompts import KB_PROMPT_RELAXED, KB_PROMPT_STRICT
+    from chat_shell.prompts import KB_PROMPT_NO_RAG, KB_PROMPT_RELAXED, KB_PROMPT_STRICT
 
-    # Choose prompt based on whether KB is user-selected or inherited from task
-    if is_user_selected:
+    # Check if any KB has RAG enabled by querying KB info
+    has_rag_enabled = await _check_any_kb_has_rag_enabled(knowledge_base_ids)
+
+    # Choose prompt based on RAG availability and user selection mode
+    if not has_rag_enabled:
+        # No-RAG mode: Use exploration tools only
+        kb_instruction = KB_PROMPT_NO_RAG
+        logger.info(
+            "[knowledge_factory] Using NO_RAG mode prompt (no retriever configured)"
+        )
+    elif is_user_selected:
         # Strict mode: User explicitly selected KB for this message
         kb_instruction = KB_PROMPT_STRICT
         logger.info(
@@ -221,3 +230,57 @@ async def get_knowledge_base_meta_list(
     except Exception as e:
         logger.warning(f"Failed to get KB meta list for task {task_id}: {e}")
         return []
+
+
+async def _check_any_kb_has_rag_enabled(knowledge_base_ids: list[int]) -> bool:
+    """
+    Check if any of the given knowledge bases have RAG enabled.
+
+    This function queries the Backend API to get KB info and checks if any KB
+    has a retriever configured (rag_enabled=True).
+
+    Args:
+        knowledge_base_ids: List of knowledge base IDs to check
+
+    Returns:
+        True if at least one KB has RAG enabled, False otherwise
+    """
+    if not knowledge_base_ids:
+        return False
+
+    from chat_shell.core.config import settings
+
+    try:
+        import httpx
+
+        # Query KB info from Backend API
+        url = f"{settings.BACKEND_URL}/api/internal/rag/kb-size"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                url,
+                json={"knowledge_base_ids": knowledge_base_ids},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Check if any KB has rag_enabled=True
+            items = data.get("items", [])
+            for item in items:
+                if item.get("rag_enabled", False):
+                    logger.debug(
+                        f"[knowledge_factory] KB {item.get('id')} has RAG enabled"
+                    )
+                    return True
+
+            logger.info(
+                f"[knowledge_factory] No KB has RAG enabled among {knowledge_base_ids}"
+            )
+            return False
+
+    except Exception as e:
+        logger.warning(
+            f"[knowledge_factory] Failed to check RAG status for KBs {knowledge_base_ids}: {e}. "
+            "Assuming RAG is enabled (fallback to normal behavior)."
+        )
+        # On error, assume RAG is enabled to avoid breaking existing functionality
+        return True

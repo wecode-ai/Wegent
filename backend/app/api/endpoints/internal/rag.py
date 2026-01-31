@@ -172,6 +172,7 @@ class KnowledgeBaseInfo(BaseModel):
     max_calls_per_conversation: int  # Maximum tool calls allowed
     exempt_calls_before_check: int  # Calls exempt from token checking
     name: str  # Knowledge base name
+    rag_enabled: bool  # Whether RAG retrieval is configured (has retriever)
 
 
 class KnowledgeBaseInfoResponse(BaseModel):
@@ -231,6 +232,12 @@ async def get_knowledge_base_info(
                 exempt_calls = spec.get("exemptCallsBeforeCheck", 5)
                 kb_name = spec.get("name", f"KB-{kb_id}")
 
+                # Check if RAG is enabled (has retriever configured)
+                retrieval_config = spec.get("retrievalConfig")
+                rag_enabled = bool(
+                    retrieval_config and retrieval_config.get("retriever_name")
+                )
+
                 # Validate config
                 if exempt_calls >= max_calls:
                     logger.warning(
@@ -245,7 +252,7 @@ async def get_knowledge_base_info(
                 logger.warning(
                     "[internal_rag] KB %d not found, using default config", kb_id
                 )
-                max_calls, exempt_calls, kb_name = 10, 5, f"KB-{kb_id}"
+                max_calls, exempt_calls, kb_name, rag_enabled = 10, 5, f"KB-{kb_id}", False
 
             items.append(
                 KnowledgeBaseInfo(
@@ -256,6 +263,7 @@ async def get_knowledge_base_info(
                     max_calls_per_conversation=max_calls,
                     exempt_calls_before_check=exempt_calls,
                     name=kb_name,
+                    rag_enabled=rag_enabled,
                 )
             )
 
@@ -263,7 +271,7 @@ async def get_knowledge_base_info(
             total_estimated_tokens += estimated_tokens
 
             logger.info(
-                "[internal_rag] KB %d info: size=%d bytes, docs=%d, tokens=%d, limits=%d/%d, name=%s",
+                "[internal_rag] KB %d info: size=%d bytes, docs=%d, tokens=%d, limits=%d/%d, name=%s, rag_enabled=%s",
                 kb_id,
                 file_size,
                 doc_count,
@@ -271,6 +279,7 @@ async def get_knowledge_base_info(
                 max_calls,
                 exempt_calls,
                 kb_name,
+                rag_enabled,
             )
 
         except Exception as e:
@@ -285,6 +294,7 @@ async def get_knowledge_base_info(
                     max_calls_per_conversation=10,  # Default
                     exempt_calls_before_check=5,  # Default
                     name=f"KB-{kb_id}",  # Default
+                    rag_enabled=False,  # Default to False for failed KBs
                 )
             )
 
