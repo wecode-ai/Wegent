@@ -9,7 +9,7 @@ import hashlib
 import io
 import re
 import zipfile
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import yaml
 from fastapi import HTTPException
@@ -27,8 +27,8 @@ class SkillDependencyValidator:
     def validate_dependencies(
         skill_name: str,
         dependencies: List[str],
-        find_skill_func,
-        db,
+        find_skill_func: Callable[..., Any],
+        db: Any,
         user_id: int,
         namespace: str = "default",
     ) -> Tuple[List[str], Optional[List[str]]]:
@@ -74,8 +74,8 @@ class SkillDependencyValidator:
     def _detect_circular_dependencies(
         skill_name: str,
         dependencies: List[str],
-        find_skill_func,
-        db,
+        find_skill_func: Callable[..., Any],
+        db: Any,
         user_id: int,
         namespace: str,
     ) -> Optional[List[str]]:

@@ -47,7 +47,7 @@ class LoadSkillInput(BaseModel):
 
     @field_validator("skill_names", mode="before")
     @classmethod
-    def normalize_skill_names(cls, v):
+    def normalize_skill_names(cls, v: Union[str, List[str]]) -> List[str]:
         """Normalize input to always be a list."""
         if isinstance(v, str):
             return [v]
@@ -97,7 +97,7 @@ class LoadSkillTool(BaseTool):
     skill_names: list[str]  # Available skill names for this session
     # Skill metadata from ChatRequest (skill_configs)
     # skill_name -> {description, prompt, displayName, dependencies, ...}
-    skill_metadata: dict[str, dict] = {}
+    skill_metadata: dict[str, dict] = Field(default_factory=dict)
     # Number of turns to retain a loaded skill (default: 5)
     skill_retention_turns: int = DEFAULT_SKILL_RETENTION_TURNS
 
@@ -154,7 +154,9 @@ class LoadSkillTool(BaseTool):
         skipped_already_loaded: List[str] = []
         not_found: List[str] = []
 
-        def collect_deps(skill_name: str, visited: Set[str], rec_stack: Set[str]):
+        def collect_deps(
+            skill_name: str, visited: Set[str], rec_stack: Set[str]
+        ) -> None:
             """Collect dependencies using DFS with cycle detection."""
             if skill_name in visited:
                 return
