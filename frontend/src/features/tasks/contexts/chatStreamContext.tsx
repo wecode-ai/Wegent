@@ -190,16 +190,21 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   const tempToRealTaskIdRef = useRef<Map<number, number>>(new Map())
   // Ref to track which subtask belongs to which task
   const subtaskToTaskRef = useRef<Map<number, number>>(new Map())
+  // Ref to track isConnected state for TaskStateManager initialization
+  const isConnectedRef = useRef(isConnected)
+  useEffect(() => {
+    isConnectedRef.current = isConnected
+  }, [isConnected])
 
   // Initialize TaskStateManager with dependencies on mount
   useEffect(() => {
     if (!taskStateManager.isInitialized()) {
       taskStateManager.initialize({
         joinTask: joinTask,
-        isConnected: () => isConnected,
+        isConnected: () => isConnectedRef.current,
       })
     }
-  }, [joinTask, isConnected])
+  }, [joinTask])
 
   // Page visibility recovery: recover all tasks when page becomes visible after being hidden
   // This handles the case where WebSocket events might have been missed while the page was in background
@@ -783,9 +788,9 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           }
           tempToRealTaskIdRef.current.set(immediateTaskId, realTaskId)
 
-          // Migrate state to new machine (if needed - the state machine handles this internally)
-          // Note: State migration between machines is not currently implemented
-          // The chat:start event will create state at realTaskId
+          // Migrate state from temp machine to real machine
+          // This ensures user messages added to temp machine are not lost
+          taskStateManager.migrateState(immediateTaskId, realTaskId)
         }
 
         // Join the task room

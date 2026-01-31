@@ -143,6 +143,55 @@ class TaskStateManagerImpl {
   }
 
   /**
+   * Migrate state from a temporary task ID to a real task ID.
+   * This is needed when a new task is created - the UI uses a negative temp ID
+   * until the server returns the real task ID.
+   *
+   * @param tempTaskId - The temporary (negative) task ID
+   * @param realTaskId - The real (positive) task ID from server
+   */
+  migrateState(tempTaskId: number, realTaskId: number): void {
+    const tempMachine = this.machines.get(tempTaskId)
+    if (!tempMachine) {
+      console.log('[TaskStateManager] No temp machine to migrate from', tempTaskId)
+      return
+    }
+
+    // Get state from temp machine
+    const tempState = tempMachine.getState()
+
+    // Create or get the real machine
+    const realMachine = this.getOrCreate(realTaskId)
+
+    // Transfer messages from temp to real
+    // The real machine might already have some state from chat:start event
+    const realState = realMachine.getState()
+    const mergedMessages = new Map(realState.messages)
+
+    // Add messages from temp that don't exist in real
+    for (const [msgId, msg] of tempState.messages) {
+      if (!mergedMessages.has(msgId)) {
+        mergedMessages.set(msgId, msg)
+      }
+    }
+
+    // Update real machine with merged messages
+    for (const [msgId, msg] of mergedMessages) {
+      if (!realState.messages.has(msgId)) {
+        realMachine.addUserMessage(msg)
+      }
+    }
+
+    // Transfer sync options
+    realMachine.setSyncOptions(tempMachine['syncOptions'] || {})
+
+    // Clean up temp machine
+    this.cleanup(tempTaskId)
+
+    console.log('[TaskStateManager] Migrated state from', tempTaskId, 'to', realTaskId)
+  }
+
+  /**
    * Subscribe to global state changes (all tasks)
    */
   subscribeGlobal(listener: (taskId: number, state: TaskStateData) => void): () => void {
