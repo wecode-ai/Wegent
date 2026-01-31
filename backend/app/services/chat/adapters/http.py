@@ -166,6 +166,9 @@ class HTTPAdapter(ChatInterface):
             "is_subscription": request.is_subscription,
         }
 
+        # KB configs (max_calls, exempt_calls, name) are now fetched by chat_shell from Backend API
+        # No need to inject them via metadata
+
         logger.info(
             "[HTTP_ADAPTER] Building metadata: is_subscription=%s, task_id=%d, subtask_id=%d",
             request.is_subscription,
@@ -469,20 +472,33 @@ class HTTPAdapter(ChatInterface):
                     text = data.get("text", "")
                     if text:
                         event_data["content"] = text
+                    # Extract block_id for text block streaming
+                    if data.get("block_id"):
+                        event_data["block_id"] = data["block_id"]
+                    # Extract block_offset for incremental rendering
+                    if data.get("block_offset") is not None:
+                        event_data["block_offset"] = data["block_offset"]
+                    # Extract result with blocks for real-time mixed content rendering
+                    # chat_shell's CHUNK events include the full blocks array for streaming display
+                    if data.get("result"):
+                        event_data["result"] = data["result"]
                 elif event_type == ChatEventType.THINKING:
                     # Thinking content is in "text" field
                     text = data.get("text", "")
                     if text:
                         event_data["content"] = text
                 elif event_type == ChatEventType.DONE:
-                    # Done event - chat_shell's ResponseDone has {id, usage, stop_reason, sources, silent_exit}
+                    # Done event - chat_shell's ResponseDone has {id, usage, stop_reason, sources, blocks, silent_exit}
                     # The actual response content is NOT in this event, it's accumulated from CHUNK events
-                    # We pass through the metadata (usage, stop_reason, sources, silent_exit) and let the caller set 'value'
+                    # We pass through the metadata (usage, stop_reason, sources, blocks, silent_exit) and let the caller set 'value'
                     event_data["result"] = {
                         "usage": data.get("usage"),
                         "stop_reason": data.get("stop_reason"),
                         "id": data.get("id"),
                         "sources": data.get("sources"),  # Knowledge base citations
+                        "blocks": data.get(
+                            "blocks"
+                        ),  # Message blocks for mixed content rendering
                         "silent_exit": data.get(
                             "silent_exit"
                         ),  # Silent exit flag for subscription tasks
@@ -501,6 +517,7 @@ class HTTPAdapter(ChatInterface):
                     event_data["display_name"] = data.get(
                         "display_name", data.get("name", "")
                     )
+                    event_data["blocks"] = data.get("blocks", [])
                     if event_type == ChatEventType.TOOL_START:
                         event_data["input"] = data.get("input", {})
                     else:  # TOOL_RESULT
@@ -511,8 +528,16 @@ class HTTPAdapter(ChatInterface):
                     logger.info(
                         "[HTTP_ADAPTER] Parsed %s event: data=%s, event_data=%s",
                         event_type.value,
-                        {k: v for k, v in data.items() if k != "output"},
-                        {k: v for k, v in event_data.items() if k != "output"},
+                        {
+                            k: v
+                            for k, v in data.items()
+                            if k not in ("output", "blocks")
+                        },
+                        {
+                            k: v
+                            for k, v in event_data.items()
+                            if k not in ("output", "blocks")
+                        },
                     )
                 elif event_type == ChatEventType.ERROR:
                     # Error event from chat_shell has {code, message, details} format

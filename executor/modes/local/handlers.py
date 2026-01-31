@@ -66,6 +66,22 @@ class TaskHandler:
         else:
             logger.warning("Received cancel request without task_id")
 
+    async def handle_task_close_session(self, data: Dict[str, Any]) -> None:
+        """Handle task close session event from Backend.
+
+        This completely terminates the task session and frees up the slot,
+        unlike cancel which only pauses execution.
+
+        Args:
+            data: Close session data containing task_id.
+        """
+        task_id = data.get("task_id")
+        if task_id is not None:
+            logger.info(f"Received task close session request: task_id={task_id}")
+            await self.runner.close_task_session(task_id)
+        else:
+            logger.warning("Received close session request without task_id")
+
     async def handle_chat_message(self, data: Dict[str, Any]) -> None:
         """Handle chat message event from Backend.
 

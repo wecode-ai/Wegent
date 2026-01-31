@@ -153,6 +153,22 @@ class ChatContext:
                 len(history),
             )
 
+            # Restore skill loading state from history (for skill retention across turns)
+            if self._load_skill_tool and history:
+                add_span_event("restoring_skill_state_from_history")
+                self._load_skill_tool.restore_from_history(history)
+                restored_skills = self._load_skill_tool.get_loaded_skills()
+                if restored_skills:
+                    add_span_event(
+                        "skill_state_restored",
+                        {"restored_skills": list(restored_skills)},
+                    )
+                    logger.info(
+                        "[CHAT_CONTEXT] Restored %d skills from history: %s",
+                        len(restored_skills),
+                        list(restored_skills),
+                    )
+
             # Build extra_tools from all sources (including builtin tools)
             add_span_event("building_extra_tools")
             extra_tools = self._build_extra_tools(kb_result, skill_tools, mcp_result)
@@ -288,6 +304,7 @@ class ChatContext:
                 "skipping KB prompt enhancement"
             )
 
+        # KB configs (max_calls, exempt_calls, name) are now fetched by KnowledgeBaseTool from Backend API
         result = await prepare_knowledge_base_tools(
             knowledge_base_ids=self._request.knowledge_base_ids,
             user_id=self._request.user_id,
@@ -323,8 +340,9 @@ class ChatContext:
             return False
 
         # Check for KB prompt markers in system_prompt
-        # Using both old (# IMPORTANT:) and new (## Knowledge Base) markers for compatibility
+        # Using both XML tag and legacy markers for compatibility
         kb_prompt_markers = [
+            "<knowledge_base>",
             "## Knowledge Base Requirement",
             "## Knowledge Base Available",
             "# IMPORTANT: Knowledge Base Requirement",
@@ -660,8 +678,9 @@ class ChatContext:
         model_namespace = "default"
         if self._request.model_config:
             model_name = self._request.model_config.get("model_name")
-            model_namespace = self._request.model_config.get(
-                "model_namespace", "default"
+            # Use `or "default"` to handle both missing key and None value
+            model_namespace = (
+                self._request.model_config.get("model_namespace") or "default"
             )
 
         create_subscription_tool = CreateSubscriptionTool(

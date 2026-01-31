@@ -120,6 +120,26 @@ async def process_response(
                     if msg.session_id:
                         session_id = msg.session_id
 
+                        # Save the Claude session ID for future resume
+                        task_id = (
+                            state_manager.task_data.get("task_id")
+                            if state_manager
+                            else None
+                        )
+                        if task_id:
+                            try:
+                                from executor.agents.claude_code.claude_code_agent import (
+                                    ClaudeCodeAgent,
+                                )
+
+                                ClaudeCodeAgent._save_session_id(
+                                    task_id, msg.session_id
+                                )
+                            except Exception as save_error:
+                                logger.warning(
+                                    f"Failed to save session ID: {save_error}"
+                                )
+
                     result_status = await _process_result_message(
                         msg,
                         state_manager,

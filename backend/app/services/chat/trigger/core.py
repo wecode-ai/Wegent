@@ -1003,6 +1003,8 @@ async def _stream_with_http_adapter(
                     await emitter.emit_chat_chunk(
                         task_id=task_id,
                         subtask_id=subtask_id,
+                        block_id=event.data.get("block_id"),
+                        block_offset=event.data.get("block_offset"),
                         content=chunk_text,
                         offset=offset,
                     )
@@ -1032,6 +1034,7 @@ async def _stream_with_http_adapter(
                 tool_name = event.data.get("name", event.data.get("tool_name", ""))
                 tool_input = event.data.get("input", event.data.get("tool_input", {}))
                 display_name = event.data.get("display_name", tool_name)
+                blocks = event.data.get("blocks", [])
 
                 logger.info(
                     "[HTTP_ADAPTER] TOOL_START: id=%s, name=%s, display_name=%s, event.data=%s",
@@ -1060,6 +1063,7 @@ async def _stream_with_http_adapter(
                 result_data = {
                     "shell_type": "Chat",
                     "thinking": thinking_steps.copy(),
+                    "blocks": blocks,
                 }
                 await emitter.emit_chat_chunk(
                     task_id=task_id,
@@ -1076,6 +1080,7 @@ async def _stream_with_http_adapter(
                 tool_output = event.data.get(
                     "output", event.data.get("tool_output", "")
                 )
+                blocks = event.data.get("blocks", [])
 
                 logger.info(
                     "[HTTP_ADAPTER] TOOL_RESULT: id=%s, name=%s, event.data=%s",
@@ -1144,6 +1149,7 @@ async def _stream_with_http_adapter(
                 result_data = {
                     "shell_type": "Chat",
                     "thinking": thinking_steps.copy(),
+                    "blocks": blocks,
                 }
                 await emitter.emit_chat_chunk(
                     task_id=task_id,

@@ -274,6 +274,7 @@ export interface TaskDetail {
   is_group_owner?: boolean // Whether current user is the group owner
   member_count?: number // Number of active members in the group
   app?: TaskApp | null // App preview information (set by expose_service tool)
+  device_id?: string | null // Device ID used for execution (for task history)
 }
 
 /** Correction data stored in subtask.result.correction */

@@ -124,6 +124,12 @@ class Settings(BaseSettings):
     # This is shared configuration between backend and chat_shell, uses validation_alias to read from DATA_TABLE_CONFIG (no prefix)
     DATA_TABLE_CONFIG: str = Field(default="", validation_alias="DATA_TABLE_CONFIG")
 
+    # Tool Display Configuration
+    # Comma-separated list of keywords to match tool names (uses substring matching)
+    # Empty string or "*" means all tools will display details
+    # Example: "read,write,search" will match "read_file", "write_file", "web_search", etc.
+    TOOL_DISPLAY_WHITELIST: str = "read,write,upload,exec"
+
     @classmethod
     def settings_customise_sources(
         cls,

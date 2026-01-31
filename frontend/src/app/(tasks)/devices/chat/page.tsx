@@ -26,7 +26,7 @@ import { useDevices } from '@/contexts/DeviceContext'
 import { teamService } from '@/features/tasks/service/teamService'
 import { Monitor, WifiOff } from 'lucide-react'
 import { ChatArea } from '@/features/tasks/components/chat'
-import { TaskParamSync } from '@/features/tasks/components/params'
+import { TaskParamSync, DeviceTaskSync } from '@/features/tasks/components/params'
 
 export default function DeviceChatPage() {
   const { t } = useTranslation('devices')
@@ -120,6 +120,7 @@ export default function DeviceChatPage() {
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* URL parameter sync for task selection */}
       <TaskParamSync />
+      <DeviceTaskSync />
 
       {/* Collapsed sidebar floating buttons */}
       {isCollapsed && !isMobile && (

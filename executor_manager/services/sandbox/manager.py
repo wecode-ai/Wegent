@@ -335,6 +335,11 @@ class SandboxManager(metaclass=SingletonMeta):
         if workspace_ref:
             task["workspace_ref"] = workspace_ref
 
+        # Add auth_token for skill downloads in sandbox
+        auth_token = sandbox.metadata.get("auth_token")
+        if auth_token:
+            task["auth_token"] = auth_token
+
         return task
 
     async def get_sandbox(

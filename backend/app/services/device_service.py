@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
 from app.models.kind import Kind
+from app.schemas.device import MAX_DEVICE_SLOTS
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +67,16 @@ class DeviceService:
         return result
 
     @staticmethod
-    async def refresh_device_heartbeat(user_id: int, device_id: str) -> bool:
+    async def refresh_device_heartbeat(
+        user_id: int, device_id: str, running_task_ids: list[int] = None
+    ) -> bool:
         """
-        Refresh device heartbeat in Redis (extend TTL).
+        Refresh device heartbeat in Redis (extend TTL) and update running task IDs.
 
         Args:
             user_id: Device owner user ID
             device_id: Device unique identifier
+            running_task_ids: List of task IDs currently running on this device
 
         Returns:
             True if refreshed successfully
@@ -81,9 +85,12 @@ class DeviceService:
         data = await cache_manager.get(key)
         if data:
             data["last_heartbeat"] = datetime.now().isoformat()
+            if running_task_ids is not None:
+                data["running_task_ids"] = running_task_ids
             result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
             logger.debug(
-                f"[DeviceService] refresh_device_heartbeat: key={key}, result={result}"
+                f"[DeviceService] refresh_device_heartbeat: key={key}, "
+                f"running_tasks={len(running_task_ids) if running_task_ids else 0}, result={result}"
             )
             return result
         logger.warning(
@@ -170,6 +177,78 @@ class DeviceService:
         return info is not None
 
     @staticmethod
+    async def get_device_slot_usage_async(
+        db: Session, user_id: int, device_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get slot usage information for a device (async version).
+
+        Reads running_task_ids from Redis (reported by executor in heartbeat),
+        then queries task details from database.
+
+        Args:
+            db: Database session
+            user_id: User ID (for Redis key)
+            device_id: Device unique identifier
+
+        Returns:
+            Dict with slot usage info: {"used": int, "max": int, "running_tasks": list}
+        """
+        from app.models.task import TaskResource
+
+        # Get device online info from Redis (includes running_task_ids)
+        device_info = await DeviceService.get_device_online_info(user_id, device_id)
+
+        running_task_ids = []
+        if device_info and "running_task_ids" in device_info:
+            running_task_ids = device_info["running_task_ids"]
+
+        # Query task details from database
+        running_tasks = []
+        if running_task_ids:
+            tasks = (
+                db.query(TaskResource)
+                .filter(
+                    and_(
+                        TaskResource.id.in_(running_task_ids),
+                        TaskResource.kind == "Task",
+                    )
+                )
+                .all()
+            )
+
+            for task in tasks:
+                try:
+                    from app.schemas.kind import Task as TaskCRD
+
+                    task_crd = TaskCRD.model_validate(task.json)
+                    running_tasks.append(
+                        {
+                            "task_id": task.id,
+                            "subtask_id": 0,  # Not relevant for session-based slots
+                            "title": task_crd.spec.title,
+                            "status": (
+                                task_crd.status.status if task_crd.status else "UNKNOWN"
+                            ),
+                            "created_at": (
+                                task_crd.status.createdAt.isoformat()
+                                if task_crd.status and task_crd.status.createdAt
+                                else None
+                            ),
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[DeviceService] Failed to parse task {task.id}: {e}"
+                    )
+
+        return {
+            "used": len(running_task_ids),
+            "max": MAX_DEVICE_SLOTS,
+            "running_tasks": running_tasks,
+        }
+
+    @staticmethod
     async def get_all_devices(db: Session, user_id: int) -> List[Dict[str, Any]]:
         """
         Get all devices for a user (both online and offline).
@@ -208,6 +287,11 @@ class DeviceService:
             # Get online status from Redis
             online_info = await DeviceService.get_device_online_info(user_id, device_id)
 
+            # Get slot usage information from Redis (running_task_ids reported by executor)
+            slot_info = await DeviceService.get_device_slot_usage_async(
+                db, user_id, device_id
+            )
+
             result.append(
                 {
                     "id": device_kind.id,
@@ -223,6 +307,9 @@ class DeviceService:
                         online_info.get("last_heartbeat") if online_info else None
                     ),
                     "capabilities": spec.get("capabilities"),
+                    "slot_used": slot_info["used"],
+                    "slot_max": slot_info["max"],
+                    "running_tasks": slot_info["running_tasks"],
                 }
             )
 

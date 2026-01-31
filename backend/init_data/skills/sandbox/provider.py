@@ -65,6 +65,7 @@ class SandboxToolProvider(SkillToolProvider):
             "bot_config": config.get("bot_config", []),
             "default_shell_type": config.get("default_shell_type", "ClaudeCode"),
             "timeout": config.get("timeout", 7200),
+            "auth_token": context.auth_token,  # For skill downloads in sandbox
         }
 
     @property
@@ -171,7 +172,6 @@ class SandboxToolProvider(SkillToolProvider):
             tool_instance = SandboxUploadAttachmentTool(
                 **base_params,
                 max_upload_size=config.get("max_file_size", 104857600),  # 100MB default
-                auth_token=context.auth_token,  # Get auth_token from context
                 api_base_url=config.get("api_base_url", ""),
             )
 
@@ -180,7 +180,6 @@ class SandboxToolProvider(SkillToolProvider):
 
             tool_instance = SandboxDownloadAttachmentTool(
                 **base_params,
-                auth_token=context.auth_token,  # Get auth_token from context
                 api_base_url=config.get("api_base_url", ""),
             )
 

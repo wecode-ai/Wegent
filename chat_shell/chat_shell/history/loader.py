@@ -458,17 +458,30 @@ def _build_history_message(
                         )
                     break
 
-        # Combine all text parts: attachments first, then knowledge bases
-        all_text_parts = attachment_text_parts + kb_text_parts
-        if all_text_parts:
-            combined_prefix = "".join(all_text_parts)
+        # Combine all text parts with XML tags:
+        # - attachments wrapped in <attachment> tag
+        # - knowledge bases wrapped in <knowledge_base> tag
+        combined_prefix = ""
+        if attachment_text_parts:
+            combined_prefix += (
+                "<attachment>\n" + "".join(attachment_text_parts) + "</attachment>\n\n"
+            )
+        if kb_text_parts:
+            combined_prefix += (
+                "<knowledge_base>\n" + "".join(kb_text_parts) + "</knowledge_base>\n\n"
+            )
+
+        if combined_prefix:
             text_content = f"{combined_prefix}{text_content}"
 
         if vision_parts:
             # Add image metadata headers to text content for reference
+            # Wrap image metadata in <attachment> tag for consistency with first upload
             if image_metadata_headers:
-                headers_text = "\n\n".join(image_metadata_headers) + "\n\n"
-                text_content = f"{headers_text}{text_content}"
+                headers_text = "\n\n".join(image_metadata_headers)
+                text_content = (
+                    f"<attachment>\n{headers_text}\n</attachment>\n\n{text_content}"
+                )
             return {
                 "role": "user",
                 "content": [{"type": "text", "text": text_content}, *vision_parts],
@@ -534,7 +547,13 @@ def _build_image_metadata_header(context) -> str:
 
 
 def _build_document_text_prefix(context) -> str:
-    """Build a text prefix for a document context with attachment metadata."""
+    """Build a text prefix for a document context (without XML tags).
+
+    Note: This returns raw content. The caller is responsible for wrapping
+    multiple attachments in a single <attachment> XML tag.
+
+    Includes attachment metadata (id, filename, mime_type, file_size, url).
+    """
     if not context.extracted_text:
         return ""
 
@@ -554,7 +573,11 @@ def _build_document_text_prefix(context) -> str:
 
 
 def _build_knowledge_base_text_prefix(context) -> str:
-    """Build a text prefix for a knowledge base context."""
+    """Build a text prefix for a knowledge base context (without XML tags).
+
+    Note: This returns raw content. The caller is responsible for wrapping
+    multiple knowledge base contents in a single <knowledge_base> XML tag.
+    """
     if not context.extracted_text:
         return ""
 
@@ -673,6 +696,8 @@ def get_knowledge_base_meta_prompt(
 
     kb_list_str = "\n".join(kb_lines)
 
+    # Return content without leading newline since the template handles formatting
+    # The content will be injected into the {kb_meta_list} placeholder in KB_PROMPT templates
     prompt = f"""
 Available Knowledge Bases (from conversation context):
 {kb_list_str}
