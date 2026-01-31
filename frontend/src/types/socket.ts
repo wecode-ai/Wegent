@@ -139,6 +139,8 @@ export interface ChatRetryPayload {
 
 export interface TaskJoinPayload {
   task_id: number
+  /** If provided, only return messages after this message_id (for incremental sync on reconnect) */
+  after_message_id?: number
 }
 
 export interface TaskLeavePayload {
@@ -179,6 +181,8 @@ export interface ChatChunkPayload {
   subtask_id: number
   content: string
   offset: number
+  /** Task ID for page refresh recovery */
+  task_id?: number
   /** Optional block ID for text block streaming (append content to specific block) */
   block_id?: string
   /** Optional block offset for offset-based content merging within a specific block */
@@ -249,6 +253,8 @@ export interface ChatErrorPayload {
   type?: string
   /** Message ID for ordering (primary sort key) */
   message_id?: number
+  /** Task ID for page refresh recovery */
+  task_id?: number
 }
 
 export interface ChatCancelledPayload {
@@ -260,6 +266,7 @@ export interface ChatCancelledPayload {
  * Block event payloads for mixed content rendering
  */
 export interface ChatBlockCreatedPayload {
+  task_id: number
   subtask_id: number
   block: {
     id: string
@@ -274,13 +281,13 @@ export interface ChatBlockCreatedPayload {
 }
 
 export interface ChatBlockUpdatedPayload {
+  task_id: number
   subtask_id: number
   block_id: string
   content?: string
   tool_output?: unknown
   status?: 'pending' | 'streaming' | 'done' | 'error'
 }
-
 export interface ChatMessageAttachment {
   id: number
   original_filename: string
@@ -501,6 +508,8 @@ export interface TaskJoinAck {
     offset: number
     cached_content: string
   }
+  /** Subtasks data for immediate message sync (same format as task detail API) */
+  subtasks?: Array<Record<string, unknown>>
   error?: string
 }
 

@@ -7,28 +7,24 @@ import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 /**
  * Calculate open links from task detail data
+ *
+ * @param taskDetail - Task detail object
+ * @param sessionId - Optional session_id (executor_name) from state machine messages
  */
-export function calculateOpenLinks(taskDetail: TaskDetail | null | undefined): OpenLinks | null {
+export function calculateOpenLinks(
+  taskDetail: TaskDetail | null | undefined,
+  sessionId?: string | null
+): OpenLinks | null {
   if (!taskDetail) {
     return null
   }
 
   const result: OpenLinks = {
-    session_id: null,
+    session_id: sessionId || null,
     vscode_link: null,
     git_link: null,
     git_url: taskDetail.git_url || '',
     target_branch: null,
-  }
-
-  // Extract session_id from subtasks executor_name
-  if (taskDetail.subtasks && taskDetail.subtasks.length > 0) {
-    for (const subtask of taskDetail.subtasks) {
-      if (subtask.executor_name) {
-        result.session_id = subtask.executor_name
-        break
-      }
-    }
   }
 
   // Extract target_branch from workbench.git_info
