@@ -369,7 +369,9 @@ class KbHeadTool(BaseTool):
                     content = full_content[start:end]
 
             returned_length = len(content)
-            has_more = (offset + returned_length) < total_length
+            # Use actual_start instead of offset for consistent pagination
+            actual_start = min(offset, total_length) if total_length > 0 else 0
+            has_more = (actual_start + returned_length) < total_length
 
             return {
                 "id": document.id,
