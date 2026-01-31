@@ -24,7 +24,7 @@ import type { ContextItem } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
 import { useTaskContext } from '../../contexts/taskContext'
-import { taskStateManager } from '../../state'
+import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
 import { Button } from '@/components/ui/button'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
@@ -90,12 +90,8 @@ function ChatAreaContent({
   // Task context
   const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext()
 
-  // Use taskStateManager to access messages (SINGLE SOURCE OF TRUTH per AGENTS.md)
-  const taskState = useMemo(() => {
-    if (!selectedTaskDetail?.id || !taskStateManager.isInitialized()) return null
-    const machine = taskStateManager.get(selectedTaskDetail.id)
-    return machine?.getState() || null
-  }, [selectedTaskDetail?.id])
+  // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
+  const { state: taskState } = useTaskStateMachine(selectedTaskDetail?.id)
 
   // Chat area state (team, repo, branch, model, input, toggles, etc.)
   const chatState = useChatAreaState({

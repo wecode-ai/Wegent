@@ -20,7 +20,7 @@ import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { Team, WorkbenchData } from '@/types/api'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { taskStateManager } from '@/features/tasks/state'
+import { useTaskStateMachine } from '@/features/tasks/hooks/useTaskStateMachine'
 import { saveLastTab } from '@/utils/userPreferences'
 import { calculateOpenLinks } from '@/utils/openLinks'
 import { useUser } from '@/features/common/UserContext'
@@ -136,16 +136,12 @@ export function CodePageDesktop() {
     details?: Record<string, unknown>
   }
 
+  // Use reactive state machine hook for real-time updates
+  const { state: taskState } = useTaskStateMachine(selectedTaskDetail?.id)
+
   // Get real-time thinking and workbench data from state machine
   // Priority: state machine (real-time) > selectedTaskDetail (API polling)
   const { thinkingData, workbenchData } = useMemo(() => {
-    const currentTaskId = selectedTaskDetail?.id
-    let taskState = null
-    if (currentTaskId && taskStateManager.isInitialized()) {
-      const machine = taskStateManager.get(currentTaskId)
-      taskState = machine?.getState()
-    }
-
     // Try to get data from state machine first (real-time updates via WebSocket)
     if (taskState?.messages && taskState.messages.size > 0) {
       // Find the latest AI message with result data (iterate in reverse order to get the newest)
@@ -196,7 +192,7 @@ export function CodePageDesktop() {
 
     // Fallback to selectedTaskDetail workbench data only (subtasks are now managed by TaskStateMachine)
     return { thinkingData: null, workbenchData: selectedTaskDetail?.workbench || null }
-  }, [selectedTaskDetail])
+  }, [taskState, selectedTaskDetail])
 
   // Save last active tab to localStorage
   useEffect(() => {

@@ -210,16 +210,6 @@ export function useChatStreamHandlers({
   // IMPORTANT: All streaming state comes from the state machine - no local state variables
   const { state: taskState, isStreaming } = useTaskStateMachine(effectiveTaskIdForState)
 
-  // DEBUG: Log streaming state changes
-  console.log('[useChatStreamHandlers] Streaming state:', {
-    effectiveTaskIdForState,
-    currentDisplayTaskId,
-    pendingTaskId,
-    isStreaming,
-    taskStateStatus: taskState?.status,
-    taskStateStreamingSubtaskId: taskState?.streamingSubtaskId,
-  })
-
   // Alias for backward compatibility - both refer to the same state machine value
   const isSubtaskStreaming = isStreaming
   const isStopping = taskState?.isStopping || false

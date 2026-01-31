@@ -109,26 +109,33 @@ export function SubscriptionConversationDialog({
 
   // Fetch task detail and subtasks when dialog opens
   useEffect(() => {
-    if (open && taskId) {
-      setLoading(true)
-      setError(null)
+    if (!open || !taskId) return
 
-      // Fetch both task detail and subtasks in parallel
-      Promise.all([
-        taskApis.getTaskDetail(taskId),
-        subtaskApis.listSubtasks({ taskId, limit: 100, fromLatest: false }),
-      ])
-        .then(([detail, subtasksResponse]) => {
-          setTaskDetail(detail)
-          setSubtasks(subtasksResponse.items)
-        })
-        .catch((err: Error) => {
-          console.error('[SubscriptionConversationDialog] Failed to load task:', err)
-          setError(err.message || t('common:errors.unknown'))
-        })
-        .finally(() => {
-          setLoading(false)
-        })
+    setLoading(true)
+    setError(null)
+    const active = { current: true }
+
+    // Fetch both task detail and subtasks in parallel
+    Promise.all([
+      taskApis.getTaskDetail(taskId),
+      subtaskApis.listSubtasks({ taskId, limit: 100, fromLatest: false }),
+    ])
+      .then(([detail, subtasksResponse]) => {
+        if (!active.current) return
+        setTaskDetail(detail)
+        setSubtasks(subtasksResponse.items)
+      })
+      .catch((err: Error) => {
+        if (!active.current) return
+        console.error('[SubscriptionConversationDialog] Failed to load task:', err)
+        setError(err.message || t('common:errors.unknown'))
+      })
+      .finally(() => {
+        if (active.current) setLoading(false)
+      })
+
+    return () => {
+      active.current = false
     }
   }, [open, taskId, t])
 

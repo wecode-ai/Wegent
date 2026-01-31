@@ -803,27 +803,14 @@ export class TaskStateMachine {
       const isUserMessage = subtask.role === 'USER' || subtask.role?.toUpperCase() === 'USER'
       const messageId = isUserMessage ? `user-backend-${subtask.id}` : `ai-${subtask.id}`
 
-      // Skip if already exists by message ID
-      if (messages.has(messageId)) {
-        continue
-      }
-
-      // Skip if already exists by subtaskId
-      if (existingSubtaskIds.has(subtask.id)) {
-        continue
-      }
-
-      // Skip USER messages if we already have enough
-      if (isUserMessage && existingUserMessageCount >= incomingUserSubtasks.length) {
-        continue
-      }
-
       // Check for frontend error state
       const existingMessage = this.state.messages.get(messageId)
       const hasFrontendError =
         existingMessage && existingMessage.status === 'error' && existingMessage.error
 
       // Handle RUNNING AI messages with content priority
+      // IMPORTANT: Always process RUNNING AI messages even if they already exist
+      // This ensures Redis cached_content and better existing content are used
       if (!isUserMessage && subtask.status === 'RUNNING') {
         const existingAiMessage = messages.get(messageId)
         const backendContent = typeof subtask.result?.value === 'string' ? subtask.result.value : ''
@@ -851,7 +838,7 @@ export class TaskStateMachine {
           type: 'ai',
           status: hasFrontendError ? 'error' : 'streaming',
           content: bestContent,
-          timestamp: new Date(subtask.created_at).getTime(),
+          timestamp: existingAiMessage?.timestamp || new Date(subtask.created_at).getTime(),
           subtaskId: subtask.id,
           messageId: subtask.message_id,
           attachments: subtask.attachments,
@@ -860,7 +847,24 @@ export class TaskStateMachine {
           subtaskStatus: subtask.status,
           result: subtask.result as UnifiedMessage['result'],
           error: hasFrontendError ? existingMessage?.error : undefined,
+          // Preserve existing reasoning content if present
+          reasoningContent: existingAiMessage?.reasoningContent,
         })
+        continue
+      }
+
+      // Skip if already exists by message ID (for non-RUNNING messages)
+      if (messages.has(messageId)) {
+        continue
+      }
+
+      // Skip if already exists by subtaskId (for non-RUNNING messages)
+      if (existingSubtaskIds.has(subtask.id)) {
+        continue
+      }
+
+      // Skip USER messages if we already have enough
+      if (isUserMessage && existingUserMessageCount >= incomingUserSubtasks.length) {
         continue
       }
 

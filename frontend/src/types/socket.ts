@@ -263,9 +263,8 @@ export interface ChatCancelledPayload {
 }
 
 /**
- /**
-  * Block event payloads for mixed content rendering
-  */
+ * Block event payloads for mixed content rendering
+ */
 export interface ChatBlockCreatedPayload {
   task_id: number
   subtask_id: number

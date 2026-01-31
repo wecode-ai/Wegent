@@ -574,9 +574,13 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           const columnMatch = errorMessage.match(/column\s+(\d+)/i)
           if (columnMatch) columnNumber = parseInt(columnMatch[1], 10)
 
-          let errorDetails = `Diagram type: ${diagram_type || 'unknown'}`
-          if (title) errorDetails += `\nTitle: ${title}`
-          errorDetails += `\nCode:\n${code}`
+          const errorDetails = [
+            `Diagram type: ${diagram_type || 'unknown'}`,
+            title ? `Title: ${title}` : null,
+            `Code:\n${code}`,
+          ]
+            .filter(Boolean)
+            .join('\n')
 
           sendSkillResponse({
             ...basePayload,

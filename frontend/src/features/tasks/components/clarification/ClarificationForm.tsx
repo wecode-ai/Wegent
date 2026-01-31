@@ -12,8 +12,7 @@ import type { ClarificationData, ClarificationAnswer } from '@/types/api'
 import ClarificationQuestion from './ClarificationQuestion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ChatStreamContext } from '../../contexts/chatStreamContext'
-import { TaskContext } from '../../contexts/taskContext'
-import { taskStateManager } from '../../state'
+import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
 import { useToast } from '@/hooks/use-toast'
 
 interface ClarificationFormProps {
@@ -41,9 +40,8 @@ export default function ClarificationForm({
   const chatStreamContext = useContext(ChatStreamContext)
   const isTaskStreaming = chatStreamContext?.isTaskStreaming ?? null
 
-  // Get selectedTaskDetail from TaskContext to access the task's state machine
-  const taskContext = useContext(TaskContext)
-  const selectedTaskDetail = taskContext?.selectedTaskDetail ?? null
+  // Use reactive hook to get messages from TaskStateMachine (single source of truth)
+  const { messages: messagesMap } = useTaskStateMachine(taskId)
 
   const [answers, setAnswers] = useState<
     Map<string, { answer_type: 'choice' | 'custom'; value: string | string[] }>
@@ -55,28 +53,23 @@ export default function ClarificationForm({
   // Track additional input value (fixed custom input box)
   const [additionalInput, setAdditionalInput] = useState('')
   // Toggle raw content view
+  // Toggle raw content view
   const [showRawContent, setShowRawContent] = useState(false)
 
-  // Get messages from TaskStateMachine (single source of truth)
-  // This ensures ClarificationForm can correctly determine if it has been answered
+  // Convert messages Map to sorted array for checking submission status
+  // This is reactive via useTaskStateMachine hook
   const messages = useMemo(() => {
-    const currentTaskId = selectedTaskDetail?.id || taskId
-    if (!currentTaskId || !taskStateManager.isInitialized()) return []
-
-    const machine = taskStateManager.get(currentTaskId)
-    const taskState = machine?.getState()
-    if (!taskState?.messages || taskState.messages.size === 0) return []
+    if (messagesMap.size === 0) return []
 
     // Convert Map to array and sort by id
-    return Array.from(taskState.messages.values())
+    return Array.from(messagesMap.values())
       .sort((a, b) => {
         const aId = typeof a.id === 'string' ? parseInt(a.id, 10) : a.id
         const bId = typeof b.id === 'string' ? parseInt(b.id, 10) : b.id
         return aId - bId
       })
       .map(msg => ({ type: msg.type }))
-  }, [selectedTaskDetail?.id, taskId])
-
+  }, [messagesMap])
   // Check if this clarification has been answered
   // Check if there's a user message after this clarification's message index
   const isSubmitted = useMemo(() => {

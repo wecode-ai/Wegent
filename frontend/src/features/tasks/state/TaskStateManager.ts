@@ -49,18 +49,18 @@ class TaskStateManagerImpl {
       throw new Error('[TaskStateManager] Not initialized. Call initialize() first.')
     }
 
-    let machine = this.machines.get(taskId)
-    if (!machine) {
-      machine = new TaskStateMachine(taskId, this.deps)
-      this.machines.set(taskId, machine)
+    const existing = this.machines.get(taskId)
+    if (existing) return existing
 
-      // Subscribe to state changes and notify global listeners
-      machine.subscribe(state => {
-        this.notifyGlobalListeners(taskId, state)
-      })
+    const machine = new TaskStateMachine(taskId, this.deps)
+    this.machines.set(taskId, machine)
 
-      console.log('[TaskStateManager] Created new TaskStateMachine for task', taskId)
-    }
+    // Subscribe to state changes and notify global listeners
+    machine.subscribe(state => {
+      this.notifyGlobalListeners(taskId, state)
+    })
+
+    console.log('[TaskStateManager] Created new TaskStateMachine for task', taskId)
     return machine
   }
 
@@ -74,13 +74,21 @@ class TaskStateManagerImpl {
   /**
    * Recover all active tasks
    * Called after WebSocket reconnection
+   *
+   * Note: Uses Set to dedupe by machine instance since migrateState()
+   * keeps both temp and real task IDs pointing to the same machine.
    */
   async recoverAll(): Promise<void> {
     console.log('[TaskStateManager] Starting recovery for all tasks')
 
+    // Dedupe by machine instance to avoid recovering the same machine twice
+    // This is needed because migrateState() keeps both temp and real IDs
+    const uniqueMachines = new Set(this.machines.values())
     const recoveryPromises: Promise<void>[] = []
-    for (const [taskId, machine] of this.machines) {
-      console.log('[TaskStateManager] Recovering task', taskId)
+
+    for (const machine of uniqueMachines) {
+      const state = machine.getState()
+      console.log('[TaskStateManager] Recovering task', state.taskId)
       recoveryPromises.push(machine.recover({ force: true }))
     }
 

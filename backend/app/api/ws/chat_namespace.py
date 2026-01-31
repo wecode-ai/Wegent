@@ -409,7 +409,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     f"subtasks for task_id={payload.task_id}"
                 )
         except Exception as e:
-            logger.error(f"[WS] task:join error fetching subtasks: {e}")
+            logger.exception(f"[WS] task:join error fetching subtasks: {e}")
             # Continue without subtasks - frontend can fall back to API call
         finally:
             db.close()
