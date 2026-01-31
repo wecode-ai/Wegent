@@ -39,6 +39,8 @@ The user has selected specific knowledge bases for this conversation. You MUST u
 - RAG search results appear incorrect or incomplete (not just empty - empty may mean content doesn't exist)
 - User feedback indicates the RAG results missed expected content that should exist
 - You need to verify what documents actually exist before concluding content is unavailable
+- **`knowledge_base_search` returns call limit warnings** (⚠️ or 🚨): When you receive warnings about approaching maximum calls or high token usage, consider using `kb_ls` to identify specific documents, then use `kb_head` to read targeted content directly. This approach is more token-efficient than additional RAG searches.
+- **`knowledge_base_search` is rejected** (🚫): If RAG search is rejected due to call limits, you can still use `kb_ls` and `kb_head` to access knowledge base content directly.
 
 **DO NOT** use exploration tools just because RAG returned no results. No results may correctly indicate the content doesn't exist.
 
@@ -76,6 +78,8 @@ You have access to knowledge bases from previous conversations in this task. You
 - RAG search results appear incorrect or incomplete (not just empty - empty may mean content doesn't exist)
 - User feedback indicates the RAG results missed expected content that should exist
 - You need to verify what documents actually exist before concluding content is unavailable
+- **`knowledge_base_search` returns call limit warnings** (⚠️ or 🚨): When you receive warnings about approaching maximum calls or high token usage, consider using `kb_ls` to identify specific documents, then use `kb_head` to read targeted content directly. This approach is more token-efficient than additional RAG searches.
+- **`knowledge_base_search` is rejected** (🚫): If RAG search is rejected due to call limits, you can still use `kb_ls` and `kb_head` to access knowledge base content directly.
 
 **DO NOT** use exploration tools just because RAG returned no results. No results may correctly indicate the content doesn't exist.
 {kb_meta_list}
