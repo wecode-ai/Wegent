@@ -41,7 +41,6 @@ import { TaskMembersPanel } from '../group-chat'
 import { useUser } from '@/features/common/UserContext'
 import { useUnifiedMessages, type DisplayMessage } from '../../hooks/useUnifiedMessages'
 import { useChatStreamContext } from '../../contexts/chatStreamContext'
-import { useStreamingVisibilityRecovery } from '../../hooks/useStreamingVisibilityRecovery'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
@@ -214,15 +213,6 @@ export default function MessagesArea({
     team: selectedTeam || null,
     isGroupChat,
     pendingTaskId,
-  })
-
-  // Use streaming visibility recovery hook to sync state when user returns from background
-  // This handles the case where WebSocket missed events while page was hidden
-  useStreamingVisibilityRecovery({
-    taskId: selectedTaskDetail?.id,
-    isStreaming,
-    minHiddenTime: 3000, // Recover if page was hidden for more than 3 seconds
-    enabled: true,
   })
 
   // Task share modal state
@@ -1049,9 +1039,6 @@ export default function MessagesArea({
         thinking: msg.thinking as Message['thinking'],
         result: msg.result, // Include result with shell_type for component selection
         sources: msg.sources, // Include sources for RAG knowledge base citations
-        recoveredContent: msg.recoveredContent,
-        isRecovered: msg.isRecovered,
-        isIncomplete: msg.isIncomplete,
         status: msg.status,
         error: msg.error,
         reasoningContent: msg.reasoningContent, // DeepSeek R1 reasoning content

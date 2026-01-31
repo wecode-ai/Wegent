@@ -3,33 +3,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * useUnifiedMessages Hook
+ * useUnifiedMessages Hook (State Machine Version)
  *
- * This hook manages the unified message list for chat display.
+ * This hook manages the unified message list for chat display using TaskStateMachine.
  * It is the SINGLE SOURCE OF TRUTH for all messages in the chat UI.
  *
  * Key Design Principles:
- * 1. SINGLE SOURCE OF TRUTH: streamState.messages is the ONLY source for rendering
- * 2. INITIALIZATION: When selecting a task, sync backend subtasks to streamState.messages
- * 3. PROPER ORDERING: Messages are sorted by timestamp
- * 4. STATE ISOLATION: Each message maintains its own state independently
- *
- * Message Flow:
- * 1. Select task -> Sync backend subtasks to streamState.messages (initialization)
- * 2. User sends message -> Add to streamState.messages with status='pending'
- * 3. Backend confirms -> Update message status to 'completed', set subtaskId
- * 4. AI starts -> Add AI message with status='streaming'
- * 5. AI chunks -> Update AI message content
- * 6. AI done -> Update AI message status to 'completed'
- *
- * This hook solves the "progress bar placeholder" bug by ensuring each message
- * has its own state and content, preventing state mixing when sending follow-up messages.
+ * 1. SINGLE SOURCE OF TRUTH: TaskStateMachine.messages is the ONLY source for rendering
+ * 2. AUTOMATIC RECOVERY: Calls recover() when task/subtasks change
+ * 3. PROPER ORDERING: Messages are sorted by messageId (primary) and timestamp (fallback)
+ * 4. REENTRANT: Multiple triggers don't cause issues due to state machine design
  */
 
-import { useMemo, useEffect, useRef } from 'react'
-import { useChatStreamContext, computeIsStreaming } from '../contexts/chatStreamContext'
+import { useMemo, useEffect } from 'react'
 import { useUser } from '@/features/common/UserContext'
 import { useTaskContext } from '../contexts/taskContext'
+import { useTaskStateMachine } from './useTaskStateMachine'
+import { taskStateManager } from '../state'
 import type { Team, Attachment, SubtaskContextBrief } from '@/types/api'
 import type { SourceReference } from '@/types/socket'
 import type { MessageBlock } from '../components/message/thinking/types'
@@ -75,23 +65,17 @@ export interface DisplayMessage {
     value?: string
     thinking?: unknown[]
     workbench?: Record<string, unknown>
-    shell_type?: string // Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
-    sources?: SourceReference[] // RAG knowledge base sources
-    reasoning_content?: string // DeepSeek R1 reasoning content
-    blocks?: MessageBlock[] // Message blocks for mixed content rendering
+    shell_type?: string
+    sources?: SourceReference[]
+    reasoning_content?: string
+    blocks?: MessageBlock[]
   }
-  /** Knowledge base source references (for RAG citations) - top-level for backward compatibility */
+  /** Knowledge base source references (for RAG citations) */
   sources?: SourceReference[]
   /** Whether this message is from the current user (for alignment) */
   isCurrentUser?: boolean
   /** Whether to show the sender avatar/name */
   showSender?: boolean
-  /** Recovered content from streaming recovery */
-  recoveredContent?: string
-  /** Whether this is recovered content */
-  isRecovered?: boolean
-  /** Whether content is incomplete */
-  isIncomplete?: boolean
   /** Reasoning/thinking content from DeepSeek R1 and similar models */
   reasoningContent?: string
 }
@@ -131,117 +115,45 @@ interface UseUnifiedMessagesResult {
 }
 
 /**
- * Hook to manage unified message list
- *
- * This hook uses streamState.messages as the ONLY data source for rendering.
- * When a task is selected, it syncs backend subtasks to streamState.messages.
+ * Hook to manage unified message list using TaskStateMachine
  */
 export function useUnifiedMessages({
   team,
   isGroupChat,
   pendingTaskId,
 }: UseUnifiedMessagesOptions): UseUnifiedMessagesResult {
-  const { getStreamState, syncBackendMessages, resumeStream } = useChatStreamContext()
   const { selectedTaskDetail } = useTaskContext()
   const { user } = useUser()
 
   const taskId = selectedTaskDetail?.id
   const subtasks = selectedTaskDetail?.subtasks
 
-  // Track the last synced task to avoid unnecessary syncs
-  const lastSyncedTaskIdRef = useRef<number | undefined>(undefined)
-  // Track the last synced subtasks count to detect deletions (e.g., after message edit)
-  const lastSyncedSubtasksCountRef = useRef<number>(0)
-  // Track whether we've attempted to resume streaming for this task
-  const attemptedResumeRef = useRef<number | undefined>(undefined)
-
-  // Determine effective task ID for querying streamState:
+  // Determine effective task ID for querying state machine:
   // - Use taskId (from selectedTaskDetail) if available
   // - Otherwise use pendingTaskId (tempTaskId or taskId before selectedTaskDetail updates)
   const effectiveTaskId = taskId || pendingTaskId || undefined
 
-  // Get stream state for current task - this will update when streamStates changes
-  // because getStreamState depends on streamStates via useCallback
-  const streamState = effectiveTaskId ? getStreamState(effectiveTaskId) : undefined
+  // Get state machine state via hook
+  const { messages: machineMessages, isStreaming: machineIsStreaming } =
+    useTaskStateMachine(effectiveTaskId)
 
-  // Sync backend subtasks to streamState.messages when task changes
-  // This initializes the message list from backend data
+  // Auto-recover when task or subtasks change
   useEffect(() => {
-    const hasMessages = streamState?.messages && streamState.messages.size > 0
-    const currentSubtasksCount = subtasks?.length || 0
-
-    // Detect if subtasks were deleted (e.g., after message edit)
-    // This forces a resync to remove deleted messages from the UI
-    const subtasksWereDeleted =
-      taskId === lastSyncedTaskIdRef.current &&
-      currentSubtasksCount < lastSyncedSubtasksCountRef.current
-
-    // Only sync when:
-    // 1. We have a taskId
-    // 2. We have subtasks
-    // 3. The task has changed (different from last synced) OR messages are empty
-    //    OR subtasks were deleted (force resync after message edit)
-    if (
-      taskId &&
-      subtasks &&
-      subtasks.length > 0 &&
-      (taskId !== lastSyncedTaskIdRef.current || !hasMessages || subtasksWereDeleted)
-    ) {
-      syncBackendMessages(taskId, subtasks, {
+    if (taskId && subtasks && subtasks.length > 0) {
+      const machine = taskStateManager.getOrCreate(taskId)
+      machine.recover({
+        subtasks,
         teamName: team?.name,
         isGroupChat,
         currentUserId: user?.id,
         currentUserName: user?.user_name,
-        forceClean: subtasksWereDeleted, // Clean up messages that were deleted after edit
       })
-      lastSyncedTaskIdRef.current = taskId
-      lastSyncedSubtasksCountRef.current = currentSubtasksCount
-
-      // KEY FIX: If there's a RUNNING/PENDING AI subtask, call resumeStream to receive
-      // streaming data. This handles the task switch case where syncBackendMessages
-      // creates a streaming placeholder but the frontend isn't receiving chat:chunk events.
-      const hasRunningAISubtask = subtasks.some(
-        s =>
-          (s.role === 'ASSISTANT' || s.role?.toUpperCase() === 'ASSISTANT') &&
-          (s.status === 'RUNNING' || s.status === 'PENDING')
-      )
-
-      if (hasRunningAISubtask && attemptedResumeRef.current !== taskId) {
-        attemptedResumeRef.current = taskId
-        console.log('[useUnifiedMessages] Found RUNNING/PENDING AI subtask, calling resumeStream', {
-          taskId,
-        })
-        // Call resumeStream to join WebSocket room and receive streaming data
-        resumeStream(taskId).then(resumed => {
-          console.log('[useUnifiedMessages] resumeStream result:', { taskId, resumed })
-        })
-      }
     }
+  }, [taskId, subtasks, team?.name, isGroupChat, user?.id, user?.user_name])
 
-    // Reset tracking when task is cleared
-    if (!taskId) {
-      lastSyncedTaskIdRef.current = undefined
-      lastSyncedSubtasksCountRef.current = 0
-      attemptedResumeRef.current = undefined
-    }
-  }, [
-    taskId,
-    subtasks,
-    streamState,
-    syncBackendMessages,
-    resumeStream,
-    team?.name,
-    isGroupChat,
-    user?.id,
-    user?.user_name,
-  ])
-
-  // Build unified message list from streamState.messages ONLY
-  // NOTE: streamState is obtained outside useMemo to ensure proper reactivity
-  // when streamStates changes in the context
+  // Build unified message list from state machine messages
   const result = useMemo<UseUnifiedMessagesResult>(() => {
-    // If no effectiveTaskId or no streamState, return empty result
-    if (!effectiveTaskId || !streamState?.messages) {
+    if (!effectiveTaskId || !machineMessages || machineMessages.size === 0) {
       return {
         messages: [],
         isStreaming: false,
@@ -262,22 +174,18 @@ export function useUnifiedMessages({
       attachment?: Attachment
     }> = []
 
-    // Convert streamState.messages to DisplayMessage array
+    // Convert state machine messages to DisplayMessage array
     const messages: DisplayMessage[] = []
 
-    for (const [, msg] of streamState.messages) {
-      // Handle both singular 'attachment' (from pending messages) and plural 'attachments' (from backend)
-      // When user sends a message with attachment, it's stored in 'attachment' field
-      // When synced from backend, it's in 'attachments' array
+    for (const [, msg] of machineMessages) {
+      // Handle both singular 'attachment' and plural 'attachments'
       let attachments: Attachment[] | undefined
       if (msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length > 0) {
         attachments = msg.attachments as Attachment[]
       } else if (msg.attachment) {
-        // Convert singular attachment to array for consistent rendering
         attachments = [msg.attachment as Attachment]
       }
 
-      // Get contexts from message (new unified context system)
       const contexts = msg.contexts as SubtaskContextBrief[] | undefined
 
       const displayMsg: DisplayMessage = {
@@ -296,15 +204,11 @@ export function useUnifiedMessages({
         senderUserId: msg.senderUserId,
         shouldShowSender: msg.shouldShowSender || (isGroupChat && msg.type === 'user'),
         subtaskStatus: msg.subtaskStatus,
-        // Get thinking from result field (for executor tasks)
         thinking: msg.result?.thinking,
-        // Include full result object (contains shell_type and other metadata)
         result: msg.result,
-        // Include sources from both top-level and result for backward compatibility
         sources: msg.sources || msg.result?.sources,
         isCurrentUser: msg.type === 'user' && (msg.senderUserId === user?.id || !msg.senderUserId),
         showSender: isGroupChat && msg.type === 'user',
-        // Reasoning content from DeepSeek R1 and similar models
         reasoningContent: msg.reasoningContent || msg.result?.reasoning_content,
       }
 
@@ -332,34 +236,27 @@ export function useUnifiedMessages({
     }
 
     // Sort messages by messageId (primary) and timestamp (secondary)
-    // This matches backend sorting logic which uses message_id + created_at
-    // Messages without messageId (e.g., pending messages) are sorted by timestamp only
     const sortedMessages = messages.sort((a, b) => {
-      // If both have messageId, use it as primary sort key
       if (a.messageId !== undefined && b.messageId !== undefined) {
         if (a.messageId !== b.messageId) {
           return a.messageId - b.messageId
         }
-        // Same messageId, use timestamp as secondary sort key
         return a.timestamp - b.timestamp
       }
-      // If only one has messageId, the one with messageId comes first (it's from backend)
       if (a.messageId !== undefined) return -1
       if (b.messageId !== undefined) return 1
-      // Neither has messageId (both pending), sort by timestamp
       return a.timestamp - b.timestamp
     })
 
     return {
       messages: sortedMessages,
-      // Compute isStreaming from messages - a task is streaming if any AI message has status='streaming'
-      isStreaming: streamingSubtaskIds.length > 0 || computeIsStreaming(streamState?.messages),
+      isStreaming: machineIsStreaming || streamingSubtaskIds.length > 0,
       streamingSubtaskIds,
       hasPendingMessages,
       subtasksMap,
       pendingMessages,
     }
-  }, [effectiveTaskId, streamState, team?.name, isGroupChat, user?.id])
+  }, [effectiveTaskId, machineMessages, machineIsStreaming, team?.name, isGroupChat, user?.id])
 
   return result
 }

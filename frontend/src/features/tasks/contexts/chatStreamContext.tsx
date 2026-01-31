@@ -38,6 +38,8 @@ import React, {
   ReactNode,
 } from 'react'
 import { useSocket, ChatEventHandlers, SkillEventHandlers } from '@/contexts/SocketContext'
+import { useTaskStateManagerInit } from '../hooks/useTaskStateManagerInit'
+import { useChatEventRouter } from '../hooks/useChatEventRouter'
 import {
   ChatSendPayload,
   ChatStartPayload,
@@ -331,6 +333,12 @@ function generateMessageId(type: 'user' | 'ai', subtaskId?: number): string {
  * Provider component for chat stream context
  */
 export function ChatStreamProvider({ children }: { children: ReactNode }) {
+  // Initialize TaskStateManager with socket context
+  useTaskStateManagerInit()
+
+  // Route WebSocket chat events to TaskStateManager
+  useChatEventRouter()
+
   // Use state to trigger re-renders when stream states change
   const [streamStates, setStreamStates] = useState<StreamStateMap>(new Map())
   // Version number that increments when clearAllStreams is called
