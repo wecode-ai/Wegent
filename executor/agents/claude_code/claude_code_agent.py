@@ -701,7 +701,6 @@ class ClaudeCodeAgent(Agent):
         }
         with open(claude_json_path, "w") as f:
             json.dump(claude_json_config, f, indent=2)
-        logger.info(f"Saved Claude Code config to {claude_json_path}")
 
         # Store config directory for Local mode
         self._claude_config_dir = config_dir
@@ -844,10 +843,6 @@ class ClaudeCodeAgent(Agent):
             "max_buffer_size",
         ]
 
-        logger.info(
-            f"Extracting Claude options from task data: {mask_sensitive_data(task_data)}"
-        )
-
         # Collect all non-None configuration parameters
         # Set max_buffer_size to 50MB to handle large file reads (default is 1MB)
         options = {
@@ -888,7 +883,6 @@ class ClaudeCodeAgent(Agent):
                 if key in bot_config and bot_config[key] is not None:
                     options[key] = bot_config[key]
 
-        logger.info(f"Extracted Claude options: {mask_sensitive_data(options)}")
         return options
 
     def pre_execute(self) -> TaskStatus:
@@ -1233,9 +1227,6 @@ class ClaudeCodeAgent(Agent):
         Config files are generated in initialize() and passed via 'settings' parameter.
         """
         logger.info(f"Creating new Claude client for session_id: {self.session_id}")
-        logger.info(
-            f"Initializing Claude client with options: {mask_sensitive_data(self.options)}"
-        )
 
         # Ensure working directory exists
         if self.options.get("cwd") is None or self.options.get("cwd") == "":
@@ -1259,7 +1250,6 @@ class ClaudeCodeAgent(Agent):
             env = self.options.get("env", {})
             env["CLAUDE_CONFIG_DIR"] = self._claude_config_dir
             self.options["env"] = env
-            logger.info(f"Local mode: using config dir {self._claude_config_dir}")
 
         # Check if there's a saved session ID to resume
         saved_session_id = self._load_saved_session_id(self.task_id)

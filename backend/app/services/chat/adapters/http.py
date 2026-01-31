@@ -166,6 +166,9 @@ class HTTPAdapter(ChatInterface):
             "is_subscription": request.is_subscription,
         }
 
+        # KB configs (max_calls, exempt_calls, name) are now fetched by chat_shell from Backend API
+        # No need to inject them via metadata
+
         logger.info(
             "[HTTP_ADAPTER] Building metadata: is_subscription=%s, task_id=%d, subtask_id=%d",
             request.is_subscription,

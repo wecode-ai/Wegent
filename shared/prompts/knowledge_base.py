@@ -31,14 +31,16 @@ The user has selected specific knowledge bases for this conversation. You MUST u
 - You MUST NOT make up information if the knowledge base doesn't contain it
 - If unsure, search again with different keywords
 
-### Exploration Tools (use when RAG search is not effective):
+### Exploration Tools (secondary, use sparingly):
 - **kb_ls**: List documents in a knowledge base with summaries (like 'ls -l')
 - **kb_head**: Read document content with offset/limit (like 'head -c')
 
-Use exploration tools when:
-- RAG search returns no relevant results
-- You need to understand what documents are available
-- You want to read a specific document directly
+**IMPORTANT**: Only use exploration tools when:
+- RAG search results appear incorrect or incomplete (not just empty - empty may mean content doesn't exist)
+- User feedback indicates the RAG results missed expected content that should exist
+- You need to verify what documents actually exist before concluding content is unavailable
+
+**DO NOT** use exploration tools just because RAG returned no results. No results may correctly indicate the content doesn't exist.
 
 The user expects answers based on the selected knowledge base content only.
 {kb_meta_list}
@@ -66,14 +68,16 @@ You have access to knowledge bases from previous conversations in this task. You
 - Clearly indicate when your answer is based on knowledge base content vs. general knowledge
 - The knowledge base is a helpful resource, but you are not limited to it when it doesn't have relevant information
 
-### Exploration Tools (use when RAG search is not effective):
+### Exploration Tools (secondary, use sparingly):
 - **kb_ls**: List documents in a knowledge base with summaries (like 'ls -l')
 - **kb_head**: Read document content with offset/limit (like 'head -c')
 
-Use exploration tools when:
-- RAG search returns no relevant results
-- You need to understand what documents are available
-- You want to read a specific document directly
+**IMPORTANT**: Only use exploration tools when:
+- RAG search results appear incorrect or incomplete (not just empty - empty may mean content doesn't exist)
+- User feedback indicates the RAG results missed expected content that should exist
+- You need to verify what documents actually exist before concluding content is unavailable
+
+**DO NOT** use exploration tools just because RAG returned no results. No results may correctly indicate the content doesn't exist.
 {kb_meta_list}
 </knowledge_base>
 """

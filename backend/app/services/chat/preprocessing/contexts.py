@@ -949,6 +949,7 @@ def _prepare_kb_tools_from_contexts(
     from chat_shell.tools.builtin import KnowledgeBaseTool
 
     # Create KnowledgeBaseTool with the specified knowledge bases
+    # KB configs (max_calls, exempt_calls, name) are now fetched from Backend API
     kb_tool = KnowledgeBaseTool(
         knowledge_base_ids=knowledge_base_ids,
         user_id=user_id,

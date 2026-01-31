@@ -327,6 +327,11 @@ class KbHeadTool(BaseTool):
         from app.models.knowledge import KnowledgeDocument
         from app.services.context import context_service
 
+        # Get allowed knowledge base IDs
+        allowed_kb_ids = (
+            set(self.knowledge_base_ids) if self.knowledge_base_ids else None
+        )
+
         def _read_single_doc(doc_id: int) -> dict:
             document = (
                 self.db_session.query(KnowledgeDocument)
@@ -336,6 +341,17 @@ class KbHeadTool(BaseTool):
 
             if not document:
                 return {"id": doc_id, "error": "Document not found"}
+
+            # Security check: verify document belongs to allowed knowledge base
+            if allowed_kb_ids and document.kind_id not in allowed_kb_ids:
+                logger.warning(
+                    f"[KbHeadTool] Access denied: doc {doc_id} belongs to KB {document.kind_id}, "
+                    f"allowed KBs: {allowed_kb_ids}"
+                )
+                return {
+                    "id": doc_id,
+                    "error": "Access denied: document not in allowed knowledge bases",
+                }
 
             content = ""
             total_length = 0
@@ -385,17 +401,31 @@ class KbHeadTool(BaseTool):
         async with httpx.AsyncClient(timeout=60.0) as client:
             for doc_id in document_ids:
                 try:
+                    # Include knowledge_base_ids for server-side security validation
+                    request_data = {
+                        "document_id": doc_id,
+                        "offset": offset,
+                        "limit": limit,
+                    }
+                    if self.knowledge_base_ids:
+                        request_data["knowledge_base_ids"] = self.knowledge_base_ids
+
                     response = await client.post(
                         f"{backend_url}/api/internal/rag/read-doc",
-                        json={
-                            "document_id": doc_id,
-                            "offset": offset,
-                            "limit": limit,
-                        },
+                        json=request_data,
                     )
 
                     if response.status_code == 404:
                         results.append({"id": doc_id, "error": "Document not found"})
+                        continue
+
+                    if response.status_code == 403:
+                        results.append(
+                            {
+                                "id": doc_id,
+                                "error": "Access denied: document not in allowed knowledge bases",
+                            }
+                        )
                         continue
 
                     if response.status_code != 200:

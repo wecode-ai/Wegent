@@ -78,7 +78,8 @@ async def prepare_knowledge_base_tools(
     # Import knowledge base tools
     from chat_shell.tools.builtin import KbHeadTool, KbLsTool, KnowledgeBaseTool
 
-    # Create KnowledgeBaseTool (primary RAG search tool)
+    # Create KnowledgeBaseTool with the specified knowledge bases
+    # KB configs (max_calls, exempt_calls, name) are fetched from Backend API
     # Pass user_subtask_id for persisting RAG results to context database
     # Pass document_ids for filtering to specific documents
     # Pass context_window from Model CRD for injection strategy decisions
