@@ -31,6 +31,15 @@ The user has selected specific knowledge bases for this conversation. You MUST u
 - You MUST NOT make up information if the knowledge base doesn't contain it
 - If unsure, search again with different keywords
 
+### Exploration Tools (use when RAG search is not effective):
+- **kb_ls**: List documents in a knowledge base with summaries (like 'ls -l')
+- **kb_head**: Read document content with offset/limit (like 'head -c')
+
+Use exploration tools when:
+- RAG search returns no relevant results
+- You need to understand what documents are available
+- You want to read a specific document directly
+
 The user expects answers based on the selected knowledge base content only.
 {kb_meta_list}
 </knowledge_base>
@@ -56,6 +65,15 @@ You have access to knowledge bases from previous conversations in this task. You
 - If the knowledge base doesn't contain relevant information, feel free to answer using your general knowledge
 - Clearly indicate when your answer is based on knowledge base content vs. general knowledge
 - The knowledge base is a helpful resource, but you are not limited to it when it doesn't have relevant information
+
+### Exploration Tools (use when RAG search is not effective):
+- **kb_ls**: List documents in a knowledge base with summaries (like 'ls -l')
+- **kb_head**: Read document content with offset/limit (like 'head -c')
+
+Use exploration tools when:
+- RAG search returns no relevant results
+- You need to understand what documents are available
+- You want to read a specific document directly
 {kb_meta_list}
 </knowledge_base>
 """

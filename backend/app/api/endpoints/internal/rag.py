@@ -10,6 +10,7 @@ These endpoints are intended for service-to-service communication.
 """
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -443,3 +444,211 @@ async def get_all_chunks(
     except Exception as e:
         logger.error("[internal_rag] All chunks failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============== Document Listing API (kb_ls) ==============
+
+
+class ListDocsRequest(BaseModel):
+    """Request for listing documents in a knowledge base."""
+
+    knowledge_base_id: int = Field(..., description="Knowledge base ID")
+
+
+class DocItem(BaseModel):
+    """Document item with metadata and summary."""
+
+    id: int = Field(..., description="Document ID")
+    name: str = Field(..., description="Document name")
+    file_extension: str = Field(..., description="File type (pdf, md, txt, etc.)")
+    file_size: int = Field(..., description="File size in bytes")
+    short_summary: Optional[str] = Field(
+        None, description="Short summary (50-100 chars)"
+    )
+    is_active: bool = Field(..., description="Whether document is indexed")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+
+class ListDocsResponse(BaseModel):
+    """Response for document listing."""
+
+    documents: list[DocItem]
+    total: int
+
+
+@router.post("/list-docs", response_model=ListDocsResponse)
+async def list_documents(
+    request: ListDocsRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    List documents in a knowledge base with metadata and summaries.
+
+    Similar to 'ls -l' command. Returns document names, sizes, types,
+    and short summaries for AI to explore available content.
+
+    Args:
+        request: Request with knowledge base ID
+        db: Database session
+
+    Returns:
+        List of documents with metadata
+    """
+    try:
+        from app.models.knowledge import KnowledgeDocument
+
+        # Query documents directly (internal API, permission checked at task level)
+        documents = (
+            db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.kind_id == request.knowledge_base_id)
+            .order_by(KnowledgeDocument.created_at.desc())
+            .all()
+        )
+
+        doc_items = []
+        for doc in documents:
+            # Extract short_summary from summary JSON field
+            short_summary = None
+            if doc.summary and isinstance(doc.summary, dict):
+                short_summary = doc.summary.get("short_summary")
+
+            doc_items.append(
+                DocItem(
+                    id=doc.id,
+                    name=doc.name,
+                    file_extension=doc.file_extension or "",
+                    file_size=doc.file_size or 0,
+                    short_summary=short_summary,
+                    is_active=doc.is_active,
+                    created_at=doc.created_at,
+                )
+            )
+
+        logger.info(
+            "[internal_rag] Listed %d documents for KB %d",
+            len(doc_items),
+            request.knowledge_base_id,
+        )
+
+        return ListDocsResponse(
+            documents=doc_items,
+            total=len(doc_items),
+        )
+
+    except Exception as e:
+        logger.error(
+            "[internal_rag] List documents failed for KB %d: %s",
+            request.knowledge_base_id,
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# ============== Document Reading API (kb_head) ==============
+
+
+class ReadDocRequest(BaseModel):
+    """Request for reading document content."""
+
+    document_id: int = Field(..., description="Document ID")
+    offset: int = Field(default=0, ge=0, description="Start position in characters")
+    limit: int = Field(
+        default=50000, ge=1, le=500000, description="Max characters to return"
+    )
+
+
+class ReadDocResponse(BaseModel):
+    """Response for document reading."""
+
+    document_id: int = Field(..., description="Document ID")
+    name: str = Field(..., description="Document name")
+    content: str = Field(..., description="Document content (partial)")
+    total_length: int = Field(..., description="Total document length in characters")
+    offset: int = Field(..., description="Actual start position")
+    returned_length: int = Field(..., description="Number of characters returned")
+    has_more: bool = Field(..., description="Whether more content is available")
+
+
+@router.post("/read-doc", response_model=ReadDocResponse)
+async def read_document(
+    request: ReadDocRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Read document content with offset/limit pagination.
+
+    Similar to 'head -c' command. Returns partial content starting from
+    offset position. Use has_more flag to check if more content exists.
+
+    Args:
+        request: Request with document ID, offset, and limit
+        db: Database session
+
+    Returns:
+        Document content with pagination info
+    """
+    try:
+        from app.models.knowledge import KnowledgeDocument
+        from app.services.context import context_service
+
+        # Get document
+        document = (
+            db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == request.document_id)
+            .first()
+        )
+
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        # Get content from attachment
+        content = ""
+        total_length = 0
+
+        if document.attachment_id:
+            attachment = context_service.get_context_by_id(
+                db=db,
+                context_id=document.attachment_id,
+            )
+            if attachment and attachment.extracted_text:
+                full_content = attachment.extracted_text
+                total_length = len(full_content)
+
+                # Apply offset and limit
+                start = min(request.offset, total_length)
+                end = min(start + request.limit, total_length)
+                content = full_content[start:end]
+
+        returned_length = len(content)
+        has_more = (request.offset + returned_length) < total_length
+
+        logger.info(
+            "[internal_rag] Read document %d: offset=%d, returned=%d/%d, has_more=%s",
+            request.document_id,
+            request.offset,
+            returned_length,
+            total_length,
+            has_more,
+        )
+
+        return ReadDocResponse(
+            document_id=document.id,
+            name=document.name,
+            content=content,
+            total_length=total_length,
+            offset=request.offset,
+            returned_length=returned_length,
+            has_more=has_more,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "[internal_rag] Read document failed for doc %d: %s",
+            request.document_id,
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=500, detail=str(e)) from e
