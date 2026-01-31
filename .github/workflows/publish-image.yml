@@ -474,7 +474,7 @@ jobs:
 
   build-executor-local-macos-amd64:
     needs: prepare-release
-    runs-on: macos-14  # Apple Silicon runner with cross-compilation for Intel
+    runs-on: macos-14  # Apple Silicon runner, using Rosetta 2 for Intel build
     permissions:
       contents: write
     steps:
@@ -483,19 +483,24 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Python (universal2 for cross-compilation)
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Install Homebrew x86_64 and Python via Rosetta 2
+        run: |
+          # Install x86_64 Homebrew under Rosetta 2
+          arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          # Install Python 3.11 via x86_64 Homebrew
+          arch -x86_64 /usr/local/bin/brew install python@3.11
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Install uv (x86_64)
+        run: |
+          arch -x86_64 /bin/bash -c "curl -LsSf https://astral.sh/uv/install.sh | sh"
 
       - name: Install dependencies and build for Intel (x86_64)
         working-directory: executor
         run: |
-          uv sync --group build
-          uv run python scripts/build_local.py --target-arch x86_64
+          # Use x86_64 Python and uv via Rosetta 2
+          export PATH="/usr/local/opt/python@3.11/bin:$HOME/.local/bin:$PATH"
+          arch -x86_64 uv sync --group build
+          arch -x86_64 uv run python scripts/build_local.py --target-arch x86_64
 
       - name: Rename binary with platform suffix
         run: |
