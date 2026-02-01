@@ -1446,6 +1446,17 @@ class ExecutorKindsService(
         if subtask_update.status == SubtaskStatus.COMPLETED:
             subtask.completed_at = datetime.now()
 
+        # Mark executor as deleted when container not found error is reported
+        # This enables the task restore flow on next message send
+        if subtask_update.status == SubtaskStatus.FAILED and subtask_update.error_message:
+            error_msg = subtask_update.error_message.lower()
+            if "container" in error_msg and "not found" in error_msg:
+                logger.info(
+                    f"[update_subtask] Container not found error detected for subtask {subtask.id}, "
+                    f"marking executor_deleted_at=True"
+                )
+                subtask.executor_deleted_at = True
+
         db.add(subtask)
         db.flush()  # Ensure subtask update is complete
 
