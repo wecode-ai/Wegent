@@ -154,6 +154,12 @@ class TaskOperationsMixin:
         if task_type == "code":
             expire_hours = settings.APPEND_CODE_TASK_EXPIRE_HOURS
 
+        # DEBUG: Log settings values to verify environment configuration
+        logger.info(
+            f"[_handle_existing_task] Settings: CHAT_EXPIRE={settings.APPEND_CHAT_TASK_EXPIRE_HOURS}h, "
+            f"CODE_EXPIRE={settings.APPEND_CODE_TASK_EXPIRE_HOURS}h, using expire_hours={expire_hours}h"
+        )
+
         # Log expiration check details
         time_since_update = (datetime.now() - existing_task.updated_at).total_seconds()
         expire_seconds = expire_hours * 3600
