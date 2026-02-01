@@ -75,7 +75,7 @@
 
 ### 🖥️ 设备模式
 
-<img src="https://github.com/user-attachments/assets/4aea6905-2c37-43c5-bc4c-2f1a4e488839" width="100%" alt="AI Device Demo"/>>
+<img src="https://github.com/user-attachments/assets/ead0cc30-b3a4-4eb6-a6dd-77ffcbd72238" width="100%" alt="AI Device Demo"/>>
 在本地设备上运行 AI 任务，完全掌控：
 
 - **本地执行器**：在自己的设备上安装并运行 Wegent 执行器
