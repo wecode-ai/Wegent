@@ -134,6 +134,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to start heartbeat service: {e}")
 
+    # Initialize Claude Code for sandbox mode if AUTH_TOKEN is provided
+    # This allows sandbox containers to download skills at startup
+    try:
+        auth_token = os.getenv("AUTH_TOKEN")
+        task_id = os.getenv("TASK_ID")
+        if auth_token and task_id:
+            logger.info(
+                f"AUTH_TOKEN found, initializing Claude Code for sandbox {task_id}..."
+            )
+            _initialize_sandbox_claude(auth_token, task_id)
+    except Exception as e:
+        logger.warning(f"Failed to initialize Claude Code for sandbox: {e}")
+
     yield  # Application runs here
 
     # Stop Wegent MCP server
@@ -156,6 +169,45 @@ async def lifespan(app: FastAPI):
 
         shutdown_telemetry()
         logger.info("OpenTelemetry shutdown completed")
+
+
+def _initialize_sandbox_claude(auth_token: str, task_id: str) -> None:
+    """Initialize Claude Code for sandbox mode.
+
+    Downloads and deploys skills based on task_id via Backend API.
+
+    Args:
+        auth_token: JWT token for API authentication
+        task_id: Task ID for fetching associated skills
+    """
+    from executor.services.api_client import SkillDownloader, fetch_task_skills
+
+    # Fetch skills via API
+    logger.info(f"[SandboxInit] Fetching skills for task {task_id}...")
+    skills_info = fetch_task_skills(task_id, auth_token)
+    logger.info(
+        f"[SandboxInit] Skills info: skills={skills_info.skills}, "
+        f"preload_skills={skills_info.preload_skills}, "
+        f"team_namespace={skills_info.team_namespace}"
+    )
+
+    # Combine skills and preload_skills
+    all_skills = list(set(skills_info.skills + skills_info.preload_skills))
+    if not all_skills:
+        logger.info("[SandboxInit] No skills to deploy, skipping")
+        return
+
+    # Download and deploy skills
+    logger.info(f"[SandboxInit] Deploying {len(all_skills)} skills: {all_skills}")
+    downloader = SkillDownloader(
+        auth_token=auth_token,
+        team_namespace=skills_info.team_namespace,
+    )
+    result = downloader.download_and_deploy(all_skills)
+    logger.info(
+        f"[SandboxInit] Skills deployment complete: "
+        f"{result.success_count}/{result.total_count} deployed to {result.skills_dir}"
+    )
 
 
 def create_app() -> FastAPI:

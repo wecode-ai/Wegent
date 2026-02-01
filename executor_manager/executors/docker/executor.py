@@ -653,6 +653,15 @@ class DockerExecutor(Executor):
         is_sandbox = task.get("type") == "sandbox"
         if not is_sandbox:
             cmd.extend(["-e", f"TASK_INFO={task_str}"])
+        else:
+            # For sandbox mode, pass auth_token and task_id via environment variables
+            # so the container can call Backend API to fetch and download skills
+            auth_token = task.get("auth_token")
+            if auth_token:
+                cmd.extend(["-e", f"AUTH_TOKEN={auth_token}"])
+            task_id = task.get("task_id")
+            if task_id:
+                cmd.extend(["-e", f"TASK_ID={task_id}"])
 
         cmd.extend(
             [

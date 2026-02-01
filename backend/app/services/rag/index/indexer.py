@@ -19,6 +19,7 @@ from app.schemas.rag import SplitterConfig
 from app.services.rag.splitter import SemanticSplitter, SentenceSplitter, SmartSplitter
 from app.services.rag.splitter.factory import create_splitter
 from app.services.rag.storage.base import BaseStorageBackend
+from shared.telemetry.decorators import add_span_event
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +213,16 @@ class DocumentIndexer:
         Returns:
             Indexing result dict including chunk metadata for storage
         """
+        add_span_event(
+            "rag.indexer.documents.received",
+            {
+                "knowledge_id": knowledge_id,
+                "doc_ref": doc_ref,
+                "source_file": source_file,
+                "document_count": str(len(documents)),
+            },
+        )
+
         # Sanitize document metadata to prevent ES mapping conflicts
         # This removes complex nested structures from PPTX/DOCX metadata
         for doc in documents:
@@ -219,6 +230,15 @@ class DocumentIndexer:
 
         # Split documents into nodes
         nodes = self.splitter.split_documents(documents)
+        add_span_event(
+            "rag.indexer.documents.split",
+            {
+                "knowledge_id": knowledge_id,
+                "doc_ref": doc_ref,
+                "node_count": str(len(nodes)),
+                "splitter_type": type(self.splitter).__name__,
+            },
+        )
 
         # Build chunk metadata for storage in database
         chunks_data = self._build_chunks_metadata(nodes)
@@ -227,6 +247,15 @@ class DocumentIndexer:
         created_at = datetime.now(timezone.utc).isoformat()
 
         # Delegate to storage backend for metadata addition and indexing
+        add_span_event(
+            "rag.indexer.vector_store.indexing_started",
+            {
+                "knowledge_id": knowledge_id,
+                "doc_ref": doc_ref,
+                "node_count": str(len(nodes)),
+                "storage_backend": type(self.storage_backend).__name__,
+            },
+        )
         result = self.storage_backend.index_with_metadata(
             nodes=nodes,
             knowledge_id=knowledge_id,
@@ -235,6 +264,16 @@ class DocumentIndexer:
             created_at=created_at,
             embed_model=self.embed_model,
             **kwargs,
+        )
+        add_span_event(
+            "rag.indexer.vector_store.indexing_completed",
+            {
+                "knowledge_id": knowledge_id,
+                "doc_ref": doc_ref,
+                "indexed_count": str(result.get("indexed_count", 0)),
+                "index_name": result.get("index_name", "unknown"),
+                "status": result.get("status", "unknown"),
+            },
         )
 
         # Add document info to result

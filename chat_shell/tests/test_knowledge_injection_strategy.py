@@ -292,11 +292,22 @@ class TestKnowledgeBaseTool:
 
         # Mock HTTP methods to simulate HTTP mode
         with patch.object(
-            tool, "_get_kb_size_info_via_http", new_callable=AsyncMock
-        ) as mock_kb_size:
-            mock_kb_size.return_value = {
+            tool, "_get_kb_info_via_http", new_callable=AsyncMock
+        ) as mock_kb_info:
+            mock_kb_info.return_value = {
                 "total_file_size": 1000,
                 "total_estimated_tokens": 250,
+                "items": [
+                    {
+                        "id": 1,
+                        "total_file_size": 1000,
+                        "document_count": 10,
+                        "estimated_tokens": 250,
+                        "max_calls_per_conversation": 10,
+                        "exempt_calls_before_check": 5,
+                        "name": "Test KB",
+                    }
+                ],
             }
 
             with patch.object(

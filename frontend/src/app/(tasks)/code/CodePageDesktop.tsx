@@ -20,6 +20,7 @@ import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { Team, WorkbenchData } from '@/types/api'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskStateMachine } from '@/features/tasks/hooks/useTaskStateMachine'
 import { saveLastTab } from '@/utils/userPreferences'
 import { calculateOpenLinks } from '@/utils/openLinks'
 import { useUser } from '@/features/common/UserContext'
@@ -52,8 +53,8 @@ export function CodePageDesktop() {
   const { selectedTaskDetail, setSelectedTask, refreshTasks, refreshSelectedTaskDetail } =
     useTaskContext()
 
-  // Chat stream context for real-time workbench and thinking data
-  const { getStreamState, clearAllStreams } = useChatStreamContext()
+  // Chat stream context for clearAllStreams
+  const { clearAllStreams } = useChatStreamContext()
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title
@@ -135,14 +136,14 @@ export function CodePageDesktop() {
     details?: Record<string, unknown>
   }
 
-  // Get real-time thinking and workbench data from stream state
-  // Priority: stream state (real-time) > selectedTaskDetail (API polling)
-  const { thinkingData, workbenchData } = useMemo(() => {
-    const currentTaskId = selectedTaskDetail?.id
-    const streamState = currentTaskId ? getStreamState(currentTaskId) : undefined
+  // Use reactive state machine hook for real-time updates
+  const { state: taskState } = useTaskStateMachine(selectedTaskDetail?.id)
 
-    // Try to get data from stream state first (real-time updates via WebSocket)
-    if (streamState?.messages && streamState.messages.size > 0) {
+  // Get real-time thinking and workbench data from state machine
+  // Priority: state machine (real-time) > selectedTaskDetail (API polling)
+  const { thinkingData, workbenchData } = useMemo(() => {
+    // Try to get data from state machine first (real-time updates via WebSocket)
+    if (taskState?.messages && taskState.messages.size > 0) {
       // Find the latest AI message with result data (iterate in reverse order to get the newest)
       // Priority: streaming message > completed message with result
       let latestAiMessageWithResult: {
@@ -150,7 +151,7 @@ export function CodePageDesktop() {
         workbench: WorkbenchData | null
       } | null = null
 
-      for (const msg of streamState.messages.values()) {
+      for (const msg of taskState.messages.values()) {
         if (msg.type === 'ai') {
           // For streaming messages, always use their result (real-time updates)
           if (msg.status === 'streaming' && msg.result) {
@@ -189,21 +190,9 @@ export function CodePageDesktop() {
       }
     }
 
-    // Fallback to selectedTaskDetail (API polling data)
-    if (selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0) {
-      const latestSubtask = selectedTaskDetail.subtasks[selectedTaskDetail.subtasks.length - 1]
-      if (latestSubtask?.result && typeof latestSubtask.result === 'object') {
-        const result = latestSubtask.result as { thinking?: unknown[] }
-        const thinking =
-          result.thinking && Array.isArray(result.thinking)
-            ? (result.thinking as ThinkingStep[])
-            : null
-        return { thinkingData: thinking, workbenchData: selectedTaskDetail?.workbench || null }
-      }
-    }
-
+    // Fallback to selectedTaskDetail workbench data only (subtasks are now managed by TaskStateMachine)
     return { thinkingData: null, workbenchData: selectedTaskDetail?.workbench || null }
-  }, [selectedTaskDetail, getStreamState])
+  }, [taskState, selectedTaskDetail])
 
   // Save last active tab to localStorage
   useEffect(() => {

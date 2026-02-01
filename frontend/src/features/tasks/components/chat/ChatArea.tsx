@@ -24,7 +24,7 @@ import type { ContextItem } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
 import { useTaskContext } from '../../contexts/taskContext'
-import { useChatStreamContext } from '../../contexts/chatStreamContext'
+import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
 import { Button } from '@/components/ui/button'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
@@ -90,14 +90,8 @@ function ChatAreaContent({
   // Task context
   const { selectedTaskDetail, setSelectedTask, accessDenied, clearAccessDenied } = useTaskContext()
 
-  // Stream context for getStreamState
-  // getStreamState is used to access messages (SINGLE SOURCE OF TRUTH per AGENTS.md)
-  const { getStreamState } = useChatStreamContext()
-
-  // Get stream state for current task to check messages
-  const currentStreamState = selectedTaskDetail?.id
-    ? getStreamState(selectedTaskDetail.id)
-    : undefined
+  // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
+  const { state: taskState } = useTaskStateMachine(selectedTaskDetail?.id)
 
   // Chat area state (team, repo, branch, model, input, toggles, etc.)
   const chatState = useChatAreaState({
@@ -108,18 +102,27 @@ function ChatAreaContent({
   })
 
   // Compute subtask info for scroll management
-  const subtaskList = selectedTaskDetail?.subtasks ?? []
-  const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null
-  const lastSubtaskId = lastSubtask?.id ?? null
-  const lastSubtaskUpdatedAt = lastSubtask?.updated_at || lastSubtask?.completed_at || null
+  // Note: Now using taskState from state machine instead of selectedTaskDetail.subtasks
+  // The state machine messages are the single source of truth
+  const lastSubtaskId = useMemo(() => {
+    if (!taskState?.messages || taskState.messages.size === 0) return null
+    let maxSubtaskId: number | null = null
+    for (const msg of taskState.messages.values()) {
+      if (msg.subtaskId && (maxSubtaskId === null || msg.subtaskId > maxSubtaskId)) {
+        maxSubtaskId = msg.subtaskId
+      }
+    }
+    return maxSubtaskId
+  }, [taskState?.messages])
+  const lastSubtaskUpdatedAt = null // No longer needed from subtasks, scroll management uses other signals
   // Determine if there are messages to display (computed early for hooks)
-  // Uses context messages as the single source of truth, not selectedTaskDetail.subtasks
+  // Uses state machine messages as the single source of truth, not selectedTaskDetail.subtasks
   const hasMessagesForHooks = useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id
-    // Check messages from context (single source of truth)
-    const hasContextMessages = currentStreamState?.messages && currentStreamState.messages.size > 0
+    // Check messages from state machine (single source of truth)
+    const hasContextMessages = taskState?.messages && taskState.messages.size > 0
     return Boolean(hasSelectedTask || hasContextMessages)
-  }, [selectedTaskDetail, currentStreamState?.messages])
+  }, [selectedTaskDetail, taskState?.messages])
 
   // Get taskId from URL for team sync logic
   const searchParams = useSearchParams()
@@ -344,17 +347,17 @@ function ChatAreaContent({
   })
 
   // Determine if there are messages to display (full computation)
+  // Note: Now using taskState.messages from state machine instead of selectedTaskDetail.subtasks
   const hasMessages = useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id
     const hasNewTaskStream =
       !selectedTaskDetail?.id && streamHandlers.pendingTaskId && streamHandlers.isStreaming
-    const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0
     const hasLocalPending = streamHandlers.localPendingMessage !== null
-    const hasUnifiedMessages =
-      streamHandlers.currentStreamState?.messages &&
-      streamHandlers.currentStreamState.messages.size > 0
+    // Use taskState from state machine (single source of truth)
+    const hasUnifiedMessages = taskState?.messages && taskState.messages.size > 0
 
-    if (hasSelectedTask && hasSubtasks) {
+    // If we have a selected task with messages in state machine, show messages
+    if (hasSelectedTask && hasUnifiedMessages) {
       return true
     }
 
@@ -372,7 +375,7 @@ function ChatAreaContent({
     streamHandlers.isStreaming,
     streamHandlers.pendingTaskId,
     streamHandlers.localPendingMessage,
-    streamHandlers.currentStreamState?.messages,
+    taskState?.messages,
   ])
 
   // Note: Team selection is now handled by useTeamSelection hook in TeamSelector component

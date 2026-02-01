@@ -964,6 +964,20 @@ async def _stream_with_http_adapter(
     first_token_received = False
 
     try:
+        # Update subtask status to RUNNING immediately for chat_shell mode
+        # Unlike executor mode (which waits for executor_manager to pick up the task),
+        # chat_shell processes the request directly, so we set RUNNING status here
+        from app.services.chat.storage.db import db_handler
+
+        await db_handler.update_subtask_status(
+            subtask_id=subtask_id,
+            status="RUNNING",
+        )
+        logger.info(
+            "[HTTP_ADAPTER] Updated subtask status to RUNNING: subtask_id=%d",
+            subtask_id,
+        )
+
         # Stream events from chat_shell and forward to WebSocket
         async for event in adapter.chat(chat_request):
             # Check for cancellation (both local event and Redis flag)
@@ -1003,6 +1017,8 @@ async def _stream_with_http_adapter(
                     await emitter.emit_chat_chunk(
                         task_id=task_id,
                         subtask_id=subtask_id,
+                        block_id=event.data.get("block_id"),
+                        block_offset=event.data.get("block_offset"),
                         content=chunk_text,
                         offset=offset,
                     )
@@ -1032,6 +1048,7 @@ async def _stream_with_http_adapter(
                 tool_name = event.data.get("name", event.data.get("tool_name", ""))
                 tool_input = event.data.get("input", event.data.get("tool_input", {}))
                 display_name = event.data.get("display_name", tool_name)
+                blocks = event.data.get("blocks", [])
 
                 logger.info(
                     "[HTTP_ADAPTER] TOOL_START: id=%s, name=%s, display_name=%s, event.data=%s",
@@ -1060,6 +1077,7 @@ async def _stream_with_http_adapter(
                 result_data = {
                     "shell_type": "Chat",
                     "thinking": thinking_steps.copy(),
+                    "blocks": blocks,
                 }
                 await emitter.emit_chat_chunk(
                     task_id=task_id,
@@ -1076,6 +1094,7 @@ async def _stream_with_http_adapter(
                 tool_output = event.data.get(
                     "output", event.data.get("tool_output", "")
                 )
+                blocks = event.data.get("blocks", [])
 
                 logger.info(
                     "[HTTP_ADAPTER] TOOL_RESULT: id=%s, name=%s, event.data=%s",
@@ -1144,6 +1163,7 @@ async def _stream_with_http_adapter(
                 result_data = {
                     "shell_type": "Chat",
                     "thinking": thinking_steps.copy(),
+                    "blocks": blocks,
                 }
                 await emitter.emit_chat_chunk(
                     task_id=task_id,
@@ -1406,6 +1426,20 @@ async def _stream_with_bridge(
         if not await core.acquire_resources():
             await bridge.stop()
             return
+
+        # Update subtask status to RUNNING immediately for chat_shell mode
+        # Unlike executor mode (which waits for executor_manager to pick up the task),
+        # chat_shell processes the request directly, so we set RUNNING status here
+        from app.services.chat.storage.db import db_handler
+
+        await db_handler.update_subtask_status(
+            subtask_id=subtask_id,
+            status="RUNNING",
+        )
+        logger.info(
+            "[BRIDGE] Updated subtask status to RUNNING: subtask_id=%d",
+            subtask_id,
+        )
 
         # Prepare extra tools
         extra_tools: list[BaseTool] = (

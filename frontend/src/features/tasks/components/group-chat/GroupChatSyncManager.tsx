@@ -8,10 +8,10 @@
  * Handles polling for new messages in group chats.
  * This component should be mounted when a group chat task is active.
  *
- * Note: Streaming content recovery for other users' messages is handled by
- * useMultipleStreamingRecovery in MessagesArea, which detects RUNNING ASSISTANT
- * subtasks and recovers their streaming content via the unified stream endpoint.
- * This simplifies the architecture by using a single mechanism for all streaming recovery.
+ * Note: Streaming content recovery is handled by TaskStateMachine, which detects
+ * RUNNING ASSISTANT subtasks and recovers their streaming content via WebSocket
+ * joinTask and Redis cached_content. This simplifies the architecture by using
+ * a single state machine for all message state management.
  */
 
 import { useEffect, useRef } from 'react'
@@ -56,8 +56,7 @@ export function GroupChatSyncManager({
   onStreamComplete,
 }: GroupChatSyncManagerProps) {
   // Polling for new messages
-  // Note: streamingSubtaskId is still tracked by polling, but streaming content
-  // recovery is handled by useMultipleStreamingRecovery in MessagesArea
+  // Note: Streaming content recovery is handled by TaskStateMachine
   const {
     streamingSubtaskId,
     hasStreaming,

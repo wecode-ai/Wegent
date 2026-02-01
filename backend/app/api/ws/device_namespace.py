@@ -37,6 +37,7 @@ from app.schemas.device import (
     DeviceOfflineEvent,
     DeviceOnlineEvent,
     DeviceRegisterPayload,
+    DeviceSlotUpdateEvent,
     DeviceStatusEvent,
     DeviceStatusPayload,
 )
@@ -672,14 +673,20 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if session_device_id != payload.device_id:
             return {"error": "Device ID mismatch"}
 
-        # Refresh Redis TTL
-        await device_service.refresh_device_heartbeat(user_id, payload.device_id)
+        # Refresh Redis TTL and update running_task_ids
+        await device_service.refresh_device_heartbeat(
+            user_id, payload.device_id, payload.running_task_ids
+        )
 
         # Database operation: quick in, quick out
         _update_device_heartbeat(user_id, payload.device_id)
 
+        # Broadcast slot update to user
+        await self._broadcast_device_slot_update(user_id, payload.device_id)
+
         logger.debug(
-            f"[Device WS] Heartbeat received: user={user_id}, device={payload.device_id}"
+            f"[Device WS] Heartbeat received: user={user_id}, device={payload.device_id}, "
+            f"running_tasks={len(payload.running_task_ids)}"
         )
 
         return {"success": True}
@@ -864,6 +871,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
             f"[Device WS] Task complete: subtask={subtask_id}, status={result.status}"
         )
 
+        # Broadcast slot update after task completion
+        await self._broadcast_device_slot_update(user_id, device_id)
+
         return {"success": True}
 
     # ============================================================
@@ -930,6 +940,44 @@ class DeviceNamespace(socketio.AsyncNamespace):
         logger.debug(
             f"[Device WS] Broadcast device:status to user:{user_id}, status={status}"
         )
+
+    async def _broadcast_device_slot_update(self, user_id: int, device_id: str) -> None:
+        """
+        Broadcast device:slot_update event to user room via chat namespace.
+
+        Queries current slot usage and emits the update.
+        """
+        from app.core.socketio import get_sio
+        from app.schemas.device import DeviceRunningTask
+
+        try:
+            with _db_session() as db:
+                slot_info = await device_service.get_device_slot_usage_async(
+                    db, user_id, device_id
+                )
+
+            sio = get_sio()
+            event_data = DeviceSlotUpdateEvent(
+                device_id=device_id,
+                slot_used=slot_info["used"],
+                slot_max=slot_info["max"],
+                running_tasks=[
+                    DeviceRunningTask(**task) for task in slot_info["running_tasks"]
+                ],
+            ).model_dump()
+
+            await sio.emit(
+                "device:slot_update",
+                event_data,
+                room=f"user:{user_id}",
+                namespace="/chat",
+            )
+            logger.debug(
+                f"[Device WS] Broadcast device:slot_update to user:{user_id}, "
+                f"slot_used={slot_info['used']}"
+            )
+        except Exception as e:
+            logger.error(f"[Device WS] Error broadcasting slot update: {e}")
 
 
 # Factory function to create the namespace
