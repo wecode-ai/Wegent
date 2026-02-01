@@ -227,7 +227,7 @@
     "container_error": "执行环境异常：容器已停止运行，请新建一个对话任务重试",
     "generic_error": "请求失败：未知错误，请重试或联系管理员",
     "copy_error": "复制错误详情",
-    "task_expired_restorable": "任务已过期，点击"继续对话"可恢复"
+    "task_expired_restorable": "任务已过期，点击「继续对话」可恢复"
   },
   "restore": {
     "dialog_title": "任务已过期",
