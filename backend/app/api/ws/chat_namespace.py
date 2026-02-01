@@ -15,12 +15,14 @@ Business logic has been extracted to services/chat/ modules:
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 import socketio
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.ws.context_decorators import auto_task_context
@@ -816,7 +818,6 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.exception(f"[WS] chat:send HTTPException: {e}")
             if isinstance(e.detail, dict):
                 # Serialize dict detail as JSON string for frontend parsing
-                import json
                 error_response = {"error": json.dumps(e.detail)}
             else:
                 error_response = {"error": str(e.detail)}
