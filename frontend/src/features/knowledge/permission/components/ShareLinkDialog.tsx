@@ -34,7 +34,7 @@ export function ShareLinkDialog({
   // Generate share link
   const shareLink =
     typeof window !== 'undefined'
-      ? `${window.location.origin}/knowledge/${kbId}/share`
+      ? `${window.location.origin}/knowledge/share/${kbId}`
       : ''
 
   const handleCopy = async () => {

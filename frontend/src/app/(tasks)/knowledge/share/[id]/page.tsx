@@ -17,7 +17,7 @@ import type { PermissionLevel } from '@/types/knowledge'
 /**
  * Knowledge Base Share Page
  *
- * This page is accessed via share links (e.g., /knowledge/123/share).
+ * This page is accessed via share links (e.g., /knowledge/share/123).
  * It allows users to:
  * 1. View KB info if they already have access
  * 2. Apply for permission if they don't have access
@@ -27,7 +27,7 @@ export default function KnowledgeBaseSharePage() {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const params = useParams()
-  const kbId = params.knowledgeBaseId ? parseInt(params.knowledgeBaseId as string, 10) : 0
+  const kbId = params.id ? parseInt(params.id as string, 10) : 0
 
   const [selectedLevel, setSelectedLevel] = useState<PermissionLevel>('view')
   const [applySuccess, setApplySuccess] = useState(false)
