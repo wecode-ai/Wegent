@@ -159,6 +159,19 @@ export interface PublicSharedTaskResponse {
   created_at: string
 }
 
+// Task Restore Types
+export interface RestoreTaskRequest {
+  message?: string // Optional message to send after restoration
+}
+
+export interface RestoreTaskResponse {
+  success: boolean
+  task_id: number
+  task_type: string
+  executor_rebuilt: boolean
+  message: string
+}
+
 // Pipeline stage confirmation types
 export interface ConfirmStageRequest {
   confirmed_prompt: string // The edited/confirmed prompt to pass to next stage
@@ -433,5 +446,18 @@ export const taskApis = {
    */
   getPipelineStageInfo: async (taskId: number): Promise<PipelineStageInfo> => {
     return apiClient.get(`/tasks/${taskId}/pipeline-stage-info`)
+  },
+
+  /**
+   * Restore an expired task to continue the conversation
+   * @param taskId - Task ID to restore
+   * @param message - Optional message to send after restoration
+   */
+  restoreTask: async (taskId: number, message?: string): Promise<RestoreTaskResponse> => {
+    const body: RestoreTaskRequest = {}
+    if (message) {
+      body.message = message
+    }
+    return apiClient.post(`/tasks/${taskId}/restore`, body)
   },
 }

@@ -40,6 +40,7 @@ from app.api.endpoints.adapter import (
     subscriptions,
     task_knowledge_bases,
     task_members,
+    task_restore,
     tasks,
     teams,
 )
@@ -91,6 +92,7 @@ api_router.include_router(
     subscription_market.router, prefix="/market", tags=["subscription-market"]
 )
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
+api_router.include_router(task_restore.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])
 api_router.include_router(task_members.router, prefix="/tasks", tags=["task-members"])
 api_router.include_router(
