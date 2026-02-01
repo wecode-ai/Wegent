@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.services.channels.dingtalk.device_selection import (
-    DINGTALK_USER_DEVICE_PREFIX,
-    DINGTALK_USER_DEVICE_TTL,
+from app.services.channels.device_selection import (
+    CHANNEL_USER_DEVICE_PREFIX,
+    CHANNEL_USER_DEVICE_TTL,
     DeviceSelection,
     DeviceSelectionManager,
     DeviceType,
@@ -87,20 +87,20 @@ class TestDeviceSelectionManager:
     def test_generate_key(self):
         """Test Redis key generation."""
         key = DeviceSelectionManager._generate_key(123)
-        assert key == f"{DINGTALK_USER_DEVICE_PREFIX}123"
+        assert key == f"{CHANNEL_USER_DEVICE_PREFIX}123"
 
     @pytest.mark.asyncio
     async def test_get_selection_no_cache(self):
         """Test getting selection when no cache exists."""
         with patch(
-            "app.services.channels.dingtalk.device_selection.cache_manager"
+            "app.services.channels.device_selection.cache_manager"
         ) as mock_cache:
             mock_cache.get = AsyncMock(return_value=None)
 
             selection = await DeviceSelectionManager.get_selection(123)
 
             assert selection.device_type == DeviceType.CHAT
-            mock_cache.get.assert_called_once_with(f"{DINGTALK_USER_DEVICE_PREFIX}123")
+            mock_cache.get.assert_called_once_with(f"{CHANNEL_USER_DEVICE_PREFIX}123")
 
     @pytest.mark.asyncio
     async def test_get_selection_with_cache(self):
@@ -111,7 +111,7 @@ class TestDeviceSelectionManager:
             "device_name": "My Mac",
         }
         with patch(
-            "app.services.channels.dingtalk.device_selection.cache_manager"
+            "app.services.channels.device_selection.cache_manager"
         ) as mock_cache:
             mock_cache.get = AsyncMock(return_value=cached_data)
 
@@ -130,7 +130,7 @@ class TestDeviceSelectionManager:
             device_name="My Mac",
         )
         with patch(
-            "app.services.channels.dingtalk.device_selection.cache_manager"
+            "app.services.channels.device_selection.cache_manager"
         ) as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
 
@@ -139,15 +139,15 @@ class TestDeviceSelectionManager:
             assert result is True
             mock_cache.set.assert_called_once()
             call_args = mock_cache.set.call_args
-            assert call_args[0][0] == f"{DINGTALK_USER_DEVICE_PREFIX}123"
+            assert call_args[0][0] == f"{CHANNEL_USER_DEVICE_PREFIX}123"
             assert call_args[0][1] == selection.to_dict()
-            assert call_args[1]["expire"] == DINGTALK_USER_DEVICE_TTL
+            assert call_args[1]["expire"] == CHANNEL_USER_DEVICE_TTL
 
     @pytest.mark.asyncio
     async def test_clear_selection(self):
         """Test clearing device selection."""
         with patch(
-            "app.services.channels.dingtalk.device_selection.cache_manager"
+            "app.services.channels.device_selection.cache_manager"
         ) as mock_cache:
             mock_cache.delete = AsyncMock(return_value=True)
 
@@ -155,14 +155,14 @@ class TestDeviceSelectionManager:
 
             assert result is True
             mock_cache.delete.assert_called_once_with(
-                f"{DINGTALK_USER_DEVICE_PREFIX}123"
+                f"{CHANNEL_USER_DEVICE_PREFIX}123"
             )
 
     @pytest.mark.asyncio
     async def test_set_local_device(self):
         """Test setting local device selection."""
         with patch(
-            "app.services.channels.dingtalk.device_selection.cache_manager"
+            "app.services.channels.device_selection.cache_manager"
         ) as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
 
@@ -181,7 +181,7 @@ class TestDeviceSelectionManager:
     async def test_set_cloud_executor(self):
         """Test setting cloud executor selection."""
         with patch(
-            "app.services.channels.dingtalk.device_selection.cache_manager"
+            "app.services.channels.device_selection.cache_manager"
         ) as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
 
@@ -196,7 +196,7 @@ class TestDeviceSelectionManager:
     async def test_set_chat_mode(self):
         """Test setting chat mode (clearing selection)."""
         with patch(
-            "app.services.channels.dingtalk.device_selection.cache_manager"
+            "app.services.channels.device_selection.cache_manager"
         ) as mock_cache:
             mock_cache.delete = AsyncMock(return_value=True)
 
