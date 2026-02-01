@@ -1050,12 +1050,16 @@ async def _stream_with_http_adapter(
                 display_name = event.data.get("display_name", tool_name)
                 blocks = event.data.get("blocks", [])
 
+                # Log event.data without blocks to reduce log size
+                event_data_without_blocks = {
+                    k: v for k, v in event.data.items() if k != "blocks"
+                }
                 logger.info(
                     "[HTTP_ADAPTER] TOOL_START: id=%s, name=%s, display_name=%s, event.data=%s",
                     tool_id,
                     tool_name,
                     display_name,
-                    event.data,
+                    event_data_without_blocks,
                 )
 
                 thinking_steps.append(
@@ -1096,13 +1100,15 @@ async def _stream_with_http_adapter(
                 )
                 blocks = event.data.get("blocks", [])
 
+                # Log event.data without blocks and output to reduce log size
+                event_data_without_blocks_output = {
+                    k: v for k, v in event.data.items() if k not in ("output", "blocks")
+                }
                 logger.info(
                     "[HTTP_ADAPTER] TOOL_RESULT: id=%s, name=%s, event.data=%s",
                     tool_id,
                     tool_name,
-                    {
-                        k: v for k, v in event.data.items() if k != "output"
-                    },  # Skip output to reduce log size
+                    event_data_without_blocks_output,
                 )
 
                 # Determine status based on event data
