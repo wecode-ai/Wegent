@@ -40,7 +40,7 @@ A fully open-source chat agent with powerful capabilities:
 - **Extensions**: Customize prompts, MCP tools and Skills (includes chart drawing skill)
 
 ### 💻 Code Mode
-<img src="https://github.com/user-attachments/assets/2b210d33-2569-4bc9-acac-e163de4e12a5" width="100%" alt="Knowledge Demo"/>
+<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
 
 A cloud-based Claude Code execution engine:
 
@@ -62,7 +62,7 @@ A cloud-based AI task trigger system:
 - **Event Filtering**: Filter conditions like "only notify me if it will rain tomorrow"
 
 ### 📚 Knowledge Mode
-<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
+<img src="https://github.com/user-attachments/assets/2b210d33-2569-4bc9-acac-e163de4e12a5" width="100%" alt="Knowledge Demo"/>
 
 A cloud-based AI document repository:
 
