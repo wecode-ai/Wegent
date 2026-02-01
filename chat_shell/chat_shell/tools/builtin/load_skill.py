@@ -11,15 +11,20 @@ This tool implements session-level skill expansion caching with persistence:
 - After 5 turns without being used, skills are automatically unloaded
 - Skill state is restored from chat history when a new conversation turn starts
 
+Key features:
+- Batch loading: Supports loading multiple skills in a single call
+- Dependency resolution: Automatically loads skill dependencies in topological order
+- Backward compatible: Single skill_name input still works
+
 In HTTP mode, skill prompts are obtained from the skill_configs passed via ChatRequest.
 """
 
 import logging
-from typing import Any, Optional, Set
+from typing import Any, List, Optional, Set, Union
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -28,21 +33,43 @@ DEFAULT_SKILL_RETENTION_TURNS = 5
 
 
 class LoadSkillInput(BaseModel):
-    """Input schema for load_skill tool."""
+    """Input schema for load_skill tool.
 
-    skill_name: str = Field(description="The name of the skill to load")
+    Supports both single skill name (string) and multiple skill names (list).
+    For backward compatibility, both formats are accepted.
+    """
+
+    skill_names: Union[str, List[str]] = Field(
+        description="The name(s) of the skill(s) to load. "
+        "Can be a single skill name (string) or multiple skill names (list). "
+        "Dependencies will be automatically loaded in the correct order."
+    )
+
+    @field_validator("skill_names", mode="before")
+    @classmethod
+    def normalize_skill_names(cls, v: Union[str, List[str]]) -> List[str]:
+        """Normalize input to always be a list."""
+        if isinstance(v, str):
+            return [v]
+        return v
 
 
 class LoadSkillTool(BaseTool):
-    """Tool to load a skill and get its full prompt content.
+    """Tool to load skill(s) and inject their prompts into the system context.
 
     This tool enables on-demand skill expansion - instead of including
     all skill prompts in the system prompt, skills are loaded only
     when needed, keeping the context window efficient.
 
+    Key features:
+    - Batch loading: Load multiple skills in one call
+    - Dependency resolution: Automatically loads dependencies recursively
+    - Topological ordering: Dependencies are loaded before dependent skills
+    - Deduplication: Each skill is only loaded once, even if requested multiple times
+
     Session-level caching with persistence:
     - Skills are cached within a single conversation turn (one user message -> AI response)
-    - First call returns the full prompt, subsequent calls return a short confirmation
+    - First call loads the skill, subsequent calls confirm it's still active
     - This prevents redundant prompt expansion during multi-tool-call cycles
     - Skills remain loaded for up to 5 conversation turns (configurable)
     - Skill state is restored from chat history at the start of each turn
@@ -56,11 +83,12 @@ class LoadSkillTool(BaseTool):
     name: str = "load_skill"
     display_name: str = "加载技能"
     description: str = (
-        "Load a skill's full instructions when you need specialized guidance. "
+        "Load skill(s) to get specialized guidance and instructions. "
         "Call this tool when your task matches one of the available skills' descriptions. "
-        "The skill will provide detailed instructions, examples, and best practices. "
-        "Note: Within the same response, if you've already loaded a skill, calling it again "
-        "will confirm it's still active without repeating the full instructions."
+        "You can load a single skill by name or multiple skills at once using a list. "
+        "Dependencies will be automatically loaded in the correct order. "
+        "The skill instructions will be added to the system prompt. "
+        "Note: Within the same response, already loaded skills will be confirmed as active."
     )
     args_schema: type[BaseModel] = LoadSkillInput
 
@@ -68,7 +96,8 @@ class LoadSkillTool(BaseTool):
     user_id: int
     skill_names: list[str]  # Available skill names for this session
     # Skill metadata from ChatRequest (skill_configs)
-    skill_metadata: dict[str, dict] = {}  # skill_name -> {description, prompt, ...}
+    # skill_name -> {description, prompt, displayName, dependencies, ...}
+    skill_metadata: dict[str, dict] = Field(default_factory=dict)
     # Number of turns to retain a loaded skill (default: 5)
     skill_retention_turns: int = DEFAULT_SKILL_RETENTION_TURNS
 
@@ -103,33 +132,103 @@ class LoadSkillTool(BaseTool):
         self._skill_remaining_turns = {}
         self._state_restored = False
 
-    def _run(
-        self,
-        skill_name: str,
-        run_manager: CallbackManagerForToolRun | None = None,
-    ) -> str:
-        """Load skill and return prompt content."""
-        if skill_name not in self.skill_names:
-            return (
-                f"Error: Skill '{skill_name}' is not available. "
-                f"Available skills: {', '.join(self.skill_names)}"
-            )
+    def _resolve_dependencies(
+        self, requested_skills: List[str]
+    ) -> tuple[List[str], List[str], List[str]]:
+        """Resolve all dependencies for requested skills using topological sort.
 
-        # Check if skill was already expanded in this turn
-        if skill_name in self._expanded_skills:
-            # Reset the remaining turns counter since skill is being used again
-            self._skill_remaining_turns[skill_name] = self.skill_retention_turns
-            return (
-                f"Skill '{skill_name}' is already active in this conversation turn. "
-                f"The skill instructions have been added to the system prompt."
-            )
+        This method recursively collects all dependencies and returns them
+        in topological order (dependencies before dependents).
 
+        Args:
+            requested_skills: List of skill names to load
+
+        Returns:
+            Tuple of (load_order, skipped_already_loaded, not_found):
+            - load_order: Skills in topological order (dependencies first)
+            - skipped_already_loaded: Skills that are already loaded
+            - not_found: Skills that don't exist
+        """
+        all_skills: Set[str] = set()
+        load_order: List[str] = []
+        skipped_already_loaded: List[str] = []
+        not_found: List[str] = []
+
+        def collect_deps(
+            skill_name: str, visited: Set[str], rec_stack: Set[str]
+        ) -> None:
+            """Collect dependencies using DFS with cycle detection."""
+            if skill_name in visited:
+                return
+
+            # Check if skill exists
+            if skill_name not in self.skill_names:
+                if skill_name not in not_found:
+                    not_found.append(skill_name)
+                return
+
+            # Check if already loaded
+            if skill_name in self._expanded_skills:
+                if skill_name not in skipped_already_loaded:
+                    skipped_already_loaded.append(skill_name)
+                    # Reset retention counter since skill is being requested again
+                    self._skill_remaining_turns[skill_name] = self.skill_retention_turns
+                return
+
+            # Mark as visiting (for cycle detection - should not happen if backend validated)
+            rec_stack.add(skill_name)
+
+            # Get skill dependencies
+            skill_info = self.skill_metadata.get(skill_name, {})
+            dependencies = skill_info.get("dependencies") or []
+
+            # Process dependencies first
+            for dep in dependencies:
+                if dep in rec_stack:
+                    # Circular dependency detected - skip to avoid infinite loop
+                    # This shouldn't happen if backend validates properly
+                    logger.warning(
+                        "[LoadSkillTool] Circular dependency detected: %s -> %s, skipping",
+                        skill_name,
+                        dep,
+                    )
+                    continue
+                collect_deps(dep, visited, rec_stack)
+
+            # Mark as visited
+            visited.add(skill_name)
+            rec_stack.discard(skill_name)
+
+            # Add to load order (dependencies already added before this)
+            if skill_name not in all_skills:
+                all_skills.add(skill_name)
+                load_order.append(skill_name)
+
+        # Process all requested skills
+        visited: Set[str] = set()
+        for skill_name in requested_skills:
+            collect_deps(skill_name, visited, set())
+
+        return load_order, skipped_already_loaded, not_found
+
+    def _load_single_skill(self, skill_name: str) -> bool:
+        """Load a single skill and store its prompt.
+
+        Args:
+            skill_name: The name of the skill to load
+
+        Returns:
+            True if loaded successfully, False otherwise
+        """
         # Get skill metadata
         skill_info = self.skill_metadata.get(skill_name, {})
         prompt = skill_info.get("prompt", "")
 
         if not prompt:
-            return f"Error: Skill '{skill_name}' has no prompt content."
+            logger.warning(
+                "[LoadSkillTool] Skill '%s' has no prompt content", skill_name
+            )
+            return False
 
         # Mark skill as expanded for this turn and store the prompt
         self._expanded_skills.add(skill_name)
@@ -149,16 +248,135 @@ class LoadSkillTool(BaseTool):
             self.skill_retention_turns,
         )
 
-        # Return a confirmation message (the actual prompt will be injected into system prompt)
-        return f"Skill '{skill_name}' has been loaded. The instructions have been added to the system prompt. Please follow them strictly."
+        return True
+
+    def _run(
+        self,
+        skill_names: Union[str, List[str]],
+        run_manager: CallbackManagerForToolRun | None = None,
+    ) -> str:
+        """Load skill(s) and return status summary.
+
+        Args:
+            skill_names: Single skill name or list of skill names to load
+
+        Returns:
+            Status summary of the loading operation
+        """
+        # Normalize input to list
+        if isinstance(skill_names, str):
+            requested_skills = [skill_names]
+        else:
+            requested_skills = skill_names
+
+        # Resolve dependencies and get load order
+        load_order, skipped, not_found = self._resolve_dependencies(requested_skills)
+
+        # Track results
+        loaded_skills: List[str] = []
+        failed_skills: List[str] = []
+        dependency_skills: List[str] = []  # Track which are dependencies vs requested
+
+        # Identify which skills are dependencies (not in original request)
+        requested_set = set(requested_skills)
+
+        # Load skills in order
+        for skill_name in load_order:
+            is_dependency = skill_name not in requested_set
+
+            if self._load_single_skill(skill_name):
+                if is_dependency:
+                    dependency_skills.append(skill_name)
+                loaded_skills.append(skill_name)
+            else:
+                failed_skills.append(skill_name)
+
+        # Build response summary
+        return self._build_response_summary(
+            loaded_skills=loaded_skills,
+            dependency_skills=dependency_skills,
+            skipped_skills=skipped,
+            not_found_skills=not_found,
+            failed_skills=failed_skills,
+        )
+
+    def _build_response_summary(
+        self,
+        loaded_skills: List[str],
+        dependency_skills: List[str],
+        skipped_skills: List[str],
+        not_found_skills: List[str],
+        failed_skills: List[str],
+    ) -> str:
+        """Build a human-readable response summary.
+
+        Args:
+            loaded_skills: Skills that were successfully loaded (including dependencies)
+            dependency_skills: Skills loaded as dependencies (subset of loaded_skills)
+            skipped_skills: Skills that were already loaded
+            not_found_skills: Skills that don't exist
+            failed_skills: Skills that failed to load (e.g., no prompt)
+
+        Returns:
+            Formatted status summary
+        """
+        total_loaded = len(loaded_skills)
+        total_skipped = len(skipped_skills)
+        total_failed = len(not_found_skills) + len(failed_skills)
+
+        # All skills already loaded
+        if total_loaded == 0 and total_skipped > 0 and total_failed == 0:
+            return (
+                f"ℹ️ All requested skills are already active: {', '.join(skipped_skills)}"
+            )
+
+        # Build response parts
+        parts = []
+
+        # Success case
+        if total_loaded > 0:
+            if total_failed == 0 and total_skipped == 0:
+                # Pure success
+                parts.append(f"✅ Successfully loaded {total_loaded} skill(s):")
+                for skill in loaded_skills:
+                    suffix = " (dependency)" if skill in dependency_skills else ""
+                    parts.append(f"  - {skill}{suffix}")
+                parts.append("")
+                parts.append("Skill prompts have been injected into system context.")
+            else:
+                # Partial success
+                parts.append("⚠️ Skill loading results:")
+                if loaded_skills:
+                    parts.append(f"  ✅ Loaded: {', '.join(loaded_skills)}")
+                if skipped_skills:
+                    parts.append(f"  ⏭️ Already active: {', '.join(skipped_skills)}")
+                if not_found_skills:
+                    parts.append(f"  ❌ Not found: {', '.join(not_found_skills)}")
+                if failed_skills:
+                    parts.append(f"  ❌ Failed: {', '.join(failed_skills)}")
+                parts.append("")
+                parts.append(
+                    "Successfully loaded skill prompts have been injected into system context."
+                )
+        else:
+            # All failed
+            parts.append("❌ Failed to load skills:")
+            if not_found_skills:
+                parts.append(f"  - Not found: {', '.join(not_found_skills)}")
+            if failed_skills:
+                parts.append(f"  - Load failed: {', '.join(failed_skills)}")
+            parts.append("")
+            parts.append(f"Available skills: {', '.join(self.skill_names)}")
+
+        return "\n".join(parts)
 
     async def _arun(
         self,
-        skill_name: str,
+        skill_names: Union[str, List[str]],
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        """Load skill asynchronously (same as sync since no I/O needed)."""
-        return self._run(skill_name, run_manager)
+        """Load skill(s) asynchronously (same as sync since no I/O needed)."""
+        return self._run(skill_names, run_manager)
 
     def clear_expanded_skills(self) -> None:
         """Clear the expanded skills cache and loaded prompts.
@@ -496,22 +714,44 @@ class LoadSkillTool(BaseTool):
         if not content or not isinstance(content, str):
             return loaded_skills
 
-        # Pattern 1: Match the load_skill tool result message
-        # "Skill 'skill_name' has been loaded..."
-        pattern1 = r"Skill '([^']+)' has been loaded"
-        matches = re.findall(pattern1, content)
-        loaded_skills.extend(matches)
+        # Pattern 1: Match the new batch load result message
+        # "Successfully loaded X skill(s):" followed by "- skill_name"
+        pattern_batch = r"- ([a-zA-Z0-9_-]+)(?:\s+\(dependency\))?"
+        batch_matches = re.findall(pattern_batch, content)
+        loaded_skills.extend(batch_matches)
 
-        # Pattern 2: Match the "already active" message (skill was loaded earlier in same turn)
+        # Pattern 2: Match "Loaded: skill1, skill2, ..."
+        pattern_loaded = r"✅ Loaded: ([a-zA-Z0-9_,\s-]+)"
+        loaded_match = re.search(pattern_loaded, content)
+        if loaded_match:
+            skills_str = loaded_match.group(1)
+            skills = [s.strip() for s in skills_str.split(",")]
+            loaded_skills.extend(skills)
+
+        # Pattern 3: Match legacy single skill load message
+        # "Skill 'skill_name' has been loaded..."
+        pattern_legacy = r"Skill '([^']+)' has been loaded"
+        legacy_matches = re.findall(pattern_legacy, content)
+        loaded_skills.extend(legacy_matches)
+
+        # Pattern 4: Match the "already active" message
         # "Skill 'skill_name' is already active..."
-        pattern2 = r"Skill '([^']+)' is already active"
-        matches = re.findall(pattern2, content)
-        loaded_skills.extend(matches)
+        pattern_active = r"Skill '([^']+)' is already active"
+        active_matches = re.findall(pattern_active, content)
+        loaded_skills.extend(active_matches)
+
+        # Pattern 5: Match "Already active: skill1, skill2, ..."
+        pattern_already = r"All requested skills are already active: ([a-zA-Z0-9_,\s-]+)"
+        already_match = re.search(pattern_already, content)
+        if already_match:
+            skills_str = already_match.group(1)
+            skills = [s.strip() for s in skills_str.split(",")]
+            loaded_skills.extend(skills)
 
         # Filter to only include skills that are available in this session
         valid_skills = [s for s in loaded_skills if s in self.skill_names]
 
-        return valid_skills
+        return list(set(valid_skills))  # Deduplicate
 
     def is_state_restored(self) -> bool:
         """Check if state has been restored from history.

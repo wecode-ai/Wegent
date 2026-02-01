@@ -493,6 +493,7 @@ class ChatConfigBuilder:
                     # Note: Preload decision is made by chat_shell based on preload_skills list
                     "skill_id": skill.id,  # Include skill ID for provider loading
                     "skill_user_id": skill.user_id,  # Include user_id for security check
+                    "dependencies": skill_crd.spec.dependencies,  # Skill dependencies
                 }
                 # Include config if present in skill spec
                 if skill_crd.spec.config:

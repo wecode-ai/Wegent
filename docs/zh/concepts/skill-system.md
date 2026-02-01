@@ -59,6 +59,9 @@ version: "1.0.0"
 author: "作者名"
 tags: ["标签1", "标签2"]
 bindShells: ["Chat", "ClaudeCode"]  # 兼容的 Shell 类型
+dependencies:                        # Skill 依赖（自动加载）
+  - base-skill
+  - utility-skill
 provider:
   module: provider                   # Python 模块名（不含 .py）
   class: MyToolProvider              # Provider 类名
@@ -67,8 +70,6 @@ tools:
     provider: provider_name
     config:
       timeout: 30
-dependencies:
-  - app.chat_shell.tools.pending_requests
 ---
 
 # Skill 提示词内容
@@ -86,9 +87,75 @@ dependencies:
 | `author` | 否 | 作者名 |
 | `tags` | 否 | 分类标签 |
 | `bindShells` | 否 | 兼容的 Shell 类型（如 "Chat", "ClaudeCode"） |
+| `dependencies` | 否 | 该 Skill 依赖的其他 Skill 名称列表（自动加载） |
 | `provider` | 否 | 动态工具的 Provider 配置 |
 | `tools` | 否 | 工具声明 |
-| `dependencies` | 否 | Python 模块依赖 |
+
+---
+
+## Skill 依赖
+
+Skill 可以声明对其他 Skill 的依赖。当加载具有依赖的 Skill 时，所有依赖项会按拓扑顺序自动先加载。
+
+### 定义依赖
+
+在 SKILL.md 的 frontmatter 中：
+
+```yaml
+---
+description: "高级 React 模式和优化"
+dependencies:
+  - react-basics          # 此 Skill 会先被加载
+  - typescript-fundamentals
+bindShells:
+  - ClaudeCode
+  - Chat
+---
+```
+
+### 依赖特性
+
+1. **自动加载**：加载 Skill 时，所有依赖项会自动先加载
+2. **拓扑排序**：依赖按正确顺序解析（依赖项先于被依赖者）
+3. **去重处理**：即使多个 Skill 依赖同一个 Skill，也只加载一次
+4. **循环检测**：系统在 Skill 上传时验证并拒绝循环依赖
+5. **缺失检测**：所有依赖必须存在才能上传 Skill
+
+### 批量加载
+
+`load_skill` 工具支持一次加载多个 Skill：
+
+```python
+# 加载单个 Skill（向后兼容）
+load_skill(skill_names="advanced-react")
+
+# 一次加载多个 Skill
+load_skill(skill_names=["react-basics", "typescript-fundamentals", "advanced-react"])
+```
+
+### 验证错误
+
+上传具有无效依赖的 Skill 时：
+
+```json
+{
+  "code": "DEPENDENCY_VALIDATION_FAILED",
+  "message": "Skill dependency validation failed",
+  "missing_dependencies": ["nonexistent-skill"],
+  "circular_dependency": null
+}
+```
+
+或循环依赖时：
+
+```json
+{
+  "code": "DEPENDENCY_VALIDATION_FAILED",
+  "message": "Skill dependency validation failed",
+  "missing_dependencies": [],
+  "circular_dependency": ["skill-a", "skill-b", "skill-c", "skill-a"]
+}
+```
 
 ---
 

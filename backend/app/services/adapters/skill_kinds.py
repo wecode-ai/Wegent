@@ -15,11 +15,135 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.schemas.kind import ObjectMeta, Skill, SkillList, SkillSpec, SkillStatus
-from app.services.skill_service import SkillValidator
+from app.services.skill_service import SkillDependencyValidator, SkillValidator
 
 
 class SkillKindsService:
     """Service for managing Skills in kinds table"""
+
+    def _find_skill_for_dependency(
+        self,
+        skill_name: str,
+        db: Session,
+        user_id: int,
+        namespace: str,
+    ) -> Optional[Kind]:
+        """
+        Find a skill by name for dependency validation.
+
+        Search order:
+        1. User's skill in default namespace (personal)
+        2. ANY skill in the specified namespace (group-level)
+        3. Public skill (user_id=0)
+
+        Args:
+            skill_name: Skill name to find
+            db: Database session
+            user_id: User ID
+            namespace: Namespace for group skill lookup
+
+        Returns:
+            Kind object if found, None otherwise
+        """
+        # 1. User's personal skill (default namespace)
+        skill = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.name == skill_name,
+                Kind.namespace == "default",
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+
+        if skill:
+            return skill
+
+        # 2. Group-level skill (specified namespace)
+        if namespace != "default":
+            skill = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Skill",
+                    Kind.name == skill_name,
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
+
+            if skill:
+                return skill
+
+        # 3. Public skill (user_id=0)
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Skill",
+                Kind.name == skill_name,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+
+    def _validate_skill_dependencies(
+        self,
+        skill_name: str,
+        dependencies: Optional[List[str]],
+        db: Session,
+        user_id: int,
+        namespace: str,
+    ) -> None:
+        """
+        Validate skill dependencies.
+
+        Raises HTTPException if:
+        - Any dependency does not exist
+        - Circular dependencies are detected
+
+        Args:
+            skill_name: Name of the skill being validated
+            dependencies: List of dependency skill names
+            db: Database session
+            user_id: User ID
+            namespace: Namespace for group skill lookup
+        """
+        if not dependencies:
+            return
+
+        missing, circular_chain = SkillDependencyValidator.validate_dependencies(
+            skill_name=skill_name,
+            dependencies=dependencies,
+            find_skill_func=self._find_skill_for_dependency,
+            db=db,
+            user_id=user_id,
+            namespace=namespace,
+        )
+
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "DEPENDENCY_VALIDATION_FAILED",
+                    "message": "Skill dependency validation failed",
+                    "missing_dependencies": missing,
+                    "circular_dependency": None,
+                },
+            )
+
+        if circular_chain:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "DEPENDENCY_VALIDATION_FAILED",
+                    "message": "Skill dependency validation failed",
+                    "missing_dependencies": [],
+                    "circular_dependency": circular_chain,
+                },
+            )
 
     def create_skill(
         self,
@@ -74,6 +198,16 @@ class SkillKindsService:
         # Validate ZIP package and extract metadata
         metadata = SkillValidator.validate_zip(file_content, file_name)
 
+        # Validate dependencies (if any)
+        dependencies = metadata.get("dependencies")
+        self._validate_skill_dependencies(
+            skill_name=name,
+            dependencies=dependencies,
+            db=db,
+            user_id=user_id,
+            namespace=namespace,
+        )
+
         # Build skill JSON
         skill_json = {
             "apiVersion": "agent.wecode.io/v1",
@@ -91,6 +225,7 @@ class SkillKindsService:
                 "tools": metadata.get("tools"),
                 "provider": metadata.get("provider"),
                 "mcpServers": metadata.get("mcpServers"),
+                "dependencies": dependencies,  # Skill dependencies
                 "preload": metadata.get("preload", False),
                 "source": source,
             },
@@ -371,6 +506,16 @@ class SkillKindsService:
         # Validate new ZIP package
         metadata = SkillValidator.validate_zip(file_content, file_name)
 
+        # Validate dependencies (if any)
+        dependencies = metadata.get("dependencies")
+        self._validate_skill_dependencies(
+            skill_name=skill_kind.name,
+            dependencies=dependencies,
+            db=db,
+            user_id=user_id,
+            namespace=skill_kind.namespace,
+        )
+
         # Update skill_kind JSON
         skill_json = skill_kind.json
         skill_json["spec"].update(
@@ -386,6 +531,7 @@ class SkillKindsService:
                 "tools": metadata.get("tools"),
                 "provider": metadata.get("provider"),
                 "mcpServers": metadata.get("mcpServers"),
+                "dependencies": dependencies,  # Skill dependencies
                 "preload": metadata.get("preload", False),
             }
         )
