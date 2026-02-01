@@ -35,6 +35,9 @@ Guides for Wegent platform users:
 - [Creating Teams](./guides/user/creating-teams.md) - Build collaborative agent teams
 - [Managing Tasks](./guides/user/managing-tasks.md) - Create and manage work tasks
 - [Spec Clarification Mode](./guides/user/spec-clarification-guide.md) - Interactive requirement specification clarification guide
+- [Knowledge Base Guide](./guides/user/knowledge-base-guide.md) - RAG-based knowledge base system usage
+- [IM Channel Integration](./guides/user/im-channel-integration.md) - Integrate DingTalk and other IM channels
+- [Local Device Support](./guides/user/local-device-support.md) - Use personal computers as task executors
 
 #### 💻 Developer Guides
 

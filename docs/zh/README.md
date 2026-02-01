@@ -35,6 +35,9 @@ Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、
 - [创建 Team](./guides/user/creating-teams.md) - 构建协作团队
 - [管理任务](./guides/user/managing-tasks.md) - 创建和管理工作任务
 - [需求规范澄清](./guides/user/spec-clarification-guide.md) - Spec Clarification 需求澄清使用指南
+- [知识库使用指南](./guides/user/knowledge-base-guide.md) - RAG 知识库系统使用指南
+- [IM 通道集成](./guides/user/im-channel-integration.md) - 集成钉钉等 IM 通道
+- [本地设备支持](./guides/user/local-device-support.md) - 使用个人电脑作为任务执行器
 
 #### 💻 开发者指南
 
