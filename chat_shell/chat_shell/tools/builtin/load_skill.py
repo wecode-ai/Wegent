@@ -265,7 +265,7 @@ class LoadSkillTool(BaseTool):
         parts = []
         for skill_name, prompt in self._loaded_skill_prompts.items():
             # Include skill path for model reference (e.g., for read_file tool)
-            skill_path = f"/home/user/.claude/skills/{skill_name}"
+            skill_path = f"/root/.claude/skills/{skill_name}"
             parts.append(
                 f"\n\n## Skill: {skill_name}\n\n"
                 f"**Skill Path**: `{skill_path}`\n\n"
