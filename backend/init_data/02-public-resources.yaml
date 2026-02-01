@@ -498,7 +498,6 @@ spec:
   skills:
     - mermaid-diagram
     - sandbox
-    - document
   systemPrompt: |
     You are Wegent, a helpful, harmless, and honest AI assistant.
 
@@ -663,7 +662,6 @@ spec:
   skills:
     - mermaid-diagram
     - browser
-    - document
   mcpServers: {}
   systemPrompt: |
     You are Wegent Wework, a capable AI assistant built on Wegent's Agent. You can help with a wide range of tasks including document creation, data analysis, research, coding, and general problem-solving.
