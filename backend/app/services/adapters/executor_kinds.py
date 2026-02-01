@@ -877,16 +877,6 @@ class ExecutorKindsService(
                 .all()
             )
 
-            # DEBUG: Print ALL subtask states at query time
-            logger.info(
-                f"[DISPATCH DEBUG] Task {subtask.task_id} queried {len(related_subtasks)} related subtasks:"
-            )
-            for rs in related_subtasks:
-                logger.info(
-                    f"[DISPATCH DEBUG]   - Subtask {rs.id}: role={rs.role}, "
-                    f"executor_name='{rs.executor_name}', executor_deleted_at={rs.executor_deleted_at}"
-                )
-
             next_subtask = None
             previous_subtask_results = ""
 
@@ -1219,19 +1209,9 @@ class ExecutorKindsService(
             executor_name = subtask.executor_name or ""
             executor_namespace = subtask.executor_namespace or ""
 
-            # DEBUG: Log initial state
-            logger.info(
-                f"[DISPATCH DEBUG] Subtask {subtask.id}: initial executor_name='{subtask.executor_name}', "
-                f"will search for inheritance={not executor_name}"
-            )
-
             if not executor_name:
                 # Look for previous assistant subtask with non-empty executor_name
                 for related in related_subtasks:
-                    logger.info(
-                        f"[DISPATCH DEBUG] Checking related subtask {related.id}: "
-                        f"role={related.role}, executor_name='{related.executor_name}'"
-                    )
                     if (
                         related.role == SubtaskRole.ASSISTANT
                         and related.id != subtask.id
@@ -1240,16 +1220,10 @@ class ExecutorKindsService(
                         executor_name = related.executor_name
                         executor_namespace = related.executor_namespace or ""
                         logger.info(
-                            f"[DISPATCH DEBUG] Subtask {subtask.id} INHERITING executor_name='{executor_name}' "
-                            f"from subtask {related.id}"
+                            f"Subtask {subtask.id} inheriting executor_name={executor_name} "
+                            f"from previous subtask {related.id}"
                         )
                         break
-
-            # DEBUG: Log final decision
-            logger.info(
-                f"[DISPATCH DEBUG] Subtask {subtask.id}: FINAL executor_name='{executor_name}' "
-                f"(empty means new container will be created)"
-            )
 
             formatted_subtasks.append(
                 {

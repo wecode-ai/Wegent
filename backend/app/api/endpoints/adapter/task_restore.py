@@ -10,7 +10,6 @@ allowing users to continue conversations on tasks that have
 exceeded their expiration time.
 """
 
-import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -23,7 +22,6 @@ from app.models.user import User
 from app.services.adapters.task_restore import task_restore_service
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 
 class RestoreTaskRequest(BaseModel):
@@ -74,9 +72,6 @@ def restore_task(
         404: Task not found or user doesn't have access
         400: Task cannot be restored (wrong status or already cleared)
     """
-    logger.info(
-        f"[RESTORE API] Called for task_id={task_id} by user_id={current_user.id}"
-    )
     return task_restore_service.restore_task(
         db=db,
         task_id=task_id,
