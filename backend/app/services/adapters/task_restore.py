@@ -167,20 +167,27 @@ class TaskRestoreService:
         if last_assistant_subtask.executor_deleted_at:
             # Executor was deleted, mark for rebuild by:
             # 1. Clearing executor_deleted_at flag
-            # 2. Clearing executor_name so new subtasks won't inherit the old container name
+            # 2. Clearing executor_name for ALL assistant subtasks so new subtasks
+            #    won't inherit the old container name from ANY previous subtask
             # This allows the next message to create a new executor
             logger.info(
                 f"Executor for task {task_id} was deleted, "
-                f"clearing executor_deleted_at and executor_name for new executor creation"
+                f"clearing executor_deleted_at and ALL executor_names for new executor creation"
             )
-            # Reset executor_deleted_at and executor_name for all subtasks of this task
+            # Reset executor_deleted_at for flagged subtasks
             db.query(Subtask).filter(
                 Subtask.task_id == task_id,
                 Subtask.executor_deleted_at.is_(True),
-            ).update({
-                Subtask.executor_deleted_at: False,
-                Subtask.executor_name: "",
-            })
+            ).update({Subtask.executor_deleted_at: False})
+
+            # Clear executor_name for ALL assistant subtasks with executor_name
+            # This prevents the inheritance logic from picking up old container names
+            db.query(Subtask).filter(
+                Subtask.task_id == task_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.executor_name.isnot(None),
+                Subtask.executor_name != "",
+            ).update({Subtask.executor_name: ""})
             return True
 
         return False
