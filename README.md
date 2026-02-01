@@ -73,7 +73,7 @@ A cloud-based AI document repository:
 - **Chat Integration**: Reference knowledge bases in single/group chats for AI responses
 
 ### 🖥️ Device Mode
-<img src="https://github.com/user-attachments/assets/4aea6905-2c37-43c5-bc4c-2f1a4e488839" width="100%" alt="AI Device Demo"/>>
+<img src="https://github.com/user-attachments/assets/4aea6905-2c37-43c5-bc4c-2f1a4e488839" width="100%" alt="AI Device Demo"/>
 
 Run AI tasks on your local machine with full control:
 
