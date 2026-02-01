@@ -168,6 +168,10 @@ install_claude_code() {
         fi
 
         current_version="$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)" || true
+        if [[ -z "$current_version" ]] || ! version_compare "$current_version" "$MIN_CLAUDE_CODE_VERSION"; then
+            print_error "Claude Code version ${current_version:-unknown} is below required ${MIN_CLAUDE_CODE_VERSION}"
+            exit 1
+        fi
         print_success "Claude Code installed: v${current_version}"
 
     elif [[ -n "$current_version" ]]; then
@@ -178,20 +182,25 @@ install_claude_code() {
             check_npm
 
             if ! npm update -g @anthropic-ai/claude-code; then
-                print_warning "Failed to upgrade Claude Code via npm."
-                print_info "You can try upgrading manually:"
+                print_error "Failed to upgrade Claude Code via npm."
+                print_info "Please upgrade manually and re-run this installer:"
                 echo "  npm update -g @anthropic-ai/claude-code"
-                echo ""
-                # Don't exit, continue with existing version
-            else
-                current_version="$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)" || true
-                print_success "Claude Code upgraded to: v${current_version}"
+                exit 1
             fi
+
+            current_version="$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)" || true
+            if [[ -z "$current_version" ]] || ! version_compare "$current_version" "$MIN_CLAUDE_CODE_VERSION"; then
+                print_error "Claude Code version ${current_version:-unknown} is still below required ${MIN_CLAUDE_CODE_VERSION}"
+                exit 1
+            fi
+            print_success "Claude Code upgraded to: v${current_version}"
         else
             print_success "Claude Code found: v${current_version}"
         fi
     else
-        print_success "Claude Code found (version unknown)"
+        print_error "Claude Code found but version could not be determined. Please reinstall or upgrade."
+        print_info "Try running: npm install -g @anthropic-ai/claude-code"
+        exit 1
     fi
 }
 
