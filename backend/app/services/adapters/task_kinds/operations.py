@@ -159,16 +159,16 @@ class TaskOperationsMixin:
             if (
                 datetime.now() - existing_task.updated_at
             ).total_seconds() > expire_hours * 3600:
-                # Return HTTP 409 with revivable error details
+                # Return HTTP 409 with restorable error details
                 raise HTTPException(
                     status_code=409,
                     detail={
-                        "code": "TASK_EXPIRED_REVIVABLE",
+                        "code": "TASK_EXPIRED_RESTORABLE",
                         "task_id": existing_task.id,
                         "task_type": task_type,
                         "expire_hours": expire_hours,
                         "last_updated_at": existing_task.updated_at.isoformat(),
-                        "message": f"{task_type} task has expired but can be revived",
+                        "message": f"{task_type} task has expired but can be restored",
                     },
                 )
 

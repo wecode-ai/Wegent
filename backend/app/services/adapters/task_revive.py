@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Task revival service for expired tasks.
+Task restore service for expired tasks.
 
-This module provides functionality to revive expired tasks,
+This module provides functionality to restore expired tasks,
 allowing users to continue conversations on tasks that have
 exceeded their expiration time.
 """
@@ -28,10 +28,10 @@ from app.services.task_member_service import task_member_service
 logger = logging.getLogger(__name__)
 
 
-class TaskReviveService:
-    """Service for reviving expired tasks."""
+class TaskRestoreService:
+    """Service for restoring expired tasks."""
 
-    def revive_task(
+    def restore_task(
         self,
         db: Session,
         task_id: int,
@@ -39,26 +39,26 @@ class TaskReviveService:
         message: Optional[str] = None,
     ) -> dict:
         """
-        Revive an expired task.
+        Restore an expired task.
 
         This method:
         1. Validates task exists and user has access
-        2. Validates task is in a revivable state
+        2. Validates task is in a restorable state
         3. Resets task updated_at timestamp
         4. Checks if executor needs rebuilding
         5. Optionally creates new subtasks if message is provided
 
         Args:
             db: Database session
-            task_id: ID of the task to revive
+            task_id: ID of the task to restore
             user: Current user
-            message: Optional message to send after revival
+            message: Optional message to send after restoration
 
         Returns:
-            Dict with success status and revival details
+            Dict with success status and restoration details
 
         Raises:
-            HTTPException: If task not found, not accessible, or not revivable
+            HTTPException: If task not found, not accessible, or not restorable
         """
         # 1. Get task and validate access
         task = (
@@ -78,15 +78,15 @@ class TaskReviveService:
         if not task_member_service.is_member(db, task_id, user.id):
             raise HTTPException(status_code=404, detail="Task not found")
 
-        # 2. Validate task status is revivable
+        # 2. Validate task status is restorable
         task_crd = Task.model_validate(task.json)
         task_status = task_crd.status.status if task_crd.status else "PENDING"
 
-        revivable_states = ["COMPLETED", "FAILED", "CANCELLED", "PENDING_CONFIRMATION"]
-        if task_status not in revivable_states:
+        restorable_states = ["COMPLETED", "FAILED", "CANCELLED", "PENDING_CONFIRMATION"]
+        if task_status not in restorable_states:
             raise HTTPException(
                 status_code=400,
-                detail=f"Task cannot be revived. Current status: {task_status}",
+                detail=f"Task cannot be restored. Current status: {task_status}",
             )
 
         # Check if task was auto-deleted
@@ -96,7 +96,7 @@ class TaskReviveService:
         ):
             raise HTTPException(
                 status_code=400,
-                detail="Task has been cleared and cannot be revived",
+                detail="Task has been cleared and cannot be restored",
             )
 
         # 3. Get task type for determining expiration
@@ -120,7 +120,7 @@ class TaskReviveService:
         db.refresh(task)
 
         logger.info(
-            f"Task {task_id} revived successfully by user {user.id}, "
+            f"Task {task_id} restored successfully by user {user.id}, "
             f"executor_rebuilt={executor_rebuilt}"
         )
 
@@ -129,7 +129,7 @@ class TaskReviveService:
             "task_id": task_id,
             "task_type": task_type,
             "executor_rebuilt": executor_rebuilt,
-            "message": "Task revived successfully",
+            "message": "Task restored successfully",
         }
 
     def _rebuild_executor_if_needed(self, db: Session, task_id: int) -> bool:
@@ -182,4 +182,4 @@ class TaskReviveService:
 
 
 # Singleton instance
-task_revive_service = TaskReviveService()
+task_restore_service = TaskRestoreService()

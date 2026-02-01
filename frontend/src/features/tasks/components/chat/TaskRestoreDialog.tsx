@@ -21,31 +21,31 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { TaskExpiredInfo } from '@/utils/errorParser'
 
-export interface TaskReviveDialogProps {
+export interface TaskRestoreDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   taskInfo: TaskExpiredInfo | null
   pendingMessage: string
-  onConfirmRevive: () => void
+  onConfirmRestore: () => void
   onCancel: () => void
-  isReviving: boolean
+  isRestoring: boolean
 }
 
 /**
- * Dialog component for confirming task revival
+ * Dialog component for confirming task restoration
  *
  * Shown when a user tries to send a message to an expired task.
- * Displays the last active time and allows the user to revive the task.
+ * Displays the last active time and allows the user to restore the task.
  */
-export function TaskReviveDialog({
+export function TaskRestoreDialog({
   open,
   onOpenChange,
   taskInfo,
   pendingMessage,
-  onConfirmRevive,
+  onConfirmRestore,
   onCancel,
-  isReviving,
-}: TaskReviveDialogProps) {
+  isRestoring,
+}: TaskRestoreDialogProps) {
   const { t, i18n } = useTranslation('chat')
 
   // Format the last active time as relative time
@@ -67,8 +67,8 @@ export function TaskReviveDialog({
   }, [onCancel, onOpenChange])
 
   const handleConfirm = useCallback(() => {
-    onConfirmRevive()
-  }, [onConfirmRevive])
+    onConfirmRestore()
+  }, [onConfirmRestore])
 
   if (!taskInfo) return null
 
@@ -78,18 +78,18 @@ export function TaskReviveDialog({
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             <Clock className="h-5 w-5 text-amber-500" />
-            {t('revive.dialog_title')}
+            {t('restore.dialog_title')}
           </AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="space-y-3">
-              <p>{t('revive.dialog_description')}</p>
+              <p>{t('restore.dialog_description')}</p>
               <div className="flex items-center gap-2 text-sm text-text-secondary">
-                <span>{t('revive.last_active', { time: lastActiveText })}</span>
+                <span>{t('restore.last_active', { time: lastActiveText })}</span>
               </div>
               {pendingMessage && (
                 <div className="mt-2 p-3 bg-surface rounded-md border border-border">
                   <p className="text-xs text-text-muted mb-1">
-                    {t('revive.pending_message_label', { defaultValue: 'Your message:' })}
+                    {t('restore.pending_message_label', { defaultValue: 'Your message:' })}
                   </p>
                   <p className="text-sm text-text-primary line-clamp-3">{pendingMessage}</p>
                 </div>
@@ -98,17 +98,17 @@ export function TaskReviveDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <Button variant="outline" onClick={handleCancel} disabled={isReviving}>
-            {t('revive.cancel_button')}
+          <Button variant="outline" onClick={handleCancel} disabled={isRestoring}>
+            {t('restore.cancel_button')}
           </Button>
-          <Button variant="primary" onClick={handleConfirm} disabled={isReviving}>
-            {isReviving ? (
+          <Button variant="primary" onClick={handleConfirm} disabled={isRestoring}>
+            {isRestoring ? (
               <>
                 <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                {t('revive.reviving', { defaultValue: 'Reviving...' })}
+                {t('restore.restoring', { defaultValue: 'Restoring...' })}
               </>
             ) : (
-              t('revive.confirm_button')
+              t('restore.confirm_button')
             )}
           </Button>
         </AlertDialogFooter>

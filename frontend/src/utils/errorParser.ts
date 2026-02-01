@@ -6,7 +6,7 @@
  * Parse error messages and return user-friendly error information
  */
 
-// Task expired revivable error info
+// Task expired restorable error info
 export interface TaskExpiredInfo {
   taskId: number
   taskType: 'chat' | 'code'
@@ -16,7 +16,7 @@ export interface TaskExpiredInfo {
 
 export interface ParsedError {
   type:
-    | 'task_expired_revivable'
+    | 'task_expired_restorable'
     | 'payload_too_large'
     | 'network_error'
     | 'timeout_error'
@@ -30,7 +30,7 @@ export interface ParsedError {
   message: string
   originalError?: string
   retryable?: boolean
-  // Task expired revivable specific field
+  // Task expired restorable specific field
   taskExpiredInfo?: TaskExpiredInfo
 }
 
@@ -44,16 +44,16 @@ export function parseError(error: Error | string): ParsedError {
   const errorMessage = typeof error === 'string' ? error : error.message
   const lowerMessage = errorMessage.toLowerCase()
 
-  // Check for task expired revivable error (HTTP 409 with TASK_EXPIRED_REVIVABLE code)
+  // Check for task expired restorable error (HTTP 409 with TASK_EXPIRED_RESTORABLE code)
   // This is returned as a JSON object in the error message
   try {
     const errorObj = JSON.parse(errorMessage)
-    if (errorObj && errorObj.code === 'TASK_EXPIRED_REVIVABLE') {
+    if (errorObj && errorObj.code === 'TASK_EXPIRED_RESTORABLE') {
       return {
-        type: 'task_expired_revivable',
-        message: errorObj.message || 'Task has expired but can be revived',
+        type: 'task_expired_restorable',
+        message: errorObj.message || 'Task has expired but can be restored',
         originalError: errorMessage,
-        retryable: false, // Not retryable in the traditional sense - requires revival
+        retryable: false, // Not retryable in the traditional sense - requires restoration
         taskExpiredInfo: {
           taskId: errorObj.task_id,
           taskType: errorObj.task_type,
@@ -226,8 +226,8 @@ export function getUserFriendlyErrorMessage(
   const parsed = parseError(error)
 
   switch (parsed.type) {
-    case 'task_expired_revivable':
-      return t('errors.task_expired_revivable')
+    case 'task_expired_restorable':
+      return t('errors.task_expired_restorable')
     case 'forbidden':
       // Use dedicated translation key for forbidden errors, fallback to generic if not available
       return t('errors.forbidden') || t('errors.generic_error')

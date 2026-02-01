@@ -116,14 +116,14 @@ export interface ChatStreamHandlers {
   // State
   isCancelling: boolean
 
-  // Task revive state and handlers
-  reviveDialogOpen: boolean
-  setReviveDialogOpen: (open: boolean) => void
-  reviveTaskInfo: TaskExpiredInfo | null
-  pendingReviveMessage: string
-  isReviving: boolean
-  handleConfirmRevive: () => Promise<void>
-  handleCancelRevive: () => void
+  // Task restore state and handlers
+  restoreDialogOpen: boolean
+  setRestoreDialogOpen: (open: boolean) => void
+  restoreTaskInfo: TaskExpiredInfo | null
+  pendingRestoreMessage: string
+  isRestoring: boolean
+  handleConfirmRestore: () => Promise<void>
+  handleCancelRestore: () => void
 }
 
 /**
@@ -192,11 +192,11 @@ export function useChatStreamHandlers({
   const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null)
   const [isCancelling, setIsCancelling] = useState(false)
 
-  // Task revive state
-  const [reviveDialogOpen, setReviveDialogOpen] = useState(false)
-  const [reviveTaskInfo, setReviveTaskInfo] = useState<TaskExpiredInfo | null>(null)
-  const [pendingReviveMessage, setPendingReviveMessage] = useState('')
-  const [isReviving, setIsReviving] = useState(false)
+  // Task restore state
+  const [restoreDialogOpen, setRestoreDialogOpen] = useState(false)
+  const [restoreTaskInfo, setRestoreTaskInfo] = useState<TaskExpiredInfo | null>(null)
+  const [pendingRestoreMessage, setPendingRestoreMessage] = useState('')
+  const [isRestoring, setIsRestoring] = useState(false)
 
   // Refs
   const lastFailedMessageRef = useRef<string | null>(null)
@@ -337,12 +337,12 @@ export function useChatStreamHandlers({
       const parsedError = parseError(error)
       lastFailedMessageRef.current = message
 
-      // Check for task expired revivable error - open revive dialog instead of showing toast
-      if (parsedError.type === 'task_expired_revivable' && parsedError.taskExpiredInfo) {
-        setPendingReviveMessage(message)
-        setReviveTaskInfo(parsedError.taskExpiredInfo)
-        setReviveDialogOpen(true)
-        return // Don't show error toast for revivable errors
+      // Check for task expired restorable error - open restore dialog instead of showing toast
+      if (parsedError.type === 'task_expired_restorable' && parsedError.taskExpiredInfo) {
+        setPendingRestoreMessage(message)
+        setRestoreTaskInfo(parsedError.taskExpiredInfo)
+        setRestoreDialogOpen(true)
+        return // Don't show error toast for restorable errors
       }
 
       // Use getErrorDisplayMessage for consistent error display logic
@@ -1006,54 +1006,54 @@ export function useChatStreamHandlers({
     }
   }, [selectedTaskDetail?.id, isCancelling, toast, refreshTasks, refreshSelectedTaskDetail])
 
-  // Task revive handlers
-  const handleConfirmRevive = useCallback(async () => {
-    if (!reviveTaskInfo) return
+  // Task restore handlers
+  const handleConfirmRestore = useCallback(async () => {
+    if (!restoreTaskInfo) return
 
-    setIsReviving(true)
+    setIsRestoring(true)
 
     try {
-      // Call revive API
-      const response = await taskApis.reviveTask(reviveTaskInfo.taskId)
+      // Call restore API
+      const response = await taskApis.restoreTask(restoreTaskInfo.taskId)
 
       if (response.success) {
         // Close dialog
-        setReviveDialogOpen(false)
+        setRestoreDialogOpen(false)
 
         // Show success toast
         toast({
-          title: t('chat:revive.success'),
+          title: t('chat:restore.success'),
         })
 
         // Refresh task detail to get updated status
         await refreshSelectedTaskDetail()
 
-        // Resend the pending message after successful revival
-        if (pendingReviveMessage && handleSendMessageRef.current) {
+        // Resend the pending message after successful restoration
+        if (pendingRestoreMessage && handleSendMessageRef.current) {
           // Small delay to ensure task state is updated
           setTimeout(() => {
-            if (pendingReviveMessage && handleSendMessageRef.current) {
-              handleSendMessageRef.current(pendingReviveMessage)
+            if (pendingRestoreMessage && handleSendMessageRef.current) {
+              handleSendMessageRef.current(pendingRestoreMessage)
             }
           }, 500)
         }
       }
     } catch (error) {
-      console.error('[useChatStreamHandlers] Failed to revive task:', error)
+      console.error('[useChatStreamHandlers] Failed to restore task:', error)
 
       toast({
         variant: 'destructive',
-        title: t('chat:revive.failed'),
+        title: t('chat:restore.failed'),
       })
     } finally {
-      setIsReviving(false)
+      setIsRestoring(false)
     }
-  }, [reviveTaskInfo, pendingReviveMessage, toast, t, refreshSelectedTaskDetail])
+  }, [restoreTaskInfo, pendingRestoreMessage, toast, t, refreshSelectedTaskDetail])
 
-  const handleCancelRevive = useCallback(() => {
-    setReviveDialogOpen(false)
-    setReviveTaskInfo(null)
-    setPendingReviveMessage('')
+  const handleCancelRestore = useCallback(() => {
+    setRestoreDialogOpen(false)
+    setRestoreTaskInfo(null)
+    setPendingRestoreMessage('')
   }, [])
 
   return {
@@ -1080,14 +1080,14 @@ export function useChatStreamHandlers({
     // State
     isCancelling,
 
-    // Task revive state and handlers
-    reviveDialogOpen,
-    setReviveDialogOpen,
-    reviveTaskInfo,
-    pendingReviveMessage,
-    isReviving,
-    handleConfirmRevive,
-    handleCancelRevive,
+    // Task restore state and handlers
+    restoreDialogOpen,
+    setRestoreDialogOpen,
+    restoreTaskInfo,
+    pendingRestoreMessage,
+    isRestoring,
+    handleConfirmRestore,
+    handleCancelRestore,
   }
 }
 

@@ -227,16 +227,16 @@
     "container_error": "执行环境异常：容器已停止运行，请新建一个对话任务重试",
     "generic_error": "请求失败：未知错误，请重试或联系管理员",
     "copy_error": "复制错误详情",
-    "task_expired_revivable": "任务已过期，点击"继续对话"可恢复"
+    "task_expired_restorable": "任务已过期，点击"继续对话"可恢复"
   },
-  "revive": {
+  "restore": {
     "dialog_title": "任务已过期",
     "dialog_description": "此任务已超过活跃时间，但可以继续对话。",
     "last_active": "上次对话：{{time}}",
     "pending_message_label": "您的消息：",
     "confirm_button": "继续对话",
     "cancel_button": "取消",
-    "reviving": "正在恢复...",
+    "restoring": "正在恢复...",
     "success": "任务已恢复",
     "failed": "恢复任务失败，请重试",
     "restoring_executor": "正在恢复执行环境..."

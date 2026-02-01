@@ -159,12 +159,12 @@ export interface PublicSharedTaskResponse {
   created_at: string
 }
 
-// Task Revive Types
-export interface ReviveTaskRequest {
-  message?: string // Optional message to send after revival
+// Task Restore Types
+export interface RestoreTaskRequest {
+  message?: string // Optional message to send after restoration
 }
 
-export interface ReviveTaskResponse {
+export interface RestoreTaskResponse {
   success: boolean
   task_id: number
   task_type: string
@@ -449,15 +449,15 @@ export const taskApis = {
   },
 
   /**
-   * Revive an expired task to continue the conversation
-   * @param taskId - Task ID to revive
-   * @param message - Optional message to send after revival
+   * Restore an expired task to continue the conversation
+   * @param taskId - Task ID to restore
+   * @param message - Optional message to send after restoration
    */
-  reviveTask: async (taskId: number, message?: string): Promise<ReviveTaskResponse> => {
-    const body: ReviveTaskRequest = {}
+  restoreTask: async (taskId: number, message?: string): Promise<RestoreTaskResponse> => {
+    const body: RestoreTaskRequest = {}
     if (message) {
       body.message = message
     }
-    return apiClient.post(`/tasks/${taskId}/revive`, body)
+    return apiClient.post(`/tasks/${taskId}/restore`, body)
   },
 }

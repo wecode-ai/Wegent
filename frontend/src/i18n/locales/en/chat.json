@@ -249,16 +249,16 @@
     "container_error": "Executor error: Container has stopped running. Please start a new conversation to retry",
     "generic_error": "Request failed: Unknown error, please try again or contact administrator",
     "copy_error": "Copy error details",
-    "task_expired_revivable": "Task expired, click \"Continue Chat\" to restore"
+    "task_expired_restorable": "Task expired, click \"Continue Chat\" to restore"
   },
-  "revive": {
+  "restore": {
     "dialog_title": "Task Expired",
     "dialog_description": "This task has exceeded its active time but can be continued.",
     "last_active": "Last active: {{time}}",
     "pending_message_label": "Your message:",
     "confirm_button": "Continue Chat",
     "cancel_button": "Cancel",
-    "reviving": "Reviving...",
+    "restoring": "Restoring...",
     "success": "Task restored",
     "failed": "Failed to restore task, please retry",
     "restoring_executor": "Restoring execution environment..."
