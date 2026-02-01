@@ -152,25 +152,25 @@ class TaskOperationsMixin:
         if task_type == "code":
             expire_hours = settings.APPEND_CODE_TASK_EXPIRE_HOURS
 
-        task_shell_source = (
-            task_crd.metadata.labels and task_crd.metadata.labels.get("source") or None
-        )
-        if task_shell_source != "chat_shell":
-            if (
-                datetime.now() - existing_task.updated_at
-            ).total_seconds() > expire_hours * 3600:
-                # Return HTTP 409 with restorable error details
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "code": "TASK_EXPIRED_RESTORABLE",
-                        "task_id": existing_task.id,
-                        "task_type": task_type,
-                        "expire_hours": expire_hours,
-                        "last_updated_at": existing_task.updated_at.isoformat(),
-                        "message": f"{task_type} task has expired but can be restored",
-                    },
-                )
+        # Check expiration for all executor-based tasks
+        # Note: This check is ONLY in the executor path (create_task_or_append).
+        # Chat Shell tasks use a different path (create_task_and_subtasks) which
+        # doesn't need expiration check because they don't use persistent containers.
+        if (
+            datetime.now() - existing_task.updated_at
+        ).total_seconds() > expire_hours * 3600:
+            # Return HTTP 409 with restorable error details
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "TASK_EXPIRED_RESTORABLE",
+                    "task_id": existing_task.id,
+                    "task_type": task_type,
+                    "expire_hours": expire_hours,
+                    "last_updated_at": existing_task.updated_at.isoformat(),
+                    "message": f"{task_type} task has expired but can be restored",
+                },
+            )
 
         # Get team reference
         team_name = task_crd.spec.teamRef.name
