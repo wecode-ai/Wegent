@@ -136,7 +136,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
       )}
 
       {/* Pending Requests Section */}
-      <Card padding="md" className="space-y-4">
+      <Card padding="default" className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Clock className="w-4 h-4 text-warning" />
           {t('permission.pendingRequests')}
@@ -207,7 +207,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
       </Card>
 
       {/* Approved Users Section */}
-      <Card padding="md" className="space-y-4">
+      <Card padding="default" className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Users className="w-4 h-4 text-primary" />
           {t('permission.approvedUsers')}
