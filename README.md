@@ -206,13 +206,27 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/yixiangxx">
+            <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+            <br />
+            <sub><b>Yi Xiang</b></sub>
+        </a>
+    </td></tr>
+<tr>
+    <td align="center">
+        <a href="https://github.com/FicoHu">
+            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
+            <br />
+            <sub><b>FicoHu</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/moqimoqidea">
             <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
             <br />
             <sub><b>Moqimoqidea</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/2561056571">
             <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
@@ -221,10 +235,10 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/yixiangxx">
-            <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+        <a href="https://github.com/maquan0927">
+            <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
             <br />
-            <sub><b>Yi Xiang</b></sub>
+            <sub><b>Just Quan</b></sub>
         </a>
     </td>
     <td align="center">
@@ -239,20 +253,6 @@ Thanks to the following developers for their contributions and efforts to make t
             <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
             <br />
             <sub><b>Icycrystal4</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/FicoHu">
-            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
-            <br />
-            <sub><b>FicoHu</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/maquan0927">
-            <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
-            <br />
-            <sub><b>Just Quan</b></sub>
         </a>
     </td>
     <td align="center">
