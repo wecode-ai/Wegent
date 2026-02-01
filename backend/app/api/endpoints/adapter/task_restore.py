@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
-from app.services.adapters.task_revive import task_restore_service
+from app.services.adapters.task_restore import task_restore_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
