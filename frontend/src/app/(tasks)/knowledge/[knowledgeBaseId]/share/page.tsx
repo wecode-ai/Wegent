@@ -60,7 +60,7 @@ export default function KnowledgeBaseSharePage() {
       setApplySuccess(true)
       // Refresh to show pending status
       await fetchShareInfo()
-    } catch (err) {
+    } catch (_err) {
       // Error is handled by the hook
     }
   }

@@ -57,7 +57,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
   ) => {
     try {
       await reviewPermission(permission.id, 'approve', level || permission.permission_level)
-    } catch (err) {
+    } catch (_err) {
       // Error is handled by the hook
     }
   }
@@ -65,7 +65,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
   const handleReject = async (permission: PendingPermissionInfo) => {
     try {
       await reviewPermission(permission.id, 'reject')
-    } catch (err) {
+    } catch (_err) {
       // Error is handled by the hook
     }
   }
@@ -74,7 +74,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
     try {
       await updatePermission(permissionId, level)
       setEditingId(null)
-    } catch (err) {
+    } catch (_err) {
       // Error is handled by the hook
     }
   }
@@ -83,7 +83,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
     if (!confirm(t('permission.confirmRemove'))) return
     try {
       await deletePermission(permissionId)
-    } catch (err) {
+    } catch (_err) {
       // Error is handled by the hook
     }
   }

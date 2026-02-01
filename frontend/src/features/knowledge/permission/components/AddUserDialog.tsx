@@ -65,7 +65,7 @@ export function AddUserDialog({
       // Reset form
       setUserId('')
       setPermissionLevel('view')
-    } catch (err) {
+    } catch (_err) {
       // Error is displayed from the hook
     }
   }
