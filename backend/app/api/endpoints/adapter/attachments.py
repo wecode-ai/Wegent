@@ -22,20 +22,103 @@ from app.models.subtask_context import ContextType
 from app.models.user import User
 from app.schemas.subtask_context import (
     AttachmentDetailResponse,
+    AttachmentPreviewResponse,
     AttachmentResponse,
     TruncationInfo,
 )
 from app.services.attachment.parser import DocumentParseError, DocumentParser
 from app.services.context import context_service
+from app.services.context.context_service import NotFoundException
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+ATTACHMENT_PREVIEW_TEXT_LIMIT = 4000
+
+
+def _ensure_attachment_access(db: Session, context, current_user: User) -> None:
+    """Ensure current user has access to the attachment context."""
+    # Check access permission:
+    # 1. User is the uploader
+    # 2. User is the task owner
+    # 3. User is a member of the task that contains this attachment
+    has_access = context.user_id == current_user.id
+
+    if not has_access and context.subtask_id > 0:
+        # Check if user is a task owner or member
+        from app.models.subtask import Subtask
+        from app.models.task import TaskResource
+        from app.models.task_member import MemberStatus, TaskMember
+
+        subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
+        if subtask:
+            # Check if user is the task owner
+            task = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.id == subtask.task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.user_id == current_user.id,
+                )
+                .first()
+            )
+            if task:
+                has_access = True
+            else:
+                # Check if user is a task member
+                task_member = (
+                    db.query(TaskMember)
+                    .filter(
+                        TaskMember.task_id == subtask.task_id,
+                        TaskMember.user_id == current_user.id,
+                        TaskMember.status == MemberStatus.ACTIVE,
+                    )
+                    .first()
+                )
+                has_access = task_member is not None
+
+    if not has_access:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+
+def _get_attachment_context(db: Session, attachment_id: int, current_user: User):
+    context = context_service.get_context_optional(
+        db=db,
+        context_id=attachment_id,
+    )
+
+    if context is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Verify it's an attachment type
+    if context.context_type != ContextType.ATTACHMENT.value:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    _ensure_attachment_access(db, context, current_user)
+    return context
+
+
+def _build_attachment_response(
+    context,
+    truncation_info: Optional[TruncationInfo],
+) -> AttachmentResponse:
+    response_truncation_info = None
+    if truncation_info and truncation_info.is_truncated:
+        response_truncation_info = TruncationInfo(
+            is_truncated=True,
+            original_length=truncation_info.original_length,
+            truncated_length=truncation_info.truncated_length,
+            truncation_message_key="content_truncated",
+        )
+
+    return AttachmentResponse.from_context(context, response_truncation_info)
+
 
 @router.post("/upload", response_model=AttachmentResponse)
 async def upload_attachment(
     file: UploadFile = File(...),
+    overwrite_attachment_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -57,6 +140,9 @@ async def upload_attachment(
 
     Returns:
         Attachment details including ID, processing status, and truncation info
+
+    Optional:
+        overwrite_attachment_id: Existing attachment ID to overwrite in-place
     """
     logger.info(
         f"[attachments.py] upload_attachment: user_id={current_user.id}, filename={file.filename}"
@@ -83,42 +169,32 @@ async def upload_attachment(
         )
 
     try:
-        context, truncation_info = context_service.upload_attachment(
-            db=db,
-            user_id=current_user.id,
-            filename=file.filename,
-            binary_data=binary_data,
-        )
-
-        # Build truncation info for response
-        response_truncation_info = None
-        if truncation_info and truncation_info.is_truncated:
-            response_truncation_info = TruncationInfo(
-                is_truncated=True,
-                original_length=truncation_info.original_length,
-                truncated_length=truncation_info.truncated_length,
-                truncation_message_key="content_truncated",
+        if overwrite_attachment_id is not None:
+            if overwrite_attachment_id <= 0:
+                raise HTTPException(
+                    status_code=400, detail="overwrite_attachment_id must be positive"
+                )
+            context, truncation_info = context_service.overwrite_attachment(
+                db=db,
+                context_id=overwrite_attachment_id,
+                user_id=current_user.id,
+                filename=file.filename,
+                binary_data=binary_data,
+            )
+        else:
+            context, truncation_info = context_service.upload_attachment(
+                db=db,
+                user_id=current_user.id,
+                filename=file.filename,
+                binary_data=binary_data,
             )
 
-        return AttachmentResponse(
-            id=context.id,
-            filename=context.original_filename,
-            file_size=context.file_size,
-            mime_type=context.mime_type,
-            status=(
-                context.status
-                if isinstance(context.status, str)
-                else context.status.value
-            ),
-            file_extension=context.file_extension,
-            text_length=context.text_length,
-            error_message=context.error_message,
-            truncation_info=response_truncation_info,
-            created_at=context.created_at,
-        )
+        return _build_attachment_response(context, truncation_info)
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Attachment not found") from e
     except DocumentParseError as e:
         # Return error with error_code for i18n mapping
         error_code = getattr(e, "error_code", None)
@@ -148,62 +224,41 @@ async def get_attachment(
     Returns:
         Attachment details including status and metadata
     """
-    # Get context without user_id filter first
-    context = context_service.get_context_optional(
-        db=db,
-        context_id=attachment_id,
-    )
-
-    if context is None:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    # Verify it's an attachment type
-    if context.context_type != ContextType.ATTACHMENT.value:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    # Check access permission:
-    # 1. User is the uploader
-    # 2. User is the task owner
-    # 3. User is a member of the task that contains this attachment
-    has_access = context.user_id == current_user.id
-
-    if not has_access and context.subtask_id > 0:
-        # Check if user is a task owner or member
-        from app.models.subtask import Subtask
-        from app.models.task import TaskResource
-        from app.models.task_member import MemberStatus, TaskMember
-
-        subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
-        if subtask:
-            # Check if user is the task owner
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == subtask.task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.user_id == current_user.id,
-                )
-                .first()
-            )
-            if task:
-                has_access = True
-            else:
-                # Check if user is a task member
-                task_member = (
-                    db.query(TaskMember)
-                    .filter(
-                        TaskMember.task_id == subtask.task_id,
-                        TaskMember.user_id == current_user.id,
-                        TaskMember.status == MemberStatus.ACTIVE,
-                    )
-                    .first()
-                )
-                has_access = task_member is not None
-
-    if not has_access:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
+    context = _get_attachment_context(db, attachment_id, current_user)
     return AttachmentDetailResponse.from_context(context)
+
+
+@router.get("/{attachment_id}/preview", response_model=AttachmentPreviewResponse)
+async def get_attachment_preview(
+    attachment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get attachment preview content.
+
+    Returns:
+        Attachment metadata and preview snippet (if available).
+    """
+    context = _get_attachment_context(db, attachment_id, current_user)
+
+    preview_type = "none"
+    preview_text = None
+
+    if context_service.is_image_context(context):
+        preview_type = "image"
+    elif context.extracted_text:
+        preview_type = "text"
+        preview_text = context.extracted_text[:ATTACHMENT_PREVIEW_TEXT_LIMIT]
+
+    download_url = context_service.build_attachment_url(attachment_id)
+
+    return AttachmentPreviewResponse.from_context(
+        context=context,
+        preview_type=preview_type,
+        preview_text=preview_text,
+        download_url=download_url,
+    )
 
 
 @router.get("/{attachment_id}/download")
@@ -218,59 +273,7 @@ async def download_attachment(
     Returns:
         File binary data with appropriate content type
     """
-    # Get context without user_id filter first
-    context = context_service.get_context_optional(
-        db=db,
-        context_id=attachment_id,
-    )
-    if context is None:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    # Verify it's an attachment type
-    if context.context_type != ContextType.ATTACHMENT.value:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    # Check access permission:
-    # 1. User is the uploader
-    # 2. User is the task owner
-    # 3. User is a member of the task that contains this attachment
-    has_access = context.user_id == current_user.id
-
-    if not has_access and context.subtask_id > 0:
-        # Check if user is a task owner or member
-        from app.models.subtask import Subtask
-        from app.models.task import TaskResource
-        from app.models.task_member import MemberStatus, TaskMember
-
-        subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
-        if subtask:
-            # Check if user is the task owner
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == subtask.task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.user_id == current_user.id,
-                )
-                .first()
-            )
-            if task:
-                has_access = True
-            else:
-                # Check if user is a task member
-                task_member = (
-                    db.query(TaskMember)
-                    .filter(
-                        TaskMember.task_id == subtask.task_id,
-                        TaskMember.user_id == current_user.id,
-                        TaskMember.status == MemberStatus.ACTIVE,
-                    )
-                    .first()
-                )
-                has_access = task_member is not None
-
-    if not has_access:
-        raise HTTPException(status_code=404, detail="Attachment not found")
+    context = _get_attachment_context(db, attachment_id, current_user)
 
     # Get binary data from the appropriate storage backend
     binary_data = context_service.get_attachment_binary_data(
