@@ -74,6 +74,9 @@ def restore_task(
         404: Task not found or user doesn't have access
         400: Task cannot be restored (wrong status or already cleared)
     """
+    logger.info(
+        f"[RESTORE API] Called for task_id={task_id} by user_id={current_user.id}"
+    )
     return task_restore_service.restore_task(
         db=db,
         task_id=task_id,

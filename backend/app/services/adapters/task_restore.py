@@ -171,23 +171,58 @@ class TaskRestoreService:
             #    won't inherit the old container name from ANY previous subtask
             # This allows the next message to create a new executor
             logger.info(
-                f"Executor for task {task_id} was deleted, "
-                f"clearing executor_deleted_at and ALL executor_names for new executor creation"
+                f"[RESTORE DEBUG] Task {task_id}: executor_deleted_at=True detected, "
+                f"last_assistant_subtask.id={last_assistant_subtask.id}"
             )
+
+            # Count subtasks to be updated
+            deleted_count = db.query(Subtask).filter(
+                Subtask.task_id == task_id,
+                Subtask.executor_deleted_at.is_(True),
+            ).count()
+            executor_name_count = db.query(Subtask).filter(
+                Subtask.task_id == task_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.executor_name.isnot(None),
+                Subtask.executor_name != "",
+            ).count()
+
+            logger.info(
+                f"[RESTORE DEBUG] Task {task_id}: will clear executor_deleted_at for {deleted_count} subtasks, "
+                f"will clear executor_name for {executor_name_count} subtasks"
+            )
+
             # Reset executor_deleted_at for flagged subtasks
-            db.query(Subtask).filter(
+            result1 = db.query(Subtask).filter(
                 Subtask.task_id == task_id,
                 Subtask.executor_deleted_at.is_(True),
             ).update({Subtask.executor_deleted_at: False})
 
             # Clear executor_name for ALL assistant subtasks with executor_name
             # This prevents the inheritance logic from picking up old container names
-            db.query(Subtask).filter(
+            result2 = db.query(Subtask).filter(
                 Subtask.task_id == task_id,
                 Subtask.role == SubtaskRole.ASSISTANT,
                 Subtask.executor_name.isnot(None),
                 Subtask.executor_name != "",
             ).update({Subtask.executor_name: ""})
+
+            logger.info(
+                f"[RESTORE DEBUG] Task {task_id}: UPDATE results - "
+                f"executor_deleted_at cleared: {result1} rows, executor_name cleared: {result2} rows"
+            )
+
+            # Verify the update worked
+            remaining = db.query(Subtask).filter(
+                Subtask.task_id == task_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.executor_name.isnot(None),
+                Subtask.executor_name != "",
+            ).count()
+            logger.info(
+                f"[RESTORE DEBUG] Task {task_id}: AFTER update, remaining subtasks with executor_name: {remaining}"
+            )
+
             return True
 
         return False
