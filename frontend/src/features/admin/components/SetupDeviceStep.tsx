@@ -4,13 +4,15 @@
 
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { ComputerDesktopIcon, CheckCircleIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
-import { Loader2, Copy, Check, ExternalLink } from 'lucide-react'
+import { Loader2, Copy, Check, ExternalLink, Monitor, Star } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useDevices } from '@/contexts/DeviceContext'
+import { SlotIndicator } from '@/features/devices/components/SlotIndicator'
+import { cn } from '@/lib/utils'
 
 interface SetupDeviceStepProps {
   /** Called when a device is successfully connected */
@@ -19,8 +21,8 @@ interface SetupDeviceStepProps {
 
 const SetupDeviceStep: React.FC<SetupDeviceStepProps> = ({ onDeviceConnected }) => {
   const { t } = useTranslation('admin')
+  const { t: tDevices } = useTranslation('devices')
   const { devices, refreshDevices, isLoading } = useDevices()
-
   const [copied, setCopied] = useState(false)
 
   // Get environment variables
@@ -28,7 +30,10 @@ const SetupDeviceStep: React.FC<SetupDeviceStepProps> = ({ onDeviceConnected }) 
   const guideUrl = process.env.NEXT_PUBLIC_DEVICE_GUIDE_URL || ''
 
   // Filter online devices
-  const onlineDevices = devices.filter(d => d.status === 'online' || d.status === 'busy')
+  const onlineDevices = useMemo(
+    () => devices.filter(d => d.status === 'online' || d.status === 'busy'),
+    [devices]
+  )
 
   // Notify parent when a device is connected
   useEffect(() => {
@@ -40,7 +45,6 @@ const SetupDeviceStep: React.FC<SetupDeviceStepProps> = ({ onDeviceConnected }) 
   // Copy command to clipboard
   const handleCopy = useCallback(async () => {
     if (!installCommand) return
-
     try {
       await navigator.clipboard.writeText(installCommand)
       setCopied(true)
@@ -54,6 +58,30 @@ const SetupDeviceStep: React.FC<SetupDeviceStepProps> = ({ onDeviceConnected }) 
   const handleRefresh = useCallback(async () => {
     await refreshDevices()
   }, [refreshDevices])
+
+  // Get status color
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'online':
+        return 'bg-green-500'
+      case 'busy':
+        return 'bg-yellow-500'
+      default:
+        return 'bg-gray-400'
+    }
+  }
+
+  // Get status text
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'online':
+        return tDevices('status_online')
+      case 'busy':
+        return tDevices('status_busy')
+      default:
+        return tDevices('status_offline')
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -152,23 +180,51 @@ const SetupDeviceStep: React.FC<SetupDeviceStepProps> = ({ onDeviceConnected }) 
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-3">
             {onlineDevices.map(device => (
-              <Card key={device.device_id} className="p-3 bg-surface border-l-2 border-l-green-500">
-                <div className="flex items-center space-x-3">
-                  <CheckCircleIcon className="w-5 h-5 text-green-500 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-text-primary truncate">
-                        {device.name || device.device_id}
-                      </span>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">
-                        {t('setup_wizard.device_step.device_connected')}
-                      </span>
+              <Card
+                key={device.device_id}
+                className={cn(
+                  'p-3 bg-surface',
+                  device.is_default ? 'border-primary' : 'border-border'
+                )}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 bg-primary/10 rounded-lg flex items-center justify-center">
+                      <Monitor className="w-4 h-4 text-primary" />
                     </div>
-                    <div className="text-xs text-text-muted mt-0.5">
-                      ID: {device.device_id.slice(0, 8)}...
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-text-primary truncate">
+                          {device.name || device.device_id}
+                        </span>
+                        {device.is_default && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-primary/10 text-primary rounded-full">
+                            <Star className="w-3 h-3 fill-current" />
+                            {tDevices('default_device')}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-text-muted mt-0.5">
+                        ID: {device.device_id.slice(0, 8)}...
+                      </div>
+                      {/* Slot indicator - shows slot usage for online devices */}
+                      <div className="mt-1.5">
+                        <SlotIndicator
+                          used={device.slot_used}
+                          max={device.slot_max}
+                          runningTasks={device.running_tasks}
+                        />
+                      </div>
                     </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={cn('w-2 h-2 rounded-full', getStatusColor(device.status))} />
+                    <span className="text-sm text-text-secondary">
+                      {getStatusText(device.status)}
+                    </span>
+                    <CheckCircleIcon className="w-5 h-5 text-green-500 ml-2" />
                   </div>
                 </div>
               </Card>
