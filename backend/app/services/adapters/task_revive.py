@@ -1,0 +1,185 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+Task revival service for expired tasks.
+
+This module provides functionality to revive expired tasks,
+allowing users to continue conversations on tasks that have
+exceeded their expiration time.
+"""
+
+import logging
+from datetime import datetime
+from typing import Optional
+
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
+
+from app.core.config import settings
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
+from app.models.user import User
+from app.schemas.kind import Task
+from app.services.task_member_service import task_member_service
+
+logger = logging.getLogger(__name__)
+
+
+class TaskReviveService:
+    """Service for reviving expired tasks."""
+
+    def revive_task(
+        self,
+        db: Session,
+        task_id: int,
+        user: User,
+        message: Optional[str] = None,
+    ) -> dict:
+        """
+        Revive an expired task.
+
+        This method:
+        1. Validates task exists and user has access
+        2. Validates task is in a revivable state
+        3. Resets task updated_at timestamp
+        4. Checks if executor needs rebuilding
+        5. Optionally creates new subtasks if message is provided
+
+        Args:
+            db: Database session
+            task_id: ID of the task to revive
+            user: Current user
+            message: Optional message to send after revival
+
+        Returns:
+            Dict with success status and revival details
+
+        Raises:
+            HTTPException: If task not found, not accessible, or not revivable
+        """
+        # 1. Get task and validate access
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Check if user has access to the task
+        if not task_member_service.is_member(db, task_id, user.id):
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # 2. Validate task status is revivable
+        task_crd = Task.model_validate(task.json)
+        task_status = task_crd.status.status if task_crd.status else "PENDING"
+
+        revivable_states = ["COMPLETED", "FAILED", "CANCELLED", "PENDING_CONFIRMATION"]
+        if task_status not in revivable_states:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Task cannot be revived. Current status: {task_status}",
+            )
+
+        # Check if task was auto-deleted
+        if (
+            task_crd.metadata.labels
+            and task_crd.metadata.labels.get("autoDeleteExecutor") == "true"
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Task has been cleared and cannot be revived",
+            )
+
+        # 3. Get task type for determining expiration
+        task_type = (
+            task_crd.metadata.labels
+            and task_crd.metadata.labels.get("taskType")
+            or "chat"
+        )
+
+        # 4. Check if executor needs rebuilding
+        executor_rebuilt = self._rebuild_executor_if_needed(db, task_id)
+
+        # 5. Reset task timestamp
+        task.updated_at = datetime.now()
+        if task_crd.status:
+            task_crd.status.updatedAt = datetime.now()
+        task.json = task_crd.model_dump(mode="json", exclude_none=True)
+        flag_modified(task, "json")
+
+        db.commit()
+        db.refresh(task)
+
+        logger.info(
+            f"Task {task_id} revived successfully by user {user.id}, "
+            f"executor_rebuilt={executor_rebuilt}"
+        )
+
+        return {
+            "success": True,
+            "task_id": task_id,
+            "task_type": task_type,
+            "executor_rebuilt": executor_rebuilt,
+            "message": "Task revived successfully",
+        }
+
+    def _rebuild_executor_if_needed(self, db: Session, task_id: int) -> bool:
+        """
+        Check if executor needs rebuilding and reset the deleted flag.
+
+        For tasks where executor has been cleaned up (executor_deleted_at=True),
+        we need to reset this flag so a new executor can be created when
+        the next message is sent.
+
+        Args:
+            db: Database session
+            task_id: Task ID to check
+
+        Returns:
+            True if executor was marked for rebuild, False otherwise
+        """
+        # Get the last assistant subtask with executor info
+        last_assistant_subtask = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.executor_name.isnot(None),
+                Subtask.executor_name != "",
+            )
+            .order_by(Subtask.id.desc())
+            .first()
+        )
+
+        if not last_assistant_subtask:
+            # No executor-based subtasks found, no rebuild needed
+            return False
+
+        if last_assistant_subtask.executor_deleted_at:
+            # Executor was deleted, mark for rebuild by clearing the deleted flag
+            # This allows the next message to create a new executor
+            logger.info(
+                f"Executor for task {task_id} was deleted, "
+                f"clearing executor_deleted_at flag for new executor creation"
+            )
+            # Reset executor_deleted_at for all subtasks of this task
+            db.query(Subtask).filter(
+                Subtask.task_id == task_id,
+                Subtask.executor_deleted_at.is_(True),
+            ).update({Subtask.executor_deleted_at: False})
+            return True
+
+        return False
+
+
+# Singleton instance
+task_revive_service = TaskReviveService()

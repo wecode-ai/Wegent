@@ -159,6 +159,19 @@ export interface PublicSharedTaskResponse {
   created_at: string
 }
 
+// Task Revive Types
+export interface ReviveTaskRequest {
+  message?: string // Optional message to send after revival
+}
+
+export interface ReviveTaskResponse {
+  success: boolean
+  task_id: number
+  task_type: string
+  executor_rebuilt: boolean
+  message: string
+}
+
 // Pipeline stage confirmation types
 export interface ConfirmStageRequest {
   confirmed_prompt: string // The edited/confirmed prompt to pass to next stage
@@ -433,5 +446,18 @@ export const taskApis = {
    */
   getPipelineStageInfo: async (taskId: number): Promise<PipelineStageInfo> => {
     return apiClient.get(`/tasks/${taskId}/pipeline-stage-info`)
+  },
+
+  /**
+   * Revive an expired task to continue the conversation
+   * @param taskId - Task ID to revive
+   * @param message - Optional message to send after revival
+   */
+  reviveTask: async (taskId: number, message?: string): Promise<ReviveTaskResponse> => {
+    const body: ReviveTaskRequest = {}
+    if (message) {
+      body.message = message
+    }
+    return apiClient.post(`/tasks/${taskId}/revive`, body)
   },
 }

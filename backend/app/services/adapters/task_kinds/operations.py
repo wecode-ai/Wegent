@@ -159,9 +159,17 @@ class TaskOperationsMixin:
             if (
                 datetime.now() - existing_task.updated_at
             ).total_seconds() > expire_hours * 3600:
+                # Return HTTP 409 with revivable error details
                 raise HTTPException(
-                    status_code=400,
-                    detail=f"{task_type} task has expired. You can only append tasks within {expire_hours} hours after last update.",
+                    status_code=409,
+                    detail={
+                        "code": "TASK_EXPIRED_REVIVABLE",
+                        "task_id": existing_task.id,
+                        "task_type": task_type,
+                        "expire_hours": expire_hours,
+                        "last_updated_at": existing_task.updated_at.isoformat(),
+                        "message": f"{task_type} task has expired but can be revived",
+                    },
                 )
 
         # Get team reference

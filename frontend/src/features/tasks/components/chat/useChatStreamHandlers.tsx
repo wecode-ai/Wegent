@@ -12,7 +12,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { useTraceAction } from '@/hooks/useTraceAction'
-import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
+import { parseError, getErrorDisplayMessage, type TaskExpiredInfo } from '@/utils/errorParser'
 import { taskApis } from '@/apis/tasks'
 import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
@@ -115,6 +115,15 @@ export interface ChatStreamHandlers {
 
   // State
   isCancelling: boolean
+
+  // Task revive state and handlers
+  reviveDialogOpen: boolean
+  setReviveDialogOpen: (open: boolean) => void
+  reviveTaskInfo: TaskExpiredInfo | null
+  pendingReviveMessage: string
+  isReviving: boolean
+  handleConfirmRevive: () => Promise<void>
+  handleCancelRevive: () => void
 }
 
 /**
@@ -182,6 +191,12 @@ export function useChatStreamHandlers({
   const [pendingTaskId, setPendingTaskId] = useState<number | null>(null)
   const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null)
   const [isCancelling, setIsCancelling] = useState(false)
+
+  // Task revive state
+  const [reviveDialogOpen, setReviveDialogOpen] = useState(false)
+  const [reviveTaskInfo, setReviveTaskInfo] = useState<TaskExpiredInfo | null>(null)
+  const [pendingReviveMessage, setPendingReviveMessage] = useState('')
+  const [isReviving, setIsReviving] = useState(false)
 
   // Refs
   const lastFailedMessageRef = useRef<string | null>(null)
@@ -321,6 +336,14 @@ export function useChatStreamHandlers({
       resetStreamingState()
       const parsedError = parseError(error)
       lastFailedMessageRef.current = message
+
+      // Check for task expired revivable error - open revive dialog instead of showing toast
+      if (parsedError.type === 'task_expired_revivable' && parsedError.taskExpiredInfo) {
+        setPendingReviveMessage(message)
+        setReviveTaskInfo(parsedError.taskExpiredInfo)
+        setReviveDialogOpen(true)
+        return // Don't show error toast for revivable errors
+      }
 
       // Use getErrorDisplayMessage for consistent error display logic
       const errorMessage = getErrorDisplayMessage(error, (key: string) => t(`chat:${key}`))
@@ -983,6 +1006,56 @@ export function useChatStreamHandlers({
     }
   }, [selectedTaskDetail?.id, isCancelling, toast, refreshTasks, refreshSelectedTaskDetail])
 
+  // Task revive handlers
+  const handleConfirmRevive = useCallback(async () => {
+    if (!reviveTaskInfo) return
+
+    setIsReviving(true)
+
+    try {
+      // Call revive API
+      const response = await taskApis.reviveTask(reviveTaskInfo.taskId)
+
+      if (response.success) {
+        // Close dialog
+        setReviveDialogOpen(false)
+
+        // Show success toast
+        toast({
+          title: t('chat:revive.success'),
+        })
+
+        // Refresh task detail to get updated status
+        await refreshSelectedTaskDetail()
+
+        // Resend the pending message after successful revival
+        if (pendingReviveMessage && handleSendMessageRef.current) {
+          // Small delay to ensure task state is updated
+          setTimeout(() => {
+            if (pendingReviveMessage && handleSendMessageRef.current) {
+              handleSendMessageRef.current(pendingReviveMessage)
+            }
+          }, 500)
+        }
+      }
+    } catch (error) {
+      console.error('[useChatStreamHandlers] Failed to revive task:', error)
+
+      toast({
+        variant: 'destructive',
+        title: t('chat:revive.failed'),
+      })
+    } finally {
+      setIsReviving(false)
+    }
+  }, [reviveTaskInfo, pendingReviveMessage, toast, t, refreshSelectedTaskDetail])
+
+  const handleCancelRevive = useCallback(() => {
+    setReviveDialogOpen(false)
+    setReviveTaskInfo(null)
+    setPendingReviveMessage('')
+  }, [])
+
   return {
     // Stream state
     pendingTaskId,
@@ -1006,6 +1079,15 @@ export function useChatStreamHandlers({
 
     // State
     isCancelling,
+
+    // Task revive state and handlers
+    reviveDialogOpen,
+    setReviveDialogOpen,
+    reviveTaskInfo,
+    pendingReviveMessage,
+    isReviving,
+    handleConfirmRevive,
+    handleCancelRevive,
   }
 }
 
