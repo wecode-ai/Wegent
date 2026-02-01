@@ -109,8 +109,10 @@ class TaskOperationsMixin:
         task_id: int,
     ) -> tuple:
         """Handle appending to an existing task."""
+        logger.info(f"[_handle_existing_task] Processing task_id={task_id}")
         task_crd = Task.model_validate(existing_task.json)
         task_status = task_crd.status.status if task_crd.status else "PENDING"
+        logger.info(f"[_handle_existing_task] task_status={task_status}")
 
         if task_status == "RUNNING":
             raise HTTPException(
@@ -152,13 +154,21 @@ class TaskOperationsMixin:
         if task_type == "code":
             expire_hours = settings.APPEND_CODE_TASK_EXPIRE_HOURS
 
+        # Log expiration check details
+        time_since_update = (datetime.now() - existing_task.updated_at).total_seconds()
+        expire_seconds = expire_hours * 3600
+        logger.info(
+            f"[_handle_existing_task] Expiration check: task_type={task_type}, "
+            f"expire_hours={expire_hours}, time_since_update={time_since_update}s, "
+            f"expire_seconds={expire_seconds}s, is_expired={time_since_update > expire_seconds}"
+        )
+
         # Check expiration for all executor-based tasks
         # Note: This check is ONLY in the executor path (create_task_or_append).
         # Chat Shell tasks use a different path (create_task_and_subtasks) which
         # doesn't need expiration check because they don't use persistent containers.
-        if (
-            datetime.now() - existing_task.updated_at
-        ).total_seconds() > expire_hours * 3600:
+        if time_since_update > expire_seconds:
+            logger.info(f"[_handle_existing_task] Task {task_id} is expired, raising 409")
             # Return HTTP 409 with restorable error details
             raise HTTPException(
                 status_code=409,
