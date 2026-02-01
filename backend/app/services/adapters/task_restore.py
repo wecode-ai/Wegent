@@ -165,17 +165,22 @@ class TaskRestoreService:
             return False
 
         if last_assistant_subtask.executor_deleted_at:
-            # Executor was deleted, mark for rebuild by clearing the deleted flag
+            # Executor was deleted, mark for rebuild by:
+            # 1. Clearing executor_deleted_at flag
+            # 2. Clearing executor_name so new subtasks won't inherit the old container name
             # This allows the next message to create a new executor
             logger.info(
                 f"Executor for task {task_id} was deleted, "
-                f"clearing executor_deleted_at flag for new executor creation"
+                f"clearing executor_deleted_at and executor_name for new executor creation"
             )
-            # Reset executor_deleted_at for all subtasks of this task
+            # Reset executor_deleted_at and executor_name for all subtasks of this task
             db.query(Subtask).filter(
                 Subtask.task_id == task_id,
                 Subtask.executor_deleted_at.is_(True),
-            ).update({Subtask.executor_deleted_at: False})
+            ).update({
+                Subtask.executor_deleted_at: False,
+                Subtask.executor_name: "",
+            })
             return True
 
         return False
