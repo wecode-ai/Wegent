@@ -144,28 +144,55 @@ class TaskOperationsMixin:
                 detail="task already clear, please create a new task",
             )
 
-        # Check expiration
-        expire_hours = settings.APPEND_CHAT_TASK_EXPIRE_HOURS
+        # Get task type for error messages
         task_type = (
             task_crd.metadata.labels
             and task_crd.metadata.labels.get("taskType")
             or "chat"
         )
+
+        # Check if executor was deleted (container cleaned up)
+        # This takes priority over expiration check - if executor is gone, task needs restore
+        last_assistant_subtask = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.executor_name.isnot(None),
+                Subtask.executor_name != "",
+            )
+            .order_by(Subtask.id.desc())
+            .first()
+        )
+
+        if last_assistant_subtask and last_assistant_subtask.executor_deleted_at:
+            logger.info(
+                f"[_handle_existing_task] Task {task_id} executor was deleted, raising 409 for restore"
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "TASK_EXPIRED_RESTORABLE",
+                    "task_id": existing_task.id,
+                    "task_type": task_type,
+                    "expire_hours": 0,
+                    "last_updated_at": existing_task.updated_at.isoformat(),
+                    "message": f"{task_type} task executor was cleaned up but can be restored",
+                    "reason": "executor_deleted",
+                },
+            )
+
+        # Check expiration
+        expire_hours = settings.APPEND_CHAT_TASK_EXPIRE_HOURS
         if task_type == "code":
             expire_hours = settings.APPEND_CODE_TASK_EXPIRE_HOURS
-
-        # DEBUG: Log settings values to verify environment configuration
-        logger.info(
-            f"[_handle_existing_task] Settings: CHAT_EXPIRE={settings.APPEND_CHAT_TASK_EXPIRE_HOURS}h, "
-            f"CODE_EXPIRE={settings.APPEND_CODE_TASK_EXPIRE_HOURS}h, using expire_hours={expire_hours}h"
-        )
 
         # Log expiration check details
         time_since_update = (datetime.now() - existing_task.updated_at).total_seconds()
         expire_seconds = expire_hours * 3600
         logger.info(
             f"[_handle_existing_task] Expiration check: task_type={task_type}, "
-            f"expire_hours={expire_hours}, time_since_update={time_since_update}s, "
+            f"expire_hours={expire_hours}, time_since_update={time_since_update:.0f}s, "
             f"expire_seconds={expire_seconds}s, is_expired={time_since_update > expire_seconds}"
         )
 
@@ -185,6 +212,7 @@ class TaskOperationsMixin:
                     "expire_hours": expire_hours,
                     "last_updated_at": existing_task.updated_at.isoformat(),
                     "message": f"{task_type} task has expired but can be restored",
+                    "reason": "expired",
                 },
             )
 
