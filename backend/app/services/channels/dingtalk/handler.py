@@ -1007,16 +1007,16 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                 device_id,
             )
 
-            # Send acknowledgment - response will be streamed via AI Card
-            # For device execution, we send an immediate acknowledgment
-            # and the actual response will come when device completes
+            # Send acknowledgment message for device execution
+            # Device tasks are executed asynchronously, so we send a complete
+            # acknowledgment message. The actual response will be handled by
+            # the device and can be viewed in the web interface.
             if self._dingtalk_client and self._use_ai_card:
-                # Use streaming emitter to show progress
+                # Use streaming emitter to send a complete acknowledgment
                 streaming_emitter = StreamingResponseEmitter(
                     dingtalk_client=self._dingtalk_client,
                     incoming_message=incoming_message,
                 )
-                # Start the card with a "processing" message
                 await streaming_emitter.emit_chat_start(
                     task_id=result.task.id,
                     subtask_id=result.assistant_subtask.id,
@@ -1025,11 +1025,20 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                 await streaming_emitter.emit_chat_chunk(
                     task_id=result.task.id,
                     subtask_id=result.assistant_subtask.id,
-                    content="⏳ 任务已发送到设备，正在执行中...\n\n",
+                    content=(
+                        f"✅ 任务已发送到设备 **{device_id[:8]}**\n\n"
+                        f"任务 ID: {result.task.id}\n"
+                        "状态: 正在执行\n\n"
+                        "💡 您可以在 Wegent 网页端查看执行进度和结果。"
+                    ),
                     offset=0,
                 )
-                # Note: The card will be updated when device reports progress
-                # For now, we leave it in streaming state
+                # Finalize the card to prevent it from staying in streaming state
+                await streaming_emitter.emit_chat_done(
+                    task_id=result.task.id,
+                    subtask_id=result.assistant_subtask.id,
+                    offset=0,
+                )
 
             return None  # Success - no error message
 

@@ -98,6 +98,17 @@ class TestParseCommand:
         result = parse_command(None)
         assert result is None
 
+    def test_parse_command_with_leading_whitespace(self):
+        """Test parsing command with leading whitespace."""
+        result = parse_command("  /devices")
+        assert result is not None
+        assert result.command == CommandType.DEVICES
+
+        result = parse_command("   /use my-mac")
+        assert result is not None
+        assert result.command == CommandType.USE
+        assert result.argument == "my-mac"
+
     def test_parse_command_with_extra_spaces(self):
         """Test parsing command with extra whitespace."""
         result = parse_command("/use   my-device  ")

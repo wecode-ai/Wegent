@@ -17,7 +17,7 @@ This module parses slash commands from DingTalk messages:
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +55,14 @@ def parse_command(content: str) -> Optional[ParsedCommand]:
     Returns:
         ParsedCommand if content is a valid command, None otherwise
     """
-    if not content or not content.startswith("/"):
+    if not content:
         return None
 
+    # Strip whitespace first, then check for command prefix
     content = content.strip()
+    if not content.startswith("/"):
+        return None
+
     parts = content.split(maxsplit=1)
     cmd_str = parts[0].lower()
     argument = parts[1].strip() if len(parts) > 1 else None
