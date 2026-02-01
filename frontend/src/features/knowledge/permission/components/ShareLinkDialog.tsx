@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Link, Check, Copy } from 'lucide-react'
 import {
   Dialog,
@@ -30,6 +30,7 @@ export function ShareLinkDialog({
 }: ShareLinkDialogProps) {
   const { t } = useTranslation('knowledge')
   const [copied, setCopied] = useState(false)
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Generate share link
   const shareLink =
@@ -37,11 +38,24 @@ export function ShareLinkDialog({
       ? `${window.location.origin}/knowledge/share/${kbId}`
       : ''
 
+  // Clean up timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+    }
+  }, [])
+
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(shareLink)
       setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      // Clear any existing timeout
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+      timeoutRef.current = setTimeout(() => setCopied(false), 2000)
     } catch (err) {
       console.error('Failed to copy link:', err)
     }

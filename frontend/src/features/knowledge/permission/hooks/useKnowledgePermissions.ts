@@ -22,7 +22,6 @@ import type {
 
 interface UseKnowledgePermissionsOptions {
   kbId: number
-  autoFetch?: boolean
 }
 
 interface UseKnowledgePermissionsReturn {

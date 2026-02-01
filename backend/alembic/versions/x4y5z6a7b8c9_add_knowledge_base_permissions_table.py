@@ -35,7 +35,7 @@ def table_exists(table_name: str) -> bool:
     result = conn.execute(
         sa.text(
             "SELECT COUNT(*) FROM information_schema.tables "
-            "WHERE table_name = :table_name"
+            "WHERE table_name = :table_name AND table_schema = DATABASE()"
         ),
         {"table_name": table_name},
     )

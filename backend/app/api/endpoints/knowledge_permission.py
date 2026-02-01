@@ -7,7 +7,6 @@ API endpoints for knowledge base permission management.
 """
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -73,7 +72,6 @@ def apply_permission(
             db_url=str(settings.DATABASE_URL),
             permission_id=result.id,
             kb_id=kb_id,
-            applicant_id=current_user.id,
             applicant_name=current_user.user_name,
             applicant_email=current_user.email,
             permission_level=result.permission_level.value,
@@ -346,7 +344,7 @@ def get_kb_share_info(
         .filter(
             Kind.id == kb_id,
             Kind.kind == "KnowledgeBase",
-            Kind.is_active == True,
+            Kind.is_active,
         )
         .first()
     )

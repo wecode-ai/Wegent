@@ -98,7 +98,7 @@ class KnowledgePermissionService:
             .filter(
                 Kind.id == knowledge_base_id,
                 Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .first()
         )
@@ -184,7 +184,7 @@ class KnowledgePermissionService:
             .filter(
                 Kind.id == knowledge_base_id,
                 Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .first()
         )
@@ -437,7 +437,7 @@ class KnowledgePermissionService:
             .filter(
                 Kind.id == knowledge_base_id,
                 Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .first()
         )
@@ -638,7 +638,7 @@ class KnowledgePermissionService:
             .filter(
                 Kind.id == knowledge_base_id,
                 Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .first()
         )

@@ -8,6 +8,7 @@ Webhook notification functions for knowledge base permission events.
 
 import logging
 from datetime import datetime
+from functools import lru_cache
 from typing import Optional
 
 from sqlalchemy import create_engine
@@ -21,9 +22,15 @@ from app.services.webhook_notification import Notification, webhook_notification
 logger = logging.getLogger(__name__)
 
 
+@lru_cache(maxsize=1)
+def _get_engine(db_url: str):
+    """Get or create a cached database engine."""
+    return create_engine(db_url.replace("+asyncmy", "+pymysql"))
+
+
 def _get_db_session(db_url: str) -> Session:
     """Create a new database session for background tasks."""
-    engine = create_engine(db_url.replace("+asyncmy", "+pymysql"))
+    engine = _get_engine(db_url)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     return SessionLocal()
 
@@ -32,7 +39,6 @@ def send_permission_request_notification(
     db_url: str,
     permission_id: int,
     kb_id: int,
-    applicant_id: int,
     applicant_name: str,
     applicant_email: Optional[str],
     permission_level: str,
@@ -44,7 +50,6 @@ def send_permission_request_notification(
         db_url: Database URL for creating session
         permission_id: Permission record ID
         kb_id: Knowledge base ID
-        applicant_id: Applicant user ID
         applicant_name: Applicant username
         applicant_email: Applicant email
         permission_level: Requested permission level

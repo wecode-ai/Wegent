@@ -37,7 +37,7 @@ class PermissionApplyRequest(BaseModel):
 
     permission_level: PermissionLevel = Field(
         default=PermissionLevel.VIEW,
-        description="Requested permission level: view or edit",
+        description="Requested permission level: view, edit, or manage",
     )
 
 

@@ -34,6 +34,8 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
   const [showAddUser, setShowAddUser] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingLevel, setEditingLevel] = useState<PermissionLevel>('view')
+  // Track selected approval levels for pending requests
+  const [approvalLevels, setApprovalLevels] = useState<Record<number, PermissionLevel>>({})
 
   const {
     permissions,
@@ -51,12 +53,30 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
     fetchPermissions()
   }, [fetchPermissions])
 
-  const handleApprove = async (
-    permission: PendingPermissionInfo,
-    level?: PermissionLevel
-  ) => {
+  // Initialize approval levels when pending requests change
+  useEffect(() => {
+    if (permissions?.pending) {
+      const initialLevels: Record<number, PermissionLevel> = {}
+      permissions.pending.forEach(p => {
+        // Only set if not already tracked
+        if (!(p.id in approvalLevels)) {
+          initialLevels[p.id] = p.permission_level
+        }
+      })
+      if (Object.keys(initialLevels).length > 0) {
+        setApprovalLevels(prev => ({ ...prev, ...initialLevels }))
+      }
+    }
+  }, [permissions?.pending])
+
+  const handleApprovalLevelChange = (permissionId: number, level: PermissionLevel) => {
+    setApprovalLevels(prev => ({ ...prev, [permissionId]: level }))
+  }
+
+  const handleApprove = async (permission: PendingPermissionInfo) => {
     try {
-      await reviewPermission(permission.id, 'approve', level || permission.permission_level)
+      const level = approvalLevels[permission.id] || permission.permission_level
+      await reviewPermission(permission.id, 'approve', level)
     } catch (_err) {
       // Error is handled by the hook
     }
@@ -169,8 +189,8 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                 </div>
                 <div className="flex items-center gap-2">
                   <Select
-                    defaultValue={permission.permission_level}
-                    onValueChange={value => handleApprove(permission, value as PermissionLevel)}
+                    value={approvalLevels[permission.id] || permission.permission_level}
+                    onValueChange={value => handleApprovalLevelChange(permission.id, value as PermissionLevel)}
                   >
                     <SelectTrigger className="w-24 h-8">
                       <SelectValue />
@@ -322,7 +342,7 @@ function PermissionGroup({
         {users.map(user => (
           <div
             key={user.id}
-            className="flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors"
+            className="group flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors"
           >
             <div className="flex-1 min-w-0">
               <div className="font-medium text-sm truncate">{user.username}</div>
