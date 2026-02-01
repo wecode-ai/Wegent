@@ -203,6 +203,8 @@ class KnowledgeService:
         Returns:
             Kind if found and accessible, None otherwise
         """
+        from app.services.knowledge.permission_service import KnowledgePermissionService
+
         kb = (
             db.query(Kind)
             .filter(
@@ -216,14 +218,13 @@ class KnowledgeService:
         if not kb:
             return None
 
-        # Check access permission
-        if kb.namespace == "default":
-            if kb.user_id != user_id:
-                return None
-        else:
-            role = get_effective_role_in_group(db, user_id, kb.namespace)
-            if role is None:
-                return None
+        # Use the new permission service to check access
+        has_access, _, _ = KnowledgePermissionService.get_user_kb_permission(
+            db, knowledge_base_id, user_id
+        )
+
+        if not has_access:
+            return None
 
         return kb
 
@@ -280,7 +281,12 @@ class KnowledgeService:
             )
 
         else:  # ALL
-            # Get personal knowledge bases
+            from app.models.knowledge_permission import (
+                KnowledgeBasePermission,
+                PermissionStatus,
+            )
+
+            # Get personal knowledge bases (created by user)
             personal = (
                 db.query(Kind)
                 .filter(
@@ -308,7 +314,42 @@ class KnowledgeService:
                 else []
             )
 
-            return personal + team
+            # Get knowledge bases with explicit approved permission
+            # (excluding ones already covered by personal or team)
+            personal_ids = {kb.id for kb in personal}
+            team_ids = {kb.id for kb in team}
+            excluded_ids = personal_ids | team_ids
+
+            shared_permissions = (
+                db.query(KnowledgeBasePermission.knowledge_base_id)
+                .filter(
+                    KnowledgeBasePermission.user_id == user_id,
+                    KnowledgeBasePermission.status == PermissionStatus.APPROVED,
+                )
+                .all()
+            )
+            shared_kb_ids = [p.knowledge_base_id for p in shared_permissions]
+
+            # Filter out already included KBs
+            shared_kb_ids_filtered = [
+                kb_id for kb_id in shared_kb_ids if kb_id not in excluded_ids
+            ]
+
+            shared = (
+                (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id.in_(shared_kb_ids_filtered),
+                        Kind.kind == "KnowledgeBase",
+                        Kind.is_active == True,
+                    )
+                    .all()
+                )
+                if shared_kb_ids_filtered
+                else []
+            )
+
+            return personal + team + shared
 
     @staticmethod
     def update_knowledge_base(
@@ -450,18 +491,15 @@ class KnowledgeService:
         Raises:
             ValueError: If permission denied or knowledge base has documents
         """
+        from app.services.knowledge.permission_service import KnowledgePermissionService
+
         kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
         if not kb:
             return False
 
-        # Check permission for team knowledge base
-        if kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can delete knowledge base in this group"
-                )
+        # Only creator can delete knowledge base
+        if kb.user_id != user_id:
+            raise ValueError("Only the creator can delete this knowledge base")
 
         # Check if knowledge base has documents - prevent deletion if documents exist
         document_count = KnowledgeService.get_document_count(db, knowledge_base_id)
@@ -470,6 +508,9 @@ class KnowledgeService:
                 f"Cannot delete knowledge base with {document_count} document(s). "
                 "Please delete all documents first."
             )
+
+        # Delete all permissions for this KB
+        KnowledgePermissionService.delete_permissions_for_kb(db, knowledge_base_id)
 
         # Physically delete the knowledge base
         db.delete(kb)
