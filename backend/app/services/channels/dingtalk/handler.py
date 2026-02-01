@@ -25,7 +25,9 @@ from app.core.cache import cache_manager
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.user import User
-from app.services.channels.dingtalk.commands import (
+
+# Import from generic modules (re-exported by dingtalk for backward compatibility)
+from app.services.channels.commands import (
     DEVICE_ITEM_TEMPLATE,
     DEVICES_EMPTY,
     DEVICES_FOOTER,
@@ -36,12 +38,13 @@ from app.services.channels.dingtalk.commands import (
     ParsedCommand,
     parse_command,
 )
-from app.services.channels.dingtalk.device_selection import (
+from app.services.channels.device_selection import (
     DeviceSelection,
     DeviceType,
     device_selection_manager,
 )
 from app.services.channels.dingtalk.user_resolver import DingTalkUserResolver
+from app.services.channels.emitter import CompositeEmitter
 
 if TYPE_CHECKING:
     from dingtalk_stream.stream import DingTalkStreamClient
@@ -70,6 +73,8 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         on_message: Optional[Callable[[Dict[str, Any]], asyncio.Future]] = None,
         get_default_team_id: Optional[Callable[[], Optional[int]]] = None,
         get_default_model_name: Optional[Callable[[], Optional[str]]] = None,
+        get_user_mapping_config: Optional[Callable[[], Dict[str, Any]]] = None,
+        channel_id: Optional[int] = None,
     ):
         """
         Initialize the handler.
@@ -85,14 +90,19 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                                 If provided, this takes precedence over default_team_id.
             get_default_model_name: Callback to get current default_model_name dynamically.
                                    Used to override bot's model configuration.
+            get_user_mapping_config: Callback to get user mapping configuration dynamically.
+                                    Returns {"mode": str, "config": dict|None}
+            channel_id: The IM channel ID for callback purposes.
         """
         super(dingtalk_stream.ChatbotHandler, self).__init__()
         self._dingtalk_client = dingtalk_client
         self._default_team_id = default_team_id
         self._get_default_team_id = get_default_team_id
         self._get_default_model_name = get_default_model_name
+        self._get_user_mapping_config = get_user_mapping_config
         self._use_ai_card = use_ai_card
         self._on_message = on_message
+        self._channel_id = channel_id
         self.logger = logging.getLogger(__name__)
 
     @property
@@ -109,28 +119,61 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             return self._get_default_model_name()
         return None
 
-    async def _get_conversation_task_id(self, conversation_id: str) -> Optional[int]:
-        """Get cached task_id for a conversation from Redis."""
+    @property
+    def user_mapping_config(self) -> Dict[str, Any]:
+        """Get the current user mapping configuration from dynamic callback."""
+        if self._get_user_mapping_config is not None:
+            return self._get_user_mapping_config()
+        return {}
+
+    async def _get_conversation_task_id(
+        self, conversation_id: str, user_id: int
+    ) -> Optional[int]:
+        """Get cached task_id for a conversation and user from Redis.
+
+        Args:
+            conversation_id: DingTalk conversation ID
+            user_id: Wegent user ID
+
+        Returns:
+            Cached task_id or None if not found
+        """
         if not conversation_id:
             return None
-        key = f"{DINGTALK_CONV_TASK_PREFIX}{conversation_id}"
+        # Include user_id in key to ensure each user has their own task in the conversation
+        key = f"{DINGTALK_CONV_TASK_PREFIX}{conversation_id}:{user_id}"
         task_id = await cache_manager.get(key)
         return int(task_id) if task_id is not None else None
 
     async def _set_conversation_task_id(
-        self, conversation_id: str, task_id: int
+        self, conversation_id: str, user_id: int, task_id: int
     ) -> None:
-        """Cache task_id for a conversation in Redis."""
+        """Cache task_id for a conversation and user in Redis.
+
+        Args:
+            conversation_id: DingTalk conversation ID
+            user_id: Wegent user ID
+            task_id: Task ID to cache
+        """
         if not conversation_id:
             return
-        key = f"{DINGTALK_CONV_TASK_PREFIX}{conversation_id}"
+        # Include user_id in key to ensure each user has their own task in the conversation
+        key = f"{DINGTALK_CONV_TASK_PREFIX}{conversation_id}:{user_id}"
         await cache_manager.set(key, task_id, expire=DINGTALK_CONV_TASK_TTL)
 
-    async def _delete_conversation_task_id(self, conversation_id: str) -> None:
-        """Delete cached task_id for a conversation from Redis."""
+    async def _delete_conversation_task_id(
+        self, conversation_id: str, user_id: int
+    ) -> None:
+        """Delete cached task_id for a conversation and user from Redis.
+
+        Args:
+            conversation_id: DingTalk conversation ID
+            user_id: Wegent user ID
+        """
         if not conversation_id:
             return
-        key = f"{DINGTALK_CONV_TASK_PREFIX}{conversation_id}"
+        # Include user_id in key to ensure each user has their own task in the conversation
+        key = f"{DINGTALK_CONV_TASK_PREFIX}{conversation_id}:{user_id}"
         await cache_manager.delete(key)
 
     async def process(self, callback: CallbackMessage) -> tuple[str, str]:
@@ -266,8 +309,17 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         db = SessionLocal()
 
         try:
+            # Get user mapping configuration from channel config
+            mapping_config = self.user_mapping_config
+            user_mapping_mode = mapping_config.get("mode")
+            user_mapping_config = mapping_config.get("config")
+
             # Resolve DingTalk user to Wegent user first (needed for all operations)
-            user_resolver = DingTalkUserResolver(db)
+            user_resolver = DingTalkUserResolver(
+                db,
+                user_mapping_mode=user_mapping_mode,
+                user_mapping_config=user_mapping_config,
+            )
             user = await user_resolver.resolve_user(
                 sender_id=sender.get("sender_id", ""),
                 sender_nick=sender.get("sender_nick"),
@@ -370,7 +422,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         if command.command == CommandType.NEW:
             # Clear conversation task mapping
             if conversation_id:
-                await self._delete_conversation_task_id(conversation_id)
+                await self._delete_conversation_task_id(conversation_id, user.id)
             self.reply_text("✅ 已开始新对话，请发送您的消息", incoming_message)
 
         elif command.command == CommandType.HELP:
@@ -408,13 +460,14 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
 
         if online_devices:
             message += "**在线设备:**\n"
-            for device in online_devices:
+            for idx, device in enumerate(online_devices, start=1):
                 status_str = ""
                 if device["status"] == "busy":
                     status_str = " - 🔴 忙碌"
                 elif device.get("is_default"):
                     status_str = " - ⭐ 默认"
                 message += DEVICE_ITEM_TEMPLATE.format(
+                    index=idx,
                     name=device["name"],
                     device_id=device["device_id"][:8],
                     status=status_str,
@@ -437,7 +490,15 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         argument: Optional[str],
         incoming_message: ChatbotMessage,
     ) -> None:
-        """Handle /use command - switch execution device."""
+        """Handle /use command - switch execution device.
+
+        Supports switching by:
+        - No argument: switch back to chat mode
+        - "cloud": switch to cloud executor
+        - Number (1, 2, 3...): switch by device index from /devices list
+        - Device name: switch by device name (case insensitive)
+        - Device ID prefix: switch by device ID prefix
+        """
         from app.services.device_service import device_service
 
         # No argument - switch back to chat mode
@@ -460,17 +521,33 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             )
             return
 
-        # Local device - find by name
+        # Get all devices
         devices = await device_service.get_all_devices(db, user.id)
+        # Filter online devices (same order as /devices command)
+        online_devices = [d for d in devices if d["status"] != "offline"]
+
         matched_device = None
 
-        for device in devices:
+        # Check if argument is a number (device index)
+        if argument.isdigit():
+            device_index = int(argument)
+            if 1 <= device_index <= len(online_devices):
+                matched_device = online_devices[device_index - 1]
+            else:
+                self.reply_text(
+                    f"❌ 无效的设备序号: {argument}\n\n"
+                    f"当前有 {len(online_devices)} 个在线设备，请使用 `/devices` 查看列表",
+                    incoming_message,
+                )
+                return
+        else:
             # Match by name (case insensitive) or device_id prefix
-            if device["name"].lower() == argument or device[
-                "device_id"
-            ].lower().startswith(argument):
-                matched_device = device
-                break
+            for device in devices:
+                if device["name"].lower() == argument or device[
+                    "device_id"
+                ].lower().startswith(argument):
+                    matched_device = device
+                    break
 
         if not matched_device:
             self.reply_text(
@@ -768,7 +845,9 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         # Try to reuse existing task for this conversation
         existing_task_id = None
         if conversation_id:
-            existing_task_id = await self._get_conversation_task_id(conversation_id)
+            existing_task_id = await self._get_conversation_task_id(
+                conversation_id, user.id
+            )
             if existing_task_id:
                 self.logger.info(
                     "[DingTalkHandler] Reusing task %d for conversation %s",
@@ -793,7 +872,9 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
 
         # Cache the task_id for this conversation
         if conversation_id:
-            await self._set_conversation_task_id(conversation_id, result.task.id)
+            await self._set_conversation_task_id(
+                conversation_id, user.id, result.task.id
+            )
 
         self.logger.info(
             "[DingTalkHandler] Task created: task_id=%d, subtask_id=%d, reused=%s",
@@ -816,7 +897,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                 incoming_message=incoming_message,
             )
             # Use a composite emitter that sends to both
-            response_emitter = _CompositeEmitter(streaming_emitter, sync_emitter)
+            response_emitter = CompositeEmitter(streaming_emitter, sync_emitter)
         else:
             response_emitter = sync_emitter
 
@@ -952,7 +1033,9 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         # Try to reuse existing task for this conversation
         existing_task_id = None
         if conversation_id:
-            existing_task_id = await self._get_conversation_task_id(conversation_id)
+            existing_task_id = await self._get_conversation_task_id(
+                conversation_id, user.id
+            )
             if existing_task_id:
                 self.logger.info(
                     "[DingTalkHandler] Reusing task %d for device conversation %s",
@@ -960,7 +1043,9 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                     conversation_id,
                 )
 
-        # Create task and subtasks (don't trigger AI yet - device will handle it)
+        # Create task and subtasks
+        # Note: should_trigger_ai=True to create assistant_subtask for device execution
+        # The device will handle the actual AI response via route_task_to_device
         result = await create_task_and_subtasks(
             db=db,
             user=user,
@@ -968,7 +1053,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             message=message,
             params=params,
             task_id=existing_task_id,
-            should_trigger_ai=False,  # Device will trigger AI
+            should_trigger_ai=True,  # Create assistant_subtask for device execution
         )
 
         if not result.assistant_subtask:
@@ -979,7 +1064,9 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
 
         # Cache the task_id for this conversation
         if conversation_id:
-            await self._set_conversation_task_id(conversation_id, result.task.id)
+            await self._set_conversation_task_id(
+                conversation_id, user.id, result.task.id
+            )
 
         self.logger.info(
             "[DingTalkHandler] Device task created: task_id=%d, subtask_id=%d, device_id=%s",
@@ -1007,6 +1094,28 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                 device_id,
             )
 
+            # Save callback info for device task completion notification
+            # This allows the device_namespace to send results back to DingTalk
+            if self._channel_id:
+                from app.services.channels.dingtalk.callback import (
+                    DingTalkCallbackInfo,
+                    dingtalk_callback_service,
+                )
+
+                callback_info = DingTalkCallbackInfo(
+                    channel_id=self._channel_id,
+                    conversation_id=conversation_id,
+                    incoming_message_data=message_context.get("callback_data"),
+                )
+                await dingtalk_callback_service.save_callback_info(
+                    task_id=result.task.id,
+                    callback_info=callback_info,
+                )
+                self.logger.info(
+                    "[DingTalkHandler] Saved callback info for task %d",
+                    result.task.id,
+                )
+
             # Send acknowledgment message for device execution
             # Device tasks are executed asynchronously, so we send a complete
             # acknowledgment message. The actual response will be handled by
@@ -1029,7 +1138,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                         f"✅ 任务已发送到设备 **{device_id[:8]}**\n\n"
                         f"任务 ID: {result.task.id}\n"
                         "状态: 正在执行\n\n"
-                        "💡 您可以在 Wegent 网页端查看执行进度和结果。"
+                        "💡 任务完成后将自动发送结果到钉钉。"
                     ),
                     offset=0,
                 )
@@ -1098,7 +1207,9 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         # Try to reuse existing task for this conversation
         existing_task_id = None
         if conversation_id:
-            existing_task_id = await self._get_conversation_task_id(conversation_id)
+            existing_task_id = await self._get_conversation_task_id(
+                conversation_id, user.id
+            )
             if existing_task_id:
                 self.logger.info(
                     "[DingTalkHandler] Reusing task %d for cloud conversation %s",
@@ -1106,7 +1217,9 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                     conversation_id,
                 )
 
-        # Create task and subtasks (don't trigger AI - executor_manager will handle it)
+        # Create task and subtasks
+        # Note: should_trigger_ai=True to create assistant_subtask for cloud execution
+        # The executor_manager will handle the actual AI response
         result = await create_task_and_subtasks(
             db=db,
             user=user,
@@ -1114,7 +1227,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             message=message,
             params=params,
             task_id=existing_task_id,
-            should_trigger_ai=False,  # Executor manager will trigger AI
+            should_trigger_ai=True,  # Create assistant_subtask for cloud execution
         )
 
         if not result.assistant_subtask:
@@ -1125,7 +1238,9 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
 
         # Cache the task_id for this conversation
         if conversation_id:
-            await self._set_conversation_task_id(conversation_id, result.task.id)
+            await self._set_conversation_task_id(
+                conversation_id, user.id, result.task.id
+            )
 
         self.logger.info(
             "[DingTalkHandler] Cloud task created: task_id=%d, subtask_id=%d",
@@ -1173,45 +1288,5 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                 f"任务 ID: {result.task.id}\n"
                 "任务完成后将收到通知。"
             )
-
-
-class _CompositeEmitter:
-    """Composite emitter that forwards events to multiple emitters.
-
-    This allows collecting response content while also streaming
-    updates to the user.
-    """
-
-    def __init__(self, *emitters):
-        """Initialize with multiple emitters."""
-        self._emitters = emitters
-
-    async def emit_chat_start(self, *args, **kwargs):
-        """Forward to all emitters."""
-        for emitter in self._emitters:
-            await emitter.emit_chat_start(*args, **kwargs)
-
-    async def emit_chat_chunk(self, *args, **kwargs):
-        """Forward to all emitters."""
-        for emitter in self._emitters:
-            await emitter.emit_chat_chunk(*args, **kwargs)
-
-    async def emit_chat_done(self, *args, **kwargs):
-        """Forward to all emitters."""
-        for emitter in self._emitters:
-            await emitter.emit_chat_done(*args, **kwargs)
-
-    async def emit_chat_error(self, *args, **kwargs):
-        """Forward to all emitters."""
-        for emitter in self._emitters:
-            await emitter.emit_chat_error(*args, **kwargs)
-
-    async def emit_chat_cancelled(self, *args, **kwargs):
-        """Forward to all emitters."""
-        for emitter in self._emitters:
-            await emitter.emit_chat_cancelled(*args, **kwargs)
-
-    async def emit_chat_bot_complete(self, *args, **kwargs):
-        """Forward to all emitters."""
         for emitter in self._emitters:
             await emitter.emit_chat_bot_complete(*args, **kwargs)

@@ -793,6 +793,25 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     f"delta_len={len(result.delta_content)}, has_thinking={result.has_thinking}"
                 )
 
+            # Send streaming progress to DingTalk if callback info exists
+            try:
+                from app.services.channels.dingtalk.callback import (
+                    dingtalk_callback_service,
+                )
+
+                # Build content for DingTalk - use full_content which includes everything
+                # The emitter will handle streaming updates
+                if result.full_content or result.thinking:
+                    await dingtalk_callback_service.send_progress(
+                        task_id=result.task_id,
+                        subtask_id=subtask_id,
+                        content=result.full_content,
+                        offset=result.new_offset,
+                        thinking=result.thinking,
+                    )
+            except Exception as e:
+                logger.debug(f"[Device WS] DingTalk progress send skipped: {e}")
+
         logger.debug(
             f"[Device WS] Progress received: subtask={subtask_id}, progress={data.get('progress', 0)}"
         )
@@ -811,6 +830,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         Handle task:complete event from device.
 
         Marks subtask as completed/failed and emits chat:done event.
+        Also sends result to DingTalk if the task was initiated from DingTalk.
 
         Args:
             sid: Socket ID
@@ -866,6 +886,22 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 status=result.status,
                 progress=100,
             )
+
+        # Send result to DingTalk if the task was initiated from DingTalk
+        try:
+            from app.services.channels.dingtalk.callback import (
+                dingtalk_callback_service,
+            )
+
+            await dingtalk_callback_service.send_task_result(
+                task_id=result.task_id,
+                subtask_id=subtask_id,
+                content=result.content,
+                status=result.status,
+                error_message=result.error_message,
+            )
+        except Exception as e:
+            logger.warning(f"[Device WS] Failed to send DingTalk callback: {e}")
 
         logger.info(
             f"[Device WS] Task complete: subtask={subtask_id}, status={result.status}"

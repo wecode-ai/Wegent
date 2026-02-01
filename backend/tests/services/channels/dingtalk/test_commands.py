@@ -46,6 +46,23 @@ class TestParseCommand:
         assert result.command == CommandType.USE
         assert result.argument is None
 
+    def test_parse_use_command_with_index(self):
+        """Test parsing /use command with device index."""
+        result = parse_command("/use 1")
+        assert result is not None
+        assert result.command == CommandType.USE
+        assert result.argument == "1"
+
+        result = parse_command("/use 2")
+        assert result is not None
+        assert result.command == CommandType.USE
+        assert result.argument == "2"
+
+        result = parse_command("/use 10")
+        assert result is not None
+        assert result.command == CommandType.USE
+        assert result.argument == "10"
+
     def test_parse_status_command(self):
         """Test parsing /status command."""
         result = parse_command("/status")
@@ -162,3 +179,8 @@ class TestHelpMessage:
         assert "/status" in HELP_MESSAGE
         assert "/new" in HELP_MESSAGE
         assert "/help" in HELP_MESSAGE
+
+    def test_help_message_mentions_index_support(self):
+        """Test that help message mentions device index support."""
+        # The help message should mention that /use supports index
+        assert "序号" in HELP_MESSAGE or "<序号" in HELP_MESSAGE
