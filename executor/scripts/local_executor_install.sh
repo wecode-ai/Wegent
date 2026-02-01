@@ -27,6 +27,11 @@ INSTALL_DIR="${HOME}/.wegent-executor/bin"
 BINARY_NAME="wegent-executor"
 VERSION=""
 
+# Claude Code minimum version requirement
+# Based on Docker image version: @anthropic-ai/claude-code@2.1.27
+MIN_CLAUDE_CODE_VERSION="2.1.0"
+MIN_NODE_VERSION="18"
+
 # Print colored message
 print_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
@@ -42,6 +47,152 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Compare semantic versions
+# Returns 0 if version1 >= version2, 1 otherwise
+version_compare() {
+    local version1="$1"
+    local version2="$2"
+
+    # Remove 'v' prefix if present
+    version1="${version1#v}"
+    version2="${version2#v}"
+
+    # Split versions into arrays
+    IFS='.' read -ra v1_parts <<< "$version1"
+    IFS='.' read -ra v2_parts <<< "$version2"
+
+    # Compare each part
+    for i in 0 1 2; do
+        local v1_part="${v1_parts[$i]:-0}"
+        local v2_part="${v2_parts[$i]:-0}"
+
+        # Extract numeric part only (handles versions like "2.1.27-beta")
+        v1_part="${v1_part%%[^0-9]*}"
+        v2_part="${v2_part%%[^0-9]*}"
+
+        if (( v1_part > v2_part )); then
+            return 0
+        elif (( v1_part < v2_part )); then
+            return 1
+        fi
+    done
+
+    return 0  # Versions are equal
+}
+
+# Check if Node.js is installed
+check_nodejs() {
+    print_info "Checking Node.js installation..."
+
+    if ! command -v node &> /dev/null; then
+        print_error "Node.js is not installed."
+        print_error "Claude Code requires Node.js ${MIN_NODE_VERSION}+ to run."
+        echo ""
+        print_info "Please install Node.js first:"
+        echo "  - Visit: https://nodejs.org/"
+        echo "  - Or use Homebrew: brew install node"
+        echo "  - Or use nvm: nvm install ${MIN_NODE_VERSION}"
+        echo ""
+        exit 1
+    fi
+
+    local node_version
+    node_version="$(node --version 2>/dev/null)"
+    # Remove 'v' prefix
+    local node_version_num="${node_version#v}"
+    local node_major="${node_version_num%%.*}"
+
+    if (( node_major < MIN_NODE_VERSION )); then
+        print_error "Node.js version ${node_version} is too old."
+        print_error "Claude Code requires Node.js ${MIN_NODE_VERSION}+ to run."
+        echo ""
+        print_info "Please upgrade Node.js:"
+        echo "  - Visit: https://nodejs.org/"
+        echo "  - Or use Homebrew: brew upgrade node"
+        echo "  - Or use nvm: nvm install ${MIN_NODE_VERSION}"
+        echo ""
+        exit 1
+    fi
+
+    print_success "Node.js found: ${node_version}"
+}
+
+# Check if npm is available
+check_npm() {
+    if ! command -v npm &> /dev/null; then
+        print_error "npm is not installed."
+        print_error "npm is required to install Claude Code."
+        echo ""
+        print_info "npm usually comes with Node.js. Please reinstall Node.js."
+        echo ""
+        exit 1
+    fi
+}
+
+# Install or upgrade Claude Code
+install_claude_code() {
+    print_info "Checking Claude Code installation..."
+
+    local claude_installed=false
+    local current_version=""
+
+    # Check if Claude Code is installed
+    if command -v claude &> /dev/null; then
+        claude_installed=true
+        # Get current version - claude --version outputs something like "claude 2.1.27"
+        current_version="$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)" || true
+    fi
+
+    if [[ "$claude_installed" == "false" ]]; then
+        print_info "Claude Code not found, installing via npm..."
+        check_npm
+
+        if ! npm install -g @anthropic-ai/claude-code; then
+            print_error "Failed to install Claude Code via npm."
+            echo ""
+            print_info "You can try installing manually:"
+            echo "  npm install -g @anthropic-ai/claude-code"
+            echo ""
+            print_info "If you encounter permission issues, try:"
+            echo "  sudo npm install -g @anthropic-ai/claude-code"
+            echo ""
+            exit 1
+        fi
+
+        # Verify installation
+        if ! command -v claude &> /dev/null; then
+            print_error "Claude Code installation failed - 'claude' command not found."
+            exit 1
+        fi
+
+        current_version="$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)" || true
+        print_success "Claude Code installed: v${current_version}"
+
+    elif [[ -n "$current_version" ]]; then
+        # Check version compatibility
+        if ! version_compare "$current_version" "$MIN_CLAUDE_CODE_VERSION"; then
+            print_warning "Claude Code version ${current_version} is below minimum required version ${MIN_CLAUDE_CODE_VERSION}"
+            print_info "Upgrading Claude Code..."
+            check_npm
+
+            if ! npm update -g @anthropic-ai/claude-code; then
+                print_warning "Failed to upgrade Claude Code via npm."
+                print_info "You can try upgrading manually:"
+                echo "  npm update -g @anthropic-ai/claude-code"
+                echo ""
+                # Don't exit, continue with existing version
+            else
+                current_version="$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)" || true
+                print_success "Claude Code upgraded to: v${current_version}"
+            fi
+        else
+            print_success "Claude Code found: v${current_version}"
+        fi
+    else
+        print_success "Claude Code found (version unknown)"
+    fi
 }
 
 # Detect OS and architecture
@@ -210,6 +361,8 @@ main() {
 
     parse_args "$@"
     detect_platform
+    check_nodejs
+    install_claude_code
     get_download_url
     create_install_dir
     download_binary
