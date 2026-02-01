@@ -14,11 +14,8 @@
 
 <div align="center">
 
-<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
 
-<img src="https://github.com/user-attachments/assets/2b210d33-2569-4bc9-acac-e163de4e12a5" width="100%" alt="Knowledge Demo"/>
 
-<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
 
 [快速开始](#-快速开始) · [文档](docs/zh/README.md) · [开发指南](docs/zh/guides/developer/setup.md)
 
@@ -30,6 +27,7 @@
 
 ### 💬 对话模式
 
+<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
 一个完全开源的聊天 Agent，具备以下能力：
 
 - **多模型支持**：兼容 Claude、OpenAI、Gemini、DeepSeek、GLM 等主流模型
@@ -44,6 +42,7 @@
 
 ### 💻 编码模式
 
+<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
 一个云端的 Claude Code 编码执行引擎：
 
 - **多模型配置**：配置各种兼容 Claude 协议的模型
@@ -54,6 +53,7 @@
 - **多轮对话**：支持多轮对话追问
 
 ### 📡 关注模式
+<img src="https://github.com/user-attachments/assets/6680c33a-f4ba-4ef2-aa8c-e7a53bd003dc" width="100%" alt="Feed Demo"/>
 
 一个云端的 AI 任务触发器：
 
@@ -64,6 +64,7 @@
 
 ### 📚 知识模式
 
+<img src="https://github.com/user-attachments/assets/2b210d33-2569-4bc9-acac-e163de4e12a5" width="100%" alt="Knowledge Demo"/>
 一个云端 AI 文档仓库：
 
 - **文档管理**：上传、管理 txt/doc/ppt/xls 等等格式的文档到知识库
@@ -71,6 +72,16 @@
 - **NotebookLM 模式**：支持在笔记本里直接选择文档进行提问
 - **在线编辑**：笔记本模式支持在线编辑文本文件
 - **对话集成**：支持在单聊、群聊中让 AI 引用知识库进行回答
+
+### 🖥️ 设备模式
+
+<img src="https://github.com/user-attachments/assets/4aea6905-2c37-43c5-bc4c-2f1a4e488839" width="100%" alt="AI Device Demo"/>>
+在本地设备上运行 AI 任务，完全掌控：
+
+- **本地执行器**：在自己的设备上安装并运行 Wegent 执行器
+- **多设备管理**：注册和管理多个本地设备
+- **槽位调度**：为每个设备配置并发任务槽位数
+- **安全连接**：通过认证的 WebSocket 连接到 Wegent 后端
 
 ### 🔧 定制化
 

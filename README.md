@@ -14,11 +14,8 @@ English | [简体中文](README_zh.md)
 
 <div align="center">
 
-<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
 
-<img src="https://github.com/user-attachments/assets/2b210d33-2569-4bc9-acac-e163de4e12a5" width="100%" alt="Knowledge Demo"/>
 
-<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
 
 [Quick Start](#-quick-start) · [Documentation](docs/en/README.md) · [Development Guide](docs/en/guides/developer/setup.md)
 
@@ -29,7 +26,7 @@ English | [简体中文](README_zh.md)
 ## ✨ Core Features
 
 ### 💬 Chat Mode
-
+<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
 A fully open-source chat agent with powerful capabilities:
 
 - **Multi-Model Support**: Compatible with Claude, OpenAI, Gemini, DeepSeek, GLM and other mainstream models
@@ -43,6 +40,7 @@ A fully open-source chat agent with powerful capabilities:
 - **Extensions**: Customize prompts, MCP tools and Skills (includes chart drawing skill)
 
 ### 💻 Code Mode
+<img src="https://github.com/user-attachments/assets/2b210d33-2569-4bc9-acac-e163de4e12a5" width="100%" alt="Knowledge Demo"/>
 
 A cloud-based Claude Code execution engine:
 
@@ -54,6 +52,7 @@ A cloud-based Claude Code execution engine:
 - **Multi-turn Conversations**: Continue conversations with follow-up questions
 
 ### 📡 Feed Mode
+<img src="https://github.com/user-attachments/assets/6680c33a-f4ba-4ef2-aa8c-e7a53bd003dc" width="100%" alt="Feed Demo"/>
 
 A cloud-based AI task trigger system:
 
@@ -63,6 +62,7 @@ A cloud-based AI task trigger system:
 - **Event Filtering**: Filter conditions like "only notify me if it will rain tomorrow"
 
 ### 📚 Knowledge Mode
+<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
 
 A cloud-based AI document repository:
 
@@ -71,6 +71,16 @@ A cloud-based AI document repository:
 - **NotebookLM Mode**: Select documents directly in notebooks for Q&A
 - **Online Editing**: Edit text files directly in notebook mode
 - **Chat Integration**: Reference knowledge bases in single/group chats for AI responses
+
+### 🖥️ Device Mode
+<img src="https://github.com/user-attachments/assets/4aea6905-2c37-43c5-bc4c-2f1a4e488839" width="100%" alt="AI Device Demo"/>>
+
+Run AI tasks on your local machine with full control:
+
+- **Local Executor**: Install and run the Wegent executor on your own device
+- **Multi-Device Management**: Register and manage multiple local devices
+- **Default Device**: Set a preferred device for quick task execution
+- **Secure Connection**: Connect to Wegent backend via authenticated WebSocket
 
 ### 🔧 Customization
 
