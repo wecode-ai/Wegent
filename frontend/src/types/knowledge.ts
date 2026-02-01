@@ -318,3 +318,120 @@ export interface ChunkListResponse {
   splitter_type?: string
   splitter_subtype?: string
 }
+
+// ============== Permission Types ==============
+
+export type PermissionLevel = 'view' | 'edit' | 'manage'
+export type PermissionStatus = 'pending' | 'approved' | 'rejected'
+export type ReviewAction = 'approve' | 'reject'
+
+// Permission Apply types
+export interface PermissionApplyRequest {
+  permission_level: PermissionLevel
+}
+
+export interface PermissionApplyResponse {
+  id: number
+  knowledge_base_id: number
+  permission_level: PermissionLevel
+  status: PermissionStatus
+  requested_at: string
+  message: string
+}
+
+// Permission Review types
+export interface PermissionReviewRequest {
+  action: ReviewAction
+  permission_level?: PermissionLevel
+}
+
+export interface PermissionReviewResponse {
+  id: number
+  user_id: number
+  permission_level: PermissionLevel
+  status: PermissionStatus
+  reviewed_at: string
+  message: string
+}
+
+// Permission Add/Update types
+export interface PermissionAddRequest {
+  user_id: number
+  permission_level: PermissionLevel
+}
+
+export interface PermissionUpdateRequest {
+  permission_level: PermissionLevel
+}
+
+// Permission User Info types
+export interface PermissionUserInfo {
+  id: number
+  user_id: number
+  username: string
+  email?: string
+  permission_level: PermissionLevel
+  requested_at: string
+  reviewed_at?: string
+  reviewed_by?: number
+}
+
+export interface PendingPermissionInfo {
+  id: number
+  user_id: number
+  username: string
+  email?: string
+  permission_level: PermissionLevel
+  requested_at: string
+}
+
+export interface ApprovedPermissionsByLevel {
+  view: PermissionUserInfo[]
+  edit: PermissionUserInfo[]
+  manage: PermissionUserInfo[]
+}
+
+export interface PermissionListResponse {
+  pending: PendingPermissionInfo[]
+  approved: ApprovedPermissionsByLevel
+}
+
+// Current User Permission types
+export interface PendingRequestInfo {
+  id: number
+  permission_level: PermissionLevel
+  requested_at: string
+}
+
+export interface MyPermissionResponse {
+  has_access: boolean
+  permission_level: PermissionLevel | null
+  is_creator: boolean
+  pending_request: PendingRequestInfo | null
+}
+
+// Permission Response (for CRUD operations)
+export interface PermissionResponse {
+  id: number
+  knowledge_base_id: number
+  user_id: number
+  permission_level: PermissionLevel
+  status: PermissionStatus
+  requested_at: string
+  reviewed_at?: string
+  reviewed_by?: number
+  created_at: string
+  updated_at: string
+}
+
+// KB Share Info for share page
+export interface KBShareInfo {
+  id: number
+  name: string
+  description?: string
+  namespace: string
+  creator_id: number
+  creator_name: string
+  created_at?: string
+  my_permission: MyPermissionResponse
+}

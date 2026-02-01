@@ -10,6 +10,7 @@ from app.api.endpoints import (
     groups,
     health,
     knowledge,
+    knowledge_permission,
     oidc,
     openapi_responses,
     pet,
@@ -128,6 +129,11 @@ api_router.include_router(
     knowledge.summary_router,
     prefix="/knowledge-bases",
     tags=["knowledge-summary"],
+)
+api_router.include_router(
+    knowledge_permission.router,
+    prefix="/knowledge-bases",
+    tags=["knowledge-permission"],
 )
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
