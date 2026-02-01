@@ -68,6 +68,9 @@ class LangGraphAgentBuilder:
         if self.tool_registry:
             self.tools = self.tool_registry.get_all()
 
+        # Initialize all_tools (will be updated during agent build to include skill tools)
+        self.all_tools: list[BaseTool] = self.tools
+
         # Automatically detect PromptModifierTool instances from registered tools
         self._prompt_modifier_tools = self._find_prompt_modifier_tools()
 
@@ -267,6 +270,9 @@ class LangGraphAgentBuilder:
                 "all_tools_count": len(all_tools),
             },
         )
+
+        # Store all_tools for external access (e.g., for display_name lookup)
+        self.all_tools = all_tools
 
         # Build agent with optional prompt modifier for dynamic system prompt updates
         # If we have a model configurator, use it for dynamic tool selection

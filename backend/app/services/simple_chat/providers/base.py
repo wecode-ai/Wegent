@@ -49,7 +49,7 @@ class ProviderConfig:
     model_id: str
     default_headers: dict[str, Any] = field(default_factory=dict)
     timeout: float = 300.0
-    max_tokens: int = 32768
+    max_tokens: int = 65536
 
 
 class LLMProvider(ABC):

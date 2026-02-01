@@ -65,10 +65,7 @@ const MixedContentView = memo(function MixedContentView({
           } else if (block.type === 'tool') {
             // Convert MessageBlock to ToolPair format for ToolBlock component
             // Normalize tool name to match preset components (e.g., sandbox_write_file -> Write)
-            const normalizedToolName = normalizeToolName(
-              block.tool_name || 'unknown',
-              block.tool_name
-            )
+            const normalizedToolName = normalizeToolName(block.tool_name || 'unknown')
             const toolPair = {
               toolUseId: block.tool_use_id || block.id,
               toolName: normalizedToolName,

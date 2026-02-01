@@ -97,9 +97,21 @@ def _handle_tool_start(
     title = _build_tool_start_title(agent_builder, tool_name, serializable_input)
 
     # Extract display_name from tool instance
+    # Try multiple sources:
+    # 1. tool_registry (for registered tools)
+    # 2. agent_builder.all_tools (includes all tools including dynamically loaded skill tools)
     tool_instance = None
+
+    # First try tool_registry
     if agent_builder.tool_registry:
         tool_instance = agent_builder.tool_registry.get(tool_name)
+
+    # If not found, search in agent_builder.all_tools (includes skill tools)
+    if not tool_instance and hasattr(agent_builder, "all_tools"):
+        for tool in agent_builder.all_tools:
+            if tool.name == tool_name:
+                tool_instance = tool
+                break
 
     display_name = (
         getattr(tool_instance, "display_name", None) if tool_instance else None
