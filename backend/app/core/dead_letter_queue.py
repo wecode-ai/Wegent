@@ -23,12 +23,27 @@ from typing import Any, Dict, List, Optional
 
 from celery import current_app
 from celery.signals import task_failure, task_rejected, task_revoked
-from prometheus_client import Counter, Gauge
+from prometheus_client import REGISTRY, Counter, Gauge
 from redis import Redis
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _get_or_create_metric(metric_class, name, *args, **kwargs):
+    """Get existing metric or create new one if it doesn't exist.
+
+    This handles the case where metrics are re-registered during module reloads
+    (e.g., hot reloading in development), which would otherwise raise:
+    ValueError: Duplicated timeseries in CollectorRegistry
+    """
+    # Check if metric already exists in the registry by name
+    if name in REGISTRY._names_to_collectors:
+        return REGISTRY._names_to_collectors[name]
+    # Create new metric if not found
+    return metric_class(name, *args, **kwargs)
+
 
 # Redis key prefix for DLQ
 DLQ_KEY_PREFIX = "celery:dlq:"
@@ -36,16 +51,19 @@ DLQ_LIST_KEY = "celery:dlq:list"
 DLQ_TTL_SECONDS = 60 * 60 * 24 * 7  # Keep failed tasks for 7 days
 
 # Prometheus metrics
-DLQ_SIZE = Gauge(
+DLQ_SIZE = _get_or_create_metric(
+    Gauge,
     "celery_dlq_size",
     "Number of tasks in dead letter queue",
 )
-DLQ_TASKS_ADDED = Counter(
+DLQ_TASKS_ADDED = _get_or_create_metric(
+    Counter,
     "celery_dlq_tasks_added_total",
     "Total tasks added to dead letter queue",
     ["task_name"],
 )
-DLQ_TASKS_REPROCESSED = Counter(
+DLQ_TASKS_REPROCESSED = _get_or_create_metric(
+    Counter,
     "celery_dlq_tasks_reprocessed_total",
     "Total tasks reprocessed from dead letter queue",
     ["task_name"],

@@ -66,6 +66,13 @@ export interface SubscriptionModelRef {
   namespace: string
 }
 
+// Knowledge base reference for Subscription
+export interface KnowledgeBaseRef {
+  id?: number
+  name: string
+  namespace?: string
+}
+
 // Subscription configuration
 export interface Subscription {
   id: number
@@ -95,6 +102,10 @@ export interface Subscription {
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
   bound_task_id?: number // Task ID bound to this subscription for history preservation
+  // Knowledge base references
+  knowledge_base_refs?: KnowledgeBaseRef[] // References to knowledge bases for this subscription
+  // Notification settings
+  enable_notification?: boolean // Whether to send notification when execution completes
   webhook_url?: string
   webhook_secret?: string // HMAC signing secret for webhook verification
   last_execution_time?: string
@@ -144,6 +155,10 @@ export interface SubscriptionCreateRequest {
   enabled?: boolean
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
+  // Knowledge base references
+  knowledge_base_refs?: KnowledgeBaseRef[] // References to knowledge bases for this subscription
+  // Notification settings
+  enable_notification?: boolean // Whether to send notification when execution completes
 }
 
 // Subscription update request
@@ -170,6 +185,10 @@ export interface SubscriptionUpdateRequest {
   enabled?: boolean
   // History preservation settings
   preserve_history?: boolean // Whether to preserve conversation history across executions
+  // Knowledge base references
+  knowledge_base_refs?: KnowledgeBaseRef[] // References to knowledge bases for this subscription
+  // Notification settings
+  enable_notification?: boolean // Whether to send notification when execution completes
 }
 
 // Subscription list response

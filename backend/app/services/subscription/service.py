@@ -446,6 +446,29 @@ class SubscriptionService:
                 "history_message_count"
             ]
 
+        # Update knowledge base references
+        if "knowledge_base_refs" in update_data:
+            from app.schemas.subscription import KnowledgeBaseSubscriptionRef
+
+            kb_refs_data = update_data["knowledge_base_refs"]
+            if kb_refs_data:
+                subscription_crd.spec.knowledgeBaseRefs = [
+                    KnowledgeBaseSubscriptionRef(
+                        id=kb.get("id"),
+                        name=kb.get("name", ""),
+                        namespace=kb.get("namespace", "default"),
+                    )
+                    for kb in kb_refs_data
+                ]
+            else:
+                subscription_crd.spec.knowledgeBaseRefs = None
+
+        # Update notification settings
+        if "enable_notification" in update_data:
+            subscription_crd.spec.enableNotification = update_data[
+                "enable_notification"
+            ]
+
         # Update trigger configuration
         if "trigger_type" in update_data or "trigger_config" in update_data:
             trigger_type = update_data.get("trigger_type", internal.get("trigger_type"))
@@ -881,6 +904,17 @@ class SubscriptionService:
             preserve_history=subscription_crd.spec.preserveHistory,
             history_message_count=subscription_crd.spec.historyMessageCount,
             bound_task_id=internal.get("bound_task_id", 0),
+            # Knowledge base references
+            knowledge_base_refs=[
+                {
+                    "id": kb.id,
+                    "name": kb.name,
+                    "namespace": kb.namespace,
+                }
+                for kb in (subscription_crd.spec.knowledgeBaseRefs or [])
+            ],
+            # Notification settings
+            enable_notification=subscription_crd.spec.enableNotification,
             webhook_url=webhook_url,
             webhook_secret=internal.get("webhook_secret"),
             last_execution_time=last_execution_time,

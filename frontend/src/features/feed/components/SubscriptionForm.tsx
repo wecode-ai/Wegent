@@ -42,6 +42,8 @@ import {
 import { subscriptionApis } from '@/apis/subscription'
 import { teamApis } from '@/apis/team'
 import { modelApis, UnifiedModel } from '@/apis/models'
+import { listKnowledgeBases } from '@/apis/knowledge'
+import type { KnowledgeBase } from '@/types/knowledge'
 import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
 import type {
   Subscription,
@@ -291,6 +293,15 @@ export function SubscriptionForm({
     initialData?.visibility || 'private'
   ) // Visibility setting
 
+  // Knowledge base selection state
+  const [selectedKnowledgeBases, setSelectedKnowledgeBases] = useState<KnowledgeBase[]>([])
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
+  const [knowledgeBasesLoading, setKnowledgeBasesLoading] = useState(false)
+  const [knowledgeBaseSelectorOpen, setKnowledgeBaseSelectorOpen] = useState(false)
+
+  // Notification settings
+  const [enableNotification, setEnableNotification] = useState(false)
+
   // Model selection state
   const [selectedModel, setSelectedModel] = useState<SubscriptionModel | null>(null)
   const [models, setModels] = useState<SubscriptionModel[]>([])
@@ -365,6 +376,26 @@ export function SubscriptionForm({
       loadModels()
     }
   }, [open, t])
+
+  // Load knowledge bases
+  useEffect(() => {
+    const loadKnowledgeBases = async () => {
+      setKnowledgeBasesLoading(true)
+      try {
+        const response = await listKnowledgeBases('all')
+        console.log('Loaded knowledge bases:', response)
+        setKnowledgeBases(response.items || [])
+      } catch (error) {
+        console.error('Failed to load knowledge bases:', error)
+        // Don't show error toast - KB loading is non-critical
+      } finally {
+        setKnowledgeBasesLoading(false)
+      }
+    }
+    if (open) {
+      loadKnowledgeBases()
+    }
+  }, [open])
 
   // Get selected team
   const selectedTeam = teams.find(t => t.id === teamId)
@@ -460,6 +491,27 @@ export function SubscriptionForm({
       setEnabled(subscription.enabled)
       setPreserveHistory(subscription.preserve_history || false)
       setVisibility(subscription.visibility || 'private')
+      // Load knowledge base references
+      if (subscription.knowledge_base_refs && subscription.knowledge_base_refs.length > 0) {
+        const selectedKBs = subscription.knowledge_base_refs.map(
+          kb =>
+            ({
+              id: kb.id || 0,
+              name: kb.name,
+              namespace: kb.namespace || 'default',
+              user_id: subscription.user_id,
+              document_count: 0,
+              is_active: true,
+              created_at: subscription.created_at,
+              updated_at: subscription.updated_at,
+            }) as KnowledgeBase
+        )
+        setSelectedKnowledgeBases(selectedKBs)
+      } else {
+        setSelectedKnowledgeBases([])
+      }
+      // Load notification setting
+      setEnableNotification(subscription.enable_notification || false)
       const repoInfo = buildRepoInfoFromSubscription(subscription)
       setSelectedRepo(repoInfo)
       setSelectedBranch(
@@ -496,6 +548,8 @@ export function SubscriptionForm({
       setEnabled(initialData?.enabled ?? true)
       setPreserveHistory(initialData?.preserveHistory ?? false)
       setVisibility(initialData?.visibility || 'private')
+      setSelectedKnowledgeBases([])
+      setEnableNotification(false)
       setSelectedRepo(null)
       setSelectedBranch(null)
       setSelectedModel(null)
@@ -571,6 +625,17 @@ export function SubscriptionForm({
           timeout_seconds: timeoutSeconds,
           enabled,
           preserve_history: preserveHistory,
+          // Knowledge base references
+          knowledge_base_refs:
+            selectedKnowledgeBases.length > 0
+              ? selectedKnowledgeBases.map(kb => ({
+                  id: kb.id,
+                  name: kb.name,
+                  namespace: kb.namespace || 'default',
+                }))
+              : undefined,
+          // Notification settings
+          enable_notification: enableNotification,
           // Only include team_id, prompt_template, visibility for non-rental subscriptions
           ...(isRental
             ? {}
@@ -616,6 +681,17 @@ export function SubscriptionForm({
           enabled,
           preserve_history: preserveHistory,
           visibility,
+          // Knowledge base references
+          knowledge_base_refs:
+            selectedKnowledgeBases.length > 0
+              ? selectedKnowledgeBases.map(kb => ({
+                  id: kb.id,
+                  name: kb.name,
+                  namespace: kb.namespace || 'default',
+                }))
+              : undefined,
+          // Notification settings
+          enable_notification: enableNotification,
           // Include git repo info if selected
           ...(selectedRepo && {
             git_repo: selectedRepo.git_repo,
@@ -655,6 +731,8 @@ export function SubscriptionForm({
     selectedRepo,
     selectedBranch,
     selectedModel,
+    selectedKnowledgeBases,
+    enableNotification,
     isEditing,
     isRental,
     subscription,
@@ -1090,6 +1168,116 @@ export function SubscriptionForm({
                 </div>
                 <Switch checked={preserveHistory} onCheckedChange={setPreserveHistory} />
               </div>
+
+              {/* Knowledge Base Selection */}
+              <div className="space-y-2 pt-2">
+                <Label className="text-sm font-medium">{t('knowledge_bases')}</Label>
+                <Popover
+                  open={knowledgeBaseSelectorOpen}
+                  onOpenChange={setKnowledgeBaseSelectorOpen}
+                >
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={knowledgeBaseSelectorOpen}
+                      className="w-full justify-between h-10"
+                      disabled={knowledgeBasesLoading}
+                    >
+                      {knowledgeBasesLoading ? (
+                        t('common:loading')
+                      ) : selectedKnowledgeBases.length > 0 ? (
+                        <span className="truncate">
+                          {selectedKnowledgeBases.map(kb => kb.name).join(', ')}
+                        </span>
+                      ) : (
+                        <span className="text-text-muted">
+                          {t('select_knowledge_bases_placeholder')}
+                        </span>
+                      )}
+                      <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className={cn(
+                      'w-[400px] p-0',
+                      'max-h-[var(--radix-popover-content-available-height,360px)]',
+                      'flex flex-col overflow-hidden'
+                    )}
+                    align="start"
+                  >
+                    <Command className="flex flex-col flex-1 min-h-0">
+                      <CommandList
+                        className="min-h-[36px] max-h-[240px] overflow-y-auto flex-1"
+                        onWheel={event => {
+                          event.stopPropagation()
+                        }}
+                      >
+                        <CommandEmpty>{t('no_knowledge_base_found')}</CommandEmpty>
+                        <CommandGroup>
+                          {/* Option to clear selection */}
+                          <CommandItem
+                            value="__clear__"
+                            onSelect={() => {
+                              setSelectedKnowledgeBases([])
+                              setKnowledgeBaseSelectorOpen(false)
+                            }}
+                          >
+                            <span className="text-text-muted">{t('no_knowledge_base')}</span>
+                          </CommandItem>
+                          {knowledgeBases.map(kb => (
+                            <CommandItem
+                              key={kb.id}
+                              value={kb.name}
+                              onSelect={() => {
+                                const isSelected = selectedKnowledgeBases.some(
+                                  selected => selected.id === kb.id
+                                )
+                                if (isSelected) {
+                                  setSelectedKnowledgeBases(
+                                    selectedKnowledgeBases.filter(selected => selected.id !== kb.id)
+                                  )
+                                } else {
+                                  setSelectedKnowledgeBases([...selectedKnowledgeBases, kb])
+                                }
+                              }}
+                            >
+                              <div className="flex flex-col">
+                                <span
+                                  className={cn(
+                                    selectedKnowledgeBases.some(
+                                      selected => selected.id === kb.id
+                                    ) && 'font-medium'
+                                  )}
+                                >
+                                  {kb.name}
+                                </span>
+                                {kb.description && (
+                                  <span className="text-xs text-text-muted">{kb.description}</span>
+                                )}
+                              </div>
+                              {selectedKnowledgeBases.some(selected => selected.id === kb.id) && (
+                                <Check className="ml-auto h-4 w-4" />
+                              )}
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                <p className="text-xs text-text-muted">{t('knowledge_bases_hint')}</p>
+              </div>
+
+              {/* Notification Setting */}
+              <div className="flex items-center justify-between pt-2">
+                <div className="space-y-0.5">
+                  <Label className="text-sm font-medium">{t('enable_notification')}</Label>
+                  <p className="text-xs text-text-muted">{t('enable_notification_hint')}</p>
+                </div>
+                <Switch checked={enableNotification} onCheckedChange={setEnableNotification} />
+              </div>
+
               {/* Visibility - Hidden for rental subscriptions */}
               {!isRental && (
                 <div className="space-y-2 pt-2">
