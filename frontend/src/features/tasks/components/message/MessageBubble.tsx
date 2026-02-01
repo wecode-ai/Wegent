@@ -1500,7 +1500,7 @@ const MessageBubble = memo(
             ) : (
               <>
                 {/* Show recovered content if available, otherwise show normal content */}
-                {msg.recoveredContent && msg.subtaskStatus === 'RUNNING' ? (
+                {msg.recoveredContent && msg.subtaskStatus === 'RUNNING' && !msg.result?.blocks ? (
                   renderRecoveredContent()
                 ) : !isUserTypeMessage && msg.result?.blocks && msg.result.blocks.length > 0 ? (
                   /* For AI messages with blocks data, use mixed content view to interleave text and tools */
