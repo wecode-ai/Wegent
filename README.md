@@ -25,7 +25,7 @@ English | [简体中文](README_zh.md)
 
 ## ✨ Core Features
 
-### 💬 Chat Mode
+### 💬 Cha Agent
 <img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
 A fully open-source chat agent with powerful capabilities:
 
@@ -39,7 +39,7 @@ A fully open-source chat agent with powerful capabilities:
 - **Sandbox Execution**: Execute commands or modify files via sandbox, E2B protocol compatible
 - **Extensions**: Customize prompts, MCP tools and Skills (includes chart drawing skill)
 
-### 💻 Code Mode
+### 💻 Code Agent
 <img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
 
 A cloud-based Claude Code execution engine:
@@ -51,7 +51,7 @@ A cloud-based Claude Code execution engine:
 - **MCP/Skill Support**: Configure MCP tools and Skills for agents
 - **Multi-turn Conversations**: Continue conversations with follow-up questions
 
-### 📡 Feed Mode
+### 📡 AI Feed
 <img src="https://github.com/user-attachments/assets/6680c33a-f4ba-4ef2-aa8c-e7a53bd003dc" width="100%" alt="Feed Demo"/>
 
 A cloud-based AI task trigger system:
@@ -61,7 +61,7 @@ A cloud-based AI task trigger system:
 - **Information Feed**: Display AI-generated content as an information stream
 - **Event Filtering**: Filter conditions like "only notify me if it will rain tomorrow"
 
-### 📚 Knowledge Mode
+### 📚 AI Knowledge
 <img src="https://github.com/user-attachments/assets/2b210d33-2569-4bc9-acac-e163de4e12a5" width="100%" alt="Knowledge Demo"/>
 
 A cloud-based AI document repository:
@@ -72,7 +72,7 @@ A cloud-based AI document repository:
 - **Online Editing**: Edit text files directly in notebook mode
 - **Chat Integration**: Reference knowledge bases in single/group chats for AI responses
 
-### 🖥️ Device Mode
+### 🖥️ AI Device
 <img src="https://github.com/user-attachments/assets/ead0cc30-b3a4-4eb6-a6dd-77ffcbd72238" width="100%" alt="AI Device Demo"/>
 
 Run AI tasks on your local machine with full control:
