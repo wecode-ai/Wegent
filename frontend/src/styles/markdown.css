@@ -84,8 +84,10 @@
    ========================================================================== */
 
 .wmde-markdown p,
-.markdown-content p {
+.markdown-content p,
+.wmde-markdown-p {
   margin-bottom: 0.75em;
+  display: block;
 }
 
 /* ==========================================================================

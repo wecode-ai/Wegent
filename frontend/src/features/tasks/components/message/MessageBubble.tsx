@@ -28,7 +28,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import MarkdownEditor from '@uiw/react-markdown-editor'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { ReasoningDisplay } from './thinking'
 import MixedContentView from './thinking/MixedContentView'
@@ -1095,10 +1094,9 @@ const MessageBubble = memo(
             <div className="space-y-4">
               {/* Render prefix text (content before the clarification form) */}
               {prefixText && (
-                <MarkdownEditor.Markdown
+                <EnhancedMarkdown
                   source={prefixText}
-                  style={{ background: 'transparent' }}
-                  wrapperElement={{ 'data-color-mode': theme }}
+                  theme={theme}
                   components={{
                     a: ({ href, children }) => {
                       if (!href) {
@@ -1128,10 +1126,9 @@ const MessageBubble = memo(
               {/* Render suffix text (content after the clarification form that couldn't be parsed) */}
               {suffixText && (
                 <div className="mt-4 p-3 rounded-lg border border-border bg-surface/50">
-                  <MarkdownEditor.Markdown
+                  <EnhancedMarkdown
                     source={suffixText}
-                    style={{ background: 'transparent' }}
-                    wrapperElement={{ 'data-color-mode': theme }}
+                    theme={theme}
                     components={{
                       a: ({ href, children }) => {
                         if (!href) {
@@ -1233,10 +1230,9 @@ const MessageBubble = memo(
           <div className="space-y-4">
             {/* Render prefix text (content before the clarification form) */}
             {prefixText && (
-              <MarkdownEditor.Markdown
+              <EnhancedMarkdown
                 source={prefixText}
-                style={{ background: 'transparent' }}
-                wrapperElement={{ 'data-color-mode': theme }}
+                theme={theme}
                 components={{
                   a: ({ href, children }) => {
                     if (!href) {
@@ -1266,10 +1262,9 @@ const MessageBubble = memo(
             {/* Render suffix text (content after the clarification form that couldn't be parsed) */}
             {suffixText && (
               <div className="mt-4 p-3 rounded-lg border border-border bg-surface/50">
-                <MarkdownEditor.Markdown
+                <EnhancedMarkdown
                   source={suffixText}
-                  style={{ background: 'transparent' }}
-                  wrapperElement={{ 'data-color-mode': theme }}
+                  theme={theme}
                   components={{
                     a: ({ href, children }) => {
                       if (!href) {

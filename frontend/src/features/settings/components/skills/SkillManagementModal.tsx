@@ -139,7 +139,10 @@ export default function SkillManagementModal({
 
   const handleDownloadSkill = async (skill: UnifiedSkill) => {
     try {
-      await downloadSkill(skill.id, skill.name)
+      // For group scope, use the groupName as namespace
+      // For personal scope, use the skill's namespace (usually 'default')
+      const namespace = scope === 'group' && groupName ? groupName : skill.namespace
+      await downloadSkill(skill.id, skill.name, namespace)
       toast({
         title: t('common:common.success'),
         description: t('common:skills.success_download', { skillName: skill.name }),

@@ -341,6 +341,12 @@ async def _handle_unary(request: Request, handler, req_class, resp_class):
 
 async def _handle_server_stream(request: Request, handler, req_class, resp_class):
     """Handle server streaming RPC"""
+    import time
+
+    rpc_method = request.url.path
+    start_time = time.time()
+    request_id = request.headers.get("x-request-id", "unknown")
+
     try:
         content_type = request.headers.get("content-type", "")
         body = await request.body()
@@ -373,8 +379,31 @@ async def _handle_server_stream(request: Request, handler, req_class, resp_class
 
         # Stream responses
         async def generate():
+            chunk_count = 0
+            last_log_time = time.time()
+            stream_start = time.time()
+
             try:
                 async for response in handler(req_obj):
+                    chunk_count += 1
+                    current_time = time.time()
+                    elapsed = current_time - stream_start
+
+                    # Log progress every 30 seconds for long-running streams
+                    if current_time - last_log_time >= 30:
+                        logger.info(
+                            f"[RPC] Stream progress: {rpc_method} request_id={request_id} "
+                            f"chunks={chunk_count} elapsed={elapsed:.1f}s"
+                        )
+                        last_log_time = current_time
+
+                    # Warn if stream is taking too long
+                    if elapsed > 60 and chunk_count == 1:
+                        logger.warning(
+                            f"[RPC] Stream slow start: {rpc_method} request_id={request_id} "
+                            f"first_chunk_after={elapsed:.1f}s"
+                        )
+
                     if "application/connect+json" in content_type:
                         # Connect protocol envelope format
                         response_data = MessageToDict(
@@ -398,8 +427,27 @@ async def _handle_server_stream(request: Request, handler, req_class, resp_class
                         length = len(serialized)
                         yield length.to_bytes(4, byteorder="big")
                         yield serialized
+
+                # Stream completed successfully
+                total_time = time.time() - stream_start
+                logger.info(
+                    f"[RPC] Stream completed: {rpc_method} request_id={request_id} "
+                    f"chunks={chunk_count} duration={total_time:.2f}s"
+                )
+
+            except GeneratorExit:
+                # Client disconnected
+                total_time = time.time() - stream_start
+                logger.warning(
+                    f"[RPC] Stream client disconnected: {rpc_method} request_id={request_id} "
+                    f"chunks={chunk_count} duration={total_time:.2f}s"
+                )
             except Exception as e:
-                logger.exception(f"Error in stream: {e}")
+                total_time = time.time() - stream_start
+                logger.exception(
+                    f"[RPC] Stream error: {rpc_method} request_id={request_id} "
+                    f"chunks={chunk_count} duration={total_time:.2f}s error={e}"
+                )
                 # Send error in envelope format with end_stream flag
                 if "application/connect+json" in content_type:
                     error_data = json.dumps(
@@ -424,7 +472,11 @@ async def _handle_server_stream(request: Request, handler, req_class, resp_class
         )
 
     except Exception as e:
-        logger.exception(f"Error handling server stream RPC: {e}")
+        elapsed = time.time() - start_time
+        logger.exception(
+            f"[RPC] Stream setup error: {rpc_method} request_id={request_id} "
+            f"duration={elapsed:.2f}s error={e}"
+        )
         return Response(
             content=json.dumps({"code": "internal", "message": str(e)}),
             status_code=500,
