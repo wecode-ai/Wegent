@@ -26,6 +26,7 @@ from executor.agents.base import Agent
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
 from executor.agents.claude_code.response_processor import process_response
 from executor.config import config
+from executor.hooks.pre_execute_hook import get_pre_execute_hook
 from executor.services.attachment_downloader import get_api_base_url
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
@@ -954,6 +955,18 @@ class ClaudeCodeAgent(Agent):
 
             # Download attachments for this task
             self._download_attachments()
+
+            # Execute pre-execute hook if configured
+            hook = get_pre_execute_hook()
+            if hook.enabled:
+                task_dir = os.path.join(config.get_workspace_root(), str(self.task_id))
+                exit_code = hook.execute(
+                    task_dir=task_dir,
+                    task_id=self.task_id,
+                    git_url=git_url,
+                )
+                if exit_code != 0:
+                    logger.warning(f"Pre-execute hook returned non-zero: {exit_code}")
 
             return TaskStatus.SUCCESS
         except Exception as e:
