@@ -269,15 +269,19 @@ class DeviceService:
         """
         Check if update is available using semantic version comparison.
 
+        If current version is None or empty, it means old executor without
+        version reporting, which should be considered as needing update.
+
         Args:
-            current: Current executor version (e.g., '1.0.0')
+            current: Current executor version (e.g., '1.0.0'), None for old executors
             latest: Latest available version (e.g., '1.1.0')
 
         Returns:
-            True if update is available (current < latest)
+            True if update is available (current < latest or current is None)
         """
+        # Old executor without version reporting should be considered as needing update
         if not current:
-            return False
+            return True
         try:
             return pkg_version.parse(current) < pkg_version.parse(latest)
         except Exception:
