@@ -67,6 +67,9 @@ class LocalRunner:
         # Runner state
         self._running = False
         self._shutdown_event = asyncio.Event()
+        self._user_requested_shutdown = (
+            False  # Flag to distinguish user shutdown from disconnect
+        )
 
         # Connection monitoring state
         self._disconnected_at: Optional[float] = None
@@ -77,9 +80,14 @@ class LocalRunner:
         self._file_handler: Optional[logging.Handler] = None
 
     def _handle_signal(self, signum: int, frame: Any) -> None:
-        """Handle shutdown signals."""
+        """Handle shutdown signals (SIGINT/SIGTERM).
+
+        This is called when user explicitly requests shutdown via Ctrl+C or kill command.
+        Sets _user_requested_shutdown to True to distinguish from connection loss.
+        """
         signal_name = signal.Signals(signum).name
         logger.info(f"Received {signal_name}, initiating graceful shutdown...")
+        self._user_requested_shutdown = True
         self._running = False
         if hasattr(self, "_shutdown_event"):
             try:
@@ -272,8 +280,13 @@ class LocalRunner:
         waits for Socket.IO's automatic reconnection to succeed.
 
         Returns:
-            True if reconnection successful, False if timeout exceeded.
+            True if reconnection successful, False if timeout exceeded or user shutdown.
         """
+        # If user requested shutdown, don't wait for reconnection
+        if self._user_requested_shutdown:
+            logger.info("User requested shutdown, skipping reconnection wait")
+            return False
+
         check_interval = config.LOCAL_RECONNECT_CHECK_INTERVAL
         timeout = config.LOCAL_RECONNECT_TIMEOUT
         start_time = self._disconnected_at or time.time()
@@ -283,9 +296,14 @@ class LocalRunner:
             f"(timeout={timeout}s, check_interval={check_interval}s)"
         )
 
-        while self._running:
+        while self._running and not self._user_requested_shutdown:
             try:
                 elapsed = time.time() - start_time
+
+                # Check if user requested shutdown during wait
+                if self._user_requested_shutdown:
+                    logger.info("User requested shutdown during reconnection wait")
+                    return False
 
                 # Check if timeout exceeded
                 if elapsed >= timeout:
