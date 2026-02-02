@@ -43,6 +43,7 @@ import {
   useProjectContext,
   DroppableHistory,
 } from '@/features/projects'
+import { useDeviceStatusHelpers } from '@/features/devices/hooks'
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
@@ -77,6 +78,11 @@ export default function TaskSidebar({
   const { t } = useTranslation()
   const router = useRouter()
   const { clearAllStreams } = useChatStreamContext()
+
+  // Device status helpers from shared hook
+  const { getStatusColor: getDeviceStatusColor, getStatusText: getDeviceStatusText } =
+    useDeviceStatusHelpers()
+
   const {
     tasks,
     groupTasks,
@@ -547,30 +553,6 @@ export default function TaskSidebar({
       </div>
     </>
   )
-
-  // Helper function to get device status color
-  const getDeviceStatusColor = (status: string) => {
-    switch (status) {
-      case 'online':
-        return 'bg-green-500'
-      case 'busy':
-        return 'bg-yellow-500'
-      default:
-        return 'bg-gray-400'
-    }
-  }
-
-  // Helper function to get device status text
-  const getDeviceStatusText = (status: string) => {
-    switch (status) {
-      case 'online':
-        return t('devices:status_online')
-      case 'busy':
-        return t('devices:status_busy')
-      default:
-        return t('devices:status_offline')
-    }
-  }
 
   // Mobile sidebar content with device selector (for devices page type)
   const mobileSidebarContent = (

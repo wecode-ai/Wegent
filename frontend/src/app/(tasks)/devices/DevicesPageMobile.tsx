@@ -70,8 +70,8 @@ export function DevicesPageMobile() {
   // Generate dynamic backend URL from runtime config
   const backendUrl = useMemo(() => getSocketUrl(), [])
 
-  // Get auth token
-  const authToken = useMemo(() => getToken() || '<YOUR_AUTH_TOKEN>', [])
+  // Get auth token - using direct call to ensure fresh token on each render
+  const authToken = getToken() || '<YOUR_AUTH_TOKEN>'
 
   const {
     devices,
