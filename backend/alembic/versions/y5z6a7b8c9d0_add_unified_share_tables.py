@@ -13,7 +13,6 @@ This migration adds two unified tables for resource sharing:
 2. resource_members - Store user access permissions to shared resources
 
 These tables replace the following fragmented tables:
-- knowledge_base_permissions
 - shared_teams
 - shared_tasks
 - task_members
@@ -29,7 +28,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "y5z6a7b8c9d0"
-down_revision: Union[str, None] = "x4y5z6a7b8c9"
+down_revision: Union[str, None] = "w3x4y5z6a7b8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

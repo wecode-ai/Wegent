@@ -6,17 +6,26 @@
 Knowledge Base share service for unified resource sharing.
 
 Provides KnowledgeBase-specific implementation of the UnifiedShareService.
+Includes permission check methods previously in KnowledgePermissionService.
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Tuple
 
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.resource_member import ResourceMember
-from app.models.share_link import ResourceType
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import PermissionLevel, ResourceType
+from app.models.user import User
+from app.schemas.share import (
+    KBShareInfoResponse,
+    MyKBPermissionResponse,
+    PendingRequestInfo,
+)
+from app.schemas.share import PermissionLevel as SchemaPermissionLevel
+from app.services.group_permission import get_effective_role_in_group
 from app.services.share.base_service import UnifiedShareService
 
 logger = logging.getLogger(__name__)
@@ -57,8 +66,6 @@ class KnowledgeShareService(UnifiedShareService):
 
         # Check if user has shared access
         if kb:
-            from app.models.resource_member import MemberStatus, ResourceMember
-
             member = (
                 db.query(ResourceMember)
                 .filter(
@@ -103,6 +110,338 @@ class KnowledgeShareService(UnifiedShareService):
             f"kb={resource.id}, permission={member.permission_level}"
         )
         return None
+
+    # =========================================================================
+    # Permission Check Methods (integrated from KnowledgePermissionService)
+    # =========================================================================
+
+    @staticmethod
+    def get_permission_priority(level: str) -> int:
+        """Get priority value for permission level (higher = more permissions)."""
+        priority_map = {
+            PermissionLevel.VIEW.value: 1,
+            PermissionLevel.EDIT.value: 2,
+            PermissionLevel.MANAGE.value: 3,
+        }
+        return priority_map.get(level, 0)
+
+    def get_user_kb_permission(
+        self,
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+    ) -> Tuple[bool, Optional[str], bool]:
+        """
+        Get user's permission for a knowledge base.
+
+        Priority: creator > explicit permission (ResourceMember) > group permission
+
+        Returns:
+            Tuple of (has_access, permission_level, is_creator)
+        """
+        # Get the knowledge base
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active,
+            )
+            .first()
+        )
+
+        if not kb:
+            return False, None, False
+
+        # Check if user is creator
+        if kb.user_id == user_id:
+            return True, PermissionLevel.MANAGE.value, True
+
+        # Check explicit permission in resource_members table
+        explicit_perm = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.resource_id == knowledge_base_id,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .first()
+        )
+
+        if explicit_perm:
+            return True, explicit_perm.permission_level, False
+
+        # For team knowledge bases, check group permission
+        if kb.namespace != "default":
+            role = get_effective_role_in_group(db, user_id, kb.namespace)
+            if role is not None:
+                # Map group role to permission level
+                # Owner/Maintainer -> manage, Developer -> edit, Reporter -> view
+                role_mapping = {
+                    "Owner": PermissionLevel.MANAGE.value,
+                    "Maintainer": PermissionLevel.MANAGE.value,
+                    "Developer": PermissionLevel.EDIT.value,
+                    "Reporter": PermissionLevel.VIEW.value,
+                }
+                return True, role_mapping.get(role, PermissionLevel.VIEW.value), False
+
+        return False, None, False
+
+    def can_manage_permissions(
+        self,
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+    ) -> bool:
+        """Check if user can manage permissions for a knowledge base."""
+        has_access, level, is_creator = self.get_user_kb_permission(
+            db, knowledge_base_id, user_id
+        )
+        if is_creator:
+            return True
+        return has_access and level == PermissionLevel.MANAGE.value
+
+    def get_my_permission(
+        self,
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+    ) -> MyKBPermissionResponse:
+        """
+        Get current user's permission for a knowledge base.
+
+        Args:
+            db: Database session
+            knowledge_base_id: Knowledge base ID
+            user_id: Current user ID
+
+        Returns:
+            MyKBPermissionResponse
+        """
+        # Get the knowledge base
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active,
+            )
+            .first()
+        )
+
+        if not kb:
+            return MyKBPermissionResponse(
+                has_access=False,
+                permission_level=None,
+                is_creator=False,
+                pending_request=None,
+            )
+
+        # Check if user is creator
+        is_creator = kb.user_id == user_id
+        if is_creator:
+            return MyKBPermissionResponse(
+                has_access=True,
+                permission_level=SchemaPermissionLevel.MANAGE,
+                is_creator=True,
+                pending_request=None,
+            )
+
+        # Check explicit permission
+        explicit_perm = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.resource_id == knowledge_base_id,
+                ResourceMember.user_id == user_id,
+            )
+            .first()
+        )
+
+        pending_request = None
+        has_explicit_access = False
+        explicit_level = None
+
+        if explicit_perm:
+            if explicit_perm.status == MemberStatus.APPROVED.value:
+                has_explicit_access = True
+                explicit_level = SchemaPermissionLevel(explicit_perm.permission_level)
+            elif explicit_perm.status == MemberStatus.PENDING.value:
+                pending_request = PendingRequestInfo(
+                    id=explicit_perm.id,
+                    permission_level=SchemaPermissionLevel(
+                        explicit_perm.permission_level
+                    ),
+                    requested_at=explicit_perm.requested_at,
+                )
+
+        # Check group permission for team KB
+        group_level = None
+        if kb.namespace != "default":
+            role = get_effective_role_in_group(db, user_id, kb.namespace)
+            if role is not None:
+                role_mapping = {
+                    "Owner": SchemaPermissionLevel.MANAGE,
+                    "Maintainer": SchemaPermissionLevel.MANAGE,
+                    "Developer": SchemaPermissionLevel.EDIT,
+                    "Reporter": SchemaPermissionLevel.VIEW,
+                }
+                group_level = role_mapping.get(role)
+
+        # Determine final access level (higher of explicit vs group)
+        if has_explicit_access and group_level:
+            # Take the higher permission
+            explicit_priority = self.get_permission_priority(explicit_level.value)
+            group_priority = self.get_permission_priority(group_level.value)
+            final_level = (
+                explicit_level if explicit_priority >= group_priority else group_level
+            )
+            return MyKBPermissionResponse(
+                has_access=True,
+                permission_level=final_level,
+                is_creator=False,
+                pending_request=None,
+            )
+        elif has_explicit_access:
+            return MyKBPermissionResponse(
+                has_access=True,
+                permission_level=explicit_level,
+                is_creator=False,
+                pending_request=None,
+            )
+        elif group_level:
+            return MyKBPermissionResponse(
+                has_access=True,
+                permission_level=group_level,
+                is_creator=False,
+                pending_request=pending_request,
+            )
+        else:
+            return MyKBPermissionResponse(
+                has_access=False,
+                permission_level=None,
+                is_creator=False,
+                pending_request=pending_request,
+            )
+
+    def get_kb_share_info(
+        self,
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+    ) -> KBShareInfoResponse:
+        """
+        Get knowledge base info for share page.
+
+        Returns basic info about the KB and current user's permission status.
+        This is used by the share link page to display KB info and handle
+        permission requests.
+
+        Args:
+            db: Database session
+            knowledge_base_id: Knowledge base ID
+            user_id: Current user ID
+
+        Returns:
+            KBShareInfoResponse
+
+        Raises:
+            ValueError: If knowledge base not found
+        """
+        # Get KB basic info (allow access even without permission for share page)
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active,
+            )
+            .first()
+        )
+
+        if not kb:
+            raise ValueError("Knowledge base not found")
+
+        spec = kb.json.get("spec", {})
+
+        # Get current user's permission
+        my_permission = self.get_my_permission(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
+        )
+
+        # Get creator info
+        creator = db.query(User).filter(User.id == kb.user_id).first()
+        creator_name = creator.user_name if creator else f"User {kb.user_id}"
+
+        return KBShareInfoResponse(
+            id=kb.id,
+            name=spec.get("name", ""),
+            description=spec.get("description"),
+            namespace=kb.namespace,
+            creator_id=kb.user_id,
+            creator_name=creator_name,
+            created_at=kb.created_at.isoformat() if kb.created_at else None,
+            my_permission=my_permission,
+        )
+
+    # =========================================================================
+    # Cleanup Methods
+    # =========================================================================
+
+    def delete_members_for_kb(
+        self,
+        db: Session,
+        knowledge_base_id: int,
+    ) -> int:
+        """
+        Delete all members for a knowledge base (called when KB is deleted).
+
+        Args:
+            db: Database session
+            knowledge_base_id: Knowledge base ID
+
+        Returns:
+            Number of deleted records
+        """
+        result = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.resource_id == knowledge_base_id,
+            )
+            .delete()
+        )
+        db.flush()
+        return result
+
+    def delete_members_for_user(
+        self,
+        db: Session,
+        user_id: int,
+    ) -> int:
+        """
+        Delete all KB members for a user (called when user is deleted).
+
+        Args:
+            db: Database session
+            user_id: User ID
+
+        Returns:
+            Number of deleted records
+        """
+        result = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.user_id == user_id,
+            )
+            .delete()
+        )
+        db.flush()
+        return result
 
 
 # Singleton instance

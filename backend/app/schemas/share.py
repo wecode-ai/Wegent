@@ -300,3 +300,50 @@ class PermissionCheckResponse(BaseModel):
 
     has_permission: bool
     actual_permission_level: Optional[str] = None
+
+
+# =============================================================================
+# Knowledge Base Permission Schemas
+# =============================================================================
+
+
+class PendingRequestInfo(BaseModel):
+    """Schema for current user's pending request info."""
+
+    id: int = Field(..., description="Member record ID")
+    permission_level: PermissionLevel = Field(
+        ..., description="Requested permission level"
+    )
+    requested_at: datetime = Field(..., description="Request timestamp")
+
+
+class MyKBPermissionResponse(BaseModel):
+    """Schema for current user's permission on a knowledge base."""
+
+    has_access: bool = Field(..., description="Whether user has access to the KB")
+    permission_level: Optional[PermissionLevel] = Field(
+        None,
+        description="User's permission level (null if no access)",
+    )
+    is_creator: bool = Field(..., description="Whether user is the KB creator")
+    pending_request: Optional[PendingRequestInfo] = Field(
+        None,
+        description="Pending permission request info if exists",
+    )
+
+
+class KBShareInfoResponse(BaseModel):
+    """Schema for knowledge base share info response."""
+
+    id: int = Field(..., description="Knowledge base ID")
+    name: str = Field(..., description="Knowledge base name")
+    description: Optional[str] = Field(None, description="Knowledge base description")
+    namespace: str = Field(..., description="Knowledge base namespace")
+    creator_id: int = Field(..., description="Creator user ID")
+    creator_name: str = Field(..., description="Creator username")
+    created_at: Optional[str] = Field(
+        None, description="Creation timestamp (ISO format)"
+    )
+    my_permission: MyKBPermissionResponse = Field(
+        ..., description="Current user's permission info"
+    )
