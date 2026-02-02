@@ -51,7 +51,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { getSocketUrl } from '@/lib/runtime-config'
-import { LocalExecutorGuide } from '@/features/devices/components/LocalExecutorGuide'
+import { LocalExecutorGuide } from '@wecode/components/devices/LocalExecutorGuide'
 
 export default function DevicesPage() {
   const { t } = useTranslation('devices')

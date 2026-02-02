@@ -1,0 +1,10 @@
+{
+  "internal_step_install": "安装 wecode-cli",
+  "internal_step_install_desc": "运行一键安装脚本",
+  "internal_step_login": "登录",
+  "internal_step_login_desc": "使用 wecode 命令登录您的账号",
+  "internal_step_start": "启动",
+  "internal_step_start_desc": "启动 Executor 服务",
+  "view_config": "查看配置",
+  "beta_warning": "此功能为测试版本，运行在个人设备上存在一定风险，请谨慎使用"
+}
