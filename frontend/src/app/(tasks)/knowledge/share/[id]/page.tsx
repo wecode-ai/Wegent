@@ -123,19 +123,19 @@ export default function KnowledgeBaseSharePage() {
                 <Clock className="w-8 h-8 text-warning" />
               </div>
             </div>
-            <h1 className="text-xl font-semibold">{t('permission.pendingApproval')}</h1>
+            <h1 className="text-xl font-semibold">{t('document.permission.pendingApproval')}</h1>
             <p className="text-text-secondary text-sm">
-              {t('permission.pendingApprovalDescription', { name: shareInfo?.name })}
+              {t('document.permission.pendingApprovalDescription', { name: shareInfo?.name })}
             </p>
             <div className="bg-muted rounded-lg p-4 text-sm">
               <div className="flex justify-between mb-2">
-                <span className="text-text-muted">{t('permission.permissionLevel')}:</span>
+                <span className="text-text-muted">{t('document.permission.permissionLevel')}:</span>
                 <span className="font-medium">
-                  {t(`permission.${myPermission.pending_request.permission_level}`)}
+                  {t(`document.permission.${myPermission.pending_request.permission_level}`)}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-text-muted">{t('permission.requestedAt')}:</span>
+                <span className="text-text-muted">{t('document.permission.requestedAt')}:</span>
                 <span className="font-medium">
                   {new Date(myPermission.pending_request.requested_at).toLocaleDateString()}
                 </span>
@@ -161,9 +161,9 @@ export default function KnowledgeBaseSharePage() {
                 <CheckCircle2 className="w-8 h-8 text-success" />
               </div>
             </div>
-            <h1 className="text-xl font-semibold">{t('permission.applySuccess')}</h1>
+            <h1 className="text-xl font-semibold">{t('document.permission.applySuccess')}</h1>
             <p className="text-text-secondary text-sm">
-              {t('permission.applySuccessDescription')}
+              {t('document.permission.applySuccessDescription')}
             </p>
             <Button variant="outline" onClick={() => router.push('/knowledge')}>
               {t('common:actions.back')}
@@ -186,7 +186,7 @@ export default function KnowledgeBaseSharePage() {
                 <Link className="w-6 h-6 text-primary" />
               </div>
             </div>
-            <h1 className="text-xl font-semibold">{t('permission.apply')}</h1>
+            <h1 className="text-xl font-semibold">{t('document.permission.apply')}</h1>
           </div>
 
           {/* KB Info */}
@@ -196,13 +196,13 @@ export default function KnowledgeBaseSharePage() {
               <p className="text-sm text-text-secondary mb-2">{shareInfo.description}</p>
             )}
             <p className="text-xs text-text-muted">
-              {t('permission.createdBy', { name: shareInfo?.creator_name })}
+              {t('document.permission.createdBy', { name: shareInfo?.creator_name })}
             </p>
           </div>
 
           {/* Permission Level Selection */}
           <div className="space-y-3">
-            <label className="text-sm font-medium">{t('permission.selectPermission')}</label>
+            <label className="text-sm font-medium">{t('document.permission.selectPermission')}</label>
             <div className="space-y-2">
               {/* View Option */}
               <label
@@ -221,8 +221,8 @@ export default function KnowledgeBaseSharePage() {
                   className="mt-1"
                 />
                 <div>
-                  <div className="font-medium">{t('permission.view')}</div>
-                  <div className="text-sm text-text-muted">{t('permission.viewDescription')}</div>
+                  <div className="font-medium">{t('document.permission.view')}</div>
+                  <div className="text-sm text-text-muted">{t('document.permission.viewDescription')}</div>
                 </div>
               </label>
               {/* Edit Option */}
@@ -242,8 +242,8 @@ export default function KnowledgeBaseSharePage() {
                   className="mt-1"
                 />
                 <div>
-                  <div className="font-medium">{t('permission.edit')}</div>
-                  <div className="text-sm text-text-muted">{t('permission.editDescription')}</div>
+                  <div className="font-medium">{t('document.permission.edit')}</div>
+                  <div className="text-sm text-text-muted">{t('document.permission.editDescription')}</div>
                 </div>
               </label>
             </div>
@@ -264,7 +264,7 @@ export default function KnowledgeBaseSharePage() {
             ) : (
               <>
                 <Send className="w-4 h-4 mr-2" />
-                {t('permission.submitRequest')}
+                {t('document.permission.submitRequest')}
               </>
             )}
           </Button>
