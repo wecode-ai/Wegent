@@ -25,6 +25,9 @@ class PreExecuteHook:
     def __init__(self):
         self.command = os.environ.get("WEGENT_HOOK_PRE_EXECUTE")
         self.timeout = int(os.environ.get("WEGENT_HOOK_PRE_EXECUTE_TIMEOUT", "30"))
+        logger.info(
+            f"PreExecuteHook initialized: command={self.command}, timeout={self.timeout}s"
+        )
 
     @property
     def enabled(self) -> bool:
@@ -47,6 +50,9 @@ class PreExecuteHook:
             Exit code, 0 means success
         """
         if not self.enabled:
+            logger.info(
+                "Pre-execute hook is disabled (WEGENT_HOOK_PRE_EXECUTE not set)"
+            )
             return 0
 
         # Build environment variables
@@ -61,7 +67,15 @@ class PreExecuteHook:
         cmd = ["bash", self.command, task_dir]
 
         try:
-            logger.info(f"Executing pre-execute hook: {' '.join(cmd)}")
+            logger.info("=" * 50)
+            logger.info("Pre-execute hook starting")
+            logger.info(f"  Command: {' '.join(cmd)}")
+            logger.info(f"  Task dir: {task_dir}")
+            logger.info(f"  Task ID: {task_id}")
+            logger.info(f"  Git URL: {git_url}")
+            logger.info(f"  Timeout: {self.timeout}s")
+            logger.info("=" * 50)
+
             result = subprocess.run(
                 cmd,
                 env=env,
@@ -71,11 +85,13 @@ class PreExecuteHook:
             )
 
             if result.stdout:
-                logger.info(f"Hook stdout: {result.stdout}")
+                logger.info(f"Hook stdout:\n{result.stdout}")
             if result.stderr:
-                logger.warning(f"Hook stderr: {result.stderr}")
+                logger.warning(f"Hook stderr:\n{result.stderr}")
 
+            logger.info("=" * 50)
             logger.info(f"Pre-execute hook completed: exit_code={result.returncode}")
+            logger.info("=" * 50)
             return result.returncode
 
         except subprocess.TimeoutExpired:

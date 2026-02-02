@@ -958,6 +958,9 @@ class ClaudeCodeAgent(Agent):
 
             # Execute pre-execute hook if configured
             hook = get_pre_execute_hook()
+            logger.info(
+                f"Pre-execute hook check: enabled={hook.enabled}, command={hook.command}"
+            )
             if hook.enabled:
                 task_dir = os.path.join(config.get_workspace_root(), str(self.task_id))
                 exit_code = hook.execute(
