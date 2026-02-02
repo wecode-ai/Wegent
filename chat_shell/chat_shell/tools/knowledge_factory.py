@@ -24,6 +24,7 @@ async def prepare_knowledge_base_tools(
     user_subtask_id: Optional[int] = None,
     is_user_selected: bool = True,
     document_ids: Optional[list[int]] = None,
+    model_id: Optional[str] = None,
     context_window: Optional[int] = None,
     skip_prompt_enhancement: bool = False,
 ) -> tuple[list, str]:
@@ -45,6 +46,8 @@ async def prepare_knowledge_base_tools(
             False = relaxed mode (KB inherited from task, can use general knowledge)
         document_ids: Optional list of document IDs to filter retrieval.
             When set, only chunks from these specific documents will be returned.
+        model_id: Optional model_id used by the current chat model.
+            Used by KnowledgeBaseTool for token counting and injection decisions.
         context_window: Optional context window size from Model CRD.
             Used by KnowledgeBaseTool for injection strategy decisions.
         skip_prompt_enhancement: If True, skip adding KB prompt instructions to system prompt.
@@ -67,11 +70,12 @@ async def prepare_knowledge_base_tools(
 
     logger.info(
         "[knowledge_factory] Creating KB tools for %d knowledge bases: %s, "
-        "is_user_selected=%s, document_ids=%s, context_window=%s",
+        "is_user_selected=%s, document_ids=%s, model_id=%s, context_window=%s",
         len(knowledge_base_ids),
         knowledge_base_ids,
         is_user_selected,
         document_ids,
+        model_id,
         context_window,
     )
 
@@ -94,6 +98,7 @@ async def prepare_knowledge_base_tools(
         user_id=user_id,
         db_session=db,
         user_subtask_id=user_subtask_id,
+        model_id=model_id or KnowledgeBaseTool.model_id,
         context_window=context_window,
     )
     extra_tools.append(kb_tool)

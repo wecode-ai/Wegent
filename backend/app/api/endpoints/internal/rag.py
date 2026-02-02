@@ -212,11 +212,13 @@ async def get_knowledge_base_info(
 
     for kb_id in request.knowledge_base_ids:
         try:
-            # Get file size and document count
-            file_size = KnowledgeService.get_total_file_size(db, kb_id)
-            doc_count = KnowledgeService.get_active_document_count(db, kb_id)
-            # Estimate tokens: approximately 4 characters per token for most models
-            estimated_tokens = file_size // 4
+            # Get file size, extracted text length, and document count in one query
+            stats = KnowledgeService.get_active_document_text_length_stats(db, kb_id)
+            file_size = stats.file_size_total
+            doc_count = stats.active_document_count
+            # Estimate tokens using extracted text length (better proxy than raw file size)
+            # tested with real cases
+            estimated_tokens = stats.text_length_total * 1.5
 
             # Get KB configuration from Kind spec
             kb_kind = (

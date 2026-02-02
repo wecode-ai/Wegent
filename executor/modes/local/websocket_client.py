@@ -22,6 +22,7 @@ from typing import Any, Callable, Dict, Optional
 import socketio
 
 from executor.config import config
+from executor.version import get_version
 from shared.logger import setup_logger
 
 logger = setup_logger("websocket_client")
@@ -370,6 +371,7 @@ class WebSocketClient:
             register_data = {
                 "device_id": self.device_id,
                 "name": self.device_name,
+                "executor_version": get_version(),
             }
             logger.info(f"Sending device:register to /local-executor: {register_data}")
 
@@ -425,6 +427,7 @@ class WebSocketClient:
             heartbeat_data = {
                 "device_id": self.device_id,
                 "running_task_ids": running_task_ids,
+                "executor_version": get_version(),
             }
             logger.info(
                 f"Sending device:heartbeat to /local-executor: {heartbeat_data}"

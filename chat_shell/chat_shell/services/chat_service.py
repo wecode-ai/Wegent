@@ -126,8 +126,13 @@ class ChatService(ChatInterface):
         extract_attributes=lambda self, request, core, state, emitter, *args, **kwargs: {
             "process.task_id": request.task_id,
             "process.subtask_id": request.subtask_id,
-            "process.model": (
-                request.model_config.get("model") if request.model_config else "gpt-4"
+            "process.model_id": (
+                request.model_config.get("model_id")
+                if request.model_config
+                else "gpt-4"
+            ),
+            "process.model_provider": (
+                request.model_config.get("model") if request.model_config else "openai"
             ),
         },
     )
@@ -207,8 +212,9 @@ class ChatService(ChatInterface):
 
             # Build messages for the agent
             add_span_event("building_messages")
+            # IMPORTANT: use model_id (e.g., "claude-3-5-sonnet-20241022"), not provider name.
             model_id = (
-                request.model_config.get("model") if request.model_config else None
+                request.model_config.get("model_id") if request.model_config else None
             )
             t1 = time.perf_counter()
             messages = agent.build_messages(

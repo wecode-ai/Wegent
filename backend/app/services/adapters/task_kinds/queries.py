@@ -732,8 +732,8 @@ class TaskQueryMixin:
                 "system_prompt": system_prompt,
                 "mcp_servers": mcp_servers,
                 "is_active": bot.is_active,
-                "created_at": bot.created_at,
-                "updated_at": bot.updated_at,
+                "created_at": (bot.created_at.isoformat() if bot.created_at else None),
+                "updated_at": (bot.updated_at.isoformat() if bot.updated_at else None),
             }
             bots[bot.id] = bot_dict
 
@@ -794,9 +794,15 @@ class TaskQueryMixin:
                 "result": subtask.result,
                 "error_message": subtask.error_message,
                 "user_id": subtask.user_id,
-                "created_at": subtask.created_at,
-                "updated_at": subtask.updated_at,
-                "completed_at": subtask.completed_at,
+                "created_at": (
+                    subtask.created_at.isoformat() if subtask.created_at else None
+                ),
+                "updated_at": (
+                    subtask.updated_at.isoformat() if subtask.updated_at else None
+                ),
+                "completed_at": (
+                    subtask.completed_at.isoformat() if subtask.completed_at else None
+                ),
                 "bots": [
                     bots.get(bot_id) for bot_id in subtask.bot_ids if bot_id in bots
                 ],

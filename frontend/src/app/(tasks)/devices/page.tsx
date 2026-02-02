@@ -28,6 +28,7 @@ import { getToken } from '@/apis/user'
 import { DeviceInfo } from '@/apis/devices'
 import { SlotIndicator } from '@/features/devices/components/SlotIndicator'
 import { RunningTasksList } from '@/features/devices/components/RunningTasksList'
+import { VersionBadge } from '@/features/devices/components/VersionBadge'
 import {
   Monitor,
   RefreshCw,
@@ -53,25 +54,11 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { getSocketUrl } from '@/lib/runtime-config'
 
 // Install script URL
 const INSTALL_SCRIPT_URL =
   'https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh'
-
-// Helper function to get backend URL dynamically
-const getBackendUrl = (): string => {
-  if (typeof window !== 'undefined') {
-    // Check runtime config from Next.js
-    const runtimeUrl = process.env.NEXT_PUBLIC_SOCKET_DIRECT_URL
-    if (runtimeUrl) return runtimeUrl
-
-    // Derive from current origin - replace frontend port with backend port
-    const origin = window.location.origin
-    return origin.replace(':3000', ':8000')
-  }
-
-  return 'http://localhost:8000'
-}
 
 // Component for copy button with state
 function CopyButton({
@@ -160,8 +147,8 @@ export default function DevicesPage() {
   const communityUrl = process.env.NEXT_PUBLIC_COMMUNITY_URL || ''
   const faqUrl = process.env.NEXT_PUBLIC_FAQ_URL || ''
 
-  // Generate dynamic backend URL
-  const backendUrl = useMemo(() => getBackendUrl(), [])
+  // Generate dynamic backend URL from runtime config
+  const backendUrl = useMemo(() => getSocketUrl(), [])
 
   // Get auth token
   const authToken = useMemo(() => getToken() || '<YOUR_AUTH_TOKEN>', [])
@@ -512,7 +499,16 @@ export default function DevicesPage() {
                               </span>
                             )}
                           </div>
-                          <p className="text-sm text-text-muted">{device.device_id}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm text-text-muted">{device.device_id}</p>
+                            {device.status !== 'offline' && (
+                              <VersionBadge
+                                executorVersion={device.executor_version}
+                                latestVersion={device.latest_version}
+                                updateAvailable={device.update_available}
+                              />
+                            )}
+                          </div>
                           {/* Slot indicator - only show for online devices */}
                           {device.status !== 'offline' && (
                             <div className="mt-1">

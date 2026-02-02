@@ -15,6 +15,10 @@ import type { ThinkingStep, ToolPair, ToolGroup, ToolStatus } from '../types'
  * This ensures specialized renderers are invoked correctly
  */
 export function normalizeToolName(toolName: string, _title?: string): string {
+  if (_title) {
+    return _title
+  }
+
   // Direct mapping for known English names
   const englishTools = [
     'Bash',

@@ -474,7 +474,7 @@ jobs:
 
   build-executor-local-macos-amd64:
     needs: prepare-release
-    runs-on: macos-15  # Intel runner (macos-13 is retired)
+    runs-on: macos-14  # Apple Silicon runner with Rosetta 2 for x86_64 build
     permissions:
       contents: write
     steps:
@@ -483,19 +483,31 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Install Rosetta 2
+        run: |
+          # Check if Rosetta 2 is already installed
+          if ! /usr/bin/pgrep -q oahd; then
+            sudo softwareupdate --install-rosetta --agree-to-license || true
+          fi
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Set up Python (x86_64 via Rosetta)
+        run: |
+          # Download and install Python for x86_64
+          curl -L -o python-installer.pkg "https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg"
+          sudo installer -pkg python-installer.pkg -target /
+          rm python-installer.pkg
 
-      - name: Install dependencies and build
+      - name: Install uv (x86_64)
+        run: |
+          arch -x86_64 /usr/local/bin/python3.11 -m pip install --upgrade pip
+          arch -x86_64 /usr/local/bin/python3.11 -m pip install uv
+
+      - name: Install dependencies and build (x86_64)
         working-directory: executor
         run: |
-          uv sync --group build
-          uv run python scripts/build_local.py
+          # Use x86_64 Python and uv to install dependencies and build
+          arch -x86_64 /usr/local/bin/python3.11 -m uv sync --group build
+          arch -x86_64 /usr/local/bin/python3.11 -m uv run python scripts/build_local.py
 
       - name: Rename binary with platform suffix
         run: |

@@ -964,6 +964,20 @@ async def _stream_with_http_adapter(
     first_token_received = False
 
     try:
+        # Update subtask status to RUNNING immediately for chat_shell mode
+        # Unlike executor mode (which waits for executor_manager to pick up the task),
+        # chat_shell processes the request directly, so we set RUNNING status here
+        from app.services.chat.storage.db import db_handler
+
+        await db_handler.update_subtask_status(
+            subtask_id=subtask_id,
+            status="RUNNING",
+        )
+        logger.info(
+            "[HTTP_ADAPTER] Updated subtask status to RUNNING: subtask_id=%d",
+            subtask_id,
+        )
+
         # Stream events from chat_shell and forward to WebSocket
         async for event in adapter.chat(chat_request):
             # Check for cancellation (both local event and Redis flag)
@@ -1036,12 +1050,16 @@ async def _stream_with_http_adapter(
                 display_name = event.data.get("display_name", tool_name)
                 blocks = event.data.get("blocks", [])
 
+                # Log event.data without blocks to reduce log size
+                event_data_without_blocks = {
+                    k: v for k, v in event.data.items() if k != "blocks"
+                }
                 logger.info(
                     "[HTTP_ADAPTER] TOOL_START: id=%s, name=%s, display_name=%s, event.data=%s",
                     tool_id,
                     tool_name,
                     display_name,
-                    event.data,
+                    event_data_without_blocks,
                 )
 
                 thinking_steps.append(
@@ -1082,13 +1100,15 @@ async def _stream_with_http_adapter(
                 )
                 blocks = event.data.get("blocks", [])
 
+                # Log event.data without blocks and output to reduce log size
+                event_data_without_blocks_output = {
+                    k: v for k, v in event.data.items() if k not in ("output", "blocks")
+                }
                 logger.info(
                     "[HTTP_ADAPTER] TOOL_RESULT: id=%s, name=%s, event.data=%s",
                     tool_id,
                     tool_name,
-                    {
-                        k: v for k, v in event.data.items() if k != "output"
-                    },  # Skip output to reduce log size
+                    event_data_without_blocks_output,
                 )
 
                 # Determine status based on event data
@@ -1412,6 +1432,20 @@ async def _stream_with_bridge(
         if not await core.acquire_resources():
             await bridge.stop()
             return
+
+        # Update subtask status to RUNNING immediately for chat_shell mode
+        # Unlike executor mode (which waits for executor_manager to pick up the task),
+        # chat_shell processes the request directly, so we set RUNNING status here
+        from app.services.chat.storage.db import db_handler
+
+        await db_handler.update_subtask_status(
+            subtask_id=subtask_id,
+            status="RUNNING",
+        )
+        logger.info(
+            "[BRIDGE] Updated subtask status to RUNNING: subtask_id=%d",
+            subtask_id,
+        )
 
         # Prepare extra tools
         extra_tools: list[BaseTool] = (
