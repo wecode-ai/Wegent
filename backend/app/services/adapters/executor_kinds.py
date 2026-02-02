@@ -940,6 +940,18 @@ class ExecutorKindsService(
 
             task_crd = Task.model_validate(task.json)
 
+            # Get workspace restore information from task labels
+            workspace_restore_pending = (
+                task_crd.metadata.labels.get("workspaceRestorePending")
+                if task_crd.metadata.labels
+                else None
+            )
+            workspace_archive_url = (
+                task_crd.metadata.labels.get("workspaceArchiveUrl")
+                if task_crd.metadata.labels
+                else None
+            )
+
             # Get workspace information
             workspace = (
                 db.query(TaskResource)
@@ -1269,6 +1281,9 @@ class ExecutorKindsService(
                     # Flag to indicate this subtask should start a new session (no conversation history)
                     # Used in pipeline mode when user confirms a stage and proceeds to next bot
                     "new_session": new_session,
+                    # Workspace restore fields for code task recovery
+                    "workspace_restore_pending": workspace_restore_pending,
+                    "workspace_archive_url": workspace_archive_url,
                 }
             )
 
@@ -1469,7 +1484,10 @@ class ExecutorKindsService(
 
         # Mark executor as deleted when container not found error is reported
         # This enables the task restore flow on next message send
-        if subtask_update.status == SubtaskStatus.FAILED and subtask_update.error_message:
+        if (
+            subtask_update.status == SubtaskStatus.FAILED
+            and subtask_update.error_message
+        ):
             error_msg = subtask_update.error_message.lower()
             if "container" in error_msg and "not found" in error_msg:
                 logger.info(
@@ -2701,6 +2719,42 @@ class ExecutorKindsService(
             raise HTTPException(
                 status_code=500, detail=f"Error deleting executor task: {str(e)}"
             )
+
+    def get_executor_address_sync(
+        self, executor_name: str, executor_namespace: str = ""
+    ) -> Dict:
+        """
+        Get executor container address synchronously.
+
+        Args:
+            executor_name: The executor container name
+            executor_namespace: Executor namespace (optional)
+
+        Returns:
+            Dict with status and base_url if successful
+        """
+        if not executor_name:
+            return {"status": "failed", "error_msg": "executor_name is required"}
+        try:
+            import requests
+
+            payload = {
+                "executor_name": executor_name,
+            }
+            url = f"{settings.EXECUTOR_MANAGER_URL}/executor-manager/executor/address"
+            logger.info(f"executor.address sync request url={url} {payload}")
+
+            response = requests.post(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Error getting executor address: {e}")
+            return {"status": "failed", "error_msg": str(e)}
 
 
 executor_kinds_service = ExecutorKindsService(Kind)

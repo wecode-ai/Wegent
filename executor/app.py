@@ -554,3 +554,42 @@ async def close_all_agent_sessions():
         raise HTTPException(
             status_code=500, detail=f"Error closing connections: {str(e)}"
         )
+
+
+@app.post("/api/workspace/archive")
+async def archive_workspace(
+    task_id: int = Query(..., description="Task ID to archive")
+):
+    """
+    Create a tar.gz archive of the workspace for a task.
+
+    This endpoint is called by backend's executor_job before cleaning up
+    the executor container. The archive contains all git-tracked files
+    and session state files.
+
+    Returns:
+        Binary tar.gz data on success, or error details on failure
+    """
+    from fastapi.responses import Response
+
+    from executor.services.workspace_service import create_workspace_archive
+
+    logger.info(f"Creating workspace archive for task {task_id}")
+
+    archive_data, error = create_workspace_archive(task_id)
+
+    if error:
+        logger.warning(f"Failed to create archive for task {task_id}: {error}")
+        raise HTTPException(status_code=400, detail=error)
+
+    logger.info(
+        f"Workspace archive created for task {task_id}, size: {len(archive_data)} bytes"
+    )
+
+    return Response(
+        content=archive_data,
+        media_type="application/gzip",
+        headers={
+            "Content-Disposition": f"attachment; filename=workspace_{task_id}.tar.gz"
+        },
+    )

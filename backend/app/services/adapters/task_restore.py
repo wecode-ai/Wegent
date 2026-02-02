@@ -8,6 +8,9 @@ Task restore service for expired tasks.
 This module provides functionality to restore expired tasks,
 allowing users to continue conversations on tasks that have
 exceeded their expiration time.
+
+For code tasks with workspace archives, it also marks the task
+for workspace restoration so the executor can restore files.
 """
 
 import logging
@@ -23,6 +26,10 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task
+from app.services.adapters.workspace_archive import (
+    is_workspace_archive_enabled,
+    workspace_archive_service,
+)
 from app.services.task_member_service import task_member_service
 
 logger = logging.getLogger(__name__)
@@ -46,7 +53,8 @@ class TaskRestoreService:
         2. Validates task is in a restorable state
         3. Resets task updated_at timestamp
         4. Checks if executor needs rebuilding
-        5. Optionally creates new subtasks if message is provided
+        5. For code tasks, marks workspace for restoration if archive exists
+        6. Optionally creates new subtasks if message is provided
 
         Args:
             db: Database session
@@ -109,7 +117,12 @@ class TaskRestoreService:
         # 4. Check if executor needs rebuilding
         executor_rebuilt = self._rebuild_executor_if_needed(db, task_id)
 
-        # 5. Reset task timestamp
+        # 5. For code tasks, mark workspace for restoration if archive exists
+        workspace_restore_marked = False
+        if task_type == "code" and executor_rebuilt:
+            workspace_restore_marked = self._mark_workspace_for_restore(db, task_id)
+
+        # 6. Reset task timestamp
         task.updated_at = datetime.now()
         if task_crd.status:
             task_crd.status.updatedAt = datetime.now()
@@ -121,7 +134,8 @@ class TaskRestoreService:
 
         logger.info(
             f"Task {task_id} restored successfully by user {user.id}, "
-            f"executor_rebuilt={executor_rebuilt}"
+            f"executor_rebuilt={executor_rebuilt}, "
+            f"workspace_restore_marked={workspace_restore_marked}"
         )
 
         return {
@@ -129,6 +143,7 @@ class TaskRestoreService:
             "task_id": task_id,
             "task_type": task_type,
             "executor_rebuilt": executor_rebuilt,
+            "workspace_restore_pending": workspace_restore_marked,
             "message": "Task restored successfully",
         }
 
@@ -193,6 +208,43 @@ class TaskRestoreService:
             return True
 
         return False
+
+    def _mark_workspace_for_restore(self, db: Session, task_id: int) -> bool:
+        """
+        Mark a code task for workspace restoration.
+
+        If a workspace archive exists for this task, mark it for restoration
+        so the new executor can download and restore the workspace files.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+
+        Returns:
+            True if workspace was marked for restoration, False otherwise
+        """
+        if not is_workspace_archive_enabled():
+            logger.debug(
+                f"Workspace archive not enabled, skipping restore mark for task {task_id}"
+            )
+            return False
+
+        # Check if task has an archive
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+            )
+            .first()
+        )
+
+        if not task or not task.workspace_archive_key:
+            logger.debug(f"Task {task_id} has no workspace archive")
+            return False
+
+        # Mark for restoration
+        return workspace_archive_service.mark_for_restore(db, task_id)
 
 
 # Singleton instance

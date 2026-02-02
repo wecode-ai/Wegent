@@ -29,6 +29,10 @@ from app.schemas.kind import Task, Team, Workspace
 from app.schemas.task import TaskCreate, TaskUpdate
 from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.adapters.pipeline_stage import pipeline_stage_service
+from app.services.adapters.workspace_archive import (
+    is_workspace_archive_enabled,
+    workspace_archive_service,
+)
 from app.services.readers.kinds import KindType, kindReader
 
 from .converters import convert_to_task_dict
@@ -201,7 +205,9 @@ class TaskOperationsMixin:
         # Chat Shell tasks use a different path (create_task_and_subtasks) which
         # doesn't need expiration check because they don't use persistent containers.
         if time_since_update > expire_seconds:
-            logger.info(f"[_handle_existing_task] Task {task_id} is expired, raising 409")
+            logger.info(
+                f"[_handle_existing_task] Task {task_id} is expired, raising 409"
+            )
             # Return HTTP 409 with restorable error details
             raise HTTPException(
                 status_code=409,
@@ -601,6 +607,9 @@ class TaskOperationsMixin:
         task.updated_at = datetime.now()
         task.is_active = False
         flag_modified(task, "json")
+
+        # Clean up workspace archive from S3 if exists
+        self._cleanup_workspace_archive(db, task_id)
 
         # Clean up long-term memories associated with this task (fire-and-forget)
         # This runs in background and doesn't block task deletion
@@ -1068,6 +1077,25 @@ class TaskOperationsMixin:
             return True
 
         return False
+
+    def _cleanup_workspace_archive(self, db: Session, task_id: int) -> None:
+        """
+        Clean up workspace archive from S3 if it exists.
+
+        Args:
+            db: Database session
+            task_id: Task ID being deleted
+        """
+        if not is_workspace_archive_enabled():
+            return
+
+        try:
+            workspace_archive_service.delete_archive(db, task_id)
+        except Exception as e:
+            # Log but don't fail the deletion
+            logger.warning(
+                f"Failed to delete workspace archive for task {task_id}: {e}"
+            )
 
     def _cleanup_task_memories(self, user_id: int, task_id: int) -> None:
         """

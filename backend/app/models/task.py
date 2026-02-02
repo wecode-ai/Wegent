@@ -9,6 +9,7 @@ This table is separated from the kinds table for better query performance
 and data management efficiency.
 """
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import (
     JSON,
@@ -74,6 +75,18 @@ class TaskResource(Base):
         default=0,
         index=True,
         comment="Project ID for task grouping",
+    )
+    # Workspace archive fields for code task recovery
+    workspace_archived_at = Column(
+        DateTime,
+        nullable=True,
+        index=True,
+        comment="Timestamp when workspace was archived to S3",
+    )
+    workspace_archive_key = Column(
+        String(255),
+        nullable=True,
+        comment="S3 key where workspace archive is stored",
     )
 
     __table_args__ = (
