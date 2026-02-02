@@ -18,6 +18,7 @@ from app.api.endpoints import (
     quota,
     rag,
     repository,
+    share,
     subtasks,
     tables,
     users,
@@ -135,6 +136,8 @@ api_router.include_router(
     prefix="/knowledge-bases",
     tags=["knowledge-permission"],
 )
+# Unified share endpoints (Team, Task, KnowledgeBase)
+api_router.include_router(share.router, prefix="/share", tags=["share"])
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(rag.router, prefix="/rag", tags=["rag"])
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
