@@ -6,7 +6,7 @@
 
 import React, { memo, useMemo, useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import remarkGfmSafe from '@/lib/remark-gfm-safe'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
@@ -484,7 +484,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   // Configure remark/rehype plugins based on content
   const remarkPlugins = useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const plugins: any[] = [remarkGfm]
+    const plugins: any[] = [remarkGfmSafe]
     if (hasMath) {
       // Enable singleDollarTextMath to support $...$ inline math
       plugins.push([remarkMath, { singleDollarTextMath: true }])

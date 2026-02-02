@@ -9,7 +9,7 @@ import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRende
 import { Copy, Check, Plus, Star, RefreshCw, Edit3, X, Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { FinalPromptData, Team, GitRepoInfo, GitBranch } from '@/types/api'
-import MarkdownEditor from '@uiw/react-markdown-editor'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
@@ -220,11 +220,10 @@ export default function FinalPromptMessage({
             </div>
           </div>
         ) : (
-          <MarkdownEditor.Markdown
+          <EnhancedMarkdown
             source={data.final_prompt}
-            style={{ background: 'transparent' }}
-            wrapperElement={{ 'data-color-mode': theme }}
-            components={createSmartMarkdownComponents({ enableImagePreview: true, theme })}
+            theme={theme}
+            components={createSmartMarkdownComponents({ enableImagePreview: true })}
           />
         )}
       </div>
