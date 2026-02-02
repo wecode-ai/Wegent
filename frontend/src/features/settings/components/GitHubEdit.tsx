@@ -55,8 +55,18 @@ const isValidDomain = (value: string) => {
     if (portNumber < 1 || portNumber > 65535) return false
   }
   if (host === 'localhost') return true
-  const domainRegex = /^(?!-)[A-Za-z0-9-]{1,63}(?<!-)(?:\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$/
-  return domainRegex.test(host)
+
+  // Validate domain without using lookbehind for iOS 16 compatibility
+  // Each label must:
+  // 1. Start with alphanumeric (not hyphen) - checked with negative lookahead
+  // 2. End with alphanumeric (not hyphen) - checked manually
+  // 3. Contain only alphanumeric and hyphens, length 1-63
+  const domainRegex = /^(?!-)[A-Za-z0-9-]{1,63}(?:\.(?!-)[A-Za-z0-9-]{1,63})*$/
+  if (!domainRegex.test(host)) return false
+
+  // Check that no label ends with a hyphen (replacing lookbehind)
+  const labels = host.split('.')
+  return labels.every(label => !label.endsWith('-'))
 }
 
 const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo }) => {

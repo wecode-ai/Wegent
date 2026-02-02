@@ -33,6 +33,10 @@ class SandboxUploadAttachmentInput(BaseModel):
         ...,
         description="Path to the file in sandbox to upload",
     )
+    overwrite_attachment_id: Optional[int] = Field(
+        default=None,
+        description="Existing attachment ID to overwrite in-place (optional)",
+    )
     timeout_seconds: Optional[int] = Field(
         default=300,
         description="Upload timeout in seconds (default: 300)",
@@ -72,6 +76,7 @@ so that users can download them.
 
 Parameters:
 - file_path (required): Path to the file in sandbox to upload
+- overwrite_attachment_id (optional): Existing attachment ID to overwrite in-place
 - timeout_seconds (optional): Upload timeout in seconds (default: 300)
 
 Returns:
@@ -85,7 +90,8 @@ Returns:
 
 Example:
 {
-  "file_path": "/home/user/documents/report.pdf"
+  "file_path": "/home/user/documents/report.pdf",
+  "overwrite_attachment_id": 123
 }
 
 After successful upload, you can provide the download_url to the user:
@@ -116,6 +122,7 @@ After successful upload, you can provide the download_url to the user:
     async def _arun(
         self,
         file_path: str,
+        overwrite_attachment_id: Optional[int] = None,
         timeout_seconds: Optional[int] = None,
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
@@ -143,7 +150,10 @@ After successful upload, you can provide the download_url to the user:
                 await self.ws_emitter.emit_tool_call(
                     task_id=self.task_id,
                     tool_name=self.name,
-                    tool_input={"file_path": file_path},
+                    tool_input={
+                        "file_path": file_path,
+                        "overwrite_attachment_id": overwrite_attachment_id,
+                    },
                     status="running",
                 )
             except Exception as e:
@@ -240,6 +250,21 @@ After successful upload, you can provide the download_url to the user:
                 return result
 
             upload_url = f"{api_base_url}/api/attachments/upload"
+            if overwrite_attachment_id is not None:
+                if overwrite_attachment_id <= 0:
+                    error_msg = "overwrite_attachment_id must be positive"
+                    result = self._format_error(
+                        error_message=error_msg,
+                        attachment_id=None,
+                        filename=os.path.basename(file_path),
+                        file_size=file_info.size,
+                        download_url="",
+                    )
+                    await self._emit_tool_status("failed", error_msg)
+                    return result
+                upload_url = (
+                    f"{upload_url}?overwrite_attachment_id={overwrite_attachment_id}"
+                )
 
             # Build curl command
             curl_cmd = (

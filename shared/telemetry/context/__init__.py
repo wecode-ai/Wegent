@@ -89,6 +89,7 @@ __all__ = [
     "get_request_id",
     "get_server_ip",
     "is_websocket_context",
+    "init_request_context",
     # WebSocket context
     "set_websocket_context",
     # Context copy/restore (for new event loops or threads)

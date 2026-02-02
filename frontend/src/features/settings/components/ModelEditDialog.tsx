@@ -191,27 +191,31 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 }) => {
   const { t } = useTranslation()
   // Support both legacy model prop and new initialData prop
-  const effectiveInitialData =
-    initialData ||
-    (model
-      ? {
-          name: model.metadata.name,
-          displayName: model.metadata.displayName,
-          modelCategoryType: model.spec.modelType,
-          providerType: model.spec.modelConfig?.env?.model,
-          modelId: model.spec.modelConfig?.env?.model_id,
-          apiKey: model.spec.modelConfig?.env?.api_key,
-          baseUrl: model.spec.modelConfig?.env?.base_url,
-          customHeaders: model.spec.modelConfig?.env?.custom_headers,
-          protocol: model.spec.protocol,
-          contextWindow: model.spec.contextWindow,
-          maxOutputTokens: model.spec.maxOutputTokens,
-          ttsConfig: model.spec.ttsConfig,
-          sttConfig: model.spec.sttConfig,
-          embeddingConfig: model.spec.embeddingConfig,
-          rerankConfig: model.spec.rerankConfig,
-        }
-      : null)
+  // Use useMemo to prevent re-creating the object on every render
+  const effectiveInitialData = React.useMemo(() => {
+    return (
+      initialData ||
+      (model
+        ? {
+            name: model.metadata.name,
+            displayName: model.metadata.displayName,
+            modelCategoryType: model.spec.modelType,
+            providerType: model.spec.modelConfig?.env?.model,
+            modelId: model.spec.modelConfig?.env?.model_id,
+            apiKey: model.spec.modelConfig?.env?.api_key,
+            baseUrl: model.spec.modelConfig?.env?.base_url,
+            customHeaders: model.spec.modelConfig?.env?.custom_headers,
+            protocol: model.spec.protocol,
+            contextWindow: model.spec.contextWindow,
+            maxOutputTokens: model.spec.maxOutputTokens,
+            ttsConfig: model.spec.ttsConfig,
+            sttConfig: model.spec.sttConfig,
+            embeddingConfig: model.spec.embeddingConfig,
+            rerankConfig: model.spec.rerankConfig,
+          }
+        : null)
+    )
+  }, [initialData, model])
   const isEditing = !!effectiveInitialData
   const isGroupScope = scope === 'group'
 
@@ -427,20 +431,27 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     }
   }
 
-  // Set model ID when initialData changes
+  // Track if we've already initialized modelId from initialData
+  // This prevents re-setting modelId when modelOptions changes after fetching
+  const hasInitializedModelId = React.useRef(false)
+
+  // Set model ID when initialData changes (only once per dialog open)
   useEffect(() => {
-    if (effectiveInitialData?.modelId) {
+    if (effectiveInitialData?.modelId && !hasInitializedModelId.current) {
       const id = effectiveInitialData.modelId
-      const isPreset = modelOptions.some(opt => opt.value === id && opt.value !== 'custom')
-      if (isPreset) {
-        setModelId(id)
-        setCustomModelId('')
-      } else {
-        setModelId('custom')
-        setCustomModelId(id)
-      }
+      hasInitializedModelId.current = true
+      // Set the model ID directly - it will be displayed even if not in options yet
+      setModelId(id)
+      setCustomModelId('')
     }
-  }, [effectiveInitialData, modelOptions])
+  }, [effectiveInitialData])
+
+  // Reset initialization flag when dialog closes
+  useEffect(() => {
+    if (!open) {
+      hasInitializedModelId.current = false
+    }
+  }, [open])
   const handleProviderChange = (value: string) => {
     setProviderType(value)
     setModelId('')
