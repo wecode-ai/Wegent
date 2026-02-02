@@ -37,9 +37,9 @@ rm -rf frontend/wecode/
 // Remove "wecode/**/*.ts", "wecode/**/*.tsx" from "include"
 ```
 
-### 4. Remove wecode translation loading from i18n setup (optional)
+### 4. No changes needed for i18n setup
 
 **File: `src/i18n/setup.ts`**
 
-The `loadWecodeTranslations` function will silently fail when wecode directory doesn't exist,
-so no changes are required. However, you can optionally remove it for cleaner code.
+The file uses dynamic import with try-catch for `@wecode/i18n` module.
+When wecode directory doesn't exist, it will silently skip - no code changes required.
