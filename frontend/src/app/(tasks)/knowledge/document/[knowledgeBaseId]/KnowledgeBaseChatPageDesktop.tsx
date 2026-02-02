@@ -89,7 +89,7 @@ export function KnowledgeBaseChatPageDesktop({
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
 
   // User state
-  const { user } = useUser()
+  const { user, isLoading: isUserLoading } = useUser()
 
   // Task context
   const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
@@ -231,8 +231,8 @@ export function KnowledgeBaseChatPageDesktop({
     return false
   }, [knowledgeBase, user, myPermission])
 
-  // Loading state
-  if (kbLoading) {
+  // Loading state - wait for both knowledge base and user data
+  if (kbLoading || isUserLoading) {
     return (
       <div className="flex smart-h-screen bg-base text-text-primary items-center justify-center">
         <Spinner />

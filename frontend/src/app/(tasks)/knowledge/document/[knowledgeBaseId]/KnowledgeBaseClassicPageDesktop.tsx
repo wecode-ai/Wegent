@@ -75,7 +75,7 @@ export function KnowledgeBaseClassicPageDesktop({
   }, [knowledgeBase, knowledgeBaseId, fetchMyPermission])
 
   // User state
-  const { user } = useUser()
+  const { user, isLoading: isUserLoading } = useUser()
 
   // Tab state for documents/permissions
   const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
@@ -165,8 +165,8 @@ export function KnowledgeBaseClassicPageDesktop({
     return false
   }, [knowledgeBase, user, myPermission])
 
-  // Loading state
-  if (kbLoading) {
+  // Loading state - wait for both knowledge base and user data
+  if (kbLoading || isUserLoading) {
     return (
       <div className="flex smart-h-screen bg-base text-text-primary items-center justify-center">
         <Spinner />
