@@ -29,6 +29,7 @@ from llama_index.core.schema import TextNode
 
 from app.schemas.rag import DoclingPipelineConfig, SmartSplitterConfig
 from app.services.rag.index.indexer import (
+    DOCLING_AVAILABLE,
     DOCLING_EXTENSIONS,
     EXCEL_EXTENSIONS,
     DocumentIndexer,
@@ -54,32 +55,37 @@ requires_docling = pytest.mark.skipif(
 class TestHelperFunctions:
     """Tests for helper functions."""
 
+    @requires_docling
     def test_should_use_docling_md(self):
-        """Test should_use_docling returns True for .md files."""
+        """Test should_use_docling returns True for .md files when docling is available."""
         assert should_use_docling(".md") is True
         assert should_use_docling(".MD") is True
 
+    @requires_docling
     def test_should_use_docling_pdf(self):
-        """Test should_use_docling returns True for .pdf files."""
+        """Test should_use_docling returns True for .pdf files when docling is available."""
         assert should_use_docling(".pdf") is True
         assert should_use_docling(".PDF") is True
 
+    @requires_docling
     def test_should_use_docling_doc_docx(self):
-        """Test should_use_docling returns True for .doc/.docx files."""
+        """Test should_use_docling returns True for .doc/.docx files when docling is available."""
         assert should_use_docling(".doc") is True
         assert should_use_docling(".docx") is True
         assert should_use_docling(".DOC") is True
         assert should_use_docling(".DOCX") is True
 
+    @requires_docling
     def test_should_use_docling_ppt_pptx(self):
-        """Test should_use_docling returns True for .ppt/.pptx files."""
+        """Test should_use_docling returns True for .ppt/.pptx files when docling is available."""
         assert should_use_docling(".ppt") is True
         assert should_use_docling(".pptx") is True
         assert should_use_docling(".PPT") is True
         assert should_use_docling(".PPTX") is True
 
+    @requires_docling
     def test_should_use_docling_xls_xlsx(self):
-        """Test should_use_docling returns True for .xls/.xlsx files."""
+        """Test should_use_docling returns True for .xls/.xlsx files when docling is available."""
         assert should_use_docling(".xls") is True
         assert should_use_docling(".xlsx") is True
         assert should_use_docling(".XLS") is True
@@ -96,6 +102,19 @@ class TestHelperFunctions:
         assert should_use_docling(".json") is False
         assert should_use_docling(".xml") is False
         assert should_use_docling(".html") is False
+
+    def test_should_use_docling_returns_false_when_not_available(self):
+        """Test should_use_docling returns False when docling is not installed."""
+        # This test verifies the fallback behavior
+        from app.services.rag.index import indexer
+        original_value = indexer.DOCLING_AVAILABLE
+        try:
+            indexer.DOCLING_AVAILABLE = False
+            assert should_use_docling(".pdf") is False
+            assert should_use_docling(".docx") is False
+            assert should_use_docling(".xlsx") is False
+        finally:
+            indexer.DOCLING_AVAILABLE = original_value
 
     def test_is_excel_file_true(self):
         """Test is_excel_file returns True for Excel files."""
@@ -426,6 +445,7 @@ class TestDocumentIndexerIndexFromBinary:
             splitter_config=splitter_config,
         )
 
+    @requires_docling
     @patch.object(DocumentIndexer, "_process_with_docling")
     @patch.object(DocumentIndexer, "_index_documents")
     def test_index_from_binary_uses_docling_for_pdf(
@@ -479,6 +499,7 @@ class TestDocumentIndexerIndexFromBinary:
         # Verify SimpleReader was used
         mock_process_simple.assert_called_once()
 
+    @requires_docling
     @patch.object(DocumentIndexer, "_process_with_docling")
     @patch.object(DocumentIndexer, "_index_documents")
     def test_index_from_binary_uses_docling_for_docx(
@@ -506,6 +527,7 @@ class TestDocumentIndexerIndexFromBinary:
         # Verify Docling was used
         mock_process_docling.assert_called_once()
 
+    @requires_docling
     @patch.object(DocumentIndexer, "_process_with_docling")
     @patch.object(DocumentIndexer, "_index_documents")
     def test_index_from_binary_uses_docling_for_xlsx(

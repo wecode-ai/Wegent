@@ -30,6 +30,17 @@ from shared.telemetry.decorators import add_span_event
 if TYPE_CHECKING:
     from llama_index.readers.docling import DoclingReader
 
+# Check if DoclingReader is available (optional dependency)
+def _is_docling_available() -> bool:
+    """Check if llama-index-readers-docling is installed."""
+    try:
+        from llama_index.readers.docling import DoclingReader
+        return True
+    except ImportError:
+        return False
+
+DOCLING_AVAILABLE = _is_docling_available()
+
 logger = logging.getLogger(__name__)
 
 # File extensions supported by DoclingReader for intelligent document parsing
@@ -47,12 +58,16 @@ def should_use_docling(file_extension: str) -> bool:
     DoclingReader provides better structure preservation for complex documents
     like PDF, DOCX, PPTX compared to SimpleDirectoryReader.
 
+    Note: Returns False if llama-index-readers-docling is not installed.
+
     Args:
         file_extension: File extension (e.g., '.pdf', '.docx')
 
     Returns:
-        True if DoclingReader should be used, False otherwise
+        True if DoclingReader should be used (and is available), False otherwise
     """
+    if not DOCLING_AVAILABLE:
+        return False
     return file_extension.lower() in DOCLING_EXTENSIONS
 
 
