@@ -58,5 +58,5 @@ rm -rf frontend/wecode/
 
 ### 4. No changes needed for i18n setup
 
-The `src/i18n/setup.ts` uses dynamic import with try-catch for `@wecode/i18n` module.
-When wecode directory doesn't exist, it will silently skip.
+The `src/i18n/setup.ts` is identical between internal and external versions.
+Wecode translations are loaded via side-effect import in wecode components.

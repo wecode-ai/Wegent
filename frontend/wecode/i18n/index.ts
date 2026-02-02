@@ -3,8 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Wecode i18n extension - loads and merges internal translations
+ * Wecode i18n extension - automatically loads and registers internal translations
+ *
+ * This module uses i18next's addResourceBundle to merge wecode translations
+ * after i18next is initialized. Import this module for side-effect.
  */
+
+import i18next from 'i18next'
 
 // Supported languages (must match main setup.ts)
 const supportedLanguages = ['en', 'zh-CN']
@@ -13,27 +18,28 @@ const supportedLanguages = ['en', 'zh-CN']
 const wecodeNamespaces = ['devices']
 
 /**
- * Load wecode extension translations and merge with base translations
- * This function is called by the main i18n setup if wecode module is available
+ * Load and register wecode translations into i18next
  */
-export async function loadWecodeTranslations(
-  resources: Record<string, Record<string, unknown>>
-): Promise<Record<string, Record<string, unknown>>> {
+async function loadWecodeResources() {
   for (const lng of supportedLanguages) {
     for (const ns of wecodeNamespaces) {
       try {
-        // Import wecode extension translations
-        const wecodeModule = await import(`./locales/${lng}/${ns}.json`)
-        // Merge wecode translations into base translations (wecode overrides base)
-        resources[lng][ns] = {
-          ...(resources[lng][ns] as Record<string, unknown>),
-          ...wecodeModule.default,
-        }
+        const translations = await import(`./locales/${lng}/${ns}.json`)
+        // addResourceBundle(lng, ns, resources, deep, overwrite)
+        // deep=true: merge with existing, overwrite=true: overwrite existing keys
+        i18next.addResourceBundle(lng, ns, translations.default, true, true)
       } catch {
         // Translation file not found, skip silently
       }
     }
   }
+}
 
-  return resources
+// Auto-load wecode translations when i18next is ready
+if (i18next.isInitialized) {
+  loadWecodeResources()
+} else {
+  i18next.on('initialized', () => {
+    loadWecodeResources()
+  })
 }

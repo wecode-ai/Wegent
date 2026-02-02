@@ -4,6 +4,7 @@
 
 'use client'
 
+import '@wecode/i18n' // side-effect import to load wecode translations
 import { useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'

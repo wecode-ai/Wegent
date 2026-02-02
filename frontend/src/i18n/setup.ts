@@ -52,15 +52,7 @@ async function loadTranslations() {
 
 // Initialize i18next
 export async function initI18n() {
-  let resources = await loadTranslations()
-
-  // Try to load wecode extension translations (internal network only)
-  try {
-    const wecodeI18n = await import('@wecode/i18n')
-    resources = await wecodeI18n.loadWecodeTranslations(resources)
-  } catch {
-    // Wecode module not available (open source version), skip silently
-  }
+  const resources = await loadTranslations()
 
   await i18next.use(initReactI18next).init({
     lng: process.env.I18N_LNG || 'en', // default language is English
