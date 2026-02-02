@@ -28,6 +28,7 @@ import { getToken } from '@/apis/user'
 import { DeviceInfo } from '@/apis/devices'
 import { SlotIndicator } from '@/features/devices/components/SlotIndicator'
 import { RunningTasksList } from '@/features/devices/components/RunningTasksList'
+import { VersionBadge } from '@/features/devices/components/VersionBadge'
 import {
   Monitor,
   RefreshCw,
@@ -498,7 +499,16 @@ export default function DevicesPage() {
                               </span>
                             )}
                           </div>
-                          <p className="text-sm text-text-muted">{device.device_id}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm text-text-muted">{device.device_id}</p>
+                            {device.status !== 'offline' && (
+                              <VersionBadge
+                                executorVersion={device.executor_version}
+                                latestVersion={device.latest_version}
+                                updateAvailable={device.update_available}
+                              />
+                            )}
+                          </div>
                           {/* Slot indicator - only show for online devices */}
                           {device.status !== 'offline' && (
                             <div className="mt-1">
