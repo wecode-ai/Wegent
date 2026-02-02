@@ -38,13 +38,6 @@ from app.services.rag.index.indexer import (
     should_use_docling,
 )
 
-# Check if llama-index-readers-docling is available
-try:
-    from llama_index.readers.docling import DoclingReader
-    DOCLING_AVAILABLE = True
-except ImportError:
-    DOCLING_AVAILABLE = False
-
 # Skip marker for tests requiring DoclingReader
 requires_docling = pytest.mark.skipif(
     not DOCLING_AVAILABLE,
@@ -165,11 +158,11 @@ class TestDoclingPipelineConfig:
         config = DoclingPipelineConfig(
             export_type="json",
             file_extension=".xlsx",
-            separator=";\n",
+            separator="；\n",  # Fullwidth semicolon for Chinese documents
         )
         assert config.type == "docling"
         assert config.export_type == "json"
-        assert config.separator == ";\n"
+        assert config.separator == "；\n"  # Fullwidth semicolon for Chinese documents
         assert config.file_extension == ".xlsx"
 
     def test_docling_config_chunk_overlap_validation(self):
@@ -334,7 +327,7 @@ class TestDocumentIndexerProcessWithDocling:
         # Verify Excel-specific config
         assert config.export_type == "json"
         assert config.file_extension == ".xlsx"
-        assert config.separator == ";\n"
+        assert config.separator == "；\n"  # Fullwidth semicolon for Chinese documents
 
     @requires_docling
     @patch("llama_index.readers.docling.DoclingReader")

@@ -349,11 +349,10 @@ class DocumentIndexer:
                         ),
                     ]
                 )
-                subtype = "excel_json"
                 heading_level_limit = None
                 logger.info(
-                    f"Configured Excel pipeline with separator='；\\n', "
-                    f"chunk_size=1024, chunk_overlap=50"
+                    "Configured Excel pipeline with separator='；\\n', "
+                    "chunk_size=1024, chunk_overlap=50"
                 )
             else:
                 # General documents: Two-stage pipeline (Markdown + Sentence)
@@ -373,10 +372,9 @@ class DocumentIndexer:
                         ),
                     ]
                 )
-                subtype = "markdown_pipeline"
                 logger.info(
-                    f"Configured Markdown pipeline with heading_level_limit=3, "
-                    f"chunk_size=1024, chunk_overlap=50"
+                    "Configured Markdown pipeline with heading_level_limit=3, "
+                    "chunk_size=1024, chunk_overlap=50"
                 )
 
             # Execute pipeline to get split nodes
