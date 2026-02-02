@@ -12,12 +12,16 @@ Common logging module, configures and provides logging functionality for the app
 Supports automatic request_id injection into log messages via ContextVar.
 """
 
+import atexit
 import logging
 import multiprocessing
 import os
 import sys
 from logging.handlers import QueueHandler, QueueListener
-from typing import Optional
+from typing import List, Optional
+
+# Global list to track all QueueListeners for cleanup
+_queue_listeners: List[QueueListener] = []
 
 
 class RequestIdFilter(logging.Filter):
@@ -137,6 +141,9 @@ def setup_logger(
             listener = QueueListener(log_queue, listener_handler)
             listener.start()
 
+            # Track listener for cleanup on exit
+            _queue_listeners.append(listener)
+
             logger.addHandler(queue_handler)
             logger._queue_listener = listener
             handler_configured = True
@@ -157,3 +164,23 @@ def setup_logger(
         logger.addHandler(console_handler)
 
     return logger
+
+
+def stop_all_queue_listeners() -> None:
+    """Stop all QueueListeners to prevent daemon thread errors on shutdown.
+
+    This function should be called before program exit to properly stop
+    the QueueListener daemon threads. It is automatically registered with
+    atexit, but can also be called manually for explicit cleanup.
+    """
+    global _queue_listeners
+    for listener in _queue_listeners:
+        try:
+            listener.stop()
+        except Exception:
+            pass
+    _queue_listeners.clear()
+
+
+# Register cleanup function to run at program exit
+atexit.register(stop_all_queue_listeners)

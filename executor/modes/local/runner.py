@@ -25,7 +25,7 @@ from executor.modes.local.handlers import TaskHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
 from executor.modes.local.progress_reporter import WebSocketProgressReporter
 from executor.modes.local.websocket_client import WebSocketClient
-from shared.logger import setup_logger
+from shared.logger import setup_logger, stop_all_queue_listeners
 from shared.status import TaskStatus
 
 logger = setup_logger("local_runner")
@@ -210,8 +210,11 @@ class LocalRunner:
 
         logger.info("Local Executor Runner shutdown complete")
 
-        # Flush file logging handler last
+        # Flush file logging handler
         self._cleanup_file_logging()
+
+        # Stop all QueueListeners to prevent daemon thread errors on exit
+        stop_all_queue_listeners()
 
     def _register_handlers(self) -> None:
         """Register WebSocket event handlers."""
