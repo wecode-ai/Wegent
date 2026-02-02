@@ -21,7 +21,9 @@ from app.models.user import User
 from app.schemas.share import (
     JoinByLinkRequest,
     JoinByLinkResponse,
+    KBShareInfoResponse,
     MemberListResponse,
+    MyKBPermissionResponse,
     PendingRequestListResponse,
     PermissionLevel,
     ResourceMemberCreate,
@@ -430,3 +432,60 @@ def review_request(
         approved=body.approved,
         permission_level=body.permission_level,
     )
+
+
+# =============================================================================
+# KnowledgeBase Specific Endpoints
+# =============================================================================
+
+
+@router.get(
+    "/KnowledgeBase/{resource_id}/my-permission",
+    response_model=MyKBPermissionResponse,
+    summary="Get my KnowledgeBase permission",
+)
+def get_my_kb_permission(
+    resource_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get current user's permission for a knowledge base.
+
+    Returns permission level, creator status, and pending request info.
+
+    - **resource_id**: Knowledge base ID
+    """
+    return knowledge_share_service.get_my_permission(
+        db=db,
+        knowledge_base_id=resource_id,
+        user_id=current_user.id,
+    )
+
+
+@router.get(
+    "/KnowledgeBase/{resource_id}/share-info",
+    response_model=KBShareInfoResponse,
+    summary="Get KnowledgeBase share info",
+)
+def get_kb_share_info(
+    resource_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get knowledge base info for share page.
+
+    Returns KB basic info and current user's permission status.
+    Used by share link page to display KB info and handle permission requests.
+
+    - **resource_id**: Knowledge base ID
+    """
+    try:
+        return knowledge_share_service.get_kb_share_info(
+            db=db,
+            knowledge_base_id=resource_id,
+            user_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))

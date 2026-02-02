@@ -203,7 +203,7 @@ class KnowledgeService:
         Returns:
             Kind if found and accessible, None otherwise
         """
-        from app.services.knowledge.permission_service import KnowledgePermissionService
+        from app.services.share import knowledge_share_service
 
         kb = (
             db.query(Kind)
@@ -218,8 +218,8 @@ class KnowledgeService:
         if not kb:
             return None
 
-        # Use the new permission service to check access
-        has_access, _, _ = KnowledgePermissionService.get_user_kb_permission(
+        # Use the knowledge share service to check access
+        has_access, _, _ = knowledge_share_service.get_user_kb_permission(
             db, knowledge_base_id, user_id
         )
 
@@ -248,10 +248,8 @@ class KnowledgeService:
             List of accessible knowledge bases
         """
         if scope == ResourceScope.PERSONAL:
-            from app.models.knowledge_permission import (
-                KnowledgeBasePermission,
-                PermissionStatus,
-            )
+            from app.models.resource_member import MemberStatus, ResourceMember
+            from app.models.share_link import ResourceType
 
             # Get personal knowledge bases (created by user)
             personal = (
@@ -269,14 +267,15 @@ class KnowledgeService:
             personal_ids = {kb.id for kb in personal}
 
             shared_permissions = (
-                db.query(KnowledgeBasePermission.knowledge_base_id)
+                db.query(ResourceMember.resource_id)
                 .filter(
-                    KnowledgeBasePermission.user_id == user_id,
-                    KnowledgeBasePermission.status == PermissionStatus.APPROVED,
+                    ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                    ResourceMember.user_id == user_id,
+                    ResourceMember.status == MemberStatus.APPROVED.value,
                 )
                 .all()
             )
-            shared_kb_ids = [p.knowledge_base_id for p in shared_permissions]
+            shared_kb_ids = [p.resource_id for p in shared_permissions]
 
             # Filter out already included KBs
             shared_kb_ids_filtered = [
@@ -323,10 +322,8 @@ class KnowledgeService:
             )
 
         else:  # ALL
-            from app.models.knowledge_permission import (
-                KnowledgeBasePermission,
-                PermissionStatus,
-            )
+            from app.models.resource_member import MemberStatus, ResourceMember
+            from app.models.share_link import ResourceType
 
             # Get personal knowledge bases (created by user)
             personal = (
@@ -363,14 +360,15 @@ class KnowledgeService:
             excluded_ids = personal_ids | team_ids
 
             shared_permissions = (
-                db.query(KnowledgeBasePermission.knowledge_base_id)
+                db.query(ResourceMember.resource_id)
                 .filter(
-                    KnowledgeBasePermission.user_id == user_id,
-                    KnowledgeBasePermission.status == PermissionStatus.APPROVED,
+                    ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                    ResourceMember.user_id == user_id,
+                    ResourceMember.status == MemberStatus.APPROVED.value,
                 )
                 .all()
             )
-            shared_kb_ids = [p.knowledge_base_id for p in shared_permissions]
+            shared_kb_ids = [p.resource_id for p in shared_permissions]
 
             # Filter out already included KBs
             shared_kb_ids_filtered = [
@@ -533,7 +531,7 @@ class KnowledgeService:
         Raises:
             ValueError: If permission denied or knowledge base has documents
         """
-        from app.services.knowledge.permission_service import KnowledgePermissionService
+        from app.services.share import knowledge_share_service
 
         kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
         if not kb:
@@ -551,8 +549,8 @@ class KnowledgeService:
                 "Please delete all documents first."
             )
 
-        # Delete all permissions for this KB
-        KnowledgePermissionService.delete_permissions_for_kb(db, knowledge_base_id)
+        # Delete all members for this KB
+        knowledge_share_service.delete_members_for_kb(db, knowledge_base_id)
 
         # Physically delete the knowledge base
         db.delete(kb)
