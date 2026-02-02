@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Link, CheckCircle2, Clock, Send } from 'lucide-react'
+import { Link, CheckCircle2, Clock, Send, AlertCircle } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -27,7 +27,12 @@ export default function KnowledgeBaseSharePage() {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
   const params = useParams()
-  const kbId = params.id ? parseInt(params.id as string, 10) : 0
+
+  // Parse and validate kbId
+  const kbIdParam = params.id
+  const parsedKbId = typeof kbIdParam === 'string' ? Number(kbIdParam) : NaN
+  const isValidKbId = Number.isInteger(parsedKbId) && parsedKbId > 0
+  const kbId = isValidKbId ? parsedKbId : 0
 
   const [selectedLevel, setSelectedLevel] = useState<PermissionLevel>('view')
   const [applySuccess, setApplySuccess] = useState(false)
@@ -42,10 +47,10 @@ export default function KnowledgeBaseSharePage() {
 
   // Fetch share info on mount
   useEffect(() => {
-    if (kbId) {
+    if (isValidKbId) {
       fetchShareInfo()
     }
-  }, [kbId, fetchShareInfo])
+  }, [isValidKbId, fetchShareInfo])
 
   // If user already has access, redirect to the KB page
   useEffect(() => {
@@ -63,6 +68,25 @@ export default function KnowledgeBaseSharePage() {
     } catch (_err) {
       // Error is handled by the hook
     }
+  }
+
+  // Invalid kbId - show error
+  if (!isValidKbId) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-base">
+        <Card padding="lg" className="max-w-md text-center">
+          <div className="flex justify-center mb-4">
+            <div className="w-12 h-12 rounded-full bg-error/10 flex items-center justify-center">
+              <AlertCircle className="w-6 h-6 text-error" />
+            </div>
+          </div>
+          <div className="text-error mb-4">{t('document.permission.invalidShareLink')}</div>
+          <Button variant="outline" onClick={() => router.push('/knowledge')}>
+            {t('common:actions.back')}
+          </Button>
+        </Card>
+      </div>
+    )
   }
 
   if (loading && !shareInfo) {

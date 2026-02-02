@@ -289,7 +289,8 @@
       "confirmRemove": "Are you sure you want to remove this user's access permission?",
       "userId": "User ID",
       "enterUserId": "Enter user ID",
-      "invalidUserId": "Please enter a valid user ID"
+      "invalidUserId": "Please enter a valid user ID",
+      "invalidShareLink": "Invalid share link"
     },
     "advancedSettings": {
       "title": "Advanced Settings",

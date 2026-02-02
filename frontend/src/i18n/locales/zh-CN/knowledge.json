@@ -289,7 +289,8 @@
       "confirmRemove": "确定要移除该用户的访问权限吗？",
       "userId": "用户ID",
       "enterUserId": "请输入用户ID",
-      "invalidUserId": "请输入有效的用户ID"
+      "invalidUserId": "请输入有效的用户ID",
+      "invalidShareLink": "无效的分享链接"
     },
     "advancedSettings": {
       "title": "高级设置",
