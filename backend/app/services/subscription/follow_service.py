@@ -63,6 +63,7 @@ class SubscriptionFollowService:
         *,
         subscription_id: int,
         user_id: int,
+        enable_notification: bool = True,
     ) -> dict:
         """
         Follow a public subscription.
@@ -71,6 +72,7 @@ class SubscriptionFollowService:
             db: Database session
             subscription_id: ID of the subscription to follow
             user_id: ID of the user following
+            enable_notification: Whether to enable notification for this subscription
 
         Returns:
             Success message
@@ -137,12 +139,14 @@ class SubscriptionFollowService:
             responded_at=now,  # Use current time as default
             created_at=now,
             updated_at=now,
+            enable_notification=enable_notification,
         )
         db.add(follow)
         db.commit()
 
         logger.info(
-            f"[SubscriptionFollow] User {user_id} followed subscription {subscription_id}"
+            f"[SubscriptionFollow] User {user_id} followed subscription {subscription_id} "
+            f"with notification={enable_notification}"
         )
 
         return {"message": "Successfully followed subscription"}
@@ -294,6 +298,84 @@ class SubscriptionFollowService:
             .count()
         )
 
+    def get_followers_with_notification(
+        self,
+        db: Session,
+        *,
+        subscription_id: int,
+    ) -> List[SubscriptionFollow]:
+        """
+        Get followers who have enabled notifications for a subscription.
+
+        Args:
+            db: Database session
+            subscription_id: ID of the subscription
+
+        Returns:
+            List of follow records with notification enabled
+        """
+        return (
+            db.query(SubscriptionFollow)
+            .filter(
+                SubscriptionFollow.subscription_id == subscription_id,
+                SubscriptionFollow.invitation_status == InvitationStatus.ACCEPTED.value,
+                SubscriptionFollow.enable_notification == True,
+            )
+            .all()
+        )
+
+    def update_follow_notification(
+        self,
+        db: Session,
+        *,
+        subscription_id: int,
+        user_id: int,
+        enable_notification: bool,
+    ) -> dict:
+        """
+        Update notification preference for a follow relationship.
+
+        Args:
+            db: Database session
+            subscription_id: ID of the subscription
+            user_id: ID of the follower
+            enable_notification: Whether to enable notification
+
+        Returns:
+            Success message with current notification status
+
+        Raises:
+            HTTPException: If not following the subscription
+        """
+        follow = (
+            db.query(SubscriptionFollow)
+            .filter(
+                SubscriptionFollow.subscription_id == subscription_id,
+                SubscriptionFollow.follower_user_id == user_id,
+                SubscriptionFollow.invitation_status == InvitationStatus.ACCEPTED.value,
+            )
+            .first()
+        )
+
+        if not follow:
+            raise HTTPException(
+                status_code=404, detail="Not following this subscription"
+            )
+
+        follow.enable_notification = enable_notification
+        follow.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+
+        logger.info(
+            f"[SubscriptionFollow] User {user_id} updated notification preference "
+            f"for subscription {subscription_id} to {enable_notification}"
+        )
+
+        return {
+            "message": "Notification preference updated",
+            "enable_notification": enable_notification,
+        }
+
     def get_following_subscriptions(
         self,
         db: Session,
@@ -362,6 +444,7 @@ class SubscriptionFollowService:
                         subscription=subscription_in_db,
                         follow_type=SchemaFollowType(follow.follow_type),
                         followed_at=follow.created_at,
+                        enable_notification=follow.enable_notification,
                     )
                 )
 

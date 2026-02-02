@@ -339,5 +339,9 @@
     "rental_display_name_placeholder": "e.g., My Daily Report",
     "validation_name_required": "Name is required",
     "validation_display_name_required": "Display name is required"
-  }
+  },
+  "notification_enabled": "Notification enabled",
+  "notification_disabled": "Notification disabled",
+  "notification_update_failed": "Failed to update notification setting",
+  "follower_notification_hint": "Receive notifications when subscription execution completes"
 }

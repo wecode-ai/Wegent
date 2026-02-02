@@ -11,6 +11,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
+  Bell,
+  BellOff,
   CalendarClock,
   Clock,
   Compass,
@@ -25,6 +27,7 @@ import { toast } from 'sonner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -73,6 +76,7 @@ export function FollowingSubscriptionList({ followType }: FollowingSubscriptionL
   const [page, setPage] = useState(1)
   const [unfollowingId, setUnfollowingId] = useState<number | null>(null)
   const [pendingUnfollow, setPendingUnfollow] = useState<FollowingSubscriptionResponse | null>(null)
+  const [updatingNotificationId, setUpdatingNotificationId] = useState<number | null>(null)
   // History dialog state
   const [historyDialogSubscription, setHistoryDialogSubscription] =
     useState<HistoryDialogSubscription | null>(null)
@@ -157,6 +161,31 @@ export function FollowingSubscriptionList({ followType }: FollowingSubscriptionL
       setPendingUnfollow(null)
     }
   }, [pendingUnfollow, unfollowingId, t])
+
+  // Handle toggle notification
+  const handleToggleNotification = useCallback(
+    async (subscriptionId: number, currentValue: boolean) => {
+      try {
+        setUpdatingNotificationId(subscriptionId)
+        await subscriptionApis.updateFollowNotification(subscriptionId, !currentValue)
+        // Update local state
+        setSubscriptions(prev =>
+          prev.map(item =>
+            item.subscription.id === subscriptionId
+              ? { ...item, enable_notification: !currentValue }
+              : item
+          )
+        )
+        toast.success(t(currentValue ? 'notification_disabled' : 'notification_enabled'))
+      } catch (error) {
+        console.error('Failed to update notification preference:', error)
+        toast.error(t('notification_update_failed'))
+      } finally {
+        setUpdatingNotificationId(null)
+      }
+    },
+    [t]
+  )
 
   // Handle click on subscription name - open history dialog
   const handleSubscriptionClick = useCallback(
@@ -317,6 +346,23 @@ export function FollowingSubscriptionList({ followType }: FollowingSubscriptionL
 
                 {/* Actions */}
                 <div className="flex items-center gap-2">
+                  {/* Notification Toggle */}
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={item.enable_notification}
+                      onCheckedChange={() =>
+                        handleToggleNotification(subscription.id, item.enable_notification)
+                      }
+                      disabled={updatingNotificationId === subscription.id}
+                      aria-label={t('enable_notification')}
+                    />
+                    {item.enable_notification ? (
+                      <Bell className="h-4 w-4 text-primary" />
+                    ) : (
+                      <BellOff className="h-4 w-4 text-text-muted" />
+                    )}
+                  </div>
+
                   <Button
                     variant="ghost"
                     size="sm"

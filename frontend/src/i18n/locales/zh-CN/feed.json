@@ -339,5 +339,9 @@
     "rental_display_name_placeholder": "如：我的每日报告",
     "validation_name_required": "名称不能为空",
     "validation_display_name_required": "显示名称不能为空"
-  }
+  },
+  "notification_enabled": "已开启通知",
+  "notification_disabled": "已关闭通知",
+  "notification_update_failed": "更新通知设置失败",
+  "follower_notification_hint": "订阅器执行完成后会发送通知"
 }

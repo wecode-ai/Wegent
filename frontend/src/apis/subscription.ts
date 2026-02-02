@@ -152,10 +152,15 @@ export const subscriptionApis = {
   // ========== Follow/Visibility APIs ==========
 
   /**
-   * Follow a public subscription
+   * Follow a public subscription with notification preference
    */
-  async followSubscription(subscriptionId: number): Promise<{ message: string }> {
-    return apiClient.post(`/subscriptions/${subscriptionId}/follow`)
+  async followSubscription(
+    subscriptionId: number,
+    enableNotification: boolean = true
+  ): Promise<{ message: string }> {
+    return apiClient.post(`/subscriptions/${subscriptionId}/follow`, {
+      enable_notification: enableNotification,
+    })
   },
 
   /**
@@ -163,6 +168,18 @@ export const subscriptionApis = {
    */
   async unfollowSubscription(subscriptionId: number): Promise<{ message: string }> {
     return apiClient.delete(`/subscriptions/${subscriptionId}/follow`)
+  },
+
+  /**
+   * Update notification preference for a followed subscription
+   */
+  async updateFollowNotification(
+    subscriptionId: number,
+    enableNotification: boolean
+  ): Promise<{ message: string; enable_notification: boolean }> {
+    return apiClient.patch(`/subscriptions/${subscriptionId}/follow/notification`, {
+      enable_notification: enableNotification,
+    })
   },
 
   /**

@@ -13,6 +13,7 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Index,
@@ -69,6 +70,9 @@ class SubscriptionFollow(Base):
     invited_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     responded_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
+    # Notification settings
+    enable_notification = Column(Boolean, nullable=False, default=True)
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
@@ -90,6 +94,8 @@ class SubscriptionFollow(Base):
             "follower_user_id",
             "invitation_status",
         ),
+        # Index for querying followers with notification enabled
+        Index("ix_sub_follow_notification", "subscription_id", "enable_notification"),
     )
 
 

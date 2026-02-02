@@ -269,12 +269,18 @@ export interface FollowingSubscriptionResponse {
   subscription: Subscription
   follow_type: FollowType
   followed_at: string
+  enable_notification: boolean
 }
 
 // Following subscriptions list response
 export interface FollowingSubscriptionsListResponse {
   total: number
   items: FollowingSubscriptionResponse[]
+}
+
+// Update follow notification request
+export interface UpdateFollowNotificationRequest {
+  enable_notification: boolean
 }
 
 // Invite user request

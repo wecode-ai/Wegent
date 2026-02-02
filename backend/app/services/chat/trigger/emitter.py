@@ -509,9 +509,6 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
                     )
                     return
 
-                user = db.query(User).filter(User.id == execution.user_id).first()
-                user_name = user.user_name if user else "Unknown"
-
                 # Get subscription display name
                 from app.schemas.subscription import Subscription
 
@@ -534,42 +531,71 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
                     f"{settings.FRONTEND_URL}/subscription?taskId={execution.task_id}"
                 )
 
-                # Build notification
-                notification = Notification(
-                    user_name=user_name,
-                    event="subscription.end",
-                    id=str(self.execution_id),
-                    start_time=(
-                        execution.started_at.strftime("%Y-%m-%d %H:%M:%S")
-                        if execution.started_at
-                        else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    ),
-                    end_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    description=description,
-                    status=status if status != "COMPLETED_SILENT" else "COMPLETED",
-                    detail_url=task_url if execution.task_id else None,
+                # Collect all users to notify
+                users_to_notify = []
+
+                # 1. Add subscription owner if notification enabled
+                if self.enable_notification and self.user_id:
+                    owner = db.query(User).filter(User.id == self.user_id).first()
+                    if owner:
+                        users_to_notify.append(owner)
+
+                # 2. Add followers with notification enabled
+                from app.services.subscription.follow_service import (
+                    subscription_follow_service,
                 )
 
-                # Send notification asynchronously in background thread
+                followers = subscription_follow_service.get_followers_with_notification(
+                    db, subscription_id=subscription.id
+                )
+                for follow in followers:
+                    # Skip if follower is the owner (already added)
+                    if follow.follower_user_id == self.user_id:
+                        continue
+                    follower = (
+                        db.query(User)
+                        .filter(User.id == follow.follower_user_id)
+                        .first()
+                    )
+                    if follower:
+                        users_to_notify.append(follower)
+
+                # Build and send notification to all users
                 import threading
 
-                def send_notification_background():
-                    try:
-                        webhook_notification_service.send_notification_sync(
-                            notification
-                        )
-                        logger.info(
-                            f"[SubscriptionEmitter] Notification sent for execution {self.execution_id}"
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"[SubscriptionEmitter] Failed to send notification for execution {self.execution_id}: {e}"
-                        )
+                for user in users_to_notify:
+                    notification = Notification(
+                        user_name=user.user_name,
+                        event="subscription.end",
+                        id=str(self.execution_id),
+                        start_time=(
+                            execution.started_at.strftime("%Y-%m-%d %H:%M:%S")
+                            if execution.started_at
+                            else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        ),
+                        end_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        description=description,
+                        status=status if status != "COMPLETED_SILENT" else "COMPLETED",
+                        detail_url=task_url if execution.task_id else None,
+                    )
 
-                thread = threading.Thread(
-                    target=send_notification_background, daemon=True
-                )
-                thread.start()
+                    def send_notification_background(notif=notification):
+                        try:
+                            webhook_notification_service.send_notification_sync(notif)
+                            logger.info(
+                                f"[SubscriptionEmitter] Notification sent to {notif.user_name} "
+                                f"for execution {self.execution_id}"
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"[SubscriptionEmitter] Failed to send notification to "
+                                f"{notif.user_name} for execution {self.execution_id}: {e}"
+                            )
+
+                    thread = threading.Thread(
+                        target=send_notification_background, daemon=True
+                    )
+                    thread.start()
 
         except Exception as e:
             logger.error(

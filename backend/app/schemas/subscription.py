@@ -595,6 +595,9 @@ class FollowingSubscriptionResponse(BaseModel):
     subscription: SubscriptionInDB
     follow_type: FollowType
     followed_at: datetime
+    enable_notification: bool = Field(
+        True, description="Whether to enable notification for this subscription"
+    )
 
 
 class FollowingSubscriptionsListResponse(BaseModel):
@@ -602,6 +605,22 @@ class FollowingSubscriptionsListResponse(BaseModel):
 
     total: int
     items: List[FollowingSubscriptionResponse]
+
+
+class UpdateFollowNotificationRequest(BaseModel):
+    """Request to update follow notification preference."""
+
+    enable_notification: bool = Field(
+        ..., description="Whether to enable notification for this subscription"
+    )
+
+
+class FollowSubscriptionRequest(BaseModel):
+    """Request to follow a subscription with notification preference."""
+
+    enable_notification: bool = Field(
+        True, description="Whether to enable notification for this subscription"
+    )
 
 
 class InviteUserRequest(BaseModel):
