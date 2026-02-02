@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, FileText, Shield } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
@@ -17,12 +17,15 @@ import {
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
+import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
 import { DocumentList } from '@/features/knowledge/document/components'
+import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
 import { listGroups } from '@/apis/groups'
 import type { GroupRole } from '@/types/group'
 interface KnowledgeBaseClassicPageDesktopProps {
@@ -59,8 +62,23 @@ export function KnowledgeBaseClassicPageDesktop({
     autoLoad: !!knowledgeBaseId,
   })
 
+  // Fetch user permission for this knowledge base
+  const { myPermission, fetchMyPermission } = useKnowledgePermissions({
+    kbId: knowledgeBaseId || 0,
+  })
+
+  // Fetch my permission when knowledge base is loaded
+  useEffect(() => {
+    if (knowledgeBase && knowledgeBaseId) {
+      fetchMyPermission()
+    }
+  }, [knowledgeBase, knowledgeBaseId, fetchMyPermission])
+
   // User state
   const { user } = useUser()
+
+  // Tab state for documents/permissions
+  const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
 
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
@@ -137,6 +155,16 @@ export function KnowledgeBaseClassicPageDesktop({
     return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
   }, [knowledgeBase, user, groupRoleMap])
 
+  // Check if user can manage permissions (is creator or has manage permission)
+  const canManagePermissions = useMemo(() => {
+    if (!knowledgeBase || !user) return false
+    // Creator can always manage permissions
+    if (knowledgeBase.user_id === user.id) return true
+    // User with manage permission can manage
+    if (myPermission?.permission_level === 'manage') return true
+    return false
+  }, [knowledgeBase, user, myPermission])
+
   // Loading state
   if (kbLoading) {
     return (
@@ -195,17 +223,50 @@ export function KnowledgeBaseClassicPageDesktop({
           <GithubStarButton />
         </TopNavigation>
 
-        {/* Content area - Document List */}
+        {/* Content area - Document List with optional Permission Management Tab */}
         <div className="flex-1 overflow-auto p-4 sm:p-6">
-          <DocumentList
-            knowledgeBase={knowledgeBase}
-            onBack={handleBack}
-            canManage={canManageKb}
-            onTypeConverted={() => {
-              // Notify parent page.tsx to refresh and re-route based on new kb_type
-              onKbTypeChanged?.()
-            }}
-          />
+          {canManagePermissions ? (
+            <Tabs
+              value={activeTab}
+              onValueChange={value => setActiveTab(value as 'documents' | 'permissions')}
+              className="h-full flex flex-col"
+            >
+              <TabsList className="w-fit mb-4">
+                <TabsTrigger value="documents" className="gap-1.5">
+                  <FileText className="w-4 h-4" />
+                  {t('chatPage.documents')}
+                </TabsTrigger>
+                <TabsTrigger value="permissions" className="gap-1.5">
+                  <Shield className="w-4 h-4" />
+                  {t('document.permission.management')}
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="documents" className="flex-1 mt-0">
+                <DocumentList
+                  knowledgeBase={knowledgeBase}
+                  onBack={handleBack}
+                  canManage={canManageKb}
+                  onTypeConverted={() => {
+                    // Notify parent page.tsx to refresh and re-route based on new kb_type
+                    onKbTypeChanged?.()
+                  }}
+                />
+              </TabsContent>
+              <TabsContent value="permissions" className="flex-1 mt-0">
+                <PermissionManagementTab kbId={knowledgeBase.id} />
+              </TabsContent>
+            </Tabs>
+          ) : (
+            <DocumentList
+              knowledgeBase={knowledgeBase}
+              onBack={handleBack}
+              canManage={canManageKb}
+              onTypeConverted={() => {
+                // Notify parent page.tsx to refresh and re-route based on new kb_type
+                onKbTypeChanged?.()
+              }}
+            />
+          )}
         </div>
       </div>
 

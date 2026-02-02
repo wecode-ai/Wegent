@@ -6,9 +6,11 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, PanelRightClose, PanelRightOpen, BookOpen, Plus } from 'lucide-react'
+import { ArrowLeft, PanelRightClose, PanelRightOpen, BookOpen, Plus, FileText, Shield } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DocumentList } from './DocumentList'
+import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -51,6 +53,8 @@ const getInitialCollapsed = (storageKey: string, defaultCollapsed: boolean): boo
 interface DocumentPanelProps {
   knowledgeBase: KnowledgeBase
   canManage?: boolean
+  /** Whether the user can manage permissions (is creator or has manage permission) */
+  canManagePermissions?: boolean
   /** Callback when document selection changes */
   onDocumentSelectionChange?: (documentIds: number[]) => void
   /** Callback when new chat button is clicked */
@@ -77,11 +81,15 @@ const STORAGE_KEY_COLLAPSED = 'kb-document-panel-collapsed'
 export function DocumentPanel({
   knowledgeBase,
   canManage = true,
+  canManagePermissions = false,
   onDocumentSelectionChange,
   onNewChat,
   onTypeConverted,
 }: DocumentPanelProps) {
   const { t } = useTranslation('knowledge')
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
 
   // Initialize state with localStorage values
   const [panelWidth, setPanelWidth] = useState(() =>
@@ -253,17 +261,48 @@ export function DocumentPanel({
         </div>
       </div>
 
-      {/* Document List */}
-      <div className="flex-1 overflow-auto p-4">
-        <DocumentList
-          knowledgeBase={knowledgeBase}
-          canManage={canManage}
-          compact={true}
-          onSelectionChange={onDocumentSelectionChange}
-          onTypeConverted={onTypeConverted}
-          // No onBack in panel mode - always show document list
-        />
-      </div>
+      {/* Content area with tabs */}
+      {canManagePermissions ? (
+        <Tabs
+          value={activeTab}
+          onValueChange={value => setActiveTab(value as 'documents' | 'permissions')}
+          className="flex-1 flex flex-col overflow-hidden"
+        >
+          <TabsList className="mx-4 mt-3 grid w-auto grid-cols-2">
+            <TabsTrigger value="documents" className="gap-1.5">
+              <FileText className="w-4 h-4" />
+              {t('chatPage.documents')}
+            </TabsTrigger>
+            <TabsTrigger value="permissions" className="gap-1.5">
+              <Shield className="w-4 h-4" />
+              {t('document.permission.management')}
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="documents" className="flex-1 overflow-auto p-4 mt-0">
+            <DocumentList
+              knowledgeBase={knowledgeBase}
+              canManage={canManage}
+              compact={true}
+              onSelectionChange={onDocumentSelectionChange}
+              onTypeConverted={onTypeConverted}
+            />
+          </TabsContent>
+          <TabsContent value="permissions" className="flex-1 overflow-auto mt-0">
+            <PermissionManagementTab kbId={knowledgeBase.id} />
+          </TabsContent>
+        </Tabs>
+      ) : (
+        /* Document List only - no permission management */
+        <div className="flex-1 overflow-auto p-4">
+          <DocumentList
+            knowledgeBase={knowledgeBase}
+            canManage={canManage}
+            compact={true}
+            onSelectionChange={onDocumentSelectionChange}
+            onTypeConverted={onTypeConverted}
+          />
+        </div>
+      )}
 
       {/* Overlay while resizing */}
       {isResizing && (

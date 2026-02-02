@@ -54,7 +54,7 @@ export function AddUserDialog({
 
     const parsedUserId = parseInt(userId, 10)
     if (isNaN(parsedUserId) || parsedUserId <= 0) {
-      setLocalError(t('permission.invalidUserId'))
+      setLocalError(t('document.permission.invalidUserId'))
       return
     }
 
@@ -85,19 +85,19 @@ export function AddUserDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <UserPlus className="w-5 h-5" />
-            {t('permission.addUser')}
+            {t('document.permission.addUser')}
           </DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 py-4">
             {/* User ID Input */}
             <div className="space-y-2">
-              <Label htmlFor="userId">{t('permission.userId')}</Label>
+              <Label htmlFor="userId">{t('document.permission.userId')}</Label>
               <Input
                 id="userId"
                 type="number"
                 min="1"
-                placeholder={t('permission.enterUserId')}
+                placeholder={t('document.permission.enterUserId')}
                 value={userId}
                 onChange={e => setUserId(e.target.value)}
                 required
@@ -106,7 +106,7 @@ export function AddUserDialog({
 
             {/* Permission Level Select */}
             <div className="space-y-2">
-              <Label htmlFor="permissionLevel">{t('permission.permissionLevel')}</Label>
+              <Label htmlFor="permissionLevel">{t('document.permission.permissionLevel')}</Label>
               <Select
                 value={permissionLevel}
                 onValueChange={v => setPermissionLevel(v as PermissionLevel)}
@@ -117,25 +117,25 @@ export function AddUserDialog({
                 <SelectContent>
                   <SelectItem value="view">
                     <div>
-                      <div className="font-medium">{t('permission.view')}</div>
+                      <div className="font-medium">{t('document.permission.view')}</div>
                       <div className="text-xs text-text-muted">
-                        {t('permission.viewDescription')}
+                        {t('document.permission.viewDescription')}
                       </div>
                     </div>
                   </SelectItem>
                   <SelectItem value="edit">
                     <div>
-                      <div className="font-medium">{t('permission.edit')}</div>
+                      <div className="font-medium">{t('document.permission.edit')}</div>
                       <div className="text-xs text-text-muted">
-                        {t('permission.editDescription')}
+                        {t('document.permission.editDescription')}
                       </div>
                     </div>
                   </SelectItem>
                   <SelectItem value="manage">
                     <div>
-                      <div className="font-medium">{t('permission.manage')}</div>
+                      <div className="font-medium">{t('document.permission.manage')}</div>
                       <div className="text-xs text-text-muted">
-                        {t('permission.manageDescription')}
+                        {t('document.permission.manageDescription')}
                       </div>
                     </div>
                   </SelectItem>
@@ -156,7 +156,7 @@ export function AddUserDialog({
               {t('common:actions.cancel')}
             </Button>
             <Button type="submit" variant="primary" disabled={loading}>
-              {loading ? <Spinner className="w-4 h-4" /> : t('permission.add')}
+              {loading ? <Spinner className="w-4 h-4" /> : t('document.permission.add')}
             </Button>
           </DialogFooter>
         </form>

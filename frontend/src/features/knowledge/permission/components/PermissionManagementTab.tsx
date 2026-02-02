@@ -100,7 +100,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
   }
 
   const handleDelete = async (permissionId: number) => {
-    if (!confirm(t('permission.confirmRemove'))) return
+    if (!confirm(t('document.permission.confirmRemove'))) return
     try {
       await deletePermission(permissionId)
     } catch (_err) {
@@ -137,11 +137,11 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold flex items-center gap-2">
           <Shield className="w-5 h-5" />
-          {t('permission.management')}
+          {t('document.permission.management')}
         </h2>
         <Button variant="outline" size="sm" onClick={() => setShowAddUser(true)}>
           <UserPlus className="w-4 h-4 mr-2" />
-          {t('permission.addUser')}
+          {t('document.permission.addUser')}
         </Button>
       </div>
 
@@ -159,7 +159,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
       <Card padding="default" className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Clock className="w-4 h-4 text-warning" />
-          {t('permission.pendingRequests')}
+          {t('document.permission.pendingRequests')}
           {pendingCount > 0 && (
             <span className="bg-warning/10 text-warning px-2 py-0.5 rounded-full text-xs">
               {pendingCount}
@@ -169,7 +169,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
 
         {pendingCount === 0 ? (
           <p className="text-sm text-text-muted py-4 text-center">
-            {t('permission.noPendingRequests')}
+            {t('document.permission.noPendingRequests')}
           </p>
         ) : (
           <div className="space-y-2">
@@ -181,10 +181,10 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                 <div className="flex-1">
                   <div className="font-medium text-sm">{permission.username}</div>
                   <div className="text-xs text-text-muted">
-                    {permission.email || t('permission.noEmail')}
+                    {permission.email || t('document.permission.noEmail')}
                   </div>
                   <div className="text-xs text-text-muted mt-1">
-                    {t('permission.requesting')}: {t(`permission.${permission.permission_level}`)}
+                    {t('document.permission.requesting')}: {t(`document.permission.${permission.permission_level}`)}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -196,9 +196,9 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="view">{t('permission.view')}</SelectItem>
-                      <SelectItem value="edit">{t('permission.edit')}</SelectItem>
-                      <SelectItem value="manage">{t('permission.manage')}</SelectItem>
+                      <SelectItem value="view">{t('document.permission.view')}</SelectItem>
+                      <SelectItem value="edit">{t('document.permission.edit')}</SelectItem>
+                      <SelectItem value="manage">{t('document.permission.manage')}</SelectItem>
                     </SelectContent>
                   </Select>
                   <Button
@@ -230,7 +230,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
       <Card padding="default" className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Users className="w-4 h-4 text-primary" />
-          {t('permission.approvedUsers')}
+          {t('document.permission.approvedUsers')}
           {approvedCount > 0 && (
             <span className="bg-primary/10 text-primary px-2 py-0.5 rounded-full text-xs">
               {approvedCount}
@@ -240,14 +240,14 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
 
         {approvedCount === 0 ? (
           <p className="text-sm text-text-muted py-4 text-center">
-            {t('permission.noApprovedUsers')}
+            {t('document.permission.noApprovedUsers')}
           </p>
         ) : (
           <div className="space-y-4">
             {/* Manage permissions */}
             {(permissions?.approved.manage.length || 0) > 0 && (
               <PermissionGroup
-                title={t('permission.manage')}
+                title={t('document.permission.manage')}
                 users={permissions!.approved.manage}
                 editingId={editingId}
                 editingLevel={editingLevel}
@@ -263,7 +263,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
             {/* Edit permissions */}
             {(permissions?.approved.edit.length || 0) > 0 && (
               <PermissionGroup
-                title={t('permission.edit')}
+                title={t('document.permission.edit')}
                 users={permissions!.approved.edit}
                 editingId={editingId}
                 editingLevel={editingLevel}
@@ -279,7 +279,7 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
             {/* View permissions */}
             {(permissions?.approved.view.length || 0) > 0 && (
               <PermissionGroup
-                title={t('permission.view')}
+                title={t('document.permission.view')}
                 users={permissions!.approved.view}
                 editingId={editingId}
                 editingLevel={editingLevel}
@@ -347,7 +347,7 @@ function PermissionGroup({
             <div className="flex-1 min-w-0">
               <div className="font-medium text-sm truncate">{user.username}</div>
               <div className="text-xs text-text-muted truncate">
-                {user.email || t('permission.noEmail')}
+                {user.email || t('document.permission.noEmail')}
               </div>
             </div>
             {editingId === user.id ? (
@@ -357,9 +357,9 @@ function PermissionGroup({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="view">{t('permission.view')}</SelectItem>
-                    <SelectItem value="edit">{t('permission.edit')}</SelectItem>
-                    <SelectItem value="manage">{t('permission.manage')}</SelectItem>
+                    <SelectItem value="view">{t('document.permission.view')}</SelectItem>
+                    <SelectItem value="edit">{t('document.permission.edit')}</SelectItem>
+                    <SelectItem value="manage">{t('document.permission.manage')}</SelectItem>
                   </SelectContent>
                 </Select>
                 <Button
@@ -388,7 +388,7 @@ function PermissionGroup({
                   size="icon"
                   className="h-7 w-7"
                   onClick={() => onStartEditing(user)}
-                  title={t('permission.modify')}
+                  title={t('document.permission.modify')}
                 >
                   <Pencil className="w-3.5 h-3.5" />
                 </Button>
@@ -397,7 +397,7 @@ function PermissionGroup({
                   size="icon"
                   className="h-7 w-7 text-error hover:text-error"
                   onClick={() => onDelete(user.id)}
-                  title={t('permission.remove')}
+                  title={t('document.permission.remove')}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
