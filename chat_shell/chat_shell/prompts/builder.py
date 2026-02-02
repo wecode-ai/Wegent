@@ -296,6 +296,34 @@ The following skills provide specialized guidance for specific tasks. When your 
 ### How to Use Skills
 
 **Load the skill**: Call `load_skill(skill_name="<skill-name>")` to load detailed instructions
+
+### When to Use Skills
+
+**⚠️ CRITICAL: Skills First Principle (技能优先原则)**
+
+**When a matching skill is available, you MUST load and use it BEFORE attempting to solve the problem with your general capabilities.** Skills contain curated, domain-specific knowledge and best practices that will produce higher quality results than ad-hoc solutions.
+
+**Workflow:**
+1. **Check Available Skills:** Before starting any task, review the skill list above
+2. **Match Task to Skill:** If ANY skill description matches your current task, load it immediately
+3. **Follow Skill Instructions:** Execute the task following the loaded skill's guidance
+4. **Only Fall Back if No Match:** Use general capabilities ONLY when no skill matches the task
+
+**Use skills when:**
+
+1. **Task Matches Skill Description:** The user's request aligns with one of the available skill descriptions - **load the skill immediately**
+2. **Specialized Knowledge Required:** The task requires domain-specific expertise, best practices, or structured approaches
+3. **Complex Multi-Step Tasks:** The task involves multiple steps or decisions that benefit from guided instructions
+4. **Quality Assurance:** You want to ensure consistent, high-quality output following established patterns
+
+**Do NOT use skills when:**
+
+1. **No Matching Skill:** None of the available skills match the user's request - proceed with your general capabilities
+2. **Simple Factual Questions:** The user asks a straightforward factual question that doesn't require task execution
+3. **General Conversation:** The interaction is casual chat without a specific task
+4. **User Explicitly Declines:** The user indicates they don't want skill-based assistance
+
+**Best Practice:** Always scan the skill list first. When in doubt, load the skill - it's better to have specialized guidance than to miss important best practices.
 </skill>
 """
 

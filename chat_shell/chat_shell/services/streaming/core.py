@@ -111,6 +111,9 @@ class StreamingState:
     is_silent_exit: bool = False
     silent_exit_reason: str = ""
 
+    # Loaded skills tracking (for persistence across conversation turns)
+    loaded_skills: list = field(default_factory=list)
+
     def append_content(self, token: str) -> None:
         """Append token to accumulated response."""
         self.full_response += token
@@ -136,6 +139,20 @@ class StreamingState:
             if key not in existing_keys:
                 self.sources.append(source)
                 existing_keys.add(key)
+
+    def add_loaded_skill(self, skill_name: str) -> None:
+        """Add a loaded skill name for persistence across conversation turns.
+
+        Args:
+            skill_name: Name of the skill that was loaded via load_skill tool
+        """
+        if skill_name and skill_name not in self.loaded_skills:
+            self.loaded_skills.append(skill_name)
+            logger.info(
+                "[StreamingState] Added loaded skill: %s (total: %d)",
+                skill_name,
+                len(self.loaded_skills),
+            )
 
     def add_block(self, block: dict) -> None:
         """Add a message block (text or tool)."""
@@ -199,6 +216,10 @@ class StreamingState:
             result["silent_exit"] = True
             if self.silent_exit_reason:
                 result["silent_exit_reason"] = self.silent_exit_reason
+        # Include loaded skills for persistence across conversation turns
+        # This is saved to result and used by restore_from_history
+        if include_value and self.loaded_skills:
+            result["loaded_skills"] = self.loaded_skills
         return result
 
     def _slim_thinking_data(self, thinking: list) -> list:

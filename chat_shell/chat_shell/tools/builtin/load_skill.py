@@ -377,17 +377,24 @@ class LoadSkillTool(BaseTool):
     def restore_from_history(self, history: list[dict[str, Any]]) -> None:
         """Restore skill loading state from chat history.
 
-        This method analyzes the chat history to find load_skill tool calls
-        and restores the skill loading state. It counts the number of conversation
-        turns since each skill was loaded and only restores skills that are still
-        within the retention window.
+        This method analyzes the chat history to find loaded skills and restores
+        the skill loading state. It supports two methods of detection:
+
+        1. Primary method: Check for 'loaded_skills' field in assistant messages
+           (added by StreamingState.get_current_result() when skills are loaded)
+
+        2. Fallback method: Parse message content for load_skill tool result patterns
+           (for backward compatibility with older history format)
+
+        The method counts the number of conversation turns since each skill was loaded
+        and only restores skills that are still within the retention window.
 
         A conversation turn is defined as a user message followed by an assistant response.
         The method counts turns backwards from the most recent message.
 
         Args:
             history: List of message dictionaries with 'role' and 'content' keys.
-                    May also contain 'tool_calls' for assistant messages.
+                    May also contain 'loaded_skills' for assistant messages.
         """
         if self._state_restored:
             logger.debug(
@@ -400,7 +407,7 @@ class LoadSkillTool(BaseTool):
             self._state_restored = True
             return
 
-        # Find all load_skill tool calls and their positions (turn index)
+        # Find all loaded skills and their positions (turn index)
         # We need to count turns from the end of history
         skill_load_turns: dict[str, int] = {}  # skill_name -> turns_ago
 
@@ -413,19 +420,32 @@ class LoadSkillTool(BaseTool):
             role = msg.get("role", "")
 
             if role == "assistant":
-                # Check for load_skill tool calls in this assistant message
-                content = msg.get("content", "")
+                # Primary method: Check for loaded_skills field (new format)
+                loaded_skills_field = msg.get("loaded_skills", [])
+                if loaded_skills_field:
+                    for skill_name in loaded_skills_field:
+                        # Only record the most recent load (closest to current turn)
+                        if skill_name not in skill_load_turns:
+                            skill_load_turns[skill_name] = current_turn
+                            logger.debug(
+                                "[LoadSkillTool] Found skill '%s' from loaded_skills field, "
+                                "%d turns ago",
+                                skill_name,
+                                current_turn,
+                            )
 
-                # Look for load_skill tool call patterns in the content
-                # The tool result is typically in the format:
-                # "Skill 'skill_name' has been loaded..."
-                loaded_skills = self._extract_loaded_skills_from_content(content)
-                for skill_name in loaded_skills:
+                # Fallback method: Parse content for tool result patterns (old format)
+                content = msg.get("content", "")
+                loaded_skills_from_content = self._extract_loaded_skills_from_content(
+                    content
+                )
+                for skill_name in loaded_skills_from_content:
                     # Only record the most recent load (closest to current turn)
                     if skill_name not in skill_load_turns:
                         skill_load_turns[skill_name] = current_turn
                         logger.debug(
-                            "[LoadSkillTool] Found skill '%s' loaded %d turns ago",
+                            "[LoadSkillTool] Found skill '%s' from content pattern, "
+                            "%d turns ago",
                             skill_name,
                             current_turn,
                         )

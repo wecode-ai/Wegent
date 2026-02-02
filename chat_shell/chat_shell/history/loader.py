@@ -492,7 +492,17 @@ def _build_history_message(
         if not subtask.result or not isinstance(subtask.result, dict):
             return None
         content = subtask.result.get("value", "")
-        return {"role": "assistant", "content": content} if content else None
+        if not content:
+            return None
+
+        msg = {"role": "assistant", "content": content}
+
+        # Include loaded_skills for skill state restoration across conversation turns
+        loaded_skills = subtask.result.get("loaded_skills")
+        if loaded_skills:
+            msg["loaded_skills"] = loaded_skills
+
+        return msg
 
     return None
 

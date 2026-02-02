@@ -171,6 +171,7 @@ def _handle_tool_end(
     # This ensures we use the same ID for updating the block
     matching_start_idx = None
     tool_use_id = event_data.get("tool_use_id")  # Try from event first
+    tool_input = None  # Store tool input for load_skill tracking
 
     if not tool_use_id:
         # Search for matching tool_start step to get the tool_use_id
@@ -182,6 +183,8 @@ def _handle_tool_end(
                 matching_start_idx = idx
                 # Use the tool_use_id from the start step
                 tool_use_id = step.get("tool_use_id")
+                # Also get tool_input for load_skill tracking
+                tool_input = step.get("details", {}).get("input", {})
                 break
 
     # If still no tool_use_id, generate one as fallback (should rarely happen)
@@ -289,6 +292,29 @@ def _handle_tool_end(
         status="done" if status == "completed" else "error",
         is_error=(status == "failed"),
     )
+
+    # Track loaded skills for persistence across conversation turns
+    # When load_skill tool completes successfully, record the skill name
+    if tool_name == "load_skill" and status == "completed":
+        # Get skill_name from tool_input (captured from start step)
+        skill_name = None
+        if tool_input and isinstance(tool_input, dict):
+            skill_name = tool_input.get("skill_name")
+
+        # If we didn't get it from tool_input, try to find it from the start step
+        if not skill_name and matching_start_idx is not None:
+            start_step = state.thinking[matching_start_idx]
+            start_input = start_step.get("details", {}).get("input", {})
+            if isinstance(start_input, dict):
+                skill_name = start_input.get("skill_name")
+
+        # Add to loaded_skills if we found the skill name
+        if skill_name and hasattr(state, "add_loaded_skill"):
+            state.add_loaded_skill(skill_name)
+            logger.info(
+                "[TOOL_END] Tracked loaded skill: %s for persistence",
+                skill_name,
+            )
 
     # Emit chunk with thinking data synchronously using emit_json
     current_result = state.get_current_result(
