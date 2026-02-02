@@ -101,6 +101,24 @@ LOCAL_RECONNECT_MAX_DELAY = _get_int_env(
     "LOCAL_RECONNECT_MAX_DELAY", DEFAULT_LOCAL_RECONNECT_MAX_DELAY
 )
 
+# Local mode reconnection timeout and check interval
+# Reconnection timeout: maximum time to wait for reconnection (default: 10 minutes)
+DEFAULT_LOCAL_RECONNECT_TIMEOUT = 600
+# Reconnection check interval: how often to check connection status (default: 30 seconds)
+DEFAULT_LOCAL_RECONNECT_CHECK_INTERVAL = 30
+# Graceful shutdown timeout for cleaning up background threads (default: 5 seconds)
+DEFAULT_LOCAL_SHUTDOWN_CLEANUP_TIMEOUT = 5
+
+LOCAL_RECONNECT_TIMEOUT = _get_int_env(
+    "LOCAL_RECONNECT_TIMEOUT", DEFAULT_LOCAL_RECONNECT_TIMEOUT
+)
+LOCAL_RECONNECT_CHECK_INTERVAL = _get_int_env(
+    "LOCAL_RECONNECT_CHECK_INTERVAL", DEFAULT_LOCAL_RECONNECT_CHECK_INTERVAL
+)
+LOCAL_SHUTDOWN_CLEANUP_TIMEOUT = _get_int_env(
+    "LOCAL_SHUTDOWN_CLEANUP_TIMEOUT", DEFAULT_LOCAL_SHUTDOWN_CLEANUP_TIMEOUT
+)
+
 # Local mode home directory
 # All local mode data (workspace, logs, cache) will be stored under this directory
 WEGENT_EXECUTOR_HOME = os.environ.get(

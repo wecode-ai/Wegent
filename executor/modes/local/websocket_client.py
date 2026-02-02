@@ -90,8 +90,10 @@ class WebSocketClient:
         self._was_registered = False  # Track if we were ever registered (for reconnect)
         self._connection_error: Optional[str] = None
 
-        # Reconnect callback
-        self._on_reconnect_callback: Optional[Callable] = None
+        # Reconnect callback - called when connection is restored
+        self._on_reconnect_callback: Optional[Callable[[], Any]] = None
+        # Disconnect callback - called when connection is lost
+        self._on_disconnect_callback: Optional[Callable[[], Any]] = None
 
         # Event handlers storage
         self._handlers: Dict[str, Callable] = {}
@@ -256,6 +258,7 @@ class WebSocketClient:
 
         @self.sio.on("connect", namespace="/local-executor")
         async def on_connect():
+            was_disconnected = not self._connected
             self._connected = True
             self._connecting = False
             self._connection_error = None
@@ -269,6 +272,14 @@ class WebSocketClient:
                     success = await self.register_device()
                     if success:
                         logger.info("Device re-registered successfully")
+                        # Notify reconnection callback if set
+                        if was_disconnected and self._on_reconnect_callback:
+                            try:
+                                result = self._on_reconnect_callback()
+                                if asyncio.iscoroutine(result):
+                                    await result
+                            except Exception as e:
+                                logger.error(f"Reconnect callback error: {e}")
                     else:
                         logger.error("Device re-registration failed")
                 except Exception as e:
@@ -276,9 +287,18 @@ class WebSocketClient:
 
         @self.sio.on("disconnect", namespace="/local-executor")
         async def on_disconnect():
+            was_connected = self._connected
             self._connected = False
             self._registered = False
             logger.info("WebSocket disconnected from /local-executor namespace")
+            # Notify disconnect callback if set
+            if was_connected and self._on_disconnect_callback:
+                try:
+                    result = self._on_disconnect_callback()
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as e:
+                    logger.error(f"Disconnect callback error: {e}")
 
         @self.sio.on("connect_error", namespace="/local-executor")
         async def on_connect_error(data):
@@ -540,6 +560,22 @@ class WebSocketClient:
         if event in self._handlers:
             del self._handlers[event]
         logger.debug(f"Unregistered handler for event: {event}")
+
+    def set_on_reconnect_callback(self, callback: Optional[Callable[[], Any]]) -> None:
+        """Set callback to be called when connection is restored after disconnect.
+
+        Args:
+            callback: Async or sync function to call on reconnection.
+        """
+        self._on_reconnect_callback = callback
+
+    def set_on_disconnect_callback(self, callback: Optional[Callable[[], Any]]) -> None:
+        """Set callback to be called when connection is lost.
+
+        Args:
+            callback: Async or sync function to call on disconnection.
+        """
+        self._on_disconnect_callback = callback
 
     async def wait(self) -> None:
         """Wait until disconnected."""

@@ -14,6 +14,7 @@ import asyncio
 import logging
 import os
 import signal
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -66,6 +67,11 @@ class LocalRunner:
         # Runner state
         self._running = False
         self._shutdown_event = asyncio.Event()
+
+        # Connection monitoring state
+        self._disconnected_at: Optional[float] = None
+        self._reconnecting = False
+        self._reconnect_event = asyncio.Event()
 
         # File logging handler (for cleanup on shutdown)
         self._file_handler: Optional[logging.Handler] = None
@@ -120,6 +126,9 @@ class LocalRunner:
             # Register WebSocket event handlers
             self._register_handlers()
 
+            # Setup connection state callbacks
+            self._setup_connection_callbacks()
+
             # Connect to Backend
             connected = await self.websocket_client.connect()
             if not connected:
@@ -158,18 +167,50 @@ class LocalRunner:
             await self._shutdown()
 
     async def _shutdown(self) -> None:
-        """Perform graceful shutdown."""
+        """Perform graceful shutdown with proper cleanup of background threads.
+
+        This method ensures:
+        1. Heartbeat service is stopped
+        2. Socket.IO client is properly disconnected
+        3. Background threads have time to clean up
+        4. File logging is flushed before exit
+        """
         logger.info("Shutting down Local Executor Runner...")
 
-        # Stop heartbeat service
-        await self.heartbeat_service.stop()
+        # Clear connection callbacks to prevent any callbacks during shutdown
+        self.websocket_client.set_on_disconnect_callback(None)
+        self.websocket_client.set_on_reconnect_callback(None)
 
-        # Disconnect WebSocket
-        await self.websocket_client.disconnect()
+        # Stop heartbeat service first
+        try:
+            await self.heartbeat_service.stop()
+            logger.info("Heartbeat service stopped")
+        except Exception as e:
+            logger.warning(f"Error stopping heartbeat service: {e}")
+
+        # Disconnect WebSocket with graceful cleanup
+        try:
+            # Give Socket.IO time to cleanly disconnect
+            await asyncio.wait_for(
+                self.websocket_client.disconnect(),
+                timeout=config.LOCAL_SHUTDOWN_CLEANUP_TIMEOUT,
+            )
+            logger.info("WebSocket disconnected")
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"WebSocket disconnect timeout after "
+                f"{config.LOCAL_SHUTDOWN_CLEANUP_TIMEOUT}s, forcing close"
+            )
+        except Exception as e:
+            logger.warning(f"Error during WebSocket disconnect: {e}")
+
+        # Allow background threads a moment to complete logging
+        # This helps prevent "could not acquire lock for stderr" errors
+        await asyncio.sleep(0.5)
 
         logger.info("Local Executor Runner shutdown complete")
 
-        # Flush file logging handler
+        # Flush file logging handler last
         self._cleanup_file_logging()
 
     def _register_handlers(self) -> None:
@@ -189,6 +230,113 @@ class LocalRunner:
         )
 
         logger.info("WebSocket event handlers registered")
+
+    def _setup_connection_callbacks(self) -> None:
+        """Setup WebSocket connection state callbacks for reconnection handling."""
+
+        def on_disconnect():
+            """Handle WebSocket disconnection."""
+            if self._running and not self._reconnecting:
+                self._disconnected_at = time.time()
+                self._reconnecting = True
+                self._reconnect_event.clear()
+                logger.warning(
+                    f"WebSocket connection lost at {self._disconnected_at}, "
+                    f"will attempt reconnection for up to {config.LOCAL_RECONNECT_TIMEOUT}s"
+                )
+
+        def on_reconnect():
+            """Handle WebSocket reconnection."""
+            if self._reconnecting:
+                reconnect_duration = (
+                    time.time() - self._disconnected_at if self._disconnected_at else 0
+                )
+                logger.info(
+                    f"WebSocket connection restored after {reconnect_duration:.1f}s"
+                )
+                self._disconnected_at = None
+                self._reconnecting = False
+                self._reconnect_event.set()
+
+        self.websocket_client.set_on_disconnect_callback(on_disconnect)
+        self.websocket_client.set_on_reconnect_callback(on_reconnect)
+        logger.info("Connection state callbacks configured")
+
+    async def _wait_for_reconnection(self) -> bool:
+        """Wait for WebSocket reconnection with timeout.
+
+        This method monitors the connection status at fixed intervals and
+        waits for Socket.IO's automatic reconnection to succeed.
+
+        Returns:
+            True if reconnection successful, False if timeout exceeded.
+        """
+        check_interval = config.LOCAL_RECONNECT_CHECK_INTERVAL
+        timeout = config.LOCAL_RECONNECT_TIMEOUT
+        start_time = self._disconnected_at or time.time()
+
+        logger.info(
+            f"Waiting for WebSocket reconnection "
+            f"(timeout={timeout}s, check_interval={check_interval}s)"
+        )
+
+        while self._running:
+            elapsed = time.time() - start_time
+
+            # Check if timeout exceeded
+            if elapsed >= timeout:
+                logger.error(
+                    f"Reconnection timeout after {elapsed:.1f}s "
+                    f"(max={timeout}s), giving up"
+                )
+                return False
+
+            # Check if already reconnected (via Socket.IO auto-reconnect)
+            if self.websocket_client.connected and self.websocket_client.registered:
+                logger.info(
+                    f"Connection restored after {elapsed:.1f}s, "
+                    "sending heartbeat to sync state"
+                )
+                # Send heartbeat to sync state with backend
+                try:
+                    await self.websocket_client.send_heartbeat()
+                    logger.info("Heartbeat sent successfully after reconnection")
+                except Exception as e:
+                    logger.warning(f"Failed to send heartbeat after reconnection: {e}")
+                return True
+
+            # Log progress at each check interval
+            remaining = timeout - elapsed
+            logger.info(
+                f"Waiting for reconnection... "
+                f"(elapsed={elapsed:.1f}s, remaining={remaining:.1f}s)"
+            )
+
+            # Wait for either reconnect event or check interval
+            try:
+                await asyncio.wait_for(
+                    self._reconnect_event.wait(),
+                    timeout=check_interval,
+                )
+                # Reconnect event was set, verify connection
+                if self.websocket_client.connected and self.websocket_client.registered:
+                    elapsed = time.time() - start_time
+                    logger.info(f"Reconnection confirmed after {elapsed:.1f}s")
+                    try:
+                        await self.websocket_client.send_heartbeat()
+                        logger.info("Heartbeat sent successfully after reconnection")
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to send heartbeat after reconnection: {e}"
+                        )
+                    return True
+            except asyncio.TimeoutError:
+                # Check interval passed, continue monitoring
+                continue
+
+        # Runner was stopped during reconnection wait
+        logger.info("Runner stopped while waiting for reconnection")
+        return False
 
     async def enqueue_task(self, task_data: Dict[str, Any]) -> None:
         """Add a task to the execution queue."""
@@ -339,11 +487,42 @@ class LocalRunner:
             )
 
     async def _task_loop(self) -> None:
-        """Main task processing loop."""
+        """Main task processing loop with connection monitoring."""
         logger.info("Starting task processing loop")
 
         while self._running:
             try:
+                # Check connection status before processing tasks
+                if not self.websocket_client.connected:
+                    if not self._reconnecting:
+                        # Connection lost, start reconnection monitoring
+                        self._disconnected_at = time.time()
+                        self._reconnecting = True
+                        self._reconnect_event.clear()
+
+                    logger.warning(
+                        "WebSocket disconnected, pausing task processing and "
+                        "waiting for reconnection..."
+                    )
+
+                    # Wait for reconnection with timeout
+                    reconnected = await self._wait_for_reconnection()
+
+                    if not reconnected:
+                        logger.error(
+                            "Failed to reconnect within timeout, stopping runner"
+                        )
+                        self._running = False
+                        break
+
+                    # Reset reconnection state
+                    self._reconnecting = False
+                    self._disconnected_at = None
+                    logger.info(
+                        "Reconnection successful, resuming task processing loop"
+                    )
+
+                # Try to get a task from the queue
                 try:
                     task_data = await asyncio.wait_for(
                         self.task_queue.get(), timeout=1.0
@@ -560,12 +739,14 @@ class LocalRunner:
             logger.warning(f"Failed to setup file logging: {e}")
 
     def _cleanup_file_logging(self) -> None:
-        """Flush and close file logging handler on shutdown."""
+        """Flush and close file logging handler on shutdown.
+
+        This method removes handlers from all loggers before closing to prevent
+        errors during interpreter shutdown when daemon threads try to log.
+        """
         if self._file_handler:
             try:
-                self._file_handler.flush()
-                self._file_handler.close()
-                # Remove handler from all loggers to prevent errors during shutdown
+                # First remove handler from all loggers to prevent further logging
                 logger_names = [
                     "local_runner",
                     "websocket_client",
@@ -578,7 +759,23 @@ class LocalRunner:
                     "executor.services.attachment_downloader",
                 ]
                 for name in logger_names:
-                    log = logging.getLogger(name)
-                    log.removeHandler(self._file_handler)
+                    try:
+                        log = logging.getLogger(name)
+                        log.removeHandler(self._file_handler)
+                    except Exception:
+                        pass
+
+                # Then flush and close the handler
+                try:
+                    self._file_handler.flush()
+                except Exception:
+                    pass
+
+                try:
+                    self._file_handler.close()
+                except Exception:
+                    pass
+
+                self._file_handler = None
             except Exception:
                 pass
