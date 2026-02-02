@@ -733,6 +733,8 @@ class TestSandboxManager:
 
     # ----- Background Task Tests -----
 
+    # ----- Background Task Tests -----
+
     @pytest.mark.asyncio
     async def test_check_heartbeats_detects_dead_executor(
         self,
@@ -747,9 +749,10 @@ class TestSandboxManager:
         mock_redis_client.hget.return_value = sample_sandbox_redis_data
 
         mock_heartbeat = MagicMock()
-        mock_heartbeat.check_heartbeat.return_value = False
-        mock_heartbeat.get_last_heartbeat.return_value = (
-            1704067000.0  # Has last heartbeat
+        # Mock async methods used by _check_heartbeats
+        mock_heartbeat.check_heartbeat = AsyncMock(return_value=False)
+        mock_heartbeat.get_last_heartbeat = AsyncMock(
+            return_value=1704067000.0  # Has last heartbeat
         )
         mocker.patch(
             "executor_manager.services.sandbox.manager.get_heartbeat_manager",
@@ -796,8 +799,11 @@ class TestSandboxManager:
         mock_redis_client.hget.return_value = old_sandbox_data
 
         mock_heartbeat = MagicMock()
-        mock_heartbeat.check_heartbeat.return_value = False
-        mock_heartbeat.get_last_heartbeat.return_value = None  # Key expired from Redis!
+        # Mock async methods used by _check_heartbeats
+        mock_heartbeat.check_heartbeat = AsyncMock(return_value=False)
+        mock_heartbeat.get_last_heartbeat = AsyncMock(
+            return_value=None  # Key expired from Redis!
+        )
         mocker.patch(
             "executor_manager.services.sandbox.manager.get_heartbeat_manager",
             return_value=mock_heartbeat,
@@ -848,8 +854,11 @@ class TestSandboxManager:
         mock_redis_client.hget.return_value = recent_sandbox_data
 
         mock_heartbeat = MagicMock()
-        mock_heartbeat.check_heartbeat.return_value = False  # No heartbeat yet
-        mock_heartbeat.get_last_heartbeat.return_value = None
+        # Mock async methods used by _check_heartbeats
+        mock_heartbeat.check_heartbeat = AsyncMock(
+            return_value=False
+        )  # No heartbeat yet
+        mock_heartbeat.get_last_heartbeat = AsyncMock(return_value=None)
         mocker.patch(
             "executor_manager.services.sandbox.manager.get_heartbeat_manager",
             return_value=mock_heartbeat,
@@ -879,6 +888,8 @@ class TestSandboxManager:
         mock_redis_client.hgetall.return_value = {"__sandbox__": "{}"}
 
         mock_heartbeat = MagicMock()
+        # Mock async method used by _handle_executor_dead
+        mock_heartbeat.delete_heartbeat = AsyncMock(return_value=True)
         mocker.patch(
             "executor_manager.services.sandbox.manager.get_heartbeat_manager",
             return_value=mock_heartbeat,
@@ -899,7 +910,6 @@ class TestSandboxManager:
         # Verify container deletion was attempted
         mock_executor.delete_executor.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_collect_expired_sandboxes_terminates_old(
         self,
         sandbox_manager_with_mock_redis,
