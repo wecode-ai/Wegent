@@ -503,7 +503,14 @@ class UsageInfo(BaseModel):
 
 
 class ResponseDone(BaseModel):
-    """Response done event data."""
+    """Response done event data.
+
+    Uses extra="allow" to pass through additional fields from upstream
+    without needing to explicitly define them here. This ensures new fields
+    (like loaded_skills) are automatically forwarded to backend.
+    """
+
+    model_config = {"extra": "allow"}
 
     id: str = Field(..., description="Response ID")
     usage: Optional[UsageInfo] = Field(None, description="Token usage")

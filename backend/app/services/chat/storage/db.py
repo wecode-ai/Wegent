@@ -111,8 +111,31 @@ class DatabaseHandler:
                 subtask.updated_at = datetime.now()
 
                 if result is not None:
+                    # Log loaded_skills before sanitization for debugging
+                    loaded_skills = result.get("loaded_skills", [])
+                    if loaded_skills:
+                        logger.info(
+                            "[DB_HANDLER] Saving loaded_skills to database: "
+                            "subtask_id=%d, status=%s, loaded_skills=%s",
+                            subtask_id,
+                            status,
+                            loaded_skills,
+                        )
+
                     # Sanitize thinking data before storing to database
                     sanitized_result = sanitize_result_for_storage(result)
+
+                    # Log loaded_skills after sanitization to verify it's preserved
+                    sanitized_loaded_skills = sanitized_result.get("loaded_skills", [])
+                    if loaded_skills:
+                        logger.info(
+                            "[DB_HANDLER] After sanitization: subtask_id=%d, "
+                            "loaded_skills_preserved=%s, sanitized_loaded_skills=%s",
+                            subtask_id,
+                            sanitized_loaded_skills == loaded_skills,
+                            sanitized_loaded_skills,
+                        )
+
                     subtask.result = sanitized_result
                 if error is not None:
                     subtask.error_message = error

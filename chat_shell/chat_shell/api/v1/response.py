@@ -107,6 +107,8 @@ async def _stream_response(
     # Silent exit tracking for subscription tasks
     is_silent_exit = False
     silent_exit_reason = ""
+    # Extra fields from DONE event to pass through (e.g., loaded_skills)
+    done_extra_fields: dict = {}
 
     try:
         # Send response.start event
@@ -540,6 +542,29 @@ async def _stream_response(
                         subtask_id,
                         len(accumulated_blocks),
                     )
+                # Collect extra fields from DONE event for pass-through
+                # These fields (like loaded_skills) will be forwarded to backend
+                known_fields = {
+                    "usage",
+                    "silent_exit",
+                    "silent_exit_reason",
+                    "blocks",
+                    "sources",
+                    "shell_type",
+                    "value",
+                    "thinking",
+                }
+                if result:
+                    for key, value in result.items():
+                        if key not in known_fields and value is not None:
+                            done_extra_fields[key] = value
+                    if done_extra_fields:
+                        logger.info(
+                            "[RESPONSE] Collected extra fields from DONE event: subtask_id=%d, "
+                            "extra_fields=%s",
+                            subtask_id,
+                            list(done_extra_fields.keys()),
+                        )
 
             elif event.type == ChatEventType.ERROR:
                 error_msg = event.data.get("error", "Unknown error")
@@ -580,27 +605,42 @@ async def _stream_response(
                 for source in accumulated_sources
             ]
 
+        # Build ResponseDone with extra fields passed through
+        response_done = ResponseDone(
+            id=response_id,
+            usage=(
+                UsageInfo(
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    total_tokens=total_input_tokens + total_output_tokens,
+                )
+                if total_input_tokens or total_output_tokens
+                else None
+            ),
+            stop_reason="silent_exit" if is_silent_exit else "end_turn",
+            sources=formatted_sources,
+            blocks=(
+                accumulated_blocks if accumulated_blocks else None
+            ),  # Include accumulated blocks
+            silent_exit=is_silent_exit if is_silent_exit else None,
+            silent_exit_reason=silent_exit_reason if silent_exit_reason else None,
+            **done_extra_fields,  # Pass through extra fields like loaded_skills
+        )
+
+        # Log the response.done event being sent to backend
+        response_done_data = response_done.model_dump()
+        logger.info(
+            "[RESPONSE] Sending response.done to backend: subtask_id=%d, "
+            "response_done_keys=%s, loaded_skills=%s, extra_fields=%s",
+            subtask_id,
+            list(response_done_data.keys()),
+            response_done_data.get("loaded_skills"),
+            done_extra_fields,
+        )
+
         yield _format_sse_event(
             ResponseEventType.RESPONSE_DONE.value,
-            ResponseDone(
-                id=response_id,
-                usage=(
-                    UsageInfo(
-                        input_tokens=total_input_tokens,
-                        output_tokens=total_output_tokens,
-                        total_tokens=total_input_tokens + total_output_tokens,
-                    )
-                    if total_input_tokens or total_output_tokens
-                    else None
-                ),
-                stop_reason="silent_exit" if is_silent_exit else "end_turn",
-                sources=formatted_sources,
-                blocks=(
-                    accumulated_blocks if accumulated_blocks else None
-                ),  # Include accumulated blocks
-                silent_exit=is_silent_exit if is_silent_exit else None,
-                silent_exit_reason=silent_exit_reason if silent_exit_reason else None,
-            ).model_dump(),
+            response_done_data,
         )
 
     except asyncio.CancelledError:
