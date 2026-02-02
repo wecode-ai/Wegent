@@ -23,7 +23,10 @@ import {
   ChevronUp,
   Settings2,
   Monitor,
+  CheckCircle2,
 } from 'lucide-react'
+import type { DeviceInfo } from '@/apis/devices'
+import { cn } from '@/lib/utils'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import TaskListSection from './TaskListSection'
@@ -51,6 +54,10 @@ interface TaskSidebarProps {
   isSearchDialogOpen?: boolean
   onSearchDialogOpenChange?: (open: boolean) => void
   shortcutDisplayText?: string
+  // Device selection support (for mobile device chat page)
+  devices?: DeviceInfo[]
+  selectedDeviceId?: string | null
+  onDeviceSelect?: (deviceId: string) => void
 }
 
 export default function TaskSidebar({
@@ -62,6 +69,10 @@ export default function TaskSidebar({
   isSearchDialogOpen: _externalIsSearchDialogOpen,
   onSearchDialogOpenChange,
   shortcutDisplayText: externalShortcutDisplayText,
+  // Device selection props
+  devices,
+  selectedDeviceId,
+  onDeviceSelect,
 }: TaskSidebarProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -537,6 +548,81 @@ export default function TaskSidebar({
     </>
   )
 
+  // Helper function to get device status color
+  const getDeviceStatusColor = (status: string) => {
+    switch (status) {
+      case 'online':
+        return 'bg-green-500'
+      case 'busy':
+        return 'bg-yellow-500'
+      default:
+        return 'bg-gray-400'
+    }
+  }
+
+  // Helper function to get device status text
+  const getDeviceStatusText = (status: string) => {
+    switch (status) {
+      case 'online':
+        return t('devices:status_online')
+      case 'busy':
+        return t('devices:status_busy')
+      default:
+        return t('devices:status_offline')
+    }
+  }
+
+  // Mobile sidebar content with device selector (for devices page type)
+  const mobileSidebarContent = (
+    <>
+      {/* Device Selector for mobile devices page */}
+      {pageType === 'devices' && devices && devices.length > 0 && onDeviceSelect && (
+        <div className="px-4 py-3 border-b border-border bg-surface/50">
+          <h3 className="text-sm font-medium text-text-muted mb-3">
+            {t('devices:select_device')}
+          </h3>
+          <div className="space-y-1.5">
+            {devices.map(device => (
+              <button
+                key={device.device_id}
+                onClick={() => onDeviceSelect(device.device_id)}
+                disabled={device.status === 'offline'}
+                className={cn(
+                  'w-full flex items-center gap-3 p-3 rounded-lg transition-colors',
+                  'h-11 min-w-[44px]',
+                  selectedDeviceId === device.device_id
+                    ? 'bg-primary/10 border border-primary'
+                    : device.status === 'offline'
+                      ? 'bg-surface/50 border border-border opacity-60 cursor-not-allowed'
+                      : 'bg-surface border border-border hover:bg-muted active:bg-muted/80'
+                )}
+              >
+                <span
+                  className={cn(
+                    'w-2 h-2 rounded-full flex-shrink-0',
+                    getDeviceStatusColor(device.status)
+                  )}
+                />
+                <span className="flex-1 text-left truncate text-sm font-medium">
+                  {device.name}
+                </span>
+                {selectedDeviceId === device.device_id && (
+                  <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0" />
+                )}
+                {device.status === 'offline' && (
+                  <span className="text-xs text-text-muted flex-shrink-0">
+                    {getDeviceStatusText(device.status)}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {sidebarContent}
+    </>
+  )
+
   return (
     <>
       {/* Desktop Sidebar - Hidden on mobile, width controlled by parent ResizableSidebar */}
@@ -555,7 +641,7 @@ export default function TaskSidebar({
         hideTitle={true}
         data-tour="task-sidebar"
       >
-        {sidebarContent}
+        {mobileSidebarContent}
       </MobileSidebar>
 
       {/* History Manage Dialog */}
