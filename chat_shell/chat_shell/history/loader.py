@@ -220,20 +220,14 @@ async def _load_history_from_remote(
         )
 
         # Convert Message objects to dict format expected by the agent
+        # Pass through all fields from the API response to preserve extra data
+        # like loaded_skills for skill state restoration
         history: list[dict[str, Any]] = []
         for msg in messages:
             # RemoteHistoryStore returns Message objects
+            # Use to_dict() to get all fields and pass through directly
             msg_dict = msg.to_dict()
-
-            # The Backend API now handles username prefix for group chat
-            # So we just use the content as-is
-
-            history.append(
-                {
-                    "role": msg_dict.get("role", "user"),
-                    "content": msg_dict.get("content", ""),
-                }
-            )
+            history.append(msg_dict)
 
         logger.debug(
             "[history] _load_history_from_remote: SUCCESS loaded %d messages "
@@ -492,7 +486,17 @@ def _build_history_message(
         if not subtask.result or not isinstance(subtask.result, dict):
             return None
         content = subtask.result.get("value", "")
-        return {"role": "assistant", "content": content} if content else None
+        if not content:
+            return None
+
+        msg = {"role": "assistant", "content": content}
+
+        # Include loaded_skills for skill state restoration across conversation turns
+        loaded_skills = subtask.result.get("loaded_skills")
+        if loaded_skills:
+            msg["loaded_skills"] = loaded_skills
+
+        return msg
 
     return None
 

@@ -28,6 +28,9 @@ class Message:
     tool_calls: Optional[list] = None
     created_at: Optional[str] = None
     metadata: dict = field(default_factory=dict)
+    loaded_skills: Optional[list] = (
+        None  # Skills loaded via load_skill tool in this turn
+    )
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -47,6 +50,8 @@ class Message:
             result["created_at"] = self.created_at
         if self.metadata:
             result["metadata"] = self.metadata
+        if self.loaded_skills:
+            result["loaded_skills"] = self.loaded_skills
         return result
 
     @classmethod
@@ -61,6 +66,7 @@ class Message:
             tool_calls=data.get("tool_calls"),
             created_at=data.get("created_at"),
             metadata=data.get("metadata", {}),
+            loaded_skills=data.get("loaded_skills"),
         )
 
 
