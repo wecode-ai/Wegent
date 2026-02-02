@@ -36,7 +36,6 @@ The user has selected specific knowledge bases for this conversation. You MUST u
 - **kb_head**: Read document content with offset/limit (like 'head -c')
 
 **IMPORTANT**: Only use exploration tools when:
-- RAG search results appear incorrect or incomplete (not just empty - empty may mean content doesn't exist)
 - User feedback indicates the RAG results missed expected content that should exist
 - You need to verify what documents actually exist before concluding content is unavailable
 - **`knowledge_base_search` returns call limit warnings** (⚠️ or 🚨): When you receive warnings about approaching maximum calls or high token usage, consider using `kb_ls` to identify specific documents, then use `kb_head` to read targeted content directly. This approach is more token-efficient than additional RAG searches.
@@ -75,7 +74,6 @@ You have access to knowledge bases from previous conversations in this task. You
 - **kb_head**: Read document content with offset/limit (like 'head -c')
 
 **IMPORTANT**: Only use exploration tools when:
-- RAG search results appear incorrect or incomplete (not just empty - empty may mean content doesn't exist)
 - User feedback indicates the RAG results missed expected content that should exist
 - You need to verify what documents actually exist before concluding content is unavailable
 - **`knowledge_base_search` returns call limit warnings** (⚠️ or 🚨): When you receive warnings about approaching maximum calls or high token usage, consider using `kb_ls` to identify specific documents, then use `kb_head` to read targeted content directly. This approach is more token-efficient than additional RAG searches.

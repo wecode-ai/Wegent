@@ -81,9 +81,9 @@ async def prepare_knowledge_base_tools(
 
     # Import knowledge base tools
     from chat_shell.tools.builtin import (
-        KBToolCallCounter,
         KbHeadTool,
         KbLsTool,
+        KBToolCallCounter,
         KnowledgeBaseTool,
     )
 

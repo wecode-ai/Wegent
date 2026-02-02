@@ -706,7 +706,11 @@ class KnowledgeBaseTool(BaseTool):
                         f"[KnowledgeBaseTool] HTTP KB info request failed: {response.status_code}, "
                         f"returning defaults"
                     )
-                    return {"total_file_size": 0, "total_estimated_tokens": 0, "items": []}
+                    return {
+                        "total_file_size": 0,
+                        "total_estimated_tokens": 0,
+                        "items": [],
+                    }
 
         except Exception as e:
             logger.warning(

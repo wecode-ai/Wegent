@@ -19,6 +19,10 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 
+# Constants for document reading pagination
+DEFAULT_READ_DOC_LIMIT = 50_000  # Default characters to return
+MAX_READ_DOC_LIMIT = 500_000  # Maximum characters allowed per request
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/rag", tags=["internal-rag"])
@@ -531,7 +535,7 @@ class ListDocsResponse(BaseModel):
 async def list_documents(
     request: ListDocsRequest,
     db: Session = Depends(get_db),
-):
+) -> ListDocsResponse:
     """
     List documents in a knowledge base with metadata and summaries.
 
@@ -605,7 +609,10 @@ class ReadDocRequest(BaseModel):
     document_id: int = Field(..., description="Document ID")
     offset: int = Field(default=0, ge=0, description="Start position in characters")
     limit: int = Field(
-        default=50000, ge=1, le=500000, description="Max characters to return"
+        default=DEFAULT_READ_DOC_LIMIT,
+        ge=1,
+        le=MAX_READ_DOC_LIMIT,
+        description="Max characters to return",
     )
     knowledge_base_ids: Optional[list[int]] = Field(
         default=None,
@@ -629,7 +636,7 @@ class ReadDocResponse(BaseModel):
 async def read_document(
     request: ReadDocRequest,
     db: Session = Depends(get_db),
-):
+) -> ReadDocResponse:
     """
     Read document content with offset/limit pagination.
 

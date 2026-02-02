@@ -19,10 +19,16 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
+from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
+
 logger = logging.getLogger(__name__)
 
-# Default configuration values (same as knowledge_base.py)
+# Default configuration values
 DEFAULT_MAX_CALLS_PER_CONVERSATION = 10
+
+# File size constants for human-readable formatting
+KB = 1024
+MB = KB * KB
 
 
 class KBToolCallCounter:
@@ -80,12 +86,12 @@ class KBToolCallCounter:
 
 def _format_file_size(size_bytes: int) -> str:
     """Format file size in human-readable format."""
-    if size_bytes < 1024:
+    if size_bytes < KB:
         return f"{size_bytes}B"
-    elif size_bytes < 1024 * 1024:
-        return f"{size_bytes / 1024:.1f}KB"
+    elif size_bytes < MB:
+        return f"{size_bytes / KB:.1f}KB"
     else:
-        return f"{size_bytes / (1024 * 1024):.1f}MB"
+        return f"{size_bytes / MB:.1f}MB"
 
 
 def _get_backend_url() -> str:
@@ -143,6 +149,7 @@ class KbLsTool(BaseTool):
         """Synchronous run - not implemented, use async version."""
         raise NotImplementedError("KbLsTool only supports async execution")
 
+    @trace_async(span_name="kb_ls_arun", tracer_name="chat_shell.tools.kb_ls")
     async def _arun(
         self,
         knowledge_base_id: int,
@@ -158,6 +165,9 @@ class KbLsTool(BaseTool):
             JSON string with document list
         """
         try:
+            add_span_event("listing_documents")
+            set_span_attribute("knowledge_base_id", knowledge_base_id)
+
             # Check call limit if counter is set
             if self._call_counter:
                 allowed, error_msg = self._call_counter.check_and_increment()
@@ -192,11 +202,19 @@ class KbLsTool(BaseTool):
                 {"error": f"Failed to list documents: {str(e)}"}, ensure_ascii=False
             )
 
+    @trace_async(
+        span_name="kb_ls_list_docs_package_mode",
+        tracer_name="chat_shell.tools.kb_ls",
+    )
     async def _list_docs_package_mode(self, knowledge_base_id: int) -> str:
         """List documents using direct database access."""
         import asyncio
 
         from app.models.knowledge import KnowledgeDocument
+
+        add_span_event("listing_documents")
+        set_span_attribute("knowledge_base_id", knowledge_base_id)
+        set_span_attribute("mode", "package")
 
         def _query_docs():
             documents = (
@@ -226,6 +244,8 @@ class KbLsTool(BaseTool):
                 }
             )
 
+        set_span_attribute("document_count", len(doc_items))
+
         logger.info(
             f"[KbLsTool] Listed {len(doc_items)} documents from KB {knowledge_base_id} (package mode)"
         )
@@ -239,13 +259,21 @@ class KbLsTool(BaseTool):
             ensure_ascii=False,
         )
 
+    @trace_async(
+        span_name="kb_ls_list_docs_http_mode", tracer_name="chat_shell.tools.kb_ls"
+    )
     async def _list_docs_http_mode(self, knowledge_base_id: int) -> str:
         """List documents via HTTP API."""
         import httpx
 
+        add_span_event("listing_documents")
+        set_span_attribute("knowledge_base_id", knowledge_base_id)
+        set_span_attribute("mode", "http")
+
         backend_url = _get_backend_url()
 
         try:
+            add_span_event("http_request_started")
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{backend_url}/api/internal/rag/list-docs",
@@ -279,6 +307,8 @@ class KbLsTool(BaseTool):
                             "is_active": doc.get("is_active", False),
                         }
                     )
+
+                set_span_attribute("document_count", len(doc_items))
 
                 logger.info(
                     f"[KbLsTool] Listed {len(doc_items)} documents from KB {knowledge_base_id} (HTTP mode)"
@@ -352,6 +382,7 @@ class KbHeadTool(BaseTool):
         """Synchronous run - not implemented, use async version."""
         raise NotImplementedError("KbHeadTool only supports async execution")
 
+    @trace_async(span_name="kb_head_arun", tracer_name="chat_shell.tools.kb_head")
     async def _arun(
         self,
         document_ids: list[int],
@@ -371,6 +402,11 @@ class KbHeadTool(BaseTool):
             JSON string with document contents
         """
         try:
+            add_span_event("reading_documents")
+            set_span_attribute("document_ids", str(document_ids))
+            set_span_attribute("offset", offset)
+            set_span_attribute("limit", limit)
+
             # Check call limit if counter is set
             if self._call_counter:
                 allowed, error_msg = self._call_counter.check_and_increment()
@@ -399,6 +435,10 @@ class KbHeadTool(BaseTool):
                 {"error": f"Failed to read documents: {str(e)}"}, ensure_ascii=False
             )
 
+    @trace_async(
+        span_name="kb_head_read_docs_package_mode",
+        tracer_name="chat_shell.tools.kb_head",
+    )
     async def _read_docs_package_mode(
         self, document_ids: list[int], offset: int, limit: int
     ) -> str:
@@ -407,6 +447,12 @@ class KbHeadTool(BaseTool):
 
         from app.models.knowledge import KnowledgeDocument
         from app.services.context import context_service
+
+        add_span_event("reading_documents")
+        set_span_attribute("document_ids", str(document_ids))
+        set_span_attribute("offset", offset)
+        set_span_attribute("limit", limit)
+        set_span_attribute("mode", "package")
 
         # Get allowed knowledge base IDs
         allowed_kb_ids = (
@@ -436,6 +482,7 @@ class KbHeadTool(BaseTool):
 
             content = ""
             total_length = 0
+            start = 0  # Track the actual start position used for slicing
 
             if document.attachment_id:
                 attachment = context_service.get_context_by_id(
@@ -450,9 +497,8 @@ class KbHeadTool(BaseTool):
                     content = full_content[start:end]
 
             returned_length = len(content)
-            # Use actual_start instead of offset for consistent pagination
-            actual_start = min(offset, total_length) if total_length > 0 else 0
-            has_more = (actual_start + returned_length) < total_length
+            # Use clamped start (not offset) for consistent pagination
+            has_more = (start + returned_length) < total_length
 
             return {
                 "id": document.id,
@@ -468,19 +514,31 @@ class KbHeadTool(BaseTool):
             result = await asyncio.to_thread(_read_single_doc, doc_id)
             results.append(result)
 
+        set_span_attribute("document_count", len(results))
+
         logger.info(f"[KbHeadTool] Read {len(results)} documents (package mode)")
 
         return json.dumps({"documents": results}, ensure_ascii=False)
 
+    @trace_async(
+        span_name="kb_head_read_docs_http_mode", tracer_name="chat_shell.tools.kb_head"
+    )
     async def _read_docs_http_mode(
         self, document_ids: list[int], offset: int, limit: int
     ) -> str:
         """Read documents via HTTP API."""
         import httpx
 
+        add_span_event("reading_documents")
+        set_span_attribute("document_ids", str(document_ids))
+        set_span_attribute("offset", offset)
+        set_span_attribute("limit", limit)
+        set_span_attribute("mode", "http")
+
         backend_url = _get_backend_url()
         results = []
 
+        add_span_event("http_request_started")
         async with httpx.AsyncClient(timeout=60.0) as client:
             for doc_id in document_ids:
                 try:
@@ -534,6 +592,8 @@ class KbHeadTool(BaseTool):
                         f"[KbHeadTool] HTTP read-doc failed for doc {doc_id}: {e}"
                     )
                     results.append({"id": doc_id, "error": str(e)})
+
+        set_span_attribute("document_count", len(results))
 
         logger.info(f"[KbHeadTool] Read {len(results)} documents (HTTP mode)")
 
