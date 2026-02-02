@@ -49,7 +49,20 @@ export function ShareLinkDialog({
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(shareLink)
+      // Use modern Clipboard API if available, fallback to execCommand
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(shareLink)
+      } else {
+        // Fallback for browsers/contexts where Clipboard API is not available
+        const textArea = document.createElement('textarea')
+        textArea.value = shareLink
+        textArea.style.position = 'fixed'
+        textArea.style.left = '-9999px'
+        document.body.appendChild(textArea)
+        textArea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textArea)
+      }
       setCopied(true)
       // Clear any existing timeout
       if (timeoutRef.current) {
