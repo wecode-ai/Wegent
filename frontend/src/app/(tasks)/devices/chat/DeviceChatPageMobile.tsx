@@ -5,7 +5,6 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar } from '@/features/tasks/components/sidebar'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
@@ -13,7 +12,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { teamService } from '@/features/tasks/service/teamService'
 import { Monitor } from 'lucide-react'
@@ -42,7 +40,6 @@ import {
  */
 export function DeviceChatPageMobile() {
   const { t } = useTranslation('devices')
-  const router = useRouter()
   const { clearAllStreams } = useChatStreamContext()
   const { setSelectedTask, selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail } =
     useTaskContext()
