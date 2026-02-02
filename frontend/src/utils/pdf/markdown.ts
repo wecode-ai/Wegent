@@ -27,8 +27,6 @@ export function parseInlineMarkdown(text: string): TextSegment[] {
     isLink?: boolean
     math?: boolean
   }> = [
-    // Inline math: $...$  (must not be escaped \$)
-    { regex: /(?<!\\)\$([^$\n]+?)(?<!\\)\$/, math: true },
     // Bold + Italic (must come before bold and italic)
     { regex: /\*\*\*(.+?)\*\*\*/, bold: true, italic: true },
     { regex: /___(.+?)___/, bold: true, italic: true },
@@ -46,8 +44,47 @@ export function parseInlineMarkdown(text: string): TextSegment[] {
     { regex: /\[([^\]]+)\]\(([^)]+)\)/, isLink: true },
   ]
 
+  // Handle inline math separately to avoid lookbehind issues on iOS 16
+  // Match all $...$ patterns, then filter out escaped ones
+  const mathPattern = /\$([^$\n]+?)\$/g
+  let mathMatch
+  const mathMatches: Array<{ index: number; length: number; segment: TextSegment }> = []
+  while ((mathMatch = mathPattern.exec(text)) !== null) {
+    // Skip if the $ is escaped (preceded by backslash)
+    if (mathMatch.index > 0 && text[mathMatch.index - 1] === '\\') {
+      continue
+    }
+    mathMatches.push({
+      index: mathMatch.index,
+      length: mathMatch[0].length,
+      segment: {
+        text: mathMatch[1],
+        math: true,
+        mathDisplay: false,
+      },
+    })
+  }
+
+  // Calculate offset of remaining text in original text
+  let offset = 0
+
   while (remaining.length > 0) {
     let earliestMatch: { index: number; length: number; segment: TextSegment } | null = null
+
+    // Check math matches that fall within current remaining text
+    const relevantMathMatches = mathMatches.filter(
+      m => m.index >= offset && m.index < offset + remaining.length
+    )
+    for (const mathMatch of relevantMathMatches) {
+      const relativeIndex = mathMatch.index - offset
+      if (!earliestMatch || relativeIndex < earliestMatch.index) {
+        earliestMatch = {
+          index: relativeIndex,
+          length: mathMatch.length,
+          segment: mathMatch.segment,
+        }
+      }
+    }
 
     for (const pattern of patterns) {
       const match = remaining.match(pattern.regex)
@@ -57,12 +94,6 @@ export function parseInlineMarkdown(text: string): TextSegment[] {
           let segment: TextSegment
           if (pattern.isLink) {
             segment = { text: match[1], link: match[2] }
-          } else if (pattern.math) {
-            segment = {
-              text: match[1],
-              math: true,
-              mathDisplay: false,
-            }
           } else {
             segment = {
               text: match[1],
@@ -89,6 +120,7 @@ export function parseInlineMarkdown(text: string): TextSegment[] {
       // Add the styled segment
       segments.push(earliestMatch.segment)
       // Continue with remaining text
+      offset += earliestMatch.index + earliestMatch.length
       remaining = remaining.substring(earliestMatch.index + earliestMatch.length)
     } else {
       // No more matches, add remaining as plain text

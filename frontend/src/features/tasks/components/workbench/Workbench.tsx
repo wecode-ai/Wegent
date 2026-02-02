@@ -21,7 +21,7 @@ import {
   XMarkIcon,
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
-import MarkdownEditor from '@uiw/react-markdown-editor'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis, BranchDiffResponse } from '@/apis/tasks'
@@ -856,10 +856,9 @@ export default function Workbench({
                       <div className="px-4 py-4">
                         <div className="text-sm text-text-primary">
                           {displayData?.summary ? (
-                            <MarkdownEditor.Markdown
+                            <EnhancedMarkdown
                               source={displayData.summary}
-                              style={{ background: 'transparent' }}
-                              wrapperElement={{ 'data-color-mode': theme }}
+                              theme={theme}
                               components={{
                                 a: ({ href, children, ...props }) => (
                                   <a

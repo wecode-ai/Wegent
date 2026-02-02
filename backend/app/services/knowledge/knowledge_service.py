@@ -9,6 +9,7 @@ Knowledge base and document service using kinds table.
 from dataclasses import dataclass
 from typing import Optional
 
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -61,6 +62,15 @@ class BatchDeleteResult:
 
     result: BatchOperationResult
     kb_ids: list[int]  # Unique KB IDs from successfully deleted documents
+
+
+@dataclass
+class ActiveDocumentTextStats:
+    """Aggregated stats for active documents in a knowledge base."""
+
+    file_size_total: int
+    text_length_total: int
+    active_document_count: int
 
 
 class KnowledgeService:
@@ -571,33 +581,6 @@ class KnowledgeService:
         )
 
     @staticmethod
-    def get_total_file_size(
-        db: Session,
-        knowledge_base_id: int,
-    ) -> int:
-        """
-        Get the total file size for all active documents in a knowledge base.
-
-        Args:
-            db: Database session
-            knowledge_base_id: Knowledge base ID
-
-        Returns:
-            Total file size in bytes for all active documents
-        """
-        from sqlalchemy import func
-
-        return (
-            db.query(func.coalesce(func.sum(KnowledgeDocument.file_size), 0))
-            .filter(
-                KnowledgeDocument.kind_id == knowledge_base_id,
-                KnowledgeDocument.is_active == True,
-            )
-            .scalar()
-            or 0
-        )
-
-    @staticmethod
     def get_active_document_count(
         db: Session,
         knowledge_base_id: int,
@@ -626,6 +609,42 @@ class KnowledgeService:
             )
             .scalar()
             or 0
+        )
+
+    @staticmethod
+    def get_active_document_text_length_stats(
+        db: Session,
+        knowledge_base_id: int,
+    ) -> "ActiveDocumentTextStats":
+        """
+        Get aggregated active document stats with extracted text length.
+
+        Returns total extracted text length (SubtaskContext.text_length),
+        total raw file size, and active document count using a single query.
+        """
+        from app.models.subtask_context import SubtaskContext
+
+        file_size_total, text_length_total, active_document_count = (
+            db.query(
+                func.coalesce(func.sum(KnowledgeDocument.file_size), 0),
+                func.coalesce(func.sum(SubtaskContext.text_length), 0),
+                func.count(KnowledgeDocument.id),
+            )
+            .outerjoin(
+                SubtaskContext,
+                KnowledgeDocument.attachment_id == SubtaskContext.id,
+            )
+            .filter(
+                KnowledgeDocument.kind_id == knowledge_base_id,
+                KnowledgeDocument.is_active == True,
+            )
+            .one()
+        )
+
+        return ActiveDocumentTextStats(
+            file_size_total=int(file_size_total or 0),
+            text_length_total=int(text_length_total or 0),
+            active_document_count=int(active_document_count or 0),
         )
 
     # ============== Knowledge Document Operations ==============

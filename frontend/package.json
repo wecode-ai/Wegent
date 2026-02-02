@@ -158,5 +158,12 @@
     "workerDirectory": [
       "public"
     ]
-  }
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead",
+    "iOS >= 15",
+    "Safari >= 15"
+  ]
 }
