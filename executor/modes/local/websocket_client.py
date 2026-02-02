@@ -291,14 +291,14 @@ class WebSocketClient:
             self._connected = False
             self._registered = False
             logger.info("WebSocket disconnected from /local-executor namespace")
-            # Notify disconnect callback if set
+            # Notify disconnect callback if set (wrapped in try-except to prevent crashes)
             if was_connected and self._on_disconnect_callback:
                 try:
                     result = self._on_disconnect_callback()
                     if asyncio.iscoroutine(result):
                         await result
                 except Exception as e:
-                    logger.error(f"Disconnect callback error: {e}")
+                    logger.warning(f"Disconnect callback error (non-fatal): {e}")
 
         @self.sio.on("connect_error", namespace="/local-executor")
         async def on_connect_error(data):

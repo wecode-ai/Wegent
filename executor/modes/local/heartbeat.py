@@ -86,25 +86,38 @@ class LocalHeartbeatService:
         while self._running:
             try:
                 if self.client.connected:
-                    success = await self.client.send_heartbeat()
-                    if success:
-                        self._consecutive_failures = 0
-                        logger.debug(
-                            f"Heartbeat OK - {datetime.now(timezone.utc).isoformat()}"
-                        )
-                    else:
-                        self._consecutive_failures += 1
-                        logger.warning(
-                            f"Heartbeat failed (attempt {self._consecutive_failures})"
-                        )
+                    try:
+                        success = await self.client.send_heartbeat()
+                        if success:
+                            self._consecutive_failures = 0
+                            logger.debug(
+                                f"Heartbeat OK - {datetime.now(timezone.utc).isoformat()}"
+                            )
+                        else:
+                            self._consecutive_failures += 1
+                            logger.warning(
+                                f"Heartbeat failed (attempt {self._consecutive_failures})"
+                            )
+                    except ConnectionError:
+                        # Connection was lost, just log and continue
+                        # The main runner will handle reconnection
+                        logger.debug("Heartbeat skipped: connection lost")
                 else:
-                    logger.warning("Heartbeat skipped: not connected")
+                    # Only log periodically to avoid log spam during reconnection
+                    if self._consecutive_failures == 0:
+                        logger.info("Heartbeat paused: waiting for reconnection")
+                    self._consecutive_failures += 1
 
                 if self._consecutive_failures >= self._max_failures:
-                    logger.error(
-                        f"Heartbeat failed {self._consecutive_failures} consecutive times"
+                    logger.warning(
+                        f"Heartbeat failed {self._consecutive_failures} consecutive times, "
+                        "waiting for reconnection"
                     )
+                    # Reset counter to avoid repeated warnings
+                    self._consecutive_failures = 0
 
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 self._consecutive_failures += 1
                 logger.warning(f"Heartbeat error: {e}")

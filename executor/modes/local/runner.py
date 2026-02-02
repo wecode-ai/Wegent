@@ -281,47 +281,24 @@ class LocalRunner:
         )
 
         while self._running:
-            elapsed = time.time() - start_time
-
-            # Check if timeout exceeded
-            if elapsed >= timeout:
-                logger.error(
-                    f"Reconnection timeout after {elapsed:.1f}s "
-                    f"(max={timeout}s), giving up"
-                )
-                return False
-
-            # Check if already reconnected (via Socket.IO auto-reconnect)
-            if self.websocket_client.connected and self.websocket_client.registered:
-                logger.info(
-                    f"Connection restored after {elapsed:.1f}s, "
-                    "sending heartbeat to sync state"
-                )
-                # Send heartbeat to sync state with backend
-                try:
-                    await self.websocket_client.send_heartbeat()
-                    logger.info("Heartbeat sent successfully after reconnection")
-                except Exception as e:
-                    logger.warning(f"Failed to send heartbeat after reconnection: {e}")
-                return True
-
-            # Log progress at each check interval
-            remaining = timeout - elapsed
-            logger.info(
-                f"Waiting for reconnection... "
-                f"(elapsed={elapsed:.1f}s, remaining={remaining:.1f}s)"
-            )
-
-            # Wait for either reconnect event or check interval
             try:
-                await asyncio.wait_for(
-                    self._reconnect_event.wait(),
-                    timeout=check_interval,
-                )
-                # Reconnect event was set, verify connection
+                elapsed = time.time() - start_time
+
+                # Check if timeout exceeded
+                if elapsed >= timeout:
+                    logger.error(
+                        f"Reconnection timeout after {elapsed:.1f}s "
+                        f"(max={timeout}s), giving up"
+                    )
+                    return False
+
+                # Check if already reconnected (via Socket.IO auto-reconnect)
                 if self.websocket_client.connected and self.websocket_client.registered:
-                    elapsed = time.time() - start_time
-                    logger.info(f"Reconnection confirmed after {elapsed:.1f}s")
+                    logger.info(
+                        f"Connection restored after {elapsed:.1f}s, "
+                        "sending heartbeat to sync state"
+                    )
+                    # Send heartbeat to sync state with backend
                     try:
                         await self.websocket_client.send_heartbeat()
                         logger.info("Heartbeat sent successfully after reconnection")
@@ -330,9 +307,48 @@ class LocalRunner:
                             f"Failed to send heartbeat after reconnection: {e}"
                         )
                     return True
-            except asyncio.TimeoutError:
-                # Check interval passed, continue monitoring
-                continue
+
+                # Log progress at each check interval
+                remaining = timeout - elapsed
+                logger.info(
+                    f"Waiting for reconnection... "
+                    f"(elapsed={elapsed:.1f}s, remaining={remaining:.1f}s)"
+                )
+
+                # Wait for either reconnect event or check interval
+                try:
+                    await asyncio.wait_for(
+                        self._reconnect_event.wait(),
+                        timeout=check_interval,
+                    )
+                    # Reconnect event was set, verify connection
+                    if (
+                        self.websocket_client.connected
+                        and self.websocket_client.registered
+                    ):
+                        elapsed = time.time() - start_time
+                        logger.info(f"Reconnection confirmed after {elapsed:.1f}s")
+                        try:
+                            await self.websocket_client.send_heartbeat()
+                            logger.info(
+                                "Heartbeat sent successfully after reconnection"
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to send heartbeat after reconnection: {e}"
+                            )
+                        return True
+                except asyncio.TimeoutError:
+                    # Check interval passed, continue monitoring
+                    continue
+
+            except asyncio.CancelledError:
+                logger.info("Reconnection wait cancelled")
+                raise
+            except Exception as e:
+                # Log unexpected errors but continue waiting
+                logger.warning(f"Error during reconnection wait: {e}")
+                await asyncio.sleep(1.0)
 
         # Runner was stopped during reconnection wait
         logger.info("Runner stopped while waiting for reconnection")
@@ -499,11 +515,10 @@ class LocalRunner:
                         self._disconnected_at = time.time()
                         self._reconnecting = True
                         self._reconnect_event.clear()
-
-                    logger.warning(
-                        "WebSocket disconnected, pausing task processing and "
-                        "waiting for reconnection..."
-                    )
+                        logger.warning(
+                            "WebSocket disconnected, pausing task processing and "
+                            "waiting for reconnection..."
+                        )
 
                     # Wait for reconnection with timeout
                     reconnected = await self._wait_for_reconnection()
@@ -547,6 +562,11 @@ class LocalRunner:
             except asyncio.CancelledError:
                 logger.info("Task loop cancelled")
                 break
+            except Exception as e:
+                # Catch any unexpected exceptions to prevent loop crash
+                logger.exception(f"Unexpected error in task loop: {e}")
+                # Brief pause before continuing to avoid tight error loops
+                await asyncio.sleep(1.0)
 
         logger.info("Task processing loop ended")
 
