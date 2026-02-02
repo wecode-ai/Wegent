@@ -304,6 +304,7 @@ class ChatContext:
                 "skipping KB prompt enhancement"
             )
 
+        # KB configs (max_calls, exempt_calls, name) are now fetched by KnowledgeBaseTool from Backend API
         result = await prepare_knowledge_base_tools(
             knowledge_base_ids=self._request.knowledge_base_ids,
             user_id=self._request.user_id,
@@ -677,8 +678,9 @@ class ChatContext:
         model_namespace = "default"
         if self._request.model_config:
             model_name = self._request.model_config.get("model_name")
-            model_namespace = self._request.model_config.get(
-                "model_namespace", "default"
+            # Use `or "default"` to handle both missing key and None value
+            model_namespace = (
+                self._request.model_config.get("model_namespace") or "default"
             )
 
         create_subscription_tool = CreateSubscriptionTool(

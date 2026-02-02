@@ -15,11 +15,15 @@ Usage:
     uv sync --group build
     uv run python scripts/build_local.py
 
+    # Cross-compile for Intel on Apple Silicon:
+    uv run python scripts/build_local.py --target-arch x86_64
+
 Output:
     dist/wegent-executor (macOS/Linux)
     dist/wegent-executor.exe (Windows)
 """
 
+import argparse
 import os
 import platform
 import shutil
@@ -60,8 +64,13 @@ def clean_build_artifacts():
             file_path.unlink()
 
 
-def build_executable():
-    """Build the executable using PyInstaller."""
+def build_executable(target_arch: str | None = None):
+    """Build the executable using PyInstaller.
+
+    Args:
+        target_arch: Target architecture for cross-compilation (e.g., 'x86_64', 'arm64').
+                     If None, builds for the native architecture.
+    """
     project_root = get_project_root()
     executor_root = get_executor_root()
 
@@ -211,6 +220,11 @@ def build_executable():
         str(executor_root / "main.py"),
     ]
 
+    # Add target architecture for cross-compilation on macOS
+    if target_arch and platform.system() == "Darwin":
+        cmd.insert(-1, f"--target-arch={target_arch}")
+        print(f"Cross-compiling for architecture: {target_arch}")
+
     print("Building executable...")
     print(f"Command: {' '.join(cmd[:10])}...")  # Print first few args
 
@@ -227,6 +241,8 @@ def build_executable():
         print(f"\nBuild successful!")
         print(f"Output: {output_path}")
         print(f"Size: {size_mb:.1f} MB")
+        if target_arch:
+            print(f"Target architecture: {target_arch}")
     else:
         print(f"Error: Output file not found at {output_path}")
         sys.exit(1)
@@ -234,18 +250,29 @@ def build_executable():
 
 def main():
     """Main entry point."""
+    parser = argparse.ArgumentParser(description="Build Wegent Local Executor binary")
+    parser.add_argument(
+        "--target-arch",
+        choices=["x86_64", "arm64"],
+        help="Target architecture for cross-compilation (macOS only). "
+        "Use 'x86_64' to build for Intel Macs on Apple Silicon.",
+    )
+    args = parser.parse_args()
+
     print("=" * 60)
     print("Wegent Local Executor - Build Script")
     print("=" * 60)
     print(f"Platform: {platform.system()} {platform.machine()}")
     print(f"Python: {sys.version}")
+    if args.target_arch:
+        print(f"Target architecture: {args.target_arch}")
     print()
 
     # Clean previous builds
     clean_build_artifacts()
 
     # Build executable
-    build_executable()
+    build_executable(target_arch=args.target_arch)
 
     print()
     print("=" * 60)

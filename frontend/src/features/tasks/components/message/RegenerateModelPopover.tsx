@@ -108,7 +108,7 @@ export function RegenerateModelPopover({
                     onClick={() => handleModelSelect(model)}
                     className={cn(
                       'w-full flex items-center gap-2 px-2 py-2 rounded-md text-left',
-                      'hover:bg-fill-sec transition-colors',
+                      'hover:bg-hover transition-colors',
                       'focus:outline-none focus:ring-2 focus:ring-primary/20'
                     )}
                   >

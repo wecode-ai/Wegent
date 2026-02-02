@@ -630,14 +630,22 @@ const MessageBubble = memo(
               like: t('chat:messages.like') || 'Like',
               dislike: t('chat:messages.dislike') || 'Dislike',
             }}
-            showRegenerate={
-              Boolean(onRegenerate) &&
-              !isGroupChat &&
-              isLastAiMessage &&
-              (msg.subtaskStatus === 'COMPLETED' || msg.status === 'completed') &&
-              msg.subtaskStatus !== 'RUNNING' &&
-              msg.status !== 'streaming'
-            }
+            showRegenerate={(() => {
+              const hasOnRegenerate = Boolean(onRegenerate)
+              const isCompleted =
+                msg.subtaskStatus === 'COMPLETED' ||
+                msg.subtaskStatus === 'CANCELLED' ||
+                msg.status === 'completed'
+              const isNotRunning =
+                msg.subtaskStatus !== 'RUNNING' &&
+                msg.subtaskStatus !== 'PENDING' &&
+                msg.subtaskStatus !== 'PROCESSING' &&
+                msg.status !== 'streaming' &&
+                msg.status !== 'pending'
+              return (
+                hasOnRegenerate && !isGroupChat && isLastAiMessage && isCompleted && isNotRunning
+              )
+            })()}
             onRegenerateClick={() => setIsRegeneratePopoverOpen(true)}
             isRegenerating={isRegenerating}
             renderRegenerateButton={(defaultButton, tooltipText) => (
@@ -1492,7 +1500,7 @@ const MessageBubble = memo(
             ) : (
               <>
                 {/* Show recovered content if available, otherwise show normal content */}
-                {msg.recoveredContent && msg.subtaskStatus === 'RUNNING' ? (
+                {msg.recoveredContent && msg.subtaskStatus === 'RUNNING' && !msg.result?.blocks ? (
                   renderRecoveredContent()
                 ) : !isUserTypeMessage && msg.result?.blocks && msg.result.blocks.length > 0 ? (
                   /* For AI messages with blocks data, use mixed content view to interleave text and tools */
@@ -1503,6 +1511,72 @@ const MessageBubble = memo(
                       taskStatus={msg.subtaskStatus}
                       theme={theme}
                       blocks={msg.result.blocks}
+                    />
+                    <SourceReferences sources={msg.sources || msg.result?.sources || []} />
+                    <BubbleTools
+                      contentToCopy={msg.content || ''}
+                      onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
+                      tools={[
+                        {
+                          key: 'download',
+                          title: t('messages.download') || 'Download',
+                          icon: <Download className="h-4 w-4 text-text-muted" />,
+                          onClick: () => {
+                            const blob = new Blob([msg.content || ''], {
+                              type: 'text/plain;charset=utf-8',
+                            })
+                            const url = URL.createObjectURL(blob)
+                            const a = document.createElement('a')
+                            a.href = url
+                            a.download = 'message.md'
+                            a.click()
+                            URL.revokeObjectURL(url)
+                            trace.download(msg.type, msg.subtaskId)
+                          },
+                        },
+                      ]}
+                      feedback={feedback}
+                      onLike={handleLike}
+                      onDislike={handleDislike}
+                      feedbackLabels={{
+                        like: t('chat:messages.like') || 'Like',
+                        dislike: t('chat:messages.dislike') || 'Dislike',
+                      }}
+                      showRegenerate={(() => {
+                        const hasOnRegenerate = Boolean(onRegenerate)
+                        const isCompleted =
+                          msg.subtaskStatus === 'COMPLETED' ||
+                          msg.subtaskStatus === 'CANCELLED' ||
+                          msg.status === 'completed'
+                        const isNotRunning =
+                          msg.subtaskStatus !== 'RUNNING' &&
+                          msg.subtaskStatus !== 'PENDING' &&
+                          msg.subtaskStatus !== 'PROCESSING' &&
+                          msg.status !== 'streaming' &&
+                          msg.status !== 'pending'
+                        return (
+                          hasOnRegenerate &&
+                          !isGroupChat &&
+                          isLastAiMessage &&
+                          isCompleted &&
+                          isNotRunning
+                        )
+                      })()}
+                      onRegenerateClick={() => setIsRegeneratePopoverOpen(true)}
+                      isRegenerating={isRegenerating}
+                      renderRegenerateButton={(defaultButton, tooltipText) => (
+                        <RegenerateModelPopover
+                          open={isRegeneratePopoverOpen}
+                          onOpenChange={setIsRegeneratePopoverOpen}
+                          selectedTeam={selectedTeam ?? null}
+                          onSelectModel={model => {
+                            onRegenerate?.(msg, model)
+                          }}
+                          isLoading={isRegenerating}
+                          trigger={defaultButton}
+                          tooltipText={tooltipText}
+                        />
+                      )}
                     />
                   </>
                 ) : (

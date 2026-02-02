@@ -464,7 +464,12 @@ class LocalRunner:
             execution_result = (
                 self.current_agent.state_manager.get_current_state() or {}
             )
-            logger.info(f"Execution result for task_id={task_id}: {execution_result}")
+            # Truncate execution_result to 20 characters for logging
+            result_str = str(execution_result)
+            truncated_result = (
+                result_str[:20] + "..." if len(result_str) > 20 else result_str
+            )
+            logger.info(f"Execution result for task_id={task_id}: {truncated_result}")
 
         # Report final result
         await progress_reporter.report_result(

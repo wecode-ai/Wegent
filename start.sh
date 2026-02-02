@@ -781,6 +781,9 @@ LOCAL_IP=$(get_local_ip)
 [ -z "$WEGENT_SOCKET_URL" ] && WEGENT_SOCKET_URL="http://$LOCAL_IP:$BACKEND_PORT"
 [ -z "$TASK_API_DOMAIN" ] && TASK_API_DOMAIN="http://$LOCAL_IP:$BACKEND_PORT"
 [ -z "$EXECUTOR_MANAGER_URL" ] && EXECUTOR_MANAGER_URL="http://localhost:$EXECUTOR_MANAGER_PORT"
+[ -z "$BACKEND_API_URL" ] && BACKEND_API_URL="http://$LOCAL_IP:$BACKEND_PORT"
+
+export BACKEND_API_URL="$BACKEND_API_URL"
 
 # Create PID directory
 mkdir -p "$PID_DIR"
@@ -857,11 +860,21 @@ stop_services() {
         fi
     done
 
-    # Clean up potentially remaining processes
-    pkill -f "uvicorn app.main:app" 2>/dev/null || true
-    pkill -f "uvicorn main:app.*8001" 2>/dev/null || true
-    pkill -f "uvicorn chat_shell.main:app" 2>/dev/null || true
-    pkill -f "npm run dev.*$WEGENT_FRONTEND_PORT" 2>/dev/null || true
+    # Clean up potentially remaining processes by port (only kill processes on our configured ports)
+    # This ensures we don't accidentally kill other backend instances on the same machine
+    for port in $BACKEND_PORT $CHAT_SHELL_PORT $EXECUTOR_MANAGER_PORT $WEGENT_FRONTEND_PORT; do
+        local pids=$(lsof -ti :$port 2>/dev/null || true)
+        if [ -n "$pids" ]; then
+            echo -e "  Cleaning up processes on port $port..."
+            echo "$pids" | xargs kill 2>/dev/null || true
+            sleep 0.5
+            # Force kill if still running
+            pids=$(lsof -ti :$port 2>/dev/null || true)
+            if [ -n "$pids" ]; then
+                echo "$pids" | xargs kill -9 2>/dev/null || true
+            fi
+        fi
+    done
 
     echo -e "${GREEN}All services stopped${NC}"
 }

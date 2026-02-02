@@ -267,7 +267,6 @@ export interface TaskDetail {
   completed_at?: string
   user: User
   team: Team
-  subtasks: TaskDetailSubtask[]
   workbench?: WorkbenchData | null
   model_id?: string | null // Model name used for this task
   is_group_chat?: boolean // Whether this task is a group chat
