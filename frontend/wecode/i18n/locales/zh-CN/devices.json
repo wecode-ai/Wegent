@@ -1,0 +1,11 @@
+{
+  "internal_step_install": "安装 wecode-cli",
+  "internal_step_install_desc": "运行一键安装脚本（需替换您的 GitLab Token）",
+  "internal_step_login": "登录",
+  "internal_step_login_desc": "使用 wecode 命令登录您的账号",
+  "internal_step_executor_install": "安装 Executor",
+  "internal_step_executor_install_desc": "安装 wegent executor 组件",
+  "internal_step_start": "启动",
+  "internal_step_start_desc": "启动 Executor 服务",
+  "internal_gitlab_token_hint": "请将 <YOUR_GITLAB_TOKEN> 替换为您的 GitLab Personal Access Token"
+}
