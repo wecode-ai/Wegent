@@ -5,21 +5,23 @@
 'use client'
 
 import '@wecode/i18n' // side-effect import to load wecode translations
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Terminal, Copy, Check, ExternalLink, AlertTriangle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
-// Internal GitLab install script URL
-const INTERNAL_INSTALL_URL =
+// Internal GitLab install script URL (fallback)
+const DEFAULT_INSTALL_URL =
   'https://git.intra.weibo.com/api/v4/projects/weibo_rd%2Fcommon%2Fwecode%2Fwecode-cli-cc/repository/files/scripts%2Finstall.sh/raw?ref=master'
+const DEFAULT_INSTALL_COMMAND = `curl -fsSL "${DEFAULT_INSTALL_URL}" | bash`
 
 export interface LocalExecutorGuideProps {
   backendUrl: string
   authToken: string
   guideUrl?: string
+  installCommand?: string
 }
 
 // Component for copy button with state
@@ -98,24 +100,18 @@ function CommandStep({
 
 /**
  * Internal network version of Local Executor Guide
- * Shows 4 steps: Install wecode-cli -> Login -> Install executor -> Start
+ * Shows 3 steps: Install wecode-cli -> Login -> Start
  */
-export function LocalExecutorGuide({ guideUrl }: LocalExecutorGuideProps) {
+export function LocalExecutorGuide({ guideUrl, installCommand }: LocalExecutorGuideProps) {
   const { t } = useTranslation('devices')
 
-  // Step 1: Install wecode-cli from internal GitLab
-  const installCommand = useMemo(
-    () => `curl -fsSL -H "PRIVATE-TOKEN: <YOUR_GITLAB_TOKEN>" "${INTERNAL_INSTALL_URL}" | bash`,
-    []
-  )
+  // Step 1: Install wecode-cli (use provided command or fallback)
+  const installCmd = installCommand || DEFAULT_INSTALL_COMMAND
 
   // Step 2: Login
   const loginCommand = 'wecode login'
 
-  // Step 3: Install executor
-  const executorInstallCommand = 'wecode executor install'
-
-  // Step 4: Start executor
+  // Step 3: Start executor
   const executorStartCommand = 'wecode executor start'
 
   return (
@@ -138,7 +134,7 @@ export function LocalExecutorGuide({ guideUrl }: LocalExecutorGuideProps) {
           stepNumber={1}
           title={t('internal_step_install')}
           description={t('internal_step_install_desc')}
-          command={installCommand}
+          command={installCmd}
         />
 
         {/* Step 2: Login */}
@@ -149,27 +145,13 @@ export function LocalExecutorGuide({ guideUrl }: LocalExecutorGuideProps) {
           command={loginCommand}
         />
 
-        {/* Step 3: Install executor */}
+        {/* Step 3: Start */}
         <CommandStep
           stepNumber={3}
-          title={t('internal_step_executor_install')}
-          description={t('internal_step_executor_install_desc')}
-          command={executorInstallCommand}
-        />
-
-        {/* Step 4: Start */}
-        <CommandStep
-          stepNumber={4}
           title={t('internal_step_start')}
           description={t('internal_step_start_desc')}
           command={executorStartCommand}
         />
-
-        {/* GitLab token hint */}
-        <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mb-4">
-          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-          <p className="text-sm text-amber-700">{t('internal_gitlab_token_hint')}</p>
-        </div>
 
         {/* Gatekeeper hint */}
         <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg mb-3">
@@ -177,7 +159,13 @@ export function LocalExecutorGuide({ guideUrl }: LocalExecutorGuideProps) {
           <p className="text-sm text-blue-700">{t('gatekeeper_hint')}</p>
         </div>
 
-        {/* Guide link */}
+        {/* Beta warning */}
+        <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mb-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <p className="text-sm text-amber-700">{t('beta_warning')}</p>
+        </div>
+
+        {/* Config link */}
         {guideUrl && (
           <div className="mt-4 flex justify-center">
             <a
@@ -187,7 +175,7 @@ export function LocalExecutorGuide({ guideUrl }: LocalExecutorGuideProps) {
               className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
             >
               <ExternalLink className="w-4 h-4" />
-              {t('view_guide')}
+              {t('view_config')}
             </a>
           </div>
         )}
