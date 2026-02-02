@@ -77,7 +77,6 @@
   "version": {
     "current": "Current Version",
     "latest": "Latest Version",
-    "updateAvailable": "Update Available",
-    "upgradeGuide": "View Upgrade Guide"
+    "updateAvailable": "Update Available"
   }
 }

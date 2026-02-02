@@ -77,7 +77,6 @@
   "version": {
     "current": "当前版本",
     "latest": "最新版本",
-    "updateAvailable": "有新版本可用",
-    "upgradeGuide": "查看升级指南"
+    "updateAvailable": "有新版本可用"
   }
 }

@@ -27,9 +27,6 @@ export function VersionBadge({
 
   if (!executorVersion) return null
 
-  // Environment variable for upgrade guide URL
-  const upgradeGuideUrl = process.env.NEXT_PUBLIC_UPGRADE_GUIDE_URL || ''
-
   return (
     <div className={cn('flex items-center gap-1.5', className)}>
       <span className="text-xs text-text-muted">v{executorVersion}</span>
@@ -53,16 +50,6 @@ export function VersionBadge({
                 <p className="text-text-muted">
                   {t('version.latest')}: {latestVersion}
                 </p>
-                {upgradeGuideUrl && (
-                  <a
-                    href={upgradeGuideUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-primary hover:underline mt-1"
-                  >
-                    {t('version.upgradeGuide')}
-                  </a>
-                )}
               </div>
             </TooltipContent>
           </Tooltip>
