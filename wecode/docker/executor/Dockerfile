@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir uv -i http://mirrors.cloud.aliyuncs.com/pypi/simp
 ENV UV_INDEX_URL="http://mirrors.cloud.aliyuncs.com/pypi/simple/"
 ENV UV_EXTRA_INDEX_URL=""
 
-RUN npm update -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code@2.1.27
 
 # Set environment variables
 ENV PATH="/usr/local/bin:${PATH}"
@@ -59,7 +59,7 @@ WORKDIR /app
 # Configure npm registry for China
 RUN npm config set registry https://registry.npmmirror.com
 
-RUN npm update -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code@2.1.27
 
 # Install uv from PyPI using Aliyun mirror
 RUN pip install --no-cache-dir uv -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com && \
