@@ -611,7 +611,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         logger.info(
             f"[Device WS] device:register user={user_id}, device_id={payload.device_id}, "
-            f"name={payload.name}"
+            f"name={payload.name}, executor_version={payload.executor_version}"
         )
 
         # Database operation: quick in, quick out
@@ -625,6 +625,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             device_id=payload.device_id,
             socket_id=sid,
             name=payload.name,
+            executor_version=payload.executor_version,
         )
 
         # Update session with device_id
@@ -675,7 +676,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         # Refresh Redis TTL and update running_task_ids
         await device_service.refresh_device_heartbeat(
-            user_id, payload.device_id, payload.running_task_ids
+            user_id, payload.device_id, payload.running_task_ids, payload.executor_version
         )
 
         # Database operation: quick in, quick out

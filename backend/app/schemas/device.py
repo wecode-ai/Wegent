@@ -54,6 +54,16 @@ class DeviceInfo(BaseModel):
     running_tasks: List[DeviceRunningTask] = Field(
         default_factory=list, description="List of tasks running on this device"
     )
+    # Version information
+    executor_version: Optional[str] = Field(
+        None, description="Device's current executor version"
+    )
+    latest_version: Optional[str] = Field(
+        None, description="Latest available executor version"
+    )
+    update_available: bool = Field(
+        False, description="Whether an update is available"
+    )
 
     class Config:
         from_attributes = True
@@ -81,6 +91,11 @@ class DeviceRegisterPayload(BaseModel):
         max_length=100,
         description="Device name (self-provided)",
     )
+    executor_version: Optional[str] = Field(
+        None,
+        max_length=50,
+        description="Executor version (e.g., '1.0.0')",
+    )
 
 
 class DeviceHeartbeatPayload(BaseModel):
@@ -89,6 +104,11 @@ class DeviceHeartbeatPayload(BaseModel):
     device_id: str = Field(..., description="Device unique identifier")
     running_task_ids: List[int] = Field(
         default_factory=list, description="List of active task IDs on this device"
+    )
+    executor_version: Optional[str] = Field(
+        None,
+        max_length=50,
+        description="Executor version (e.g., '1.0.0')",
     )
 
 

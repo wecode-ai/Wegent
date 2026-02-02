@@ -10,16 +10,19 @@ This service handles:
 - Online state management via Redis
 - Heartbeat monitoring
 - Task routing to devices
+- Version management and update checking
 """
 
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from packaging import version as pkg_version
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
+from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.device import MAX_DEVICE_SLOTS
 
@@ -40,7 +43,12 @@ class DeviceService:
 
     @staticmethod
     async def set_device_online(
-        user_id: int, device_id: str, socket_id: str, name: str, status: str = "online"
+        user_id: int,
+        device_id: str,
+        socket_id: str,
+        name: str,
+        status: str = "online",
+        executor_version: Optional[str] = None,
     ) -> bool:
         """
         Set device online status in Redis.
@@ -51,6 +59,7 @@ class DeviceService:
             socket_id: WebSocket session ID
             name: Device name
             status: Device status (online, busy)
+            executor_version: Executor version (e.g., '1.0.0')
 
         Returns:
             True if set successfully
@@ -61,6 +70,7 @@ class DeviceService:
             "name": name,
             "status": status,
             "last_heartbeat": datetime.now().isoformat(),
+            "executor_version": executor_version,
         }
         result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
         logger.info(f"[DeviceService] set_device_online: key={key}, result={result}")
@@ -68,7 +78,10 @@ class DeviceService:
 
     @staticmethod
     async def refresh_device_heartbeat(
-        user_id: int, device_id: str, running_task_ids: list[int] = None
+        user_id: int,
+        device_id: str,
+        running_task_ids: list[int] = None,
+        executor_version: Optional[str] = None,
     ) -> bool:
         """
         Refresh device heartbeat in Redis (extend TTL) and update running task IDs.
@@ -77,6 +90,7 @@ class DeviceService:
             user_id: Device owner user ID
             device_id: Device unique identifier
             running_task_ids: List of task IDs currently running on this device
+            executor_version: Executor version (e.g., '1.0.0')
 
         Returns:
             True if refreshed successfully
@@ -87,6 +101,8 @@ class DeviceService:
             data["last_heartbeat"] = datetime.now().isoformat()
             if running_task_ids is not None:
                 data["running_task_ids"] = running_task_ids
+            if executor_version is not None:
+                data["executor_version"] = executor_version
             result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
             logger.debug(
                 f"[DeviceService] refresh_device_heartbeat: key={key}, "
@@ -249,6 +265,25 @@ class DeviceService:
         }
 
     @staticmethod
+    def is_update_available(current: Optional[str], latest: str) -> bool:
+        """
+        Check if update is available using semantic version comparison.
+
+        Args:
+            current: Current executor version (e.g., '1.0.0')
+            latest: Latest available version (e.g., '1.1.0')
+
+        Returns:
+            True if update is available (current < latest)
+        """
+        if not current:
+            return False
+        try:
+            return pkg_version.parse(current) < pkg_version.parse(latest)
+        except Exception:
+            return False
+
+    @staticmethod
     async def get_all_devices(db: Session, user_id: int) -> List[Dict[str, Any]]:
         """
         Get all devices for a user (both online and offline).
@@ -292,6 +327,15 @@ class DeviceService:
                 db, user_id, device_id
             )
 
+            # Get version info
+            executor_version = (
+                online_info.get("executor_version") if online_info else None
+            )
+            latest_version = settings.EXECUTOR_LATEST_VERSION
+            update_available = DeviceService.is_update_available(
+                executor_version, latest_version
+            )
+
             result.append(
                 {
                     "id": device_kind.id,
@@ -310,6 +354,9 @@ class DeviceService:
                     "slot_used": slot_info["used"],
                     "slot_max": slot_info["max"],
                     "running_tasks": slot_info["running_tasks"],
+                    "executor_version": executor_version,
+                    "latest_version": latest_version,
+                    "update_available": update_available,
                 }
             )
 
