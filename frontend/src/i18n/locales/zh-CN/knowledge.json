@@ -251,9 +251,9 @@
     "permission": {
       "noAccess": "您没有操作权限",
       "share": "分享",
-      "shareLink": "分享链接",
-      "shareLinkDescription": "复制链接发送给其他人，他们可以通过链接申请访问「{{name}}」",
-      "shareInstructions": "分享后，您仍然可以管理该知识库，其他人需要申请并获得批准后才能访问。",
+      "shareLink": "邀请协作",
+      "shareLinkDescription": "将链接发送给其他人，对方可申请访问知识库「{{name}}」",
+      "shareInstructions": "分享后您仍可管理该知识库，对方需提交申请并经您批准后方可访问。",
       "copyLink": "复制链接",
       "linkCopied": "链接已复制到剪贴板",
       "management": "权限管理",

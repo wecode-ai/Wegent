@@ -251,9 +251,9 @@
     "permission": {
       "noAccess": "You do not have permission to perform this action",
       "share": "Share",
-      "shareLink": "Share Link",
-      "shareLinkDescription": "Copy and send this link to others. They can use it to request access to \"{{name}}\"",
-      "shareInstructions": "After sharing, you can still manage this knowledge base. Others need to submit a request and get approved before accessing.",
+      "shareLink": "Invite to Collaborate",
+      "shareLinkDescription": "Send this link to others so they can request access to \"{{name}}\"",
+      "shareInstructions": "You retain full control after sharing. Others must submit a request and receive your approval before accessing.",
       "copyLink": "Copy Link",
       "linkCopied": "Link copied to clipboard",
       "management": "Permission Management",
