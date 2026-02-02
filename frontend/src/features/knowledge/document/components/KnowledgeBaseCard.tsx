@@ -122,7 +122,7 @@ export function KnowledgeBaseCard({
                 e.stopPropagation()
                 onShare()
               }}
-              title={t('knowledge:permission.share')}
+              title={t('knowledge:document.permission.share')}
             >
               <Share2 className="w-4 h-4" />
             </button>

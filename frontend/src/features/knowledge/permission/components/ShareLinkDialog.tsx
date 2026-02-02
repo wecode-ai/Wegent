@@ -38,6 +38,46 @@ export function ShareLinkDialog({
       ? `${window.location.origin}/knowledge/share/${kbId}`
       : ''
 
+  // Helper function to copy text to clipboard
+  const copyToClipboard = async (text: string) => {
+    try {
+      // Use modern Clipboard API if available, fallback to execCommand
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(text)
+      } else {
+        // Fallback for browsers/contexts where Clipboard API is not available
+        const textArea = document.createElement('textarea')
+        textArea.value = text
+        textArea.style.position = 'fixed'
+        textArea.style.left = '-9999px'
+        document.body.appendChild(textArea)
+        textArea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textArea)
+      }
+      return true
+    } catch (err) {
+      console.error('Failed to copy:', err)
+      return false
+    }
+  }
+
+  // Auto-copy link when dialog opens
+  useEffect(() => {
+    if (open && shareLink) {
+      copyToClipboard(shareLink).then(success => {
+        if (success) {
+          setCopied(true)
+          // Clear any existing timeout
+          if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current)
+          }
+          timeoutRef.current = setTimeout(() => setCopied(false), 2000)
+        }
+      })
+    }
+  }, [open, shareLink])
+
   // Clean up timeout on unmount
   useEffect(() => {
     return () => {
@@ -48,29 +88,14 @@ export function ShareLinkDialog({
   }, [])
 
   const handleCopy = async () => {
-    try {
-      // Use modern Clipboard API if available, fallback to execCommand
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        await navigator.clipboard.writeText(shareLink)
-      } else {
-        // Fallback for browsers/contexts where Clipboard API is not available
-        const textArea = document.createElement('textarea')
-        textArea.value = shareLink
-        textArea.style.position = 'fixed'
-        textArea.style.left = '-9999px'
-        document.body.appendChild(textArea)
-        textArea.select()
-        document.execCommand('copy')
-        document.body.removeChild(textArea)
-      }
+    const success = await copyToClipboard(shareLink)
+    if (success) {
       setCopied(true)
       // Clear any existing timeout
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current)
       }
       timeoutRef.current = setTimeout(() => setCopied(false), 2000)
-    } catch (err) {
-      console.error('Failed to copy link:', err)
     }
   }
 
