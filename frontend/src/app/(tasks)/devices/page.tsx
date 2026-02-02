@@ -65,7 +65,6 @@ export default function DevicesPage() {
   const guideUrl = process.env.NEXT_PUBLIC_DEVICE_GUIDE_URL || ''
   const communityUrl = process.env.NEXT_PUBLIC_COMMUNITY_URL || ''
   const faqUrl = process.env.NEXT_PUBLIC_FAQ_URL || ''
-  const installCommand = process.env.NEXT_PUBLIC_DEVICE_INSTALL_COMMAND || ''
 
   // Generate dynamic backend URL from runtime config
   const backendUrl = useMemo(() => getSocketUrl(), [])
@@ -290,7 +289,6 @@ export default function DevicesPage() {
                   backendUrl={backendUrl}
                   authToken={authToken}
                   guideUrl={guideUrl}
-                  installCommand={installCommand}
                 />
 
                 {/* Help section */}

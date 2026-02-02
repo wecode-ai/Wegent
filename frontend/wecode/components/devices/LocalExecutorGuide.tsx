@@ -12,16 +12,13 @@ import { Terminal, Copy, Check, ExternalLink, AlertTriangle } from 'lucide-react
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
-// Internal GitLab install script URL (fallback)
-const DEFAULT_INSTALL_URL =
-  'https://git.intra.weibo.com/api/v4/projects/weibo_rd%2Fcommon%2Fwecode%2Fwecode-cli-cc/repository/files/scripts%2Finstall.sh/raw?ref=master'
-const DEFAULT_INSTALL_COMMAND = `curl -fsSL "${DEFAULT_INSTALL_URL}" | bash`
+// Install command from environment variable (wecode-specific config)
+const INSTALL_COMMAND = process.env.NEXT_PUBLIC_DEVICE_INSTALL_COMMAND || ''
 
 export interface LocalExecutorGuideProps {
   backendUrl: string
   authToken: string
   guideUrl?: string
-  installCommand?: string
 }
 
 // Component for copy button with state
@@ -102,11 +99,8 @@ function CommandStep({
  * Internal network version of Local Executor Guide
  * Shows 3 steps: Install wecode-cli -> Login -> Start
  */
-export function LocalExecutorGuide({ guideUrl, installCommand }: LocalExecutorGuideProps) {
+export function LocalExecutorGuide({ guideUrl }: LocalExecutorGuideProps) {
   const { t } = useTranslation('devices')
-
-  // Step 1: Install wecode-cli (use provided command or fallback)
-  const installCmd = installCommand || DEFAULT_INSTALL_COMMAND
 
   // Step 2: Login
   const loginCommand = 'wecode login'
@@ -134,7 +128,7 @@ export function LocalExecutorGuide({ guideUrl, installCommand }: LocalExecutorGu
           stepNumber={1}
           title={t('internal_step_install')}
           description={t('internal_step_install_desc')}
-          command={installCmd}
+          command={INSTALL_COMMAND}
         />
 
         {/* Step 2: Login */}
