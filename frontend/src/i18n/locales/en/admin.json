@@ -647,6 +647,20 @@
       "model_deleted": "Model deleted successfully",
       "add_first_model": "Add your first public model"
     },
+    "device_step": {
+      "title": "Connect Device",
+      "description": "Connect your local device to run AI tasks. Once connected, your device will appear below automatically.",
+      "install_command": "Install Command",
+      "install_hint": "Run the following command in your terminal to install and connect your device:",
+      "copy_command": "Copy",
+      "copied": "Copied!",
+      "view_guide": "View Setup Guide",
+      "detecting": "Waiting for device connection...",
+      "device_connected": "Device Connected",
+      "device_name": "Device Name",
+      "no_device_hint": "After running the command above, your device will appear here automatically",
+      "refresh": "Refresh"
+    },
     "skill_step": {
       "title": "Configure Public Skills",
       "description": "Upload skill packages (.zip) that will be available to all users. Skills provide on-demand capabilities to AI agents.",
