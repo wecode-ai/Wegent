@@ -287,9 +287,9 @@
       "requesting": "Requesting",
       "noEmail": "No email",
       "confirmRemove": "Are you sure you want to remove this user's access permission?",
-      "userId": "User ID",
-      "enterUserId": "Enter user ID",
-      "invalidUserId": "Please enter a valid user ID",
+      "userName": "Username",
+      "enterUserName": "Enter username",
+      "invalidUserName": "Please enter a valid username",
       "invalidShareLink": "Invalid share link"
     },
     "advancedSettings": {

@@ -42,11 +42,8 @@ interface UseKnowledgePermissionsReturn {
     action: ReviewAction,
     level?: PermissionLevel
   ) => Promise<PermissionReviewResponse>
-  addPermission: (userId: number, level: PermissionLevel) => Promise<PermissionResponse>
-  updatePermission: (
-    permissionId: number,
-    level: PermissionLevel
-  ) => Promise<PermissionResponse>
+  addPermission: (userName: string, level: PermissionLevel) => Promise<PermissionResponse>
+  updatePermission: (permissionId: number, level: PermissionLevel) => Promise<PermissionResponse>
   deletePermission: (permissionId: number) => Promise<void>
   clearError: () => void
 }
@@ -140,11 +137,7 @@ export function useKnowledgePermissions({
           action,
           permission_level: level,
         }
-        const result = await knowledgePermissionApi.reviewPermission(
-          kbId,
-          permissionId,
-          request
-        )
+        const result = await knowledgePermissionApi.reviewPermission(kbId, permissionId, request)
         // Refresh permissions after review
         await fetchPermissions()
         return result
@@ -160,12 +153,12 @@ export function useKnowledgePermissions({
   )
 
   const addPermission = useCallback(
-    async (userId: number, level: PermissionLevel): Promise<PermissionResponse> => {
+    async (userName: string, level: PermissionLevel): Promise<PermissionResponse> => {
       setLoading(true)
       setError(null)
       try {
         const request: PermissionAddRequest = {
-          user_id: userId,
+          user_name: userName,
           permission_level: level,
         }
         const result = await knowledgePermissionApi.addPermission(kbId, request)

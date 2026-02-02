@@ -35,14 +35,9 @@ interface AddUserDialogProps {
   onSuccess?: () => void
 }
 
-export function AddUserDialog({
-  open,
-  onOpenChange,
-  kbId,
-  onSuccess,
-}: AddUserDialogProps) {
+export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDialogProps) {
   const { t } = useTranslation('knowledge')
-  const [userId, setUserId] = useState('')
+  const [userName, setUserName] = useState('')
   const [permissionLevel, setPermissionLevel] = useState<PermissionLevel>('view')
   const [localError, setLocalError] = useState<string | null>(null)
 
@@ -52,18 +47,18 @@ export function AddUserDialog({
     e.preventDefault()
     setLocalError(null)
 
-    const parsedUserId = parseInt(userId, 10)
-    if (isNaN(parsedUserId) || parsedUserId <= 0) {
-      setLocalError(t('document.permission.invalidUserId'))
+    const trimmedUserName = userName.trim()
+    if (!trimmedUserName) {
+      setLocalError(t('document.permission.invalidUserName'))
       return
     }
 
     try {
-      await addPermission(parsedUserId, permissionLevel)
+      await addPermission(trimmedUserName, permissionLevel)
       onSuccess?.()
       onOpenChange(false)
       // Reset form
-      setUserId('')
+      setUserName('')
       setPermissionLevel('view')
     } catch (_err) {
       // Error is displayed from the hook
@@ -71,7 +66,7 @@ export function AddUserDialog({
   }
 
   const handleClose = () => {
-    setUserId('')
+    setUserName('')
     setPermissionLevel('view')
     setLocalError(null)
     onOpenChange(false)
@@ -90,16 +85,15 @@ export function AddUserDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 py-4">
-            {/* User ID Input */}
+            {/* User Name Input */}
             <div className="space-y-2">
-              <Label htmlFor="userId">{t('document.permission.userId')}</Label>
+              <Label htmlFor="userName">{t('document.permission.userName')}</Label>
               <Input
-                id="userId"
-                type="number"
-                min="1"
-                placeholder={t('document.permission.enterUserId')}
-                value={userId}
-                onChange={e => setUserId(e.target.value)}
+                id="userName"
+                type="text"
+                placeholder={t('document.permission.enterUserName')}
+                value={userName}
+                onChange={e => setUserName(e.target.value)}
                 required
               />
             </div>

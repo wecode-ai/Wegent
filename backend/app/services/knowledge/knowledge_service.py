@@ -248,7 +248,13 @@ class KnowledgeService:
             List of accessible knowledge bases
         """
         if scope == ResourceScope.PERSONAL:
-            return (
+            from app.models.knowledge_permission import (
+                KnowledgeBasePermission,
+                PermissionStatus,
+            )
+
+            # Get personal knowledge bases (created by user)
+            personal = (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "KnowledgeBase",
@@ -256,9 +262,45 @@ class KnowledgeService:
                     Kind.namespace == "default",
                     Kind.is_active == True,
                 )
-                .order_by(Kind.updated_at.desc())
                 .all()
             )
+
+            # Get knowledge bases with explicit approved permission (shared to user)
+            personal_ids = {kb.id for kb in personal}
+
+            shared_permissions = (
+                db.query(KnowledgeBasePermission.knowledge_base_id)
+                .filter(
+                    KnowledgeBasePermission.user_id == user_id,
+                    KnowledgeBasePermission.status == PermissionStatus.APPROVED,
+                )
+                .all()
+            )
+            shared_kb_ids = [p.knowledge_base_id for p in shared_permissions]
+
+            # Filter out already included KBs
+            shared_kb_ids_filtered = [
+                kb_id for kb_id in shared_kb_ids if kb_id not in personal_ids
+            ]
+
+            shared = (
+                (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id.in_(shared_kb_ids_filtered),
+                        Kind.kind == "KnowledgeBase",
+                        Kind.is_active == True,
+                    )
+                    .all()
+                )
+                if shared_kb_ids_filtered
+                else []
+            )
+
+            # Combine and sort by updated_at
+            all_kbs = personal + shared
+            all_kbs.sort(key=lambda kb: kb.updated_at, reverse=True)
+            return all_kbs
 
         elif scope == ResourceScope.GROUP:
             if not group_name:

@@ -287,9 +287,9 @@
       "requesting": "申请权限",
       "noEmail": "无邮箱",
       "confirmRemove": "确定要移除该用户的访问权限吗？",
-      "userId": "用户ID",
-      "enterUserId": "请输入用户ID",
-      "invalidUserId": "请输入有效的用户ID",
+      "userName": "用户名",
+      "enterUserName": "请输入用户名",
+      "invalidUserName": "请输入有效的用户名",
       "invalidShareLink": "无效的分享链接"
     },
     "advancedSettings": {
