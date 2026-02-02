@@ -676,7 +676,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         # Refresh Redis TTL and update running_task_ids
         await device_service.refresh_device_heartbeat(
-            user_id, payload.device_id, payload.running_task_ids, payload.executor_version
+            user_id,
+            payload.device_id,
+            payload.running_task_ids,
+            payload.executor_version,
         )
 
         # Database operation: quick in, quick out

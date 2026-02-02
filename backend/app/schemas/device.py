@@ -61,9 +61,7 @@ class DeviceInfo(BaseModel):
     latest_version: Optional[str] = Field(
         None, description="Latest available executor version"
     )
-    update_available: bool = Field(
-        False, description="Whether an update is available"
-    )
+    update_available: bool = Field(False, description="Whether an update is available")
 
     class Config:
         from_attributes = True
