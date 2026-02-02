@@ -52,6 +52,7 @@ from app.services.chat.access import (
     get_active_streaming,
     get_token_expiry,
     verify_jwt_token,
+    verify_websocket_token,
 )
 from app.services.chat.operations import (
     call_executor_cancel,
@@ -108,6 +109,11 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         Check if session token is expired.
 
+        Supports both JWT tokens and API Keys:
+        - JWT tokens: Check token_exp against current timestamp
+        - API Keys: If token_exp is None (never expires), always return False
+                   Otherwise check expires_at timestamp
+
         Args:
             sid: Socket ID
 
@@ -115,10 +121,17 @@ class ChatNamespace(socketio.AsyncNamespace):
             True if token is expired, False otherwise
         """
         session = await self.get_session(sid)
+        auth_type = session.get("auth_type", "jwt")
         token_exp = session.get("token_exp")
+
+        # For API Keys with no expiry (None), never expire
+        if auth_type == "api_key" and token_exp is None:
+            return False
+
         if not token_exp:
-            # No expiry stored, assume expired
+            # No expiry stored and not a never-expiring API Key, assume expired
             return True
+
         return datetime.now().timestamp() > token_exp
 
     async def _handle_token_expired(self, sid: str) -> dict:
@@ -188,8 +201,12 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         Handle client connection.
 
-        Verifies JWT token and joins user to their personal room.
+        Verifies authentication token (JWT or API Key) and joins user to their personal room.
         Rejects new connections during graceful shutdown.
+
+        Supports two authentication methods:
+        - JWT Token: Standard bearer token (frontend uses this)
+        - API Key: Long-lived key with "wg-" prefix (Executor uses this)
 
         Args:
             sid: Socket ID
@@ -222,14 +239,11 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.warning(f"[WS] Missing token in auth sid={sid}")
             raise ConnectionRefusedError("Missing authentication token")
 
-        # Verify token
-        user = verify_jwt_token(token)
+        # Verify token using unified verification (supports both JWT and API Key)
+        user, token_exp, auth_type = verify_websocket_token(token)
         if not user:
             logger.warning(f"[WS] Invalid token sid={sid}")
             raise ConnectionRefusedError("Invalid or expired token")
-
-        # Extract token expiry for later validation
-        token_exp = get_token_expiry(token)
 
         # Save user info to session
         await self.save_session(
@@ -238,8 +252,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                 "user_id": user.id,
                 "user_name": user.user_name,
                 "request_id": request_id,
-                "token_exp": token_exp,  # Store token expiry for later checks
+                "token_exp": token_exp,  # Store token expiry (None for never-expiring API Keys)
                 "auth_token": token,  # Store original token for downstream services
+                "auth_type": auth_type,  # Store auth type ("jwt" or "api_key")
             },
         )
 
@@ -250,7 +265,9 @@ class ChatNamespace(socketio.AsyncNamespace):
         user_room = f"user:{user.id}"
         await self.enter_room(sid, user_room)
 
-        logger.info(f"[WS] Connected user={user.id} ({user.user_name}) sid={sid}")
+        logger.info(
+            f"[WS] Connected user={user.id} ({user.user_name}) sid={sid} auth_type={auth_type}"
+        )
 
     async def on_disconnect(self, sid: str):
         """
