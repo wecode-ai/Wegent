@@ -659,33 +659,17 @@ class ClaudeCodeAgent(Agent):
         Save Claude config files to appropriate directory based on execution mode.
 
         - Docker mode: saves to ~/.claude/ (SDK reads from default location)
-        - Local mode: saves to task workspace directory, file path passed via
-          SDK's 'settings' parameter in _create_and_connect_client() to avoid
-          modifying user's personal ~/.claude/ config
+        - Local mode: Does NOT write settings.json (contains sensitive API keys).
+          Sensitive config is passed via environment variables in _create_and_connect_client().
+          Only writes non-sensitive claude.json (user preferences) with strict file permissions.
 
         Args:
             agent_config: The agent configuration dictionary
         """
-        # Determine config directory based on mode
-        if config.EXECUTOR_MODE == "local":
-            # Local mode: save to task workspace directory (avoid modifying user's ~/.claude/)
-            config_dir = os.path.join(
-                config.get_workspace_root(), str(self.task_id), ".claude"
-            )
-            claude_json_path = os.path.join(config_dir, "claude.json")
-        else:
-            # Docker mode: save to user's ~/.claude directory (original behavior)
-            config_dir = os.path.expanduser("~/.claude")
-            claude_json_path = os.path.expanduser("~/.claude.json")
+        # Store env config for passing to SDK via environment variables
+        self._claude_env_config = agent_config.get("env", {})
 
-        Path(config_dir).mkdir(parents=True, exist_ok=True)
-
-        # Save settings.json
-        settings_path = os.path.join(config_dir, "settings.json")
-        with open(settings_path, "w") as f:
-            json.dump(agent_config, f, indent=2)
-
-        # Save claude.json config (user preferences)
+        # Non-sensitive user preferences config for claude.json
         claude_json_config = {
             "numStartups": 2,
             "installMethod": "unknown",
@@ -699,12 +683,46 @@ class ClaudeCodeAgent(Agent):
             "lastReleaseNotesSeen": "2.0.14",
             "isQualifiedForDataSharing": False,
         }
-        with open(claude_json_path, "w") as f:
-            json.dump(claude_json_config, f, indent=2)
 
-        # Store config directory for Local mode
+        if config.EXECUTOR_MODE == "local":
+            # Local mode: Do NOT write settings.json (contains sensitive API keys/tokens)
+            # Sensitive config is passed via env parameter in _create_and_connect_client()
+            config_dir = os.path.join(
+                config.get_workspace_root(), str(self.task_id), ".claude"
+            )
+            claude_json_path = os.path.join(config_dir, "claude.json")
+
+            # Create directory with restricted permissions (owner only)
+            Path(config_dir).mkdir(parents=True, exist_ok=True)
+            os.chmod(config_dir, 0o700)
+
+            # Write only non-sensitive claude.json with restricted permissions
+            with open(claude_json_path, "w") as f:
+                json.dump(claude_json_config, f, indent=2)
+            os.chmod(claude_json_path, 0o600)
+
+            logger.info(
+                f"Local mode: Saved claude.json to {config_dir} "
+                "(settings.json skipped - sensitive config passed via env)"
+            )
+        else:
+            # Docker mode: save to user's ~/.claude directory (original behavior)
+            config_dir = os.path.expanduser("~/.claude")
+            claude_json_path = os.path.expanduser("~/.claude.json")
+
+            Path(config_dir).mkdir(parents=True, exist_ok=True)
+
+            # Save settings.json (Docker mode only - isolated container environment)
+            settings_path = os.path.join(config_dir, "settings.json")
+            with open(settings_path, "w") as f:
+                json.dump(agent_config, f, indent=2)
+
+            # Save claude.json
+            with open(claude_json_path, "w") as f:
+                json.dump(claude_json_config, f, indent=2)
+
+        # Store config directory for SDK configuration
         self._claude_config_dir = config_dir
-        self._claude_env_config = agent_config.get("env", {})
 
     def _resolve_env_value(self, value: str) -> str:
         """Resolve a value that may be an environment variable template or encrypted.
