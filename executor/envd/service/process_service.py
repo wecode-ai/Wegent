@@ -220,6 +220,7 @@ class ProcessServiceHandler:
                 process_running = True
                 last_data_time = loop.time()
                 keepalive_interval = 5.0  # 5 seconds
+                exit_signal = asyncio.Event()  # Signal for immediate exit
 
                 async def read_pty_output():
                     nonlocal process_running, last_data_time
@@ -230,48 +231,65 @@ class ProcessServiceHandler:
                     flags = fcntl.fcntl(master, fcntl.F_GETFL)
                     fcntl.fcntl(master, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
-                    while proc.poll() is None:
-                        try:
-                            # Use select to check if data is available with timeout
-                            ready, _, _ = await loop.run_in_executor(
-                                None, select.select, [master], [], [], 0.5
-                            )
-                            if ready:
-                                try:
-                                    data = os.read(master, 4096)
-                                    if data:
-                                        last_data_time = loop.time()
-                                        yield process_pb2.StartResponse(
-                                            event=process_pb2.ProcessEvent(
-                                                data=process_pb2.ProcessEvent.DataEvent(
-                                                    pty=data
+                    try:
+                        while proc.poll() is None:
+                            try:
+                                # Use select to check if data is available with timeout
+                                ready, _, _ = await loop.run_in_executor(
+                                    None, select.select, [master], [], [], 0.5
+                                )
+                                if ready:
+                                    try:
+                                        data = os.read(master, 4096)
+                                        if data:
+                                            last_data_time = loop.time()
+                                            yield process_pb2.StartResponse(
+                                                event=process_pb2.ProcessEvent(
+                                                    data=process_pb2.ProcessEvent.DataEvent(
+                                                        pty=data
+                                                    )
                                                 )
                                             )
-                                        )
-                                except (OSError, BlockingIOError):
-                                    # No data available or fd closed
-                                    pass
-                            else:
-                                # Timeout, yield control
-                                await asyncio.sleep(0.1)
-                        except (OSError, ValueError):
-                            # FD closed or invalid
-                            break
-                    process_running = False
+                                    except (OSError, BlockingIOError):
+                                        # No data available or fd closed
+                                        pass
+                                else:
+                                    # Timeout, yield control
+                                    await asyncio.sleep(0.1)
+                            except (OSError, ValueError):
+                                # FD closed or invalid
+                                break
+                    finally:
+                        process_running = False
+                        exit_signal.set()  # Signal keepalive to exit immediately
 
                 async def send_keepalive():
-                    while process_running:
-                        await asyncio.sleep(keepalive_interval)
-                        # Only send keepalive if no data was sent recently and process still running
-                        if (
-                            process_running
-                            and loop.time() - last_data_time >= keepalive_interval
-                        ):
-                            yield process_pb2.StartResponse(
-                                event=process_pb2.ProcessEvent(
-                                    keepalive=process_pb2.ProcessEvent.KeepAlive()
-                                )
+                    keepalive_count = 0
+                    while process_running and not exit_signal.is_set():
+                        try:
+                            # Wait for exit signal or timeout
+                            await asyncio.wait_for(
+                                exit_signal.wait(), timeout=keepalive_interval
                             )
+                            # Signal received, exit immediately
+                            break
+                        except asyncio.TimeoutError:
+                            # Normal timeout, check if keepalive needed
+                            if (
+                                process_running
+                                and loop.time() - last_data_time >= keepalive_interval
+                            ):
+                                keepalive_count += 1
+                                if keepalive_count % 6 == 1:  # Log every 30s (6 * 5s)
+                                    logger.debug(
+                                        f"PTY process {proc.pid} keepalive #{keepalive_count}, "
+                                        f"no data for {loop.time() - last_data_time:.1f}s"
+                                    )
+                                yield process_pb2.StartResponse(
+                                    event=process_pb2.ProcessEvent(
+                                        keepalive=process_pb2.ProcessEvent.KeepAlive()
+                                    )
+                                )
 
                 # Merge streams from PTY output and keepalive
                 try:
@@ -312,6 +330,8 @@ class ProcessServiceHandler:
                 last_data_time = loop.time()
                 keepalive_interval = 5.0
                 process_running = True
+                exit_signal = asyncio.Event()  # Signal for immediate exit
+                stderr_output = []  # Collect stderr for error logging
 
                 # Stream output
                 async def read_stream(stream, is_stderr=False):
@@ -323,6 +343,9 @@ class ProcessServiceHandler:
                                 break
                             last_data_time = loop.time()
                             if is_stderr:
+                                stderr_output.append(
+                                    data.decode("utf-8", errors="replace")
+                                )
                                 yield process_pb2.ProcessEvent.DataEvent(stderr=data)
                             else:
                                 yield process_pb2.ProcessEvent.DataEvent(stdout=data)
@@ -332,19 +355,37 @@ class ProcessServiceHandler:
 
                 async def send_keepalive():
                     nonlocal process_running
-                    while process_running and proc.poll() is None:
-                        await asyncio.sleep(keepalive_interval)
-                        # Only send keepalive if no data was sent recently and process still running
-                        if (
-                            process_running
-                            and proc.poll() is None
-                            and loop.time() - last_data_time >= keepalive_interval
-                        ):
-                            yield process_pb2.StartResponse(
-                                event=process_pb2.ProcessEvent(
-                                    keepalive=process_pb2.ProcessEvent.KeepAlive()
-                                )
+                    keepalive_count = 0
+                    while (
+                        process_running
+                        and proc.poll() is None
+                        and not exit_signal.is_set()
+                    ):
+                        try:
+                            # Wait for exit signal or timeout
+                            await asyncio.wait_for(
+                                exit_signal.wait(), timeout=keepalive_interval
                             )
+                            # Signal received, exit immediately
+                            break
+                        except asyncio.TimeoutError:
+                            # Normal timeout, check if keepalive needed
+                            if (
+                                process_running
+                                and proc.poll() is None
+                                and loop.time() - last_data_time >= keepalive_interval
+                            ):
+                                keepalive_count += 1
+                                if keepalive_count % 6 == 1:  # Log every 30s (6 * 5s)
+                                    logger.debug(
+                                        f"Process {proc.pid} keepalive #{keepalive_count}, "
+                                        f"no data for {loop.time() - last_data_time:.1f}s"
+                                    )
+                                yield process_pb2.StartResponse(
+                                    event=process_pb2.ProcessEvent(
+                                        keepalive=process_pb2.ProcessEvent.KeepAlive()
+                                    )
+                                )
 
                 # Read both streams concurrently
                 tasks = []
@@ -354,11 +395,14 @@ class ProcessServiceHandler:
                     tasks.append(read_stream(proc.stderr, True))
 
                 async def data_stream():
-                    if tasks:
-                        async for data_event in self._merge_streams(tasks):
-                            yield process_pb2.StartResponse(
-                                event=process_pb2.ProcessEvent(data=data_event)
-                            )
+                    try:
+                        if tasks:
+                            async for data_event in self._merge_streams(tasks):
+                                yield process_pb2.StartResponse(
+                                    event=process_pb2.ProcessEvent(data=data_event)
+                                )
+                    finally:
+                        exit_signal.set()
 
                 # Merge data stream and keepalive
                 try:
@@ -370,12 +414,27 @@ class ProcessServiceHandler:
                     logger.exception(f"Error in stream merge: {e}")
                 finally:
                     process_running = False
+                    exit_signal.set()  # Signal keepalive to exit immediately
 
             # Wait for process to complete (non-blocking check)
             returncode = proc.poll()
             if returncode is None:
                 # Process still running, wait asynchronously
                 returncode = await loop.run_in_executor(None, proc.wait)
+
+            if returncode != 0:
+                stderr_text = "".join(stderr_output).strip()
+                if stderr_text:
+                    logger.warning(
+                        f"Process {proc.pid} completed with non-zero exit code {returncode}, "
+                        f"stderr: {stderr_text[:1000]}"
+                    )
+                else:
+                    logger.warning(
+                        f"Process {proc.pid} completed with non-zero exit code {returncode}"
+                    )
+            else:
+                logger.info(f"Process {proc.pid} completed with exit code {returncode}")
 
             # Send end event
             yield process_pb2.StartResponse(
@@ -447,6 +506,9 @@ class ProcessServiceHandler:
                 # Managed process - use subprocess.Popen
                 # Check if already finished
                 if proc.poll() is not None:
+                    logger.info(
+                        f"Process {pid} already completed with exit code {proc.returncode}"
+                    )
                     yield process_pb2.ConnectResponse(
                         event=process_pb2.ProcessEvent(
                             end=process_pb2.ProcessEvent.EndEvent(
@@ -466,6 +528,8 @@ class ProcessServiceHandler:
                         )
                     )
                     await asyncio.sleep(5)
+
+                logger.info(f"Process {pid} completed with exit code {proc.returncode}")
 
                 # Send end event
                 yield process_pb2.ConnectResponse(
@@ -496,6 +560,8 @@ class ProcessServiceHandler:
                             ps_proc.status()
                         except psutil.NoSuchProcess:
                             break
+
+                    logger.info(f"System process {pid} ended")
 
                     # Process ended
                     yield process_pb2.ConnectResponse(
@@ -830,6 +896,9 @@ class ProcessServiceHandler:
 
             # Process has exited or timed out, remove from manager
             self.manager.remove_process(pid)
-            logger.debug(f"Cleaned up finished process {pid}")
+            exit_code = proc.returncode if proc else "unknown"
+            logger.info(
+                f"Cleaned up finished process pid: {pid} with exit code {exit_code}"
+            )
         except Exception as e:
             logger.warning(f"Error cleaning up process {pid}: {e}")
