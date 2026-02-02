@@ -167,11 +167,15 @@ def _handle_tool_end(
 
     serializable_output = _make_output_serializable(tool_output)
 
+    # Extract tool input from event_data for load_skill tracking
+    # This is the original input before any filtering by should_display_tool_details
+    raw_tool_input = event_data.get("data", {}).get("input", {})
+    tool_input = _make_serializable(raw_tool_input) if raw_tool_input else {}
+
     # Find matching start step first to get the tool_use_id that was created
     # This ensures we use the same ID for updating the block
     matching_start_idx = None
     tool_use_id = event_data.get("tool_use_id")  # Try from event first
-    tool_input = None  # Store tool input for load_skill tracking
 
     if not tool_use_id:
         # Search for matching tool_start step to get the tool_use_id
@@ -183,8 +187,6 @@ def _handle_tool_end(
                 matching_start_idx = idx
                 # Use the tool_use_id from the start step
                 tool_use_id = step.get("tool_use_id")
-                # Also get tool_input for load_skill tracking
-                tool_input = step.get("details", {}).get("input", {})
                 break
 
     # If still no tool_use_id, generate one as fallback (should rarely happen)
@@ -296,23 +298,27 @@ def _handle_tool_end(
     # Track loaded skills for persistence across conversation turns
     # When load_skill tool completes successfully, record the skill name
     if tool_name == "load_skill" and status == "completed":
-        # Get skill_name from tool_input (captured from start step)
-        skill_name = None
-        if tool_input and isinstance(tool_input, dict):
-            skill_name = tool_input.get("skill_name")
+        # Get skill_name directly from tool_input (extracted from event_data)
+        skill_name = (
+            tool_input.get("skill_name") if isinstance(tool_input, dict) else None
+        )
 
-        # If we didn't get it from tool_input, try to find it from the start step
-        if not skill_name and matching_start_idx is not None:
-            start_step = state.thinking[matching_start_idx]
-            start_input = start_step.get("details", {}).get("input", {})
-            if isinstance(start_input, dict):
-                skill_name = start_input.get("skill_name")
+        logger.info(
+            "[TOOL_END] load_skill completed: skill_name=%s, tool_input=%s",
+            skill_name,
+            tool_input,
+        )
 
         # Add to loaded_skills if we found the skill name
         if skill_name and hasattr(state, "add_loaded_skill"):
             state.add_loaded_skill(skill_name)
             logger.info(
                 "[TOOL_END] Tracked loaded skill: %s for persistence",
+                skill_name,
+            )
+        else:
+            logger.warning(
+                "[TOOL_END] Could not track loaded skill: skill_name=%s",
                 skill_name,
             )
 

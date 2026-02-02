@@ -144,16 +144,19 @@ class LangGraphAgentBuilder:
                     new_messages.append(SystemMessage(content=updated_content))
                     system_updated = True
 
+                    # Log the final system prompt sent to the model
+                    # logger.info(
+                    #     "[prompt_modifier] Final system prompt (len=%d):\n%s",
+                    #     len(updated_content),
+                    #     updated_content,
+                    # )
+
                 else:
                     new_messages.append(msg)
 
             # If no system message found, prepend one with modifications
             if not system_updated:
                 new_messages.insert(0, SystemMessage(content=combined_modification))
-                logger.debug(
-                    "[prompt_modifier] Created new system message with modifications, len=%d",
-                    len(combined_modification),
-                )
 
             return new_messages
 

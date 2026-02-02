@@ -103,6 +103,64 @@ class LoadSkillTool(BaseTool):
         self._skill_remaining_turns = {}
         self._state_restored = False
 
+    def _load_skill_internal(
+        self,
+        skill_name: str,
+        remaining_turns: Optional[int] = None,
+        source: str = "load_skill",
+    ) -> bool:
+        """Internal method to load a skill's prompt and update state.
+
+        This is the core logic shared by:
+        - _run() - load_skill tool invocation
+        - preload_skill_prompt() - preloading skills at startup
+        - restore_from_history() - restoring skills from chat history
+
+        Args:
+            skill_name: The name of the skill to load
+            remaining_turns: Number of turns to retain (defaults to skill_retention_turns)
+            source: Source of the load for logging (load_skill, preload, restore)
+
+        Returns:
+            True if skill was loaded successfully, False otherwise
+        """
+        # Get skill metadata
+        skill_info = self.skill_metadata.get(skill_name, {})
+        prompt = skill_info.get("prompt", "")
+
+        if not prompt:
+            logger.warning(
+                "[LoadSkillTool] Skill '%s' has no prompt content (source=%s)",
+                skill_name,
+                source,
+            )
+            return False
+
+        # Mark skill as expanded and store the prompt
+        self._expanded_skills.add(skill_name)
+        self._loaded_skill_prompts[skill_name] = prompt
+
+        # Set the remaining turns counter
+        turns = (
+            remaining_turns
+            if remaining_turns is not None
+            else self.skill_retention_turns
+        )
+        self._skill_remaining_turns[skill_name] = turns
+
+        # Cache the display name for friendly UI display
+        display_name = skill_info.get("displayName")
+        if display_name:
+            self._skill_display_names[skill_name] = display_name
+
+        logger.info(
+            "[LoadSkillTool] Loaded skill '%s' (source=%s, remaining_turns=%d)",
+            skill_name,
+            source,
+            turns,
+        )
+        return True
+
     def _run(
         self,
         skill_name: str,
@@ -124,30 +182,9 @@ class LoadSkillTool(BaseTool):
                 f"The skill instructions have been added to the system prompt."
             )
 
-        # Get skill metadata
-        skill_info = self.skill_metadata.get(skill_name, {})
-        prompt = skill_info.get("prompt", "")
-
-        if not prompt:
+        # Use shared internal method to load the skill
+        if not self._load_skill_internal(skill_name, source="load_skill"):
             return f"Error: Skill '{skill_name}' has no prompt content."
-
-        # Mark skill as expanded for this turn and store the prompt
-        self._expanded_skills.add(skill_name)
-        self._loaded_skill_prompts[skill_name] = prompt
-
-        # Set the remaining turns counter for this skill
-        self._skill_remaining_turns[skill_name] = self.skill_retention_turns
-
-        # Cache the display name for friendly UI display
-        display_name = skill_info.get("displayName")
-        if display_name:
-            self._skill_display_names[skill_name] = display_name
-
-        logger.info(
-            "[LoadSkillTool] Loaded skill '%s' with %d turns retention",
-            skill_name,
-            self.skill_retention_turns,
-        )
 
         # Return a confirmation message (the actual prompt will be injected into system prompt)
         return f"Skill '{skill_name}' has been loaded. The instructions have been added to the system prompt. Please follow them strictly."
@@ -228,24 +265,12 @@ class LoadSkillTool(BaseTool):
             skill_name: The name of the skill
             skill_config: The skill configuration containing prompt and displayName
         """
-        prompt = skill_config.get("prompt", "")
-        if not prompt:
-            return
+        # Temporarily add to skill_metadata if not present (for _load_skill_internal)
+        if skill_name not in self.skill_metadata:
+            self.skill_metadata[skill_name] = skill_config
 
-        # Store the prompt for injection
-        self._loaded_skill_prompts[skill_name] = prompt
-        self._expanded_skills.add(skill_name)
-
-        # Cache the display name
-        display_name = skill_config.get("displayName")
-        if display_name:
-            self._skill_display_names[skill_name] = display_name
-
-        logger.debug(
-            "[LoadSkillTool] Preloaded skill prompt for '%s' (len=%d)",
-            skill_name,
-            len(prompt),
-        )
+        # Use shared internal method to load the skill
+        self._load_skill_internal(skill_name, source="preload")
 
     def get_prompt_modification(self) -> str:
         """Get prompt modification content for system prompt injection.
@@ -254,30 +279,143 @@ class LoadSkillTool(BaseTool):
         LangGraphAgentBuilder to automatically detect and use this tool
         for dynamic prompt modification.
 
+        This method generates the complete <skill> block containing:
+        1. Available Skills section (skills that can be loaded via load_skill tool)
+        2. Loaded Skill Instructions section (skills that have been loaded)
+
+        All skill-related prompt logic is centralized here for maintainability.
+
         Returns:
-            Combined string of all loaded skill prompts wrapped in <skill> tags,
-            or empty string if none loaded
+            Complete <skill> block with Available Skills and Loaded Skill Instructions,
+            or empty string if no skills are configured
+        """
+        # Build the Available Skills section
+        available_skills_content = self._build_available_skills_section()
+
+        # Build the Loaded Skill Instructions section
+        loaded_skills_content = self._build_loaded_skills_section()
+
+        # If no skills configured at all, return empty string
+        if not available_skills_content and not loaded_skills_content:
+            logger.debug("[LoadSkillTool.get_prompt_modification] No skills configured")
+            return ""
+
+        # Combine into a single <skill> block
+        parts = ["\n\n<skill>"]
+
+        if available_skills_content:
+            parts.append(available_skills_content)
+
+        if loaded_skills_content:
+            parts.append(loaded_skills_content)
+
+        parts.append("\n</skill>")
+
+        return "".join(parts)
+
+    def _build_available_skills_section(self) -> str:
+        """Build the Available Skills section for the skill prompt.
+
+        This section lists all skills that can be loaded via the load_skill tool,
+        along with instructions on how and when to use skills.
+
+        Returns:
+            Available Skills section content, or empty string if no skills available
+        """
+        # Get skills that have both name and description
+        valid_skills = []
+        for skill_name in self.skill_names:
+            skill_info = self.skill_metadata.get(skill_name, {})
+            description = skill_info.get("description", "")
+            if skill_name and description:
+                valid_skills.append({"name": skill_name, "description": description})
+
+        if not valid_skills:
+            return ""
+
+        skill_list = "\n".join(
+            [f"- **{s['name']}**: {s['description']}" for s in valid_skills]
+        )
+
+        return f"""
+## Available Skills
+
+The following skills provide specialized guidance for specific tasks. When your task matches a skill's description, use the `load_skill` tool to load the full instructions.
+
+{skill_list}
+
+### How to Use Skills
+
+**Load the skill**: Call `load_skill(skill_name="<skill-name>")` to load detailed instructions
+
+### When to Use Skills
+
+**⚠️ CRITICAL: Skills First Principle (技能优先原则)**
+
+**When a matching skill is available, you MUST load and use it BEFORE attempting to solve the problem with your general capabilities.** Skills contain curated, domain-specific knowledge and best practices that will produce higher quality results than ad-hoc solutions.
+
+**Workflow:**
+1. **Check Available Skills:** Before starting any task, review the skill list above
+2. **Match Task to Skill:** If ANY skill description matches your current task, load it immediately
+3. **Follow Skill Instructions:** Execute the task following the loaded skill's guidance
+4. **Only Fall Back if No Match:** Use general capabilities ONLY when no skill matches the task
+
+**Use skills when:**
+
+1. **Task Matches Skill Description:** The user's request aligns with one of the available skill descriptions - **load the skill immediately**
+2. **Specialized Knowledge Required:** The task requires domain-specific expertise, best practices, or structured approaches
+3. **Complex Multi-Step Tasks:** The task involves multiple steps or decisions that benefit from guided instructions
+4. **Quality Assurance:** You want to ensure consistent, high-quality output following established patterns
+
+**Do NOT use skills when:**
+
+1. **No Matching Skill:** None of the available skills match the user's request - proceed with your general capabilities
+2. **Simple Factual Questions:** The user asks a straightforward factual question that doesn't require task execution
+3. **General Conversation:** The interaction is casual chat without a specific task
+4. **User Explicitly Declines:** The user indicates they don't want skill-based assistance
+
+**Best Practice:** Always scan the skill list first. When in doubt, load the skill - it's better to have specialized guidance than to miss important best practices.
+"""
+
+    def _build_loaded_skills_section(self) -> str:
+        """Build the Loaded Skill Instructions section for the skill prompt.
+
+        This section contains the full instructions for skills that have been
+        loaded via load_skill tool or preloaded at startup.
+
+        Each skill's instructions are wrapped in XML tags (e.g., <skill_name>...</skill_name>)
+        to help the model clearly distinguish between different skills and avoid confusion.
+
+        Returns:
+            Loaded Skill Instructions section content, or empty string if no skills loaded
         """
         if not self._loaded_skill_prompts:
-            logger.debug("[LoadSkillTool.get_combined_skill_prompt] No loaded skills")
+            logger.debug(
+                "[LoadSkillTool._build_loaded_skills_section] No loaded skills"
+            )
             return ""
 
         parts = []
         for skill_name, prompt in self._loaded_skill_prompts.items():
             # Include skill path for model reference (e.g., for read_file tool)
             skill_path = f"~/.claude/skills/{skill_name}"
+            # Wrap each skill's instructions in XML tags to avoid model confusion
+            # Use skill_name as the tag name (replace invalid characters with underscore)
+            safe_tag_name = skill_name.replace("-", "_").replace(" ", "_")
             parts.append(
-                f"\n\n## Skill: {skill_name}\n\n"
+                f"\n\n<{safe_tag_name}>\n"
+                f"### Skill: {skill_name}\n\n"
                 f"**Skill Path**: `{skill_path}`\n\n"
                 f"**Note**: All file paths mentioned in this skill's instructions are relative to the Skill Path above. "
                 f"When accessing files, prepend the Skill Path to get the absolute path.\n\n"
-                f"{prompt}"
+                f"{prompt}\n"
+                f"</{safe_tag_name}>"
             )
 
         return (
-            "\n\n<skill>\n# Loaded Skill Instructions\n\nThe following skills have been loaded. "
+            "\n\n## Loaded Skill Instructions\n\nThe following skills have been loaded. "
+            "Each skill's instructions are wrapped in XML tags for clarity."
             + "".join(parts)
-            + "\n</skill>"
         )
 
     # Alias for backward compatibility
@@ -467,28 +605,13 @@ class LoadSkillTool(BaseTool):
             remaining_turns = self.skill_retention_turns - turns_ago
 
             if remaining_turns > 0 and skill_name in self.skill_names:
-                # Restore this skill
-                skill_info = self.skill_metadata.get(skill_name, {})
-                prompt = skill_info.get("prompt", "")
-
-                if prompt:
-                    self._expanded_skills.add(skill_name)
-                    self._loaded_skill_prompts[skill_name] = prompt
-                    self._skill_remaining_turns[skill_name] = remaining_turns
-
-                    # Cache display name
-                    display_name = skill_info.get("displayName")
-                    if display_name:
-                        self._skill_display_names[skill_name] = display_name
-
+                # Use shared internal method to restore the skill
+                if self._load_skill_internal(
+                    skill_name,
+                    remaining_turns=remaining_turns,
+                    source=f"restore (loaded {turns_ago} turns ago)",
+                ):
                     restored_count += 1
-                    logger.info(
-                        "[LoadSkillTool] Restored skill '%s' from history "
-                        "(loaded %d turns ago, %d turns remaining)",
-                        skill_name,
-                        turns_ago,
-                        remaining_turns,
-                    )
             elif remaining_turns <= 0:
                 logger.debug(
                     "[LoadSkillTool] Skill '%s' expired (loaded %d turns ago, "

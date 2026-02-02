@@ -1203,6 +1203,17 @@ async def _stream_with_http_adapter(
                 else:
                     logger.info("[HTTP_ADAPTER] No sources in result")
 
+                # Log loaded_skills from chat_shell for debugging skill persistence
+                loaded_skills = result.get("loaded_skills", [])
+                if loaded_skills:
+                    logger.info(
+                        "[HTTP_ADAPTER] Received loaded_skills from chat_shell: "
+                        "subtask_id=%d, loaded_skills=%s, result_keys=%s",
+                        subtask_id,
+                        loaded_skills,
+                        list(result.keys()),
+                    )
+
                 # Update subtask status to COMPLETED in database
                 # This is critical for persistence - without this, messages show as "running" after refresh
                 from app.services.chat.storage.db import db_handler

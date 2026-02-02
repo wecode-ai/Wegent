@@ -163,6 +163,18 @@ class SSEEmitter(StreamEmitter):
         }
         if message_id is not None:
             payload["message_id"] = message_id
+
+        # Log loaded_skills being emitted for debugging skill persistence
+        loaded_skills = result.get("loaded_skills", [])
+        if loaded_skills:
+            logger.info(
+                "[SSE_EMITTER] Emitting done with loaded_skills: subtask_id=%d, "
+                "loaded_skills=%s, result_keys=%s",
+                subtask_id,
+                loaded_skills,
+                list(result.keys()),
+            )
+
         self._events.append(self.format_sse(payload))
 
     async def emit_error(self, subtask_id: int, error: str) -> None:
@@ -319,6 +331,18 @@ class RedisPublishingEmitter(StreamEmitter):
         }
         if message_id is not None:
             payload["message_id"] = message_id
+
+        # Log loaded_skills being sent to backend for debugging
+        loaded_skills = result.get("loaded_skills", [])
+        if loaded_skills:
+            logger.info(
+                "[REDIS_EMITTER] Sending loaded_skills to backend: subtask_id=%d, "
+                "loaded_skills=%s, payload_keys=%s",
+                subtask_id,
+                loaded_skills,
+                list(payload.keys()),
+            )
+
         await storage.publish_streaming_chunk(subtask_id, json.dumps(payload))
         logger.info("[REDIS_EMITTER] Published done event: subtask_id=%d", subtask_id)
 

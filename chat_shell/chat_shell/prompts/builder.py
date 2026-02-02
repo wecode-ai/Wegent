@@ -283,78 +283,6 @@ def append_deep_thinking_prompt(system_prompt: str, enable_deep_thinking: bool) 
     return system_prompt
 
 
-# Skill Metadata Prompt Template
-SKILL_METADATA_PROMPT = """
-
-<skill>
-## Available Skills
-
-The following skills provide specialized guidance for specific tasks. When your task matches a skill's description, use the `load_skill` tool to load the full instructions.
-
-{skill_list}
-
-### How to Use Skills
-
-**Load the skill**: Call `load_skill(skill_name="<skill-name>")` to load detailed instructions
-
-### When to Use Skills
-
-**⚠️ CRITICAL: Skills First Principle (技能优先原则)**
-
-**When a matching skill is available, you MUST load and use it BEFORE attempting to solve the problem with your general capabilities.** Skills contain curated, domain-specific knowledge and best practices that will produce higher quality results than ad-hoc solutions.
-
-**Workflow:**
-1. **Check Available Skills:** Before starting any task, review the skill list above
-2. **Match Task to Skill:** If ANY skill description matches your current task, load it immediately
-3. **Follow Skill Instructions:** Execute the task following the loaded skill's guidance
-4. **Only Fall Back if No Match:** Use general capabilities ONLY when no skill matches the task
-
-**Use skills when:**
-
-1. **Task Matches Skill Description:** The user's request aligns with one of the available skill descriptions - **load the skill immediately**
-2. **Specialized Knowledge Required:** The task requires domain-specific expertise, best practices, or structured approaches
-3. **Complex Multi-Step Tasks:** The task involves multiple steps or decisions that benefit from guided instructions
-4. **Quality Assurance:** You want to ensure consistent, high-quality output following established patterns
-
-**Do NOT use skills when:**
-
-1. **No Matching Skill:** None of the available skills match the user's request - proceed with your general capabilities
-2. **Simple Factual Questions:** The user asks a straightforward factual question that doesn't require task execution
-3. **General Conversation:** The interaction is casual chat without a specific task
-4. **User Explicitly Declines:** The user indicates they don't want skill-based assistance
-
-**Best Practice:** Always scan the skill list first. When in doubt, load the skill - it's better to have specialized guidance than to miss important best practices.
-</skill>
-"""
-
-
-def append_skill_metadata_prompt(system_prompt: str, skills: list[dict]) -> str:
-    """
-    Append skill metadata to system prompt.
-
-    Args:
-        system_prompt: The original system prompt.
-        skills: List of skill metadata [{"name": "...", "description": "..."}]
-
-    Returns:
-        System prompt with skill metadata appended.
-    """
-    if not skills:
-        return system_prompt
-
-    # Filter out skills without name or description
-    valid_skills = [s for s in skills if s.get("name") and s.get("description")]
-    if not valid_skills:
-        return system_prompt
-
-    skill_list = "\n".join(
-        [f"- **{s['name']}**: {s['description']}" for s in valid_skills]
-    )
-
-    skill_section = SKILL_METADATA_PROMPT.format(skill_list=skill_list)
-    return system_prompt + skill_section
-
-
 def build_system_prompt(
     base_prompt: str,
     enable_clarification: bool = False,
@@ -365,17 +293,19 @@ def build_system_prompt(
     Build the final system prompt with optional enhancements.
 
     This function centralizes all prompt building logic within chat_shell,
-    applying clarification mode, deep thinking mode, and on-demand skill metadata
-    based on the provided configuration.
+    applying clarification mode and deep thinking mode based on the provided
+    configuration.
 
-    Note: Skills with preload=True will be automatically injected by prompt_modifier
-    via LoadSkillTool.get_combined_skill_prompt(), so they are NOT included here.
+    Note: Skill-related prompts (Available Skills + Loaded Skill Instructions)
+    are now handled entirely by LoadSkillTool.get_prompt_modification() via
+    the prompt_modifier mechanism. The 'skills' parameter is kept for backward
+    compatibility but is no longer used here.
 
     Args:
         base_prompt: The base system prompt from Ghost
         enable_clarification: Whether to enable clarification mode
         enable_deep_thinking: Whether to enable deep thinking mode
-        skills: List of all skill configs [{"name": "...", "description": "...", "prompt": "...", "preload": bool, ...}]
+        skills: Deprecated - skill prompts are now injected by LoadSkillTool
 
     Returns:
         The final system prompt with all enhancements applied
@@ -384,8 +314,7 @@ def build_system_prompt(
         1. Base prompt (caller should wrap Ghost systemPrompt in <base_prompt> tags if needed)
         2. Clarification mode instructions (if enabled)
         3. Deep thinking mode instructions (if enabled)
-        4. On-demand skill metadata (for load_skill tool)
-        5. Preloaded skills (injected later by prompt_modifier)
+        4. Skill prompts (injected dynamically by LoadSkillTool via prompt_modifier)
     """
     system_prompt = base_prompt
 
@@ -397,8 +326,10 @@ def build_system_prompt(
     if enable_deep_thinking:
         system_prompt = append_deep_thinking_prompt(system_prompt, True)
 
-    # Inject on-demand skill metadata (filter out preloaded ones)
-    if skills:
-        system_prompt = append_skill_metadata_prompt(system_prompt, skills)
+    # Note: Skill prompts are now injected dynamically by LoadSkillTool.get_prompt_modification()
+    # via the prompt_modifier mechanism in LangGraphAgentBuilder. This ensures that:
+    # 1. Available Skills and Loaded Skill Instructions are in the same <skill> block
+    # 2. The skill prompt is always up-to-date with the current loaded skills state
 
+    return system_prompt
     return system_prompt
