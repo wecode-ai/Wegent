@@ -356,7 +356,7 @@ export interface PermissionReviewResponse {
 
 // Permission Add/Update types
 export interface PermissionAddRequest {
-  user_id: number
+  user_name: string
   permission_level: PermissionLevel
 }
 

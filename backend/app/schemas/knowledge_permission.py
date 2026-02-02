@@ -46,7 +46,9 @@ class PermissionApplyResponse(BaseModel):
 
     id: int = Field(..., description="Permission record ID")
     knowledge_base_id: int = Field(..., description="Knowledge base ID")
-    permission_level: PermissionLevel = Field(..., description="Requested permission level")
+    permission_level: PermissionLevel = Field(
+        ..., description="Requested permission level"
+    )
     status: PermissionStatus = Field(..., description="Request status")
     requested_at: datetime = Field(..., description="Request timestamp")
     message: str = Field(..., description="Response message")
@@ -77,7 +79,9 @@ class PermissionReviewResponse(BaseModel):
 
     id: int = Field(..., description="Permission record ID")
     user_id: int = Field(..., description="User ID")
-    permission_level: PermissionLevel = Field(..., description="Granted/requested permission level")
+    permission_level: PermissionLevel = Field(
+        ..., description="Granted/requested permission level"
+    )
     status: PermissionStatus = Field(..., description="New status after review")
     reviewed_at: datetime = Field(..., description="Review timestamp")
     message: str = Field(..., description="Response message")
@@ -89,7 +93,7 @@ class PermissionReviewResponse(BaseModel):
 class PermissionAddRequest(BaseModel):
     """Schema for directly adding user permission (without request)."""
 
-    user_id: int = Field(..., description="User ID to add permission for")
+    user_name: str = Field(..., description="Username to add permission for")
     permission_level: PermissionLevel = Field(
         default=PermissionLevel.VIEW,
         description="Permission level to grant",
@@ -125,16 +129,24 @@ class PendingPermissionInfo(BaseModel):
     user_id: int = Field(..., description="User ID")
     username: str = Field(..., description="Username")
     email: Optional[str] = Field(None, description="User email")
-    permission_level: PermissionLevel = Field(..., description="Requested permission level")
+    permission_level: PermissionLevel = Field(
+        ..., description="Requested permission level"
+    )
     requested_at: datetime = Field(..., description="Request timestamp")
 
 
 class ApprovedPermissionsByLevel(BaseModel):
     """Schema for approved permissions grouped by level."""
 
-    view: List[PermissionUserInfo] = Field(default_factory=list, description="Users with view permission")
-    edit: List[PermissionUserInfo] = Field(default_factory=list, description="Users with edit permission")
-    manage: List[PermissionUserInfo] = Field(default_factory=list, description="Users with manage permission")
+    view: List[PermissionUserInfo] = Field(
+        default_factory=list, description="Users with view permission"
+    )
+    edit: List[PermissionUserInfo] = Field(
+        default_factory=list, description="Users with edit permission"
+    )
+    manage: List[PermissionUserInfo] = Field(
+        default_factory=list, description="Users with manage permission"
+    )
 
 
 class PermissionListResponse(BaseModel):
@@ -157,7 +169,9 @@ class PendingRequestInfo(BaseModel):
     """Schema for current user's pending request info."""
 
     id: int = Field(..., description="Permission record ID")
-    permission_level: PermissionLevel = Field(..., description="Requested permission level")
+    permission_level: PermissionLevel = Field(
+        ..., description="Requested permission level"
+    )
     requested_at: datetime = Field(..., description="Request timestamp")
 
 

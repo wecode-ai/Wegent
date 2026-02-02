@@ -30,19 +30,19 @@ from app.schemas.knowledge_permission import (
     PermissionAddRequest,
     PermissionApplyRequest,
     PermissionApplyResponse,
+)
+from app.schemas.knowledge_permission import PermissionLevel as SchemaPermissionLevel
+from app.schemas.knowledge_permission import (
     PermissionListResponse,
     PermissionResponse,
     PermissionReviewRequest,
     PermissionReviewResponse,
+)
+from app.schemas.knowledge_permission import PermissionStatus as SchemaPermissionStatus
+from app.schemas.knowledge_permission import (
     PermissionUpdateRequest,
     PermissionUserInfo,
     ReviewAction,
-)
-from app.schemas.knowledge_permission import (
-    PermissionLevel as SchemaPermissionLevel,
-)
-from app.schemas.knowledge_permission import (
-    PermissionStatus as SchemaPermissionStatus,
 )
 from app.services.group_permission import get_effective_role_in_group
 
@@ -147,8 +147,10 @@ class KnowledgePermissionService:
         user_id: int,
     ) -> bool:
         """Check if user can manage permissions for a knowledge base."""
-        has_access, level, is_creator = KnowledgePermissionService.get_user_kb_permission(
-            db, knowledge_base_id, user_id
+        has_access, level, is_creator = (
+            KnowledgePermissionService.get_user_kb_permission(
+                db, knowledge_base_id, user_id
+            )
         )
         if is_creator:
             return True
@@ -212,7 +214,9 @@ class KnowledgePermissionService:
             if existing.status == PermissionStatus.APPROVED:
                 raise ValueError("You already have access to this knowledge base")
             if existing.status == PermissionStatus.PENDING:
-                raise ValueError("You already have a pending request for this knowledge base")
+                raise ValueError(
+                    "You already have a pending request for this knowledge base"
+                )
             # Rejected status - allow reapply by updating the record
             existing.permission_level = PermissionLevel(request.permission_level.value)
             existing.status = PermissionStatus.PENDING
@@ -389,7 +393,9 @@ class KnowledgePermissionService:
                         user_id=perm.user_id,
                         username=user.user_name if user else f"User {perm.user_id}",
                         email=user.email if user else None,
-                        permission_level=SchemaPermissionLevel(perm.permission_level.value),
+                        permission_level=SchemaPermissionLevel(
+                            perm.permission_level.value
+                        ),
                         requested_at=perm.requested_at,
                     )
                 )
@@ -417,7 +423,7 @@ class KnowledgePermissionService:
             db: Database session
             knowledge_base_id: Knowledge base ID
             admin_user_id: Admin user ID (who is adding)
-            request: Permission add request
+            request: Permission add request (uses user_name to identify user)
 
         Returns:
             PermissionResponse
@@ -445,21 +451,21 @@ class KnowledgePermissionService:
         if not kb:
             raise ValueError("Knowledge base not found")
 
-        # Can't add permission for the creator
-        if kb.user_id == request.user_id:
-            raise ValueError("Cannot add permission for the knowledge base creator")
-
-        # Check if user exists
-        target_user = db.query(User).filter(User.id == request.user_id).first()
+        # Find user by user_name
+        target_user = db.query(User).filter(User.user_name == request.user_name).first()
         if not target_user:
-            raise ValueError("User not found")
+            raise ValueError(f"User '{request.user_name}' not found")
+
+        # Can't add permission for the creator
+        if kb.user_id == target_user.id:
+            raise ValueError("Cannot add permission for the knowledge base creator")
 
         # Check existing permission
         existing = (
             db.query(KnowledgeBasePermission)
             .filter(
                 KnowledgeBasePermission.knowledge_base_id == knowledge_base_id,
-                KnowledgeBasePermission.user_id == request.user_id,
+                KnowledgeBasePermission.user_id == target_user.id,
             )
             .first()
         )
@@ -479,7 +485,7 @@ class KnowledgePermissionService:
             # Create new permission
             perm = KnowledgeBasePermission(
                 knowledge_base_id=knowledge_base_id,
-                user_id=request.user_id,
+                user_id=target_user.id,
                 permission_level=PermissionLevel(request.permission_level.value),
                 status=PermissionStatus.APPROVED,
                 requested_at=now,
@@ -678,11 +684,15 @@ class KnowledgePermissionService:
         if explicit_perm:
             if explicit_perm.status == PermissionStatus.APPROVED:
                 has_explicit_access = True
-                explicit_level = SchemaPermissionLevel(explicit_perm.permission_level.value)
+                explicit_level = SchemaPermissionLevel(
+                    explicit_perm.permission_level.value
+                )
             elif explicit_perm.status == PermissionStatus.PENDING:
                 pending_request = PendingRequestInfo(
                     id=explicit_perm.id,
-                    permission_level=SchemaPermissionLevel(explicit_perm.permission_level.value),
+                    permission_level=SchemaPermissionLevel(
+                        explicit_perm.permission_level.value
+                    ),
                     requested_at=explicit_perm.requested_at,
                 )
 
@@ -708,7 +718,9 @@ class KnowledgePermissionService:
             group_priority = KnowledgePermissionService.get_permission_priority(
                 PermissionLevel(group_level.value)
             )
-            final_level = explicit_level if explicit_priority >= group_priority else group_level
+            final_level = (
+                explicit_level if explicit_priority >= group_priority else group_level
+            )
             return MyPermissionResponse(
                 has_access=True,
                 permission_level=final_level,
