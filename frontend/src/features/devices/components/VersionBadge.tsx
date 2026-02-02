@@ -35,7 +35,7 @@ export function VersionBadge({
           <Tooltip>
             <TooltipTrigger asChild>
               <Badge
-                variant="outline"
+                variant="info"
                 className="cursor-pointer border-amber-400 text-amber-600 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-600 dark:text-amber-400 px-1.5 py-0"
               >
                 <ArrowUpCircle className="h-3 w-3" />
