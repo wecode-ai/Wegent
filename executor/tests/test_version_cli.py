@@ -4,7 +4,6 @@
 
 """Tests for the --version CLI flag functionality."""
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -72,43 +71,52 @@ class TestVersionCLI:
 
 
 class TestHandleVersionFlag:
-    """Test _handle_version_flag function directly using mocked os._exit."""
+    """Test _handle_version_flag function directly."""
 
     def test_handle_version_flag_with_version(self) -> None:
-        """Test that _handle_version_flag calls os._exit(0) when --version is present."""
+        """Test that _handle_version_flag exits when --version is present in non-frozen mode."""
         with patch.object(sys, "argv", ["main.py", "--version"]):
-            with patch.object(os, "_exit") as mock_exit:
-                from executor.main import _handle_version_flag
+            with patch.object(sys, "frozen", False, create=True):
+                with pytest.raises(SystemExit) as exc_info:
+                    from executor.main import _handle_version_flag
 
-                _handle_version_flag()
-                mock_exit.assert_called_once_with(0)
+                    _handle_version_flag()
+                assert exc_info.value.code == 0
 
     def test_handle_version_flag_with_v(self) -> None:
-        """Test that _handle_version_flag calls os._exit(0) when -v is present."""
+        """Test that _handle_version_flag exits when -v is present in non-frozen mode."""
         with patch.object(sys, "argv", ["main.py", "-v"]):
-            with patch.object(os, "_exit") as mock_exit:
-                from executor.main import _handle_version_flag
+            with patch.object(sys, "frozen", False, create=True):
+                with pytest.raises(SystemExit) as exc_info:
+                    from executor.main import _handle_version_flag
 
-                _handle_version_flag()
-                mock_exit.assert_called_once_with(0)
+                    _handle_version_flag()
+                assert exc_info.value.code == 0
 
     def test_handle_version_flag_without_flag(self) -> None:
         """Test that _handle_version_flag does nothing without version flag."""
         with patch.object(sys, "argv", ["main.py"]):
-            with patch.object(os, "_exit") as mock_exit:
-                from executor.main import _handle_version_flag
+            from executor.main import _handle_version_flag
 
-                _handle_version_flag()
-                mock_exit.assert_not_called()
+            # Should not raise SystemExit
+            _handle_version_flag()
 
     def test_handle_version_flag_with_other_args(self) -> None:
         """Test that _handle_version_flag does nothing with other arguments."""
         with patch.object(sys, "argv", ["main.py", "--help"]):
-            with patch.object(os, "_exit") as mock_exit:
+            from executor.main import _handle_version_flag
+
+            # Should not raise SystemExit
+            _handle_version_flag()
+
+    def test_handle_version_flag_skipped_in_frozen_mode(self) -> None:
+        """Test that _handle_version_flag skips processing in frozen (PyInstaller) mode."""
+        with patch.object(sys, "argv", ["main.py", "--version"]):
+            with patch.object(sys, "frozen", True, create=True):
                 from executor.main import _handle_version_flag
 
+                # Should NOT exit in frozen mode (handled by runtime hook)
                 _handle_version_flag()
-                mock_exit.assert_not_called()
 
 
 class TestModuleImportSafety:
@@ -131,3 +139,20 @@ class TestModuleImportSafety:
             # If we reach here, the import didn't exit - which is correct behavior
         finally:
             sys.argv = original_argv
+
+
+class TestRuntimeHook:
+    """Test the PyInstaller runtime hook."""
+
+    def test_runtime_hook_file_exists(self) -> None:
+        """Test that the runtime hook file exists."""
+        hook_path = PROJECT_ROOT / "executor" / "hooks" / "rthook_version.py"
+        assert hook_path.exists(), f"Runtime hook not found at {hook_path}"
+
+    def test_runtime_hook_has_version_handling(self) -> None:
+        """Test that the runtime hook contains version handling code."""
+        hook_path = PROJECT_ROOT / "executor" / "hooks" / "rthook_version.py"
+        content = hook_path.read_text()
+        assert "--version" in content
+        assert "-v" in content
+        assert "os._exit" in content

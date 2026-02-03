@@ -15,6 +15,8 @@ Supports two modes:
 
 CLI options:
 - --version, -v: Print version and exit
+  Note: In PyInstaller builds, this is handled by hooks/rthook_version.py
+  to avoid module initialization issues.
 """
 
 import multiprocessing
@@ -27,14 +29,20 @@ def _handle_version_flag() -> None:
 
     If the flag is present, print version and exit immediately.
     This is done before any heavy imports to ensure fast response.
+
+    Note: In PyInstaller builds, version flag is handled earlier by the
+    runtime hook (hooks/rthook_version.py) to avoid cleanup errors.
+    This function serves as a fallback for non-frozen (development) mode.
     """
+    # Skip if already handled by PyInstaller runtime hook
+    if getattr(sys, "frozen", False):
+        return
+
     if "--version" in sys.argv or "-v" in sys.argv:
         from executor.version import get_version
 
         print(get_version(), flush=True)
-        # Use os._exit() instead of sys.exit() to avoid PyInstaller cleanup
-        # hooks that may fail when modules are not fully initialized
-        os._exit(0)
+        sys.exit(0)
 
 
 # Required for PyInstaller on macOS/Windows to prevent infinite fork
