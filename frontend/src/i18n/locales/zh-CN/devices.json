@@ -78,5 +78,7 @@
     "current": "当前版本",
     "latest": "最新版本",
     "updateAvailable": "有新版本可用"
-  }
+  },
+  "add_device": "添加设备",
+  "hide_guide": "收起指南"
 }
