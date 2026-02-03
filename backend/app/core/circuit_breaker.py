@@ -27,29 +27,48 @@ from functools import wraps
 from typing import Any, Callable, Optional
 
 import pybreaker
-from prometheus_client import Counter, Gauge
+from prometheus_client import REGISTRY, Counter, Gauge
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def _get_or_create_metric(metric_class, name, *args, **kwargs):
+    """Get existing metric or create new one if it doesn't exist.
+
+    This handles the case where metrics are re-registered during module reloads
+    (e.g., hot reloading in development), which would otherwise raise:
+    ValueError: Duplicated timeseries in CollectorRegistry
+    """
+    # Check if metric already exists in the registry by name
+    if name in REGISTRY._names_to_collectors:
+        return REGISTRY._names_to_collectors[name]
+    # Create new metric if not found
+    return metric_class(name, *args, **kwargs)
+
+
 # Prometheus metrics for circuit breaker
-CIRCUIT_BREAKER_STATE = Gauge(
+CIRCUIT_BREAKER_STATE = _get_or_create_metric(
+    Gauge,
     "circuit_breaker_state",
     "Circuit breaker state (0=closed, 1=open, 2=half-open)",
     ["breaker_name"],
 )
-CIRCUIT_BREAKER_FAILURES = Counter(
+CIRCUIT_BREAKER_FAILURES = _get_or_create_metric(
+    Counter,
     "circuit_breaker_failures_total",
     "Total circuit breaker failures",
     ["breaker_name"],
 )
-CIRCUIT_BREAKER_SUCCESS = Counter(
+CIRCUIT_BREAKER_SUCCESS = _get_or_create_metric(
+    Counter,
     "circuit_breaker_success_total",
     "Total circuit breaker successes",
     ["breaker_name"],
 )
-CIRCUIT_BREAKER_REJECTED = Counter(
+CIRCUIT_BREAKER_REJECTED = _get_or_create_metric(
+    Counter,
     "circuit_breaker_rejected_total",
     "Total requests rejected by open circuit",
     ["breaker_name"],

@@ -14,7 +14,7 @@ This module provides REST API endpoints for:
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Body, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -23,10 +23,12 @@ from app.models.user import User
 from app.schemas.subscription import (
     DiscoverSubscriptionsListResponse,
     FollowingSubscriptionsListResponse,
+    FollowSubscriptionRequest,
     InviteNamespaceRequest,
     InviteUserRequest,
     SubscriptionFollowersListResponse,
     SubscriptionInvitationsListResponse,
+    UpdateFollowNotificationRequest,
 )
 from app.services.subscription.follow_service import subscription_follow_service
 
@@ -41,6 +43,9 @@ router = APIRouter()
 @router.post("/{subscription_id}/follow", status_code=status.HTTP_200_OK)
 def follow_subscription(
     subscription_id: int,
+    request: FollowSubscriptionRequest = Body(
+        default_factory=FollowSubscriptionRequest
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -48,12 +53,13 @@ def follow_subscription(
     Follow a public subscription.
 
     Users can follow public subscriptions to see their execution results
-    in their Feed timeline.
+    in their Feed timeline. By default, notifications are enabled.
     """
     return subscription_follow_service.follow_subscription(
         db=db,
         subscription_id=subscription_id,
         user_id=current_user.id,
+        notification_preference=request.notification_preference,
     )
 
 
@@ -73,6 +79,26 @@ def unfollow_subscription(
         db=db,
         subscription_id=subscription_id,
         user_id=current_user.id,
+    )
+
+
+@router.patch("/{subscription_id}/follow/notification", status_code=status.HTTP_200_OK)
+def update_follow_notification(
+    subscription_id: int,
+    request: UpdateFollowNotificationRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Update notification preference for a followed subscription.
+
+    Enable or disable webhook notifications when the subscription execution completes.
+    """
+    return subscription_follow_service.update_follow_notification(
+        db=db,
+        subscription_id=subscription_id,
+        user_id=current_user.id,
+        notification_preference=request.notification_preference,
     )
 
 

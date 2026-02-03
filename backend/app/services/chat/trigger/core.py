@@ -546,6 +546,11 @@ async def _stream_chat_response(
                 task_id=stream_data.task_id,
                 context_window=model_context_window,  # Pass model's context_window from Model spec
             )
+            # Check if enhanced_system_prompt contains KB prompt
+            has_kb_prompt = (
+                "<knowledge_base>" in enhanced_system_prompt
+                or "Knowledge Base" in enhanced_system_prompt
+            )
             logger.info(
                 f"[ai_trigger] Unified context processing completed: "
                 f"user_subtask_id={user_subtask_id}, "
@@ -553,7 +558,9 @@ async def _stream_chat_response(
                 f"extra_tools={[t.name for t in extra_tools]}, "
                 f"has_table_context={has_table_context}, "
                 f"table_contexts_count={len(table_contexts)}, "
-                f"table_contexts={table_contexts}"
+                f"table_contexts={table_contexts}, "
+                f"enhanced_prompt_length={len(enhanced_system_prompt)}, "
+                f"has_kb_prompt={has_kb_prompt}"
             )
         else:
             logger.warning(
@@ -879,6 +886,15 @@ async def _stream_with_http_adapter(
     # The ws_config.enable_web_search is for user override, but server-side setting takes precedence
     enable_web_search = ws_config.enable_web_search or getattr(
         settings, "WEB_SEARCH_ENABLED", False
+    )
+
+    # Check if system_prompt contains KB prompt
+    has_kb_in_prompt = (
+        "<knowledge_base>" in system_prompt or "Knowledge Base" in system_prompt
+    )
+    logger.info(
+        f"[HTTP_ADAPTER] Building ChatRequest: system_prompt_length={len(system_prompt)}, "
+        f"has_kb_in_prompt={has_kb_in_prompt}, knowledge_base_ids={knowledge_base_ids}"
     )
 
     chat_request = ChatRequest(

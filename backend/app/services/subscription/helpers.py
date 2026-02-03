@@ -28,6 +28,7 @@ from app.schemas.subscription import (
     EventTriggerConfig,
     GitPushEventConfig,
     IntervalTriggerConfig,
+    KnowledgeBaseSubscriptionRef,
     OneTimeTriggerConfig,
     Subscription,
     SubscriptionCreate,
@@ -136,6 +137,18 @@ def build_subscription_crd(
             namespace=subscription_in.model_ref.get("namespace", "default"),
         )
 
+    # Build knowledge base references
+    knowledge_base_refs = None
+    if subscription_in.knowledge_base_refs:
+        knowledge_base_refs = [
+            KnowledgeBaseSubscriptionRef(
+                id=kb.get("id"),
+                name=kb.get("name", ""),
+                namespace=kb.get("namespace", "default"),
+            )
+            for kb in subscription_in.knowledge_base_refs
+        ]
+
     spec = SubscriptionSpec(
         displayName=subscription_in.display_name,
         taskType=subscription_in.task_type,
@@ -156,6 +169,10 @@ def build_subscription_crd(
         # History preservation settings
         preserveHistory=subscription_in.preserve_history,
         historyMessageCount=subscription_in.history_message_count,
+        # Knowledge base references
+        knowledgeBaseRefs=knowledge_base_refs,
+        # Notification settings
+        enableNotification=subscription_in.enable_notification,
     )
 
     status = SubscriptionStatus()

@@ -279,13 +279,24 @@ class ChatContext:
         from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
 
         base_system_prompt = self._request.system_prompt or ""
-        if not self._request.knowledge_base_ids:
+        kb_ids = self._request.knowledge_base_ids
+
+        logger.info(
+            "[CHAT_CONTEXT] _prepare_kb_tools called with knowledge_base_ids=%s, system_prompt_length=%d",
+            kb_ids,
+            len(base_system_prompt),
+        )
+
+        if not kb_ids:
+            logger.warning(
+                "[CHAT_CONTEXT] No knowledge_base_ids, skipping KB tool preparation"
+            )
             add_span_event("no_kb_ids_skipped")
             return [], base_system_prompt
 
         add_span_event(
             "preparing_kb_tools",
-            {"kb_ids_count": len(self._request.knowledge_base_ids)},
+            {"kb_ids_count": len(kb_ids)},
         )
         model_id = (
             self._request.model_config.get("model_id")
@@ -731,8 +742,14 @@ class ChatContext:
 
         # Add KB tools
         kb_tools, _ = kb_result
+        logger.info(
+            "[CHAT_CONTEXT] Adding KB tools: count=%d", len(kb_tools) if kb_tools else 0
+        )
         if kb_tools:
             extra_tools.extend(kb_tools)
+            logger.info(
+                "[CHAT_CONTEXT] Added %d KB tool(s) to extra_tools", len(kb_tools)
+            )
 
         # Add skill tools (dynamically created from skill configs)
         if skill_tools:

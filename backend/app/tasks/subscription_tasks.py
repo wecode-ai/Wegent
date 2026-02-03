@@ -18,10 +18,10 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from celery.exceptions import SoftTimeLimitExceeded
-from prometheus_client import Counter, Histogram
+from prometheus_client import REGISTRY, Counter, Histogram
 from sqlalchemy.orm import Session
 
 from app.core.celery_app import celery_app
@@ -29,18 +29,36 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def _get_or_create_metric(metric_class, name, *args, **kwargs):
+    """Get existing metric or create new one if it doesn't exist.
+
+    This handles the case where metrics are re-registered during module reloads
+    (e.g., hot reloading in development), which would otherwise raise:
+    ValueError: Duplicated timeseries in CollectorRegistry
+    """
+    # Check if metric already exists in the registry by name
+    if name in REGISTRY._names_to_collectors:
+        return REGISTRY._names_to_collectors[name]
+    # Create new metric if not found
+    return metric_class(name, *args, **kwargs)
+
+
 # Prometheus metrics
-SUBSCRIPTION_EXECUTIONS_TOTAL = Counter(
+SUBSCRIPTION_EXECUTIONS_TOTAL = _get_or_create_metric(
+    Counter,
     "subscription_executions_total",
     "Total subscription executions",
     ["status", "trigger_type"],
 )
-SUBSCRIPTION_EXECUTION_DURATION = Histogram(
+SUBSCRIPTION_EXECUTION_DURATION = _get_or_create_metric(
+    Histogram,
     "subscription_execution_duration_seconds",
     "Subscription execution duration in seconds",
     buckets=[10, 30, 60, 120, 300, 600],
 )
-SUBSCRIPTION_QUEUE_SIZE = Counter(
+SUBSCRIPTION_QUEUE_SIZE = _get_or_create_metric(
+    Counter,
     "subscription_tasks_queued_total",
     "Total subscription tasks queued for execution",
 )
@@ -64,6 +82,10 @@ class SubscriptionExecutionContext:
     preserve_history: bool = False
     history_message_count: int = 10
     bound_task_id: int = 0
+    # Knowledge base references
+    knowledge_base_refs: Optional[List[Dict[str, Any]]] = None
+    # Notification settings
+    enable_notification: bool = False
 
 
 @dataclass
@@ -228,12 +250,46 @@ def _load_subscription_execution_context(
         preserve_history = False
         history_message_count = 10
         bound_task_id = 0
+        # For rentals, use source's knowledge base refs
+        knowledge_base_refs = None
+        if source_crd.spec.knowledgeBaseRefs:
+            knowledge_base_refs = [
+                {"id": kb.id, "name": kb.name, "namespace": kb.namespace}
+                for kb in source_crd.spec.knowledgeBaseRefs
+            ]
+        enable_notification = getattr(source_crd.spec, "enableNotification", False)
     else:
         preserve_history = getattr(subscription_crd.spec, "preserveHistory", False)
         history_message_count = getattr(
             subscription_crd.spec, "historyMessageCount", 10
         )
         bound_task_id = internal.get("bound_task_id", 0) or 0
+        # Load knowledge base refs from CRD
+        knowledge_base_refs = None
+        logger.info(
+            f"[subscription_tasks] Loading KB refs for subscription {subscription.id}, "
+            f"spec.knowledgeBaseRefs={subscription_crd.spec.knowledgeBaseRefs}"
+        )
+        if subscription_crd.spec.knowledgeBaseRefs:
+            knowledge_base_refs = [
+                {"id": kb.id, "name": kb.name, "namespace": kb.namespace}
+                for kb in subscription_crd.spec.knowledgeBaseRefs
+            ]
+            logger.info(
+                f"[subscription_tasks] Loaded {len(knowledge_base_refs)} KB refs: {knowledge_base_refs}"
+            )
+        else:
+            logger.warning(
+                f"[subscription_tasks] No knowledgeBaseRefs found in subscription {subscription.id} spec"
+            )
+        enable_notification = getattr(
+            subscription_crd.spec, "enableNotification", False
+        )
+        logger.info(
+            f"[subscription_tasks] enable_notification for subscription {subscription.id}: "
+            f"{enable_notification}, spec.enableNotification={getattr(subscription_crd.spec, 'enableNotification', 'NOT_SET')}, "
+            f"is_rental={is_rental}"
+        )
 
     # Build effective subscription_crd for execution
     # For rentals, we need to merge source's team/prompt/workspace with rental's trigger/model
@@ -264,6 +320,8 @@ def _load_subscription_execution_context(
         preserve_history=preserve_history,
         history_message_count=history_message_count,
         bound_task_id=bound_task_id,
+        knowledge_base_refs=knowledge_base_refs,
+        enable_notification=enable_notification,
     )
 
 
@@ -428,6 +486,19 @@ async def _create_subscription_task(
     if ctx.preserve_history and reuse_task_id is None:
         _bind_task_to_subscription(db, ctx.subscription, result.task.id)
 
+    # Add knowledge base references to task if specified
+    logger.info(
+        f"[subscription_tasks] Checking KB refs for task {result.task.id}, "
+        f"knowledge_base_refs={ctx.knowledge_base_refs}"
+    )
+    if ctx.knowledge_base_refs and result.task:
+        _add_knowledge_bases_to_task(db, result.task, ctx.knowledge_base_refs)
+    else:
+        logger.warning(
+            f"[subscription_tasks] Skipping KB add: knowledge_base_refs={ctx.knowledge_base_refs}, "
+            f"task={result.task.id if result.task else None}"
+        )
+
     return SubscriptionTaskResult(
         task=result.task,
         user_subtask=result.user_subtask,
@@ -487,6 +558,74 @@ def _link_task_to_execution(db: Session, execution: Any, task_id: int) -> None:
     db.commit()
 
 
+def _add_knowledge_bases_to_task(
+    db: Session,
+    task: Any,
+    knowledge_base_refs: List[Dict[str, Any]],
+) -> None:
+    """Add knowledge base references to task spec.
+
+    Args:
+        db: Database session
+        task: Task resource
+        knowledge_base_refs: List of knowledge base references
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.schemas.kind import KnowledgeBaseTaskRef, Task
+
+    if not knowledge_base_refs:
+        logger.warning(
+            f"[subscription_tasks] KB refs is empty, skipping add to task {task.id}"
+        )
+        return
+
+    try:
+        logger.info(
+            f"[subscription_tasks] Adding {len(knowledge_base_refs)} KB refs to task {task.id}: "
+            f"{knowledge_base_refs}"
+        )
+        logger.info(
+            f"[subscription_tasks] Task {task.id} json before: {task.json.get('spec', {}).get('knowledgeBaseRefs', 'NOT SET')}"
+        )
+
+        task_crd = Task.model_validate(task.json)
+
+        # Convert subscription KB refs to task KB refs
+        kb_refs = [
+            KnowledgeBaseTaskRef(
+                id=kb.get("id"),
+                name=kb.get("name", ""),
+                namespace=kb.get("namespace", "default"),
+            )
+            for kb in knowledge_base_refs
+        ]
+
+        # Add to task spec
+        if not task_crd.spec.knowledgeBaseRefs:
+            task_crd.spec.knowledgeBaseRefs = []
+        task_crd.spec.knowledgeBaseRefs = kb_refs
+
+        # Save changes
+        task.json = task_crd.model_dump(mode="json")
+        flag_modified(task, "json")
+        db.commit()
+
+        # Verify the save
+        dumped = task_crd.model_dump(mode="json")
+        saved_kb = dumped.get("spec", {}).get("knowledgeBaseRefs", "NOT FOUND")
+        logger.info(
+            f"[subscription_tasks] Successfully added {len(kb_refs)} KB(s) to task {task.id}. "
+            f"Saved knowledgeBaseRefs: {saved_kb}"
+        )
+    except Exception as e:
+        logger.error(
+            f"[subscription_tasks] Failed to add knowledge bases to task {task.id}: {e}",
+            exc_info=True,
+        )
+        # Don't raise - this is non-critical
+
+
 async def _trigger_chat_shell_response(
     ctx: SubscriptionExecutionContext,
     task: Any,
@@ -517,7 +656,12 @@ async def _trigger_chat_shell_response(
         force_override_bot_model=override_model_name,
     )
     task_room = get_task_room(task.id)
-    subscription_emitter = SubscriptionEventEmitter(execution_id=ctx.execution.id)
+    subscription_emitter = SubscriptionEventEmitter(
+        execution_id=ctx.execution.id,
+        user_id=ctx.user.id,
+        subscription_id=ctx.subscription.id,
+        enable_notification=ctx.enable_notification,
+    )
 
     # Determine history_limit based on preserve_history setting
     # If preserve_history is enabled, use the configured history_message_count

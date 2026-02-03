@@ -28,6 +28,7 @@ import type {
   RentalSubscriptionResponse,
   RentalSubscriptionsListResponse,
   RentalCountResponse,
+  NotificationPreference,
 } from '@/types/subscription'
 import type { PaginationParams } from '@/types/api'
 
@@ -152,10 +153,15 @@ export const subscriptionApis = {
   // ========== Follow/Visibility APIs ==========
 
   /**
-   * Follow a public subscription
+   * Follow a public subscription with notification preference
    */
-  async followSubscription(subscriptionId: number): Promise<{ message: string }> {
-    return apiClient.post(`/subscriptions/${subscriptionId}/follow`)
+  async followSubscription(
+    subscriptionId: number,
+    notificationPreference: NotificationPreference = 'default'
+  ): Promise<{ message: string }> {
+    return apiClient.post(`/subscriptions/${subscriptionId}/follow`, {
+      notification_preference: notificationPreference,
+    })
   },
 
   /**
@@ -163,6 +169,18 @@ export const subscriptionApis = {
    */
   async unfollowSubscription(subscriptionId: number): Promise<{ message: string }> {
     return apiClient.delete(`/subscriptions/${subscriptionId}/follow`)
+  },
+
+  /**
+   * Update notification preference for a followed subscription
+   */
+  async updateFollowNotification(
+    subscriptionId: number,
+    notificationPreference: NotificationPreference
+  ): Promise<{ message: string; notification_preference: NotificationPreference }> {
+    return apiClient.patch(`/subscriptions/${subscriptionId}/follow/notification`, {
+      notification_preference: notificationPreference,
+    })
   },
 
   /**

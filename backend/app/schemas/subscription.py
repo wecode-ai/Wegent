@@ -62,6 +62,14 @@ class BackgroundExecutionStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
+class NotificationPreference(str, Enum):
+    """Notification preference for subscription follows."""
+
+    SILENT = "silent"  # No notifications
+    DEFAULT = "default"  # Use system default notification method
+    PRIVATE_MESSAGE = "private_message"  # Send via private message/IM channel
+
+
 # Trigger configuration schemas
 class CronTriggerConfig(BaseModel):
     """Cron trigger configuration."""
@@ -144,6 +152,16 @@ class SourceSubscriptionRef(BaseModel):
     namespace: str = Field("default", description="Source subscription namespace")
 
 
+class KnowledgeBaseSubscriptionRef(BaseModel):
+    """Reference to a KnowledgeBase for Subscription."""
+
+    id: Optional[int] = Field(
+        None, description="Knowledge base Kind.id (primary reference)"
+    )
+    name: str = Field(..., description="Knowledge base name")
+    namespace: str = Field("default", description="Knowledge base namespace")
+
+
 # CRD spec and status
 class SubscriptionSpec(BaseModel):
     """Subscription CRD specification."""
@@ -205,6 +223,16 @@ class SubscriptionSpec(BaseModel):
         None,
         description="Reference to source subscription (for rentals). "
         "When set, this subscription is a rental instance.",
+    )
+    # Knowledge base references
+    knowledgeBaseRefs: Optional[List[KnowledgeBaseSubscriptionRef]] = Field(
+        None,
+        description="References to knowledge bases for this subscription",
+    )
+    # Notification settings
+    enableNotification: bool = Field(
+        False,
+        description="Whether to send notification when execution completes",
     )
 
 
@@ -312,6 +340,16 @@ class SubscriptionBase(BaseModel):
         le=50,
         description="Number of recent messages to include as context (0-50)",
     )
+    # Knowledge base references
+    knowledge_base_refs: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description="References to knowledge bases for this subscription",
+    )
+    # Notification settings
+    enable_notification: bool = Field(
+        False,
+        description="Whether to send notification when execution completes",
+    )
 
 
 class SubscriptionCreate(SubscriptionBase):
@@ -346,6 +384,10 @@ class SubscriptionUpdate(BaseModel):
     # History preservation settings
     preserve_history: Optional[bool] = None
     history_message_count: Optional[int] = Field(None, ge=0, le=50)
+    # Knowledge base references
+    knowledge_base_refs: Optional[List[Dict[str, Any]]] = None
+    # Notification settings
+    enable_notification: Optional[bool] = None
 
 
 class SubscriptionInDB(SubscriptionBase):
@@ -561,6 +603,10 @@ class FollowingSubscriptionResponse(BaseModel):
     subscription: SubscriptionInDB
     follow_type: FollowType
     followed_at: datetime
+    notification_preference: NotificationPreference = Field(
+        NotificationPreference.DEFAULT,
+        description="Notification preference for this subscription",
+    )
 
 
 class FollowingSubscriptionsListResponse(BaseModel):
@@ -568,6 +614,24 @@ class FollowingSubscriptionsListResponse(BaseModel):
 
     total: int
     items: List[FollowingSubscriptionResponse]
+
+
+class UpdateFollowNotificationRequest(BaseModel):
+    """Request to update follow notification preference."""
+
+    notification_preference: NotificationPreference = Field(
+        ...,
+        description="Notification preference: 'silent', 'default', or 'private_message'",
+    )
+
+
+class FollowSubscriptionRequest(BaseModel):
+    """Request to follow a subscription with notification preference."""
+
+    notification_preference: NotificationPreference = Field(
+        NotificationPreference.DEFAULT,
+        description="Notification preference for this subscription",
+    )
 
 
 class InviteUserRequest(BaseModel):

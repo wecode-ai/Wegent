@@ -11,10 +11,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
+  Bell,
+  BellOff,
   CalendarClock,
   Clock,
   Compass,
   Loader2,
+  MessageCircle,
   Share2,
   Timer,
   UserMinus,
@@ -25,6 +28,13 @@ import { toast } from 'sonner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,6 +49,7 @@ import { subscriptionApis } from '@/apis/subscription'
 import type {
   FollowingSubscriptionResponse,
   FollowType,
+  NotificationPreference,
   SubscriptionTriggerType,
 } from '@/types/subscription'
 import { paths } from '@/config/paths'
@@ -73,6 +84,7 @@ export function FollowingSubscriptionList({ followType }: FollowingSubscriptionL
   const [page, setPage] = useState(1)
   const [unfollowingId, setUnfollowingId] = useState<number | null>(null)
   const [pendingUnfollow, setPendingUnfollow] = useState<FollowingSubscriptionResponse | null>(null)
+  const [updatingNotificationId, setUpdatingNotificationId] = useState<number | null>(null)
   // History dialog state
   const [historyDialogSubscription, setHistoryDialogSubscription] =
     useState<HistoryDialogSubscription | null>(null)
@@ -157,6 +169,44 @@ export function FollowingSubscriptionList({ followType }: FollowingSubscriptionL
       setPendingUnfollow(null)
     }
   }, [pendingUnfollow, unfollowingId, t])
+
+  // Handle notification preference change
+  const handleNotificationPreferenceChange = useCallback(
+    async (subscriptionId: number, newPreference: NotificationPreference) => {
+      try {
+        setUpdatingNotificationId(subscriptionId)
+        await subscriptionApis.updateFollowNotification(subscriptionId, newPreference)
+        // Update local state
+        setSubscriptions(prev =>
+          prev.map(item =>
+            item.subscription.id === subscriptionId
+              ? { ...item, notification_preference: newPreference }
+              : item
+          )
+        )
+        toast.success(t('notification_updated'))
+      } catch (error) {
+        console.error('Failed to update notification preference:', error)
+        toast.error(t('notification_update_failed'))
+      } finally {
+        setUpdatingNotificationId(null)
+      }
+    },
+    [t]
+  )
+
+  // Get notification icon based on preference
+  const getNotificationIcon = (preference: NotificationPreference) => {
+    switch (preference) {
+      case 'silent':
+        return <BellOff className="h-4 w-4 text-text-muted" />
+      case 'private_message':
+        return <MessageCircle className="h-4 w-4 text-primary" />
+      case 'default':
+      default:
+        return <Bell className="h-4 w-4 text-primary" />
+    }
+  }
 
   // Handle click on subscription name - open history dialog
   const handleSubscriptionClick = useCallback(
@@ -317,6 +367,44 @@ export function FollowingSubscriptionList({ followType }: FollowingSubscriptionL
 
                 {/* Actions */}
                 <div className="flex items-center gap-2">
+                  {/* Notification Preference Select */}
+                  <Select
+                    value={item.notification_preference}
+                    onValueChange={(value: NotificationPreference) =>
+                      handleNotificationPreferenceChange(subscription.id, value)
+                    }
+                    disabled={updatingNotificationId === subscription.id}
+                  >
+                    <SelectTrigger className="w-[140px] h-8">
+                      <div className="flex items-center gap-2">
+                        {getNotificationIcon(item.notification_preference)}
+                        <SelectValue placeholder={t('notification_preference')} />
+                      </div>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="silent">
+                        <div className="flex items-center gap-2">
+                          <BellOff className="h-4 w-4" />
+                          <span>{t('notification_silent')}</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="default">
+                        <div className="flex items-center gap-2">
+                          <Bell className="h-4 w-4" />
+                          <span>{t('notification_default')}</span>
+                        </div>
+                      </SelectItem>
+                      {/* TODO: Enable private_message when IM channel integration is ready
+                      <SelectItem value="private_message">
+                        <div className="flex items-center gap-2">
+                          <MessageCircle className="h-4 w-4" />
+                          <span>{t('notification_private_message')}</span>
+                        </div>
+                      </SelectItem>
+                    */}
+                    </SelectContent>
+                  </Select>
+
                   <Button
                     variant="ghost"
                     size="sm"

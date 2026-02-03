@@ -13,6 +13,7 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Index,
@@ -36,6 +37,14 @@ class InvitationStatus(str, Enum):
     PENDING = "pending"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
+
+
+class NotificationPreference(str, Enum):
+    """Notification preference enumeration for subscription follows."""
+
+    SILENT = "silent"  # No notifications
+    DEFAULT = "default"  # Use system default notification method
+    PRIVATE_MESSAGE = "private_message"  # Send via private message/IM channel
 
 
 class SubscriptionFollow(Base):
@@ -69,6 +78,11 @@ class SubscriptionFollow(Base):
     invited_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     responded_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
+    # Notification settings
+    notification_preference = Column(
+        String(20), nullable=False, default=NotificationPreference.DEFAULT.value
+    )
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
@@ -89,6 +103,10 @@ class SubscriptionFollow(Base):
             "ix_sub_follow_pending_invitations",
             "follower_user_id",
             "invitation_status",
+        ),
+        # Index for querying followers with notification preference
+        Index(
+            "ix_sub_follow_notification", "subscription_id", "notification_preference"
         ),
     )
 

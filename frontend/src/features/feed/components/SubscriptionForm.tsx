@@ -42,6 +42,8 @@ import {
 import { subscriptionApis } from '@/apis/subscription'
 import { teamApis } from '@/apis/team'
 import { modelApis, UnifiedModel } from '@/apis/models'
+import { listKnowledgeBases } from '@/apis/knowledge'
+import type { KnowledgeBase } from '@/types/knowledge'
 import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
 import type {
   Subscription,
@@ -57,6 +59,9 @@ import { RepositorySelector, BranchSelector } from '@/features/tasks/components/
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { cn, parseUTCDate } from '@/lib/utils'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
+import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select'
+import { Tag } from '@/components/ui/tag'
+import { MessageSquare, Code, Layers } from 'lucide-react'
 
 // Model type for selector
 interface SubscriptionModel {
@@ -239,6 +244,7 @@ interface SubscriptionFormProps {
     enabled: boolean
     preserveHistory: boolean
     visibility: SubscriptionVisibility
+    enableNotification: boolean
   }>
 }
 
@@ -290,6 +296,17 @@ export function SubscriptionForm({
   const [visibility, setVisibility] = useState<SubscriptionVisibility>(
     initialData?.visibility || 'private'
   ) // Visibility setting
+
+  // Knowledge base selection state
+  const [selectedKnowledgeBases, setSelectedKnowledgeBases] = useState<KnowledgeBase[]>([])
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
+  const [knowledgeBasesLoading, setKnowledgeBasesLoading] = useState(false)
+  const [knowledgeBaseSelectorOpen, setKnowledgeBaseSelectorOpen] = useState(false)
+
+  // Notification settings
+  const [enableNotification, setEnableNotification] = useState(
+    initialData?.enableNotification ?? false
+  )
 
   // Model selection state
   const [selectedModel, setSelectedModel] = useState<SubscriptionModel | null>(null)
@@ -365,6 +382,26 @@ export function SubscriptionForm({
       loadModels()
     }
   }, [open, t])
+
+  // Load knowledge bases
+  useEffect(() => {
+    const loadKnowledgeBases = async () => {
+      setKnowledgeBasesLoading(true)
+      try {
+        const response = await listKnowledgeBases('all')
+        console.log('Loaded knowledge bases:', response)
+        setKnowledgeBases(response.items || [])
+      } catch (error) {
+        console.error('Failed to load knowledge bases:', error)
+        // Don't show error toast - KB loading is non-critical
+      } finally {
+        setKnowledgeBasesLoading(false)
+      }
+    }
+    if (open) {
+      loadKnowledgeBases()
+    }
+  }, [open])
 
   // Get selected team
   const selectedTeam = teams.find(t => t.id === teamId)
@@ -460,6 +497,27 @@ export function SubscriptionForm({
       setEnabled(subscription.enabled)
       setPreserveHistory(subscription.preserve_history || false)
       setVisibility(subscription.visibility || 'private')
+      // Load knowledge base references
+      if (subscription.knowledge_base_refs && subscription.knowledge_base_refs.length > 0) {
+        const selectedKBs = subscription.knowledge_base_refs.map(
+          kb =>
+            ({
+              id: kb.id || 0,
+              name: kb.name,
+              namespace: kb.namespace || 'default',
+              user_id: subscription.user_id,
+              document_count: 0,
+              is_active: true,
+              created_at: subscription.created_at,
+              updated_at: subscription.updated_at,
+            }) as KnowledgeBase
+        )
+        setSelectedKnowledgeBases(selectedKBs)
+      } else {
+        setSelectedKnowledgeBases([])
+      }
+      // Load notification settings
+      setEnableNotification(subscription.enable_notification || false)
       const repoInfo = buildRepoInfoFromSubscription(subscription)
       setSelectedRepo(repoInfo)
       setSelectedBranch(
@@ -496,6 +554,8 @@ export function SubscriptionForm({
       setEnabled(initialData?.enabled ?? true)
       setPreserveHistory(initialData?.preserveHistory ?? false)
       setVisibility(initialData?.visibility || 'private')
+      setSelectedKnowledgeBases([])
+      setEnableNotification(false)
       setSelectedRepo(null)
       setSelectedBranch(null)
       setSelectedModel(null)
@@ -571,6 +631,17 @@ export function SubscriptionForm({
           timeout_seconds: timeoutSeconds,
           enabled,
           preserve_history: preserveHistory,
+          // Knowledge base references
+          knowledge_base_refs:
+            selectedKnowledgeBases.length > 0
+              ? selectedKnowledgeBases.map(kb => ({
+                  id: kb.id,
+                  name: kb.name,
+                  namespace: kb.namespace || 'default',
+                }))
+              : undefined,
+          // Notification settings
+          enable_notification: enableNotification,
           // Only include team_id, prompt_template, visibility for non-rental subscriptions
           ...(isRental
             ? {}
@@ -616,6 +687,17 @@ export function SubscriptionForm({
           enabled,
           preserve_history: preserveHistory,
           visibility,
+          // Knowledge base references
+          knowledge_base_refs:
+            selectedKnowledgeBases.length > 0
+              ? selectedKnowledgeBases.map(kb => ({
+                  id: kb.id,
+                  name: kb.name,
+                  namespace: kb.namespace || 'default',
+                }))
+              : undefined,
+          // Notification settings
+          enable_notification: enableNotification,
           // Include git repo info if selected
           ...(selectedRepo && {
             git_repo: selectedRepo.git_repo,
@@ -655,6 +737,8 @@ export function SubscriptionForm({
     selectedRepo,
     selectedBranch,
     selectedModel,
+    selectedKnowledgeBases,
+    enableNotification,
     isEditing,
     isRental,
     subscription,
@@ -917,22 +1001,116 @@ export function SubscriptionForm({
                   <Label className="text-sm font-medium">
                     {t('select_team')} <span className="text-destructive">*</span>
                   </Label>
-                  <Select
-                    value={teamId?.toString() || ''}
-                    onValueChange={handleTeamChange}
-                    disabled={teamsLoading}
-                  >
-                    <SelectTrigger className="h-10">
-                      <SelectValue placeholder={t('select_team_placeholder')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {teams.map(team => (
-                        <SelectItem key={team.id} value={team.id.toString()}>
-                          {team.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {(() => {
+                    // Convert teams to SearchableSelectItem format with type badges
+                    const teamSelectItems: SearchableSelectItem[] = teams.map(team => {
+                      // Determine team type badge
+                      const bindMode = team.bind_mode
+                      const hasChat = bindMode?.includes('chat')
+                      const hasCode = bindMode?.includes('code')
+
+                      let typeBadge = null
+                      if (hasChat && hasCode) {
+                        typeBadge = (
+                          <Tag className="!m-0 flex-shrink-0" variant="success">
+                            <Layers className="h-3 w-3 mr-1" />
+                            {t('team_type_both')}
+                          </Tag>
+                        )
+                      } else if (hasCode) {
+                        typeBadge = (
+                          <Tag className="!m-0 flex-shrink-0" variant="info">
+                            <Code className="h-3 w-3 mr-1" />
+                            {t('team_type_code')}
+                          </Tag>
+                        )
+                      } else if (hasChat) {
+                        typeBadge = (
+                          <Tag className="!m-0 flex-shrink-0" variant="default">
+                            <MessageSquare className="h-3 w-3 mr-1" />
+                            {t('team_type_chat')}
+                          </Tag>
+                        )
+                      }
+
+                      return {
+                        value: team.id.toString(),
+                        label: team.name,
+                        searchText: team.name,
+                        content: (
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="font-medium text-sm text-text-secondary truncate flex-1 min-w-0"
+                              title={team.name}
+                            >
+                              {team.name}
+                            </span>
+                            {typeBadge}
+                          </div>
+                        ),
+                      }
+                    })
+
+                    // Render trigger value with type badge
+                    const renderTriggerValue = (item: SearchableSelectItem | undefined) => {
+                      if (!item) return null
+                      const team = teams.find(t => t.id.toString() === item.value)
+                      if (!team) return <span className="truncate">{item.label}</span>
+
+                      const bindMode = team.bind_mode
+                      const hasChat = bindMode?.includes('chat')
+                      const hasCode = bindMode?.includes('code')
+
+                      let typeBadge = null
+                      if (hasChat && hasCode) {
+                        typeBadge = (
+                          <Tag className="!m-0 flex-shrink-0 ml-2" variant="success">
+                            <Layers className="h-3 w-3 mr-1" />
+                            {t('team_type_both')}
+                          </Tag>
+                        )
+                      } else if (hasCode) {
+                        typeBadge = (
+                          <Tag className="!m-0 flex-shrink-0 ml-2" variant="info">
+                            <Code className="h-3 w-3 mr-1" />
+                            {t('team_type_code')}
+                          </Tag>
+                        )
+                      } else if (hasChat) {
+                        typeBadge = (
+                          <Tag className="!m-0 flex-shrink-0 ml-2" variant="default">
+                            <MessageSquare className="h-3 w-3 mr-1" />
+                            {t('team_type_chat')}
+                          </Tag>
+                        )
+                      }
+
+                      return (
+                        <div className="flex items-center min-w-0">
+                          <span className="truncate flex-1 min-w-0" title={item.label}>
+                            {item.label}
+                          </span>
+                          {typeBadge}
+                        </div>
+                      )
+                    }
+
+                    return (
+                      <SearchableSelect
+                        value={teamId?.toString() || ''}
+                        onValueChange={handleTeamChange}
+                        disabled={teamsLoading}
+                        placeholder={t('select_team_placeholder')}
+                        searchPlaceholder={t('search_team_placeholder')}
+                        items={teamSelectItems}
+                        loading={teamsLoading}
+                        emptyText={t('no_teams_available')}
+                        noMatchText={t('no_matching_teams')}
+                        triggerClassName="h-10"
+                        renderTriggerValue={renderTriggerValue}
+                      />
+                    )
+                  })()}
                 </div>
               )}
 
@@ -1090,6 +1268,107 @@ export function SubscriptionForm({
                 </div>
                 <Switch checked={preserveHistory} onCheckedChange={setPreserveHistory} />
               </div>
+
+              {/* Knowledge Base Selection */}
+              <div className="space-y-2 pt-2">
+                <Label className="text-sm font-medium">{t('knowledge_bases')}</Label>
+                <Popover
+                  open={knowledgeBaseSelectorOpen}
+                  onOpenChange={setKnowledgeBaseSelectorOpen}
+                >
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={knowledgeBaseSelectorOpen}
+                      className="w-full justify-between h-10"
+                      disabled={knowledgeBasesLoading}
+                    >
+                      {knowledgeBasesLoading ? (
+                        t('common:loading')
+                      ) : selectedKnowledgeBases.length > 0 ? (
+                        <span className="truncate">
+                          {selectedKnowledgeBases.map(kb => kb.name).join(', ')}
+                        </span>
+                      ) : (
+                        <span className="text-text-muted">
+                          {t('select_knowledge_bases_placeholder')}
+                        </span>
+                      )}
+                      <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className={cn(
+                      'w-[400px] p-0',
+                      'max-h-[var(--radix-popover-content-available-height,360px)]',
+                      'flex flex-col overflow-hidden'
+                    )}
+                    align="start"
+                  >
+                    <Command className="flex flex-col flex-1 min-h-0">
+                      <CommandList
+                        className="min-h-[36px] max-h-[240px] overflow-y-auto flex-1"
+                        onWheel={event => {
+                          event.stopPropagation()
+                        }}
+                      >
+                        <CommandEmpty>{t('no_knowledge_base_found')}</CommandEmpty>
+                        <CommandGroup>
+                          {/* Option to clear selection */}
+                          <CommandItem
+                            value="__clear__"
+                            onSelect={() => {
+                              setSelectedKnowledgeBases([])
+                              setKnowledgeBaseSelectorOpen(false)
+                            }}
+                          >
+                            <span className="text-text-muted">{t('no_knowledge_base')}</span>
+                          </CommandItem>
+                          {knowledgeBases.map(kb => (
+                            <CommandItem
+                              key={kb.id}
+                              value={kb.name}
+                              onSelect={() => {
+                                const isSelected = selectedKnowledgeBases.some(
+                                  selected => selected.id === kb.id
+                                )
+                                if (isSelected) {
+                                  setSelectedKnowledgeBases(
+                                    selectedKnowledgeBases.filter(selected => selected.id !== kb.id)
+                                  )
+                                } else {
+                                  setSelectedKnowledgeBases([...selectedKnowledgeBases, kb])
+                                }
+                              }}
+                            >
+                              <div className="flex flex-col">
+                                <span
+                                  className={cn(
+                                    selectedKnowledgeBases.some(
+                                      selected => selected.id === kb.id
+                                    ) && 'font-medium'
+                                  )}
+                                >
+                                  {kb.name}
+                                </span>
+                                {kb.description && (
+                                  <span className="text-xs text-text-muted">{kb.description}</span>
+                                )}
+                              </div>
+                              {selectedKnowledgeBases.some(selected => selected.id === kb.id) && (
+                                <Check className="ml-auto h-4 w-4" />
+                              )}
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                <p className="text-xs text-text-muted">{t('knowledge_bases_hint')}</p>
+              </div>
+
               {/* Visibility - Hidden for rental subscriptions */}
               {!isRental && (
                 <div className="space-y-2 pt-2">
@@ -1131,6 +1410,15 @@ export function SubscriptionForm({
                   </p>
                 </div>
               )}
+
+              {/* Enable Notification */}
+              <div className="flex items-center justify-between pt-2">
+                <div className="space-y-0.5">
+                  <Label className="text-sm font-medium">{t('enable_notification')}</Label>
+                  <p className="text-xs text-text-muted">{t('enable_notification_hint')}</p>
+                </div>
+                <Switch checked={enableNotification} onCheckedChange={setEnableNotification} />
+              </div>
 
               {/* Enabled */}
               <div className="flex items-center justify-between pt-2">
