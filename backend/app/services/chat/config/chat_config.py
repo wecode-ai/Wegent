@@ -604,6 +604,11 @@ class ChatConfigBuilder:
         This method is used for additional skills from frontend where we have
         explicit namespace and is_public information.
 
+        Search order for non-public skills:
+        1. Current user's skill in specified namespace (personal)
+        2. ANY user's skill in specified namespace (group-level, for group namespaces)
+        3. Current user's skill in default namespace (fallback)
+
         Args:
             skill_name: Skill name
             namespace: Skill namespace
@@ -625,7 +630,7 @@ class ChatConfigBuilder:
                 .first()
             )
         else:
-            # User's skill - search in specified namespace first, then default
+            # 1. Current user's skill in specified namespace
             skill = (
                 self.db.query(Kind)
                 .filter(
@@ -640,7 +645,23 @@ class ChatConfigBuilder:
             if skill:
                 return skill
 
-            # Fallback to default namespace
+            # 2. Group-level skill (any user's skill in the namespace)
+            # This allows team members to use skills uploaded by other members
+            if namespace != "default":
+                skill = (
+                    self.db.query(Kind)
+                    .filter(
+                        Kind.kind == "Skill",
+                        Kind.name == skill_name,
+                        Kind.namespace == namespace,
+                        Kind.is_active == True,  # noqa: E712
+                    )
+                    .first()
+                )
+                if skill:
+                    return skill
+
+            # 3. Fallback to current user's skill in default namespace
             if namespace != "default":
                 return (
                     self.db.query(Kind)

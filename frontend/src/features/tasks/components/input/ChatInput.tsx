@@ -12,7 +12,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import type { ChatTipItem, Team } from '@/types/api'
 import type { UnifiedSkill } from '@/apis/skills'
 import MentionAutocomplete from '../chat/MentionAutocomplete'
-import SkillAutocomplete from '../chat/SkillAutocomplete'
+import SkillAutocomplete, { SkillFlyAnimationTrigger } from '../chat/SkillAutocomplete'
+import SkillFlyAnimation from '../chat/SkillFlyAnimation'
 
 interface ChatInputProps {
   message: string
@@ -47,6 +48,8 @@ interface ChatInputProps {
   isChatShell?: boolean
   /** Whether skill selector is read-only (can view but not modify via / command) */
   skillSelectorReadOnly?: boolean
+  /** Ref to the skill button element for fly animation target */
+  skillButtonRef?: React.RefObject<HTMLElement | null>
 }
 
 export default function ChatInput({
@@ -72,6 +75,7 @@ export default function ChatInput({
   onSkillSelect,
   isChatShell = false,
   skillSelectorReadOnly = false,
+  skillButtonRef,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation()
 
@@ -122,6 +126,26 @@ export default function ChatInput({
   const [showSkillMenu, setShowSkillMenu] = useState(false)
   const [skillMenuPosition, setSkillMenuPosition] = useState({ top: 0, left: 0 })
   const [skillQuery, setSkillQuery] = useState('')
+
+  // Skill fly animation state (managed here so animation persists after autocomplete closes)
+  const [flyAnimation, setFlyAnimation] = useState<{
+    skillName: string | null
+    startPosition: { x: number; y: number } | null
+    endPosition: { x: number; y: number } | null
+  }>({
+    skillName: null,
+    startPosition: null,
+    endPosition: null,
+  })
+
+  // Handle fly animation trigger from SkillAutocomplete
+  const handleTriggerFlyAnimation = useCallback((data: SkillFlyAnimationTrigger) => {
+    setFlyAnimation({
+      skillName: data.skillName,
+      startPosition: data.startPosition,
+      endPosition: data.endPosition,
+    })
+  }, [])
 
   // Update placeholder visibility when message changes externally
   useEffect(() => {
@@ -660,9 +684,20 @@ export default function ChatInput({
           position={skillMenuPosition}
           isChatShell={isChatShell}
           readOnly={skillSelectorReadOnly}
+          skillButtonRef={skillButtonRef}
+          onTriggerFlyAnimation={handleTriggerFlyAnimation}
         />
       )}
 
+      {/* Skill fly animation - rendered here so it persists after autocomplete closes */}
+      <SkillFlyAnimation
+        skillName={flyAnimation.skillName}
+        startPosition={flyAnimation.startPosition}
+        endPosition={flyAnimation.endPosition}
+        onAnimationComplete={() =>
+          setFlyAnimation({ skillName: null, startPosition: null, endPosition: null })
+        }
+      />
       {/* Scrollable container that includes both badge and editable content */}
       <div
         className="w-full custom-scrollbar"
