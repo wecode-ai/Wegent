@@ -101,16 +101,30 @@ export const knowledgePermissionApi = {
         (acc, m) => {
           const level = m.permission_level as 'view' | 'edit' | 'manage'
           if (!acc[level]) acc[level] = []
-          acc[level].push({
+          const member: {
+            id: number
+            user_id: number
+            username: string
+            email: string
+            permission_level: 'view' | 'edit' | 'manage'
+            requested_at: string
+            reviewed_at?: string
+            reviewed_by?: number
+          } = {
             id: m.id,
             user_id: m.user_id,
             username: m.user_name || '',
             email: '',
             permission_level: level,
             requested_at: m.requested_at,
-            reviewed_at: m.reviewed_at || undefined,
-            reviewed_by: m.reviewed_by_user_id || undefined,
-          })
+          }
+          if (m.reviewed_at) {
+            member.reviewed_at = m.reviewed_at
+          }
+          if (m.reviewed_by_user_id) {
+            member.reviewed_by = m.reviewed_by_user_id
+          }
+          acc[level].push(member)
           return acc
         },
         { view: [], edit: [], manage: [] } as {
