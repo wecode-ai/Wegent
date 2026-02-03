@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  JoinByLinkRequest,
+  JoinByLinkResponse,
   KBShareInfo,
   MyPermissionResponse,
   PermissionAddRequest,
@@ -13,6 +15,9 @@ import type {
   PermissionReviewRequest,
   PermissionReviewResponse,
   PermissionUpdateRequest,
+  PublicKnowledgeBaseResponse,
+  ShareLinkConfig,
+  ShareLinkResponse,
 } from '@/types/knowledge'
 import client from './client'
 
@@ -88,10 +93,7 @@ export const knowledgePermissionApi = {
   /**
    * Delete (revoke) a user's permission
    */
-  deletePermission: async (
-    kbId: number,
-    permissionId: number
-  ): Promise<{ message: string }> => {
+  deletePermission: async (kbId: number, permissionId: number): Promise<{ message: string }> => {
     const response = await client.delete<{ message: string }>(
       `/knowledge-bases/${kbId}/permissions/${permissionId}`
     )
@@ -112,9 +114,61 @@ export const knowledgePermissionApi = {
    * Get knowledge base info for share page
    */
   getShareInfo: async (kbId: number): Promise<KBShareInfo> => {
-    const response = await client.get<KBShareInfo>(
-      `/knowledge-bases/${kbId}/share-info`
+    const response = await client.get<KBShareInfo>(`/knowledge-bases/${kbId}/share-info`)
+    return response
+  },
+
+  /**
+   * Get public knowledge base info by share token (no auth required)
+   */
+  getPublicKnowledgeBase: async (token: string): Promise<PublicKnowledgeBaseResponse> => {
+    const response = await client.get<PublicKnowledgeBaseResponse>(
+      `/share/public/knowledge?token=${encodeURIComponent(token)}`
     )
+    return response
+  },
+
+  /**
+   * Get share token for KB redirect (no auth required)
+   */
+  getShareTokenByKbId: async (kbId: number): Promise<{ share_token: string }> => {
+    const response = await client.get<{ share_token: string }>(
+      `/share/public/knowledge/redirect?kb_id=${kbId}`
+    )
+    return response
+  },
+
+  /**
+   * Create or get share link for knowledge base
+   */
+  createShareLink: async (kbId: number, config?: ShareLinkConfig): Promise<ShareLinkResponse> => {
+    const response = await client.post<ShareLinkResponse>(`/share/KnowledgeBase/${kbId}/link`, {
+      config: config || { require_approval: true, default_permission_level: 'view' },
+    })
+    return response
+  },
+
+  /**
+   * Get existing share link for knowledge base
+   */
+  getShareLink: async (kbId: number): Promise<ShareLinkResponse | null> => {
+    const response = await client.get<ShareLinkResponse | null>(`/share/KnowledgeBase/${kbId}/link`)
+    return response
+  },
+
+  /**
+   * Delete share link for knowledge base
+   */
+  deleteShareLink: async (kbId: number): Promise<{ message: string }> => {
+    const response = await client.delete<{ message: string }>(`/share/KnowledgeBase/${kbId}/link`)
+    return response
+  },
+
+  /**
+   * Join knowledge base via share link
+   */
+  joinByLink: async (request: JoinByLinkRequest): Promise<JoinByLinkResponse> => {
+    const response = await client.post<JoinByLinkResponse>('/share/join', request)
     return response
   },
 }

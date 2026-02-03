@@ -333,3 +333,18 @@ class KBShareInfoResponse(BaseModel):
     my_permission: MyKBPermissionResponse = Field(
         ..., description="Current user's permission info"
     )
+
+
+class PublicKnowledgeBaseResponse(BaseModel):
+    """Public knowledge base info for anonymous access via share token."""
+
+    id: int = Field(..., description="Knowledge base ID")
+    name: str = Field(..., description="Knowledge base name")
+    description: Optional[str] = Field(None, description="Knowledge base description")
+    creator_id: int = Field(..., description="Creator user ID")
+    creator_name: str = Field(..., description="Creator username")
+    require_approval: bool = Field(..., description="Whether joining requires approval")
+    default_permission_level: str = Field(
+        ..., description="Default permission level for joiners"
+    )
+    is_expired: bool = Field(False, description="Whether the share link has expired")
