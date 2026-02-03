@@ -1200,6 +1200,7 @@
     "select_skills": "选择技能",
     "team_skills_section": "智能体技能",
     "personal_skills_section": "个人技能",
+    "group_skills_section": "组技能",
     "public_skills_section": "公共技能",
     "no_available_skills": "无可选技能",
     "skills_selected": "已选 {{count}} 个技能",

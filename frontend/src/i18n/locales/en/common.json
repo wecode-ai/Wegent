@@ -1206,6 +1206,7 @@
     "select_skills": "Select Skills",
     "team_skills_section": "Agent Skills",
     "personal_skills_section": "Personal Skills",
+    "group_skills_section": "Group Skills",
     "public_skills_section": "Public Skills",
     "no_available_skills": "No skills available",
     "skills_selected": "{{count}} skill(s) selected",
