@@ -57,7 +57,9 @@ class ModelSelection:
         """Check if this is a Claude model (required for device mode)."""
         if not self.provider:
             return False
-        return self.provider.lower() in ("claude", "anthropic")
+        provider_lower = self.provider.lower()
+        # Match any provider containing "claude" or "anthropic"
+        return "claude" in provider_lower or "anthropic" in provider_lower
 
 
 class ModelSelectionManager:
@@ -143,4 +145,6 @@ def is_claude_provider(provider: Optional[str]) -> bool:
     """Check if a provider is Claude/Anthropic (required for device mode)."""
     if not provider:
         return False
-    return provider.lower() in ("claude", "anthropic")
+    provider_lower = provider.lower()
+    # Match any provider containing "claude" or "anthropic"
+    return "claude" in provider_lower or "anthropic" in provider_lower
