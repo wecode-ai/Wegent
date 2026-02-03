@@ -24,10 +24,12 @@ import type {
   MultiAttachmentUploadState,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
-import { isChatShell } from '../../service/messageService'
+import type { UnifiedSkill } from '@/apis/skills'
+import { isChatShell, isClaudeCode } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
+import SkillSelectorPopover from '../selector/SkillSelectorPopover'
 
 export interface ChatInputControlsProps {
   // Team and Model
@@ -97,6 +99,13 @@ export interface ChatInputControlsProps {
 
   // Whether there are no available teams (shows disabled state)
   hasNoTeams?: boolean
+
+  // Skill selector support
+  availableSkills?: UnifiedSkill[]
+  teamSkillNames?: string[]
+  preloadedSkillNames?: string[]
+  selectedSkillNames?: string[]
+  onToggleSkill?: (skillName: string) => void
 }
 
 /**
@@ -158,6 +167,11 @@ export function ChatInputControls({
   onStopStream,
   onSendMessage,
   hasNoTeams = false,
+  availableSkills = [],
+  teamSkillNames = [],
+  preloadedSkillNames = [],
+  selectedSkillNames = [],
+  onToggleSkill,
 }: ChatInputControlsProps) {
   // Always use compact mode (icon only) to save space
   const shouldUseCompactQuota = true
@@ -272,6 +286,11 @@ export function ChatInputControls({
         onStopStream={onStopStream}
         onSendMessage={onSendMessage}
         hasNoTeams={hasNoTeams}
+        availableSkills={availableSkills}
+        teamSkillNames={teamSkillNames}
+        preloadedSkillNames={preloadedSkillNames}
+        selectedSkillNames={selectedSkillNames}
+        onToggleSkill={onToggleSkill}
       />
     )
   }
@@ -282,7 +301,7 @@ export function ChatInputControls({
       className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
     >
       <div
-        className="flex-1 min-w-0 overflow-hidden flex items-center gap-3"
+        className="flex-1 min-w-0 overflow-visible flex items-center gap-3"
         data-tour="input-controls"
       >
         {/* Context Selection - only show for chat shell */}
@@ -297,6 +316,21 @@ export function ChatInputControls({
         {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
         {supportsAttachments(selectedTeam) && (
           <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
+        )}
+
+        {/* Skill Selector - show when skills are available */}
+        {/* For ClaudeCode tasks, skill selection is read-only after task creation (hasMessages) */}
+        {availableSkills.length > 0 && onToggleSkill && (
+          <SkillSelectorPopover
+            skills={availableSkills}
+            teamSkillNames={teamSkillNames}
+            preloadedSkillNames={preloadedSkillNames}
+            selectedSkillNames={selectedSkillNames}
+            onToggleSkill={onToggleSkill}
+            isChatShell={isChatShell(selectedTeam)}
+            disabled={isLoading || isStreaming}
+            readOnly={hasMessages && isClaudeCode(selectedTeam)}
+          />
         )}
 
         {/* Clarification Toggle Button - only show for chat shell */}

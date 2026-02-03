@@ -444,7 +444,7 @@ async def _stream_chat_response(
                 enable_clarification=payload.enable_clarification,
                 enable_deep_thinking=True,
                 task_id=stream_data.task_id,
-                preload_skills=getattr(payload, "preload_skills", None),
+                preload_skills=getattr(payload, "additional_skills", None),
             )
         except ValueError as e:
             error_msg = str(e)
@@ -692,6 +692,7 @@ async def _stream_chat_response(
                 event_emitter=emitter,
                 is_user_selected_kb=is_user_selected_kb,
                 preload_skills=chat_config.preload_skills,  # Use resolved from ChatConfig
+                user_selected_skills=chat_config.user_selected_skills,  # Pass user-selected skills for prompt highlighting
                 user_subtask_id=user_subtask_id,  # Pass user subtask ID for RAG persistence
                 history_limit=history_limit,  # Pass history limit for subscription tasks
                 auth_token=auth_token,  # Pass auth token from WebSocket session
@@ -753,14 +754,15 @@ async def _stream_with_http_adapter(
     system_prompt: str,
     ws_config: Any,
     extra_tools: list,
-    skill_names: list = None,
-    skill_configs: list = None,
-    knowledge_base_ids: list = None,
-    document_ids: list = None,
-    table_contexts: list = None,
+    skill_names: list | None = None,
+    skill_configs: list | None = None,
+    knowledge_base_ids: list | None = None,
+    document_ids: list | None = None,
+    table_contexts: list | None = None,
     event_emitter: Optional["ChatEventEmitter"] = None,
     is_user_selected_kb: bool = True,
-    preload_skills: list = None,
+    preload_skills: list | None = None,
+    user_selected_skills: list[str] | None = None,
     user_subtask_id: Optional[int] = None,
     history_limit: Optional[int] = None,
     auth_token: str = "",
@@ -898,6 +900,8 @@ async def _stream_with_http_adapter(
         skill_names=skill_names or [],
         skill_configs=skill_configs or [],
         preload_skills=preload_skills or [],  # Pass preload_skills to ChatRequest
+        user_selected_skills=user_selected_skills
+        or [],  # Pass user-selected skills for prompt highlighting
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids,
         is_user_selected_kb=is_user_selected_kb,

@@ -233,6 +233,7 @@ async def _stream_response(
         history_limit = None  # For subscription tasks
         auth_token = ""  # JWT token for API authentication
         is_subscription = False  # For SilentExitTool injection
+        user_selected_skills = []
 
         if request.metadata:
             task_id = getattr(request.metadata, "task_id", 0) or 0
@@ -264,6 +265,9 @@ async def _stream_response(
             auth_token = getattr(request.metadata, "auth_token", None) or ""
             is_subscription = (
                 getattr(request.metadata, "is_subscription", False) or False
+            )
+            user_selected_skills = (
+                getattr(request.metadata, "user_selected_skills", None) or []
             )
         # Merge skill configs from tools and metadata
         all_skill_configs = skill_configs + skill_configs_from_meta
@@ -309,13 +313,14 @@ async def _stream_response(
             mcp_servers=mcp_servers,
             auth_token=auth_token,
             is_subscription=is_subscription,
+            user_selected_skills=user_selected_skills,
         )
 
         logger.info(
             "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, user_subtask_id=%s, "
             "enable_web_search=%s, mcp_servers=%d, skills=%d, "
             "skill_names=%s, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s, "
-            "table_contexts_count=%d, table_contexts=%s",
+            "table_contexts_count=%d, table_contexts=%s, user_selected_skills=%s",
             task_id,
             subtask_id,
             user_subtask_id,
@@ -328,6 +333,7 @@ async def _stream_response(
             document_ids,
             len(table_contexts),
             table_contexts,  # Log the actual content
+            user_selected_skills,  # Log user selected skills from backend
         )
 
         # Record request details to trace

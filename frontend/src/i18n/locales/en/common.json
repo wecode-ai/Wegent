@@ -1200,5 +1200,23 @@
       "hint_description": "Use hjkl to navigate, i for insert mode, Esc for normal mode. :w to save, :q to close.",
       "commands_hint": ":w save | :q close | :wq save & close"
     }
+  },
+  "skillSelector": {
+    "slash_command_hint": "Type / to select skills",
+    "select_skills": "Select Skills",
+    "team_skills_section": "Agent Skills",
+    "personal_skills_section": "Personal Skills",
+    "public_skills_section": "Public Skills",
+    "no_available_skills": "No skills available",
+    "skills_selected": "{{count}} skill(s) selected",
+    "remove_skill": "Remove skill",
+    "skill_autocomplete_title": "Select skills to use",
+    "preload_hint": "Selected skills will be auto-loaded",
+    "download_hint": "Selected skills will be downloaded when the task runs",
+    "search_skills": "Search skills...",
+    "no_matching_skills": "No matching skills",
+    "already_selected": "Already selected",
+    "skill_button_tooltip": "Select skills to use with this message",
+    "manage_skills": "Manage"
   }
 }
