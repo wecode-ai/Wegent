@@ -12,6 +12,18 @@ authenticated API calls to the Backend, including:
 - fetch_task_skills: Fetch skills list for a task
 
 All services that need to call Backend API should use these utilities.
+
+Authentication:
+- Supports both JWT Token and API Key (starting with 'wg-')
+- Token is passed via Authorization: Bearer header
+- API Key can also be passed via X-API-Key header
+
+Example:
+    # Using JWT Token
+    client = ApiClient(auth_token="eyJhbG...")
+
+    # Using API Key
+    client = ApiClient(auth_token="wg-abc123...")
 """
 
 import io
@@ -47,11 +59,18 @@ class ApiClient:
     headers and error handling. All executor services that need to call
     Backend API should use this class or its subclasses.
 
+    Authentication:
+    - Supports both JWT Token and API Key (starting with 'wg-')
+    - Token is passed via Authorization: Bearer header
+
     Example:
-        client = ApiClient(auth_token="xxx")
+        # Using JWT Token
+        client = ApiClient(auth_token="eyJhbG...")
         response = client.get("/api/v1/tasks/123/skills")
-        if response:
-            skills = response.json()
+
+        # Using API Key
+        client = ApiClient(auth_token="wg-abc123...")
+        response = client.get("/api/v1/tasks/123/skills")
     """
 
     DEFAULT_TIMEOUT = 30  # seconds
@@ -60,7 +79,7 @@ class ApiClient:
         """Initialize API client.
 
         Args:
-            auth_token: JWT token for authenticated API calls
+            auth_token: JWT token or API Key (starting with 'wg-') for authenticated API calls
         """
         self.auth_token = auth_token
         self.api_base_url = get_api_base_url()
@@ -212,7 +231,7 @@ class SkillDownloader:
         """Initialize skill downloader.
 
         Args:
-            auth_token: JWT token for authenticated API calls
+            auth_token: JWT token or API Key (starting with 'wg-') for authenticated API calls
             team_namespace: Team namespace for skill lookup
             skills_dir: Directory to deploy skills. Priority:
                         1. Explicit skills_dir parameter
