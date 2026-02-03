@@ -421,16 +421,28 @@ export async function uploadAttachment(
  * Get attachment details by ID
  *
  * @param attachmentId - Attachment ID
+ * @param shareToken - Optional share token for public access (no login required)
  * @returns Attachment details
  */
-export async function getAttachment(attachmentId: number): Promise<AttachmentDetailResponse> {
+export async function getAttachment(
+  attachmentId: number,
+  shareToken?: string
+): Promise<AttachmentDetailResponse> {
   const token = getToken()
+  let url = `${API_BASE_URL}/api/attachments/${attachmentId}`
 
-  const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}`, {
+  // Add share_token as query parameter if provided
+  if (shareToken) {
+    url += `?share_token=${encodeURIComponent(shareToken)}`
+  }
+
+  const response = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` }),
+      // Only include Authorization header if we have a token and no shareToken
+      // shareToken-based access doesn't require JWT authentication
+      ...(!shareToken && token && { Authorization: `Bearer ${token}` }),
     },
   })
 
@@ -446,18 +458,28 @@ export async function getAttachment(attachmentId: number): Promise<AttachmentDet
  * Get attachment preview by ID
  *
  * @param attachmentId - Attachment ID
+ * @param shareToken - Optional share token for public access (no login required)
  * @returns Attachment preview details
  */
 export async function getAttachmentPreview(
-  attachmentId: number
+  attachmentId: number,
+  shareToken?: string
 ): Promise<AttachmentPreviewResponse> {
   const token = getToken()
+  let url = `${API_BASE_URL}/api/attachments/${attachmentId}/preview`
 
-  const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}/preview`, {
+  // Add share_token as query parameter if provided
+  if (shareToken) {
+    url += `?share_token=${encodeURIComponent(shareToken)}`
+  }
+
+  const response = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` }),
+      // Only include Authorization header if we have a token and no shareToken
+      // shareToken-based access doesn't require JWT authentication
+      ...(!shareToken && token && { Authorization: `Bearer ${token}` }),
     },
   })
 

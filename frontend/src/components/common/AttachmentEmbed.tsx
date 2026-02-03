@@ -13,6 +13,7 @@ import HtmlPreview from '@/components/common/HtmlPreview'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useAttachmentPreview } from '@/hooks/useAttachmentPreview'
 import { useAttachmentImage } from '@/hooks/useAttachmentImage'
+import { useShareToken } from '@/contexts/ShareTokenContext'
 import { downloadAttachment, isImageExtension, isHtmlExtension } from '@/apis/attachments'
 
 interface AttachmentEmbedProps {
@@ -22,7 +23,8 @@ interface AttachmentEmbedProps {
 
 export default function AttachmentEmbed({ attachmentId, theme = 'light' }: AttachmentEmbedProps) {
   const { t } = useTranslation('common')
-  const { data, isLoading, error } = useAttachmentPreview(attachmentId)
+  const { shareToken } = useShareToken()
+  const { data, isLoading, error } = useAttachmentPreview(attachmentId, shareToken)
 
   const isImage = useMemo(() => {
     if (!data) return false
@@ -40,11 +42,11 @@ export default function AttachmentEmbed({ attachmentId, theme = 'light' }: Attac
     blobUrl: imageUrl,
     isLoading: imageLoading,
     error: imageError,
-  } = useAttachmentImage(attachmentId, isImage)
+  } = useAttachmentImage(attachmentId, isImage, shareToken)
 
   const handleDownload = async () => {
     try {
-      await downloadAttachment(attachmentId, data?.filename)
+      await downloadAttachment(attachmentId, data?.filename, shareToken)
     } catch (err) {
       console.error('Failed to download attachment:', err)
     }
