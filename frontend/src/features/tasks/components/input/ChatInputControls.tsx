@@ -29,7 +29,7 @@ import { isChatShell, isClaudeCode } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
-import SkillSelectorPopover from '../selector/SkillSelectorPopover'
+import SkillSelectorPopover, { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
 
 export interface ChatInputControlsProps {
   // Team and Model
@@ -106,6 +106,9 @@ export interface ChatInputControlsProps {
   preloadedSkillNames?: string[]
   selectedSkillNames?: string[]
   onToggleSkill?: (skillName: string) => void
+
+  // Ref for skill selector button (for fly animation)
+  skillSelectorRef?: React.RefObject<SkillSelectorPopoverRef | null>
 }
 
 /**
@@ -172,6 +175,7 @@ export function ChatInputControls({
   preloadedSkillNames = [],
   selectedSkillNames = [],
   onToggleSkill,
+  skillSelectorRef,
 }: ChatInputControlsProps) {
   // Always use compact mode (icon only) to save space
   const shouldUseCompactQuota = true
@@ -322,6 +326,7 @@ export function ChatInputControls({
         {/* For ClaudeCode tasks, skill selection is read-only after task creation (hasMessages) */}
         {availableSkills.length > 0 && onToggleSkill && (
           <SkillSelectorPopover
+            ref={skillSelectorRef}
             skills={availableSkills}
             teamSkillNames={teamSkillNames}
             preloadedSkillNames={preloadedSkillNames}
