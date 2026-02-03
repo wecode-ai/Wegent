@@ -323,6 +323,22 @@ class TestContextServiceFormatting:
         # Test with both None
         assert context_service.build_sandbox_path(None, None, "test.pdf") is None
 
+    def test_build_sandbox_path_strips_control_characters(self):
+        """Test sandbox path strips control characters from filename"""
+        from app.services.context import context_service
+
+        # Test filename with newline
+        path = context_service.build_sandbox_path(123, 456, "test\n.pdf")
+        assert path == "123:executor:attachments/456/test.pdf"
+
+        # Test filename with carriage return
+        path = context_service.build_sandbox_path(123, 456, "test\r.pdf")
+        assert path == "123:executor:attachments/456/test.pdf"
+
+        # Test filename with both
+        path = context_service.build_sandbox_path(123, 456, "test\r\n.pdf")
+        assert path == "123:executor:attachments/456/test.pdf"
+
     def test_build_document_text_prefix_with_sandbox_path(self):
         """Test building document text prefix with sandbox path included"""
         from app.models.subtask_context import (
