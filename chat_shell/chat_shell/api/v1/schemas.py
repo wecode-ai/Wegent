@@ -248,6 +248,11 @@ class Metadata(BaseModel):
         False,
         description="Whether this is a subscription task. When True, SilentExitTool will be added.",
     )
+    # User-selected skills (skills explicitly chosen by user for this message)
+    user_selected_skills: Optional[list[str]] = Field(
+        None,
+        description="Skills explicitly selected by user for this message. These will be highlighted in system prompt.",
+    )
 
 
 class AttachmentConfig(BaseModel):

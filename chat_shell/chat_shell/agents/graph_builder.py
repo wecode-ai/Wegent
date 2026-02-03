@@ -145,11 +145,11 @@ class LangGraphAgentBuilder:
                     system_updated = True
 
                     # Log the final system prompt sent to the model
-                    # logger.info(
-                    #     "[prompt_modifier] Final system prompt (len=%d):\n%s",
-                    #     len(updated_content),
-                    #     updated_content,
-                    # )
+                    logger.info(
+                        "[prompt_modifier] Final system prompt (len=%d):\n%s",
+                        len(updated_content),
+                        updated_content,
+                    )
 
                 else:
                     new_messages.append(msg)

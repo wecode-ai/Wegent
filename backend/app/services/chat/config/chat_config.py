@@ -63,6 +63,10 @@ class ChatConfig:
     # Preload skills list (resolved from Ghost CRD + frontend override)
     preload_skills: list[str] = field(default_factory=list)
 
+    # User-selected skills (skills explicitly chosen by user for this message)
+    # These skills will be highlighted in the system prompt to encourage the model to prioritize them
+    user_selected_skills: list[str] = field(default_factory=list)
+
     # Prompt enhancement options (handled internally by chat_shell)
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
@@ -149,7 +153,7 @@ class ChatConfigBuilder:
         # Get skills for the bot (needed for load_skill tool and prompt enhancement)
         # Also get preload_skills from Ghost CRD
         # Pass user_preload_skills from frontend for dynamic skill loading
-        skills, resolved_preload_skills = self._get_bot_skills(
+        skills, resolved_preload_skills, user_selected_skills = self._get_bot_skills(
             bot,
             user_preload_skills=preload_skills or [],
         )
@@ -185,6 +189,7 @@ class ChatConfigBuilder:
             skill_names=skill_names,
             skill_configs=skills,  # Full skill configs
             preload_skills=resolved_preload_skills,  # Resolved from Ghost CRD + frontend
+            user_selected_skills=user_selected_skills,  # Skills explicitly chosen by user
             enable_clarification=enable_clarification,
             enable_deep_thinking=enable_deep_thinking,
         )
@@ -439,12 +444,13 @@ class ChatConfigBuilder:
         self,
         bot: Kind,
         user_preload_skills: list = None,
-    ) -> tuple[list[dict], list[str]]:
+    ) -> tuple[list[dict], list[str], list[str]]:
         """Get skills for the bot from Ghost, plus any additional skills from frontend.
 
         Returns tuple of:
         - List of skill metadata including tools configuration
         - List of resolved preload skill names (from Ghost CRD + user selected skills)
+        - List of user-selected skill names (skills explicitly chosen by user for this message)
 
         The tools field contains tool declarations from SKILL.md frontmatter,
         which are used by SkillToolRegistry to dynamically create tool instances.
@@ -455,7 +461,7 @@ class ChatConfigBuilder:
                 Each item can be a dict with {name, namespace, is_public} or a SkillRef object.
 
         Returns:
-            Tuple of (skills, preload_skills)
+            Tuple of (skills, preload_skills, user_selected_skills)
         """
         from app.schemas.kind import Ghost
 
@@ -470,7 +476,7 @@ class ChatConfigBuilder:
             logger.warning(
                 "[_get_bot_skills] Bot has no ghostRef, returning empty skills"
             )
-            return [], []
+            return [], [], []
 
         # Query Ghost
         ghost = (
@@ -491,7 +497,7 @@ class ChatConfigBuilder:
                 bot_crd.spec.ghostRef.name,
                 bot_crd.spec.ghostRef.namespace,
             )
-            return [], []
+            return [], [], []
 
         ghost_crd = Ghost.model_validate(ghost.json)
         logger.info(
@@ -504,6 +510,7 @@ class ChatConfigBuilder:
         # Initialize result containers
         skills: list[dict] = []
         preload_skills: list[str] = []
+        user_selected_skills: list[str] = []  # Track user-selected skills separately
         existing_skill_names: set[str] = set()
 
         # Build preload set from Ghost CRD
@@ -552,10 +559,13 @@ class ChatConfigBuilder:
                     # Skill exists, just add to preload if not already there
                     if skill_name not in preload_skills:
                         preload_skills.append(skill_name)
-                        logger.info(
-                            "[_get_bot_skills] Skill '%s' added to preload (user selected, already in Ghost)",
-                            skill_name,
-                        )
+                    # Always mark as user-selected since user explicitly chose it
+                    if skill_name not in user_selected_skills:
+                        user_selected_skills.append(skill_name)
+                    logger.info(
+                        "[_get_bot_skills] Skill '%s' added to preload and user_selected (user selected, already in Ghost)",
+                        skill_name,
+                    )
                     continue
 
                 # Find and add new skill
@@ -565,8 +575,9 @@ class ChatConfigBuilder:
                     skills.append(skill_data)
                     existing_skill_names.add(skill_name)
                     preload_skills.append(skill_name)
+                    user_selected_skills.append(skill_name)  # Mark as user-selected
                     logger.info(
-                        "[_get_bot_skills] Added user-selected skill '%s' to skills and preload",
+                        "[_get_bot_skills] Added user-selected skill '%s' to skills, preload, and user_selected",
                         skill_name,
                     )
                 else:
@@ -578,11 +589,12 @@ class ChatConfigBuilder:
                     )
 
         logger.info(
-            "[_get_bot_skills] Final result: preload_skills=%s, total skills=%d",
+            "[_get_bot_skills] Final result: preload_skills=%s, user_selected_skills=%s, total skills=%d",
             preload_skills,
+            user_selected_skills,
             len(skills),
         )
-        return skills, preload_skills
+        return skills, preload_skills, user_selected_skills
 
     def _find_skill_by_ref(
         self, skill_name: str, namespace: str, is_public: bool

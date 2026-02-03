@@ -25,7 +25,7 @@ import type {
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
-import { isChatShell } from '../../service/messageService'
+import { isChatShell, isClaudeCode } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
@@ -314,6 +314,7 @@ export function ChatInputControls({
         )}
 
         {/* Skill Selector - show when skills are available */}
+        {/* For ClaudeCode tasks, skill selection is read-only after task creation (hasMessages) */}
         {availableSkills.length > 0 && onToggleSkill && (
           <SkillSelectorPopover
             skills={availableSkills}
@@ -323,6 +324,7 @@ export function ChatInputControls({
             onToggleSkill={onToggleSkill}
             isChatShell={isChatShell(selectedTeam)}
             disabled={isLoading || isStreaming}
+            readOnly={hasMessages && isClaudeCode(selectedTeam)}
           />
         )}
 

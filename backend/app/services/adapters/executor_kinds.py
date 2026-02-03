@@ -1140,6 +1140,27 @@ class ExecutorKindsService(
 
             # Check if this is a subscription task for silent exit support
             is_subscription = type == "subscription"
+
+            # Extract user-selected skills from task labels
+            # These are skills explicitly selected by the user for this task
+            user_selected_skills = []
+            if task_crd.metadata.labels:
+                additional_skills_json = task_crd.metadata.labels.get(
+                    "additionalSkills"
+                )
+                if additional_skills_json:
+                    try:
+                        import json as json_module
+
+                        user_selected_skills = json_module.loads(additional_skills_json)
+                        logger.info(
+                            f"[EXECUTOR_DISPATCH] task_id={subtask.task_id} user_selected_skills={user_selected_skills}"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"[EXECUTOR_DISPATCH] Failed to parse additionalSkills for task {subtask.task_id}: {e}"
+                        )
+
             logger.info(
                 f"[EXECUTOR_DISPATCH] task_id={subtask.task_id}, subtask_id={subtask.id}, "
                 f"type={type}, is_subscription={is_subscription}, "
@@ -1248,6 +1269,9 @@ class ExecutorKindsService(
                     # Flag to indicate this subtask should start a new session (no conversation history)
                     # Used in pipeline mode when user confirms a stage and proceeds to next bot
                     "new_session": new_session,
+                    # User-selected skills for skill emphasis in executor
+                    # These are skills explicitly selected by the user for this task
+                    "user_selected_skills": user_selected_skills,
                 }
             )
 

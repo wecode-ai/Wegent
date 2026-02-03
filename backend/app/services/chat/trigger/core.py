@@ -692,6 +692,7 @@ async def _stream_chat_response(
                 event_emitter=emitter,
                 is_user_selected_kb=is_user_selected_kb,
                 preload_skills=chat_config.preload_skills,  # Use resolved from ChatConfig
+                user_selected_skills=chat_config.user_selected_skills,  # Pass user-selected skills for prompt highlighting
                 user_subtask_id=user_subtask_id,  # Pass user subtask ID for RAG persistence
                 history_limit=history_limit,  # Pass history limit for subscription tasks
                 auth_token=auth_token,  # Pass auth token from WebSocket session
@@ -761,6 +762,7 @@ async def _stream_with_http_adapter(
     event_emitter: Optional["ChatEventEmitter"] = None,
     is_user_selected_kb: bool = True,
     preload_skills: list = None,
+    user_selected_skills: list = None,
     user_subtask_id: Optional[int] = None,
     history_limit: Optional[int] = None,
     auth_token: str = "",
@@ -898,6 +900,8 @@ async def _stream_with_http_adapter(
         skill_names=skill_names or [],
         skill_configs=skill_configs or [],
         preload_skills=preload_skills or [],  # Pass preload_skills to ChatRequest
+        user_selected_skills=user_selected_skills
+        or [],  # Pass user-selected skills for prompt highlighting
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids,
         is_user_selected_kb=is_user_selected_kb,

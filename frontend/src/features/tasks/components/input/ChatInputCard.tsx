@@ -15,6 +15,7 @@ import { QuoteCard } from '../text-selection'
 import { ConnectionStatusBanner } from './ConnectionStatusBanner'
 import type { Team, ChatTipItem } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isClaudeCode } from '../../service/messageService'
 
 export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskInputMessage'> {
   // Input message
@@ -248,6 +249,8 @@ export function ChatInputCard({
               selectedSkillNames={selectedSkillNames}
               onSkillSelect={onToggleSkill}
               isChatShell={selectedTeam?.agent_type === 'chat'}
+              // For ClaudeCode tasks, skill selection is read-only after task creation (hasMessages)
+              skillSelectorReadOnly={hasMessages && isClaudeCode(selectedTeam)}
             />
           </div>
         )}

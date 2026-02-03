@@ -863,6 +863,24 @@ async def create_chat_task(
         if not task_type:
             task_type = "code" if params.git_url else "chat"
 
+        # Convert additional_skills from list of dicts to list of SkillRef objects
+        additional_skills_refs = None
+        if params.additional_skills:
+            from app.schemas.task import SkillRef
+
+            additional_skills_refs = [
+                SkillRef(
+                    name=s.get("name", ""),
+                    namespace=s.get("namespace", "default"),
+                    is_public=s.get("is_public", False),
+                )
+                for s in params.additional_skills
+            ]
+            logger.info(
+                f"[create_chat_task] Passing {len(additional_skills_refs)} additional_skills to executor: "
+                f"{[s.name for s in additional_skills_refs]}"
+            )
+
         # Build TaskCreate object
         task_create = TaskCreate(
             title=params.title,
@@ -882,6 +900,7 @@ async def create_chat_task(
             model_id=params.model_id,
             force_override_bot_model=params.force_override_bot_model,
             force_override_bot_model_type=params.force_override_bot_model_type,
+            additional_skills=additional_skills_refs,
         )
 
         # Call create_task_or_append (synchronous method)

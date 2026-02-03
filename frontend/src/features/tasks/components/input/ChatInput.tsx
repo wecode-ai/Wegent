@@ -45,6 +45,8 @@ interface ChatInputProps {
   selectedSkillNames?: string[]
   onSkillSelect?: (skillName: string) => void
   isChatShell?: boolean
+  /** Whether skill selector is read-only (can view but not modify via / command) */
+  skillSelectorReadOnly?: boolean
 }
 
 export default function ChatInput({
@@ -69,6 +71,7 @@ export default function ChatInput({
   selectedSkillNames = [],
   onSkillSelect,
   isChatShell = false,
+  skillSelectorReadOnly = false,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation()
 
@@ -656,6 +659,7 @@ export default function ChatInput({
           }}
           position={skillMenuPosition}
           isChatShell={isChatShell}
+          readOnly={skillSelectorReadOnly}
         />
       )}
 

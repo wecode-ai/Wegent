@@ -27,8 +27,10 @@ interface SkillSelectorPopoverProps {
   onToggleSkill: (skillName: string) => void
   /** Whether this is a Chat Shell (affects filtering behavior) */
   isChatShell: boolean
-  /** Whether the selector is disabled */
+  /** Whether the selector is disabled (cannot open popover) */
   disabled?: boolean
+  /** Whether the selector is read-only (can view but not modify) */
+  readOnly?: boolean
 }
 
 interface GroupedSkill {
@@ -50,6 +52,7 @@ export default function SkillSelectorPopover({
   onToggleSkill,
   isChatShell,
   disabled = false,
+  readOnly = false,
 }: SkillSelectorPopoverProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -161,28 +164,34 @@ export default function SkillSelectorPopover({
       elements.push(
         <div
           key={skill.name}
-          className={`flex items-center gap-2 px-2 py-2 rounded-md cursor-pointer transition-colors ${
-            isSelected ? 'bg-primary/10' : 'hover:bg-muted'
-          }`}
-          onClick={() => onToggleSkill(skill.name)}
-          role="button"
-          tabIndex={0}
-          onKeyDown={e => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              onToggleSkill(skill.name)
-            }
-          }}
+          className={`flex items-center gap-2 px-2 py-2 rounded-md transition-colors ${
+            readOnly ? 'cursor-default' : 'cursor-pointer'
+          } ${isSelected ? 'bg-primary/10' : readOnly ? '' : 'hover:bg-muted'}`}
+          onClick={readOnly ? undefined : () => onToggleSkill(skill.name)}
+          role={readOnly ? undefined : 'button'}
+          tabIndex={readOnly ? -1 : 0}
+          onKeyDown={
+            readOnly
+              ? undefined
+              : e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onToggleSkill(skill.name)
+                  }
+                }
+          }
         >
           <div
             className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
               isSelected ? 'bg-primary border-primary text-white' : 'border-border bg-background'
-            }`}
+            } ${readOnly ? 'opacity-60' : ''}`}
           >
             {isSelected && <Check className="h-3 w-3" />}
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm text-text-primary truncate">
+            <div
+              className={`text-sm truncate ${readOnly ? 'text-text-muted' : 'text-text-primary'}`}
+            >
               {skill.displayName || skill.name}
             </div>
             {skill.description && (
@@ -196,9 +205,15 @@ export default function SkillSelectorPopover({
     return elements
   }
 
+  // Prevent opening popover when disabled
+  const handleOpenChange = (newOpen: boolean) => {
+    if (disabled) return
+    setOpen(newOpen)
+  }
+
   return (
     <TooltipProvider>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={handleOpenChange}>
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>

@@ -28,6 +28,8 @@ interface SkillAutocompleteProps {
   position: { top: number; left: number }
   /** Whether this is a Chat Shell (affects filtering behavior) */
   isChatShell: boolean
+  /** Whether the selector is read-only (can view but not modify) */
+  readOnly?: boolean
 }
 
 interface GroupedSkill {
@@ -54,6 +56,7 @@ export default function SkillAutocomplete({
   onClose,
   position,
   isChatShell,
+  readOnly = false,
 }: SkillAutocompleteProps) {
   const { t } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
@@ -150,7 +153,10 @@ export default function SkillAutocomplete({
       } else if (event.key === 'Enter') {
         event.preventDefault()
         event.stopPropagation()
-        if (filteredSkills[selectedIndex]) {
+        // In read-only mode, Enter just closes the menu
+        if (readOnly) {
+          onClose()
+        } else if (filteredSkills[selectedIndex]) {
           handleSelect(filteredSkills[selectedIndex].skill.name)
         }
       }
@@ -160,7 +166,7 @@ export default function SkillAutocomplete({
     return () => {
       document.removeEventListener('keydown', handleKeyDown, true)
     }
-  }, [onClose, filteredSkills, selectedIndex, handleSelect])
+  }, [onClose, filteredSkills, selectedIndex, handleSelect, readOnly])
 
   // Get section header for a group
   const getSectionHeader = (group: 'team' | 'personal' | 'public') => {
@@ -230,23 +236,31 @@ export default function SkillAutocomplete({
     renderItems.push(
       <div
         key={skill.name}
-        className={`px-3 py-2 cursor-pointer transition-colors flex items-center gap-2 ${
-          displayIndex === selectedIndex ? 'bg-muted' : 'hover:bg-muted'
+        className={`px-3 py-2 transition-colors flex items-center gap-2 ${
+          readOnly ? 'cursor-default' : 'cursor-pointer'
+        } ${
+          displayIndex === selectedIndex ? 'bg-muted' : readOnly ? '' : 'hover:bg-muted'
         } ${isSelected ? 'opacity-60' : ''}`}
-        onClick={() => handleSelect(skill.name)}
-        role="button"
-        tabIndex={0}
-        onKeyDown={e => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            handleSelect(skill.name)
-          }
-        }}
+        onClick={readOnly ? undefined : () => handleSelect(skill.name)}
+        role={readOnly ? undefined : 'button'}
+        tabIndex={readOnly ? -1 : 0}
+        onKeyDown={
+          readOnly
+            ? undefined
+            : e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  handleSelect(skill.name)
+                }
+              }
+        }
       >
-        <Zap className="h-4 w-4 text-primary flex-shrink-0" />
+        <Zap className={`h-4 w-4 flex-shrink-0 ${readOnly ? 'text-text-muted' : 'text-primary'}`} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm text-text-primary font-medium truncate">
+            <span
+              className={`text-sm font-medium truncate ${readOnly ? 'text-text-muted' : 'text-text-primary'}`}
+            >
               {skill.displayName || skill.name}
             </span>
             {isSelected && <Check className="h-3.5 w-3.5 text-primary flex-shrink-0" />}

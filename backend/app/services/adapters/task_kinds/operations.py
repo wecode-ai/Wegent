@@ -256,6 +256,16 @@ class TaskOperationsMixin:
         db.add(workspace)
 
         # Create Task JSON
+        # Build additional_skills label if provided
+        # Store as JSON string for skill names that user explicitly selected
+        additional_skills_label = None
+        if obj_in.additional_skills:
+            # Extract skill names from SkillRef objects
+            skill_names = [s.name for s in obj_in.additional_skills]
+            import json as json_module
+
+            additional_skills_label = json_module.dumps(skill_names)
+
         task_json = {
             "kind": "Task",
             "spec": {
@@ -299,6 +309,11 @@ class TaskOperationsMixin:
                     **(
                         {"api_key_name": obj_in.api_key_name}
                         if obj_in.api_key_name
+                        else {}
+                    ),
+                    **(
+                        {"additionalSkills": additional_skills_label}
+                        if additional_skills_label
                         else {}
                     ),
                 },
