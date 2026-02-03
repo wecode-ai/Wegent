@@ -1126,7 +1126,7 @@ class ExecutorKindsService(
                         "agent_config": agent_config_data,
                         "system_prompt": bot_prompt,
                         "mcp_servers": mcp_servers,
-                        "skills": skills,
+                        "skills": skills,  # Will be merged with user_selected_skills later
                         "role": team_member_info.role if team_member_info else "",
                         "base_image": shell_base_image,  # Custom base image for executor
                     }
@@ -1160,6 +1160,20 @@ class ExecutorKindsService(
                         logger.warning(
                             f"[EXECUTOR_DISPATCH] Failed to parse additionalSkills for task {subtask.task_id}: {e}"
                         )
+
+            # Merge user_selected_skills into each bot's skills list
+            # This ensures user-selected skills are downloaded by executor
+            if user_selected_skills:
+                for bot_config in bots:
+                    existing_skills = bot_config.get("skills", [])
+                    # Add user-selected skills that are not already in the bot's skills
+                    for skill_name in user_selected_skills:
+                        if skill_name not in existing_skills:
+                            existing_skills.append(skill_name)
+                    bot_config["skills"] = existing_skills
+                logger.info(
+                    f"[EXECUTOR_DISPATCH] Merged user_selected_skills {user_selected_skills} into {len(bots)} bot(s) for task {subtask.task_id}"
+                )
 
             logger.info(
                 f"[EXECUTOR_DISPATCH] task_id={subtask.task_id}, subtask_id={subtask.id}, "
