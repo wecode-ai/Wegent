@@ -309,7 +309,7 @@ class MessageCompressor:
 
         original_tokens = self.count_tokens(messages)
 
-        logger.debug(
+        logger.info(
             "[MessageCompressor] Checking compression: "
             "original_tokens=%d, trigger_limit=%d, target_limit=%d, over_limit=%s",
             original_tokens,
