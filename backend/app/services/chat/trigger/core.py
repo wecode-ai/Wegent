@@ -638,45 +638,50 @@ async def _stream_chat_response(
             has_table_context=has_table_context,  # Pass table context flag
         )
 
+        # Prepare knowledge base data before closing db session
+        knowledge_base_ids = None
+        document_ids = None
+        is_user_selected_kb = False
+
+        if chat_shell_mode == "http" and user_subtask_id:
+            from app.services.chat.preprocessing.contexts import (
+                _get_bound_knowledge_base_ids,
+                get_document_ids_from_subtask,
+                get_knowledge_base_ids_from_subtask,
+            )
+
+            # Priority 1: Get subtask-level KB selection (user explicitly selected for this message)
+            knowledge_base_ids = get_knowledge_base_ids_from_subtask(
+                db, user_subtask_id
+            )
+            is_user_selected_kb = bool(knowledge_base_ids)
+
+            if knowledge_base_ids:
+                document_ids = get_document_ids_from_subtask(db, user_subtask_id)
+                logger.info(
+                    "[ai_trigger] HTTP mode: subtask-level KB selected, knowledge_base_ids=%s, "
+                    "document_ids=%s (strict mode)",
+                    knowledge_base_ids,
+                    document_ids,
+                )
+            elif stream_data.task_id:
+                # Priority 2: Fall back to task-level bound knowledge bases
+                knowledge_base_ids = _get_bound_knowledge_base_ids(
+                    db, stream_data.task_id
+                )
+                if knowledge_base_ids:
+                    logger.info(
+                        "[ai_trigger] HTTP mode: task-level KB fallback, knowledge_base_ids=%s (relaxed mode)",
+                        knowledge_base_ids,
+                    )
+
+        # Close db session before streaming starts
+        # All database operations are done at this point
+        db.close()
+        db = None  # Prevent accidental use after close
+
         if chat_shell_mode == "http":
             # HTTP mode: Call chat_shell service via HTTP/SSE
-            # Get knowledge_base_ids and document_ids from user subtask's contexts
-            knowledge_base_ids = None
-            document_ids = None
-            is_user_selected_kb = False
-
-            if user_subtask_id:
-                from app.services.chat.preprocessing.contexts import (
-                    _get_bound_knowledge_base_ids,
-                    get_document_ids_from_subtask,
-                    get_knowledge_base_ids_from_subtask,
-                )
-
-                # Priority 1: Get subtask-level KB selection (user explicitly selected for this message)
-                knowledge_base_ids = get_knowledge_base_ids_from_subtask(
-                    db, user_subtask_id
-                )
-                is_user_selected_kb = bool(knowledge_base_ids)
-
-                if knowledge_base_ids:
-                    document_ids = get_document_ids_from_subtask(db, user_subtask_id)
-                    logger.info(
-                        "[ai_trigger] HTTP mode: subtask-level KB selected, knowledge_base_ids=%s, "
-                        "document_ids=%s (strict mode)",
-                        knowledge_base_ids,
-                        document_ids,
-                    )
-                elif stream_data.task_id:
-                    # Priority 2: Fall back to task-level bound knowledge bases
-                    knowledge_base_ids = _get_bound_knowledge_base_ids(
-                        db, stream_data.task_id
-                    )
-                    if knowledge_base_ids:
-                        logger.info(
-                            "[ai_trigger] HTTP mode: task-level KB fallback, knowledge_base_ids=%s (relaxed mode)",
-                            knowledge_base_ids,
-                        )
-
             await _stream_with_http_adapter(
                 stream_data=stream_data,
                 message=final_message,
@@ -743,7 +748,9 @@ async def _stream_chat_response(
         # Exit span context
         span_manager.exit_span()
 
-        db.close()
+        # Close db if not already closed (only needed if error occurred before db.close())
+        if db is not None:
+            db.close()
 
 
 async def _stream_with_http_adapter(

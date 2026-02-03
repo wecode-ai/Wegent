@@ -6,7 +6,7 @@
 
 import pytest
 
-from app.services.channels.dingtalk.commands import (
+from app.services.channels.commands import (
     HELP_MESSAGE,
     CommandType,
     ParsedCommand,

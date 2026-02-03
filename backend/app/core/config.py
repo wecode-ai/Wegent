@@ -324,6 +324,16 @@ class Settings(BaseSettings):
     # "bridge" - StreamingCore publishes to Redis channel, WebSocketBridge forwards to WebSocket
     STREAMING_MODE: str = "legacy"
 
+    # IM Channel configuration
+    # Default Claude model name for device mode (auto-switch when user's model is not Claude)
+    # Format: model name as shown in /models list (e.g., "claude-3-5-sonnet")
+    # If empty, user must manually select a Claude model
+    IM_CHANNEL_DEVICE_DEFAULT_MODEL: str = ""
+    # Conversation timeout in minutes for IM channels
+    # If the last message was sent more than this many minutes ago, start a new conversation
+    # Set to 0 to disable auto-new conversation (default: 720 minutes = 12 hours)
+    IM_CHANNEL_CONVERSATION_TIMEOUT_MINUTES: int = 720
+
     # Default team configuration for each mode
     # Format: "name#namespace" (namespace is optional, defaults to "default")
     DEFAULT_TEAM_CHAT: str = "wegent-chat#default"  # Default team for chat mode
