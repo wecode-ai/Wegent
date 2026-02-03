@@ -26,17 +26,13 @@ def _handle_version_flag() -> None:
     """Handle --version/-v flag before any other initialization.
 
     If the flag is present, print version and exit immediately.
-    This is done before any imports to ensure fast response.
+    This is done before any heavy imports to ensure fast response.
     """
     if "--version" in sys.argv or "-v" in sys.argv:
         from executor.version import get_version
 
         print(get_version())
         sys.exit(0)
-
-
-# Check for version flag first (before any heavy imports)
-_handle_version_flag()
 
 
 # Required for PyInstaller on macOS/Windows to prevent infinite fork
@@ -60,13 +56,16 @@ from shared.logger import setup_logger
 logger = setup_logger("task_executor")
 
 
-def main():
+def main() -> None:
     """
     Main function for running the executor.
 
     In local mode (EXECUTOR_MODE=local), starts the WebSocket-based local runner.
     In Docker mode (default), starts the FastAPI server.
     """
+    # Handle version flag first (before any heavy initialization)
+    _handle_version_flag()
+
     from executor.config import config
 
     if config.EXECUTOR_MODE == "local":

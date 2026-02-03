@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 class TestVersionCLI:
     """Test suite for executor --version CLI flag."""
 
-    def test_version_flag_long(self):
+    def test_version_flag_long(self) -> None:
         """Test that --version flag prints version and exits."""
         result = subprocess.run(
             [sys.executable, "-m", "executor.main", "--version"],
@@ -31,7 +31,7 @@ class TestVersionCLI:
         assert result.returncode == 0
         assert result.stdout.strip() == get_version()
 
-    def test_version_flag_short(self):
+    def test_version_flag_short(self) -> None:
         """Test that -v flag prints version and exits."""
         result = subprocess.run(
             [sys.executable, "-m", "executor.main", "-v"],
@@ -42,7 +42,7 @@ class TestVersionCLI:
         assert result.returncode == 0
         assert result.stdout.strip() == get_version()
 
-    def test_version_output_format(self):
+    def test_version_output_format(self) -> None:
         """Test that version output is just the version number without prefix/suffix."""
         result = subprocess.run(
             [sys.executable, "-m", "executor.main", "--version"],
@@ -58,7 +58,7 @@ class TestVersionCLI:
         assert ":" not in version_output
         assert "version" not in version_output.lower()
 
-    def test_version_matches_get_version(self):
+    def test_version_matches_get_version(self) -> None:
         """Test that CLI version output matches get_version() function."""
         expected_version = get_version()
         result = subprocess.run(
@@ -73,7 +73,7 @@ class TestVersionCLI:
 class TestHandleVersionFlag:
     """Test _handle_version_flag function directly."""
 
-    def test_handle_version_flag_with_version(self):
+    def test_handle_version_flag_with_version(self) -> None:
         """Test that _handle_version_flag exits when --version is present."""
         with patch.object(sys, "argv", ["main.py", "--version"]):
             with pytest.raises(SystemExit) as exc_info:
@@ -82,7 +82,7 @@ class TestHandleVersionFlag:
                 _handle_version_flag()
             assert exc_info.value.code == 0
 
-    def test_handle_version_flag_with_v(self):
+    def test_handle_version_flag_with_v(self) -> None:
         """Test that _handle_version_flag exits when -v is present."""
         with patch.object(sys, "argv", ["main.py", "-v"]):
             with pytest.raises(SystemExit) as exc_info:
@@ -91,7 +91,7 @@ class TestHandleVersionFlag:
                 _handle_version_flag()
             assert exc_info.value.code == 0
 
-    def test_handle_version_flag_without_flag(self):
+    def test_handle_version_flag_without_flag(self) -> None:
         """Test that _handle_version_flag does nothing without version flag."""
         with patch.object(sys, "argv", ["main.py"]):
             from executor.main import _handle_version_flag
@@ -99,10 +99,32 @@ class TestHandleVersionFlag:
             # Should not raise SystemExit
             _handle_version_flag()
 
-    def test_handle_version_flag_with_other_args(self):
+    def test_handle_version_flag_with_other_args(self) -> None:
         """Test that _handle_version_flag does nothing with other arguments."""
         with patch.object(sys, "argv", ["main.py", "--help"]):
             from executor.main import _handle_version_flag
 
             # Should not raise SystemExit
             _handle_version_flag()
+
+
+class TestModuleImportSafety:
+    """Test that importing executor.main doesn't cause unintended side effects."""
+
+    def test_import_with_v_flag_does_not_exit(self) -> None:
+        """Test that importing executor.main with -v in sys.argv doesn't exit.
+
+        This ensures pytest -v and similar commands work correctly.
+        """
+        original_argv = sys.argv.copy()
+        try:
+            sys.argv = ["pytest", "-v", "test_file.py"]
+            # This import should NOT cause SystemExit
+            import importlib
+
+            import executor.main
+
+            importlib.reload(executor.main)
+            # If we reach here, the import didn't exit - which is correct behavior
+        finally:
+            sys.argv = original_argv
