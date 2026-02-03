@@ -117,8 +117,8 @@ class ContextService:
         """
         if task_id is None or subtask_id is None:
             return None
-        # Strip control characters to prevent metadata string corruption
-        safe_filename = filename.replace("\n", "").replace("\r", "")
+        # Guard against None filename and strip control characters
+        safe_filename = (filename or "document").replace("\n", "").replace("\r", "")
         return f"{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
 
     # ==================== Attachment Operations ====================

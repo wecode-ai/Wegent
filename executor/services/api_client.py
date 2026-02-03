@@ -521,5 +521,5 @@ def fetch_task_attachments(task_id: str, auth_token: str) -> TaskAttachmentsResu
             )
 
     except Exception as e:
-        logger.error(f"[fetch_task_attachments] Error: {e}")
+        logger.exception("[fetch_task_attachments] Error")
         return TaskAttachmentsResult(attachments=[], error=str(e))

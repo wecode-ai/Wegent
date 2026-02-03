@@ -605,13 +605,15 @@ async def get_attachment_by_subtask(
 async def get_all_task_attachments(
     task_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_flexible_for_executor),
 ):
     """
     Get all attachments for a task (across all subtasks).
 
     This endpoint is used by the executor to pre-download all attachments
     for a task at sandbox startup.
+
+    Supports both JWT token and API Key authentication.
 
     Args:
         task_id: Task ID
@@ -633,7 +635,7 @@ async def get_all_task_attachments(
         .filter(
             TaskMember.task_id == task_id,
             TaskMember.user_id == current_user.id,
-            TaskMember.status == MemberStatus.ACTIVE.value,
+            TaskMember.status == MemberStatus.ACTIVE,
         )
         .first()
         is not None
