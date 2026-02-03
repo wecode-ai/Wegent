@@ -6,7 +6,6 @@
 
 # -*- coding: utf-8 -*-
 
-import json
 import os
 from typing import Any, Dict, Optional, Tuple
 
@@ -28,19 +27,21 @@ logger = setup_logger("task_processor")
 
 def read_task_data() -> Dict[str, Any]:
     """
-    Read task data from environment variable
+    Read task data from environment variable or file.
 
     Returns:
         dict: Task data
 
     Raises:
-        SystemExit: If TASK_INFO environment variable is not set
+        SystemExit: If TASK_INFO is not found
     """
-    task_data = os.getenv("TASK_INFO")
+    from executor.config.env_reader import get_task_info
+
+    task_data = get_task_info()
     if task_data is None:
-        logger.error("TASK_INFO environment variable is not set")
+        logger.error("TASK_INFO not found")
         os._exit(1)
-    return json.loads(task_data)
+    return task_data
 
 
 def execute_task(agent: Agent) -> Tuple[TaskStatus, Optional[str]]:

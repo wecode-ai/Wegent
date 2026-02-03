@@ -442,7 +442,11 @@ class SandboxRepository(metaclass=SingletonMeta):
     # =========================================================================
 
     def save_executor_binding(
-        self, task_id: int, executor_name: str, ttl: Optional[int] = None
+        self,
+        task_id: int,
+        executor_name: str,
+        ttl: Optional[int] = None,
+        **extra_fields,
     ) -> bool:
         """Save executor binding for task continuity.
 
@@ -450,6 +454,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             task_id: Task ID
             executor_name: Executor container name
             ttl: TTL in seconds (defaults to config value)
+            **extra_fields: Additional fields to store 
 
         Returns:
             True if successful, False otherwise
@@ -463,6 +468,7 @@ class SandboxRepository(metaclass=SingletonMeta):
                 "executor_name": executor_name,
                 "task_id": task_id,
                 "created_at": time.time(),
+                **extra_fields,  # Merge any additional fields
             }
 
             if ttl is None:
@@ -471,7 +477,8 @@ class SandboxRepository(metaclass=SingletonMeta):
             self.redis_client.setex(binding_key, ttl, json.dumps(binding_value))
             logger.info(
                 f"[SandboxRepository] Stored executor binding: "
-                f"task_id={task_id} -> executor={executor_name}, ttl={ttl}s"
+                f"task_id={task_id} -> executor={executor_name}, "
+                f"extra={list(extra_fields.keys())}, ttl={ttl}s"
             )
             return True
         except Exception as e:
@@ -487,6 +494,18 @@ class SandboxRepository(metaclass=SingletonMeta):
         Returns:
             Executor name if found, None otherwise
         """
+        binding = self.load_executor_binding_full(task_id)
+        return binding.get("executor_name") if binding else None
+
+    def load_executor_binding_full(self, task_id: int) -> Optional[Dict[str, Any]]:
+        """Load full executor binding info for task continuity.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            Binding dict with executor_name, sandbox_claim_name, etc. if found
+        """
         if self.redis_client is None:
             return None
 
@@ -495,8 +514,7 @@ class SandboxRepository(metaclass=SingletonMeta):
             binding_json = self.redis_client.get(binding_key)
 
             if binding_json:
-                binding = json.loads(binding_json)
-                return binding.get("executor_name")
+                return json.loads(binding_json)
             return None
         except Exception as e:
             logger.warning(f"[SandboxRepository] Failed to load executor binding: {e}")
