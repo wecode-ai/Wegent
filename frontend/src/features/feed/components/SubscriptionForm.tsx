@@ -244,6 +244,7 @@ interface SubscriptionFormProps {
     enabled: boolean
     preserveHistory: boolean
     visibility: SubscriptionVisibility
+    enableNotification: boolean
   }>
 }
 

@@ -1729,7 +1729,10 @@ class ExecutorKindsService(
         self._auto_delete_executors_if_enabled(db, task_id, task_crd, subtasks)
 
         # Send notification when task is completed or failed
-        self._send_task_completion_notification(db, task_id, task_crd)
+        # Pass previous_status to prevent duplicate notifications
+        self._send_task_completion_notification(
+            db, task_id, task_crd, current_task_status
+        )
 
         # Update BackgroundExecution status if this is a Subscription task
         self._update_background_execution_status(db, task_id, task_crd)
@@ -2444,11 +2447,35 @@ class ExecutorKindsService(
             asyncio.create_task(delete_executors_async())
 
     def _send_task_completion_notification(
-        self, db: Session, task_id: int, task_crd: Task
+        self,
+        db: Session,
+        task_id: int,
+        task_crd: Task,
+        previous_status: Optional[str] = None,
     ) -> None:
-        """Send webhook notification when task is completed or failed"""
+        """Send webhook notification when task is completed or failed.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            task_crd: Task CRD object
+            previous_status: Previous task status before this update. If provided,
+                           notification is only sent when transitioning from non-terminal
+                           to terminal state (COMPLETED/FAILED).
+        """
+        current_status = task_crd.status.status if task_crd.status else None
+
         # Only send notification when task status is COMPLETED or FAILED
-        if not task_crd.status or task_crd.status.status not in ["COMPLETED", "FAILED"]:
+        if not current_status or current_status not in ["COMPLETED", "FAILED"]:
+            return
+
+        # Prevent duplicate notifications: only send when transitioning to terminal state
+        # If previous_status is provided and was already terminal, skip notification
+        if previous_status and previous_status in ["COMPLETED", "FAILED", "CANCELLED"]:
+            logger.debug(
+                f"Skipping duplicate webhook notification for task {task_id}: "
+                f"already in terminal state {previous_status}"
+            )
             return
 
         try:
