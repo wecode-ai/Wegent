@@ -315,8 +315,84 @@ For complete API documentation, see:
 - Backend API docs: `http://localhost:8000/api/docs`
 - AGENTS.md: RAG Services section
 
+## Using Knowledge Base Without RAG (No Retriever Mode)
+
+You can create and use knowledge bases even without configuring a retriever. In this mode, the AI uses exploration tools instead of semantic search.
+
+### What Works Without RAG
+
+- ✅ Document upload and storage
+- ✅ Document viewing and editing
+- ✅ AI can browse documents using `kb_ls` (list) and `kb_head` (read) tools
+- ✅ Manual document exploration by AI
+- ✅ Knowledge base chat in notebook mode
+
+### What Requires RAG Configuration
+
+- ❌ Semantic search (`knowledge_base_search` tool)
+- ❌ Vector similarity retrieval
+- ❌ Automatic chunk-based retrieval
+- ❌ Hybrid search (vector + keyword)
+
+### When to Use No-RAG Mode
+
+Consider using knowledge bases without RAG when:
+
+1. **No Vector Database Available**: You don't have Elasticsearch or other vector database set up
+2. **Small Knowledge Base**: Your knowledge base is small enough for AI to read through documents
+3. **Testing**: You want to test knowledge base functionality without RAG infrastructure
+4. **Cost Optimization**: You want to avoid embedding model API costs
+
+### AI Behavior in No-RAG Mode
+
+When you chat with an AI that has access to a knowledge base without RAG:
+
+1. **Document Discovery**: AI uses `kb_ls` to list available documents with summaries
+2. **Content Selection**: AI reviews document summaries to identify relevant ones
+3. **Content Reading**: AI uses `kb_head` to read document content (with pagination for large files)
+4. **Answer Generation**: AI answers based on the content it has read
+
+### Example Workflow
+
+```text
+User: What does the API documentation say about authentication?
+
+AI: Let me explore the knowledge base to find relevant information.
+
+[Uses kb_ls to list documents]
+Found 5 documents:
+- api-guide.md (15KB) - API usage guide with authentication section
+- setup.md (8KB) - Initial setup instructions
+- ...
+
+[Uses kb_head to read api-guide.md]
+Reading authentication section from api-guide.md...
+
+Based on the API documentation, authentication uses JWT tokens...
+```
+
+### Performance Considerations
+
+This approach is **less efficient** than RAG retrieval:
+
+| Aspect | RAG Mode | No-RAG Mode |
+|--------|----------|-------------|
+| Search Speed | Fast (vector similarity) | Slower (sequential reading) |
+| Token Usage | Lower (relevant chunks only) | Higher (may read full documents) |
+| Accuracy | Semantic understanding | Depends on document summaries |
+| Best For | Large knowledge bases | Small knowledge bases (<50 docs) |
+
+### Setting Up No-RAG Mode
+
+1. **Create Knowledge Base**: In the create dialog, skip the retrieval configuration section
+2. **Upload Documents**: Documents are stored but not indexed for RAG
+3. **Start Chatting**: AI will automatically use exploration tools
+
+> **Note**: You can always add RAG configuration later by editing the knowledge base settings after configuring a retriever.
+
 ## Related Documentation
 
+- [Managing Knowledge Bases](managing-knowledge-bases.md)
 - [Creating Bots](creating-bots.md)
 - [Creating Teams](creating-teams.md)
 - [Managing Tasks](managing-tasks.md)
