@@ -113,7 +113,7 @@
       "namePlaceholder": "Enter document name",
       "updateFailed": "Failed to update document",
       "dropzone": "Drop files here or click to browse",
-      "supportedTypes": "PDF, Word, PPT, Excel, TXT, MD, Images (Max {{maxSize}}MB)",
+      "supportedTypes": "PDF, Word, PPT, Excel, TXT, MD (Max {{maxSize}}MB)",
       "uploading": "Uploading...",
       "uploadSuccess": "File uploaded successfully",
       "batch": {
@@ -194,6 +194,7 @@
       "textRequired": "Please enter text content",
       "insert": "Insert",
       "clickToRename": "Click to rename",
+      "unsupportedFileType": "Image files are not supported yet. Support will be added in future versions.",
       "addTable": "Add Data Table",
       "tableHint": "Enter the table link and name to add it to your knowledge base.",
       "tableUrlHint": "Please enter a valid table URL. Ensure the link is accessible and you have read permission. Currently supports DingTalk tables.",
