@@ -106,10 +106,10 @@ async def prepare_knowledge_base_tools(
     extra_tools.append(kb_tool)
 
     # Create shared call counter for exploration tools (kb_ls and kb_head)
-    # These tools share the same max_calls_per_conversation limit
-    # The max_calls value will be fetched from KB config via HTTP API
-    # For now, use default value; actual limit will be enforced at runtime
-    exploration_call_counter = KBToolCallCounter()
+    # These tools share the same max_calls_per_conversation limit as knowledge_base_search
+    # Get the actual limit from kb_tool configuration to ensure consistency
+    max_calls, _ = kb_tool._get_kb_limits()
+    exploration_call_counter = KBToolCallCounter(max_calls=max_calls)
 
     # Create exploration tools (kb_ls and kb_head)
     # These are secondary tools for when RAG search doesn't find relevant results
