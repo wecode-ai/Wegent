@@ -9,14 +9,17 @@ The ChannelManager is a singleton that handles:
 - Starting/stopping channel providers
 - Managing provider lifecycle
 - Providing status information
+- Provider registration for extensibility
 
 IM channels are stored as Messager CRD in the kinds table.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Protocol
 
 from sqlalchemy.orm import Session
+
+from app.services.channels.callback import ChannelType
 
 if TYPE_CHECKING:
     from app.services.channels.base import BaseChannelProvider
@@ -40,22 +43,31 @@ class ChannelLike(Protocol):
     default_model_name: str
 
 
+# Type alias for provider factory function
+ProviderFactory = Callable[[ChannelLike], "BaseChannelProvider"]
+
+
 class ChannelManager:
     """
     Singleton manager for all IM channel instances.
 
     Handles the lifecycle of channel providers, including starting,
     stopping, and restarting based on database configuration.
+
+    Supports extensible provider registration for new channel types.
     """
 
     _instance: Optional["ChannelManager"] = None
     _channels: Dict[int, "BaseChannelProvider"]  # channel_id -> provider instance
+    _provider_factories: Dict[str, ProviderFactory]  # channel_type -> factory function
 
     def __new__(cls) -> "ChannelManager":
         """Ensure singleton pattern."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._channels = {}
+            cls._instance._provider_factories = {}
+            cls._instance._register_default_providers()
         return cls._instance
 
     @classmethod
@@ -70,7 +82,66 @@ class ChannelManager:
         """Reset the singleton instance (for testing)."""
         if cls._instance is not None:
             cls._instance._channels = {}
+            cls._instance._provider_factories = {}
         cls._instance = None
+
+    def _register_default_providers(self) -> None:
+        """Register default provider factories."""
+        # Register DingTalk provider
+        self.register_provider_factory(
+            ChannelType.DINGTALK.value,
+            self._create_dingtalk_provider,
+        )
+        # Future providers can be registered here or via register_provider_factory()
+
+    def register_provider_factory(
+        self, channel_type: str, factory: ProviderFactory
+    ) -> None:
+        """
+        Register a provider factory for a channel type.
+
+        This allows extending the manager with new channel types without
+        modifying the core code.
+
+        Args:
+            channel_type: The channel type string (e.g., "dingtalk", "feishu")
+            factory: Factory function that creates a provider instance
+        """
+        self._provider_factories[channel_type] = factory
+        logger.info(
+            "[ChannelManager] Registered provider factory for channel type: %s",
+            channel_type,
+        )
+
+    def unregister_provider_factory(self, channel_type: str) -> None:
+        """
+        Unregister a provider factory for a channel type.
+
+        Args:
+            channel_type: The channel type string
+        """
+        if channel_type in self._provider_factories:
+            del self._provider_factories[channel_type]
+            logger.info(
+                "[ChannelManager] Unregistered provider factory for channel type: %s",
+                channel_type,
+            )
+
+    def get_supported_channel_types(self) -> List[str]:
+        """
+        Get list of supported channel types.
+
+        Returns:
+            List of channel type strings
+        """
+        return list(self._provider_factories.keys())
+
+    @staticmethod
+    def _create_dingtalk_provider(channel: ChannelLike) -> "BaseChannelProvider":
+        """Create a DingTalk provider instance."""
+        from app.services.channels.dingtalk.service import DingTalkChannelProvider
+
+        return DingTalkChannelProvider(channel)
 
     async def start_all_enabled(self, db: Session) -> int:
         """
@@ -148,7 +219,9 @@ class ChannelManager:
         provider = self._create_provider(channel)
         if provider is None:
             logger.warning(
-                "[ChannelManager] Unknown channel type: %s", channel.channel_type
+                "[ChannelManager] Unknown channel type: %s. Supported types: %s",
+                channel.channel_type,
+                ", ".join(self.get_supported_channel_types()),
             )
             return False
 
@@ -223,24 +296,46 @@ class ChannelManager:
         """
         Create a provider instance based on channel type.
 
+        Uses registered provider factories for extensibility.
+
         Args:
             channel: Channel-like object
 
         Returns:
             Provider instance or None if type is unknown
         """
-        if channel.channel_type == "dingtalk":
-            from app.services.channels.dingtalk.service import DingTalkChannelProvider
-
-            return DingTalkChannelProvider(channel)
-        # Future implementations:
-        # elif channel.channel_type == "feishu":
-        #     from app.services.channels.feishu.service import FeishuChannelProvider
-        #     return FeishuChannelProvider(channel)
-        # elif channel.channel_type == "wechat":
-        #     from app.services.channels.wechat.service import WeChatChannelProvider
-        #     return WeChatChannelProvider(channel)
+        factory = self._provider_factories.get(channel.channel_type)
+        if factory:
+            return factory(channel)
         return None
+
+    def get_channel(self, channel_id: int) -> Optional["BaseChannelProvider"]:
+        """
+        Get a running channel provider by ID.
+
+        Args:
+            channel_id: ID of the channel
+
+        Returns:
+            Channel provider instance or None if not running
+        """
+        return self._channels.get(channel_id)
+
+    def get_channel_by_type(self, channel_type: str) -> List["BaseChannelProvider"]:
+        """
+        Get all running channel providers of a specific type.
+
+        Args:
+            channel_type: The channel type string
+
+        Returns:
+            List of channel provider instances
+        """
+        return [
+            provider
+            for provider in self._channels.values()
+            if provider.channel_type == channel_type
+        ]
 
     def get_status(self, channel_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -300,3 +395,23 @@ class ChannelManager:
 def get_channel_manager() -> ChannelManager:
     """Get the ChannelManager singleton instance."""
     return ChannelManager.get_instance()
+
+
+def register_channel_provider(channel_type: str, factory: ProviderFactory) -> None:
+    """
+    Register a channel provider factory.
+
+    This is a convenience function for registering new channel types
+    from external modules.
+
+    Args:
+        channel_type: The channel type string (e.g., "feishu", "telegram")
+        factory: Factory function that creates a provider instance
+
+    Example:
+        from app.services.channels.manager import register_channel_provider
+        from app.services.channels.feishu.service import FeishuChannelProvider
+
+        register_channel_provider("feishu", lambda ch: FeishuChannelProvider(ch))
+    """
+    get_channel_manager().register_provider_factory(channel_type, factory)

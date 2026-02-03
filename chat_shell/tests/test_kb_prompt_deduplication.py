@@ -192,8 +192,9 @@ class TestKnowledgeFactorySkipPromptEnhancement:
                 skip_prompt_enhancement=True,
             )
 
-            # Should return KB tool but not modify prompt
-            assert len(tools) == 1
+            # Should return 3 KB tools (knowledge_base_search, kb_ls, kb_head)
+            # but not modify prompt
+            assert len(tools) == 3
             assert enhanced_prompt == base_prompt
             # Should NOT contain KB prompt markers
             assert "## Knowledge Base Requirement" not in enhanced_prompt
@@ -221,8 +222,9 @@ class TestKnowledgeFactorySkipPromptEnhancement:
                 is_user_selected=True,
             )
 
-            # Should return KB tool and add prompt
-            assert len(tools) == 1
+            # Should return 3 KB tools (knowledge_base_search, kb_ls, kb_head)
+            # and add prompt
+            assert len(tools) == 3
             # Should contain KB prompt marker (strict mode because is_user_selected=True)
             assert "## Knowledge Base Requirement" in enhanced_prompt
 

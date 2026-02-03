@@ -22,6 +22,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -39,6 +40,8 @@ interface DocumentItemProps {
   compact?: boolean
   /** Whether the document is currently being refreshed */
   isRefreshing?: boolean
+  /** Whether the knowledge base has RAG configured (retriever + embedding model) */
+  ragConfigured?: boolean
 }
 
 export function DocumentItem({
@@ -53,6 +56,7 @@ export function DocumentItem({
   onSelect,
   compact = false,
   isRefreshing = false,
+  ragConfigured = true,
 }: DocumentItemProps) {
   const { t } = useTranslation()
 
@@ -185,14 +189,30 @@ export function DocumentItem({
               </span>
             )}
             {/* Status indicator */}
-            <span
-              className={`w-1 h-1 rounded-full flex-shrink-0 ${document.is_active ? 'bg-green-500' : 'bg-yellow-500'}`}
-              title={
-                document.is_active
-                  ? t('knowledge:document.document.indexStatus.available')
-                  : t('knowledge:document.document.indexStatus.unavailable')
-              }
-            />
+            {document.is_active ? (
+              <span
+                className="w-1 h-1 rounded-full flex-shrink-0 bg-green-500"
+                title={t('knowledge:document.document.indexStatus.available')}
+              />
+            ) : !ragConfigured ? (
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-yellow-500 cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs">
+                    <p className="text-xs">
+                      {t('knowledge:document.document.indexStatus.unavailableHint')}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : (
+              <span
+                className="w-1 h-1 rounded-full flex-shrink-0 bg-yellow-500"
+                title={t('knowledge:document.document.indexStatus.unavailable')}
+              />
+            )}
           </div>
         </div>
 
@@ -340,15 +360,32 @@ export function DocumentItem({
 
       {/* Index status (is_active) */}
       <div className="w-24 flex-shrink-0 text-center">
-        <Badge
-          variant={document.is_active ? 'success' : 'warning'}
-          size="sm"
-          className="whitespace-nowrap"
-        >
-          {document.is_active
-            ? t('knowledge:document.document.indexStatus.available')
-            : t('knowledge:document.document.indexStatus.unavailable')}
-        </Badge>
+        {document.is_active ? (
+          <Badge variant="success" size="sm" className="whitespace-nowrap">
+            {t('knowledge:document.document.indexStatus.available')}
+          </Badge>
+        ) : !ragConfigured ? (
+          <TooltipProvider>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <span>
+                  <Badge variant="warning" size="sm" className="whitespace-nowrap cursor-help">
+                    {t('knowledge:document.document.indexStatus.unavailable')}
+                  </Badge>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                <p className="text-xs">
+                  {t('knowledge:document.document.indexStatus.unavailableHint')}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          <Badge variant="warning" size="sm" className="whitespace-nowrap">
+            {t('knowledge:document.document.indexStatus.unavailable')}
+          </Badge>
+        )}
       </div>
 
       {/* Action buttons */}

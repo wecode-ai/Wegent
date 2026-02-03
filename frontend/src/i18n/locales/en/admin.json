@@ -746,7 +746,17 @@
       "default_model_placeholder": "Select default model",
       "no_default_model": "Use agent's default model",
       "team_no_model_warning": "The selected agent has no model configured. You must select a default model.",
-      "is_enabled": "Enable Channel"
+      "is_enabled": "Enable Channel",
+      "user_mapping_mode": "User Mapping Mode",
+      "user_mapping_mode_description": "Choose how to map IM users to system users",
+      "user_mapping_modes": {
+        "select_user": "Specific User",
+        "staff_id": "Match by Staff ID",
+        "email": "Match by Email"
+      },
+      "target_user": "Target User",
+      "target_user_description": "All IM messages will be processed as this user",
+      "select_user_placeholder": "Select a user"
     },
     "confirm": {
       "delete_title": "Delete Channel",
@@ -770,7 +780,8 @@
       "name_required": "Channel name is required",
       "config_required": "Client ID and Client Secret are required",
       "team_required": "A default agent must be selected",
-      "model_required_for_team": "The selected agent has no model configured. You must select a default model."
+      "model_required_for_team": "The selected agent has no model configured. You must select a default model.",
+      "target_user_required": "A target user must be selected when using Specific User mode"
     }
   }
 }

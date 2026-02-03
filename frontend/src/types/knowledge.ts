@@ -14,11 +14,11 @@ export type KnowledgeResourceScope = 'personal' | 'group' | 'all'
 
 // Retrieval Config types
 export interface RetrievalConfig {
-  retriever_name: string
-  retriever_namespace: string
-  embedding_config: {
-    model_name: string
-    model_namespace: string
+  retriever_name?: string
+  retriever_namespace?: string
+  embedding_config?: {
+    model_name?: string
+    model_namespace?: string
   }
   retrieval_mode?: 'vector' | 'keyword' | 'hybrid'
   top_k?: number

@@ -746,7 +746,17 @@
       "default_model_placeholder": "选择默认模型",
       "no_default_model": "使用智能体默认模型",
       "team_no_model_warning": "该智能体没有配置模型，必须选择一个默认模型",
-      "is_enabled": "启用渠道"
+      "is_enabled": "启用渠道",
+      "user_mapping_mode": "用户映射方式",
+      "user_mapping_mode_description": "选择如何将 IM 用户映射到系统用户",
+      "user_mapping_modes": {
+        "select_user": "指定用户",
+        "staff_id": "按工号匹配",
+        "email": "按邮箱匹配"
+      },
+      "target_user": "目标用户",
+      "target_user_description": "所有 IM 消息将以此用户身份处理",
+      "select_user_placeholder": "选择用户"
     },
     "confirm": {
       "delete_title": "删除渠道",
@@ -770,7 +780,8 @@
       "name_required": "渠道名称不能为空",
       "config_required": "Client ID 和 Client Secret 不能为空",
       "team_required": "必须选择一个默认智能体",
-      "model_required_for_team": "所选智能体没有配置模型，必须选择一个默认模型"
+      "model_required_for_team": "所选智能体没有配置模型，必须选择一个默认模型",
+      "target_user_required": "使用指定用户模式时必须选择一个目标用户"
     }
   }
 }
