@@ -71,6 +71,21 @@ class TestTokenCounter:
         count = counter.count_messages(messages)
         assert count > 0
 
+    def test_detect_provider_openai(self):
+        """Test provider detection for OpenAI models."""
+        counter = TokenCounter(model_id="gpt-4-turbo")
+        assert counter.provider == "openai"
+
+    def test_detect_provider_anthropic(self):
+        """Test provider detection for Anthropic models."""
+        counter = TokenCounter(model_id="claude-3-5-sonnet-20241022")
+        assert counter.provider == "anthropic"
+
+    def test_detect_provider_google(self):
+        """Test provider detection for Google models."""
+        counter = TokenCounter(model_id="gemini-1.5-pro")
+        assert counter.provider == "google"
+
     def test_is_over_limit(self):
         """Test over limit detection."""
         counter = TokenCounter(model_id="gpt-4")
