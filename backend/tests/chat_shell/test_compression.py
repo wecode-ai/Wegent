@@ -58,8 +58,7 @@ class TestTokenCounter:
         }
         count = counter.count_message(message)
         # Should include both text and image tokens
-        # Token count varies by tokenizer implementation, just verify it's positive
-        assert count > 0
+        assert count > 50  # At least image token count
 
     def test_count_messages_list(self):
         """Test counting tokens in message list."""
