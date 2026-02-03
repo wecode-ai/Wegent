@@ -1177,6 +1177,45 @@ class ContextService:
             .first()
         )
 
+    def get_attachments_by_task(
+        self,
+        db: Session,
+        task_id: int,
+    ) -> List[SubtaskContext]:
+        """
+        Get all attachment contexts for a task (across all subtasks).
+
+        This method is used by the executor to pre-download all attachments
+        for a task at sandbox startup.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+
+        Returns:
+            List of attachment SubtaskContext records for all subtasks of the task
+        """
+        from app.models.subtask import Subtask
+
+        # Get all subtask IDs for this task
+        subtask_ids = db.query(Subtask.id).filter(Subtask.task_id == task_id).all()
+        subtask_ids = [s[0] for s in subtask_ids]
+
+        if not subtask_ids:
+            return []
+
+        # Get all attachments for these subtasks
+        return (
+            db.query(SubtaskContext)
+            .filter(
+                SubtaskContext.subtask_id.in_(subtask_ids),
+                SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+                SubtaskContext.status == ContextStatus.READY.value,
+            )
+            .order_by(SubtaskContext.created_at)
+            .all()
+        )
+
     def delete_context(
         self,
         db: Session,

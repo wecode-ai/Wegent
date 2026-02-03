@@ -443,3 +443,83 @@ class SkillDownloader:
                 f"[SkillDownloader] Error extracting skill '{skill_name}': {e}"
             )
             return False
+
+
+@dataclass
+class TaskAttachmentInfo:
+    """Information about an attachment for a task."""
+
+    id: int
+    original_filename: str
+    file_size: int
+    mime_type: str
+    subtask_id: int
+
+
+@dataclass
+class TaskAttachmentsResult:
+    """Result of fetching task attachments."""
+
+    attachments: List[TaskAttachmentInfo]
+    error: Optional[str] = None
+
+
+def fetch_task_attachments(task_id: str, auth_token: str) -> TaskAttachmentsResult:
+    """Fetch all attachments for a task via Backend API.
+
+    Calls GET /api/attachments/task/{task_id}/all to get all attachments
+    for all subtasks of the task.
+
+    Args:
+        task_id: Task ID
+        auth_token: API auth token
+
+    Returns:
+        TaskAttachmentsResult with attachments list or error
+    """
+    if not auth_token or not task_id:
+        logger.warning(
+            f"[fetch_task_attachments] Missing required params: "
+            f"auth_token={'present' if auth_token else 'missing'}, task_id={task_id}"
+        )
+        return TaskAttachmentsResult(attachments=[], error="Missing required params")
+
+    try:
+        logger.info(
+            f"[fetch_task_attachments] Calling API for task {task_id}, "
+            f"auth_token={'present' if auth_token else 'missing'}"
+        )
+        client = ApiClient(auth_token)
+        logger.info(f"[fetch_task_attachments] API base URL: {client.api_base_url}")
+
+        response = client.get(f"/api/attachments/task/{task_id}/all")
+
+        if response:
+            data = response.json()
+            attachments = []
+            for att in data:
+                attachments.append(
+                    TaskAttachmentInfo(
+                        id=att.get("id"),
+                        original_filename=att.get("filename", ""),
+                        file_size=att.get("file_size", 0),
+                        mime_type=att.get("mime_type", ""),
+                        subtask_id=att.get("subtask_id", 0),
+                    )
+                )
+            logger.info(
+                f"[fetch_task_attachments] Fetched {len(attachments)} attachments "
+                f"for task {task_id}"
+            )
+            return TaskAttachmentsResult(attachments=attachments)
+        else:
+            logger.warning(
+                f"[fetch_task_attachments] API returned no response for task {task_id}"
+            )
+            return TaskAttachmentsResult(
+                attachments=[], error="API returned no response"
+            )
+
+    except Exception as e:
+        logger.error(f"[fetch_task_attachments] Error: {e}")
+        return TaskAttachmentsResult(attachments=[], error=str(e))

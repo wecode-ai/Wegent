@@ -144,6 +144,10 @@ async def lifespan(app: FastAPI):
                 f"AUTH_TOKEN found, initializing Claude Code for sandbox {task_id}..."
             )
             _initialize_sandbox_claude(auth_token, task_id)
+
+            # Pre-download all attachments for the task
+            logger.info(f"Pre-downloading attachments for sandbox {task_id}...")
+            _predownload_task_attachments(auth_token, task_id)
     except Exception as e:
         logger.warning(f"Failed to initialize Claude Code for sandbox: {e}")
 
@@ -207,6 +211,92 @@ def _initialize_sandbox_claude(auth_token: str, task_id: str) -> None:
     logger.info(
         f"[SandboxInit] Skills deployment complete: "
         f"{result.success_count}/{result.total_count} deployed to {result.skills_dir}"
+    )
+
+
+def _predownload_task_attachments(auth_token: str, task_id: str) -> None:
+    """Pre-download all attachments for a task at sandbox startup.
+
+    Downloads all attachments for the task to /home/user/attachments directory,
+    making them available for the AI agent to access.
+
+    Args:
+        auth_token: JWT token for API authentication
+        task_id: Task ID for fetching attachments
+    """
+    from pathlib import Path
+
+    from executor.services.api_client import fetch_task_attachments, get_api_base_url
+
+    # Define attachments directory
+    attachments_dir = "/home/user/attachments"
+
+    # Fetch all attachments for the task
+    logger.info(f"[SandboxInit] Fetching attachments for task {task_id}...")
+    result = fetch_task_attachments(task_id, auth_token)
+
+    if result.error:
+        logger.warning(f"[SandboxInit] Failed to fetch attachments: {result.error}")
+        return
+
+    if not result.attachments:
+        logger.info("[SandboxInit] No attachments to download")
+        return
+
+    # Create attachments directory
+    Path(attachments_dir).mkdir(parents=True, exist_ok=True)
+    logger.info(f"[SandboxInit] Created attachments directory: {attachments_dir}")
+
+    # Download each attachment
+    import requests
+
+    api_base_url = get_api_base_url()
+    headers = {"Authorization": f"Bearer {auth_token}"}
+    success_count = 0
+
+    for att in result.attachments:
+        try:
+            # Build download URL
+            download_url = f"{api_base_url}/api/attachments/{att.id}/executor-download"
+            logger.info(
+                f"[SandboxInit] Downloading attachment: {att.original_filename} "
+                f"(id={att.id}, subtask={att.subtask_id})"
+            )
+
+            # Download file
+            response = requests.get(
+                download_url,
+                headers=headers,
+                timeout=300,  # 5 minutes for large files
+                stream=True,
+            )
+
+            if response.status_code != 200:
+                logger.warning(
+                    f"[SandboxInit] Failed to download attachment '{att.original_filename}': "
+                    f"HTTP {response.status_code}"
+                )
+                continue
+
+            # Save file to attachments directory
+            file_path = os.path.join(attachments_dir, att.original_filename)
+            with open(file_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+            logger.info(
+                f"[SandboxInit] Downloaded attachment '{att.original_filename}' to {file_path}"
+            )
+            success_count += 1
+
+        except Exception as e:
+            logger.warning(
+                f"[SandboxInit] Error downloading attachment '{att.original_filename}': {e}"
+            )
+
+    logger.info(
+        f"[SandboxInit] Attachment pre-download complete: "
+        f"{success_count}/{len(result.attachments)} downloaded to {attachments_dir}"
     )
 
 

@@ -9,7 +9,7 @@ Uses the unified context service for managing attachments as subtask contexts.
 """
 
 import logging
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -599,3 +599,50 @@ async def get_attachment_by_subtask(
         raise HTTPException(status_code=403, detail="Access denied")
 
     return AttachmentDetailResponse.from_context(context)
+
+
+@router.get("/task/{task_id}/all", response_model=List[AttachmentDetailResponse])
+async def get_all_task_attachments(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get all attachments for a task (across all subtasks).
+
+    This endpoint is used by the executor to pre-download all attachments
+    for a task at sandbox startup.
+
+    Args:
+        task_id: Task ID
+
+    Returns:
+        List of attachment details for all subtasks of the task
+    """
+    # Verify task exists and user has access
+    task = db.query(TaskResource).filter(TaskResource.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Check if user is the task owner or a member
+    from app.models.task_member import MemberStatus, TaskMember
+
+    is_owner = task.user_id == current_user.id
+    is_member = (
+        db.query(TaskMember)
+        .filter(
+            TaskMember.task_id == task_id,
+            TaskMember.user_id == current_user.id,
+            TaskMember.status == MemberStatus.ACTIVE.value,
+        )
+        .first()
+        is not None
+    )
+
+    if not is_owner and not is_member:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Get all attachments for the task
+    attachments = context_service.get_attachments_by_task(db=db, task_id=task_id)
+
+    return [AttachmentDetailResponse.from_context(att) for att in attachments]
