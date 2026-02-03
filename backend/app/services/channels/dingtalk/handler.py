@@ -21,6 +21,9 @@ from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.user import User
 from app.services.channels.dingtalk.user_resolver import DingTalkUserResolver
+from app.services.subscription.notification_service import (
+    subscription_notification_service,
+)
 
 if TYPE_CHECKING:
     from dingtalk_stream.stream import DingTalkStreamClient
@@ -49,6 +52,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         on_message: Optional[Callable[[Dict[str, Any]], asyncio.Future]] = None,
         get_default_team_id: Optional[Callable[[], Optional[int]]] = None,
         get_default_model_name: Optional[Callable[[], Optional[str]]] = None,
+        channel_id: Optional[int] = None,
     ):
         """
         Initialize the handler.
@@ -64,6 +68,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                                 If provided, this takes precedence over default_team_id.
             get_default_model_name: Callback to get current default_model_name dynamically.
                                    Used to override bot's model configuration.
+            channel_id: The Messager channel ID (Kind.id) for IM binding tracking.
         """
         super(dingtalk_stream.ChatbotHandler, self).__init__()
         self._dingtalk_client = dingtalk_client
@@ -72,6 +77,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         self._get_default_model_name = get_default_model_name
         self._use_ai_card = use_ai_card
         self._on_message = on_message
+        self._channel_id = channel_id
         self.logger = logging.getLogger(__name__)
 
     @property
@@ -275,6 +281,23 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                     incoming_message,
                 )
                 return
+
+            # Update user's IM channel binding for subscription notifications
+            if self._channel_id:
+                try:
+                    subscription_notification_service.update_user_im_binding(
+                        db=db,
+                        user_id=user.id,
+                        channel_id=self._channel_id,
+                        channel_type="dingtalk",
+                        sender_id=sender.get("sender_id", ""),
+                        sender_staff_id=sender.get("sender_staff_id"),
+                        conversation_id=conversation_id,
+                    )
+                except Exception as e:
+                    self.logger.warning(
+                        "[DingTalkHandler] Failed to update IM binding: %s", e
+                    )
 
             # Get default team for this channel
             team = self._get_default_team(db, user.id)

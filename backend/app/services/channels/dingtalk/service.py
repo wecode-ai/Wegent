@@ -191,6 +191,7 @@ class DingTalkChannelProvider(BaseChannelProvider):
                 get_default_model_name=lambda: _get_channel_default_model_name(
                     channel_id
                 ),
+                channel_id=channel_id,
             )
             self._client.register_callback_handler(
                 dingtalk_stream.chatbot.ChatbotMessage.TOPIC,
