@@ -10,7 +10,9 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useUser } from '@/features/common/UserContext'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ChatTipItem, Team } from '@/types/api'
+import type { UnifiedSkill } from '@/apis/skills'
 import MentionAutocomplete from '../chat/MentionAutocomplete'
+import SkillAutocomplete from '../chat/SkillAutocomplete'
 
 interface ChatInputProps {
   message: string
@@ -34,6 +36,13 @@ interface ChatInputProps {
   hasNoTeams?: boolean
   // Custom reason for disabled state (e.g., "Device offline"). Shows as placeholder.
   disabledReason?: string
+  // Skill selector support
+  skills?: UnifiedSkill[]
+  teamSkillNames?: string[]
+  preloadedSkillNames?: string[]
+  selectedSkillNames?: string[]
+  onSkillSelect?: (skillName: string) => void
+  isChatShell?: boolean
 }
 
 export default function ChatInput({
@@ -51,6 +60,12 @@ export default function ChatInput({
   onPasteFile,
   hasNoTeams = false,
   disabledReason,
+  skills = [],
+  teamSkillNames = [],
+  preloadedSkillNames = [],
+  selectedSkillNames = [],
+  onSkillSelect,
+  isChatShell = false,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation()
 
@@ -96,6 +111,11 @@ export default function ChatInput({
   const [showMentionMenu, setShowMentionMenu] = useState(false)
   const [mentionMenuPosition, setMentionMenuPosition] = useState({ top: 0, left: 0 })
   const [mentionQuery, setMentionQuery] = useState('')
+
+  // Skill autocomplete state (slash command)
+  const [showSkillMenu, setShowSkillMenu] = useState(false)
+  const [skillMenuPosition, setSkillMenuPosition] = useState({ top: 0, left: 0 })
+  const [skillQuery, setSkillQuery] = useState('')
 
   // Update placeholder visibility when message changes externally
   useEffect(() => {
@@ -306,8 +326,107 @@ export default function ChatInput({
           }
         }
       }
+
+      // Check for / trigger for skill selection (when skills are available)
+      if (skills.length > 0 && onSkillSelect) {
+        const lastChar = text[text.length - 1]
+        // Check if user just typed / at the start of a word (after space or at start)
+        if (lastChar === '/') {
+          // Check if / is at the start of input or after a space
+          const charBeforeSlash = text.length > 1 ? text[text.length - 2] : ''
+          if (!charBeforeSlash || /\s/.test(charBeforeSlash)) {
+            // Get cursor position to show skill menu
+            const selection = window.getSelection()
+            if (selection && selection.rangeCount > 0) {
+              const range = selection.getRangeAt(0)
+              const rect = range.getBoundingClientRect()
+              const containerRect = editableRef.current?.getBoundingClientRect()
+
+              if (containerRect) {
+                setSkillMenuPosition({
+                  top: rect.top - containerRect.top - 8,
+                  left: rect.left - containerRect.left,
+                })
+                setShowSkillMenu(true)
+                setSkillQuery('')
+              }
+            }
+          }
+        } else if (showSkillMenu) {
+          // Update query or close menu if user continues typing after /
+          const words = text.split(/\s/)
+          const lastWord = words[words.length - 1]
+          if (lastWord.startsWith('/')) {
+            // Extract query after /
+            const query = lastWord.substring(1)
+            setSkillQuery(query)
+          } else {
+            setShowSkillMenu(false)
+            setSkillQuery('')
+          }
+        }
+      }
     },
-    [isInputDisabled, setMessage, getTextWithNewlines, isGroupChat, team, showMentionMenu]
+    [
+      isInputDisabled,
+      setMessage,
+      getTextWithNewlines,
+      isGroupChat,
+      team,
+      showMentionMenu,
+      skills,
+      onSkillSelect,
+      showSkillMenu,
+    ]
+  )
+
+  // Handle skill selection from slash command
+  const handleSkillSelect = useCallback(
+    (skillName: string) => {
+      if (editableRef.current && onSkillSelect) {
+        const currentText = getTextWithNewlines(editableRef.current)
+        // Find the last / command and remove it from the text
+        const lastSlashIndex = currentText.lastIndexOf('/')
+
+        if (lastSlashIndex !== -1) {
+          // Check if this / is at start of a word
+          const charBeforeSlash = lastSlashIndex > 0 ? currentText[lastSlashIndex - 1] : ''
+          if (!charBeforeSlash || /\s/.test(charBeforeSlash)) {
+            // Get text before the /
+            const textBefore = currentText.substring(0, lastSlashIndex)
+            // Get text after / and find where the current word ends
+            const textAfterSlash = currentText.substring(lastSlashIndex + 1)
+            // Find the end of the current word (first whitespace after /)
+            const wordEndMatch = textAfterSlash.match(/^\S*/)
+            const currentWord = wordEndMatch ? wordEndMatch[0] : ''
+            const textAfterWord = textAfterSlash.substring(currentWord.length)
+            // Build new text: remove the /command
+            const newText = (textBefore + textAfterWord).trim()
+            setMessage(newText)
+            setContentWithNewlines(editableRef.current, newText)
+          }
+        }
+
+        // Add the skill to selection
+        onSkillSelect(skillName)
+
+        // Move cursor to end
+        const selection = window.getSelection()
+        if (selection && editableRef.current) {
+          const range = document.createRange()
+          range.selectNodeContents(editableRef.current)
+          range.collapse(false)
+          selection.removeAllRanges()
+          selection.addRange(range)
+        }
+
+        // Focus back to input
+        editableRef.current.focus()
+        setShowSkillMenu(false)
+        setSkillQuery('')
+      }
+    },
+    [getTextWithNewlines, setMessage, setContentWithNewlines, onSkillSelect]
   )
 
   // Handle mention selection
@@ -526,6 +645,24 @@ export default function ChatInput({
             setMentionQuery('')
           }}
           position={mentionMenuPosition}
+        />
+      )}
+
+      {/* Skill autocomplete menu (slash command) */}
+      {showSkillMenu && skills.length > 0 && onSkillSelect && (
+        <SkillAutocomplete
+          skills={skills}
+          teamSkillNames={teamSkillNames}
+          preloadedSkillNames={preloadedSkillNames}
+          query={skillQuery}
+          selectedSkillNames={selectedSkillNames}
+          onSelect={handleSkillSelect}
+          onClose={() => {
+            setShowSkillMenu(false)
+            setSkillQuery('')
+          }}
+          position={skillMenuPosition}
+          isChatShell={isChatShell}
         />
       )}
 

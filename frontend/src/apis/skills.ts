@@ -318,6 +318,37 @@ export interface UnifiedSkill {
 }
 
 /**
+ * Task skills response type
+ */
+export interface TaskSkillsResponse {
+  task_id: number
+  team_id?: number
+  team_namespace: string
+  skills: string[]
+  preload_skills: string[]
+}
+
+/**
+ * Fetch skills configured for a specific task
+ */
+export async function fetchTaskSkills(taskId: number): Promise<TaskSkillsResponse> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/tasks/${taskId}/skills`
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'Failed to fetch task skills')
+  }
+
+  return response.json()
+}
+
+/**
  * Fetch unified skills list (user's + public)
  */
 export async function fetchUnifiedSkillsList(params?: {

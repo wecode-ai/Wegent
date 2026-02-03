@@ -508,5 +508,18 @@
     "proceeding_to_stage": "正在进入阶段: {{stage}}",
     "pipeline_completed": "流水线已完成",
     "no_task_id": "没有可用的任务 ID"
+  },
+  "skills": {
+    "slash_command_hint": "输入 / 选择技能",
+    "select_skills": "选择技能",
+    "team_skills_section": "智能体技能",
+    "personal_skills_section": "个人技能",
+    "public_skills_section": "公共技能",
+    "no_available_skills": "无可用技能",
+    "skills_selected": "已选 {{count}} 个技能",
+    "remove_skill": "移除技能",
+    "skill_autocomplete_title": "选择要使用的技能",
+    "preload_hint": "将注入到系统提示词",
+    "download_hint": "将下载到执行环境"
   }
 }

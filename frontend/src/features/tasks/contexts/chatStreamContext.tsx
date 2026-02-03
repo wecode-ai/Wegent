@@ -104,6 +104,10 @@ export interface ChatMessageRequest {
   knowledge_base_id?: number
   // Local device ID for task execution (optional, when undefined use cloud executor)
   device_id?: string
+  // Skill names to preload for Chat Shell (inject into system prompt)
+  preload_skill_names?: string[]
+  // Additional skill names for other shells (downloaded to executor)
+  additional_skill_names?: string[]
 }
 
 /**

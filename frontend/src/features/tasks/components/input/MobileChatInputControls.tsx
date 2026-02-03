@@ -16,6 +16,7 @@ import ChatContextInput from '../chat/ChatContextInput'
 import AttachmentButton from '../AttachmentButton'
 import SendButton from './SendButton'
 import LoadingDots from '../message/LoadingDots'
+import SkillSelectorButton from '../chat/SkillSelectorButton'
 import { ActionButton } from '@/components/ui/action-button'
 import { Button } from '@/components/ui/button'
 import {
@@ -26,6 +27,7 @@ import {
 } from '@/components/ui/dropdown'
 import type { Team, GitRepoInfo, GitBranch as GitBranchType, TaskDetail } from '@/types/api'
 import type { ContextItem } from '@/types/context'
+import type { UnifiedSkill } from '@/apis/skills'
 import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 
@@ -66,6 +68,13 @@ export interface MobileChatInputControlsProps {
   // Context selection
   selectedContexts: ContextItem[]
   setSelectedContexts: (contexts: ContextItem[]) => void
+
+  // Skill selection
+  skills?: UnifiedSkill[]
+  teamSkillNames?: string[]
+  preloadedSkillNames?: string[]
+  selectedSkillNames?: string[]
+  onSkillSelectionChange?: (skillNames: string[]) => void
 
   // Attachment
   onFileSelect: (files: File | File[]) => void
@@ -118,6 +127,11 @@ export function MobileChatInputControls({
   onCorrectionModeToggle,
   selectedContexts,
   setSelectedContexts,
+  skills = [],
+  teamSkillNames = [],
+  preloadedSkillNames = [],
+  selectedSkillNames = [],
+  onSkillSelectionChange,
   onFileSelect,
   isLoading,
   isStreaming,
@@ -210,6 +224,18 @@ export function MobileChatInputControls({
         {/* Attachment */}
         {supportsAttachments(selectedTeam) && (
           <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
+        )}
+        {/* Skill Selector Button - show when skills are available */}
+        {skills.length > 0 && onSkillSelectionChange && (
+          <SkillSelectorButton
+            skills={skills}
+            teamSkillNames={teamSkillNames}
+            preloadedSkillNames={preloadedSkillNames}
+            selectedSkillNames={selectedSkillNames}
+            onSelectionChange={onSkillSelectionChange}
+            isChatShell={isChatShell(selectedTeam)}
+            disabled={isLoading || isStreaming}
+          />
         )}
         {/* Context (Knowledge base) */}
         {isChatShell(selectedTeam) && (

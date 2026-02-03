@@ -530,5 +530,18 @@
     "proceeding_to_stage": "Proceeding to stage: {{stage}}",
     "pipeline_completed": "Pipeline completed",
     "no_task_id": "No task ID available"
+  },
+  "skills": {
+    "slash_command_hint": "Type / to select skills",
+    "select_skills": "Select Skills",
+    "team_skills_section": "Agent Skills",
+    "personal_skills_section": "Personal Skills",
+    "public_skills_section": "Public Skills",
+    "no_available_skills": "No available skills",
+    "skills_selected": "{{count}} skill(s) selected",
+    "remove_skill": "Remove skill",
+    "skill_autocomplete_title": "Select skills to use",
+    "preload_hint": "Will be injected into system prompt",
+    "download_hint": "Will be downloaded to executor"
   }
 }

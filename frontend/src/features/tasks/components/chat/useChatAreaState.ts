@@ -131,6 +131,13 @@ export interface ChatAreaState {
   setSelectedContexts: (contexts: ContextItem[]) => void
   resetContexts: () => void
 
+  // Skill selection state
+  selectedSkillNames: string[]
+  setSelectedSkillNames: (names: string[]) => void
+  addSkill: (skillName: string) => void
+  removeSkill: (skillName: string) => void
+  resetSkills: () => void
+
   // Refs
   initialTeamIdRef: React.MutableRefObject<number | null>
 
@@ -215,9 +222,28 @@ export function useChatAreaState({
   // Context selection state (knowledge bases)
   const [selectedContexts, setSelectedContexts] = useState<ContextItem[]>([])
 
+  // Skill selection state
+  const [selectedSkillNames, setSelectedSkillNames] = useState<string[]>([])
+
   // Reset contexts helper
   const resetContexts = useCallback(() => {
     setSelectedContexts([])
+  }, [])
+
+  // Skill state helpers
+  const addSkill = useCallback((skillName: string) => {
+    setSelectedSkillNames(prev => {
+      if (prev.includes(skillName)) return prev
+      return [...prev, skillName]
+    })
+  }, [])
+
+  const removeSkill = useCallback((skillName: string) => {
+    setSelectedSkillNames(prev => prev.filter(name => name !== skillName))
+  }, [])
+
+  const resetSkills = useCallback(() => {
+    setSelectedSkillNames([])
   }, [])
 
   // Media query
@@ -625,6 +651,13 @@ export function useChatAreaState({
     selectedContexts,
     setSelectedContexts,
     resetContexts,
+
+    // Skill selection state
+    selectedSkillNames,
+    setSelectedSkillNames,
+    addSkill,
+    removeSkill,
+    resetSkills,
 
     // Refs
     initialTeamIdRef,

@@ -76,6 +76,11 @@ class TaskCreate(BaseModel):
     )
     # API key name field
     api_key_name: Optional[str] = None  # API key name used for this request
+    # Skill selection fields
+    # For Chat Shell: skills to preload (inject prompt into system message)
+    preload_skill_names: Optional[List[str]] = None
+    # For other shells: additional skills to download to executor
+    additional_skill_names: Optional[List[str]] = None
 
 
 class TaskUpdate(BaseModel):

@@ -15,6 +15,7 @@ import AttachmentButton from '../AttachmentButton'
 import SendButton from './SendButton'
 import LoadingDots from '../message/LoadingDots'
 import QuotaUsage from '../params/QuotaUsage'
+import SkillSelectorButton from '../chat/SkillSelectorButton'
 import { ActionButton } from '@/components/ui/action-button'
 import type {
   Team,
@@ -24,6 +25,7 @@ import type {
   MultiAttachmentUploadState,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
+import type { UnifiedSkill } from '@/apis/skills'
 import { isChatShell } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
@@ -72,6 +74,13 @@ export interface ChatInputControlsProps {
   // Context selection (knowledge bases)
   selectedContexts: ContextItem[]
   setSelectedContexts: (contexts: ContextItem[]) => void
+
+  // Skill selection
+  skills?: UnifiedSkill[]
+  teamSkillNames?: string[]
+  preloadedSkillNames?: string[]
+  selectedSkillNames?: string[]
+  onSkillSelectionChange?: (skillNames: string[]) => void
 
   // Attachment (multi-attachment)
   attachmentState: MultiAttachmentUploadState
@@ -141,6 +150,11 @@ export function ChatInputControls({
   onCorrectionModeToggle,
   selectedContexts,
   setSelectedContexts,
+  skills = [],
+  teamSkillNames = [],
+  preloadedSkillNames = [],
+  selectedSkillNames = [],
+  onSkillSelectionChange,
   attachmentState: _attachmentState,
   onFileSelect,
   onAttachmentRemove: _onAttachmentRemove,
@@ -297,6 +311,19 @@ export function ChatInputControls({
         {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
         {supportsAttachments(selectedTeam) && (
           <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
+        )}
+
+        {/* Skill Selector Button - show when skills are available */}
+        {skills.length > 0 && onSkillSelectionChange && (
+          <SkillSelectorButton
+            skills={skills}
+            teamSkillNames={teamSkillNames}
+            preloadedSkillNames={preloadedSkillNames}
+            selectedSkillNames={selectedSkillNames}
+            onSelectionChange={onSkillSelectionChange}
+            isChatShell={isChatShell(selectedTeam)}
+            disabled={isLoading || isStreaming}
+          />
         )}
 
         {/* Clarification Toggle Button - only show for chat shell */}
