@@ -587,6 +587,138 @@ data: {"id":"dr-local-123","status":"completed","usage":{...}}
 
 ---
 
+## 实现状态
+
+✅ **已完成实现 (方案一简化版)**
+
+基于澄清的需求（Backend 代理、无本地缓存、无权限控制、无并发限制、无 usage 记录），实现了简化版方案一。
+
+### 实现的文件
+
+```
+chat_shell/
+├── api/v1/
+│   └── deep_research.py              # API 路由 + Schema (NEW)
+├── clients/
+│   ├── __init__.py                   # 模块导出 (NEW)
+│   └── gemini_interaction.py         # HTTP 客户端 (NEW)
+└── main.py                           # 注册路由 (MODIFIED)
+```
+
+### 实际 API 设计
+
+由于 Backend 代理模式，状态查询和结果流式获取使用 POST 方法（携带 model_config）：
+
+#### 1. 创建任务
+
+```http
+POST /v1/deep-research
+Content-Type: application/json
+
+{
+    "model_config": {
+        "api_key": "sk-xxx",
+        "base_url": "http://10.222.76.222:8080"
+    },
+    "input": "Research the history of Google TPUs.",
+    "agent": "deep-research-pro-preview-12-2025",
+    "metadata": {
+        "task_id": 123,
+        "subtask_id": 456,
+        "user_id": 789
+    }
+}
+```
+
+响应:
+```json
+{
+    "interaction_id": "5738096098665299968",
+    "status": "in_progress",
+    "created_at": "2026-02-03T10:46:28Z"
+}
+```
+
+#### 2. 查询状态
+
+```http
+POST /v1/deep-research/{interaction_id}/status
+Content-Type: application/json
+
+{
+    "model_config": {
+        "api_key": "sk-xxx",
+        "base_url": "http://10.222.76.222:8080"
+    }
+}
+```
+
+响应:
+```json
+{
+    "interaction_id": "5738096098665299968",
+    "status": "in_progress",
+    "created_at": "2026-02-03T10:46:28Z",
+    "updated_at": "2026-02-03T10:50:00Z"
+}
+```
+
+#### 3. 流式获取结果
+
+```http
+POST /v1/deep-research/{interaction_id}/stream
+Content-Type: application/json
+
+{
+    "model_config": {
+        "api_key": "sk-xxx",
+        "base_url": "http://10.222.76.222:8080"
+    }
+}
+```
+
+响应 (SSE):
+```
+event: response.start
+data: {"event_type":"interaction.start","interaction":{...}}
+
+event: content.start
+data: {"content":{"type":"thought"},"event_type":"content.start","index":0}
+
+event: content.delta
+data: {"delta":{"content":{"text":"..."},"type":"thought_summary"},"event_type":"content.delta","index":0}
+
+event: content.stop
+data: {"event_type":"content.stop","index":0}
+
+event: content.start
+data: {"content":{"type":"text"},"event_type":"content.start","index":1}
+
+event: content.delta
+data: {"delta":{"annotations":[...],"text":"# The Evolution of Google TPUs...","type":"text"},"event_type":"content.delta","index":1}
+
+event: content.stop
+data: {"event_type":"content.stop","index":1}
+
+event: response.done
+data: {"event_type":"interaction.complete","interaction":{"id":"...","status":"completed","usage":{...}}}
+
+event: done
+data: [DONE]
+```
+
+### 简化说明
+
+相比原始方案，简化了以下内容：
+
+1. **无数据库持久化**：Backend 负责持久化，chat_shell 仅作为代理
+2. **无本地缓存**：每次获取都从 Gemini API 获取
+3. **无权限验证**：Backend 统一验证
+4. **无并发限制**：不限制
+5. **无 usage 记录**：透传 Gemini 返回的数据
+
+---
+
 ## 参考资料
 
 - [Gemini Interaction API 官方文档](https://ai.google.dev/gemini-api/docs/interactions?hl=zh-cn&ua=deep-research#rest_3)

@@ -461,6 +461,27 @@ async def _stream_chat_response(
         # Add model info to span
         span_manager.set_model_attributes(chat_config.model_config)
 
+        # Check for special protocol routing (gemini-deep-research)
+        # Deep research requires a completely different flow: create job -> poll -> stream results
+        if chat_config.protocol == "gemini-deep-research":
+            logger.info(
+                "[ai_trigger] Routing to Gemini Deep Research flow: "
+                "task_id=%d, subtask_id=%d",
+                stream_data.task_id,
+                stream_data.subtask_id,
+            )
+            # Close db before starting deep research (long-running operation)
+            db.close()
+            db = None
+            await _stream_deep_research(
+                stream_data=stream_data,
+                message=message,
+                model_config=chat_config.model_config,
+                event_emitter=emitter,
+                span_manager=span_manager,
+            )
+            return
+
         # Search for relevant memories (with timeout, graceful degradation)
         # WebSocket chat (web) respects user preference for memory
         # This runs before context processing to inject memory context
@@ -1361,6 +1382,312 @@ async def _stream_with_http_adapter(
         # Clean up streaming content cache from Redis
         # This prevents stale data from being returned for future streams
         await session_manager.delete_streaming_content(subtask_id)
+
+
+async def _stream_deep_research(
+    stream_data: StreamTaskData,
+    message: str,
+    model_config: dict,
+    event_emitter: Optional["ChatEventEmitter"],
+    span_manager: Optional[Any] = None,
+) -> None:
+    """Stream using Gemini Deep Research API.
+
+    This function handles the special flow for Gemini Deep Research:
+    1. Emit chat:start event
+    2. Create a deep research job via chat_shell proxy
+    3. Poll for job completion (with progress updates via reasoning chunks)
+    4. Stream the final research result
+    5. Emit chat:done event
+
+    Deep Research is a long-running operation (10-30 minutes typically).
+    Progress is communicated via reasoning chunks showing current status.
+
+    Args:
+        stream_data: StreamTaskData containing all extracted ORM data
+        message: User query for deep research
+        model_config: Model configuration including api_key and model_id
+        event_emitter: Event emitter for chat events
+        span_manager: Optional span manager for telemetry
+    """
+    from app.services.chat.trigger.emitter import (
+        ChatEventEmitter,
+        WebSocketEventEmitter,
+    )
+
+    emitter: ChatEventEmitter = event_emitter or WebSocketEventEmitter()
+    task_id = stream_data.task_id
+    subtask_id = stream_data.subtask_id
+    message_id = stream_data.assistant_message_id
+
+    # Emit chat:start event
+    logger.info(
+        "[deep_research] Starting deep research: task_id=%d, subtask_id=%d",
+        task_id,
+        subtask_id,
+    )
+    await emitter.emit_chat_start(
+        task_id=task_id,
+        subtask_id=subtask_id,
+        message_id=message_id,
+        shell_type="Chat",  # Use Chat shell type for deep research
+    )
+
+    import httpx
+
+    from app.core.config import settings
+    from app.services.chat.storage.db_handler import DBHandler
+
+    # Get chat_shell base URL
+    chat_shell_url = settings.CHAT_SHELL_URL.rstrip("/")
+    deep_research_url = f"{chat_shell_url}/v1/deep-research"
+
+    # Prepare model config for deep research API
+    # base_url should be the Gemini API endpoint (user's proxy or Google's default)
+    gemini_base_url = model_config.get("base_url") or "https://generativelanguage.googleapis.com"
+    # model_id is used as the "agent" parameter
+    agent = model_config.get("model_id", "deep-research-pro-preview-12-2025")
+    
+    dr_model_config = {
+        "api_key": model_config.get("api_key", ""),
+        "base_url": gemini_base_url,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
+            # Step 1: Create deep research job
+            logger.info(
+                "[deep_research] Creating deep research job: agent=%s, query=%s",
+                agent,
+                message[:100] + "..." if len(message) > 100 else message,
+            )
+            await emitter.emit_chat_chunk(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                chunk="[Starting Deep Research...]\n",
+                is_reasoning=True,
+                message_id=message_id,
+            )
+
+            create_response = await client.post(
+                deep_research_url,
+                json={
+                    "input": message,
+                    "agent": agent,
+                    "model_config": dr_model_config,
+                },
+            )
+
+            if create_response.status_code != 200:
+                error_msg = f"Failed to create deep research job: {create_response.text}"
+                logger.error("[deep_research] %s", error_msg)
+                await emitter.emit_chat_error(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    error=error_msg,
+                )
+                return
+
+            create_data = create_response.json()
+            job_id = create_data.get("id")
+
+            if not job_id:
+                error_msg = "Deep research job created but no ID returned"
+                logger.error("[deep_research] %s", error_msg)
+                await emitter.emit_chat_error(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    error=error_msg,
+                )
+                return
+
+            logger.info("[deep_research] Job created: job_id=%s", job_id)
+            await emitter.emit_chat_chunk(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                chunk=f"[Research job created: {job_id}]\n",
+                is_reasoning=True,
+                message_id=message_id,
+            )
+
+            # Step 2: Poll for job completion
+            status_url = f"{deep_research_url}/{job_id}/status"
+            poll_interval = 5  # seconds
+            max_polls = 720  # 1 hour max (720 * 5s = 3600s)
+            polls = 0
+            last_status_msg = ""
+
+            while polls < max_polls:
+                polls += 1
+                await asyncio.sleep(poll_interval)
+
+                status_response = await client.post(
+                    status_url,
+                    json={"model_config": dr_model_config},
+                )
+
+                if status_response.status_code != 200:
+                    logger.warning(
+                        "[deep_research] Status check failed: %s",
+                        status_response.text,
+                    )
+                    continue
+
+                status_data = status_response.json()
+                status = status_data.get("status", "PROCESSING")
+
+                # Emit progress updates
+                status_msg = status_data.get("status_message", "")
+                if status_msg and status_msg != last_status_msg:
+                    last_status_msg = status_msg
+                    await emitter.emit_chat_chunk(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        chunk=f"[{status_msg}]\n",
+                        is_reasoning=True,
+                        message_id=message_id,
+                    )
+
+                logger.info(
+                    "[deep_research] Poll %d: status=%s, message=%s",
+                    polls,
+                    status,
+                    status_msg,
+                )
+
+                if status == "COMPLETED":
+                    logger.info("[deep_research] Job completed: job_id=%s", job_id)
+                    break
+                elif status == "FAILED":
+                    error_msg = status_data.get(
+                        "error", "Deep research job failed"
+                    )
+                    logger.error("[deep_research] Job failed: %s", error_msg)
+                    await emitter.emit_chat_error(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        error=error_msg,
+                    )
+                    return
+
+            if polls >= max_polls:
+                error_msg = "Deep research job timed out after 1 hour"
+                logger.error("[deep_research] %s", error_msg)
+                await emitter.emit_chat_error(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    error=error_msg,
+                )
+                return
+
+            # Step 3: Stream the results
+            stream_url = f"{deep_research_url}/{job_id}/stream"
+            logger.info("[deep_research] Streaming results: job_id=%s", job_id)
+
+            await emitter.emit_chat_chunk(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                chunk="[Research complete. Streaming results...]\n\n",
+                is_reasoning=True,
+                message_id=message_id,
+            )
+
+            # Use streaming request to get SSE events
+            full_content = ""
+            async with client.stream(
+                "POST",
+                stream_url,
+                json={"model_config": dr_model_config},
+                timeout=httpx.Timeout(300.0),
+            ) as response:
+                if response.status_code != 200:
+                    error_msg = f"Failed to stream results: status={response.status_code}"
+                    logger.error("[deep_research] %s", error_msg)
+                    await emitter.emit_chat_error(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        error=error_msg,
+                    )
+                    return
+
+                # Process SSE stream
+                buffer = ""
+                async for chunk in response.aiter_text():
+                    buffer += chunk
+                    lines = buffer.split("\n")
+                    buffer = lines[-1]  # Keep incomplete line in buffer
+
+                    for line in lines[:-1]:
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            if data_str == "[DONE]":
+                                continue
+                            try:
+                                import json
+
+                                data = json.loads(data_str)
+                                if data.get("type") == "content":
+                                    text = data.get("text", "")
+                                    if text:
+                                        full_content += text
+                                        await emitter.emit_chat_chunk(
+                                            task_id=task_id,
+                                            subtask_id=subtask_id,
+                                            chunk=text,
+                                            is_reasoning=False,
+                                            message_id=message_id,
+                                        )
+                            except json.JSONDecodeError:
+                                logger.warning(
+                                    "[deep_research] Failed to parse SSE data: %s",
+                                    data_str[:100],
+                                )
+
+            # Save the result to database
+            db = SessionLocal()
+            try:
+                db_handler = DBHandler(db)
+                await db_handler.update_subtask_content(subtask_id, full_content)
+                await db_handler.update_subtask_status(subtask_id, SubtaskStatus.DONE)
+                logger.info(
+                    "[deep_research] Saved result to database: subtask_id=%d, content_length=%d",
+                    subtask_id,
+                    len(full_content),
+                )
+            finally:
+                db.close()
+
+            # Emit chat:done event
+            logger.info(
+                "[deep_research] Completed: task_id=%d, subtask_id=%d",
+                task_id,
+                subtask_id,
+            )
+            await emitter.emit_chat_done(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+            )
+
+            if span_manager:
+                span_manager.record_success(
+                    event_name="deep_research_completed",
+                )
+
+    except Exception as e:
+        logger.exception(
+            "[deep_research] Error: task_id=%d, subtask_id=%d, error=%s",
+            task_id,
+            subtask_id,
+            e,
+        )
+        if span_manager:
+            span_manager.record_exception(e)
+        await emitter.emit_chat_error(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            error=str(e),
+        )
 
 
 async def _stream_with_bridge(

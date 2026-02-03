@@ -381,6 +381,11 @@ def create_app(
 
     app.include_router(v1_response_router)
 
+    # Include deep research router
+    from chat_shell.api.v1.deep_research import router as deep_research_router
+
+    app.include_router(deep_research_router)
+
     # Include health check router
     from chat_shell.api.health import router as health_router
 
