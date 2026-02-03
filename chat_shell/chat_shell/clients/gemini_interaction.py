@@ -85,9 +85,9 @@ class GeminiInteractionClient:
         }
 
         logger.info(
-            "[GEMINI_CLIENT] Creating interaction: agent=%s, input_len=%d",
-            agent,
-            len(input_text),
+            "[GEMINI_CLIENT][CREATE] Request: url=%s, payload=%s",
+            url,
+            {**payload, "input": input_text[:200] + "..." if len(input_text) > 200 else input_text},
         )
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -97,10 +97,15 @@ class GeminiInteractionClient:
                     json=payload,
                     headers=self._get_headers(),
                 )
+                logger.info(
+                    "[GEMINI_CLIENT][CREATE] Response: status=%d, body=%s",
+                    response.status_code,
+                    response.text[:1000] if len(response.text) > 1000 else response.text,
+                )
                 response.raise_for_status()
                 result = response.json()
                 logger.info(
-                    "[GEMINI_CLIENT] Interaction created: id=%s, status=%s",
+                    "[GEMINI_CLIENT][CREATE] Success: id=%s, status=%s",
                     result.get("id"),
                     result.get("status"),
                 )
@@ -136,7 +141,7 @@ class GeminiInteractionClient:
         """
         url = f"{self.base_url}/v1beta/interactions/{interaction_id}"
 
-        logger.debug("[GEMINI_CLIENT] Getting status: id=%s", interaction_id)
+        logger.info("[GEMINI_CLIENT][STATUS] Request: url=%s", url)
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
@@ -144,10 +149,15 @@ class GeminiInteractionClient:
                     url,
                     headers=self._get_headers(),
                 )
+                logger.info(
+                    "[GEMINI_CLIENT][STATUS] Response: status=%d, body=%s",
+                    response.status_code,
+                    response.text[:500] if len(response.text) > 500 else response.text,
+                )
                 response.raise_for_status()
                 result = response.json()
-                logger.debug(
-                    "[GEMINI_CLIENT] Status retrieved: id=%s, status=%s",
+                logger.info(
+                    "[GEMINI_CLIENT][STATUS] Success: id=%s, status=%s",
                     interaction_id,
                     result.get("status"),
                 )
@@ -185,7 +195,11 @@ class GeminiInteractionClient:
         url = f"{self.base_url}/v1beta/interactions/{interaction_id}"
         params = {"stream": "true"}
 
-        logger.info("[GEMINI_CLIENT] Starting stream: id=%s", interaction_id)
+        logger.info(
+            "[GEMINI_CLIENT][STREAM] Request: url=%s, params=%s",
+            url,
+            params,
+        )
 
         async with httpx.AsyncClient(timeout=None) as client:
             try:
@@ -195,10 +209,14 @@ class GeminiInteractionClient:
                     params=params,
                     headers=self._get_headers(),
                 ) as response:
+                    logger.info(
+                        "[GEMINI_CLIENT][STREAM] Response started: status=%d",
+                        response.status_code,
+                    )
                     if response.status_code != 200:
                         error_body = await response.aread()
                         logger.error(
-                            "[GEMINI_CLIENT] Stream failed: id=%s, status=%d, body=%s",
+                            "[GEMINI_CLIENT][STREAM] Failed: id=%s, status=%d, body=%s",
                             interaction_id,
                             response.status_code,
                             error_body.decode(),
@@ -210,12 +228,21 @@ class GeminiInteractionClient:
 
                     event_type = ""
                     event_data = ""
+                    event_count = 0
 
                     async for line in response.aiter_lines():
                         line = line.strip()
                         if not line:
                             # Empty line signals end of event
                             if event_type and event_data:
+                                event_count += 1
+                                # Log every event for debugging
+                                logger.info(
+                                    "[GEMINI_CLIENT][STREAM] Event #%d: type=%s, data=%s",
+                                    event_count,
+                                    event_type,
+                                    event_data[:500] if len(event_data) > 500 else event_data,
+                                )
                                 yield event_type, event_data
                                 event_type = ""
                                 event_data = ""
@@ -228,10 +255,19 @@ class GeminiInteractionClient:
 
                     # Yield any remaining event
                     if event_type and event_data:
+                        event_count += 1
+                        logger.info(
+                            "[GEMINI_CLIENT][STREAM] Final event #%d: type=%s, data=%s",
+                            event_count,
+                            event_type,
+                            event_data[:500] if len(event_data) > 500 else event_data,
+                        )
                         yield event_type, event_data
 
                     logger.info(
-                        "[GEMINI_CLIENT] Stream completed: id=%s", interaction_id
+                        "[GEMINI_CLIENT][STREAM] Completed: id=%s, total_events=%d",
+                        interaction_id,
+                        event_count,
                     )
 
             except httpx.RequestError as e:
