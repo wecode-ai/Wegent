@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import json
 import logging
 import threading
 from datetime import datetime
@@ -1126,7 +1127,7 @@ class ExecutorKindsService(
                         "agent_config": agent_config_data,
                         "system_prompt": bot_prompt,
                         "mcp_servers": mcp_servers,
-                        "skills": skills,
+                        "skills": skills,  # Will be merged with user_selected_skills later
                         "role": team_member_info.role if team_member_info else "",
                         "base_image": shell_base_image,  # Custom base image for executor
                     }
@@ -1140,6 +1141,55 @@ class ExecutorKindsService(
 
             # Check if this is a subscription task for silent exit support
             is_subscription = type == "subscription"
+
+            # Extract user-selected skills from task labels
+            # These are skills explicitly selected by the user for this task
+            user_selected_skills = []
+            if task_crd.metadata.labels:
+                additional_skills_json = task_crd.metadata.labels.get(
+                    "additionalSkills"
+                )
+                if additional_skills_json:
+                    try:
+                        parsed_skills = json.loads(additional_skills_json)
+                        # Validate that parsed result is a list of strings
+                        if isinstance(parsed_skills, list):
+                            # Filter to only include string elements
+                            user_selected_skills = [
+                                s for s in parsed_skills if isinstance(s, str) and s
+                            ]
+                            if len(user_selected_skills) != len(parsed_skills):
+                                logger.warning(
+                                    f"[EXECUTOR_DISPATCH] Filtered out {len(parsed_skills) - len(user_selected_skills)} "
+                                    f"non-string entries from additionalSkills for task {subtask.task_id}"
+                                )
+                        else:
+                            logger.warning(
+                                f"[EXECUTOR_DISPATCH] additionalSkills is not a list for task {subtask.task_id}, "
+                                f"got {type(parsed_skills).__name__}"
+                            )
+                        logger.info(
+                            f"[EXECUTOR_DISPATCH] task_id={subtask.task_id} user_selected_skills={user_selected_skills}"
+                        )
+                    except json.JSONDecodeError as e:
+                        logger.warning(
+                            f"[EXECUTOR_DISPATCH] Failed to parse additionalSkills JSON for task {subtask.task_id}: {e}"
+                        )
+
+            # Merge user_selected_skills into each bot's skills list
+            # This ensures user-selected skills are downloaded by executor
+            if user_selected_skills:
+                for bot_config in bots:
+                    existing_skills = bot_config.get("skills", [])
+                    # Add user-selected skills that are not already in the bot's skills
+                    for skill_name in user_selected_skills:
+                        if skill_name not in existing_skills:
+                            existing_skills.append(skill_name)
+                    bot_config["skills"] = existing_skills
+                logger.info(
+                    f"[EXECUTOR_DISPATCH] Merged user_selected_skills {user_selected_skills} into {len(bots)} bot(s) for task {subtask.task_id}"
+                )
+
             logger.info(
                 f"[EXECUTOR_DISPATCH] task_id={subtask.task_id}, subtask_id={subtask.id}, "
                 f"type={type}, is_subscription={is_subscription}, "
@@ -1248,6 +1298,9 @@ class ExecutorKindsService(
                     # Flag to indicate this subtask should start a new session (no conversation history)
                     # Used in pipeline mode when user confirms a stage and proceeds to next bot
                     "new_session": new_session,
+                    # User-selected skills for skill emphasis in executor
+                    # These are skills explicitly selected by the user for this task
+                    "user_selected_skills": user_selected_skills,
                 }
             )
 

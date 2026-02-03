@@ -47,6 +47,8 @@ interface ContextBadgeListProps {
   contexts?: SubtaskContextBrief[]
   /** Optional callback when user wants to re-select a context */
   onContextReselect?: (context: SubtaskContextBrief) => void
+  /** Share token for public access (no login required) */
+  shareToken?: string
 }
 
 /**
@@ -58,7 +60,11 @@ interface ContextBadgeListProps {
  * - knowledge_base: Displays KB name with document count
  * - table: Displays table name with clickable link to view/reselect
  */
-export function ContextBadgeList({ contexts, onContextReselect }: ContextBadgeListProps) {
+export function ContextBadgeList({
+  contexts,
+  onContextReselect,
+  shareToken,
+}: ContextBadgeListProps) {
   if (!contexts || contexts.length === 0) {
     return null
   }
@@ -70,6 +76,7 @@ export function ContextBadgeList({ contexts, onContextReselect }: ContextBadgeLi
           key={`${context.context_type}-${context.id}`}
           context={context}
           onReselect={onContextReselect}
+          shareToken={shareToken}
         />
       ))}
     </div>
@@ -82,13 +89,15 @@ export function ContextBadgeList({ contexts, onContextReselect }: ContextBadgeLi
 function ContextBadgeItem({
   context,
   onReselect,
+  shareToken,
 }: {
   context: SubtaskContextBrief
   onReselect?: (context: SubtaskContextBrief) => void
+  shareToken?: string
 }) {
   switch (context.context_type) {
     case 'attachment':
-      return <AttachmentContextBadge context={context} />
+      return <AttachmentContextBadge context={context} shareToken={shareToken} />
     case 'knowledge_base':
       return <KnowledgeBaseBadge context={context} />
     case 'table':
@@ -103,7 +112,13 @@ function ContextBadgeItem({
  *
  * Converts SubtaskContextBrief to Attachment format for AttachmentPreview
  */
-function AttachmentContextBadge({ context }: { context: SubtaskContextBrief }) {
+function AttachmentContextBadge({
+  context,
+  shareToken,
+}: {
+  context: SubtaskContextBrief
+  shareToken?: string
+}) {
   // Map context status to Attachment status
   // SubtaskContextBrief uses lowercase status values (pending, ready, failed)
   // Attachment uses specific status types (uploading, parsing, ready, failed)
@@ -136,7 +151,14 @@ function AttachmentContextBadge({ context }: { context: SubtaskContextBrief }) {
     created_at: '',
   }
 
-  return <AttachmentPreview attachment={attachment} compact={false} showDownload={true} />
+  return (
+    <AttachmentPreview
+      attachment={attachment}
+      compact={false}
+      showDownload={true}
+      shareToken={shareToken}
+    />
+  )
 }
 /**
  * Knowledge base badge - displays KB name and document count

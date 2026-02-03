@@ -1168,8 +1168,16 @@ class ClaudeCodeAgent(Agent):
                 logger.info(f"Task {self.task_id} cancelled during client setup")
                 return TaskStatus.COMPLETED
 
-            # Prepare prompt
+            # Prepare prompt with skill emphasis if user selected skills
             prompt = self.prompt
+            user_selected_skills = self.task_data.get("user_selected_skills", [])
+            if user_selected_skills:
+                skill_emphasis = self._build_skill_emphasis_prompt(user_selected_skills)
+                prompt = skill_emphasis + "\n\n" + prompt
+                logger.info(
+                    f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
+                )
+
             if self.options.get("cwd"):
                 prompt = (
                     prompt + "\nCurrent working directory: " + self.options.get("cwd")
@@ -2144,3 +2152,39 @@ model: inherit
             logger.info(f"Generated SubAgent config: {filepath}")
         except Exception as e:
             logger.warning(f"Failed to generate SubAgent config for {raw_name}: {e}")
+
+    def _build_skill_emphasis_prompt(self, user_selected_skills: List[str]) -> str:
+        """
+        Build skill emphasis prompt for user-selected skills.
+
+        When users explicitly select skills in the frontend, this method generates
+        a prompt prefix that emphasizes these skills, encouraging the model to
+        prioritize using them.
+
+        Args:
+            user_selected_skills: List of skill names that the user explicitly selected
+
+        Returns:
+            str: Skill emphasis prompt to prepend to the user's message
+        """
+        if not user_selected_skills:
+            return ""
+
+        # Build skill list with emphasis markers
+        skill_list = "\n".join(
+            f"  - **{skill}** [USER SELECTED - PRIORITIZE]"
+            for skill in user_selected_skills
+        )
+
+        emphasis_prompt = f"""## User-Selected Skills
+
+The user has explicitly selected the following skills for this task. You should **prioritize using these skills** when they are relevant to the task:
+
+{skill_list}
+
+**Important**: These skills were specifically chosen by the user. When the task can benefit from these skills, prefer to use them over other approaches.
+
+---
+
+"""
+        return emphasis_prompt

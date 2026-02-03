@@ -17,6 +17,7 @@ from app.api.endpoints.admin import (
     public_shells,
     public_teams,
     stats,
+    subscription_monitor,
     system_config,
     tasks,
     users,
@@ -36,5 +37,6 @@ router.include_router(system_config.router, tags=["admin-system-config"])
 router.include_router(api_keys.router, tags=["admin-api-keys"])
 router.include_router(kind_management.router, tags=["admin-kind-management"])
 router.include_router(stats.router, tags=["admin-stats"])
+router.include_router(subscription_monitor.router, tags=["admin-subscription-monitor"])
 router.include_router(tasks.router, tags=["admin-tasks"])
 router.include_router(im_channels.router, tags=["admin-im-channels"])

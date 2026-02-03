@@ -14,7 +14,10 @@ interface AttachmentPreviewState {
   error: string | null
 }
 
-export function useAttachmentPreview(attachmentId: number): AttachmentPreviewState {
+export function useAttachmentPreview(
+  attachmentId: number,
+  shareToken?: string
+): AttachmentPreviewState {
   const cached = attachmentPreviewCache.get(attachmentId) || null
   const [data, setData] = useState<AttachmentPreviewResponse | null>(cached)
   const [isLoading, setIsLoading] = useState(!cached)
@@ -35,7 +38,7 @@ export function useAttachmentPreview(attachmentId: number): AttachmentPreviewSta
     const fetchPreview = async () => {
       try {
         setIsLoading(true)
-        const response = await getAttachmentPreview(attachmentId)
+        const response = await getAttachmentPreview(attachmentId, shareToken)
         attachmentPreviewCache.set(attachmentId, response)
         if (isMounted) {
           setData(response)
@@ -58,7 +61,7 @@ export function useAttachmentPreview(attachmentId: number): AttachmentPreviewSta
     return () => {
       isMounted = false
     }
-  }, [attachmentId, cached])
+  }, [attachmentId, shareToken, cached])
 
   return { data, isLoading, error }
 }
