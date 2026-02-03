@@ -160,11 +160,15 @@ function SharedTaskContent() {
       }
     }
 
-    // For AI messages, extract result value
+    // For AI messages, extract result value and pass full result object
     let resultContent = ''
     if (subtask.result) {
       if (typeof subtask.result === 'object') {
-        const resultObj = subtask.result as { value?: unknown; thinking?: unknown }
+        const resultObj = subtask.result as {
+          value?: unknown
+          thinking?: unknown
+          blocks?: unknown
+        }
         if (resultObj.value !== null && resultObj.value !== undefined && resultObj.value !== '') {
           resultContent = String(resultObj.value)
         } else {
@@ -193,6 +197,8 @@ function SharedTaskContent() {
       subtaskStatus: subtask.status,
       subtaskId: subtask.id,
       contexts,
+      // Pass the full result object to MessageBubble for tool blocks rendering
+      result: subtask.result as Message['result'],
     }
   }
 
