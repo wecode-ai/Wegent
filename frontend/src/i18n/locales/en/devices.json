@@ -78,5 +78,7 @@
     "current": "Current Version",
     "latest": "Latest Version",
     "updateAvailable": "Update Available"
-  }
+  },
+  "add_device": "Add Device",
+  "hide_guide": "Hide Guide"
 }
