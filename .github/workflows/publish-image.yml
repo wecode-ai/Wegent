@@ -521,6 +521,81 @@ jobs:
           retention-days: 1
 
   # ============================================================================
+  # Executor Local Binary Build (Linux)
+  # ============================================================================
+  build-executor-local-linux-amd64:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies and build
+        working-directory: executor
+        run: |
+          uv sync --group build
+          uv run python scripts/build_local.py
+
+      - name: Rename binary with platform suffix
+        run: |
+          mv executor/dist/wegent-executor executor/dist/wegent-executor-linux-amd64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wegent-executor-linux-amd64
+          path: executor/dist/wegent-executor-linux-amd64
+          retention-days: 1
+
+  build-executor-local-linux-arm64:
+    needs: prepare-release
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies and build
+        working-directory: executor
+        run: |
+          uv sync --group build
+          uv run python scripts/build_local.py
+
+      - name: Rename binary with platform suffix
+        run: |
+          mv executor/dist/wegent-executor executor/dist/wegent-executor-linux-arm64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wegent-executor-linux-arm64
+          path: executor/dist/wegent-executor-linux-arm64
+          retention-days: 1
+
+  # ============================================================================
   # Create Multi-arch Manifests (combine amd64 + arm64 into single tag)
   # ============================================================================
   create-manifests:
@@ -593,6 +668,8 @@ jobs:
       - create-manifests
       - build-executor-local-macos-arm64
       - build-executor-local-macos-amd64
+      - build-executor-local-linux-amd64
+      - build-executor-local-linux-arm64
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -607,7 +684,7 @@ jobs:
       - name: Download executor binaries
         uses: actions/download-artifact@v4
         with:
-          pattern: wegent-executor-macos-*
+          pattern: wegent-executor-*
           path: ./executor-binaries
           merge-multiple: true
 
@@ -667,4 +744,6 @@ jobs:
           files: |
             ./executor-binaries/wegent-executor-macos-arm64
             ./executor-binaries/wegent-executor-macos-amd64
+            ./executor-binaries/wegent-executor-linux-amd64
+            ./executor-binaries/wegent-executor-linux-arm64
             ./executor/scripts/local_executor_install.sh

@@ -162,6 +162,8 @@ def build_executable(target_arch: str | None = None):
             f"--specpath={executor_root}",
             # Add project root to Python path
             f"--paths={project_root}",
+            # Runtime hook for --version flag (runs before main script)
+            f"--runtime-hook={executor_root / 'hooks' / 'rthook_version.py'}",
             # Hidden imports for dependencies
             "--hidden-import=executor",
             "--hidden-import=executor.config",
