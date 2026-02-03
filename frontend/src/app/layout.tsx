@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+// iOS 16 Safari polyfills - must be imported first
+import '@/lib/polyfills'
+
 import type { Metadata } from 'next'
 import './globals.css'
 import '@/styles/markdown.css'
@@ -20,6 +23,7 @@ import SchemeURLDialogBridgeClient from '@/components/SchemeURLDialogBridgeClien
 import { Toaster } from '@/components/ui/toaster'
 import { Toaster as SonnerToaster } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { CSSLoadFixer } from '@/components/CSSLoadFixer'
 
 export const metadata: Metadata = {
   title: 'Wegent AI',
@@ -45,6 +49,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeScript />
       </head>
       <body className="font-sans antialiased bg-base text-text-primary" suppressHydrationWarning>
+        <CSSLoadFixer />
         <ServiceWorkerRegistration />
         <TelemetryInit />
         <SchemeURLInit />
