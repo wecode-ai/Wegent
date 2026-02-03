@@ -19,11 +19,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgePermissions } from '../hooks/useKnowledgePermissions'
 import { AddUserDialog } from './add-user-dialog'
-import type {
-  PermissionLevel,
-  PendingPermissionInfo,
-  PermissionUserInfo,
-} from '@/types/knowledge'
+import type { PermissionLevel, PendingPermissionInfo, PermissionUserInfo } from '@/types/knowledge'
 
 interface PermissionManagementTabProps {
   kbId: number
@@ -183,13 +179,16 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
                     {permission.email || t('document.permission.noEmail')}
                   </div>
                   <div className="text-xs text-text-muted mt-1">
-                    {t('document.permission.requesting')}: {t(`document.permission.${permission.permission_level}`)}
+                    {t('document.permission.requesting')}:{' '}
+                    {t(`document.permission.${permission.permission_level}`)}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Select
                     value={approvalLevels[permission.id] || permission.permission_level}
-                    onValueChange={value => handleApprovalLevelChange(permission.id, value as PermissionLevel)}
+                    onValueChange={value =>
+                      handleApprovalLevelChange(permission.id, value as PermissionLevel)
+                    }
                   >
                     <SelectTrigger className="w-24 h-8">
                       <SelectValue />
@@ -351,7 +350,10 @@ function PermissionGroup({
             </div>
             {editingId === user.id ? (
               <div className="flex items-center gap-2">
-                <Select value={editingLevel} onValueChange={v => setEditingLevel(v as PermissionLevel)}>
+                <Select
+                  value={editingLevel}
+                  onValueChange={v => setEditingLevel(v as PermissionLevel)}
+                >
                   <SelectTrigger className="w-24 h-8">
                     <SelectValue />
                   </SelectTrigger>

@@ -26,6 +26,7 @@ from app.schemas.share import (
     MyKBPermissionResponse,
     PendingRequestListResponse,
     PermissionLevel,
+    PublicKnowledgeBaseResponse,
     ResourceMemberCreate,
     ResourceMemberResponse,
     ResourceMemberUpdate,
@@ -199,12 +200,13 @@ def get_share_info(
 
 @router.get(
     "/public/knowledge",
+    response_model=PublicKnowledgeBaseResponse,
     summary="Get public knowledge base info",
 )
 def get_public_kb_info(
     token: str,
     db: Session = Depends(get_db),
-):
+) -> PublicKnowledgeBaseResponse:
     """
     Get public knowledge base information by share token.
 
@@ -223,12 +225,13 @@ def get_public_kb_info(
 
 @router.get(
     "/public/knowledge/redirect",
+    response_model=Dict[str, str],
     summary="Get share token for KB redirect",
 )
 def get_kb_share_token(
     kb_id: int,
     db: Session = Depends(get_db),
-):
+) -> Dict[str, str]:
     """
     Get share token for a knowledge base by ID.
 

@@ -93,9 +93,7 @@ export function AddUserForm({
 
         {/* Error Message */}
         {error && (
-          <div className="text-sm text-error bg-error/10 px-3 py-2 rounded-lg">
-            {error}
-          </div>
+          <div className="text-sm text-error bg-error/10 px-3 py-2 rounded-lg">{error}</div>
         )}
       </div>
     </form>

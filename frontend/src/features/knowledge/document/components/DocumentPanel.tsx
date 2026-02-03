@@ -6,7 +6,15 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, PanelRightClose, PanelRightOpen, BookOpen, Plus, FileText, Shield } from 'lucide-react'
+import {
+  ArrowLeft,
+  PanelRightClose,
+  PanelRightOpen,
+  BookOpen,
+  Plus,
+  FileText,
+  Shield,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DocumentList } from './DocumentList'

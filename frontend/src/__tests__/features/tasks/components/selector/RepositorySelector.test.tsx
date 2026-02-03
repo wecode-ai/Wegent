@@ -177,21 +177,7 @@ describe('RepositorySelector', () => {
     await user.click(trigger)
 
     // Wait for search input to appear with longer timeout
-    let searchInput: HTMLElement | null = null
-    await waitFor(
-      () => {
-        searchInput = screen.queryByPlaceholderText('Search repository...')
-        expect(searchInput).toBeInTheDocument()
-      },
-      { timeout: 5000 }
-    )
-
-    if (!searchInput) {
-      // If search input didn't appear, the test cannot proceed
-      // This is a defensive check for flaky environments
-      console.warn('Search input not found, skipping search interaction')
-      return
-    }
+    const searchInput = await screen.findByPlaceholderText('Search repository...')
 
     // Type a search query that returns no results
     await user.type(searchInput, 'nonexistent-repo')
@@ -244,20 +230,7 @@ describe('RepositorySelector', () => {
     await user.click(trigger)
 
     // Wait for search input to appear with longer timeout
-    let searchInput: HTMLElement | null = null
-    await waitFor(
-      () => {
-        searchInput = screen.queryByPlaceholderText('Search repository...')
-        expect(searchInput).toBeInTheDocument()
-      },
-      { timeout: 5000 }
-    )
-
-    if (!searchInput) {
-      // If search input didn't appear, the test cannot proceed
-      console.warn('Search input not found, skipping search interaction')
-      return
-    }
+    const searchInput = await screen.findByPlaceholderText('Search repository...')
 
     // Type a search query
     await user.type(searchInput, 'video')
@@ -344,7 +317,7 @@ describe('RepositorySelector', () => {
     await user.click(trigger)
 
     // Type a search query that returns no results (not matching any local repos)
-    const searchInput = screen.getByPlaceholderText('Search repository...')
+    const searchInput = await screen.findByPlaceholderText('Search repository...')
     await user.type(searchInput, 'zzz-nonexistent')
 
     // Wait for search to complete

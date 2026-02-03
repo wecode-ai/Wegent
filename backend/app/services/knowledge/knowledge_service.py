@@ -251,21 +251,7 @@ class KnowledgeService:
             from app.models.resource_member import MemberStatus, ResourceMember
             from app.models.share_link import ResourceType
 
-            # Get personal knowledge bases (created by user)
-            personal = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "KnowledgeBase",
-                    Kind.user_id == user_id,
-                    Kind.namespace == "default",
-                    Kind.is_active == True,
-                )
-                .all()
-            )
-
             # Get knowledge bases with explicit approved permission (shared to user)
-            personal_ids = {kb.id for kb in personal}
-
             shared_permissions = (
                 db.query(ResourceMember.resource_id)
                 .filter(
@@ -277,24 +263,27 @@ class KnowledgeService:
             )
             shared_kb_ids = [p.resource_id for p in shared_permissions]
 
-            # Filter out already included KBs
-            shared_kb_ids_filtered = [
-                kb_id for kb_id in shared_kb_ids if kb_id not in personal_ids
-            ]
-
-            shared = (
-                (
-                    db.query(Kind)
-                    .filter(
-                        Kind.id.in_(shared_kb_ids_filtered),
-                        Kind.kind == "KnowledgeBase",
-                        Kind.is_active == True,
-                    )
-                    .all()
+            # Single query to get both personal and shared knowledge bases
+            # Personal: user_id matches and namespace is "default"
+            # Shared: id is in shared_kb_ids
+            all_kbs = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "KnowledgeBase",
+                    Kind.is_active == True,
+                    ((Kind.user_id == user_id) & (Kind.namespace == "default"))
+                    | (Kind.id.in_(shared_kb_ids) if shared_kb_ids else False),
                 )
-                if shared_kb_ids_filtered
-                else []
+                .all()
             )
+
+            # Separate into personal and shared for sorting
+            personal = [
+                kb
+                for kb in all_kbs
+                if kb.user_id == user_id and kb.namespace == "default"
+            ]
+            shared = [kb for kb in all_kbs if kb not in personal]
 
             # Combine and sort by updated_at
             all_kbs = personal + shared
@@ -325,40 +314,10 @@ class KnowledgeService:
             from app.models.resource_member import MemberStatus, ResourceMember
             from app.models.share_link import ResourceType
 
-            # Get personal knowledge bases (created by user)
-            personal = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "KnowledgeBase",
-                    Kind.user_id == user_id,
-                    Kind.namespace == "default",
-                    Kind.is_active == True,
-                )
-                .all()
-            )
-
             # Get team knowledge bases from accessible groups
             accessible_groups = get_user_groups(db, user_id)
-            team = (
-                (
-                    db.query(Kind)
-                    .filter(
-                        Kind.kind == "KnowledgeBase",
-                        Kind.namespace.in_(accessible_groups),
-                        Kind.is_active == True,
-                    )
-                    .all()
-                )
-                if accessible_groups
-                else []
-            )
 
-            # Get knowledge bases with explicit approved permission
-            # (excluding ones already covered by personal or team)
-            personal_ids = {kb.id for kb in personal}
-            team_ids = {kb.id for kb in team}
-            excluded_ids = personal_ids | team_ids
-
+            # Get knowledge bases with explicit approved permission (shared to user)
             shared_permissions = (
                 db.query(ResourceMember.resource_id)
                 .filter(
@@ -370,24 +329,34 @@ class KnowledgeService:
             )
             shared_kb_ids = [p.resource_id for p in shared_permissions]
 
-            # Filter out already included KBs
-            shared_kb_ids_filtered = [
-                kb_id for kb_id in shared_kb_ids if kb_id not in excluded_ids
-            ]
-
-            shared = (
-                (
-                    db.query(Kind)
-                    .filter(
-                        Kind.id.in_(shared_kb_ids_filtered),
-                        Kind.kind == "KnowledgeBase",
-                        Kind.is_active == True,
+            # Single query to get personal, team, and shared knowledge bases
+            # Personal: user_id matches and namespace is "default"
+            # Team: namespace is in accessible_groups
+            # Shared: id is in shared_kb_ids
+            all_kbs = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "KnowledgeBase",
+                    Kind.is_active == True,
+                    ((Kind.user_id == user_id) & (Kind.namespace == "default"))
+                    | (
+                        (Kind.namespace.in_(accessible_groups))
+                        if accessible_groups
+                        else False
                     )
-                    .all()
+                    | ((Kind.id.in_(shared_kb_ids)) if shared_kb_ids else False),
                 )
-                if shared_kb_ids_filtered
-                else []
+                .all()
             )
+
+            # Separate into personal, team, and shared
+            personal = [
+                kb
+                for kb in all_kbs
+                if kb.user_id == user_id and kb.namespace == "default"
+            ]
+            team = [kb for kb in all_kbs if kb.namespace in accessible_groups]
+            shared = [kb for kb in all_kbs if kb not in personal and kb not in team]
 
             return personal + team + shared
 
