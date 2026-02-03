@@ -144,7 +144,9 @@ class ChatSendPayload(BaseModel):
         None, description="Knowledge base ID for knowledge type tasks"
     )
     preload_skills: Optional[List[str]] = Field(
-        None, description="List of skill names to preload into system prompt"
+        None,
+        description="List of skill names to preload into system prompt",
+        alias="preload_skill_names",
     )
     additional_skill_names: Optional[List[str]] = Field(
         None,
