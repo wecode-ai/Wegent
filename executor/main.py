@@ -31,8 +31,10 @@ def _handle_version_flag() -> None:
     if "--version" in sys.argv or "-v" in sys.argv:
         from executor.version import get_version
 
-        print(get_version())
-        sys.exit(0)
+        print(get_version(), flush=True)
+        # Use os._exit() instead of sys.exit() to avoid PyInstaller cleanup
+        # hooks that may fail when modules are not fully initialized
+        os._exit(0)
 
 
 # Required for PyInstaller on macOS/Windows to prevent infinite fork

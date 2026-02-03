@@ -4,6 +4,7 @@
 
 """Tests for the --version CLI flag functionality."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -71,41 +72,43 @@ class TestVersionCLI:
 
 
 class TestHandleVersionFlag:
-    """Test _handle_version_flag function directly."""
+    """Test _handle_version_flag function directly using mocked os._exit."""
 
     def test_handle_version_flag_with_version(self) -> None:
-        """Test that _handle_version_flag exits when --version is present."""
+        """Test that _handle_version_flag calls os._exit(0) when --version is present."""
         with patch.object(sys, "argv", ["main.py", "--version"]):
-            with pytest.raises(SystemExit) as exc_info:
+            with patch.object(os, "_exit") as mock_exit:
                 from executor.main import _handle_version_flag
 
                 _handle_version_flag()
-            assert exc_info.value.code == 0
+                mock_exit.assert_called_once_with(0)
 
     def test_handle_version_flag_with_v(self) -> None:
-        """Test that _handle_version_flag exits when -v is present."""
+        """Test that _handle_version_flag calls os._exit(0) when -v is present."""
         with patch.object(sys, "argv", ["main.py", "-v"]):
-            with pytest.raises(SystemExit) as exc_info:
+            with patch.object(os, "_exit") as mock_exit:
                 from executor.main import _handle_version_flag
 
                 _handle_version_flag()
-            assert exc_info.value.code == 0
+                mock_exit.assert_called_once_with(0)
 
     def test_handle_version_flag_without_flag(self) -> None:
         """Test that _handle_version_flag does nothing without version flag."""
         with patch.object(sys, "argv", ["main.py"]):
-            from executor.main import _handle_version_flag
+            with patch.object(os, "_exit") as mock_exit:
+                from executor.main import _handle_version_flag
 
-            # Should not raise SystemExit
-            _handle_version_flag()
+                _handle_version_flag()
+                mock_exit.assert_not_called()
 
     def test_handle_version_flag_with_other_args(self) -> None:
         """Test that _handle_version_flag does nothing with other arguments."""
         with patch.object(sys, "argv", ["main.py", "--help"]):
-            from executor.main import _handle_version_flag
+            with patch.object(os, "_exit") as mock_exit:
+                from executor.main import _handle_version_flag
 
-            # Should not raise SystemExit
-            _handle_version_flag()
+                _handle_version_flag()
+                mock_exit.assert_not_called()
 
 
 class TestModuleImportSafety:
@@ -119,7 +122,7 @@ class TestModuleImportSafety:
         original_argv = sys.argv.copy()
         try:
             sys.argv = ["pytest", "-v", "test_file.py"]
-            # This import should NOT cause SystemExit
+            # This import should NOT cause os._exit or any exit
             import importlib
 
             import executor.main
