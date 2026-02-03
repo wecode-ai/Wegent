@@ -116,9 +116,9 @@ class ShareLink(Base):
     )
 
     __table_args__ = (
-        Index("ix_share_links_resource", "resource_type", "resource_id"),
+        Index("idx_share_links_resource", "resource_type", "resource_id"),
         Index(
-            "uq_share_links_active_resource",
+            "idx_share_links_active_resource",
             "resource_type",
             "resource_id",
             "is_active",

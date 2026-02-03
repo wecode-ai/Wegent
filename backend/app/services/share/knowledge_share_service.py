@@ -39,7 +39,7 @@ class KnowledgeShareService(UnifiedShareService):
     Members get access based on their permission level.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(ResourceType.KNOWLEDGE_BASE)
 
     def _get_resource(
@@ -48,7 +48,7 @@ class KnowledgeShareService(UnifiedShareService):
         """
         Fetch KnowledgeBase resource.
 
-        For Knowledge Bases, we check if the resource exists and belongs to the user
+        For Knowledge Bases, we check if resource exists and belongs to the user
         OR if the user has been shared access.
         """
         kb = (
@@ -79,7 +79,7 @@ class KnowledgeShareService(UnifiedShareService):
             if member:
                 return kb
 
-        return kb  # Return KB even if not accessible (for share info)
+        return None  # Only return KB for authorized users (owners or approved members)
 
     def _get_resource_name(self, resource: Kind) -> str:
         """Get KnowledgeBase display name."""

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+kai  # SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -134,22 +134,22 @@ def upgrade() -> None:
 
         # Create indexes for share_links
         op.create_index(
-            "ix_share_links_resource",
+            "idx_share_links_resource",
             "share_links",
             ["resource_type", "resource_id"],
             unique=False,
         )
         op.create_index(
-            "ix_share_links_token", "share_links", ["share_token"], unique=True
+            "idx_share_links_token", "share_links", ["share_token"], unique=True
         )
         op.create_index(
-            "ix_share_links_creator",
+            "idx_share_links_creator",
             "share_links",
             ["created_by_user_id"],
             unique=False,
         )
         op.create_index(
-            "uq_share_links_active_resource",
+            "idx_share_links_active_resource",
             "share_links",
             ["resource_type", "resource_id", "is_active"],
             unique=False,
@@ -266,31 +266,31 @@ def upgrade() -> None:
 
         # Create indexes for resource_members
         op.create_index(
-            "ix_resource_members_resource",
+            "idx_resource_members_resource",
             "resource_members",
             ["resource_type", "resource_id"],
             unique=False,
         )
         op.create_index(
-            "ix_resource_members_user",
+            "idx_resource_members_user",
             "resource_members",
             ["user_id"],
             unique=False,
         )
         op.create_index(
-            "ix_resource_members_status",
+            "idx_resource_members_status",
             "resource_members",
             ["status"],
             unique=False,
         )
         op.create_index(
-            "ix_resource_members_resource_status",
+            "idx_resource_members_resource_status",
             "resource_members",
             ["resource_type", "resource_id", "status"],
             unique=False,
         )
         op.create_index(
-            "ix_resource_members_share_link",
+            "idx_resource_members_share_link",
             "resource_members",
             ["share_link_id"],
             unique=False,
@@ -504,21 +504,21 @@ def downgrade() -> None:
 
     # Drop resource_members indexes and table
     if table_exists("resource_members"):
-        op.drop_index("ix_resource_members_share_link", table_name="resource_members")
+        op.drop_index("idx_resource_members_share_link", table_name="resource_members")
         op.drop_index(
-            "ix_resource_members_resource_status", table_name="resource_members"
+            "idx_resource_members_resource_status", table_name="resource_members"
         )
-        op.drop_index("ix_resource_members_status", table_name="resource_members")
-        op.drop_index("ix_resource_members_user", table_name="resource_members")
-        op.drop_index("ix_resource_members_resource", table_name="resource_members")
+        op.drop_index("idx_resource_members_status", table_name="resource_members")
+        op.drop_index("idx_resource_members_user", table_name="resource_members")
+        op.drop_index("idx_resource_members_resource", table_name="resource_members")
         op.drop_table("resource_members")
 
     # Drop share_links indexes and table
     if table_exists("share_links"):
-        op.drop_index("uq_share_links_active_resource", table_name="share_links")
-        op.drop_index("ix_share_links_creator", table_name="share_links")
-        op.drop_index("ix_share_links_token", table_name="share_links")
-        op.drop_index("ix_share_links_resource", table_name="share_links")
+        op.drop_index("idx_share_links_active_resource", table_name="share_links")
+        op.drop_index("idx_share_links_creator", table_name="share_links")
+        op.drop_index("idx_share_links_token", table_name="share_links")
+        op.drop_index("idx_share_links_resource", table_name="share_links")
         op.drop_table("share_links")
 
 

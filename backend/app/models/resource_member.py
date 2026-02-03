@@ -132,10 +132,10 @@ class ResourceMember(Base):
         UniqueConstraint(
             "resource_type", "resource_id", "user_id", name="uq_resource_members"
         ),
-        Index("ix_resource_members_resource", "resource_type", "resource_id"),
-        Index("ix_resource_members_status", "status"),
+        Index("idx_resource_members_resource", "resource_type", "resource_id"),
+        Index("idx_resource_members_status", "status"),
         Index(
-            "ix_resource_members_resource_status",
+            "idx_resource_members_resource_status",
             "resource_type",
             "resource_id",
             "status",
