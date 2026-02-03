@@ -212,6 +212,12 @@ class KbLsTool(BaseTool):
 
         from app.models.knowledge import KnowledgeDocument
 
+        # Check if we have a sync session with query method
+        if not hasattr(self.db_session, "query"):
+            raise ImportError(
+                "Package mode requires sync SQLAlchemy session with query method"
+            )
+
         add_span_event("listing_documents")
         set_span_attribute("knowledge_base_id", knowledge_base_id)
         set_span_attribute("mode", "package")
@@ -447,6 +453,12 @@ class KbHeadTool(BaseTool):
 
         from app.models.knowledge import KnowledgeDocument
         from app.services.context import context_service
+
+        # Check if we have a sync session with query method
+        if not hasattr(self.db_session, "query"):
+            raise ImportError(
+                "Package mode requires sync SQLAlchemy session with query method"
+            )
 
         add_span_event("reading_documents")
         set_span_attribute("document_ids", str(document_ids))

@@ -12,6 +12,8 @@ from typing import Any, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
+
 logger = logging.getLogger(__name__)
 
 
@@ -253,6 +255,10 @@ async def get_knowledge_base_meta_list(
         return []
 
 
+@trace_async(
+    span_name="check_any_kb_has_rag_enabled",
+    tracer_name="chat_shell.tools.knowledge_factory",
+)
 async def _check_any_kb_has_rag_enabled(knowledge_base_ids: list[int]) -> bool:
     """
     Check if any of the given knowledge bases have RAG enabled.
@@ -266,13 +272,18 @@ async def _check_any_kb_has_rag_enabled(knowledge_base_ids: list[int]) -> bool:
     Returns:
         True if at least one KB has RAG enabled, False otherwise
     """
+    set_span_attribute("knowledge_base_ids.count", len(knowledge_base_ids))
+
     if not knowledge_base_ids:
+        add_span_event("no_knowledge_bases")
         return False
 
     from chat_shell.core.config import settings
 
     try:
         import httpx
+
+        add_span_event("querying_backend_api")
 
         # Query KB info from Backend API
         url = f"{settings.BACKEND_URL}/api/internal/rag/kb-size"
@@ -291,11 +302,16 @@ async def _check_any_kb_has_rag_enabled(knowledge_base_ids: list[int]) -> bool:
                     logger.debug(
                         f"[knowledge_factory] KB {item.get('id')} has RAG enabled"
                     )
+                    add_span_event("rag_enabled_found")
+                    set_span_attribute("rag_enabled", True)
+                    set_span_attribute("kb_id_with_rag", item.get("id"))
                     return True
 
             logger.info(
                 f"[knowledge_factory] No KB has RAG enabled among {knowledge_base_ids}"
             )
+            add_span_event("no_rag_enabled")
+            set_span_attribute("rag_enabled", False)
             return False
 
     except Exception as e:
@@ -303,5 +319,8 @@ async def _check_any_kb_has_rag_enabled(knowledge_base_ids: list[int]) -> bool:
             f"[knowledge_factory] Failed to check RAG status for KBs {knowledge_base_ids}: {e}. "
             "Assuming RAG is enabled (fallback to normal behavior)."
         )
+        add_span_event("check_failed")
+        set_span_attribute("error", str(e))
+        set_span_attribute("rag_enabled", True)  # fallback
         # On error, assume RAG is enabled to avoid breaking existing functionality
         return True

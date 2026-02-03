@@ -354,21 +354,21 @@ DELETE /api/rag/documents/{doc_ref}?knowledge_id=kb_001&retriever_name=my-es-ret
 
 ### 示例工作流程
 
-```
+```text
 用户：API 文档中关于身份验证是怎么说的？
 
 AI：让我探索知识库以查找相关信息。
 
 [使用 kb_ls 列出文档]
 找到 5 个文档：
-- api-guide.md (15KB) - API 使用指南，包含身份验证部分
+- api-guide.md (15KB) - API 使用指南,包含身份验证部分
 - setup.md (8KB) - 初始设置说明
 - ...
 
 [使用 kb_head 读取 api-guide.md]
 正在读取 api-guide.md 中的身份验证部分...
 
-根据 API 文档，身份验证使用 JWT 令牌...
+根据 API 文档,身份验证使用 JWT 令牌...
 ```
 
 ### 性能考虑

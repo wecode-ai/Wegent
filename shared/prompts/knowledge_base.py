@@ -36,7 +36,7 @@ The user has selected specific knowledge bases for this conversation. You MUST u
 - **kb_head**: Read document content with offset/limit (like 'head -c')
 
 **IMPORTANT**: Only use exploration tools when:
-- **`knowledge_base_search` returns rag_not_configured or RAG retrieval is not available
+- `knowledge_base_search` returns rag_not_configured or RAG retrieval is not available
 - You need to verify what documents actually exist before concluding content is unavailable
 - **`knowledge_base_search` returns call limit warnings** (⚠️ or 🚨): Use `kb_ls` to identify documents, then `kb_head` to read targeted content directly (more token-efficient than additional RAG searches)
 - **`knowledge_base_search` is rejected** (🚫): Use `kb_ls` and `kb_head` to access content directly
@@ -68,7 +68,7 @@ You have access to knowledge bases from previous conversations in this task. You
 - **kb_head**: Read document content with offset/limit (like 'head -c')
 
 **IMPORTANT**: Only use exploration tools when:
-- **`knowledge_base_search` returns rag_not_configured or 'RAG retrieval is not available'
+- `knowledge_base_search` returns rag_not_configured or 'RAG retrieval is not available'
 - You need to verify what documents actually exist before concluding content is unavailable
 - **`knowledge_base_search` returns call limit warnings** (⚠️ or 🚨): Use `kb_ls` to identify documents, then `kb_head` to read targeted content directly (more token-efficient than additional RAG searches)
 - **`knowledge_base_search` is rejected** (🚫): Use `kb_ls` and `kb_head` to access content directly

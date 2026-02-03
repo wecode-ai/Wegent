@@ -354,7 +354,7 @@ When you chat with an AI that has access to a knowledge base without RAG:
 
 ### Example Workflow
 
-```
+```text
 User: What does the API documentation say about authentication?
 
 AI: Let me explore the knowledge base to find relevant information.

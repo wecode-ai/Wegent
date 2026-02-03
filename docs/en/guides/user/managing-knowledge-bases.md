@@ -103,7 +103,7 @@ When enabled, Wegent can auto-generate summaries for documents:
 
 Semantic search tool that finds relevant document chunks:
 
-```
+```text
 Input: query string
 Output: Relevant chunks with scores and sources
 ```
@@ -114,7 +114,7 @@ Output: Relevant chunks with scores and sources
 
 Lists all documents in a knowledge base with metadata:
 
-```
+```text
 Input: knowledge_base_id
 Output: List of documents with:
   - ID, name, file extension
@@ -129,7 +129,7 @@ Output: List of documents with:
 
 Reads document content with pagination support:
 
-```
+```text
 Input: document_ids, offset (default 0), limit (default 50KB)
 Output:
   - Document content
