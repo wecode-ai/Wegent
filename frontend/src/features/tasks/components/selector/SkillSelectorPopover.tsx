@@ -6,13 +6,15 @@
 
 import React, { useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { Zap, Check, Search, User, Globe } from 'lucide-react'
+import { Zap, Check, Search, User, Globe, Settings } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ActionButton } from '@/components/ui/action-button'
+import { Button } from '@/components/ui/button'
 import type { UnifiedSkill } from '@/apis/skills'
+import Link from 'next/link'
 
 interface SkillSelectorPopoverProps {
   /** All available skills */
@@ -267,11 +269,24 @@ export default function SkillSelectorPopover({
           {/* Skills list */}
           <div className="flex-1 overflow-y-auto custom-scrollbar">{renderSkillsList()}</div>
 
-          {/* Hint at bottom */}
-          <div className="px-2 pt-2 border-t border-border mt-2 text-xs text-text-muted">
-            {isChatShell
-              ? t('common:skillSelector.preload_hint')
-              : t('common:skillSelector.download_hint')}
+          {/* Footer with hint and settings link */}
+          <div className="px-2 pt-2 border-t border-border mt-2 flex items-center justify-between gap-2">
+            <span className="text-xs text-text-muted">
+              {isChatShell
+                ? t('common:skillSelector.preload_hint')
+                : t('common:skillSelector.download_hint')}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs text-text-muted hover:text-text-primary"
+              asChild
+            >
+              <Link href="/settings?section=personal&tab=personal-skills">
+                <Settings className="h-3 w-3 mr-1" />
+                {t('common:skillSelector.manage_skills')}
+              </Link>
+            </Button>
           </div>
         </PopoverContent>
       </Popover>

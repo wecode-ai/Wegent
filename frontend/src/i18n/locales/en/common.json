@@ -1216,6 +1216,7 @@
     "search_skills": "Search skills...",
     "no_matching_skills": "No matching skills",
     "already_selected": "Already selected",
-    "skill_button_tooltip": "Select skills to use with this message"
+    "skill_button_tooltip": "Select skills to use with this message",
+    "manage_skills": "Manage"
   }
 }

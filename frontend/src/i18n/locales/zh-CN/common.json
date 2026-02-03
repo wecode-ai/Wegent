@@ -1210,6 +1210,7 @@
     "search_skills": "搜索技能...",
     "no_matching_skills": "没有匹配的技能",
     "already_selected": "已选择",
-    "skill_button_tooltip": "选择要在此消息中使用的技能"
+    "skill_button_tooltip": "选择要在此消息中使用的技能",
+    "manage_skills": "管理技能"
   }
 }
