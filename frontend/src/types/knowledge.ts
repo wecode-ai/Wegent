@@ -435,3 +435,52 @@ export interface KBShareInfo {
   created_at?: string
   my_permission: MyPermissionResponse
 }
+
+// Public Knowledge Base Response (for anonymous access via share token)
+export interface PublicKnowledgeBaseResponse {
+  id: number
+  name: string
+  description?: string
+  creator_id: number
+  creator_name: string
+  require_approval: boolean
+  default_permission_level: string
+  is_expired: boolean
+}
+
+// Share Link types
+export interface ShareLinkConfig {
+  require_approval?: boolean
+  default_permission_level?: PermissionLevel
+  expires_in_hours?: number
+}
+
+export interface ShareLinkResponse {
+  id: number
+  resource_type: string
+  resource_id: number
+  share_url: string
+  share_token: string
+  require_approval: boolean
+  default_permission_level: string
+  expires_at?: string
+  is_active: boolean
+  created_by_user_id: number
+  created_at: string
+  updated_at: string
+}
+
+// Join by link types
+export interface JoinByLinkRequest {
+  share_token: string
+  requested_permission_level?: PermissionLevel
+}
+
+export interface JoinByLinkResponse {
+  message: string
+  status: 'pending' | 'approved' | 'rejected'
+  member_id: number
+  resource_type: string
+  resource_id: number
+  copied_resource_id?: number
+}

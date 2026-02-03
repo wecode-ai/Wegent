@@ -8,7 +8,9 @@ import { useState, useRef, useEffect } from 'react'
 import { Link, Check, Copy } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
+import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 
 interface ShareLinkDialogProps {
   open: boolean
@@ -20,11 +22,10 @@ interface ShareLinkDialogProps {
 export function ShareLinkDialog({ open, onOpenChange, kbId, kbName }: ShareLinkDialogProps) {
   const { t } = useTranslation('knowledge')
   const [copied, setCopied] = useState(false)
+  const [shareLink, setShareLink] = useState<string>('')
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
-
-  // Generate share link
-  const shareLink =
-    typeof window !== 'undefined' ? `${window.location.origin}/knowledge/share/${kbId}` : ''
 
   // Helper function to copy text to clipboard
   const copyToClipboard = async (text: string) => {
@@ -50,21 +51,46 @@ export function ShareLinkDialog({ open, onOpenChange, kbId, kbName }: ShareLinkD
     }
   }
 
-  // Auto-copy link when dialog opens
+  // Fetch or create share link when dialog opens
   useEffect(() => {
-    if (open && shareLink) {
-      copyToClipboard(shareLink).then(success => {
-        if (success) {
-          setCopied(true)
-          // Clear any existing timeout
-          if (timeoutRef.current) {
-            clearTimeout(timeoutRef.current)
+    if (open && kbId) {
+      const fetchShareLink = async () => {
+        setIsLoading(true)
+        setError(null)
+        try {
+          // First try to get existing share link
+          let link = await knowledgePermissionApi.getShareLink(kbId)
+
+          // If no share link exists, create one
+          if (!link) {
+            link = await knowledgePermissionApi.createShareLink(kbId, {
+              require_approval: true,
+              default_permission_level: 'view',
+            })
           }
-          timeoutRef.current = setTimeout(() => setCopied(false), 2000)
+
+          if (link) {
+            setShareLink(link.share_url)
+            // Auto-copy link
+            const success = await copyToClipboard(link.share_url)
+            if (success) {
+              setCopied(true)
+              if (timeoutRef.current) {
+                clearTimeout(timeoutRef.current)
+              }
+              timeoutRef.current = setTimeout(() => setCopied(false), 2000)
+            }
+          }
+        } catch (err) {
+          console.error('Failed to get share link:', err)
+          setError((err as Error)?.message || 'Failed to get share link')
+        } finally {
+          setIsLoading(false)
         }
-      })
+      }
+      fetchShareLink()
     }
-  }, [open, shareLink])
+  }, [open, kbId])
 
   // Clean up timeout on unmount
   useEffect(() => {
@@ -76,6 +102,7 @@ export function ShareLinkDialog({ open, onOpenChange, kbId, kbName }: ShareLinkD
   }, [])
 
   const handleCopy = async () => {
+    if (!shareLink) return
     const success = await copyToClipboard(shareLink)
     if (success) {
       setCopied(true)
@@ -100,15 +127,36 @@ export function ShareLinkDialog({ open, onOpenChange, kbId, kbName }: ShareLinkD
           <p className="text-sm text-text-secondary">
             {t('document.permission.shareLinkDescription', { name: kbName })}
           </p>
-          <div className="flex items-center gap-2">
-            <div className="flex-1 p-3 bg-muted rounded-lg text-sm break-all font-mono">
-              {shareLink}
+          {isLoading ? (
+            <div className="flex items-center justify-center py-4">
+              <Spinner className="w-6 h-6" />
             </div>
-            <Button variant="outline" size="icon" onClick={handleCopy} className="flex-shrink-0">
-              {copied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
-            </Button>
-          </div>
-          {copied && <p className="text-sm text-success">{t('document.permission.linkCopied')}</p>}
+          ) : error ? (
+            <div className="text-sm text-error text-center py-4">{error}</div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 p-3 bg-muted rounded-lg text-sm break-all font-mono">
+                  {shareLink}
+                </div>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={handleCopy}
+                  className="flex-shrink-0"
+                >
+                  {copied ? (
+                    <Check className="w-4 h-4 text-success" />
+                  ) : (
+                    <Copy className="w-4 h-4" />
+                  )}
+                </Button>
+              </div>
+              {copied && (
+                <p className="text-sm text-success">{t('document.permission.linkCopied')}</p>
+              )}
+            </>
+          )}
         </div>
       </DialogContent>
     </Dialog>

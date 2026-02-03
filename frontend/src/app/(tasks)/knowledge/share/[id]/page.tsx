@@ -6,25 +6,21 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Link, CheckCircle2, Clock, Send, AlertCircle } from 'lucide-react'
+import { AlertCircle } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
-import type { PermissionLevel } from '@/types/knowledge'
+import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 
 /**
- * Knowledge Base Share Page
+ * Legacy Knowledge Base Share Page - Redirects to new token-based URL
  *
- * This page is accessed via share links (e.g., /knowledge/share/123).
- * It allows users to:
- * 1. View KB info if they already have access
- * 2. Apply for permission if they don't have access
- * 3. See pending request status if they have a pending request
+ * This page handles old share links (e.g., /knowledge/share/123) and redirects
+ * them to the new token-based format (e.g., /shared/knowledge?token=xxx).
  */
-export default function KnowledgeBaseSharePage() {
-  const { t } = useTranslation('knowledge')
+export default function KnowledgeBaseShareRedirectPage() {
+  const { t } = useTranslation('shared-knowledge')
   const router = useRouter()
   const params = useParams()
 
@@ -34,44 +30,41 @@ export default function KnowledgeBaseSharePage() {
   const isValidKbId = Number.isInteger(parsedKbId) && parsedKbId > 0
   const kbId = isValidKbId ? parsedKbId : 0
 
-  const [selectedLevel, setSelectedLevel] = useState<PermissionLevel>('view')
-  const [applySuccess, setApplySuccess] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const {
-    shareInfo,
-    loading,
-    error,
-    fetchShareInfo,
-    applyPermission,
-  } = useKnowledgePermissions({ kbId })
-
-  // Fetch share info on mount
   useEffect(() => {
-    if (isValidKbId) {
-      fetchShareInfo()
+    if (!isValidKbId) {
+      setError(t('error_invalid_link'))
+      return
     }
-  }, [isValidKbId, fetchShareInfo])
 
-  // If user already has access, redirect to the KB page
-  useEffect(() => {
-    if (shareInfo?.my_permission?.has_access) {
-      router.push(`/knowledge/document/${kbId}`)
-    }
-  }, [shareInfo, kbId, router])
+    const fetchShareToken = async () => {
+      try {
+        // Get share token for this KB
+        const result = await knowledgePermissionApi.getShareTokenByKbId(kbId)
+        if (result.share_token) {
+          // Redirect to new token-based URL
+          router.replace(`/shared/knowledge?token=${encodeURIComponent(result.share_token)}`)
+        } else {
+          setError(t('error_kb_not_found'))
+        }
+      } catch (err) {
+        console.error('Failed to get share token:', err)
+        const errorMessage = (err as Error)?.message || ''
 
-  const handleApply = async () => {
-    try {
-      await applyPermission(selectedLevel)
-      setApplySuccess(true)
-      // Refresh to show pending status
-      await fetchShareInfo()
-    } catch (_err) {
-      // Error is handled by the hook
+        if (errorMessage.includes('not found')) {
+          setError(t('error_kb_not_found'))
+        } else {
+          setError(t('error_load_failed'))
+        }
+      }
     }
-  }
+
+    fetchShareToken()
+  }, [isValidKbId, kbId, router, t])
 
   // Invalid kbId - show error
-  if (!isValidKbId) {
+  if (!isValidKbId || error) {
     return (
       <div className="flex h-screen items-center justify-center bg-base">
         <Card padding="lg" className="max-w-md text-center">
@@ -80,196 +73,22 @@ export default function KnowledgeBaseSharePage() {
               <AlertCircle className="w-6 h-6 text-error" />
             </div>
           </div>
-          <div className="text-error mb-4">{t('document.permission.invalidShareLink')}</div>
+          <div className="text-error mb-4">{error || t('error_invalid_link')}</div>
           <Button variant="outline" onClick={() => router.push('/knowledge')}>
-            {t('common:actions.back')}
+            {t('go_home')}
           </Button>
         </Card>
       </div>
     )
   }
 
-  if (loading && !shareInfo) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-base">
-        <Spinner />
-      </div>
-    )
-  }
-
-  if (error && !shareInfo) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-base">
-        <Card padding="lg" className="max-w-md text-center">
-          <div className="text-error mb-4">{error}</div>
-          <Button variant="outline" onClick={() => router.push('/knowledge')}>
-            {t('common:actions.back')}
-          </Button>
-        </Card>
-      </div>
-    )
-  }
-
-  const myPermission = shareInfo?.my_permission
-
-  // User has a pending request
-  if (myPermission?.pending_request) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-base p-4">
-        <Card padding="lg" className="max-w-md w-full">
-          <div className="text-center space-y-4">
-            <div className="flex justify-center">
-              <div className="w-16 h-16 rounded-full bg-warning/10 flex items-center justify-center">
-                <Clock className="w-8 h-8 text-warning" />
-              </div>
-            </div>
-            <h1 className="text-xl font-semibold">{t('document.permission.pendingApproval')}</h1>
-            <p className="text-text-secondary text-sm">
-              {t('document.permission.pendingApprovalDescription', { name: shareInfo?.name })}
-            </p>
-            <div className="bg-muted rounded-lg p-4 text-sm">
-              <div className="flex justify-between mb-2">
-                <span className="text-text-muted">{t('document.permission.permissionLevel')}:</span>
-                <span className="font-medium">
-                  {t(`document.permission.${myPermission.pending_request.permission_level}`)}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">{t('document.permission.requestedAt')}:</span>
-                <span className="font-medium">
-                  {new Date(myPermission.pending_request.requested_at).toLocaleDateString()}
-                </span>
-              </div>
-            </div>
-            <Button variant="outline" onClick={() => router.push('/knowledge')}>
-              {t('common:actions.back')}
-            </Button>
-          </div>
-        </Card>
-      </div>
-    )
-  }
-
-  // Apply success state
-  if (applySuccess) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-base p-4">
-        <Card padding="lg" className="max-w-md w-full">
-          <div className="text-center space-y-4">
-            <div className="flex justify-center">
-              <div className="w-16 h-16 rounded-full bg-success/10 flex items-center justify-center">
-                <CheckCircle2 className="w-8 h-8 text-success" />
-              </div>
-            </div>
-            <h1 className="text-xl font-semibold">{t('document.permission.applySuccess')}</h1>
-            <p className="text-text-secondary text-sm">
-              {t('document.permission.applySuccessDescription')}
-            </p>
-            <Button variant="outline" onClick={() => router.push('/knowledge')}>
-              {t('common:actions.back')}
-            </Button>
-          </div>
-        </Card>
-      </div>
-    )
-  }
-
-  // No access - show apply form
+  // Loading state - redirecting
   return (
-    <div className="flex h-screen items-center justify-center bg-base p-4">
-      <Card padding="lg" className="max-w-md w-full">
-        <div className="space-y-6">
-          {/* Header */}
-          <div className="text-center space-y-2">
-            <div className="flex justify-center mb-4">
-              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                <Link className="w-6 h-6 text-primary" />
-              </div>
-            </div>
-            <h1 className="text-xl font-semibold">{t('document.permission.apply')}</h1>
-          </div>
-
-          {/* KB Info */}
-          <div className="bg-muted rounded-lg p-4">
-            <h2 className="font-medium mb-1">{shareInfo?.name}</h2>
-            {shareInfo?.description && (
-              <p className="text-sm text-text-secondary mb-2">{shareInfo.description}</p>
-            )}
-            <p className="text-xs text-text-muted">
-              {t('document.permission.createdBy', { name: shareInfo?.creator_name })}
-            </p>
-          </div>
-
-          {/* Permission Level Selection */}
-          <div className="space-y-3">
-            <label className="text-sm font-medium">{t('document.permission.selectPermission')}</label>
-            <div className="space-y-2">
-              {/* View Option */}
-              <label
-                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                  selectedLevel === 'view'
-                    ? 'border-primary bg-primary/5'
-                    : 'border-border hover:border-primary/50'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="permission"
-                  value="view"
-                  checked={selectedLevel === 'view'}
-                  onChange={() => setSelectedLevel('view')}
-                  className="mt-1"
-                />
-                <div>
-                  <div className="font-medium">{t('document.permission.view')}</div>
-                  <div className="text-sm text-text-muted">{t('document.permission.viewDescription')}</div>
-                </div>
-              </label>
-              {/* Edit Option */}
-              <label
-                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                  selectedLevel === 'edit'
-                    ? 'border-primary bg-primary/5'
-                    : 'border-border hover:border-primary/50'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="permission"
-                  value="edit"
-                  checked={selectedLevel === 'edit'}
-                  onChange={() => setSelectedLevel('edit')}
-                  className="mt-1"
-                />
-                <div>
-                  <div className="font-medium">{t('document.permission.edit')}</div>
-                  <div className="text-sm text-text-muted">{t('document.permission.editDescription')}</div>
-                </div>
-              </label>
-            </div>
-          </div>
-
-          {/* Error Message */}
-          {error && <div className="text-sm text-error text-center">{error}</div>}
-
-          {/* Submit Button */}
-          <Button
-            variant="primary"
-            className="w-full"
-            onClick={handleApply}
-            disabled={loading}
-          >
-            {loading ? (
-              <Spinner className="w-4 h-4" />
-            ) : (
-              <>
-                <Send className="w-4 h-4 mr-2" />
-                {t('document.permission.submitRequest')}
-              </>
-            )}
-          </Button>
-        </div>
-      </Card>
+    <div className="flex h-screen items-center justify-center bg-base">
+      <div className="text-center">
+        <Spinner className="w-8 h-8 mx-auto mb-4" />
+        <p className="text-text-muted">Redirecting...</p>
+      </div>
     </div>
   )
 }

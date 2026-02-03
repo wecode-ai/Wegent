@@ -197,6 +197,54 @@ def get_share_info(
     raise HTTPException(status_code=400, detail="Invalid share token")
 
 
+@router.get(
+    "/public/knowledge",
+    summary="Get public knowledge base info",
+)
+def get_public_kb_info(
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Get public knowledge base information by share token.
+
+    No authentication required - used for public share page.
+
+    - **token**: Share token from URL
+    """
+    try:
+        return knowledge_share_service.get_public_kb_info(
+            db=db,
+            share_token=token,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get(
+    "/public/knowledge/redirect",
+    summary="Get share token for KB redirect",
+)
+def get_kb_share_token(
+    kb_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Get share token for a knowledge base by ID.
+
+    No authentication required - used for redirecting old share links.
+
+    - **kb_id**: Knowledge base ID
+    """
+    token = knowledge_share_service.get_share_token_by_kb_id(
+        db=db,
+        knowledge_base_id=kb_id,
+    )
+    if not token:
+        raise HTTPException(status_code=404, detail="Share link not found")
+    return {"share_token": token}
+
+
 # =============================================================================
 # Join Endpoints
 # =============================================================================
