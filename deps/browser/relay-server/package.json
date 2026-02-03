@@ -1,0 +1,49 @@
+{
+  "name": "@wb/wegent-cdp-relay-server",
+  "version": "0.1.5",
+  "description": "Chrome DevTools Protocol relay server and browser automation tool",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "cdp-relay-server": "dist/cli.js",
+    "browser-tool": "dist/tool-cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./tool": {
+      "import": "./dist/tool.js",
+      "types": "./dist/tool.d.ts"
+    },
+    "./client": {
+      "import": "./dist/browser-client.js",
+      "types": "./dist/browser-client.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "chrome-extension"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/cli.js",
+    "tool": "node dist/tool-cli.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
