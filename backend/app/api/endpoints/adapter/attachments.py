@@ -12,13 +12,15 @@ import logging
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.models.subtask import Subtask
 from app.models.subtask_context import ContextType
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.subtask_context import (
     AttachmentDetailResponse,
@@ -29,6 +31,7 @@ from app.schemas.subtask_context import (
 from app.services.attachment.parser import DocumentParseError, DocumentParser
 from app.services.context import context_service
 from app.services.context.context_service import NotFoundException
+from app.services.shared_task import shared_task_service
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +116,80 @@ def _build_attachment_response(
         )
 
     return AttachmentResponse.from_context(context, response_truncation_info)
+
+
+def _validate_share_token_access(
+    db: Session, attachment_id: int, share_token: str
+) -> bool:
+    """
+    Validate that a share_token has access to a specific attachment.
+
+    This validates that:
+    1. The share_token is valid and decrypts to user_id#task_id
+    2. The attachment belongs to a subtask of the task in the token
+    3. The task owner matches the user_id in the token
+
+    Args:
+        db: Database session
+        attachment_id: The attachment ID to check access for
+        share_token: The encrypted share token
+
+    Returns:
+        True if access is granted, False otherwise
+    """
+    # Decode share token to get task info
+    share_info = shared_task_service.decode_share_token(share_token, db)
+    if not share_info:
+        return False
+
+    # Get the context (attachment)
+    context = context_service.get_context_optional(
+        db=db,
+        context_id=attachment_id,
+    )
+    if context is None:
+        return False
+
+    # Verify it's an attachment type
+    if context.context_type != ContextType.ATTACHMENT.value:
+        return False
+
+    # Get the subtask that this attachment belongs to
+    if context.subtask_id <= 0:
+        # Attachment not linked to a subtask
+        # For unlinked attachments, verify the attachment owner matches the task owner
+        if context.user_id == share_info.user_id:
+            return True
+        else:
+            logger.warning(
+                f"[_validate_share_token_access] Ownership mismatch: context.user_id={context.user_id}, "
+                f"share_info.user_id={share_info.user_id}"
+            )
+            return False
+
+    subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
+    if not subtask:
+        return False
+
+    # Verify the subtask belongs to the task in the token
+    if subtask.task_id != share_info.task_id:
+        return False
+
+    # Verify the task owner matches the user_id in the token
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == share_info.task_id,
+            TaskResource.user_id == share_info.user_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
+        )
+        .first()
+    )
+    if not task:
+        return False
+
+    return True
 
 
 @router.post("/upload", response_model=AttachmentResponse)
@@ -215,32 +292,89 @@ async def upload_attachment(
 @router.get("/{attachment_id}", response_model=AttachmentDetailResponse)
 async def get_attachment(
     attachment_id: int,
+    share_token: Optional[str] = Query(
+        None, description="Share token for public access"
+    ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
 ):
     """
     Get attachment details by ID.
 
+    Supports two authentication methods:
+    1. JWT token (for logged-in users)
+    2. Share token (for public shared task viewers)
+
     Returns:
         Attachment details including status and metadata
     """
-    context = _get_attachment_context(db, attachment_id, current_user)
+
+    context = None
+
+    # Method 1: Share token authentication (no login required)
+    if share_token:
+        has_access = _validate_share_token_access(db, attachment_id, share_token)
+        if has_access:
+            # Get context for share token access
+            context = context_service.get_context_optional(
+                db=db,
+                context_id=attachment_id,
+            )
+            if context is None:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+        else:
+            raise HTTPException(status_code=403, detail="Share token access denied")
+    # Method 2: JWT token authentication (existing logic)
+    elif current_user:
+        context = _get_attachment_context(db, attachment_id, current_user)
+    else:
+        # No authentication provided
+        raise HTTPException(status_code=401, detail="Authentication required")
+
     return AttachmentDetailResponse.from_context(context)
 
 
 @router.get("/{attachment_id}/preview", response_model=AttachmentPreviewResponse)
 async def get_attachment_preview(
     attachment_id: int,
+    share_token: Optional[str] = Query(
+        None, description="Share token for public access"
+    ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
 ):
     """
     Get attachment preview content.
 
+    Supports two authentication methods:
+    1. JWT token (for logged-in users)
+    2. Share token (for public shared task viewers)
+
     Returns:
         Attachment metadata and preview snippet (if available).
     """
-    context = _get_attachment_context(db, attachment_id, current_user)
+    has_access = False
+
+    # Method 1: Share token authentication (no login required)
+    if share_token:
+        has_access = _validate_share_token_access(db, attachment_id, share_token)
+        if has_access:
+            # Get context for share token access
+            context = context_service.get_context_optional(
+                db=db,
+                context_id=attachment_id,
+            )
+            if context is None:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+        else:
+            raise HTTPException(status_code=403, detail="Share token access denied")
+    # Method 2: JWT token authentication (existing logic)
+    elif current_user:
+        context = _get_attachment_context(db, attachment_id, current_user)
+        has_access = True
+    else:
+        # No authentication provided
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     preview_type = "none"
     preview_text = None
@@ -264,16 +398,45 @@ async def get_attachment_preview(
 @router.get("/{attachment_id}/download")
 async def download_attachment(
     attachment_id: int,
+    share_token: Optional[str] = Query(
+        None, description="Share token for public access"
+    ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
 ):
     """
     Download the original file.
 
+    Supports two authentication methods:
+    1. JWT token (for logged-in users)
+    2. Share token (for public shared task viewers)
+
     Returns:
         File binary data with appropriate content type
     """
-    context = _get_attachment_context(db, attachment_id, current_user)
+    has_access = False
+
+    # Method 1: Share token authentication (no login required)
+    if share_token:
+        has_access = _validate_share_token_access(db, attachment_id, share_token)
+        if has_access:
+            # Get context for share token access
+            context = context_service.get_context_optional(
+                db=db,
+                context_id=attachment_id,
+            )
+            if context is None:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+    # Method 2: JWT token authentication (existing logic)
+    elif current_user:
+        context = _get_attachment_context(db, attachment_id, current_user)
+        has_access = True
+    else:
+        # No authentication provided
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    if not has_access:
+        raise HTTPException(status_code=404, detail="Attachment not found")
 
     # Get binary data from the appropriate storage backend
     binary_data = context_service.get_attachment_binary_data(
