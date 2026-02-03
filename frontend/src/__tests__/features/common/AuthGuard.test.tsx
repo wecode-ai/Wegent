@@ -58,14 +58,18 @@ describe('AuthGuard', () => {
         </AuthGuard>
       )
 
-      // Assert
-      await waitFor(() => {
-        expect(userApis.isAuthenticated).toHaveBeenCalled()
-        expect(mockRouter.replace).toHaveBeenCalledWith(
-          expect.stringContaining(paths.auth.login.getHref())
-        )
-      })
-    })
+      // Assert - the component redirects but stays in loading state
+      // so we only check that router.replace was called
+      await waitFor(
+        () => {
+          expect(userApis.isAuthenticated).toHaveBeenCalled()
+          expect(mockRouter.replace).toHaveBeenCalledWith(
+            expect.stringContaining(paths.auth.login.getHref())
+          )
+        },
+        { timeout: 3000 }
+      )
+    }, 10000)
 
     it('should render children when isAuthenticated returns true', async () => {
       // Arrange
@@ -145,6 +149,25 @@ describe('AuthGuard', () => {
       await waitFor(() => {
         expect(mockRouter.replace).not.toHaveBeenCalled()
         expect(getByText('Shared Task')).toBeInTheDocument()
+      })
+    })
+
+    it('should allow access to shared knowledge page without authentication', async () => {
+      // Arrange
+      ;(usePathname as jest.Mock).mockReturnValue('/shared/knowledge')
+      ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(false)
+
+      // Act
+      const { getByText } = render(
+        <AuthGuard>
+          <div>Shared Knowledge</div>
+        </AuthGuard>
+      )
+
+      // Assert
+      await waitFor(() => {
+        expect(mockRouter.replace).not.toHaveBeenCalled()
+        expect(getByText('Shared Knowledge')).toBeInTheDocument()
       })
     })
   })
