@@ -5,7 +5,7 @@
 """Add unified share tables (share_links and resource_members)
 
 Revision ID: y5z6a7b8c9d0
-Revises: x4y5z6a7b8c9
+Revises: w3x4y5z6a7b8
 Create Date: 2025-02-02
 
 This migration adds two unified tables for resource sharing:
