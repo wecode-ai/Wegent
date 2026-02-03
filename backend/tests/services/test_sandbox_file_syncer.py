@@ -300,7 +300,7 @@ class TestGlobalSyncer:
 
     @pytest.mark.asyncio
     async def test_sync_attachment_to_sandbox_background(self):
-        """Test background sync function handles exceptions."""
+        """Test background sync function delegates to syncer instance."""
         with patch(
             "app.services.sandbox_file_syncer.get_sandbox_file_syncer"
         ) as mock_get:

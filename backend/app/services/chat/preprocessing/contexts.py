@@ -490,15 +490,12 @@ def _schedule_attachment_sync_to_sandbox(
     """
     import asyncio
 
-    from app.services.sandbox_file_syncer import (
-        get_sandbox_file_syncer,
-        sync_attachment_to_sandbox_background,
-    )
+    from app.services.sandbox_file_syncer import sync_attachment_to_sandbox_background
 
     try:
-        # Check if sandbox is healthy synchronously first (fast check)
-        # This avoids fetching binary data if sandbox is not running
-        syncer = get_sandbox_file_syncer()
+        # Import sandbox sync utilities (deferred to avoid circular imports)
+        # Health check is performed asynchronously in the background task
+        # to avoid blocking the main flow
 
         # Get attachment data from database
         attachment_contexts = (

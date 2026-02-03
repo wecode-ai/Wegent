@@ -15,7 +15,6 @@ block the attachment upload flow.
 import asyncio
 import logging
 import os
-import re
 from typing import Optional
 
 import httpx
@@ -300,7 +299,5 @@ async def sync_attachment_to_sandbox_background(
             filename=filename,
             binary_data=binary_data,
         )
-    except Exception as e:
-        logger.exception(
-            f"[SandboxFileSyncer] Unexpected error in background sync: {e}"
-        )
+    except Exception:
+        logger.exception("[SandboxFileSyncer] Unexpected error in background sync")
