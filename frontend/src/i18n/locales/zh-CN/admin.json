@@ -366,8 +366,8 @@
     }
   },
   "monitor": {
-    "title": "Flow 执行监控",
-    "description": "查看所有用户的 Flow 执行统计和错误信息",
+    "title": "订阅执行监控",
+    "description": "查看所有用户的订阅执行统计和错误信息",
     "time_range": {
       "1h": "最近 1 小时",
       "6h": "最近 6 小时",
@@ -379,13 +379,14 @@
       "total_executions": "总执行数",
       "completed": "已完成",
       "failed": "失败",
-      "timeout": "超时",
+      "retrying": "重试中",
+      "cancelled": "已取消",
       "running": "运行中",
       "pending": "等待中",
-      "active_flows": "活跃 Flow",
-      "total_flows": "总 Flow 数",
-      "enabled_flows": "已启用的定时任务",
-      "all_flows": "所有 Flow"
+      "active_subscriptions": "活跃订阅",
+      "total_subscriptions": "总订阅数",
+      "enabled_subscriptions": "已启用的订阅",
+      "all_subscriptions": "所有订阅"
     },
     "error_list": {
       "title": "异常执行记录",
@@ -396,7 +397,7 @@
       "no_errors": "暂无异常执行记录",
       "columns": {
         "execution_id": "执行 ID",
-        "flow_id": "Flow ID",
+        "subscription_id": "订阅 ID",
         "user_id": "用户 ID",
         "status": "状态",
         "trigger_type": "触发类型",

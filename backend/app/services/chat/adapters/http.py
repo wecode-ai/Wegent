@@ -155,6 +155,7 @@ class HTTPAdapter(ChatInterface):
             "skill_names": request.skill_names,
             "skill_configs": request.skill_configs,
             "preload_skills": request.preload_skills,
+            "user_selected_skills": request.user_selected_skills,  # Skills explicitly chosen by user
             "knowledge_base_ids": request.knowledge_base_ids,
             "document_ids": request.document_ids,
             "is_user_selected_kb": request.is_user_selected_kb,
