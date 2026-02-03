@@ -12,11 +12,38 @@ Executor main entry point.
 Supports two modes:
 - Local mode (EXECUTOR_MODE=local): WebSocket-based executor for local deployment
 - Docker mode (default): FastAPI server for container deployment
+
+CLI options:
+- --version, -v: Print version and exit
+  Note: In PyInstaller builds, this is handled by hooks/rthook_version.py
+  to avoid module initialization issues.
 """
 
 import multiprocessing
 import os
 import sys
+
+
+def _handle_version_flag() -> None:
+    """Handle --version/-v flag before any other initialization.
+
+    If the flag is present, print version and exit immediately.
+    This is done before any heavy imports to ensure fast response.
+
+    Note: In PyInstaller builds, version flag is handled earlier by the
+    runtime hook (hooks/rthook_version.py) to avoid cleanup errors.
+    This function serves as a fallback for non-frozen (development) mode.
+    """
+    # Skip if already handled by PyInstaller runtime hook
+    if getattr(sys, "frozen", False):
+        return
+
+    if "--version" in sys.argv or "-v" in sys.argv:
+        from executor.version import get_version
+
+        print(get_version(), flush=True)
+        sys.exit(0)
+
 
 # Required for PyInstaller on macOS/Windows to prevent infinite fork
 if getattr(sys, "frozen", False):
@@ -39,13 +66,16 @@ from shared.logger import setup_logger
 logger = setup_logger("task_executor")
 
 
-def main():
+def main() -> None:
     """
     Main function for running the executor.
 
     In local mode (EXECUTOR_MODE=local), starts the WebSocket-based local runner.
     In Docker mode (default), starts the FastAPI server.
     """
+    # Handle version flag first (before any heavy initialization)
+    _handle_version_flag()
+
     from executor.config import config
 
     if config.EXECUTOR_MODE == "local":

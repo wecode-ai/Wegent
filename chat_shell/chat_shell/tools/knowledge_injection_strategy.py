@@ -130,24 +130,18 @@ class InjectionStrategy:
         if not chunks:
             return 0
 
-        total_chars = 0
-
+        # Count tokens from actual chunk content
+        total_tokens = 0
         for chunk in chunks:
             content = chunk.get("content", "")
             if clean_chunks:
                 content = self.content_cleaner.clean_content(content)
-            total_chars += len(content)
-
-        # Estimate tokens (add overhead for formatting)
-        estimated_tokens = int(
-            total_chars
-            / self.token_counter.CHARS_PER_TOKEN.get(self.token_counter.provider, 4.0)
-        )
+            total_tokens += self.token_counter.count_text(content)
 
         # Add overhead for chunk formatting (source info, etc.)
         formatting_overhead = len(chunks) * 50  # ~50 tokens per chunk for metadata
 
-        return estimated_tokens + formatting_overhead
+        return total_tokens + formatting_overhead
 
     def prepare_chunks_for_injection(
         self,
@@ -489,5 +483,4 @@ class InjectionStrategy:
             "max_direct_chunks": self.max_direct_chunks,
             "context_buffer_ratio": self.context_buffer_ratio,
             "context_window": self.context_window,
-            "provider": self.token_counter.provider,
         }

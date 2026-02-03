@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Wegent Executor Installation Script
-# This script downloads and installs the wegent-executor binary for macOS.
+# This script downloads and installs the wegent-executor binary for macOS and Linux.
 #
 # Usage:
 #   curl -fsSL https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh | bash
@@ -92,7 +92,11 @@ check_nodejs() {
         echo ""
         print_info "Please install Node.js first:"
         echo "  - Visit: https://nodejs.org/"
-        echo "  - Or use Homebrew: brew install node"
+        if [[ "$OS" == "macos" ]]; then
+            echo "  - Or use Homebrew: brew install node"
+        elif [[ "$OS" == "linux" ]]; then
+            echo "  - Or use your package manager: apt install nodejs / dnf install nodejs"
+        fi
         echo "  - Or use nvm: nvm install ${MIN_NODE_VERSION}"
         echo ""
         exit 1
@@ -110,7 +114,11 @@ check_nodejs() {
         echo ""
         print_info "Please upgrade Node.js:"
         echo "  - Visit: https://nodejs.org/"
-        echo "  - Or use Homebrew: brew upgrade node"
+        if [[ "$OS" == "macos" ]]; then
+            echo "  - Or use Homebrew: brew upgrade node"
+        elif [[ "$OS" == "linux" ]]; then
+            echo "  - Or use your package manager to upgrade nodejs"
+        fi
         echo "  - Or use nvm: nvm install ${MIN_NODE_VERSION}"
         echo ""
         exit 1
@@ -252,8 +260,7 @@ detect_platform() {
             OS="macos"
             ;;
         Linux)
-            print_error "Linux is not yet supported. Please use Docker deployment."
-            exit 1
+            OS="linux"
             ;;
         *)
             print_error "Unsupported operating system: $os"
@@ -390,9 +397,12 @@ print_usage_instructions() {
     echo ""
     echo "Add this line to your ~/.zshrc or ~/.bashrc to make it permanent."
     echo ""
-    print_warning "First run may require allowing the binary in:"
-    print_warning "System Settings > Privacy & Security"
-    echo ""
+    # Platform-specific notes
+    if [[ "$OS" == "macos" ]]; then
+        print_warning "First run may require allowing the binary in:"
+        print_warning "System Settings > Privacy & Security"
+        echo ""
+    fi
 }
 
 # Main function
