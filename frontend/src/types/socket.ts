@@ -119,6 +119,12 @@ export interface ChatSendPayload {
   knowledge_base_id?: number
   // Local device execution
   device_id?: string // Local device ID for task execution (if undefined, use cloud executor)
+
+  // Skill selection
+  /** Skill names to preload (for Chat Shell - prompts injected into system message) */
+  preload_skill_names?: string[]
+  /** Additional skill names (for other shells - downloaded to executor) */
+  additional_skill_names?: string[]
 }
 
 export interface ChatCancelPayload {

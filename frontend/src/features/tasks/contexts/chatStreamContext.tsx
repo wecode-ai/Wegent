@@ -104,6 +104,12 @@ export interface ChatMessageRequest {
   knowledge_base_id?: number
   // Local device ID for task execution (optional, when undefined use cloud executor)
   device_id?: string
+
+  // Skill selection
+  /** Skill names to preload (for Chat Shell - prompts injected into system message) */
+  preload_skill_names?: string[]
+  /** Additional skill names (for other shells - downloaded to executor) */
+  additional_skill_names?: string[]
 }
 
 /**
@@ -693,6 +699,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         task_type: request.task_type,
         knowledge_base_id: request.knowledge_base_id,
         device_id: request.device_id,
+        preload_skill_names: request.preload_skill_names,
+        additional_skill_names: request.additional_skill_names,
       }
 
       try {

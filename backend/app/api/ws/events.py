@@ -146,6 +146,10 @@ class ChatSendPayload(BaseModel):
     preload_skills: Optional[List[str]] = Field(
         None, description="List of skill names to preload into system prompt"
     )
+    additional_skill_names: Optional[List[str]] = Field(
+        None,
+        description="Additional skill names for non-Chat shells (downloaded to executor)",
+    )
     # Local device execution
     device_id: Optional[str] = Field(
         None,
