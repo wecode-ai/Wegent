@@ -219,6 +219,8 @@ def _process_attachment_context(
     idx: int,
     text_contents: List[str],
     image_contents: List[dict],
+    task_id: Optional[int] = None,
+    subtask_id: Optional[int] = None,
 ) -> None:
     """
     Process an attachment context and add to appropriate list.
@@ -228,6 +230,8 @@ def _process_attachment_context(
         idx: Attachment index (for labeling)
         text_contents: List to append text content to
         image_contents: List to append image content to
+        task_id: Optional task ID for building sandbox path
+        subtask_id: Optional subtask ID for building sandbox path
     """
     # Check if it's an image attachment
     if context_service.is_image_context(context) and context.image_base64:
@@ -239,11 +243,21 @@ def _process_attachment_context(
         formatted_size = context_service.format_file_size(file_size)
         url = context_service.build_attachment_url(attachment_id)
 
-        # Build image metadata header
-        image_header = (
-            f"[Image Attachment: {filename} | ID: {attachment_id} | "
-            f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]"
-        )
+        # Build sandbox path if task_id and subtask_id are provided
+        sandbox_path = context_service.build_sandbox_path(task_id, subtask_id, filename)
+
+        # Build image metadata header with optional sandbox path
+        if sandbox_path:
+            image_header = (
+                f"[Image Attachment: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
+                f"Sandbox: {sandbox_path}]"
+            )
+        else:
+            image_header = (
+                f"[Image Attachment: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]"
+            )
 
         image_contents.append(
             {
@@ -258,7 +272,9 @@ def _process_attachment_context(
     else:
         # Text document - get formatted content with attachment index
         # The content is wrapped in <attachment> XML tags by context_service
-        doc_prefix = context_service.build_document_text_prefix(context)
+        doc_prefix = context_service.build_document_text_prefix(
+            context, task_id=task_id, subtask_id=subtask_id
+        )
         if doc_prefix:
             text_contents.append(f"[Attachment {idx}]\n{doc_prefix}")
 
@@ -731,7 +747,7 @@ async def prepare_contexts_for_chat(
 
     # 1. Process attachment contexts - inject into message
     final_message = await _process_attachment_contexts_for_message(
-        attachment_contexts, message
+        attachment_contexts, message, task_id=task_id, subtask_id=user_subtask_id
     )
 
     # 2. Process knowledge base contexts - create tools
@@ -832,6 +848,8 @@ async def prepare_contexts_for_chat(
 async def _process_attachment_contexts_for_message(
     attachment_contexts: List[SubtaskContext],
     message: str,
+    task_id: Optional[int] = None,
+    subtask_id: Optional[int] = None,
 ) -> str | dict[str, Any]:
     """
     Process attachment contexts and build message with content.
@@ -839,6 +857,8 @@ async def _process_attachment_contexts_for_message(
     Args:
         attachment_contexts: List of attachment SubtaskContext records
         message: Original user message
+        task_id: Optional task ID for building sandbox path
+        subtask_id: Optional subtask ID for building sandbox path
 
     Returns:
         Message with attachment contents prepended, or vision structure for images
@@ -851,7 +871,14 @@ async def _process_attachment_contexts_for_message(
 
     for idx, context in enumerate(attachment_contexts, start=1):
         try:
-            _process_attachment_context(context, idx, text_contents, image_contents)
+            _process_attachment_context(
+                context,
+                idx,
+                text_contents,
+                image_contents,
+                task_id=task_id,
+                subtask_id=subtask_id,
+            )
         except Exception as e:
             logger.exception(f"Error processing attachment context {context.id}: {e}")
             continue

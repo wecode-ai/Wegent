@@ -94,6 +94,31 @@ class ContextService:
         """
         return f"/api/attachments/{attachment_id}/download"
 
+    @staticmethod
+    def build_sandbox_path(
+        task_id: Optional[int],
+        subtask_id: Optional[int],
+        filename: str,
+    ) -> Optional[str]:
+        """
+        Build the sandbox file path for an attachment.
+
+        This path corresponds to where the Executor downloads attachments
+        in the sandbox environment.
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID
+            filename: Original filename
+
+        Returns:
+            Sandbox path in format: {task_id}:executor:attachments/{subtask_id}/{filename}
+            Returns None if task_id or subtask_id is not provided.
+        """
+        if task_id is None or subtask_id is None:
+            return None
+        return f"{task_id}:executor:attachments/{subtask_id}/{filename}"
+
     # ==================== Attachment Operations ====================
 
     def _validate_attachment_input(
@@ -568,14 +593,18 @@ class ContextService:
     def build_document_text_prefix(
         self,
         context: SubtaskContext,
+        task_id: Optional[int] = None,
+        subtask_id: Optional[int] = None,
     ) -> Optional[str]:
         """
         Build a text prefix containing document content for prepending to messages.
 
-        Includes attachment metadata (id, filename, mime_type, file_size, url).
+        Includes attachment metadata (id, filename, mime_type, file_size, url, sandbox_path).
 
         Args:
             context: SubtaskContext record with extracted_text
+            task_id: Optional task ID for building sandbox path
+            subtask_id: Optional subtask ID for building sandbox path
 
         Returns:
             Formatted text prefix without XML tags, or None if no extracted text
@@ -595,11 +624,21 @@ class ContextService:
         formatted_size = self.format_file_size(file_size)
         url = self.build_attachment_url(attachment_id)
 
+        # Build sandbox path if task_id and subtask_id are provided
+        sandbox_path = self.build_sandbox_path(task_id, subtask_id, filename)
+
         # Build the prefix with metadata and optional truncation notice
-        prefix = (
-            f"[Attachment: {filename} | ID: {attachment_id} | "
-            f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
-        )
+        if sandbox_path:
+            prefix = (
+                f"[Attachment: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
+                f"Sandbox: {sandbox_path}]\n"
+            )
+        else:
+            prefix = (
+                f"[Attachment: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
+            )
 
         if is_truncated:
             prefix += (
