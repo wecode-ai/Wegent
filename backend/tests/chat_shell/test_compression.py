@@ -58,8 +58,7 @@ class TestTokenCounter:
         }
         count = counter.count_message(message)
         # Should include both text and image tokens
-        # LiteLLM accurately counts tokens for small images (this test base64 is tiny)
-        assert count > 50  # Should have text tokens + some image tokens
+        assert count > 50  # At least image token count
 
     def test_count_messages_list(self):
         """Test counting tokens in message list."""
