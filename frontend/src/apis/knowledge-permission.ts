@@ -19,6 +19,26 @@ import type {
   ShareLinkConfig,
   ShareLinkResponse,
 } from '@/types/knowledge'
+
+// Type for unified share API member response
+interface ResourceMemberResponse {
+  id: number
+  resource_type: string
+  resource_id: number
+  user_id: number
+  user_name: string | null
+  permission_level: string
+  status: string
+  invited_by_user_id: number
+  invited_by_user_name: string | null
+  reviewed_by_user_id: number | null
+  reviewed_by_user_name: string | null
+  reviewed_at: string | null
+  copied_resource_id: number | null
+  requested_at: string
+  created_at: string
+  updated_at: string
+}
 import client from './client'
 
 export const knowledgePermissionApi = {
@@ -30,8 +50,11 @@ export const knowledgePermissionApi = {
     request: PermissionApplyRequest
   ): Promise<PermissionApplyResponse> => {
     const response = await client.post<PermissionApplyResponse>(
-      `/knowledge-bases/${kbId}/permissions/apply`,
-      request
+      `/share/KnowledgeBase/${kbId}/join`,
+      {
+        share_token: '', // Will be filled by the caller
+        requested_permission_level: request.permission_level,
+      }
     )
     return response
   },
@@ -45,8 +68,11 @@ export const knowledgePermissionApi = {
     request: PermissionReviewRequest
   ): Promise<PermissionReviewResponse> => {
     const response = await client.post<PermissionReviewResponse>(
-      `/knowledge-bases/${kbId}/permissions/${permissionId}/review`,
-      request
+      `/share/KnowledgeBase/${kbId}/requests/${permissionId}/review`,
+      {
+        approved: request.action === 'approve',
+        permission_level: request.permission_level,
+      }
     )
     return response
   },
@@ -55,10 +81,45 @@ export const knowledgePermissionApi = {
    * List all permissions for a knowledge base
    */
   listPermissions: async (kbId: number): Promise<PermissionListResponse> => {
-    const response = await client.get<PermissionListResponse>(
-      `/knowledge-bases/${kbId}/permissions`
+    const response = await client.get<{ members: ResourceMemberResponse[]; total: number }>(
+      `/share/KnowledgeBase/${kbId}/members`
     )
-    return response
+    // Transform unified share API response to PermissionListResponse format
+    const pending = response.members
+      .filter(m => m.status === 'pending')
+      .map(m => ({
+        id: m.id,
+        user_id: m.user_id,
+        username: m.user_name || '',
+        email: '',
+        permission_level: m.permission_level as 'view' | 'edit' | 'manage',
+        requested_at: m.requested_at,
+      }))
+    const approved = response.members
+      .filter(m => m.status === 'approved')
+      .reduce(
+        (acc, m) => {
+          const level = m.permission_level as 'view' | 'edit' | 'manage'
+          if (!acc[level]) acc[level] = []
+          acc[level].push({
+            id: m.id,
+            user_id: m.user_id,
+            username: m.user_name || '',
+            email: '',
+            permission_level: level,
+            requested_at: m.requested_at,
+            reviewed_at: m.reviewed_at || undefined,
+            reviewed_by: m.reviewed_by_user_id || undefined,
+          })
+          return acc
+        },
+        { view: [], edit: [], manage: [] } as {
+          view: typeof pending
+          edit: typeof pending
+          manage: typeof pending
+        }
+      )
+    return { pending, approved }
   },
 
   /**
@@ -68,10 +129,16 @@ export const knowledgePermissionApi = {
     kbId: number,
     request: PermissionAddRequest
   ): Promise<PermissionResponse> => {
-    const response = await client.post<PermissionResponse>(
-      `/knowledge-bases/${kbId}/permissions`,
-      request
-    )
+    // First, get user ID from username
+    const usersResponse = await client.get<{ items: { id: number; user_name: string }[] }>('/users')
+    const user = usersResponse.items.find(u => u.user_name === request.user_name)
+    if (!user) {
+      throw new Error('User not found')
+    }
+    const response = await client.post<PermissionResponse>(`/share/KnowledgeBase/${kbId}/members`, {
+      user_id: user.id,
+      permission_level: request.permission_level,
+    })
     return response
   },
 
@@ -84,8 +151,10 @@ export const knowledgePermissionApi = {
     request: PermissionUpdateRequest
   ): Promise<PermissionResponse> => {
     const response = await client.put<PermissionResponse>(
-      `/knowledge-bases/${kbId}/permissions/${permissionId}`,
-      request
+      `/share/KnowledgeBase/${kbId}/members/${permissionId}`,
+      {
+        permission_level: request.permission_level,
+      }
     )
     return response
   },
@@ -95,7 +164,7 @@ export const knowledgePermissionApi = {
    */
   deletePermission: async (kbId: number, permissionId: number): Promise<{ message: string }> => {
     const response = await client.delete<{ message: string }>(
-      `/knowledge-bases/${kbId}/permissions/${permissionId}`
+      `/share/KnowledgeBase/${kbId}/members/${permissionId}`
     )
     return response
   },
@@ -105,7 +174,7 @@ export const knowledgePermissionApi = {
    */
   getMyPermission: async (kbId: number): Promise<MyPermissionResponse> => {
     const response = await client.get<MyPermissionResponse>(
-      `/knowledge-bases/${kbId}/permissions/my`
+      `/share/KnowledgeBase/${kbId}/my-permission`
     )
     return response
   },
@@ -114,7 +183,7 @@ export const knowledgePermissionApi = {
    * Get knowledge base info for share page
    */
   getShareInfo: async (kbId: number): Promise<KBShareInfo> => {
-    const response = await client.get<KBShareInfo>(`/knowledge-bases/${kbId}/share-info`)
+    const response = await client.get<KBShareInfo>(`/share/KnowledgeBase/${kbId}/share-info`)
     return response
   },
 
