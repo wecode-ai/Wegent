@@ -31,8 +31,8 @@ async def prepare_knowledge_base_tools(
     """
     Prepare knowledge base tools and enhanced system prompt.
 
-    This function encapsulates the logic for creating KnowledgeBaseTool
-    and enhancing the system prompt with knowledge base instructions.
+    This function encapsulates the logic for creating KnowledgeBaseTool,
+    KbLsTool, KbHeadTool and enhancing the system prompt with knowledge base instructions.
 
     Args:
         knowledge_base_ids: Optional list of knowledge base IDs
@@ -69,7 +69,7 @@ async def prepare_knowledge_base_tools(
         return extra_tools, enhanced_system_prompt
 
     logger.info(
-        "[knowledge_factory] Creating KnowledgeBaseTool for %d knowledge bases: %s, "
+        "[knowledge_factory] Creating KB tools for %d knowledge bases: %s, "
         "is_user_selected=%s, document_ids=%s, model_id=%s, context_window=%s",
         len(knowledge_base_ids),
         knowledge_base_ids,
@@ -79,11 +79,19 @@ async def prepare_knowledge_base_tools(
         context_window,
     )
 
-    # Import KnowledgeBaseTool
-    from chat_shell.tools.builtin import KnowledgeBaseTool
+    # Import knowledge base tools
+    from chat_shell.tools.builtin import (
+        KbHeadTool,
+        KbLsTool,
+        KBToolCallCounter,
+        KnowledgeBaseTool,
+    )
 
     # Create KnowledgeBaseTool with the specified knowledge bases
     # KB configs (max_calls, exempt_calls, name) are fetched from Backend API
+    # Pass user_subtask_id for persisting RAG results to context database
+    # Pass document_ids for filtering to specific documents
+    # Pass context_window from Model CRD for injection strategy decisions
     kb_tool = KnowledgeBaseTool(
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids or [],
@@ -95,6 +103,33 @@ async def prepare_knowledge_base_tools(
     )
     extra_tools.append(kb_tool)
 
+    # Create shared call counter for exploration tools (kb_ls and kb_head)
+    # These tools share the same max_calls_per_conversation limit
+    # The max_calls value will be fetched from KB config via HTTP API
+    # For now, use default value; actual limit will be enforced at runtime
+    exploration_call_counter = KBToolCallCounter()
+
+    # Create exploration tools (kb_ls and kb_head)
+    # These are secondary tools for when RAG search doesn't find relevant results
+    # They share a call counter to enforce combined call limits
+    kb_ls_tool = KbLsTool(
+        knowledge_base_ids=knowledge_base_ids,
+        db_session=db,
+    )
+    kb_ls_tool._call_counter = exploration_call_counter
+
+    kb_head_tool = KbHeadTool(
+        knowledge_base_ids=knowledge_base_ids,
+        db_session=db,
+    )
+    kb_head_tool._call_counter = exploration_call_counter
+
+    extra_tools.extend([kb_ls_tool, kb_head_tool])
+
+    logger.info(
+        "[knowledge_factory] Created 3 KB tools: knowledge_base_search, kb_ls, kb_head"
+    )
+
     # Skip prompt enhancement if Backend has already added KB prompts (HTTP mode)
     if skip_prompt_enhancement:
         logger.info(
@@ -103,10 +138,19 @@ async def prepare_knowledge_base_tools(
         return extra_tools, enhanced_system_prompt
 
     # Import shared prompt constants from chat_shell prompts module
-    from chat_shell.prompts import KB_PROMPT_RELAXED, KB_PROMPT_STRICT
+    from chat_shell.prompts import KB_PROMPT_NO_RAG, KB_PROMPT_RELAXED, KB_PROMPT_STRICT
 
-    # Choose prompt based on whether KB is user-selected or inherited from task
-    if is_user_selected:
+    # Check if any KB has RAG enabled by querying KB info
+    has_rag_enabled = await _check_any_kb_has_rag_enabled(knowledge_base_ids)
+
+    # Choose prompt based on RAG availability and user selection mode
+    if not has_rag_enabled:
+        # No-RAG mode: Use exploration tools only
+        kb_instruction = KB_PROMPT_NO_RAG
+        logger.info(
+            "[knowledge_factory] Using NO_RAG mode prompt (no retriever configured)"
+        )
+    elif is_user_selected:
         # Strict mode: User explicitly selected KB for this message
         kb_instruction = KB_PROMPT_STRICT
         logger.info(
@@ -207,3 +251,57 @@ async def get_knowledge_base_meta_list(
     except Exception as e:
         logger.warning(f"Failed to get KB meta list for task {task_id}: {e}")
         return []
+
+
+async def _check_any_kb_has_rag_enabled(knowledge_base_ids: list[int]) -> bool:
+    """
+    Check if any of the given knowledge bases have RAG enabled.
+
+    This function queries the Backend API to get KB info and checks if any KB
+    has a retriever configured (rag_enabled=True).
+
+    Args:
+        knowledge_base_ids: List of knowledge base IDs to check
+
+    Returns:
+        True if at least one KB has RAG enabled, False otherwise
+    """
+    if not knowledge_base_ids:
+        return False
+
+    from chat_shell.core.config import settings
+
+    try:
+        import httpx
+
+        # Query KB info from Backend API
+        url = f"{settings.BACKEND_URL}/api/internal/rag/kb-size"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                url,
+                json={"knowledge_base_ids": knowledge_base_ids},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Check if any KB has rag_enabled=True
+            items = data.get("items", [])
+            for item in items:
+                if item.get("rag_enabled", False):
+                    logger.debug(
+                        f"[knowledge_factory] KB {item.get('id')} has RAG enabled"
+                    )
+                    return True
+
+            logger.info(
+                f"[knowledge_factory] No KB has RAG enabled among {knowledge_base_ids}"
+            )
+            return False
+
+    except Exception as e:
+        logger.warning(
+            f"[knowledge_factory] Failed to check RAG status for KBs {knowledge_base_ids}: {e}. "
+            "Assuming RAG is enabled (fallback to normal behavior)."
+        )
+        # On error, assume RAG is enabled to avoid breaking existing functionality
+        return True
