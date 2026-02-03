@@ -8,6 +8,7 @@ This module provides utilities for creating and managing tasks and subtasks
 for the chat functionality.
 """
 
+import json as json_lib
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -324,6 +325,19 @@ def create_new_task(
                 **(
                     {"forceOverrideBotModelType": params.force_override_bot_model_type}
                     if params.force_override_bot_model_type
+                    else {}
+                ),
+                **(
+                    {
+                        "additionalSkills": json_lib.dumps(
+                            [
+                                s.get("name")
+                                for s in params.additional_skills
+                                if s.get("name")
+                            ]
+                        )
+                    }
+                    if params.additional_skills
                     else {}
                 ),
             },
