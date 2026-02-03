@@ -310,7 +310,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 # First chunk: include thinking status
                 chunk_to_send = f"{thinking_text}\n\n"
                 if delta_content:
-                    chunk_to_send += "📝 **回复:**\n"
+                    chunk_to_send += "**回复:**\n"
                     chunk_to_send += delta_content
             elif delta_content:
                 # Subsequent chunks: only send delta content
