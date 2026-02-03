@@ -12,7 +12,11 @@ interface AttachmentImageState {
   error: boolean
 }
 
-export function useAttachmentImage(attachmentId: number, enabled: boolean): AttachmentImageState {
+export function useAttachmentImage(
+  attachmentId: number,
+  enabled: boolean,
+  shareToken?: string
+): AttachmentImageState {
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState(false)
@@ -28,9 +32,11 @@ export function useAttachmentImage(attachmentId: number, enabled: boolean): Atta
 
       try {
         const token = getToken()
-        const response = await fetch(getAttachmentPreviewUrl(attachmentId), {
+        const response = await fetch(getAttachmentPreviewUrl(attachmentId, shareToken), {
           headers: {
-            ...(token && { Authorization: `Bearer ${token}` }),
+            // Only include Authorization header if we have a token and no shareToken
+            // shareToken-based access doesn't require JWT authentication
+            ...(!shareToken && token && { Authorization: `Bearer ${token}` }),
           },
         })
 
@@ -63,7 +69,7 @@ export function useAttachmentImage(attachmentId: number, enabled: boolean): Atta
         URL.revokeObjectURL(blobUrl)
       }
     }
-  }, [attachmentId, enabled])
+  }, [attachmentId, enabled, shareToken])
 
   useEffect(() => {
     return () => {

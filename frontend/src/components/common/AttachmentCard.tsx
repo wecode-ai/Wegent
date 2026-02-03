@@ -9,6 +9,7 @@ import { Download, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { downloadAttachment, getAttachment, getFileIcon } from '@/apis/attachments'
 import type { AttachmentDetailResponse } from '@/apis/attachments'
+import { useShareToken } from '@/contexts/ShareTokenContext'
 
 // Global cache for attachment details to avoid redundant API calls
 const attachmentCache = new Map<number, AttachmentDetailResponse>()
@@ -29,6 +30,7 @@ interface AttachmentCardProps {
  * - Download button (downloads with authentication)
  */
 export function AttachmentCard({ attachmentId }: AttachmentCardProps) {
+  const { shareToken } = useShareToken()
   const [attachment, setAttachment] = useState<AttachmentDetailResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -48,7 +50,7 @@ export function AttachmentCard({ attachmentId }: AttachmentCardProps) {
         }
 
         // Fetch from API if not cached
-        const data = await getAttachment(attachmentId)
+        const data = await getAttachment(attachmentId, shareToken)
         attachmentCache.set(attachmentId, data) // Cache the result
         setAttachment(data)
       } catch (err) {
@@ -60,12 +62,12 @@ export function AttachmentCard({ attachmentId }: AttachmentCardProps) {
     }
 
     fetchAttachment()
-  }, [attachmentId])
+  }, [attachmentId, shareToken])
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.preventDefault()
     try {
-      await downloadAttachment(attachmentId)
+      await downloadAttachment(attachmentId, attachment?.filename, shareToken)
     } catch (error) {
       console.error('Failed to download attachment:', error)
     }
