@@ -220,7 +220,7 @@ Configure these in the knowledge base advanced settings.
 ## Related Documentation
 
 - [Configuring Retrievers](configuring-retrievers.md)
-- [Creating Teams](creating-teams.md)
+- [Agent Settings](agent-settings.md)
 - [Managing Tasks](managing-tasks.md)
 
 ---

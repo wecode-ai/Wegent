@@ -624,7 +624,7 @@ flowchart TB
 ### 文档
 - [核心概念](../../concepts/core-concepts.md) - 了解 Wegent 的架构
 - [配置检索器](./configuring-retrievers.md) - 设置向量数据库
-- [创建 Ghost](./creating-ghosts.md) - 配置具有知识库访问权限的智能体
+- [智能体设置](./agent-settings.md) - 配置具有知识库访问权限的智能体
 
 ### 技术参考
 - [YAML 规范](../../reference/yaml-specification.md) - CRD 定义

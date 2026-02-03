@@ -116,9 +116,8 @@ Wegent 内置了一个开发 Bot。对于 Claude Code 运行时,请设置以下�
 
 ### 🎨 创建自定义智能体
 
-- [创建 Ghost](../guides/user/creating-ghosts.md) - 定义智能体的"灵魂"
-- [创建 Bot](../guides/user/creating-bots.md) - 组装完整的智能体实例
-- [创建 Team](../guides/user/creating-teams.md) - 构建协作团队
+- [智能体设置](../guides/user/agent-settings.md) - 配置智能体和机器人
+- [协作模式](../concepts/collaboration-models.md) - 了解多机器人协作方式
 
 ### 💻 开发和扩展
 

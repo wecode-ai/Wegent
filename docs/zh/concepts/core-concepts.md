@@ -389,8 +389,7 @@ graph LR
 
 - [YAML 配置详解](../reference/yaml-specification.md) - 完整的 YAML 配置格式说明
 - [协作模式详解](./collaboration-models.md) - 四种协作模式的详细说明
-- [创建 Bot 指南](../guides/user/creating-bots.md) - 如何创建和配置 Bot
-- [创建 Team 指南](../guides/user/creating-teams.md) - 如何构建协作团队
+- [智能体设置指南](../guides/user/agent-settings.md) - 如何配置智能体、机器人和协作模式
 
 ---
 

@@ -493,7 +493,7 @@ After installation, you can:
 
 - [Quick Start](./quick-start.md) - Run your first task
 - [Core Concepts](../concepts/core-concepts.md) - Learn Wegent's core concepts
-- [Creating Ghosts](../guides/user/creating-ghosts.md) - Create your first agent
+- [Agent Settings](../guides/user/agent-settings.md) - Configure your first agent
 - [Development Guide](../guides/developer/setup.md) - Setup development environment
 
 ---

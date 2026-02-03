@@ -393,8 +393,7 @@ This approach is **less efficient** than RAG retrieval:
 ## Related Documentation
 
 - [Managing Knowledge Bases](managing-knowledge-bases.md)
-- [Creating Bots](creating-bots.md)
-- [Creating Teams](creating-teams.md)
+- [Agent Settings](agent-settings.md)
 - [Managing Tasks](managing-tasks.md)
 - [YAML Specification](../../reference/yaml-specification.md)
 

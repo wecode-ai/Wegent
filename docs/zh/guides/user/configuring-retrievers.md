@@ -393,8 +393,7 @@ AI：让我探索知识库以查找相关信息。
 ## 相关文档
 
 - [管理知识库](managing-knowledge-bases.md)
-- [创建机器人](creating-bots.md)
-- [创建智能体](creating-teams.md)
+- [智能体设置](agent-settings.md)
 - [管理任务](managing-tasks.md)
 - [YAML 规范](../../reference/yaml-specification.md)
 

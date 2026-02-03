@@ -220,7 +220,7 @@ Wegent 支持两种类型的知识库：
 ## 相关文档
 
 - [配置检索器](configuring-retrievers.md)
-- [创建智能体](creating-teams.md)
+- [智能体设置](agent-settings.md)
 - [管理任务](managing-tasks.md)
 
 ---

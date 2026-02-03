@@ -358,9 +358,8 @@ When a task starts:
 ## 🔗 Related Resources
 
 ### Documentation
-- [YAML Specification - Skill](../reference/yaml-specification.md#-skill)
-- [Creating Bots](./creating-bots.md)
-- [Creating Ghosts](./creating-ghosts.md)
+- [YAML Specification - Skill](../../reference/yaml-specification.md#-skill)
+- [Agent Settings](./agent-settings.md) - Configure agents and bots with skills
 
 ### External Resources
 - [Claude Code Skills Documentation](https://docs.claude.com/en/docs/claude-code/skills)

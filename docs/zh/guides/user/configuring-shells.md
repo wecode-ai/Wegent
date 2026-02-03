@@ -545,8 +545,7 @@ spec:
 - [Model (模型) 配置完整指南](./configuring-models.md) - 配置 AI 模型参数
 
 ### 下一步
-- [创建 Bot](./creating-bots.md) - 使用 Shell 创建完整的 Bot 实例
-- [创建 Ghost](./creating-ghosts.md) - 定义 Bot 的"灵魂"
+- [智能体设置](./agent-settings.md) - 配置智能体和机器人
 
 ### 参考文档
 - [核心概念](../../concepts/core-concepts.md) - 理解 Shell 在架构中的角色

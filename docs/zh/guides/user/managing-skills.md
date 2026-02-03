@@ -358,9 +358,8 @@ spec:
 ## 🔗 相关资源
 
 ### 文档
-- [YAML 规范 - Skill](../reference/yaml-specification.md#-skill)
-- [创建 Bots](./creating-bots.md)
-- [创建 Ghosts](./creating-ghosts.md)
+- [YAML 规范 - Skill](../../reference/yaml-specification.md#-skill)
+- [智能体设置](./agent-settings.md) - 配置智能体和机器人
 
 ### 外部资源
 - [Claude Code Skills 文档](https://docs.claude.com/en/docs/claude-code/skills)

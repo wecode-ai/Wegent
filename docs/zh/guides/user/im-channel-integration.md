@@ -387,7 +387,7 @@ flowchart LR
 
 ### 文档
 - [核心概念](../../concepts/core-concepts.md) - 了解 Wegent 的架构
-- [创建智能体](./creating-teams.md) - 为 IM 通道配置智能体
+- [智能体设置](./agent-settings.md) - 为 IM 通道配置智能体
 - [配置模型](./configuring-models.md) - 设置 AI 模型
 
 ### 外部资源
