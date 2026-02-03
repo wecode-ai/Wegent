@@ -120,10 +120,6 @@ async def _stream_response(
         )
 
         # Build model config dict
-        # max_tokens priority: Model CRD max_output_tokens > request.max_tokens
-        effective_max_tokens = (
-            request.model_config_data.max_output_tokens or request.max_tokens
-        )
         model_config = {
             "model_id": request.model_config_data.model_id,
             "model": request.model_config_data.model,
@@ -136,7 +132,7 @@ async def _stream_response(
             "timeout": request.model_config_data.timeout,
             "max_retries": request.model_config_data.max_retries,
             "temperature": request.temperature,
-            "max_tokens": effective_max_tokens,
+            "max_tokens": request.max_tokens,
             # Model CRD reference for subscription creation
             "model_name": request.model_config_data.model_name,
             "model_namespace": request.model_config_data.model_namespace,

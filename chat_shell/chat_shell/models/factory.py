@@ -86,7 +86,7 @@ class LangChainModelFactory:
                 "api_key": cfg["api_key"],
                 "base_url": cfg.get("base_url") or None,
                 "temperature": kw.get("temperature", 1.0),
-                "max_tokens": kw.get("max_tokens"),
+                "max_tokens": cfg.get("max_tokens"),
                 "streaming": kw.get("streaming", False),
                 "model_kwargs": (
                     {"extra_headers": cfg.get("default_headers")}
@@ -118,7 +118,7 @@ class LangChainModelFactory:
                 ),
                 "anthropic_api_url": cfg.get("base_url") or None,
                 "temperature": kw.get("temperature", 1.0),
-                "max_tokens": kw.get("max_tokens", 32768),
+                "max_tokens": cfg.get("max_tokens"),
                 "streaming": kw.get("streaming", False),
                 # Enable prompt caching for Anthropic models (90% cost reduction on cached tokens)
                 # Merge user-provided headers with the prompt-caching beta header
@@ -142,7 +142,7 @@ class LangChainModelFactory:
                 ),
                 "base_url": cfg.get("base_url") or None,
                 "temperature": kw.get("temperature", 1.0),
-                "max_output_tokens": kw.get("max_tokens"),
+                "max_output_tokens": cfg.get("max_tokens"),
                 "streaming": kw.get("streaming", False),
                 "additional_headers": cfg.get("default_headers") or None,
             },
@@ -186,6 +186,8 @@ class LangChainModelFactory:
             "base_url": model_config.get("base_url", ""),
             "default_headers": model_config.get("default_headers"),
             "api_format": model_config.get("api_format"),
+            "max_tokens": model_config.get("max_output_tokens")
+            or model_config.get("max_tokens"),
         }
         model_type = model_config.get("model", "openai")
 
