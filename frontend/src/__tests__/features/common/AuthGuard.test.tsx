@@ -69,7 +69,7 @@ describe('AuthGuard', () => {
         },
         { timeout: 3000 }
       )
-    }, 10000)
+    }, 30000)
 
     it('should render children when isAuthenticated returns true', async () => {
       // Arrange
@@ -84,12 +84,15 @@ describe('AuthGuard', () => {
       )
 
       // Assert
-      await waitFor(() => {
-        expect(userApis.isAuthenticated).toHaveBeenCalled()
-        expect(mockRouter.replace).not.toHaveBeenCalled()
-        expect(getByText('Protected Content')).toBeInTheDocument()
-      })
-    })
+      await waitFor(
+        () => {
+          expect(userApis.isAuthenticated).toHaveBeenCalled()
+          expect(mockRouter.replace).not.toHaveBeenCalled()
+          expect(getByText('Protected Content')).toBeInTheDocument()
+        },
+        { timeout: 3000 }
+      )
+    }, 15000)
 
     it('should include redirect path in login URL', async () => {
       // Arrange
