@@ -10,7 +10,7 @@ Supports Team, Task, and KnowledgeBase resource types.
 """
 
 import logging
-from typing import Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -87,7 +87,7 @@ def create_share_link(
     body: ShareLinkCreate = ShareLinkCreate(),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
+) -> ShareLinkResponse:
     """
     Create or update a share link for a resource.
 
@@ -117,7 +117,7 @@ def get_share_link(
     resource_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
+) -> Optional[ShareLinkResponse]:
     """
     Get the active share link for a resource.
 
@@ -143,7 +143,7 @@ def delete_share_link(
     resource_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
+) -> Dict[str, str]:
     """
     Deactivate the share link for a resource.
 
@@ -175,7 +175,7 @@ def delete_share_link(
 def get_share_info(
     share_token: str,
     db: Session = Depends(get_db),
-):
+) -> ShareInfoResponse:
     """
     Get public information about a share link.
 
@@ -211,7 +211,7 @@ def join_by_link(
     body: JoinByLinkRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
+) -> JoinByLinkResponse:
     """
     Request to join a shared resource via share link.
 
@@ -255,7 +255,7 @@ def get_members(
     resource_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
+) -> MemberListResponse:
     """
     Get all approved members of a resource.
 
@@ -281,7 +281,7 @@ def add_member(
     body: ResourceMemberCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
+) -> ResourceMemberResponse:
     """
     Directly add a member to a resource.
 
@@ -314,7 +314,7 @@ def update_member(
     body: ResourceMemberUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
+) -> ResourceMemberResponse:
     """
     Update a member's permission level.
 
@@ -348,7 +348,7 @@ def remove_member(
     member_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
+) -> Dict[str, str]:
     """
     Remove a member from a resource.
 
@@ -383,7 +383,7 @@ def get_pending_requests(
     resource_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
+) -> PendingRequestListResponse:
     """
     Get pending approval requests for a resource.
 
@@ -412,7 +412,7 @@ def review_request(
     body: ReviewRequestBody,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
+) -> ReviewRequestResponse:
     """
     Approve or reject a pending request.
 
@@ -448,7 +448,7 @@ def get_my_kb_permission(
     resource_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
+) -> MyKBPermissionResponse:
     """
     Get current user's permission for a knowledge base.
 
@@ -472,7 +472,7 @@ def get_kb_share_info(
     resource_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
+) -> KBShareInfoResponse:
     """
     Get knowledge base info for share page.
 
@@ -488,4 +488,4 @@ def get_kb_share_info(
             user_id=current_user.id,
         )
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e

@@ -15,6 +15,7 @@ from functools import lru_cache
 from typing import Optional
 
 from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
-def _get_engine(db_url: str):
+def _get_engine(db_url: str) -> Engine:
     """Get or create a cached database engine."""
     return create_engine(db_url.replace("+asyncmy", "+pymysql"))
 
@@ -168,6 +169,10 @@ def send_share_request_notification(
             ResourceType.TASK.value: "task",
         }.get(resource_type, "resource")
 
+        # Mask email unless PII is explicitly allowed
+        email_display = (
+            applicant_email if settings.ALLOW_PII_IN_WEBHOOKS else "***@***.***"
+        )
         notification = Notification(
             user_name=owner_name,
             event=f"{resource_type.lower()}_share_request",
@@ -175,7 +180,7 @@ def send_share_request_notification(
             start_time=now.isoformat(),
             end_time=now.isoformat(),
             description=(
-                f"User {applicant_name} ({applicant_email or 'no email'}) "
+                f"User {applicant_name} ({email_display}) "
                 f"requested {permission_level} permission for {resource_type_name} '{resource_name}'"
             ),
             status="pending",

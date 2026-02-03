@@ -134,9 +134,6 @@ def upgrade() -> None:
 
         # Create indexes for share_links
         op.create_index(
-            "ix_share_links_id", "share_links", ["id"], unique=False
-        )
-        op.create_index(
             "ix_share_links_resource",
             "share_links",
             ["resource_type", "resource_id"],
@@ -269,9 +266,6 @@ def upgrade() -> None:
 
         # Create indexes for resource_members
         op.create_index(
-            "ix_resource_members_id", "resource_members", ["id"], unique=False
-        )
-        op.create_index(
             "ix_resource_members_resource",
             "resource_members",
             ["resource_type", "resource_id"],
@@ -315,7 +309,6 @@ def downgrade() -> None:
         op.drop_index("ix_resource_members_status", table_name="resource_members")
         op.drop_index("ix_resource_members_user", table_name="resource_members")
         op.drop_index("ix_resource_members_resource", table_name="resource_members")
-        op.drop_index("ix_resource_members_id", table_name="resource_members")
         op.drop_table("resource_members")
 
     # Drop share_links indexes and table
@@ -324,5 +317,4 @@ def downgrade() -> None:
         op.drop_index("ix_share_links_creator", table_name="share_links")
         op.drop_index("ix_share_links_token", table_name="share_links")
         op.drop_index("ix_share_links_resource", table_name="share_links")
-        op.drop_index("ix_share_links_id", table_name="share_links")
         op.drop_table("share_links")

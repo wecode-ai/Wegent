@@ -262,7 +262,7 @@
     "selectIcon": "选择图标",
     "share": {
       "title": "智能体分享",
-      "confirm_message": "确定要使用 {{userName}} 的智能体「{{teamName}}」执行任务吗？",
+      "confirm_message": "确定要使用 {{userName}} 分享的智能体「{{teamName}}」执行任务吗？",
       "join_description": "确定加入后，「{{teamName}}」将添加到您的智能体列表中，您可以使用该智能体创建和执行任务。",
       "joining": "加入中...",
       "confirm_join": "确认加入",
@@ -274,8 +274,8 @@
       "loading": "正在加载智能体信息...",
       "self_share_suffix": " 是您的智能体，无须加入。",
       "already_joined_suffix": " 已在您的智能体列表中，无须重复加入。",
-      "confirm_prefix": "确定要使用 ",
-      "confirm_middle": " 分享的智能体「",
+      "confirm_prefix": "确定要使用",
+      "confirm_middle": "分享的智能体「",
       "confirm_suffix": "」执行任务吗？",
       "join_description_prefix": "确定加入后，「",
       "join_description_suffix": "」将添加到您的智能体列表中，您可以使用该智能体创建和执行任务。"
