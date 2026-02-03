@@ -563,15 +563,27 @@ data: {"id":"dr-local-123","status":"completed","usage":{...}}
 
 1. **Backend 集成方式**：chat_shell 的 Deep Research API 是否需要被 Backend 代理，还是前端直接调用 chat_shell？
 
+回答：chat_shell 的 Deep Research API 是否需要被 Backend 代理
+
 2. **权限控制**：是否需要在 chat_shell 层面做 API Key 验证，还是由 Backend 统一处理？
+
+回答：由 Backend 统一处理
 
 3. **结果缓存**：流式获取结果后，是否需要在本地缓存结果内容，以支持重复获取？
 
+回答：不需要在本地缓存，每次流式获取内容从 Gemini 直接获取
+
 4. **错误处理**：当 Gemini 返回错误或超时时，如何处理？是否需要支持重试？
+
+回答：显示错误，暂时不支持重试
 
 5. **并发限制**：是否需要限制每个用户/任务的并发 Deep Research 数量？
 
+回答：不限制
+
 6. **计费统计**：是否需要记录 usage 信息用于计费？
+
+回答：不记录
 
 ---
 
