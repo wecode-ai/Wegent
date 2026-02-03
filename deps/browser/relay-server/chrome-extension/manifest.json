@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Wegent Browser Relay",
+  "version": "0.0.1",
+  "description": "Enable LLM to control browser tabs via CDP relay",
+  "permissions": ["debugger", "tabs", "activeTab", "storage"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Browser Relay (click to attach/detach)"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  },
+  "icons": {}
+}
