@@ -7,6 +7,18 @@ WebSocket client for local executor mode.
 
 This module implements a Socket.IO based WebSocket client aligned with
 the LocalDeviceClient protocol for communicating with the Backend server.
+
+Authentication:
+- WEGENT_AUTH_TOKEN environment variable supports both:
+  - JWT Token: Standard JWT token with expiration
+  - API Key: Personal API key starting with 'wg-' prefix (no expiration)
+
+Example:
+    # Using JWT Token
+    export WEGENT_AUTH_TOKEN="eyJhbG..."
+
+    # Using API Key (recommended for local executor)
+    export WEGENT_AUTH_TOKEN="wg-abc123..."
 """
 
 import asyncio
@@ -22,6 +34,7 @@ from typing import Any, Callable, Dict, Optional
 import socketio
 
 from executor.config import config
+from executor.version import get_version
 from shared.logger import setup_logger
 
 logger = setup_logger("websocket_client")
@@ -36,8 +49,12 @@ class WebSocketClient:
     Features:
     - Automatic reconnection with exponential backoff
     - Device-based registration with unique device_id
-    - Authentication via JWT token
+    - Authentication via JWT token or API Key
     - Connection state management
+
+    Authentication:
+    - JWT Token: Standard Bearer token with expiration
+    - API Key: Personal API key (wg-xxx) with no expiration
     """
 
     def __init__(
@@ -54,6 +71,7 @@ class WebSocketClient:
         Args:
             backend_url: Backend WebSocket URL. Defaults to config.WEGENT_BACKEND_URL.
             auth_token: Authentication token. Defaults to config.WEGENT_AUTH_TOKEN.
+                        Can be either JWT Token or API Key (starting with 'wg-').
             reconnection: Enable automatic reconnection. Defaults to True.
             reconnection_attempts: Max reconnection attempts (0 for infinite).
             reconnection_delay: Initial reconnection delay in seconds.
@@ -370,6 +388,7 @@ class WebSocketClient:
             register_data = {
                 "device_id": self.device_id,
                 "name": self.device_name,
+                "executor_version": get_version(),
             }
             logger.info(f"Sending device:register to /local-executor: {register_data}")
 
@@ -417,8 +436,17 @@ class WebSocketClient:
             raise ConnectionError("WebSocket not connected")
 
         try:
-            heartbeat_data = {"device_id": self.device_id}
-            logger.debug(
+            # Get active task IDs from ClaudeCodeAgent
+            from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
+
+            running_task_ids = ClaudeCodeAgent.get_active_task_ids()
+
+            heartbeat_data = {
+                "device_id": self.device_id,
+                "running_task_ids": running_task_ids,
+                "executor_version": get_version(),
+            }
+            logger.info(
                 f"Sending device:heartbeat to /local-executor: {heartbeat_data}"
             )
             response = await self.sio.call(

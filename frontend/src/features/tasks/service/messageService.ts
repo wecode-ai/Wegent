@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Team, GitRepoInfo, GitBranch, TaskDetail, Bot } from '@/types/api'
+import type { Team, GitRepoInfo, GitBranch, TaskDetail } from '@/types/api'
 import { taskApis, CreateTaskRequest } from '@/apis/tasks'
 
 /**
@@ -37,10 +37,36 @@ export function isChatShell(team: Team | null): boolean {
 
   return false
 }
+
 /**
+ * Check if a team uses ClaudeCode Shell type.
+ * ClaudeCode tasks do not allow skill modification after task creation.
+ *
+ * @param team - Team to check
+ * @returns true if the team uses ClaudeCode Shell
+ */
+export function isClaudeCode(team: Team | null): boolean {
+  if (!team) return false
+
+  // Primary check: agent_type field (case-insensitive)
+  if (team.agent_type?.toLowerCase() === 'claudecode') {
+    return true
+  }
+
+  // Fallback: check first bot's shell_type (for task detail teams where agent_type may be null)
+  if (team.bots && team.bots.length > 0) {
+    const firstBot = team.bots[0]
+    if (firstBot.bot?.shell_type?.toLowerCase() === 'claudecode') {
+      return true
+    }
+  }
+
+  return false
+}
+
 /**
- * Check if a task uses Chat Shell type based on subtask bot information.
- * This is useful when team.agent_type is not available but subtask bots have shell_type.
+ * Check if a task uses Chat Shell type based on team information.
+ * Now relies solely on team.agent_type since subtasks are managed by TaskStateMachine.
  *
  * @param taskDetail - Task detail to check
  * @returns true if the task uses Chat Shell
@@ -48,26 +74,8 @@ export function isChatShell(team: Team | null): boolean {
 export function isTaskChatShell(taskDetail: TaskDetail | null): boolean {
   if (!taskDetail) return false
 
-  // First check team's agent_type
-  if (isChatShell(taskDetail.team)) {
-    return true
-  }
-
-  // Fallback: check subtask bots' shell_type
-  if (taskDetail.subtasks && taskDetail.subtasks.length > 0) {
-    for (const subtask of taskDetail.subtasks) {
-      if (subtask.bots && subtask.bots.length > 0) {
-        for (const bot of subtask.bots) {
-          // Bot in subtask has shell_type directly (not nested in bot.bot)
-          if ((bot as Bot).shell_type?.toLowerCase() === 'chat') {
-            return true
-          }
-        }
-      }
-    }
-  }
-
-  return false
+  // Check team's agent_type (primary source of truth)
+  return isChatShell(taskDetail.team)
 }
 
 /**

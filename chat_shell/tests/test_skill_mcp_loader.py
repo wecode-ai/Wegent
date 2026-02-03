@@ -129,7 +129,7 @@ class TestPrepareSkillToolsWithMcp:
 
     @pytest.mark.asyncio
     async def test_skill_with_mcp_servers_config(self):
-        """Test that skill with mcpServers config triggers MCP loading."""
+        """Test that skill with mcpServers config triggers MCP loading when preloaded."""
         skill_configs = [
             {
                 "name": "test_skill",
@@ -157,6 +157,7 @@ class TestPrepareSkillToolsWithMcp:
                 subtask_id=1,
                 user_id=1,
                 skill_configs=skill_configs,
+                preload_skills=["test_skill"],  # Skill must be preloaded to load MCP
             )
 
             # MCP client should be created with prefixed server name
@@ -167,6 +168,39 @@ class TestPrepareSkillToolsWithMcp:
             # Should return MCP tools and clients
             assert len(tools) == 1
             assert len(clients) == 1
+
+    @pytest.mark.asyncio
+    async def test_skill_with_mcp_servers_not_preloaded(self):
+        """Test that skill with mcpServers config does NOT trigger MCP loading when not preloaded."""
+        skill_configs = [
+            {
+                "name": "test_skill",
+                "description": "A test skill",
+                "mcpServers": {
+                    "server1": {
+                        "type": "stdio",
+                        "command": "python",
+                        "args": ["-m", "test_server"],
+                    }
+                },
+            }
+        ]
+
+        with patch("chat_shell.tools.mcp.MCPClient") as mock_mcp_class:
+            tools, clients = await prepare_skill_tools(
+                task_id=1,
+                subtask_id=1,
+                user_id=1,
+                skill_configs=skill_configs,
+                # No preload_skills - skill is not preloaded
+            )
+
+            # MCP client should NOT be created because skill is not preloaded
+            mock_mcp_class.assert_not_called()
+
+            # Should return empty lists
+            assert tools == []
+            assert clients == []
 
     @pytest.mark.asyncio
     async def test_skill_without_mcp_servers(self):
@@ -185,6 +219,7 @@ class TestPrepareSkillToolsWithMcp:
                 subtask_id=1,
                 user_id=1,
                 skill_configs=skill_configs,
+                preload_skills=["test_skill"],  # Even if preloaded, no MCP servers
             )
 
             # MCP client should NOT be created
@@ -196,7 +231,7 @@ class TestPrepareSkillToolsWithMcp:
 
     @pytest.mark.asyncio
     async def test_multiple_skills_with_mcp_servers(self):
-        """Test that multiple skills' MCP servers are merged."""
+        """Test that multiple preloaded skills' MCP servers are merged."""
         skill_configs = [
             {
                 "name": "skill_a",
@@ -230,6 +265,7 @@ class TestPrepareSkillToolsWithMcp:
                 subtask_id=1,
                 user_id=1,
                 skill_configs=skill_configs,
+                preload_skills=["skill_a", "skill_b"],  # Both skills must be preloaded
             )
 
             # MCP client should be created once with merged configs
@@ -243,6 +279,55 @@ class TestPrepareSkillToolsWithMcp:
 
             # Should return combined tools
             assert len(tools) == 2
+            assert len(clients) == 1
+
+    @pytest.mark.asyncio
+    async def test_partial_preload_only_loads_preloaded_skills(self):
+        """Test that only preloaded skills' MCP servers are loaded."""
+        skill_configs = [
+            {
+                "name": "skill_a",
+                "description": "Skill A",
+                "mcpServers": {
+                    "server_a": {"type": "stdio", "command": "cmd_a"},
+                },
+            },
+            {
+                "name": "skill_b",
+                "description": "Skill B",
+                "mcpServers": {
+                    "server_b": {"type": "stdio", "command": "cmd_b"},
+                },
+            },
+        ]
+
+        mock_client = MagicMock()
+        mock_client.is_connected = True
+        mock_client.get_tools.return_value = [MagicMock(name="tool_a")]
+
+        with patch(
+            "chat_shell.tools.mcp.MCPClient", return_value=mock_client
+        ) as mock_mcp_class:
+            mock_client.connect = AsyncMock()
+            tools, clients = await prepare_skill_tools(
+                task_id=1,
+                subtask_id=1,
+                user_id=1,
+                skill_configs=skill_configs,
+                preload_skills=["skill_a"],  # Only skill_a is preloaded
+            )
+
+            # MCP client should be created with only skill_a's server
+            mock_mcp_class.assert_called_once()
+            call_args = mock_mcp_class.call_args
+            merged_config = call_args[0][0]
+
+            # Should only have skill_a's server
+            assert "skill_a_server_a" in merged_config
+            assert "skill_b_server_b" not in merged_config
+
+            # Should return tools from skill_a only
+            assert len(tools) == 1
             assert len(clients) == 1
 
     @pytest.mark.asyncio

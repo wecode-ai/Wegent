@@ -732,8 +732,8 @@ class TaskQueryMixin:
                 "system_prompt": system_prompt,
                 "mcp_servers": mcp_servers,
                 "is_active": bot.is_active,
-                "created_at": bot.created_at,
-                "updated_at": bot.updated_at,
+                "created_at": (bot.created_at.isoformat() if bot.created_at else None),
+                "updated_at": (bot.updated_at.isoformat() if bot.updated_at else None),
             }
             bots[bot.id] = bot_dict
 
@@ -794,9 +794,15 @@ class TaskQueryMixin:
                 "result": subtask.result,
                 "error_message": subtask.error_message,
                 "user_id": subtask.user_id,
-                "created_at": subtask.created_at,
-                "updated_at": subtask.updated_at,
-                "completed_at": subtask.completed_at,
+                "created_at": (
+                    subtask.created_at.isoformat() if subtask.created_at else None
+                ),
+                "updated_at": (
+                    subtask.updated_at.isoformat() if subtask.updated_at else None
+                ),
+                "completed_at": (
+                    subtask.completed_at.isoformat() if subtask.completed_at else None
+                ),
                 "bots": [
                     bots.get(bot_id) for bot_id in subtask.bot_ids if bot_id in bots
                 ],
@@ -975,3 +981,120 @@ class TaskQueryMixin:
             )
 
         return result
+
+    def get_task_skills(
+        self, db: Session, *, task_id: int, user_id: int
+    ) -> Dict[str, Any]:
+        """Get all skills associated with a task.
+
+        Follows the chain: task → team → bots → ghosts → skills
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            user_id: User ID (for authorization)
+
+        Returns:
+            Dictionary with:
+            - task_id: The task ID
+            - team_id: The team ID (if found)
+            - team_namespace: The team namespace
+            - skills: List of skill names (deduplicated)
+            - preload_skills: List of skills to preload
+
+        Raises:
+            HTTPException: If task not found
+        """
+        from app.models.task import TaskResource
+        from app.services.readers.kinds import KindType, kindReader
+        from app.services.task_member_service import task_member_service
+
+        # Check if task exists and user has access
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+                TaskResource.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Check if user has access (owner or active member)
+        if not task_member_service.is_member(db, task_id, user_id):
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Parse task CRD to get team reference
+        task_crd = Task.model_validate(task.json)
+        team_name = task_crd.spec.teamRef.name
+        team_namespace = task_crd.spec.teamRef.namespace
+
+        # Use task owner's user_id for querying related resources
+        task_owner_id = task.user_id
+
+        # Get team
+        team = kindReader.get_by_name_and_namespace(
+            db, task_owner_id, KindType.TEAM, team_namespace, team_name
+        )
+
+        if not team:
+            logger.warning(
+                f"[get_task_skills] Team not found for task {task_id}: "
+                f"namespace={team_namespace}, name={team_name}"
+            )
+            return {
+                "task_id": task_id,
+                "team_id": None,
+                "team_namespace": team_namespace,
+                "skills": [],
+                "preload_skills": [],
+            }
+
+        team_crd = Team.model_validate(team.json)
+        all_skills = set()
+        all_preload_skills = set()
+
+        # Iterate through team members to get bot → ghost → skills
+        for member in team_crd.spec.members or []:
+            bot = kindReader.get_by_name_and_namespace(
+                db,
+                task_owner_id,
+                KindType.BOT,
+                member.botRef.namespace,
+                member.botRef.name,
+            )
+            if not bot:
+                continue
+
+            bot_crd = Bot.model_validate(bot.json)
+
+            # Get ghost (stores skills)
+            ghost = kindReader.get_by_name_and_namespace(
+                db,
+                task_owner_id,
+                KindType.GHOST,
+                bot_crd.spec.ghostRef.namespace,
+                bot_crd.spec.ghostRef.name,
+            )
+            if ghost and ghost.json:
+                ghost_crd = Ghost.model_validate(ghost.json)
+                if ghost_crd.spec.skills:
+                    all_skills.update(ghost_crd.spec.skills)
+                if ghost_crd.spec.preload_skills:
+                    all_preload_skills.update(ghost_crd.spec.preload_skills)
+
+        logger.info(
+            f"[get_task_skills] task_id={task_id}, team_id={team.id}, "
+            f"skills={list(all_skills)}, preload_skills={list(all_preload_skills)}"
+        )
+
+        return {
+            "task_id": task_id,
+            "team_id": team.id,
+            "team_namespace": team.namespace or "default",
+            "skills": list(all_skills),
+            "preload_skills": list(all_preload_skills),
+        }

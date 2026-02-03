@@ -6,7 +6,7 @@
 
 import React, { memo, useMemo, useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import remarkGfmSafe from '@/lib/remark-gfm-safe'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
@@ -17,6 +17,7 @@ import { Check, Copy, Code, ChevronDown, ChevronUp } from 'lucide-react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { createSchemeAwareUrlTransform } from '@/lib/scheme'
+import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRenderer'
 
 import 'katex/dist/katex.min.css'
 
@@ -424,11 +425,8 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   // Default components with link handling and code block rendering
   const defaultComponents = useMemo(
     (): Components => ({
-      a: ({ href, children, ...props }) => (
-        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-          {children}
-        </a>
-      ),
+      // Merge smart components for attachment and image handling
+      ...createSmartMarkdownComponents({ enableImagePreview: true }),
       // Restore list styles that Tailwind preflight resets
       ul: ({ children, ...props }) => (
         <ul
@@ -486,7 +484,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   // Configure remark/rehype plugins based on content
   const remarkPlugins = useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const plugins: any[] = [remarkGfm]
+    const plugins: any[] = [remarkGfmSafe]
     if (hasMath) {
       // Enable singleDollarTextMath to support $...$ inline math
       plugins.push([remarkMath, { singleDollarTextMath: true }])
@@ -512,8 +510,8 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     return plugins
   }, [hasMath])
 
-  // URL transform to allow wegent:// scheme URLs
-  const urlTransform = useMemo(() => createSchemeAwareUrlTransform(['wegent:']), [])
+  // URL transform to allow wegent:// and attachment:// scheme URLs
+  const urlTransform = useMemo(() => createSchemeAwareUrlTransform(['wegent:', 'attachment:']), [])
 
   // Render markdown content
   const renderMarkdown = (content: string) => (

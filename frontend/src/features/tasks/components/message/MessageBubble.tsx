@@ -28,9 +28,10 @@ import {
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import MarkdownEditor from '@uiw/react-markdown-editor'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
-import { ThinkingDisplay, ReasoningDisplay } from './thinking'
+import { ReasoningDisplay } from './thinking'
+import MixedContentView from './thinking/MixedContentView'
+import ThinkingDisplay from './thinking/ThinkingDisplay'
 import ClarificationForm from '../clarification/ClarificationForm'
 import FinalPromptMessage from './FinalPromptMessage'
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary'
@@ -44,8 +45,10 @@ import RegenerateModelPopover from './RegenerateModelPopover'
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api'
 import type { SourceReference } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
+import type { MessageBlock } from './thinking/types'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { useMessageFeedback } from '@/hooks/useMessageFeedback'
+import { ShareTokenProvider } from '@/contexts/ShareTokenContext'
 import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartUrlRenderer'
 import { formatDateTime } from '@/utils/dateTime'
 import { parseError, getErrorDisplayMessage } from '@/utils/errorParser'
@@ -74,6 +77,7 @@ export interface Message {
     shell_type?: string // Shell type (Chat, ClaudeCode, Agno, etc.)
     sources?: SourceReference[] // RAG knowledge base sources
     reasoning_content?: string // Reasoning content from DeepSeek R1 etc.
+    blocks?: MessageBlock[] // Message blocks for mixed rendering (new format)
   }
   /** @deprecated Use contexts instead */
   attachments?: Attachment[]
@@ -168,6 +172,8 @@ export interface MessageBubbleProps {
   onRegenerate?: (msg: Message, model: Model) => void
   /** Whether regenerate is in progress */
   isRegenerating?: boolean
+  /** Share token for public access to attachments (no login required) */
+  shareToken?: string
 }
 
 // Component for rendering a paragraph with hover action button
@@ -290,6 +296,7 @@ const MessageBubble = memo(
     isLastAiMessage,
     onRegenerate,
     isRegenerating,
+    shareToken,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
@@ -626,14 +633,22 @@ const MessageBubble = memo(
               like: t('chat:messages.like') || 'Like',
               dislike: t('chat:messages.dislike') || 'Dislike',
             }}
-            showRegenerate={
-              Boolean(onRegenerate) &&
-              !isGroupChat &&
-              isLastAiMessage &&
-              (msg.subtaskStatus === 'COMPLETED' || msg.status === 'completed') &&
-              msg.subtaskStatus !== 'RUNNING' &&
-              msg.status !== 'streaming'
-            }
+            showRegenerate={(() => {
+              const hasOnRegenerate = Boolean(onRegenerate)
+              const isCompleted =
+                msg.subtaskStatus === 'COMPLETED' ||
+                msg.subtaskStatus === 'CANCELLED' ||
+                msg.status === 'completed'
+              const isNotRunning =
+                msg.subtaskStatus !== 'RUNNING' &&
+                msg.subtaskStatus !== 'PENDING' &&
+                msg.subtaskStatus !== 'PROCESSING' &&
+                msg.status !== 'streaming' &&
+                msg.status !== 'pending'
+              return (
+                hasOnRegenerate && !isGroupChat && isLastAiMessage && isCompleted && isNotRunning
+              )
+            })()}
             onRegenerateClick={() => setIsRegeneratePopoverOpen(true)}
             isRegenerating={isRegenerating}
             renderRegenerateButton={(defaultButton, tooltipText) => (
@@ -1083,10 +1098,9 @@ const MessageBubble = memo(
             <div className="space-y-4">
               {/* Render prefix text (content before the clarification form) */}
               {prefixText && (
-                <MarkdownEditor.Markdown
+                <EnhancedMarkdown
                   source={prefixText}
-                  style={{ background: 'transparent' }}
-                  wrapperElement={{ 'data-color-mode': theme }}
+                  theme={theme}
                   components={{
                     a: ({ href, children }) => {
                       if (!href) {
@@ -1116,10 +1130,9 @@ const MessageBubble = memo(
               {/* Render suffix text (content after the clarification form that couldn't be parsed) */}
               {suffixText && (
                 <div className="mt-4 p-3 rounded-lg border border-border bg-surface/50">
-                  <MarkdownEditor.Markdown
+                  <EnhancedMarkdown
                     source={suffixText}
-                    style={{ background: 'transparent' }}
-                    wrapperElement={{ 'data-color-mode': theme }}
+                    theme={theme}
                     components={{
                       a: ({ href, children }) => {
                         if (!href) {
@@ -1221,10 +1234,9 @@ const MessageBubble = memo(
           <div className="space-y-4">
             {/* Render prefix text (content before the clarification form) */}
             {prefixText && (
-              <MarkdownEditor.Markdown
+              <EnhancedMarkdown
                 source={prefixText}
-                style={{ background: 'transparent' }}
-                wrapperElement={{ 'data-color-mode': theme }}
+                theme={theme}
                 components={{
                   a: ({ href, children }) => {
                     if (!href) {
@@ -1254,10 +1266,9 @@ const MessageBubble = memo(
             {/* Render suffix text (content after the clarification form that couldn't be parsed) */}
             {suffixText && (
               <div className="mt-4 p-3 rounded-lg border border-border bg-surface/50">
-                <MarkdownEditor.Markdown
+                <EnhancedMarkdown
                   source={suffixText}
-                  style={{ background: 'transparent' }}
-                  wrapperElement={{ 'data-color-mode': theme }}
+                  theme={theme}
                   components={{
                     a: ({ href, children }) => {
                       if (!href) {
@@ -1418,171 +1429,257 @@ const MessageBubble = memo(
           : 'w-full'
 
     return (
-      <div
-        className={`flex ${isEditing ? 'justify-start' : shouldAlignRight ? 'justify-end' : 'justify-start'}`}
-        translate="no"
-      >
+      <ShareTokenProvider shareToken={shareToken}>
         <div
-          className={`flex ${containerWidthClass} flex-col ${isEditing ? 'items-start' : shouldAlignRight ? 'items-end' : 'items-start'}`}
+          className={`flex ${isEditing ? 'justify-start' : shouldAlignRight ? 'justify-end' : 'justify-start'}`}
+          translate="no"
         >
-          {/* Show thinking display for AI messages */}
-          {!isUserTypeMessage && msg.thinking && (
-            <ThinkingDisplay
-              thinking={msg.thinking}
-              taskStatus={msg.subtaskStatus}
-              shellType={msg.result?.shell_type}
-            />
-          )}
-          {/* Show reasoning display for DeepSeek R1 and similar models */}
-          {!isUserTypeMessage && (msg.reasoningContent || msg.result?.reasoning_content) && (
-            <ReasoningDisplay
-              reasoningContent={msg.reasoningContent || msg.result?.reasoning_content || ''}
-              isStreaming={msg.subtaskStatus === 'RUNNING' || msg.status === 'streaming'}
-            />
-          )}
           <div
-            className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}
-            onMouseUp={handleTextSelection}
-            data-message-content="true"
+            className={`flex ${containerWidthClass} flex-col ${isEditing ? 'items-start' : shouldAlignRight ? 'items-end' : 'items-start'}`}
           >
-            {/* Show header for AI messages */}
-            {!isUserTypeMessage && (
-              <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
-                {headerIcon}
-                <span className="font-semibold">{headerLabel}</span>
-                {timestampLabel && <span>{timestampLabel}</span>}
-                {msg.isRecovered && (
-                  <span className="text-primary text-xs">
-                    ({t('messages.recovered') || '已恢复'})
-                  </span>
-                )}
-              </div>
-            )}
-            {/* Show header for other users' messages in group chat (left-aligned user messages) */}
-            {isUserTypeMessage && !shouldAlignRight && msg.shouldShowSender && (
-              <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
-                <User className="w-4 h-4" />
-                <span className="font-semibold">{msg.senderUserName || 'Unknown User'}</span>
-                {timestampLabel && <span>{timestampLabel}</span>}
-              </div>
-            )}
-            {isUserTypeMessage && (
-              <ContextBadgeList
-                contexts={msg.contexts || undefined}
-                onContextReselect={onContextReselect}
-              />
-            )}
-            {/* Show waiting indicator when streaming but no content yet */}
-            {isWaiting || msg.isWaiting ? (
-              <StreamingWaitIndicator isWaiting={true} />
-            ) : isEditing && isUserTypeMessage && onEditSave && onEditCancel ? (
-              /* Show inline edit component when editing a user message */
-              <InlineMessageEdit
-                initialContent={msg.content}
-                onSave={onEditSave}
-                onCancel={onEditCancel}
-              />
-            ) : (
-              <>
-                {/* Show recovered content if available, otherwise show normal content */}
-                {msg.recoveredContent && msg.subtaskStatus === 'RUNNING'
-                  ? renderRecoveredContent()
-                  : renderMessageBody(msg, index)}
-              </>
-            )}
-            {/* Show incomplete notice for completed but incomplete messages */}
-            {msg.isIncomplete && msg.subtaskStatus !== 'RUNNING' && renderRecoveryNotice()}
-
-            {/* Show error message and retry button for failed messages */}
-            {!isUserTypeMessage && msg.status === 'error' && msg.error && (
-              <div className="mt-4">
-                {/* Error message with details */}
-                <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800">
-                  <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    {/* Error message based on error type */}
-                    <p className="text-sm text-red-800 dark:text-red-200">
-                      {getErrorDisplayMessage(msg.error, (key: string) => t(`chat:${key}`))}
-                    </p>
-                    {/* Detailed error message from backend - only show if different from main message */}
-                    {(() => {
-                      const parsedError = parseError(msg.error)
-                      // Don't show duplicate message for generic errors
-                      if (parsedError.type !== 'generic_error') {
-                        return (
-                          <p className="mt-1 text-xs text-red-600 dark:text-red-300 break-all">
-                            {msg.error}
-                          </p>
-                        )
-                      }
-                      return null
-                    })()}
-                  </div>
-                  {/* Action buttons: Retry and Copy */}
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    {/* Only show retry button for retryable errors */}
-                    {/* Container errors (OOM, container crash) are not retryable - user should start new task */}
-                    {onRetry &&
-                      (() => {
-                        const parsedError = parseError(msg.error)
-                        const isRetryable =
-                          parsedError.type !== 'container_oom' &&
-                          parsedError.type !== 'container_error'
-                        if (!isRetryable) return null
-                        return (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => onRetry(msg)}
-                                className="h-7 w-7 !rounded-md bg-red-100 dark:bg-red-900/30 hover:!bg-red-200 dark:hover:!bg-red-900/50"
-                              >
-                                <RefreshCw className="h-4 w-4 text-red-600 dark:text-red-400" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>{t('actions.retry') || '重试'}</TooltipContent>
-                          </Tooltip>
-                        )
-                      })()}
-                    <CopyButton
-                      content={msg.error}
-                      className="h-7 w-7 flex-shrink-0 !rounded-md bg-red-100 dark:bg-red-900/30 hover:!bg-red-200 dark:hover:!bg-red-900/50"
-                      tooltip={t('chat:errors.copy_error') || 'Copy error'}
-                      onCopySuccess={() =>
-                        trace.event('error-copy', {
-                          'error.message': msg.error?.substring(0, 100),
-                          ...(msg.subtaskId && { 'subtask.id': msg.subtaskId }),
-                        })
-                      }
-                    />
-                  </div>
+            <div
+              className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}
+              onMouseUp={handleTextSelection}
+              data-message-content="true"
+            >
+              {/* Show header for AI messages */}
+              {!isUserTypeMessage && (
+                <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
+                  {headerIcon}
+                  <span className="font-semibold">{headerLabel}</span>
+                  {timestampLabel && <span>{timestampLabel}</span>}
+                  {msg.isRecovered && (
+                    <span className="text-primary text-xs">
+                      ({t('messages.recovered') || '已恢复'})
+                    </span>
+                  )}
                 </div>
-              </div>
-            )}
-
-            {/* Show copy button for user messages - visible on hover */}
-            {isUserTypeMessage && !isEditing && (
-              <div className="absolute -bottom-8 left-2 flex items-center gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                <CopyButton
-                  content={msg.content}
-                  className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
-                  tooltip={t('chat:actions.copy') || 'Copy'}
-                  onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
+              )}
+              {/* Show reasoning display for DeepSeek R1 and similar models */}
+              {!isUserTypeMessage && (msg.reasoningContent || msg.result?.reasoning_content) && (
+                <ReasoningDisplay
+                  reasoningContent={msg.reasoningContent || msg.result?.reasoning_content || ''}
+                  isStreaming={msg.subtaskStatus === 'RUNNING' || msg.status === 'streaming'}
                 />
-                {/* Edit button - only show for non-group chat and when not streaming */}
-                {!isGroupChat && !isStreaming && onEdit && (
-                  <EditButton
-                    onEdit={() => onEdit(msg)}
-                    className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
-                    tooltip={t('chat:actions.edit') || 'Edit'}
+              )}
+              {/* Show tool blocks for messages with thinking but no blocks */}
+              {!isUserTypeMessage &&
+                msg.thinking &&
+                msg.thinking.length > 0 &&
+                (!msg.result?.blocks || msg.result.blocks.length === 0) && (
+                  <ThinkingDisplay
+                    thinking={msg.thinking}
+                    taskStatus={msg.subtaskStatus}
+                    shellType={msg.result?.shell_type}
                   />
                 )}
-              </div>
-            )}
+              {/* Show header for other users' messages in group chat (left-aligned user messages) */}
+              {isUserTypeMessage && !shouldAlignRight && msg.shouldShowSender && (
+                <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
+                  <User className="w-4 h-4" />
+                  <span className="font-semibold">{msg.senderUserName || 'Unknown User'}</span>
+                  {timestampLabel && <span>{timestampLabel}</span>}
+                </div>
+              )}
+              {/* Show contexts (attachments, knowledge bases, etc.) for both user and AI messages */}
+              <ContextBadgeList
+                contexts={msg.contexts || undefined}
+                onContextReselect={isUserTypeMessage ? onContextReselect : undefined}
+                shareToken={shareToken}
+              />
+              {/* Show waiting indicator when streaming but no content yet */}
+              {isWaiting || msg.isWaiting ? (
+                <StreamingWaitIndicator isWaiting={true} />
+              ) : isEditing && isUserTypeMessage && onEditSave && onEditCancel ? (
+                /* Show inline edit component when editing a user message */
+                <InlineMessageEdit
+                  initialContent={msg.content}
+                  onSave={onEditSave}
+                  onCancel={onEditCancel}
+                />
+              ) : (
+                <>
+                  {/* Show recovered content if available, otherwise show normal content */}
+                  {msg.recoveredContent &&
+                  msg.subtaskStatus === 'RUNNING' &&
+                  !msg.result?.blocks ? (
+                    renderRecoveredContent()
+                  ) : !isUserTypeMessage && msg.result?.blocks && msg.result.blocks.length > 0 ? (
+                    /* For AI messages with blocks data, use mixed content view to interleave text and tools */
+                    <>
+                      <MixedContentView
+                        thinking={msg.thinking ?? null}
+                        content={msg.content || ''}
+                        taskStatus={msg.subtaskStatus}
+                        theme={theme}
+                        blocks={msg.result.blocks}
+                      />
+                      <SourceReferences sources={msg.sources || msg.result?.sources || []} />
+                      <BubbleTools
+                        contentToCopy={msg.content || ''}
+                        onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
+                        tools={[
+                          {
+                            key: 'download',
+                            title: t('messages.download') || 'Download',
+                            icon: <Download className="h-4 w-4 text-text-muted" />,
+                            onClick: () => {
+                              const blob = new Blob([msg.content || ''], {
+                                type: 'text/plain;charset=utf-8',
+                              })
+                              const url = URL.createObjectURL(blob)
+                              const a = document.createElement('a')
+                              a.href = url
+                              a.download = 'message.md'
+                              a.click()
+                              URL.revokeObjectURL(url)
+                              trace.download(msg.type, msg.subtaskId)
+                            },
+                          },
+                        ]}
+                        feedback={feedback}
+                        onLike={handleLike}
+                        onDislike={handleDislike}
+                        feedbackLabels={{
+                          like: t('chat:messages.like') || 'Like',
+                          dislike: t('chat:messages.dislike') || 'Dislike',
+                        }}
+                        showRegenerate={(() => {
+                          const hasOnRegenerate = Boolean(onRegenerate)
+                          const isCompleted =
+                            msg.subtaskStatus === 'COMPLETED' ||
+                            msg.subtaskStatus === 'CANCELLED' ||
+                            msg.status === 'completed'
+                          const isNotRunning =
+                            msg.subtaskStatus !== 'RUNNING' &&
+                            msg.subtaskStatus !== 'PENDING' &&
+                            msg.subtaskStatus !== 'PROCESSING' &&
+                            msg.status !== 'streaming' &&
+                            msg.status !== 'pending'
+                          return (
+                            hasOnRegenerate &&
+                            !isGroupChat &&
+                            isLastAiMessage &&
+                            isCompleted &&
+                            isNotRunning
+                          )
+                        })()}
+                        onRegenerateClick={() => setIsRegeneratePopoverOpen(true)}
+                        isRegenerating={isRegenerating}
+                        renderRegenerateButton={(defaultButton, tooltipText) => (
+                          <RegenerateModelPopover
+                            open={isRegeneratePopoverOpen}
+                            onOpenChange={setIsRegeneratePopoverOpen}
+                            selectedTeam={selectedTeam ?? null}
+                            onSelectModel={model => {
+                              onRegenerate?.(msg, model)
+                            }}
+                            isLoading={isRegenerating}
+                            trigger={defaultButton}
+                            tooltipText={tooltipText}
+                          />
+                        )}
+                      />
+                    </>
+                  ) : (
+                    <>{renderMessageBody(msg, index)}</>
+                  )}
+                </>
+              )}
+              {/* Show incomplete notice for completed but incomplete messages */}
+              {msg.isIncomplete && msg.subtaskStatus !== 'RUNNING' && renderRecoveryNotice()}
+
+              {/* Show error message and retry button for failed messages */}
+              {!isUserTypeMessage && msg.status === 'error' && msg.error && (
+                <div className="mt-4">
+                  {/* Error message with details */}
+                  <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800">
+                    <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      {/* Error message based on error type */}
+                      <p className="text-sm text-red-800 dark:text-red-200">
+                        {getErrorDisplayMessage(msg.error, (key: string) => t(`chat:${key}`))}
+                      </p>
+                      {/* Detailed error message from backend - only show if different from main message */}
+                      {(() => {
+                        const parsedError = parseError(msg.error)
+                        // Don't show duplicate message for generic errors
+                        if (parsedError.type !== 'generic_error') {
+                          return (
+                            <p className="mt-1 text-xs text-red-600 dark:text-red-300 break-all">
+                              {msg.error}
+                            </p>
+                          )
+                        }
+                        return null
+                      })()}
+                    </div>
+                    {/* Action buttons: Retry and Copy */}
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      {/* Only show retry button for retryable errors */}
+                      {/* Container errors (OOM, container crash) are not retryable - user should start new task */}
+                      {onRetry &&
+                        (() => {
+                          const parsedError = parseError(msg.error)
+                          const isRetryable =
+                            parsedError.type !== 'container_oom' &&
+                            parsedError.type !== 'container_error'
+                          if (!isRetryable) return null
+                          return (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => onRetry(msg)}
+                                  className="h-7 w-7 !rounded-md bg-red-100 dark:bg-red-900/30 hover:!bg-red-200 dark:hover:!bg-red-900/50"
+                                >
+                                  <RefreshCw className="h-4 w-4 text-red-600 dark:text-red-400" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>{t('actions.retry') || '重试'}</TooltipContent>
+                            </Tooltip>
+                          )
+                        })()}
+                      <CopyButton
+                        content={msg.error}
+                        className="h-7 w-7 flex-shrink-0 !rounded-md bg-red-100 dark:bg-red-900/30 hover:!bg-red-200 dark:hover:!bg-red-900/50"
+                        tooltip={t('chat:errors.copy_error') || 'Copy error'}
+                        onCopySuccess={() =>
+                          trace.event('error-copy', {
+                            'error.message': msg.error?.substring(0, 100),
+                            ...(msg.subtaskId && { 'subtask.id': msg.subtaskId }),
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Show copy button for user messages - visible on hover */}
+              {isUserTypeMessage && !isEditing && (
+                <div className="absolute -bottom-8 left-2 flex items-center gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                  <CopyButton
+                    content={msg.content}
+                    className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
+                    tooltip={t('chat:actions.copy') || 'Copy'}
+                    onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
+                  />
+                  {/* Edit button - only show for non-group chat and when not streaming */}
+                  {!isGroupChat && !isStreaming && onEdit && (
+                    <EditButton
+                      onEdit={() => onEdit(msg)}
+                      className="h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec"
+                      tooltip={t('chat:actions.edit') || 'Edit'}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      </ShareTokenProvider>
     )
   },
   (prevProps, nextProps) => {
@@ -1607,6 +1704,25 @@ const MessageBubble = memo(
     const nextReasoningLen =
       nextProps.msg.reasoningContent?.length || nextProps.msg.result?.reasoning_content?.length || 0
 
+    // Compare blocks array length for mixed content rendering
+    const prevBlocksLen = prevProps.msg.result?.blocks?.length || 0
+    const nextBlocksLen = nextProps.msg.result?.blocks?.length || 0
+
+    // CRITICAL FIX: Compare blocks content hash (id + status + has_output)
+    // Comparing only length is not enough - we need to detect when block status/content changes
+    const prevBlocksHash =
+      prevProps.msg.result?.blocks
+        ?.map(
+          b => `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : b.content?.length || 0}`
+        )
+        .join('|') || ''
+    const nextBlocksHash =
+      nextProps.msg.result?.blocks
+        ?.map(
+          b => `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : b.content?.length || 0}`
+        )
+        .join('|') || ''
+
     const shouldSkipRender =
       prevProps.msg.content === nextProps.msg.content &&
       prevProps.msg.subtaskStatus === nextProps.msg.subtaskStatus &&
@@ -1616,6 +1732,7 @@ const MessageBubble = memo(
       prevProps.msg.isRecovered === nextProps.msg.isRecovered &&
       prevProps.msg.isIncomplete === nextProps.msg.isIncomplete &&
       prevProps.msg.isWaiting === nextProps.msg.isWaiting &&
+      prevProps.msg.result === nextProps.msg.result &&
       prevProps.isWaiting === nextProps.isWaiting &&
       prevProps.theme === nextProps.theme &&
       prevProps.onTextSelect === nextProps.onTextSelect &&
@@ -1625,6 +1742,8 @@ const MessageBubble = memo(
       prevThinkingLen === nextThinkingLen &&
       prevSourcesLen === nextSourcesLen &&
       prevReasoningLen === nextReasoningLen &&
+      prevBlocksLen === nextBlocksLen &&
+      prevBlocksHash === nextBlocksHash && // CRITICAL: Compare block content changes
       prevProps.msg.status === nextProps.msg.status &&
       prevProps.msg.error === nextProps.msg.error &&
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&

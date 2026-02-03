@@ -256,6 +256,14 @@ class TaskOperationsMixin:
         db.add(workspace)
 
         # Create Task JSON
+        # Build additional_skills label if provided
+        # Store as JSON string for skill names that user explicitly selected
+        additional_skills_label = None
+        if obj_in.additional_skills:
+            # Extract skill names from SkillRef objects
+            skill_names = [s.name for s in obj_in.additional_skills]
+            additional_skills_label = json_lib.dumps(skill_names)
+
         task_json = {
             "kind": "Task",
             "spec": {
@@ -299,6 +307,11 @@ class TaskOperationsMixin:
                     **(
                         {"api_key_name": obj_in.api_key_name}
                         if obj_in.api_key_name
+                        else {}
+                    ),
+                    **(
+                        {"additionalSkills": additional_skills_label}
+                        if additional_skills_label
                         else {}
                     ),
                 },
@@ -604,7 +617,7 @@ class TaskOperationsMixin:
         background_task_runner: Optional[Callable] = None,
     ) -> Dict[str, Any]:
         """
-        Cancel a running task.
+        Cancel a running task or close session for completed device tasks.
         """
         # Verify user owns this task
         task_dict = self.get_task_detail(db=db, task_id=task_id, user_id=user_id)
@@ -614,7 +627,59 @@ class TaskOperationsMixin:
         current_status = task_dict.get("status", "")
         final_states = ["COMPLETED", "FAILED", "CANCELLED", "DELETE"]
 
+        # Special handling for device tasks in final state: close session instead of error
         if current_status in final_states:
+            # Check if this is a device task
+            task_kind = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.id == task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active.is_(True),
+                )
+                .first()
+            )
+
+            if task_kind and task_kind.json:
+                task_crd = Task.model_validate(task_kind.json)
+                task_type = (
+                    task_crd.metadata.labels.get("task_type", "")
+                    if task_crd.metadata.labels
+                    else ""
+                )
+
+                # For device tasks (task_type == "task"), send close-session event
+                if task_type == "task":
+                    logger.info(
+                        f"Task {task_id} is in final state {current_status}, sending close-session event for device task"
+                    )
+                    from app.services.chat.ws_emitter import get_ws_emitter
+
+                    ws_emitter = get_ws_emitter()
+                    if ws_emitter:
+                        try:
+                            await ws_emitter.emit_to_user(
+                                user_id,
+                                "task:close-session",
+                                {"task_id": task_id},
+                            )
+                            logger.info(
+                                f"Sent task:close-session event for task {task_id}"
+                            )
+                            return {
+                                "message": "Session closed successfully",
+                                "status": current_status,
+                            }
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to send close-session event for task {task_id}: {str(e)}"
+                            )
+                            raise HTTPException(
+                                status_code=500,
+                                detail=f"Failed to close session: {str(e)}",
+                            ) from e
+
+            # Non-device tasks or failed to send close-session: return error as before
             logger.warning(
                 f"Task {task_id} is already in final state {current_status}, cannot cancel"
             )

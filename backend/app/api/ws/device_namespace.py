@@ -8,8 +8,13 @@ Device namespace for Socket.IO.
 This module implements the /local-executor namespace for local device connections.
 It handles device authentication, registration, heartbeat, and task execution.
 
+Authentication:
+- Supports both JWT Token and API Key authentication
+- API Key: Token starting with 'wg-' prefix (personal keys only)
+- JWT Token: Standard JWT token with user info
+
 Events:
-- connect: Device authenticates with user JWT token
+- connect: Device authenticates with user JWT token or API Key
 - device:register: Device registers itself with device_id and name
 - device:heartbeat: Device sends heartbeat every 30s
 - device:status: Device reports status (idle/busy)
@@ -30,6 +35,7 @@ import socketio
 from sqlalchemy.orm import Session
 
 from app.api.ws.decorators import trace_websocket_event
+from app.core.auth_utils import is_api_key, verify_api_key
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask, SubtaskStatus
 from app.schemas.device import (
@@ -37,6 +43,7 @@ from app.schemas.device import (
     DeviceOfflineEvent,
     DeviceOnlineEvent,
     DeviceRegisterPayload,
+    DeviceSlotUpdateEvent,
     DeviceStatusEvent,
     DeviceStatusPayload,
 )
@@ -452,12 +459,17 @@ class DeviceNamespace(socketio.AsyncNamespace):
         """
         Handle device connection.
 
-        Verifies JWT token and prepares for device registration.
+        Verifies JWT token or API Key and prepares for device registration.
+
+        Authentication:
+        - If token starts with 'wg-', treated as API Key (personal keys only)
+        - Otherwise, treated as JWT Token
 
         Args:
             sid: Socket ID
             environ: WSGI environ dict
             auth: Authentication data (expected: {"token": "..."})
+                  Token can be either JWT Token or API Key (starting with 'wg-')
 
         Raises:
             ConnectionRefusedError: If authentication fails
@@ -486,37 +498,64 @@ class DeviceNamespace(socketio.AsyncNamespace):
             logger.warning(f"[Device WS] Missing token in auth sid={sid}")
             raise ConnectionRefusedError("Missing authentication token")
 
-        # Verify token
-        user = verify_jwt_token(token)
-        if not user:
-            logger.warning(f"[Device WS] Invalid token sid={sid}")
-            raise ConnectionRefusedError("Invalid or expired token")
+        # Determine auth type and verify token
+        user = None
+        auth_type = ""
+        token_exp = None
 
-        # Extract token expiry
-        token_exp = get_token_expiry(token)
+        if is_api_key(token):
+            # API Key authentication
+            auth_type = "api_key"
+            with _db_session() as db:
+                user = verify_api_key(db, token)
+                if user:
+                    # Detach user from session to avoid DetachedInstanceError
+                    user_id = user.id
+                    user_name = user.user_name
+            if not user:
+                key_preview = token[:10] + "..." if len(token) > 10 else token
+                logger.warning(
+                    f"[Device WS] Invalid API key sid={sid}, key={key_preview}"
+                )
+                raise ConnectionRefusedError("Invalid or expired API key")
+            # API Key has no expiry (token_exp stays None)
+            token_exp = None
+        else:
+            # JWT Token authentication
+            auth_type = "jwt"
+            user = verify_jwt_token(token)
+            if not user:
+                logger.warning(f"[Device WS] Invalid JWT token sid={sid}")
+                raise ConnectionRefusedError("Invalid or expired token")
+            user_id = user.id
+            user_name = user.user_name
+            # Extract token expiry for JWT
+            token_exp = get_token_expiry(token)
 
         # Save user info to session (device_id will be added on register)
         await self.save_session(
             sid,
             {
-                "user_id": user.id,
-                "user_name": user.user_name,
+                "user_id": user_id,
+                "user_name": user_name,
                 "request_id": request_id,
                 "token_exp": token_exp,
                 "auth_token": token,
+                "auth_type": auth_type,
                 "device_id": None,  # Set on device:register
                 "registered": False,
             },
         )
 
-        set_user_context(user_id=str(user.id), user_name=user.user_name)
+        set_user_context(user_id=str(user_id), user_name=user_name)
 
         # Join user room for device-related notifications
-        user_room = f"user:{user.id}"
+        user_room = f"user:{user_id}"
         await self.enter_room(sid, user_room)
 
         logger.info(
-            f"[Device WS] Connected user={user.id} ({user.user_name}) sid={sid}, awaiting registration"
+            f"[Device WS] Connected user={user_id} ({user_name}) via {auth_type} "
+            f"sid={sid}, awaiting registration"
         )
 
     async def on_disconnect(self, sid: str):
@@ -610,7 +649,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         logger.info(
             f"[Device WS] device:register user={user_id}, device_id={payload.device_id}, "
-            f"name={payload.name}"
+            f"name={payload.name}, executor_version={payload.executor_version}"
         )
 
         # Database operation: quick in, quick out
@@ -624,6 +663,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             device_id=payload.device_id,
             socket_id=sid,
             name=payload.name,
+            executor_version=payload.executor_version,
         )
 
         # Update session with device_id
@@ -672,14 +712,23 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if session_device_id != payload.device_id:
             return {"error": "Device ID mismatch"}
 
-        # Refresh Redis TTL
-        await device_service.refresh_device_heartbeat(user_id, payload.device_id)
+        # Refresh Redis TTL and update running_task_ids
+        await device_service.refresh_device_heartbeat(
+            user_id,
+            payload.device_id,
+            payload.running_task_ids,
+            payload.executor_version,
+        )
 
         # Database operation: quick in, quick out
         _update_device_heartbeat(user_id, payload.device_id)
 
+        # Broadcast slot update to user
+        await self._broadcast_device_slot_update(user_id, payload.device_id)
+
         logger.debug(
-            f"[Device WS] Heartbeat received: user={user_id}, device={payload.device_id}"
+            f"[Device WS] Heartbeat received: user={user_id}, device={payload.device_id}, "
+            f"running_tasks={len(payload.running_task_ids)}"
         )
 
         return {"success": True}
@@ -786,6 +835,25 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     f"delta_len={len(result.delta_content)}, has_thinking={result.has_thinking}"
                 )
 
+            # Send streaming progress to DingTalk if callback info exists
+            try:
+                from app.services.channels.dingtalk.callback import (
+                    dingtalk_callback_service,
+                )
+
+                # Build content for DingTalk - use full_content which includes everything
+                # The emitter will handle streaming updates
+                if result.full_content or result.thinking:
+                    await dingtalk_callback_service.send_progress(
+                        task_id=result.task_id,
+                        subtask_id=subtask_id,
+                        content=result.full_content,
+                        offset=result.new_offset,
+                        thinking=result.thinking,
+                    )
+            except Exception as e:
+                logger.debug(f"[Device WS] DingTalk progress send skipped: {e}")
+
         logger.debug(
             f"[Device WS] Progress received: subtask={subtask_id}, progress={data.get('progress', 0)}"
         )
@@ -804,6 +872,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         Handle task:complete event from device.
 
         Marks subtask as completed/failed and emits chat:done event.
+        Also sends result to DingTalk if the task was initiated from DingTalk.
 
         Args:
             sid: Socket ID
@@ -860,9 +929,28 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 progress=100,
             )
 
+        # Send result to DingTalk if the task was initiated from DingTalk
+        try:
+            from app.services.channels.dingtalk.callback import (
+                dingtalk_callback_service,
+            )
+
+            await dingtalk_callback_service.send_task_result(
+                task_id=result.task_id,
+                subtask_id=subtask_id,
+                content=result.content,
+                status=result.status,
+                error_message=result.error_message,
+            )
+        except Exception as e:
+            logger.warning(f"[Device WS] Failed to send DingTalk callback: {e}")
+
         logger.info(
             f"[Device WS] Task complete: subtask={subtask_id}, status={result.status}"
         )
+
+        # Broadcast slot update after task completion
+        await self._broadcast_device_slot_update(user_id, device_id)
 
         return {"success": True}
 
@@ -930,6 +1018,44 @@ class DeviceNamespace(socketio.AsyncNamespace):
         logger.debug(
             f"[Device WS] Broadcast device:status to user:{user_id}, status={status}"
         )
+
+    async def _broadcast_device_slot_update(self, user_id: int, device_id: str) -> None:
+        """
+        Broadcast device:slot_update event to user room via chat namespace.
+
+        Queries current slot usage and emits the update.
+        """
+        from app.core.socketio import get_sio
+        from app.schemas.device import DeviceRunningTask
+
+        try:
+            with _db_session() as db:
+                slot_info = await device_service.get_device_slot_usage_async(
+                    db, user_id, device_id
+                )
+
+            sio = get_sio()
+            event_data = DeviceSlotUpdateEvent(
+                device_id=device_id,
+                slot_used=slot_info["used"],
+                slot_max=slot_info["max"],
+                running_tasks=[
+                    DeviceRunningTask(**task) for task in slot_info["running_tasks"]
+                ],
+            ).model_dump()
+
+            await sio.emit(
+                "device:slot_update",
+                event_data,
+                room=f"user:{user_id}",
+                namespace="/chat",
+            )
+            logger.debug(
+                f"[Device WS] Broadcast device:slot_update to user:{user_id}, "
+                f"slot_used={slot_info['used']}"
+            )
+        except Exception as e:
+            logger.error(f"[Device WS] Error broadcasting slot update: {e}")
 
 
 # Factory function to create the namespace

@@ -86,6 +86,8 @@ class WebSocketEmitter:
         content: str,
         offset: int,
         result: Optional[Dict[str, Any]] = None,
+        block_id: Optional[str] = None,
+        block_offset: Optional[int] = None,
     ) -> None:
         """
         Emit chat:chunk event to task room.
@@ -96,12 +98,23 @@ class WebSocketEmitter:
             content: Content chunk (for text streaming)
             offset: Current offset in the full response
             result: Optional full result data (for executor tasks with thinking/workbench)
+            block_id: Optional block ID for text block streaming (append content to specific block)
+            block_offset: Optional character offset within the current text block
         """
         payload = {
             "subtask_id": subtask_id,
             "content": content,
             "offset": offset,
+            "task_id": task_id,  # Add task_id for page refresh recovery
         }
+        # Include block_id if provided (for text block streaming)
+        if block_id is not None:
+            payload["block_id"] = block_id
+
+        # Include block_offset if provided (for incremental rendering)
+        if block_offset is not None:
+            payload["block_offset"] = block_offset
+
         # Include full result if provided (for executor tasks)
         if result is not None:
             payload["result"] = result
@@ -168,6 +181,7 @@ class WebSocketEmitter:
         payload = {
             "subtask_id": subtask_id,
             "error": error,
+            "task_id": task_id,  # Add task_id for page refresh recovery
         }
         if error_type is not None:
             payload["type"] = error_type
@@ -805,6 +819,39 @@ class WebSocketEmitter:
         logger.debug(
             f"[WS] emit flow:execution_update SENT to room user:{user_id} execution={execution_id} status={status}"
         )
+
+    # ============================================================
+    # Custom Events (for Block Architecture and other extensions)
+    # ============================================================
+
+    async def emit_custom_event(
+        self,
+        task_id: int,
+        event_type: str,
+        data: Dict[str, Any],
+        skip_sid: Optional[str] = None,
+    ) -> None:
+        """
+        Emit a custom event to task room.
+
+        This is a generic method for emitting custom event types that don't have
+        dedicated methods. Primarily used for Block architecture events
+        (chat:block_created, chat:block_updated).
+
+        Args:
+            task_id: Task ID
+            event_type: Event type (e.g., "chat:block_created", "chat:block_updated")
+            data: Event payload data
+            skip_sid: Optional socket ID to exclude
+        """
+        await self.sio.emit(
+            event_type,
+            data,
+            room=f"task:{task_id}",
+            skip_sid=skip_sid,
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit {event_type} task={task_id}")
 
 
 # Global emitter instance (lazy initialized)

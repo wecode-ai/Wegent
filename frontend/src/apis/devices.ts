@@ -13,6 +13,14 @@ import { apiClient } from './client'
 
 export type DeviceStatus = 'online' | 'offline' | 'busy'
 
+export interface DeviceRunningTask {
+  task_id: number
+  subtask_id: number
+  title: string
+  status: string
+  created_at?: string
+}
+
 export interface DeviceInfo {
   id: number
   device_id: string
@@ -21,6 +29,13 @@ export interface DeviceInfo {
   is_default: boolean
   last_heartbeat?: string
   capabilities?: string[]
+  slot_used: number
+  slot_max: number
+  running_tasks: DeviceRunningTask[]
+  // Version information
+  executor_version: string | null
+  latest_version: string | null
+  update_available: boolean
 }
 
 export interface DeviceListResponse {
@@ -66,5 +81,19 @@ export const deviceApis = {
    */
   async deleteDevice(deviceId: string): Promise<{ message: string }> {
     return apiClient.delete(`/devices/${encodeURIComponent(deviceId)}`)
+  },
+
+  /**
+   * Cancel a running task or close session for completed tasks.
+   *
+   * - For running tasks: This will pause the task execution
+   * - For completed tasks: This will close the session and free up the device slot
+   *
+   * The backend automatically determines the action based on task status.
+   *
+   * @param taskId - Task ID to cancel/close
+   */
+  async cancelTask(taskId: number): Promise<{ message: string; status: string }> {
+    return apiClient.post(`/tasks/${taskId}/cancel`)
   },
 }

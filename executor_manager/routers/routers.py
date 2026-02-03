@@ -665,7 +665,7 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
                 tracker = get_running_task_tracker()
                 heartbeat_mgr = get_heartbeat_manager()
 
-                heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
+                await heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
                 logger.info(
                     f"[DeleteExecutor] Removing task {task_id} from RunningTaskTracker "
                     f"(source: delete_executor, executor_name={request.executor_name})"
@@ -869,7 +869,7 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
                 tracker = get_running_task_tracker()
 
                 # Delete heartbeat key
-                heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
+                await heartbeat_mgr.delete_heartbeat(task_id_str, HeartbeatType.TASK)
                 # Remove from running tasks tracker
                 logger.info(
                     f"[CancelTask] Removing task {request.task_id} from RunningTaskTracker "
@@ -917,7 +917,7 @@ async def task_heartbeat(task_id: str, http_request: Request):
     )
 
     heartbeat_mgr = get_heartbeat_manager()
-    success = heartbeat_mgr.update_heartbeat(task_id, HeartbeatType.TASK)
+    success = await heartbeat_mgr.update_heartbeat(task_id, HeartbeatType.TASK)
 
     if not success:
         logger.warning(f"[TaskAPI] Failed to update heartbeat for task {task_id}")

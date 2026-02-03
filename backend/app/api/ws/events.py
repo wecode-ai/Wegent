@@ -98,6 +98,17 @@ class ContextItem(BaseModel):
     data: Dict[str, Any] = Field(..., description="Context-specific data")
 
 
+class SkillRef(BaseModel):
+    """Skill reference with full identification info for backend.
+
+    Backend needs name + namespace + is_public to uniquely identify a skill.
+    """
+
+    name: str = Field(..., description="Skill name")
+    namespace: str = Field(..., description="Skill namespace")
+    is_public: bool = Field(..., description="Whether the skill is public")
+
+
 class ChatSendPayload(BaseModel):
     """Payload for chat:send event."""
 
@@ -143,8 +154,9 @@ class ChatSendPayload(BaseModel):
     knowledge_base_id: Optional[int] = Field(
         None, description="Knowledge base ID for knowledge type tasks"
     )
-    preload_skills: Optional[List[str]] = Field(
-        None, description="List of skill names to preload into system prompt"
+    additional_skills: Optional[List[SkillRef]] = Field(
+        None,
+        description="Additional skills with full info (name, namespace, is_public)",
     )
     # Local device execution
     device_id: Optional[str] = Field(
@@ -197,6 +209,10 @@ class TaskJoinPayload(BaseModel):
     """Payload for task:join event."""
 
     task_id: int = Field(..., description="Task ID to join")
+    after_message_id: Optional[int] = Field(
+        None,
+        description="If provided, only return messages after this message_id (for incremental sync on reconnect)",
+    )
 
 
 class TaskLeavePayload(BaseModel):
@@ -239,6 +255,7 @@ class ChatChunkPayload(BaseModel):
     subtask_id: int
     content: str
     offset: int
+    task_id: Optional[int] = None  # Add task_id for page refresh recovery
     sources: Optional[List[SourceReference]] = Field(
         None, description="Knowledge base source references (for RAG citations)"
     )
@@ -529,6 +546,9 @@ class TaskJoinAck(BaseModel):
     """ACK response for task:join event."""
 
     streaming: Optional[Dict[str, Any]] = None
+    subtasks: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Subtasks data for immediate message sync"
+    )
     error: Optional[str] = None
 
 

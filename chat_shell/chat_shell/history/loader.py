@@ -220,20 +220,14 @@ async def _load_history_from_remote(
         )
 
         # Convert Message objects to dict format expected by the agent
+        # Pass through all fields from the API response to preserve extra data
+        # like loaded_skills for skill state restoration
         history: list[dict[str, Any]] = []
         for msg in messages:
             # RemoteHistoryStore returns Message objects
+            # Use to_dict() to get all fields and pass through directly
             msg_dict = msg.to_dict()
-
-            # The Backend API now handles username prefix for group chat
-            # So we just use the content as-is
-
-            history.append(
-                {
-                    "role": msg_dict.get("role", "user"),
-                    "content": msg_dict.get("content", ""),
-                }
-            )
+            history.append(msg_dict)
 
         logger.debug(
             "[history] _load_history_from_remote: SUCCESS loaded %d messages "
@@ -458,17 +452,30 @@ def _build_history_message(
                         )
                     break
 
-        # Combine all text parts: attachments first, then knowledge bases
-        all_text_parts = attachment_text_parts + kb_text_parts
-        if all_text_parts:
-            combined_prefix = "".join(all_text_parts)
+        # Combine all text parts with XML tags:
+        # - attachments wrapped in <attachment> tag
+        # - knowledge bases wrapped in <knowledge_base> tag
+        combined_prefix = ""
+        if attachment_text_parts:
+            combined_prefix += (
+                "<attachment>\n" + "".join(attachment_text_parts) + "</attachment>\n\n"
+            )
+        if kb_text_parts:
+            combined_prefix += (
+                "<knowledge_base>\n" + "".join(kb_text_parts) + "</knowledge_base>\n\n"
+            )
+
+        if combined_prefix:
             text_content = f"{combined_prefix}{text_content}"
 
         if vision_parts:
             # Add image metadata headers to text content for reference
+            # Wrap image metadata in <attachment> tag for consistency with first upload
             if image_metadata_headers:
-                headers_text = "\n\n".join(image_metadata_headers) + "\n\n"
-                text_content = f"{headers_text}{text_content}"
+                headers_text = "\n\n".join(image_metadata_headers)
+                text_content = (
+                    f"<attachment>\n{headers_text}\n</attachment>\n\n{text_content}"
+                )
             return {
                 "role": "user",
                 "content": [{"type": "text", "text": text_content}, *vision_parts],
@@ -479,7 +486,17 @@ def _build_history_message(
         if not subtask.result or not isinstance(subtask.result, dict):
             return None
         content = subtask.result.get("value", "")
-        return {"role": "assistant", "content": content} if content else None
+        if not content:
+            return None
+
+        msg = {"role": "assistant", "content": content}
+
+        # Include loaded_skills for skill state restoration across conversation turns
+        loaded_skills = subtask.result.get("loaded_skills")
+        if loaded_skills:
+            msg["loaded_skills"] = loaded_skills
+
+        return msg
 
     return None
 
@@ -534,7 +551,13 @@ def _build_image_metadata_header(context) -> str:
 
 
 def _build_document_text_prefix(context) -> str:
-    """Build a text prefix for a document context with attachment metadata."""
+    """Build a text prefix for a document context (without XML tags).
+
+    Note: This returns raw content. The caller is responsible for wrapping
+    multiple attachments in a single <attachment> XML tag.
+
+    Includes attachment metadata (id, filename, mime_type, file_size, url).
+    """
     if not context.extracted_text:
         return ""
 
@@ -554,7 +577,11 @@ def _build_document_text_prefix(context) -> str:
 
 
 def _build_knowledge_base_text_prefix(context) -> str:
-    """Build a text prefix for a knowledge base context."""
+    """Build a text prefix for a knowledge base context (without XML tags).
+
+    Note: This returns raw content. The caller is responsible for wrapping
+    multiple knowledge base contents in a single <knowledge_base> XML tag.
+    """
     if not context.extracted_text:
         return ""
 
@@ -673,6 +700,8 @@ def get_knowledge_base_meta_prompt(
 
     kb_list_str = "\n".join(kb_lines)
 
+    # Return content without leading newline since the template handles formatting
+    # The content will be injected into the {kb_meta_list} placeholder in KB_PROMPT templates
     prompt = f"""
 Available Knowledge Bases (from conversation context):
 {kb_list_str}

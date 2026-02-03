@@ -155,6 +155,7 @@ class HTTPAdapter(ChatInterface):
             "skill_names": request.skill_names,
             "skill_configs": request.skill_configs,
             "preload_skills": request.preload_skills,
+            "user_selected_skills": request.user_selected_skills,  # Skills explicitly chosen by user
             "knowledge_base_ids": request.knowledge_base_ids,
             "document_ids": request.document_ids,
             "is_user_selected_kb": request.is_user_selected_kb,
@@ -165,6 +166,9 @@ class HTTPAdapter(ChatInterface):
             # Subscription flag for SilentExitTool injection
             "is_subscription": request.is_subscription,
         }
+
+        # KB configs (max_calls, exempt_calls, name) are now fetched by chat_shell from Backend API
+        # No need to inject them via metadata
 
         logger.info(
             "[HTTP_ADAPTER] Building metadata: is_subscription=%s, task_id=%d, subtask_id=%d",
@@ -469,27 +473,34 @@ class HTTPAdapter(ChatInterface):
                     text = data.get("text", "")
                     if text:
                         event_data["content"] = text
+                    # Extract block_id for text block streaming
+                    if data.get("block_id"):
+                        event_data["block_id"] = data["block_id"]
+                    # Extract block_offset for incremental rendering
+                    if data.get("block_offset") is not None:
+                        event_data["block_offset"] = data["block_offset"]
+                    # Extract result with blocks for real-time mixed content rendering
+                    # chat_shell's CHUNK events include the full blocks array for streaming display
+                    if data.get("result"):
+                        event_data["result"] = data["result"]
                 elif event_type == ChatEventType.THINKING:
                     # Thinking content is in "text" field
                     text = data.get("text", "")
                     if text:
                         event_data["content"] = text
                 elif event_type == ChatEventType.DONE:
-                    # Done event - chat_shell's ResponseDone has {id, usage, stop_reason, sources, silent_exit}
-                    # The actual response content is NOT in this event, it's accumulated from CHUNK events
-                    # We pass through the metadata (usage, stop_reason, sources, silent_exit) and let the caller set 'value'
-                    event_data["result"] = {
-                        "usage": data.get("usage"),
-                        "stop_reason": data.get("stop_reason"),
-                        "id": data.get("id"),
-                        "sources": data.get("sources"),  # Knowledge base citations
-                        "silent_exit": data.get(
-                            "silent_exit"
-                        ),  # Silent exit flag for subscription tasks
-                        "silent_exit_reason": data.get(
-                            "silent_exit_reason"
-                        ),  # Reason for silent exit
-                    }
+                    # Done event - pass through the entire data object as result
+                    # This avoids having to manually extract each field and ensures
+                    # new fields from chat_shell are automatically included
+                    # The caller will merge this with accumulated response content
+                    event_data["result"] = data
+                    # Log the complete DONE event received from chat_shell
+                    logger.info(
+                        "[HTTP_ADAPTER] Received DONE event from chat_shell: "
+                        "data_keys=%s, loaded_skills=%s",
+                        list(data.keys()),
+                        data.get("loaded_skills"),
+                    )
                 elif event_type in (
                     ChatEventType.TOOL_START,
                     ChatEventType.TOOL_RESULT,
@@ -501,6 +512,7 @@ class HTTPAdapter(ChatInterface):
                     event_data["display_name"] = data.get(
                         "display_name", data.get("name", "")
                     )
+                    event_data["blocks"] = data.get("blocks", [])
                     if event_type == ChatEventType.TOOL_START:
                         event_data["input"] = data.get("input", {})
                     else:  # TOOL_RESULT
@@ -511,8 +523,16 @@ class HTTPAdapter(ChatInterface):
                     logger.info(
                         "[HTTP_ADAPTER] Parsed %s event: data=%s, event_data=%s",
                         event_type.value,
-                        {k: v for k, v in data.items() if k != "output"},
-                        {k: v for k, v in event_data.items() if k != "output"},
+                        {
+                            k: v
+                            for k, v in data.items()
+                            if k not in ("output", "blocks")
+                        },
+                        {
+                            k: v
+                            for k, v in event_data.items()
+                            if k not in ("output", "blocks")
+                        },
                     )
                 elif event_type == ChatEventType.ERROR:
                     # Error event from chat_shell has {code, message, details} format

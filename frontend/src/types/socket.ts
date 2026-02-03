@@ -34,6 +34,10 @@ export const ServerEvents = {
   CHAT_ERROR: 'chat:error',
   CHAT_CANCELLED: 'chat:cancelled',
 
+  // Block events for mixed content rendering (to task room)
+  CHAT_BLOCK_CREATED: 'chat:block_created',
+  CHAT_BLOCK_UPDATED: 'chat:block_updated',
+
   // Non-streaming messages (to task room, exclude sender)
   CHAT_MESSAGE: 'chat:message',
   CHAT_BOT_COMPLETE: 'chat:bot_complete',
@@ -69,6 +73,7 @@ export const ServerEvents = {
   DEVICE_ONLINE: 'device:online',
   DEVICE_OFFLINE: 'device:offline',
   DEVICE_STATUS: 'device:status',
+  DEVICE_SLOT_UPDATE: 'device:slot_update',
 } as const
 
 // Client -> Server Skill events
@@ -114,6 +119,17 @@ export interface ChatSendPayload {
   knowledge_base_id?: number
   // Local device execution
   device_id?: string // Local device ID for task execution (if undefined, use cloud executor)
+  // Skill selection
+  /** Skill names to preload (for Chat Shell - prompts injected into system message) */
+  preload_skill_names?: string[]
+  /** Additional skill names (for other shells - downloaded to executor) */
+  additional_skill_names?: string[]
+  /** Additional skills with full info (name, namespace, is_public) - preferred over additional_skill_names */
+  additional_skills?: Array<{
+    name: string
+    namespace: string
+    is_public: boolean
+  }>
 }
 
 export interface ChatCancelPayload {
@@ -134,6 +150,8 @@ export interface ChatRetryPayload {
 
 export interface TaskJoinPayload {
   task_id: number
+  /** If provided, only return messages after this message_id (for incremental sync on reconnect) */
+  after_message_id?: number
 }
 
 export interface TaskLeavePayload {
@@ -174,6 +192,12 @@ export interface ChatChunkPayload {
   subtask_id: number
   content: string
   offset: number
+  /** Task ID for page refresh recovery */
+  task_id?: number
+  /** Optional block ID for text block streaming (append content to specific block) */
+  block_id?: string
+  /** Optional block offset for offset-based content merging within a specific block */
+  block_offset?: number
   /** Full result data for executor tasks (contains thinking, workbench) */
   result?: {
     value?: string
@@ -186,6 +210,18 @@ export interface ChatChunkPayload {
     reasoning_content?: string
     /** Incremental reasoning chunk for streaming */
     reasoning_chunk?: string
+    /** Message blocks for mixed rendering (new format) */
+    blocks?: Array<{
+      id: string
+      type: 'text' | 'tool' | 'thinking' | 'error'
+      content?: string
+      tool_use_id?: string
+      tool_name?: string
+      tool_input?: Record<string, unknown>
+      tool_output?: unknown
+      status?: 'pending' | 'streaming' | 'done' | 'error'
+      timestamp?: number
+    }>
   }
   /** Knowledge base source references (for RAG citations) */
   sources?: SourceReference[]
@@ -195,7 +231,27 @@ export interface ChatDonePayload {
   task_id?: number
   subtask_id: number
   offset: number
-  result: Record<string, unknown>
+  result: Record<string, unknown> & {
+    value?: string
+    thinking?: unknown[]
+    workbench?: Record<string, unknown>
+    sources?: SourceReference[]
+    shell_type?: string
+    reasoning_content?: string
+    /** Message blocks for mixed rendering (new format) */
+    blocks?: Array<{
+      id: string
+      type: 'text' | 'tool' | 'thinking' | 'error'
+      content?: string
+      tool_use_id?: string
+      tool_name?: string
+      tool_input?: Record<string, unknown>
+      tool_output?: unknown
+      status?: 'pending' | 'streaming' | 'done' | 'error'
+      timestamp?: number
+    }>
+    error?: string // Error message if result represents error completion
+  }
   /** Message ID for ordering (primary sort key) */
   message_id?: number
   /** Knowledge base source references (for RAG citations) */
@@ -208,6 +264,8 @@ export interface ChatErrorPayload {
   type?: string
   /** Message ID for ordering (primary sort key) */
   message_id?: number
+  /** Task ID for page refresh recovery */
+  task_id?: number
 }
 
 export interface ChatCancelledPayload {
@@ -215,6 +273,32 @@ export interface ChatCancelledPayload {
   subtask_id: number
 }
 
+/**
+ * Block event payloads for mixed content rendering
+ */
+export interface ChatBlockCreatedPayload {
+  task_id: number
+  subtask_id: number
+  block: {
+    id: string
+    type: 'text' | 'tool' | 'thinking' | 'error'
+    content?: string
+    tool_use_id?: string
+    tool_name?: string
+    tool_input?: Record<string, unknown>
+    status?: 'pending' | 'streaming' | 'done' | 'error'
+    timestamp?: number
+  }
+}
+
+export interface ChatBlockUpdatedPayload {
+  task_id: number
+  subtask_id: number
+  block_id: string
+  content?: string
+  tool_output?: unknown
+  status?: 'pending' | 'streaming' | 'done' | 'error'
+}
 export interface ChatMessageAttachment {
   id: number
   original_filename: string
@@ -435,6 +519,8 @@ export interface TaskJoinAck {
     offset: number
     cached_content: string
   }
+  /** Subtasks data for immediate message sync (same format as task detail API) */
+  subtasks?: Array<Record<string, unknown>>
   error?: string
 }
 
@@ -574,6 +660,23 @@ export interface DeviceOfflinePayload {
 export interface DeviceStatusPayload {
   device_id: string
   status: DeviceStatus
+}
+
+/** Running task info for slot updates */
+export interface DeviceRunningTaskWs {
+  task_id: number
+  subtask_id: number
+  title: string
+  status: string
+  created_at?: string
+}
+
+/** Payload for device:slot_update event */
+export interface DeviceSlotUpdatePayload {
+  device_id: string
+  slot_used: number
+  slot_max: number
+  running_tasks: DeviceRunningTaskWs[]
 }
 
 /**

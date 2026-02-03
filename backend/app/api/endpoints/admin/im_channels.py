@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.dependencies import get_db
 from app.core.security import get_admin_user
@@ -367,6 +368,13 @@ async def update_im_channel(
     current_json["spec"] = spec
     channel.json = current_json
     channel.updated_at = datetime.now()
+    # Mark JSON field as modified for SQLAlchemy to detect the change
+    flag_modified(channel, "json")
+
+    # Mark JSON field as modified to ensure SQLAlchemy detects the change
+    from sqlalchemy.orm.attributes import flag_modified
+
+    flag_modified(channel, "json")
 
     db.commit()
     db.refresh(channel)
@@ -488,6 +496,8 @@ async def toggle_im_channel(
     current_json["spec"] = spec
     channel.json = current_json
     channel.updated_at = datetime.now()
+    # Mark JSON field as modified for SQLAlchemy to detect the change
+    flag_modified(channel, "json")
 
     db.commit()
     db.refresh(channel)

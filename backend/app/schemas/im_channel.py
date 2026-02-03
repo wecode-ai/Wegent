@@ -126,6 +126,10 @@ class IMChannelStatus(BaseModel):
     )
 
 
+# User mapping mode literals
+UserMappingMode = Literal["staff_id", "email", "select_user"]
+
+
 # Channel-specific config schemas for documentation and validation
 class DingTalkChannelConfig(BaseModel):
     """Configuration schema for DingTalk channel."""
@@ -134,6 +138,20 @@ class DingTalkChannelConfig(BaseModel):
     client_secret: str = Field(..., description="DingTalk application Client secret")
     use_ai_card: bool = Field(
         default=True, description="Use AI Card for streaming responses"
+    )
+    # User mapping mode: how to map DingTalk users to Wegent users
+    # - "staff_id": Use DingTalk staff_id as username (default)
+    # - "email": Match user by email address
+    # - "select_user": Map all DingTalk users to a specific Wegent user
+    user_mapping_mode: UserMappingMode = Field(
+        default="select_user",
+        description="User mapping mode: staff_id, email, or select_user",
+    )
+    # User mapping config: additional configuration based on mode
+    # For "select_user" mode: {"target_user_id": 123}
+    user_mapping_config: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="User mapping configuration. For select_user mode: {target_user_id: int}",
     )
 
 

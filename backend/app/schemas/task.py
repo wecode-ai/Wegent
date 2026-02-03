@@ -13,6 +13,17 @@ from app.schemas.team import TeamInDB
 from app.schemas.user import UserInDB
 
 
+class SkillRef(BaseModel):
+    """Skill reference with full identification info.
+
+    Backend needs name + namespace + is_public to uniquely identify a skill.
+    """
+
+    name: str
+    namespace: str
+    is_public: bool
+
+
 class TaskApp(BaseModel):
     """App preview information (set by expose_service tool when service starts)"""
 
@@ -76,6 +87,10 @@ class TaskCreate(BaseModel):
     )
     # API key name field
     api_key_name: Optional[str] = None  # API key name used for this request
+
+    # Skill selection (user-selected skills for this message)
+    # Backend determines preload vs download based on executor type
+    additional_skills: Optional[List[SkillRef]] = None
 
 
 class TaskUpdate(BaseModel):
@@ -149,6 +164,7 @@ class TaskDetail(BaseModel):
     app: Optional[TaskApp] = (
         None  # App preview information (set by expose_service tool)
     )
+    device_id: Optional[str] = None  # Device ID used for execution (for task history)
 
     class Config:
         from_attributes = True
@@ -217,3 +233,17 @@ class PipelineStageInfo(BaseModel):
     current_stage_name: str  # Name of current stage (bot name)
     is_pending_confirmation: bool  # Whether waiting for user confirmation
     stages: list[dict]  # List of {index, name, require_confirmation, status}
+
+
+class TaskSkillsResponse(BaseModel):
+    """Response for GET /tasks/{task_id}/skills endpoint.
+
+    Returns all skills associated with a task through the chain:
+    task → team → bots → ghosts → skills
+    """
+
+    task_id: int
+    team_id: Optional[int] = None
+    team_namespace: str = "default"
+    skills: List[str] = []  # All bot skills (deduplicated)
+    preload_skills: List[str] = []  # Skills to preload

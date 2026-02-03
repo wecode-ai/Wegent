@@ -10,6 +10,7 @@ These endpoints are intended for service-to-service communication.
 """
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,6 +18,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+
+# Constants for document reading pagination
+DEFAULT_READ_DOC_LIMIT = 50_000  # Default characters to return
+MAX_READ_DOC_LIMIT = 500_000  # Maximum characters allowed per request
 
 logger = logging.getLogger(__name__)
 
@@ -151,48 +156,59 @@ async def internal_retrieve(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-class KnowledgeBaseSizeRequest(BaseModel):
-    """Request for getting knowledge base size."""
+class KnowledgeBaseInfoRequest(BaseModel):
+    """Request for getting knowledge base information."""
 
     knowledge_base_ids: list[int] = Field(..., description="List of knowledge base IDs")
 
 
-class KnowledgeBaseSizeInfo(BaseModel):
-    """Size information for a single knowledge base."""
+class KnowledgeBaseInfo(BaseModel):
+    """Complete information for a single knowledge base.
+
+    Includes size information, configuration, and metadata needed by chat_shell
+    for intelligent injection strategy and call limit enforcement.
+    """
 
     id: int
     total_file_size: int  # Total file size in bytes
     document_count: int  # Number of active documents
     estimated_tokens: int  # Estimated token count (file_size / 4)
+    max_calls_per_conversation: int  # Maximum tool calls allowed
+    exempt_calls_before_check: int  # Calls exempt from token checking
+    name: str  # Knowledge base name
+    rag_enabled: bool  # Whether RAG retrieval is configured (has retriever)
 
 
-class KnowledgeBaseSizeResponse(BaseModel):
-    """Response for knowledge base size query."""
+class KnowledgeBaseInfoResponse(BaseModel):
+    """Response for knowledge base info query."""
 
-    items: list[KnowledgeBaseSizeInfo]
+    items: list[KnowledgeBaseInfo]
     total_file_size: int  # Sum of all KB sizes
     total_estimated_tokens: int  # Sum of all estimated tokens
 
 
-@router.post("/kb-size", response_model=KnowledgeBaseSizeResponse)
-async def get_knowledge_base_size(
-    request: KnowledgeBaseSizeRequest,
+@router.post("/kb-size", response_model=KnowledgeBaseInfoResponse)
+async def get_knowledge_base_info(
+    request: KnowledgeBaseInfoRequest,
     db: Session = Depends(get_db),
 ):
     """
-    Get size information for knowledge bases.
+    Get complete information for knowledge bases.
 
-    This endpoint returns the total file size and estimated token count
-    for the specified knowledge bases. Used by chat_shell to decide
-    whether to use direct injection or RAG retrieval.
+    This endpoint returns size information, configuration, and metadata
+    for the specified knowledge bases. Used by chat_shell for:
+    1. Deciding whether to use direct injection or RAG retrieval
+    2. Enforcing tool call limits per KB configuration
+    3. Displaying KB names in logs and UI
 
     Args:
         request: Request with knowledge base IDs
         db: Database session
 
     Returns:
-        Size information for each knowledge base
+        Complete information for each knowledge base
     """
+    from app.models.kind import Kind
     from app.services.knowledge import KnowledgeService
 
     items = []
@@ -201,17 +217,64 @@ async def get_knowledge_base_size(
 
     for kb_id in request.knowledge_base_ids:
         try:
-            file_size = KnowledgeService.get_total_file_size(db, kb_id)
-            doc_count = KnowledgeService.get_active_document_count(db, kb_id)
-            # Estimate tokens: approximately 4 characters per token for most models
-            estimated_tokens = file_size // 4
+            # Get file size, extracted text length, and document count in one query
+            stats = KnowledgeService.get_active_document_text_length_stats(db, kb_id)
+            file_size = stats.file_size_total
+            doc_count = stats.active_document_count
+            # Estimate tokens using extracted text length (better proxy than raw file size)
+            # tested with real cases
+            estimated_tokens = int(stats.text_length_total * 1.5)
+
+            # Get KB configuration from Kind spec
+            kb_kind = (
+                db.query(Kind)
+                .filter(Kind.id == kb_id, Kind.kind == "KnowledgeBase")
+                .first()
+            )
+
+            if kb_kind:
+                spec = kb_kind.json.get("spec", {})
+                max_calls = spec.get("maxCallsPerConversation", 10)
+                exempt_calls = spec.get("exemptCallsBeforeCheck", 5)
+                kb_name = spec.get("name", f"KB-{kb_id}")
+
+                # Check if RAG is enabled (has retriever configured)
+                retrieval_config = spec.get("retrievalConfig")
+                rag_enabled = bool(
+                    retrieval_config and retrieval_config.get("retriever_name")
+                )
+
+                # Validate config
+                if exempt_calls >= max_calls:
+                    logger.warning(
+                        "[internal_rag] Invalid KB config for KB %d: exempt=%d >= max=%d. Using defaults.",
+                        kb_id,
+                        exempt_calls,
+                        max_calls,
+                    )
+                    max_calls, exempt_calls = 10, 5
+            else:
+                # KB not found, use defaults
+                logger.warning(
+                    "[internal_rag] KB %d not found, using default config", kb_id
+                )
+                max_calls, exempt_calls, kb_name, rag_enabled = (
+                    10,
+                    5,
+                    f"KB-{kb_id}",
+                    False,
+                )
 
             items.append(
-                KnowledgeBaseSizeInfo(
+                KnowledgeBaseInfo(
                     id=kb_id,
                     total_file_size=file_size,
                     document_count=doc_count,
                     estimated_tokens=estimated_tokens,
+                    max_calls_per_conversation=max_calls,
+                    exempt_calls_before_check=exempt_calls,
+                    name=kb_name,
+                    rag_enabled=rag_enabled,
                 )
             )
 
@@ -219,33 +282,41 @@ async def get_knowledge_base_size(
             total_estimated_tokens += estimated_tokens
 
             logger.info(
-                "[internal_rag] KB %d size: %d bytes, %d docs, ~%d tokens",
+                "[internal_rag] KB %d info: size=%d bytes, docs=%d, tokens=%d, limits=%d/%d, name=%s, rag_enabled=%s",
                 kb_id,
                 file_size,
                 doc_count,
                 estimated_tokens,
+                max_calls,
+                exempt_calls,
+                kb_name,
+                rag_enabled,
             )
 
         except Exception as e:
-            logger.warning("[internal_rag] Failed to get size for KB %d: %s", kb_id, e)
-            # Add zero values for failed KBs
+            logger.warning("[internal_rag] Failed to get info for KB %d: %s", kb_id, e)
+            # Add default values for failed KBs
             items.append(
-                KnowledgeBaseSizeInfo(
+                KnowledgeBaseInfo(
                     id=kb_id,
                     total_file_size=0,
                     document_count=0,
                     estimated_tokens=0,
+                    max_calls_per_conversation=10,  # Default
+                    exempt_calls_before_check=5,  # Default
+                    name=f"KB-{kb_id}",  # Default
+                    rag_enabled=False,  # Default to False for failed KBs
                 )
             )
 
     logger.info(
-        "[internal_rag] Total KB size: %d bytes, ~%d tokens for %d KBs",
+        "[internal_rag] Total KB info: %d bytes, ~%d tokens for %d KBs",
         total_file_size,
         total_estimated_tokens,
         len(request.knowledge_base_ids),
     )
 
-    return KnowledgeBaseSizeResponse(
+    return KnowledgeBaseInfoResponse(
         items=items,
         total_file_size=total_file_size,
         total_estimated_tokens=total_estimated_tokens,
@@ -443,3 +514,235 @@ async def get_all_chunks(
     except Exception as e:
         logger.error("[internal_rag] All chunks failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============== Document Listing API (kb_ls) ==============
+
+
+class ListDocsRequest(BaseModel):
+    """Request for listing documents in a knowledge base."""
+
+    knowledge_base_id: int = Field(..., description="Knowledge base ID")
+
+
+class DocItem(BaseModel):
+    """Document item with metadata and summary."""
+
+    id: int = Field(..., description="Document ID")
+    name: str = Field(..., description="Document name")
+    file_extension: str = Field(..., description="File type (pdf, md, txt, etc.)")
+    file_size: int = Field(..., description="File size in bytes")
+    short_summary: Optional[str] = Field(
+        None, description="Short summary (50-100 chars)"
+    )
+    is_active: bool = Field(..., description="Whether document is indexed")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+
+class ListDocsResponse(BaseModel):
+    """Response for document listing."""
+
+    documents: list[DocItem]
+    total: int
+
+
+@router.post("/list-docs", response_model=ListDocsResponse)
+async def list_documents(
+    request: ListDocsRequest,
+    db: Session = Depends(get_db),
+) -> ListDocsResponse:
+    """
+    List documents in a knowledge base with metadata and summaries.
+
+    Similar to 'ls -l' command. Returns document names, sizes, types,
+    and short summaries for AI to explore available content.
+
+    Args:
+        request: Request with knowledge base ID
+        db: Database session
+
+    Returns:
+        List of documents with metadata
+    """
+    try:
+        from app.models.knowledge import KnowledgeDocument
+
+        # Query documents directly (internal API, permission checked at task level)
+        documents = (
+            db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.kind_id == request.knowledge_base_id)
+            .order_by(KnowledgeDocument.created_at.desc())
+            .all()
+        )
+
+        doc_items = []
+        for doc in documents:
+            # Extract short_summary from summary JSON field
+            short_summary = None
+            if doc.summary and isinstance(doc.summary, dict):
+                short_summary = doc.summary.get("short_summary")
+
+            doc_items.append(
+                DocItem(
+                    id=doc.id,
+                    name=doc.name,
+                    file_extension=doc.file_extension or "",
+                    file_size=doc.file_size or 0,
+                    short_summary=short_summary,
+                    is_active=doc.is_active,
+                    created_at=doc.created_at,
+                )
+            )
+
+        logger.info(
+            "[internal_rag] Listed %d documents for KB %d",
+            len(doc_items),
+            request.knowledge_base_id,
+        )
+
+        return ListDocsResponse(
+            documents=doc_items,
+            total=len(doc_items),
+        )
+
+    except Exception as e:
+        logger.error(
+            "[internal_rag] List documents failed for KB %d: %s",
+            request.knowledge_base_id,
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# ============== Document Reading API (kb_head) ==============
+
+
+class ReadDocRequest(BaseModel):
+    """Request for reading document content."""
+
+    document_id: int = Field(..., description="Document ID")
+    offset: int = Field(default=0, ge=0, description="Start position in characters")
+    limit: int = Field(
+        default=DEFAULT_READ_DOC_LIMIT,
+        ge=1,
+        le=MAX_READ_DOC_LIMIT,
+        description="Max characters to return",
+    )
+    knowledge_base_ids: Optional[list[int]] = Field(
+        default=None,
+        description="Optional list of allowed KB IDs for security validation",
+    )
+
+
+class ReadDocResponse(BaseModel):
+    """Response for document reading."""
+
+    document_id: int = Field(..., description="Document ID")
+    name: str = Field(..., description="Document name")
+    content: str = Field(..., description="Document content (partial)")
+    total_length: int = Field(..., description="Total document length in characters")
+    offset: int = Field(..., description="Actual start position")
+    returned_length: int = Field(..., description="Number of characters returned")
+    has_more: bool = Field(..., description="Whether more content is available")
+
+
+@router.post("/read-doc", response_model=ReadDocResponse)
+async def read_document(
+    request: ReadDocRequest,
+    db: Session = Depends(get_db),
+) -> ReadDocResponse:
+    """
+    Read document content with offset/limit pagination.
+
+    Similar to 'head -c' command. Returns partial content starting from
+    offset position. Use has_more flag to check if more content exists.
+
+    Args:
+        request: Request with document ID, offset, and limit
+        db: Database session
+
+    Returns:
+        Document content with pagination info
+    """
+    try:
+        from app.models.knowledge import KnowledgeDocument
+        from app.services.context import context_service
+
+        # Get document
+        document = (
+            db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == request.document_id)
+            .first()
+        )
+
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        # Security check: verify document belongs to allowed knowledge bases
+        if request.knowledge_base_ids:
+            if document.kind_id not in request.knowledge_base_ids:
+                logger.warning(
+                    "[internal_rag] Access denied: doc %d belongs to KB %d, "
+                    "allowed KBs: %s",
+                    request.document_id,
+                    document.kind_id,
+                    request.knowledge_base_ids,
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="Access denied: document not in allowed knowledge bases",
+                )
+
+        # Get content from attachment
+        content = ""
+        total_length = 0
+        actual_start = 0
+
+        if document.attachment_id:
+            attachment = context_service.get_context_optional(
+                db=db,
+                context_id=document.attachment_id,
+            )
+            if attachment and attachment.extracted_text:
+                full_content = attachment.extracted_text
+                total_length = len(full_content)
+
+                # Apply offset and limit, clamp start to total_length
+                actual_start = min(request.offset, total_length)
+                end = min(actual_start + request.limit, total_length)
+                content = full_content[actual_start:end]
+
+        returned_length = len(content)
+        # Use actual_start instead of request.offset for consistent pagination
+        has_more = (actual_start + returned_length) < total_length
+
+        logger.info(
+            "[internal_rag] Read document %d: offset=%d, returned=%d/%d, has_more=%s",
+            request.document_id,
+            actual_start,
+            returned_length,
+            total_length,
+            has_more,
+        )
+
+        return ReadDocResponse(
+            document_id=document.id,
+            name=document.name,
+            content=content,
+            total_length=total_length,
+            offset=actual_start,  # Return actual clamped offset
+            returned_length=returned_length,
+            has_more=has_more,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "[internal_rag] Read document failed for doc %d: %s",
+            request.document_id,
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=500, detail=str(e)) from e
