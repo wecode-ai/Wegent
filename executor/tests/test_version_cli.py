@@ -6,11 +6,15 @@
 
 import subprocess
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from executor.version import get_version
+
+# Get the project root directory dynamically
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
 class TestVersionCLI:
@@ -22,7 +26,7 @@ class TestVersionCLI:
             [sys.executable, "-m", "executor.main", "--version"],
             capture_output=True,
             text=True,
-            cwd="/workspace/190858/Wegent",
+            cwd=str(PROJECT_ROOT),
         )
         assert result.returncode == 0
         assert result.stdout.strip() == get_version()
@@ -33,7 +37,7 @@ class TestVersionCLI:
             [sys.executable, "-m", "executor.main", "-v"],
             capture_output=True,
             text=True,
-            cwd="/workspace/190858/Wegent",
+            cwd=str(PROJECT_ROOT),
         )
         assert result.returncode == 0
         assert result.stdout.strip() == get_version()
@@ -44,7 +48,7 @@ class TestVersionCLI:
             [sys.executable, "-m", "executor.main", "--version"],
             capture_output=True,
             text=True,
-            cwd="/workspace/190858/Wegent",
+            cwd=str(PROJECT_ROOT),
         )
         version_output = result.stdout.strip()
         # Version should be a simple semver format (e.g., "1.0.0")
@@ -61,7 +65,7 @@ class TestVersionCLI:
             [sys.executable, "-m", "executor.main", "--version"],
             capture_output=True,
             text=True,
-            cwd="/workspace/190858/Wegent",
+            cwd=str(PROJECT_ROOT),
         )
         assert result.stdout.strip() == expected_version
 
