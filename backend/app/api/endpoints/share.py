@@ -21,6 +21,11 @@ from app.models.user import User
 from app.schemas.share import (
     JoinByLinkRequest,
     JoinByLinkResponse,
+    KBAddMemberByUsernameRequest,
+    KBApprovedPermissionsByLevel,
+    KBPendingPermissionInfo,
+    KBPermissionListResponse,
+    KBPermissionUserInfo,
     KBShareInfoResponse,
     MemberListResponse,
     MyKBPermissionResponse,
@@ -537,3 +542,115 @@ def get_kb_share_info(
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.get(
+    "/KnowledgeBase/{resource_id}/permissions",
+    response_model=KBPermissionListResponse,
+    summary="Get KnowledgeBase permission list",
+)
+def get_kb_permission_list(
+    resource_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> KBPermissionListResponse:
+    """
+    Get formatted permission list for knowledge base management UI.
+
+    Returns pending requests and approved members grouped by permission level.
+    Requires manage permission on the knowledge base.
+
+    - **resource_id**: Knowledge base ID
+    """
+    # Check if user can manage permissions
+    if not knowledge_share_service.can_manage_permissions(
+        db, resource_id, current_user.id
+    ):
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to manage this resource"
+        )
+
+    # Get members and pending requests
+    members_response = knowledge_share_service.get_members(
+        db=db, resource_id=resource_id, user_id=current_user.id
+    )
+    pending_response = knowledge_share_service.get_pending_requests(
+        db=db, resource_id=resource_id, user_id=current_user.id
+    )
+
+    # Format pending requests
+    pending: list[KBPendingPermissionInfo] = []
+    for req in pending_response.requests:
+        pending.append(
+            KBPendingPermissionInfo(
+                id=req.id,
+                user_id=req.user_id,
+                username=req.user_name or f"User {req.user_id}",
+                email=None,  # Email not in pending response
+                permission_level=PermissionLevel(req.requested_permission_level),
+                requested_at=req.requested_at,
+            )
+        )
+
+    # Format approved members grouped by level
+    approved = KBApprovedPermissionsByLevel(view=[], edit=[], manage=[])
+    for member in members_response.members:
+        user_info = KBPermissionUserInfo(
+            id=member.id,
+            user_id=member.user_id,
+            username=member.user_name or f"User {member.user_id}",
+            email=None,  # Email not in member response
+            permission_level=PermissionLevel(member.permission_level),
+        )
+        if member.permission_level == PermissionLevel.VIEW.value:
+            approved.view.append(user_info)
+        elif member.permission_level == PermissionLevel.EDIT.value:
+            approved.edit.append(user_info)
+        elif member.permission_level == PermissionLevel.MANAGE.value:
+            approved.manage.append(user_info)
+
+    return KBPermissionListResponse(pending=pending, approved=approved)
+
+
+@router.post(
+    "/KnowledgeBase/{resource_id}/permissions",
+    response_model=ResourceMemberResponse,
+    summary="Add KnowledgeBase member by username",
+)
+def add_kb_member_by_username(
+    resource_id: int,
+    body: KBAddMemberByUsernameRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> ResourceMemberResponse:
+    """
+    Add a member to a knowledge base by username.
+
+    Requires manage permission on the knowledge base.
+
+    - **resource_id**: Knowledge base ID
+    - **body**: Member info (user_name, permission_level)
+    """
+    # Check if user can manage permissions
+    if not knowledge_share_service.can_manage_permissions(
+        db, resource_id, current_user.id
+    ):
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to manage this resource"
+        )
+
+    # Find user by username
+    target_user = db.query(User).filter(User.user_name == body.user_name).first()
+    if not target_user:
+        raise HTTPException(
+            status_code=404, detail=f"User '{body.user_name}' not found"
+        )
+
+    # Add member
+    return knowledge_share_service.add_member(
+        db=db,
+        resource_id=resource_id,
+        current_user_id=current_user.id,
+        target_user_id=target_user.id,
+        permission_level=body.permission_level,
+    )

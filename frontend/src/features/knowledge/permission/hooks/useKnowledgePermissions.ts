@@ -133,8 +133,9 @@ export function useKnowledgePermissions({
       setLoading(true)
       setError(null)
       try {
+        // Convert action to approved boolean for backend
         const request: PermissionReviewRequest = {
-          action,
+          approved: action === 'approve',
           permission_level: level,
         }
         const result = await knowledgePermissionApi.reviewPermission(kbId, permissionId, request)

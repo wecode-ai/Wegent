@@ -41,35 +41,35 @@ export const knowledgePermissionApi = {
    */
   reviewPermission: async (
     kbId: number,
-    permissionId: number,
+    requestId: number,
     request: PermissionReviewRequest
   ): Promise<PermissionReviewResponse> => {
     const response = await client.post<PermissionReviewResponse>(
-      `/knowledge-bases/${kbId}/permissions/${permissionId}/review`,
+      `/share/KnowledgeBase/${kbId}/requests/${requestId}/review`,
       request
     )
     return response
   },
 
   /**
-   * List all permissions for a knowledge base
+   * List all permissions for a knowledge base (formatted for management UI)
    */
   listPermissions: async (kbId: number): Promise<PermissionListResponse> => {
     const response = await client.get<PermissionListResponse>(
-      `/knowledge-bases/${kbId}/permissions`
+      `/share/KnowledgeBase/${kbId}/permissions`
     )
     return response
   },
 
   /**
-   * Directly add permission for a user
+   * Directly add permission for a user by username
    */
   addPermission: async (
     kbId: number,
     request: PermissionAddRequest
   ): Promise<PermissionResponse> => {
     const response = await client.post<PermissionResponse>(
-      `/knowledge-bases/${kbId}/permissions`,
+      `/share/KnowledgeBase/${kbId}/permissions`,
       request
     )
     return response
@@ -80,11 +80,11 @@ export const knowledgePermissionApi = {
    */
   updatePermission: async (
     kbId: number,
-    permissionId: number,
+    memberId: number,
     request: PermissionUpdateRequest
   ): Promise<PermissionResponse> => {
     const response = await client.put<PermissionResponse>(
-      `/knowledge-bases/${kbId}/permissions/${permissionId}`,
+      `/share/KnowledgeBase/${kbId}/members/${memberId}`,
       request
     )
     return response
@@ -93,9 +93,9 @@ export const knowledgePermissionApi = {
   /**
    * Delete (revoke) a user's permission
    */
-  deletePermission: async (kbId: number, permissionId: number): Promise<{ message: string }> => {
+  deletePermission: async (kbId: number, memberId: number): Promise<{ message: string }> => {
     const response = await client.delete<{ message: string }>(
-      `/knowledge-bases/${kbId}/permissions/${permissionId}`
+      `/share/KnowledgeBase/${kbId}/members/${memberId}`
     )
     return response
   },
@@ -105,7 +105,7 @@ export const knowledgePermissionApi = {
    */
   getMyPermission: async (kbId: number): Promise<MyPermissionResponse> => {
     const response = await client.get<MyPermissionResponse>(
-      `/knowledge-bases/${kbId}/permissions/my`
+      `/share/KnowledgeBase/${kbId}/my-permission`
     )
     return response
   },
@@ -114,7 +114,7 @@ export const knowledgePermissionApi = {
    * Get knowledge base info for share page
    */
   getShareInfo: async (kbId: number): Promise<KBShareInfo> => {
-    const response = await client.get<KBShareInfo>(`/knowledge-bases/${kbId}/share-info`)
+    const response = await client.get<KBShareInfo>(`/share/KnowledgeBase/${kbId}/share-info`)
     return response
   },
 

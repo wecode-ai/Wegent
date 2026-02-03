@@ -348,3 +348,66 @@ class PublicKnowledgeBaseResponse(BaseModel):
         ..., description="Default permission level for joiners"
     )
     is_expired: bool = Field(False, description="Whether the share link has expired")
+
+
+# =============================================================================
+# Knowledge Base Permission List Schemas (for permission management UI)
+# =============================================================================
+
+
+class KBPendingPermissionInfo(BaseModel):
+    """Schema for a pending permission request in KB permission list."""
+
+    id: int = Field(..., description="Member record ID")
+    user_id: int = Field(..., description="User ID")
+    username: str = Field(..., description="Username")
+    email: Optional[str] = Field(None, description="User email")
+    permission_level: PermissionLevel = Field(
+        ..., description="Requested permission level"
+    )
+    requested_at: datetime = Field(..., description="Request timestamp")
+
+
+class KBPermissionUserInfo(BaseModel):
+    """Schema for an approved user in KB permission list."""
+
+    id: int = Field(..., description="Member record ID")
+    user_id: int = Field(..., description="User ID")
+    username: str = Field(..., description="Username")
+    email: Optional[str] = Field(None, description="User email")
+    permission_level: PermissionLevel = Field(..., description="Permission level")
+
+
+class KBApprovedPermissionsByLevel(BaseModel):
+    """Schema for approved permissions grouped by level."""
+
+    view: List["KBPermissionUserInfo"] = Field(
+        default_factory=list, description="Users with view permission"
+    )
+    edit: List["KBPermissionUserInfo"] = Field(
+        default_factory=list, description="Users with edit permission"
+    )
+    manage: List["KBPermissionUserInfo"] = Field(
+        default_factory=list, description="Users with manage permission"
+    )
+
+
+class KBPermissionListResponse(BaseModel):
+    """Response containing formatted KB permission list for management UI."""
+
+    pending: List[KBPendingPermissionInfo] = Field(
+        default_factory=list, description="Pending permission requests"
+    )
+    approved: KBApprovedPermissionsByLevel = Field(
+        default_factory=KBApprovedPermissionsByLevel,
+        description="Approved permissions grouped by level",
+    )
+
+
+class KBAddMemberByUsernameRequest(BaseModel):
+    """Request body for adding a KB member by username."""
+
+    user_name: str = Field(..., description="Username to add as member")
+    permission_level: PermissionLevel = Field(
+        default=PermissionLevel.VIEW, description="Permission level"
+    )

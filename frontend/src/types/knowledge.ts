@@ -341,7 +341,7 @@ export interface PermissionApplyResponse {
 
 // Permission Review types
 export interface PermissionReviewRequest {
-  action: ReviewAction
+  approved: boolean
   permission_level?: PermissionLevel
 }
 
