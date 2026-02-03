@@ -366,8 +366,8 @@
     }
   },
   "monitor": {
-    "title": "Flow 执行监控",
-    "description": "查看所有用户的 Flow 执行统计和错误信息",
+    "title": "订阅执行监控",
+    "description": "查看所有用户的订阅执行统计和错误信息",
     "time_range": {
       "1h": "最近 1 小时",
       "6h": "最近 6 小时",
@@ -379,13 +379,14 @@
       "total_executions": "总执行数",
       "completed": "已完成",
       "failed": "失败",
-      "timeout": "超时",
+      "retrying": "重试中",
+      "cancelled": "已取消",
       "running": "运行中",
       "pending": "等待中",
-      "active_flows": "活跃 Flow",
-      "total_flows": "总 Flow 数",
-      "enabled_flows": "已启用的定时任务",
-      "all_flows": "所有 Flow"
+      "active_subscriptions": "活跃订阅",
+      "total_subscriptions": "总订阅数",
+      "enabled_subscriptions": "已启用的订阅",
+      "all_subscriptions": "所有订阅"
     },
     "error_list": {
       "title": "异常执行记录",
@@ -396,7 +397,7 @@
       "no_errors": "暂无异常执行记录",
       "columns": {
         "execution_id": "执行 ID",
-        "flow_id": "Flow ID",
+        "subscription_id": "订阅 ID",
         "user_id": "用户 ID",
         "status": "状态",
         "trigger_type": "触发类型",
@@ -745,7 +746,17 @@
       "default_model_placeholder": "选择默认模型",
       "no_default_model": "使用智能体默认模型",
       "team_no_model_warning": "该智能体没有配置模型，必须选择一个默认模型",
-      "is_enabled": "启用渠道"
+      "is_enabled": "启用渠道",
+      "user_mapping_mode": "用户映射方式",
+      "user_mapping_mode_description": "选择如何将 IM 用户映射到系统用户",
+      "user_mapping_modes": {
+        "select_user": "指定用户",
+        "staff_id": "按工号匹配",
+        "email": "按邮箱匹配"
+      },
+      "target_user": "目标用户",
+      "target_user_description": "所有 IM 消息将以此用户身份处理",
+      "select_user_placeholder": "选择用户"
     },
     "confirm": {
       "delete_title": "删除渠道",
@@ -769,7 +780,8 @@
       "name_required": "渠道名称不能为空",
       "config_required": "Client ID 和 Client Secret 不能为空",
       "team_required": "必须选择一个默认智能体",
-      "model_required_for_team": "所选智能体没有配置模型，必须选择一个默认模型"
+      "model_required_for_team": "所选智能体没有配置模型，必须选择一个默认模型",
+      "target_user_required": "使用指定用户模式时必须选择一个目标用户"
     }
   }
 }

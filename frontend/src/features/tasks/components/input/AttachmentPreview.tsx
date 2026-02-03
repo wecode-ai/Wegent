@@ -23,6 +23,8 @@ interface AttachmentPreviewProps {
   showDownload?: boolean
   /** Compact mode (smaller size) */
   compact?: boolean
+  /** Share token for public access (no login required) */
+  shareToken?: string
 }
 
 /**
@@ -178,16 +180,17 @@ export default function AttachmentPreview({
   attachment,
   showDownload = true,
   compact = false,
+  shareToken,
 }: AttachmentPreviewProps) {
   const [showLightbox, setShowLightbox] = useState(false)
 
   const handleDownload = useCallback(async () => {
     try {
-      await downloadAttachment(attachment.id, attachment.filename)
+      await downloadAttachment(attachment.id, attachment.filename, shareToken)
     } catch (err) {
       console.error('Failed to download attachment:', err)
     }
-  }, [attachment.id, attachment.filename])
+  }, [attachment.id, attachment.filename, shareToken])
 
   const handleImageClick = useCallback(() => {
     setShowLightbox(true)
@@ -205,7 +208,7 @@ export default function AttachmentPreview({
     blobUrl: imageUrl,
     isLoading: imageLoading,
     error: imageError,
-  } = useAttachmentImage(attachment.id, isImage)
+  } = useAttachmentImage(attachment.id, isImage, shareToken)
 
   // Render image preview for image types
   if (isImage && !imageError) {

@@ -363,6 +363,11 @@ export function DocumentList({
   const isNotebook = kbType === 'notebook'
   // Check if can convert to notebook (document count must be <= 50)
   const canConvertToNotebook = documents.length <= NOTEBOOK_MAX_DOCUMENTS
+  // Check if RAG is configured (has retriever and embedding model)
+  const ragConfigured = !!(
+    knowledgeBase.retrieval_config?.retriever_name &&
+    knowledgeBase.retrieval_config?.embedding_config?.model_name
+  )
 
   return (
     <div className="space-y-4">
@@ -629,6 +634,7 @@ export function DocumentList({
                   selected={selectedIds.has(doc.id)}
                   onSelect={handleSelectDoc}
                   compact={true}
+                  ragConfigured={ragConfigured}
                 />
               ))}
             </div>
@@ -699,6 +705,7 @@ export function DocumentList({
                   showBorder={index < filteredAndSortedDocuments.length - 1}
                   selected={selectedIds.has(doc.id)}
                   onSelect={handleSelectDoc}
+                  ragConfigured={ragConfigured}
                 />
               ))}
             </div>

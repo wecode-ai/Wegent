@@ -19,7 +19,6 @@ __all__ = [
     "MappedUserInfo",
     "BaseUserMapper",
     "DefaultUserMapper",
-    "ERPUserMapper",
     "get_user_mapper",
     "set_user_mapper",
 ]

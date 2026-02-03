@@ -356,6 +356,9 @@ class TaskDispatcher:
         creating/updating a task). It handles finding an event loop and scheduling
         the async dispatch operation.
 
+        When called from Celery worker (no running event loop), creates a new
+        event loop to execute the dispatch synchronously.
+
         Args:
             task_id: Task ID to dispatch
         """
@@ -368,7 +371,7 @@ class TaskDispatcher:
             loop.create_task(self._dispatch_task_async(task_id))
             logger.debug(f"Push mode: scheduled dispatch for task {task_id}")
         except RuntimeError:
-            # No event loop running - try main loop
+            # No event loop running - try main loop first (FastAPI context)
             try:
                 from app.services.chat.ws_emitter import get_main_event_loop
 
@@ -380,13 +383,28 @@ class TaskDispatcher:
                     logger.debug(
                         f"Push mode: scheduled dispatch on main loop for task {task_id}"
                     )
-                else:
-                    logger.warning(
-                        f"Push mode: cannot dispatch task {task_id}, no running event loop"
-                    )
+                    return
             except Exception as e:
-                logger.warning(
-                    f"Push mode: failed to schedule dispatch for task {task_id}: {e}"
+                logger.debug(
+                    f"Push mode: main loop not available for task {task_id}: {e}"
+                )
+
+            # Fallback: create new event loop (Celery worker context)
+            # This is synchronous but necessary when no event loop exists
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(self._dispatch_task_async(task_id))
+                    logger.info(
+                        f"Push mode: dispatched task {task_id} via new event loop"
+                    )
+                finally:
+                    loop.close()
+            except Exception as e:
+                logger.error(
+                    f"Push mode: failed to dispatch task {task_id}: {e}",
+                    exc_info=True,
                 )
 
     async def _emit_task_failed_ws_event(

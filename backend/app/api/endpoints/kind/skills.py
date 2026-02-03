@@ -579,7 +579,7 @@ async def update_public_skill_with_upload(
 @router.get("/public/{skill_id}/download")
 def download_public_skill(
     skill_id: int,
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_flexible_for_executor),
     db: Session = Depends(get_db),
 ):
     """
@@ -996,7 +996,7 @@ def get_skill(
 def download_skill(
     skill_id: int,
     namespace: str = Query("default", description="Namespace for group skill lookup"),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_flexible_for_executor),
     db: Session = Depends(get_db),
 ):
     """

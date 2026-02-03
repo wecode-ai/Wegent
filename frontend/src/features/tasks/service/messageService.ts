@@ -37,6 +37,33 @@ export function isChatShell(team: Team | null): boolean {
 
   return false
 }
+
+/**
+ * Check if a team uses ClaudeCode Shell type.
+ * ClaudeCode tasks do not allow skill modification after task creation.
+ *
+ * @param team - Team to check
+ * @returns true if the team uses ClaudeCode Shell
+ */
+export function isClaudeCode(team: Team | null): boolean {
+  if (!team) return false
+
+  // Primary check: agent_type field (case-insensitive)
+  if (team.agent_type?.toLowerCase() === 'claudecode') {
+    return true
+  }
+
+  // Fallback: check first bot's shell_type (for task detail teams where agent_type may be null)
+  if (team.bots && team.bots.length > 0) {
+    const firstBot = team.bots[0]
+    if (firstBot.bot?.shell_type?.toLowerCase() === 'claudecode') {
+      return true
+    }
+  }
+
+  return false
+}
+
 /**
  * Check if a task uses Chat Shell type based on team information.
  * Now relies solely on team.agent_type since subtasks are managed by TaskStateMachine.

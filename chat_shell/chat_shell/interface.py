@@ -80,6 +80,10 @@ class ChatRequest:
     # Preload skills configuration (for testing)
     preload_skills: list = field(default_factory=list)  # List of skill names to preload
 
+    # User-selected skills (skills explicitly chosen by user for this message)
+    # These skills will be highlighted in the system prompt to encourage the model to prioritize them
+    user_selected_skills: list = field(default_factory=list)
+
     # Knowledge base configuration
     knowledge_base_ids: Optional[list] = None  # Knowledge base IDs to search
     document_ids: Optional[list] = None  # Document IDs to filter retrieval
