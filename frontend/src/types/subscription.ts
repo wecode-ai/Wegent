@@ -19,6 +19,9 @@ export type SubscriptionTriggerType = 'cron' | 'interval' | 'one_time' | 'event'
 // Event trigger sub-type enumeration
 export type SubscriptionEventType = 'webhook' | 'git_push'
 
+// Notification preference enumeration
+export type NotificationPreference = 'silent' | 'default' | 'private_message'
+
 // Background execution status enumeration
 export type BackgroundExecutionStatus =
   | 'PENDING'
@@ -269,7 +272,7 @@ export interface FollowingSubscriptionResponse {
   subscription: Subscription
   follow_type: FollowType
   followed_at: string
-  enable_notification: boolean
+  notification_preference: NotificationPreference
 }
 
 // Following subscriptions list response
@@ -280,7 +283,7 @@ export interface FollowingSubscriptionsListResponse {
 
 // Update follow notification request
 export interface UpdateFollowNotificationRequest {
-  enable_notification: boolean
+  notification_preference: NotificationPreference
 }
 
 // Invite user request

@@ -62,6 +62,14 @@ class BackgroundExecutionStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
+class NotificationPreference(str, Enum):
+    """Notification preference for subscription follows."""
+
+    SILENT = "silent"  # No notifications
+    DEFAULT = "default"  # Use system default notification method
+    PRIVATE_MESSAGE = "private_message"  # Send via private message/IM channel
+
+
 # Trigger configuration schemas
 class CronTriggerConfig(BaseModel):
     """Cron trigger configuration."""
@@ -595,8 +603,9 @@ class FollowingSubscriptionResponse(BaseModel):
     subscription: SubscriptionInDB
     follow_type: FollowType
     followed_at: datetime
-    enable_notification: bool = Field(
-        True, description="Whether to enable notification for this subscription"
+    notification_preference: NotificationPreference = Field(
+        NotificationPreference.DEFAULT,
+        description="Notification preference for this subscription",
     )
 
 
@@ -610,16 +619,18 @@ class FollowingSubscriptionsListResponse(BaseModel):
 class UpdateFollowNotificationRequest(BaseModel):
     """Request to update follow notification preference."""
 
-    enable_notification: bool = Field(
-        ..., description="Whether to enable notification for this subscription"
+    notification_preference: NotificationPreference = Field(
+        ...,
+        description="Notification preference: 'silent', 'default', or 'private_message'",
     )
 
 
 class FollowSubscriptionRequest(BaseModel):
     """Request to follow a subscription with notification preference."""
 
-    enable_notification: bool = Field(
-        True, description="Whether to enable notification for this subscription"
+    notification_preference: NotificationPreference = Field(
+        NotificationPreference.DEFAULT,
+        description="Notification preference for this subscription",
     )
 
 

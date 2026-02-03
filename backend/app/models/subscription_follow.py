@@ -39,6 +39,14 @@ class InvitationStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class NotificationPreference(str, Enum):
+    """Notification preference enumeration for subscription follows."""
+
+    SILENT = "silent"  # No notifications
+    DEFAULT = "default"  # Use system default notification method
+    PRIVATE_MESSAGE = "private_message"  # Send via private message/IM channel
+
+
 class SubscriptionFollow(Base):
     """
     Subscription follow relationship table.
@@ -71,7 +79,9 @@ class SubscriptionFollow(Base):
     responded_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     # Notification settings
-    enable_notification = Column(Boolean, nullable=False, default=True)
+    notification_preference = Column(
+        String(20), nullable=False, default=NotificationPreference.DEFAULT.value
+    )
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -94,8 +104,10 @@ class SubscriptionFollow(Base):
             "follower_user_id",
             "invitation_status",
         ),
-        # Index for querying followers with notification enabled
-        Index("ix_sub_follow_notification", "subscription_id", "enable_notification"),
+        # Index for querying followers with notification preference
+        Index(
+            "ix_sub_follow_notification", "subscription_id", "notification_preference"
+        ),
     )
 
 

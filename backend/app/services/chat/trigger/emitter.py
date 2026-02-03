@@ -353,7 +353,7 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
 
         logger.info(
             f"[SubscriptionEmitter] chat:done task={task_id} subtask={subtask_id} "
-            f"execution_id={self.execution_id}"
+            f"execution_id={self.execution_id}, enable_notification={self.enable_notification}"
         )
 
         # Check if this is a silent exit
@@ -373,9 +373,18 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
 
         # Send notification if enabled
         if self.enable_notification:
+            logger.info(
+                f"[SubscriptionEmitter] Sending notification for execution {self.execution_id} "
+                f"(enable_notification={self.enable_notification})"
+            )
             await self._send_notification(
                 status=status,
                 result_summary=extract_result_summary(result),
+            )
+        else:
+            logger.info(
+                f"[SubscriptionEmitter] Notification skipped for execution {self.execution_id} "
+                f"(enable_notification={self.enable_notification})"
             )
 
     async def emit_chat_error(

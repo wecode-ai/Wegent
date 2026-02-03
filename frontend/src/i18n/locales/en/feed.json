@@ -42,6 +42,12 @@
   "git_branch": "Branch (optional)",
   "select_team": "Select Agent",
   "select_team_placeholder": "Choose an agent to execute the subscription",
+  "search_team_placeholder": "Search agents...",
+  "no_teams_available": "No agents available",
+  "no_matching_teams": "No matching agents found",
+  "team_type_chat": "Chat",
+  "team_type_code": "Code",
+  "team_type_both": "General",
   "prompt_template": "Prompt Template",
   "prompt_template_placeholder": "Enter the prompt to execute. You can use variables like {{date}}, {{time}}, {{datetime}}",
   "prompt_variables_hint": "Supported variables: {{date}}, {{time}}, {{datetime}}, {{subscription_name}}, {{webhook_data}}",
@@ -343,5 +349,11 @@
   "notification_enabled": "Notification enabled",
   "notification_disabled": "Notification disabled",
   "notification_update_failed": "Failed to update notification setting",
-  "follower_notification_hint": "Receive notifications when subscription execution completes"
+  "follower_notification_hint": "Receive notifications when subscription execution completes",
+  "notification_preference": "Notification Preference",
+  "notification_preference_hint": "Choose how you want to be notified when execution completes",
+  "notification_silent": "Silent (No notification)",
+  "notification_default": "Default Notification",
+  "notification_private_message": "Private Message",
+  "notification_updated": "Notification preference updated"
 }

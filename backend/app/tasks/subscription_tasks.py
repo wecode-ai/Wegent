@@ -285,6 +285,11 @@ def _load_subscription_execution_context(
         enable_notification = getattr(
             subscription_crd.spec, "enableNotification", False
         )
+        logger.info(
+            f"[subscription_tasks] enable_notification for subscription {subscription.id}: "
+            f"{enable_notification}, spec.enableNotification={getattr(subscription_crd.spec, 'enableNotification', 'NOT_SET')}, "
+            f"is_rental={is_rental}"
+        )
 
     # Build effective subscription_crd for execution
     # For rentals, we need to merge source's team/prompt/workspace with rental's trigger/model

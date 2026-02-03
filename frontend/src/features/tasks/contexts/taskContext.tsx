@@ -697,39 +697,14 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     try {
       // Clear access denied state before fetching
       setAccessDenied(false)
+      // Fetch task metadata only (subtasks are now obtained via WebSocket task:join)
       const updatedTaskDetail = await taskApis.getTaskDetail(selectedTask.id)
 
-      // Extract workbench data from subtasks
-      let workbenchData = null
-      if (Array.isArray(updatedTaskDetail.subtasks) && updatedTaskDetail.subtasks.length > 0) {
-        for (const sub of updatedTaskDetail.subtasks) {
-          const result = sub.result
-          if (result && typeof result === 'object') {
-            if (result.workbench) {
-              workbenchData = result.workbench
-            } else if (result.value && typeof result.value === 'object' && result.value.workbench) {
-              workbenchData = result.value.workbench
-            } else if (typeof result.value === 'string') {
-              try {
-                const parsedValue = JSON.parse(result.value)
-                if (parsedValue.workbench) {
-                  workbenchData = parsedValue.workbench
-                }
-              } catch (_e) {
-                // Not valid JSON, ignore
-              }
-            }
-          }
-        }
-      }
+      // Note: Workbench data extraction from subtasks is no longer needed here
+      // Subtasks are now managed by TaskStateMachine via WebSocket join response
+      // Workbench data should be obtained from the state machine or WebSocket events
 
-      // Create a new object with workbench data to ensure React detects the change
-      const taskDetailWithWorkbench = {
-        ...updatedTaskDetail,
-        workbench: workbenchData || updatedTaskDetail.workbench,
-      }
-
-      setSelectedTaskDetail(taskDetailWithWorkbench)
+      setSelectedTaskDetail(updatedTaskDetail)
     } catch (error) {
       // Check if it's a 403 Forbidden or 404 Not Found error (access denied or task not found)
       // Both cases should show the access denied UI to prevent information leakage

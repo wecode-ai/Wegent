@@ -444,7 +444,7 @@ async def sandbox_heartbeat(sandbox_id: str, http_request: Request):
     )
 
     heartbeat_mgr = get_heartbeat_manager()
-    success = heartbeat_mgr.update_heartbeat(sandbox_id, HeartbeatType.SANDBOX)
+    success = await heartbeat_mgr.update_heartbeat(sandbox_id, HeartbeatType.SANDBOX)
 
     if not success:
         logger.warning(

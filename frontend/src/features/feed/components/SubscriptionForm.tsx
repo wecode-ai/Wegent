@@ -59,6 +59,9 @@ import { RepositorySelector, BranchSelector } from '@/features/tasks/components/
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { cn, parseUTCDate } from '@/lib/utils'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
+import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select'
+import { Tag } from '@/components/ui/tag'
+import { MessageSquare, Code, Layers } from 'lucide-react'
 
 // Model type for selector
 interface SubscriptionModel {
@@ -300,7 +303,9 @@ export function SubscriptionForm({
   const [knowledgeBaseSelectorOpen, setKnowledgeBaseSelectorOpen] = useState(false)
 
   // Notification settings
-  const [enableNotification, setEnableNotification] = useState(false)
+  const [enableNotification, setEnableNotification] = useState(
+    initialData?.enableNotification ?? false
+  )
 
   // Model selection state
   const [selectedModel, setSelectedModel] = useState<SubscriptionModel | null>(null)
@@ -510,7 +515,7 @@ export function SubscriptionForm({
       } else {
         setSelectedKnowledgeBases([])
       }
-      // Load notification setting
+      // Load notification settings
       setEnableNotification(subscription.enable_notification || false)
       const repoInfo = buildRepoInfoFromSubscription(subscription)
       setSelectedRepo(repoInfo)
@@ -995,22 +1000,116 @@ export function SubscriptionForm({
                   <Label className="text-sm font-medium">
                     {t('select_team')} <span className="text-destructive">*</span>
                   </Label>
-                  <Select
-                    value={teamId?.toString() || ''}
-                    onValueChange={handleTeamChange}
-                    disabled={teamsLoading}
-                  >
-                    <SelectTrigger className="h-10">
-                      <SelectValue placeholder={t('select_team_placeholder')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {teams.map(team => (
-                        <SelectItem key={team.id} value={team.id.toString()}>
-                          {team.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {(() => {
+                    // Convert teams to SearchableSelectItem format with type badges
+                    const teamSelectItems: SearchableSelectItem[] = teams.map(team => {
+                      // Determine team type badge
+                      const bindMode = team.bind_mode
+                      const hasChat = bindMode?.includes('chat')
+                      const hasCode = bindMode?.includes('code')
+
+                      let typeBadge = null
+                      if (hasChat && hasCode) {
+                        typeBadge = (
+                          <Tag className="!m-0 flex-shrink-0" variant="success">
+                            <Layers className="h-3 w-3 mr-1" />
+                            {t('team_type_both')}
+                          </Tag>
+                        )
+                      } else if (hasCode) {
+                        typeBadge = (
+                          <Tag className="!m-0 flex-shrink-0" variant="info">
+                            <Code className="h-3 w-3 mr-1" />
+                            {t('team_type_code')}
+                          </Tag>
+                        )
+                      } else if (hasChat) {
+                        typeBadge = (
+                          <Tag className="!m-0 flex-shrink-0" variant="default">
+                            <MessageSquare className="h-3 w-3 mr-1" />
+                            {t('team_type_chat')}
+                          </Tag>
+                        )
+                      }
+
+                      return {
+                        value: team.id.toString(),
+                        label: team.name,
+                        searchText: team.name,
+                        content: (
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="font-medium text-sm text-text-secondary truncate flex-1 min-w-0"
+                              title={team.name}
+                            >
+                              {team.name}
+                            </span>
+                            {typeBadge}
+                          </div>
+                        ),
+                      }
+                    })
+
+                    // Render trigger value with type badge
+                    const renderTriggerValue = (item: SearchableSelectItem | undefined) => {
+                      if (!item) return null
+                      const team = teams.find(t => t.id.toString() === item.value)
+                      if (!team) return <span className="truncate">{item.label}</span>
+
+                      const bindMode = team.bind_mode
+                      const hasChat = bindMode?.includes('chat')
+                      const hasCode = bindMode?.includes('code')
+
+                      let typeBadge = null
+                      if (hasChat && hasCode) {
+                        typeBadge = (
+                          <Tag className="!m-0 flex-shrink-0 ml-2" variant="success">
+                            <Layers className="h-3 w-3 mr-1" />
+                            {t('team_type_both')}
+                          </Tag>
+                        )
+                      } else if (hasCode) {
+                        typeBadge = (
+                          <Tag className="!m-0 flex-shrink-0 ml-2" variant="info">
+                            <Code className="h-3 w-3 mr-1" />
+                            {t('team_type_code')}
+                          </Tag>
+                        )
+                      } else if (hasChat) {
+                        typeBadge = (
+                          <Tag className="!m-0 flex-shrink-0 ml-2" variant="default">
+                            <MessageSquare className="h-3 w-3 mr-1" />
+                            {t('team_type_chat')}
+                          </Tag>
+                        )
+                      }
+
+                      return (
+                        <div className="flex items-center min-w-0">
+                          <span className="truncate flex-1 min-w-0" title={item.label}>
+                            {item.label}
+                          </span>
+                          {typeBadge}
+                        </div>
+                      )
+                    }
+
+                    return (
+                      <SearchableSelect
+                        value={teamId?.toString() || ''}
+                        onValueChange={handleTeamChange}
+                        disabled={teamsLoading}
+                        placeholder={t('select_team_placeholder')}
+                        searchPlaceholder={t('search_team_placeholder')}
+                        items={teamSelectItems}
+                        loading={teamsLoading}
+                        emptyText={t('no_teams_available')}
+                        noMatchText={t('no_matching_teams')}
+                        triggerClassName="h-10"
+                        renderTriggerValue={renderTriggerValue}
+                      />
+                    )
+                  })()}
                 </div>
               )}
 
@@ -1269,15 +1368,6 @@ export function SubscriptionForm({
                 <p className="text-xs text-text-muted">{t('knowledge_bases_hint')}</p>
               </div>
 
-              {/* Notification Setting */}
-              <div className="flex items-center justify-between pt-2">
-                <div className="space-y-0.5">
-                  <Label className="text-sm font-medium">{t('enable_notification')}</Label>
-                  <p className="text-xs text-text-muted">{t('enable_notification_hint')}</p>
-                </div>
-                <Switch checked={enableNotification} onCheckedChange={setEnableNotification} />
-              </div>
-
               {/* Visibility - Hidden for rental subscriptions */}
               {!isRental && (
                 <div className="space-y-2 pt-2">
@@ -1319,6 +1409,15 @@ export function SubscriptionForm({
                   </p>
                 </div>
               )}
+
+              {/* Enable Notification */}
+              <div className="flex items-center justify-between pt-2">
+                <div className="space-y-0.5">
+                  <Label className="text-sm font-medium">{t('enable_notification')}</Label>
+                  <p className="text-xs text-text-muted">{t('enable_notification_hint')}</p>
+                </div>
+                <Switch checked={enableNotification} onCheckedChange={setEnableNotification} />
+              </div>
 
               {/* Enabled */}
               <div className="flex items-center justify-between pt-2">

@@ -42,6 +42,15 @@ export interface AttachmentDetailResponse extends AttachmentResponse {
 }
 
 /**
+ * Attachment preview response with extracted text snippet
+ */
+export interface AttachmentPreviewResponse extends AttachmentDetailResponse {
+  preview_type: 'text' | 'image' | 'html' | 'none'
+  preview_text?: string | null
+  download_url: string
+}
+
+/**
  * Error code to i18n key mapping
  */
 const ERROR_CODE_MAPPING: Record<
@@ -119,6 +128,8 @@ export const SUPPORTED_EXTENSIONS = [
   '.csv',
   '.txt',
   '.md',
+  '.html',
+  '.htm',
   '.jpg',
   '.jpeg',
   '.png',
@@ -195,6 +206,7 @@ export const SUPPORTED_MIME_TYPES = [
   'text/csv',
   'text/plain',
   'text/markdown',
+  'text/html',
   'image/jpeg',
   'image/png',
   'image/gif',
@@ -272,6 +284,9 @@ export function getFileIcon(extension: string): string {
     case '.bmp':
     case '.webp':
       return '🖼️'
+    case '.html':
+    case '.htm':
+      return '🌐'
     default:
       // Check for code files
       if (CODE_FILE_EXTENSIONS.includes(ext)) {
@@ -292,11 +307,24 @@ export function getFileIcon(extension: string): string {
 export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 
 /**
+ * HTML file extensions
+ */
+export const HTML_EXTENSIONS = ['.html', '.htm']
+
+/**
  * Check if a file extension is an image type
  */
 export function isImageExtension(extension: string): boolean {
   const ext = extension.toLowerCase()
   return IMAGE_EXTENSIONS.includes(ext)
+}
+
+/**
+ * Check if a file extension is an HTML type
+ */
+export function isHtmlExtension(extension: string): boolean {
+  const ext = extension.toLowerCase()
+  return HTML_EXTENSIONS.includes(ext)
 }
 
 /**
@@ -404,6 +432,33 @@ export async function getAttachment(attachmentId: number): Promise<AttachmentDet
   if (!response.ok) {
     const error = await response.json().catch(() => ({}))
     throw new Error(error.detail || 'Failed to get attachment')
+  }
+
+  return response.json()
+}
+
+/**
+ * Get attachment preview by ID
+ *
+ * @param attachmentId - Attachment ID
+ * @returns Attachment preview details
+ */
+export async function getAttachmentPreview(
+  attachmentId: number
+): Promise<AttachmentPreviewResponse> {
+  const token = getToken()
+
+  const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}/preview`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.detail || 'Failed to get attachment preview')
   }
 
   return response.json()
@@ -540,6 +595,7 @@ export async function getAttachmentBySubtask(
 export const attachmentApis = {
   uploadAttachment,
   getAttachment,
+  getAttachmentPreview,
   getAttachmentDownloadUrl,
   downloadAttachment,
   deleteAttachment,

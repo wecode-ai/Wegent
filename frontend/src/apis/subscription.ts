@@ -28,6 +28,7 @@ import type {
   RentalSubscriptionResponse,
   RentalSubscriptionsListResponse,
   RentalCountResponse,
+  NotificationPreference,
 } from '@/types/subscription'
 import type { PaginationParams } from '@/types/api'
 
@@ -156,10 +157,10 @@ export const subscriptionApis = {
    */
   async followSubscription(
     subscriptionId: number,
-    enableNotification: boolean = true
+    notificationPreference: NotificationPreference = 'default'
   ): Promise<{ message: string }> {
     return apiClient.post(`/subscriptions/${subscriptionId}/follow`, {
-      enable_notification: enableNotification,
+      notification_preference: notificationPreference,
     })
   },
 
@@ -175,10 +176,10 @@ export const subscriptionApis = {
    */
   async updateFollowNotification(
     subscriptionId: number,
-    enableNotification: boolean
-  ): Promise<{ message: string; enable_notification: boolean }> {
+    notificationPreference: NotificationPreference
+  ): Promise<{ message: string; notification_preference: NotificationPreference }> {
     return apiClient.patch(`/subscriptions/${subscriptionId}/follow/notification`, {
-      enable_notification: enableNotification,
+      notification_preference: notificationPreference,
     })
   },
 

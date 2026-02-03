@@ -59,7 +59,7 @@ def follow_subscription(
         db=db,
         subscription_id=subscription_id,
         user_id=current_user.id,
-        enable_notification=request.enable_notification,
+        notification_preference=request.notification_preference,
     )
 
 
@@ -98,7 +98,7 @@ def update_follow_notification(
         db=db,
         subscription_id=subscription_id,
         user_id=current_user.id,
-        enable_notification=request.enable_notification,
+        notification_preference=request.notification_preference,
     )
 
 

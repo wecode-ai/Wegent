@@ -6,7 +6,7 @@
 
 import { WikiContent as WikiContentType } from '@/types/wiki'
 import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import remarkGfmSafe from '@/lib/remark-gfm-safe'
 import remarkMath from 'remark-math'
 import rehypeRaw from 'rehype-raw'
 import rehypeKatex from 'rehype-katex'
@@ -547,7 +547,7 @@ export function WikiContent({ content, loading, error }: WikiContentProps) {
         <div className="px-8 py-6">
           <div className="prose prose-base max-w-none dark:prose-invert wiki-content">
             <ReactMarkdown
-              remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: true }]]}
+              remarkPlugins={[remarkGfmSafe, [remarkMath, { singleDollarTextMath: true }]]}
               rehypePlugins={[rehypeKatex, rehypeRaw]}
               components={{
                 // Table components

@@ -42,6 +42,12 @@
   "git_branch": "分支（可选）",
   "select_team": "选择智能体",
   "select_team_placeholder": "选择执行任务的智能体",
+  "search_team_placeholder": "搜索智能体...",
+  "no_teams_available": "暂无可用智能体",
+  "no_matching_teams": "未找到匹配的智能体",
+  "team_type_chat": "对话",
+  "team_type_code": "编程",
+  "team_type_both": "通用",
   "prompt_template": "Prompt 模板",
   "prompt_template_placeholder": "输入要执行的 Prompt。支持变量如 {{date}}, {{time}}, {{datetime}}",
   "prompt_variables_hint": "支持的变量：{{date}}, {{time}}, {{datetime}}, {{subscription_name}}, {{webhook_data}}",
@@ -343,5 +349,11 @@
   "notification_enabled": "已开启通知",
   "notification_disabled": "已关闭通知",
   "notification_update_failed": "更新通知设置失败",
-  "follower_notification_hint": "订阅器执行完成后会发送通知"
+  "follower_notification_hint": "订阅器执行完成后会发送通知",
+  "notification_preference": "通知偏好",
+  "notification_preference_hint": "选择订阅器执行完成后的通知方式",
+  "notification_silent": "静默（不通知）",
+  "notification_default": "默认通知",
+  "notification_private_message": "私信通知",
+  "notification_updated": "通知设置已更新"
 }

@@ -3,6 +3,7 @@
     "name": "Wegent AI Assistant",
     "description": "A whole dev team of AI agents in your editor."
   },
+  "loading": "Loading...",
   "repos": {
     "repository": "Select Repository",
     "branch": "Select Branch",
@@ -1175,10 +1176,17 @@
       "content_truncated_hint": "File content was too long. Kept first {{length}} million characters",
       "batch_limit_exceeded": "Too many files selected (max {{max}} files)"
     },
+    "preview": {
+      "label": "Preview",
+      "loading": "Loading preview...",
+      "unavailable": "Preview unavailable"
+    },
     "truncation": {
       "notice": "⚠️ Content too long, auto-truncated ({{original}} chars → {{truncated}} chars)"
     },
-    "supported_types": "PDF, Word, Excel, TXT, Markdown, Images, Code files",
+    "supported_types": "PDF, Word, Excel, TXT, Markdown, Images, HTML, Code files",
+    "html_preview": "HTML Preview",
+    "click_to_preview": "Click to preview",
     "characters": "chars",
     "upload_tooltip": "Supported file types: Documents (PDF, Word, PPT, Excel), Images, Code files and text files\nMax file size: {{size}} MB"
   },

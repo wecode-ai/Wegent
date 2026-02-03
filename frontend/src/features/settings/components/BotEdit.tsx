@@ -356,14 +356,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     fetchShells()
   }, [toast, t, allowedAgents, scope, groupName])
-  // Check if current agent supports skills (ClaudeCode only, Chat shell is hidden)
+  // Check if current agent supports skills (ClaudeCode and Chat shell types)
   const supportsSkills = useMemo(() => {
     // Get shell type from the selected shell
     const selectedShell = shells.find(s => s.name === agentName)
     const shellType = selectedShell?.shellType || agentName
-    // Skills are supported for ClaudeCode shell type only
-    // Chat shell skills selection is hidden (but skills still work if configured)
-    return shellType === 'ClaudeCode'
+    // Skills are supported for ClaudeCode and Chat shell types
+    return shellType === 'ClaudeCode' || shellType === 'Chat'
   }, [agentName, shells])
 
   // Check if current agent supports preload skills (Chat only)
@@ -653,11 +652,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       const configObj = JSON.parse(agentConfig.trim())
       parsedAgentConfig = { ...configObj, protocol: selectedProtocol }
     } else {
-      parsedAgentConfig = createPredefinedModelConfig(
+      // createPredefinedModelConfig returns null if selectedModel is empty
+      const modelConfig = createPredefinedModelConfig(
         selectedModel,
         selectedModelType,
         selectedModelNamespace
-      ) as Record<string, unknown>
+      )
+      parsedAgentConfig = modelConfig ?? {}
     }
 
     let parsedMcpConfig: Record<string, unknown> = {}
@@ -860,11 +861,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       }
     } else {
       // Use createPredefinedModelConfig to include bind_model_type and namespace
-      parsedAgentConfig = createPredefinedModelConfig(
+      // Returns null if selectedModel is empty, meaning no model binding
+      const modelConfig = createPredefinedModelConfig(
         selectedModel,
         selectedModelType,
         selectedModelNamespace
       )
+      parsedAgentConfig = modelConfig ?? {}
     }
 
     let parsedMcpConfig: Record<string, unknown> | null = null

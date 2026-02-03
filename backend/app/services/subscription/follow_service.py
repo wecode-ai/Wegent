@@ -23,6 +23,7 @@ from app.models.namespace_member import NamespaceMember
 from app.models.subscription_follow import (
     FollowType,
     InvitationStatus,
+    NotificationPreference,
     SubscriptionFollow,
     SubscriptionShareNamespace,
 )
@@ -35,6 +36,9 @@ from app.schemas.subscription import (
 )
 from app.schemas.subscription import FollowType as SchemaFollowType
 from app.schemas.subscription import InvitationStatus as SchemaInvitationStatus
+from app.schemas.subscription import (
+    NotificationPreference as SchemaNotificationPreference,
+)
 from app.schemas.subscription import (
     Subscription,
     SubscriptionFollowerResponse,
@@ -63,7 +67,7 @@ class SubscriptionFollowService:
         *,
         subscription_id: int,
         user_id: int,
-        enable_notification: bool = True,
+        notification_preference: NotificationPreference = NotificationPreference.DEFAULT,
     ) -> dict:
         """
         Follow a public subscription.
@@ -72,7 +76,7 @@ class SubscriptionFollowService:
             db: Database session
             subscription_id: ID of the subscription to follow
             user_id: ID of the user following
-            enable_notification: Whether to enable notification for this subscription
+            notification_preference: Notification preference for this subscription
 
         Returns:
             Success message
@@ -139,14 +143,14 @@ class SubscriptionFollowService:
             responded_at=now,  # Use current time as default
             created_at=now,
             updated_at=now,
-            enable_notification=enable_notification,
+            notification_preference=notification_preference.value,
         )
         db.add(follow)
         db.commit()
 
         logger.info(
             f"[SubscriptionFollow] User {user_id} followed subscription {subscription_id} "
-            f"with notification={enable_notification}"
+            f"with notification_preference={notification_preference.value}"
         )
 
         return {"message": "Successfully followed subscription"}
@@ -306,20 +310,22 @@ class SubscriptionFollowService:
     ) -> List[SubscriptionFollow]:
         """
         Get followers who have enabled notifications for a subscription.
+        Excludes followers with 'silent' preference.
 
         Args:
             db: Database session
             subscription_id: ID of the subscription
 
         Returns:
-            List of follow records with notification enabled
+            List of follow records with notification enabled (not silent)
         """
         return (
             db.query(SubscriptionFollow)
             .filter(
                 SubscriptionFollow.subscription_id == subscription_id,
                 SubscriptionFollow.invitation_status == InvitationStatus.ACCEPTED.value,
-                SubscriptionFollow.enable_notification == True,
+                SubscriptionFollow.notification_preference
+                != NotificationPreference.SILENT.value,
             )
             .all()
         )
@@ -330,7 +336,7 @@ class SubscriptionFollowService:
         *,
         subscription_id: int,
         user_id: int,
-        enable_notification: bool,
+        notification_preference: NotificationPreference,
     ) -> dict:
         """
         Update notification preference for a follow relationship.
@@ -339,7 +345,7 @@ class SubscriptionFollowService:
             db: Database session
             subscription_id: ID of the subscription
             user_id: ID of the follower
-            enable_notification: Whether to enable notification
+            notification_preference: Notification preference setting
 
         Returns:
             Success message with current notification status
@@ -362,18 +368,18 @@ class SubscriptionFollowService:
                 status_code=404, detail="Not following this subscription"
             )
 
-        follow.enable_notification = enable_notification
+        follow.notification_preference = notification_preference.value
         follow.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.commit()
 
         logger.info(
             f"[SubscriptionFollow] User {user_id} updated notification preference "
-            f"for subscription {subscription_id} to {enable_notification}"
+            f"for subscription {subscription_id} to {notification_preference.value}"
         )
 
         return {
             "message": "Notification preference updated",
-            "enable_notification": enable_notification,
+            "notification_preference": notification_preference.value,
         }
 
     def get_following_subscriptions(
@@ -444,7 +450,9 @@ class SubscriptionFollowService:
                         subscription=subscription_in_db,
                         follow_type=SchemaFollowType(follow.follow_type),
                         followed_at=follow.created_at,
-                        enable_notification=follow.enable_notification,
+                        notification_preference=SchemaNotificationPreference(
+                            follow.notification_preference
+                        ),
                     )
                 )
 

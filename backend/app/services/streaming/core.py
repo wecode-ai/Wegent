@@ -510,6 +510,7 @@ class StreamingCore:
             await self.emitter.emit_event(
                 "chat:block_created",
                 {
+                    "task_id": self.state.task_id,
                     "subtask_id": self.state.subtask_id,
                     "block": block,
                 },
@@ -524,6 +525,7 @@ class StreamingCore:
                     await self.emitter.emit_event(
                         "chat:block_updated",
                         {
+                            "task_id": self.state.task_id,
                             "subtask_id": self.state.subtask_id,
                             "block_id": block["id"],
                             "content": block["content"],
@@ -545,6 +547,7 @@ class StreamingCore:
             await self.emitter.emit_event(
                 "chat:block_updated",
                 {
+                    "task_id": self.state.task_id,
                     "subtask_id": self.state.subtask_id,
                     "block_id": self.state.current_text_block_id,
                     "status": "done",
@@ -594,6 +597,7 @@ class StreamingCore:
         await self.emitter.emit_event(
             "chat:block_created",
             {
+                "task_id": self.state.task_id,
                 "subtask_id": self.state.subtask_id,
                 "block": block,
             },
@@ -628,6 +632,7 @@ class StreamingCore:
         await self.emitter.emit_event(
             "chat:block_updated",
             {
+                "task_id": self.state.task_id,
                 "subtask_id": self.state.subtask_id,
                 "block_id": tool_use_id,
                 **updates,
