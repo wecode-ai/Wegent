@@ -444,7 +444,7 @@ async def _stream_chat_response(
                 enable_clarification=payload.enable_clarification,
                 enable_deep_thinking=True,
                 task_id=stream_data.task_id,
-                preload_skills=getattr(payload, "preload_skills", None),
+                preload_skills=getattr(payload, "additional_skills", None),
             )
         except ValueError as e:
             error_msg = str(e)

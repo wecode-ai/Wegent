@@ -57,6 +57,8 @@ class TaskCreationParams:
     knowledge_base_id: Optional[int] = (
         None  # Knowledge base ID for knowledge type tasks
     )
+    # Skill selection - backend determines preload vs download based on executor type
+    additional_skills: Optional[List[Dict[str, Any]]] = None
 
 
 def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:

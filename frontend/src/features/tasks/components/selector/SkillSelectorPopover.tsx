@@ -7,11 +7,11 @@
 import React, { useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Zap, Check, Search, User, Globe } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { ActionButton } from '@/components/ui/action-button'
 import type { UnifiedSkill } from '@/apis/skills'
 
 interface SkillSelectorPopoverProps {
@@ -202,24 +202,24 @@ export default function SkillSelectorPopover({
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={`relative h-8 px-2 text-text-muted hover:text-text-primary ${
-                  !hasSkills || disabled ? 'opacity-50 cursor-not-allowed' : ''
-                }`}
-                disabled={!hasSkills || disabled}
-              >
-                <Zap className="h-4 w-4" />
+              <div className="relative">
+                <ActionButton
+                  variant="outline"
+                  onClick={() => setOpen(!open)}
+                  disabled={!hasSkills || disabled}
+                  icon={<Zap className="h-4 w-4 text-text-primary" />}
+                  title={t('common:skillSelector.skill_button_tooltip')}
+                  className="border-border bg-base text-text-primary hover:bg-hover"
+                />
                 {selectedCount > 0 && (
                   <Badge
                     variant="secondary"
-                    className="absolute -top-1 -right-1 h-4 min-w-4 flex items-center justify-center text-[10px] px-1 bg-primary text-white"
+                    className="absolute -top-1.5 -right-1.5 h-[18px] min-w-[18px] flex items-center justify-center text-[10px] px-1 bg-primary text-white pointer-events-none z-10 rounded-full"
                   >
                     {selectedCount}
                   </Badge>
                 )}
-              </Button>
+              </div>
             </PopoverTrigger>
           </TooltipTrigger>
           <TooltipContent side="top">

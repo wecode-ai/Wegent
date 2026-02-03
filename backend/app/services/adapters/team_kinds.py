@@ -2058,5 +2058,94 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             # has_parameters is true as long as external API bot exists, even if API call fails
             return {"has_parameters": True, "parameters": []}
 
+    def get_team_skills(
+        self, db: Session, *, team_id: int, user_id: int
+    ) -> Dict[str, Any]:
+        """Get all skills associated with a team.
+
+        Follows the chain: team → bots → ghosts → skills
+
+        Args:
+            db: Database session
+            team_id: Team ID
+            user_id: User ID (for authorization)
+
+        Returns:
+            Dictionary with:
+            - team_id: The team ID
+            - team_namespace: The team namespace
+            - skills: List of skill names (deduplicated)
+            - preload_skills: List of skills to preload
+
+        Raises:
+            HTTPException: If team not found or access denied
+        """
+        # Get team
+        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        # Check if user has access to this team
+        # Access is granted if:
+        # 1. User is the owner (team.user_id == user_id)
+        # 2. Team is public (team.user_id == 0)
+        # 3. User has shared access
+        is_public_team = team.user_id == 0
+        is_author = team.user_id == user_id
+        if not is_author and not is_public_team:
+            shared_team = sharedTeamReader.get_by_team_and_user(db, team_id, user_id)
+            if not shared_team:
+                raise HTTPException(
+                    status_code=403, detail="Access denied to this team"
+                )
+
+        team_crd = Team.model_validate(team.json)
+        all_skills = set()
+        all_preload_skills = set()
+
+        # Use team owner's user_id for querying related resources
+        team_owner_id = team.user_id
+
+        # Iterate through team members to get bot → ghost → skills
+        for member in team_crd.spec.members or []:
+            bot = kindReader.get_by_name_and_namespace(
+                db,
+                team_owner_id,
+                KindType.BOT,
+                member.botRef.namespace,
+                member.botRef.name,
+            )
+            if not bot:
+                continue
+
+            bot_crd = Bot.model_validate(bot.json)
+
+            # Get ghost (stores skills)
+            ghost = kindReader.get_by_name_and_namespace(
+                db,
+                team_owner_id,
+                KindType.GHOST,
+                bot_crd.spec.ghostRef.namespace,
+                bot_crd.spec.ghostRef.name,
+            )
+            if ghost and ghost.json:
+                ghost_crd = Ghost.model_validate(ghost.json)
+                if ghost_crd.spec.skills:
+                    all_skills.update(ghost_crd.spec.skills)
+                if ghost_crd.spec.preload_skills:
+                    all_preload_skills.update(ghost_crd.spec.preload_skills)
+
+        logger.info(
+            f"[get_team_skills] team_id={team_id}, "
+            f"skills={list(all_skills)}, preload_skills={list(all_preload_skills)}"
+        )
+
+        return {
+            "team_id": team_id,
+            "team_namespace": team.namespace or "default",
+            "skills": list(all_skills),
+            "preload_skills": list(all_preload_skills),
+        }
+
 
 team_kinds_service = TeamKindsService(Kind)

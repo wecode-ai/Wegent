@@ -6,18 +6,23 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { fetchUnifiedSkillsList, UnifiedSkill } from '@/apis/skills'
-import { fetchTaskSkills, TaskSkillsResponse } from '@/apis/tasks'
+import { fetchTeamSkills, TeamSkillsResponse } from '@/apis/team'
 import type { Team } from '@/types/api'
 import { isChatShell } from '../service/messageService'
 
-// Type for skill reference (can be string name or object with name)
-type SkillRefLike = string | { name: string }
+/**
+ * Skill reference with full identification info for backend
+ * Backend needs name + namespace + is_public to uniquely identify a skill
+ */
+export interface SkillRef {
+  name: string
+  namespace: string
+  is_public: boolean
+}
 
 interface UseSkillSelectorOptions {
   /** Selected team for the current chat */
   team: Team | null
-  /** Current task ID (if any) */
-  taskId?: number
   /** Whether skills feature is enabled */
   enabled?: boolean
 }
@@ -31,6 +36,8 @@ interface UseSkillSelectorReturn {
   preloadedSkillNames: string[]
   /** Currently selected skill names */
   selectedSkillNames: string[]
+  /** Currently selected skills with full info (name, namespace, is_public) */
+  selectedSkills: SkillRef[]
   /** Add a skill to selection */
   addSkill: (skillName: string) => void
   /** Remove a skill from selection */
@@ -52,7 +59,7 @@ interface UseSkillSelectorReturn {
 /**
  * Hook for managing skill selection in chat interface.
  *
- * Fetches available skills from the unified API and task-specific skills,
+ * Fetches available skills from the unified API and team-specific skills,
  * and manages the selection state for user-chosen skills.
  *
  * The hook handles different Shell types:
@@ -61,13 +68,12 @@ interface UseSkillSelectorReturn {
  */
 export function useSkillSelector({
   team,
-  taskId,
   enabled = true,
 }: UseSkillSelectorOptions): UseSkillSelectorReturn {
   // State for available skills from unified API
   const [availableSkills, setAvailableSkills] = useState<UnifiedSkill[]>([])
-  // State for task-specific skills (from backend)
-  const [taskSkills, setTaskSkills] = useState<TaskSkillsResponse | null>(null)
+  // State for team-specific skills (from backend)
+  const [teamSkillsData, setTeamSkillsData] = useState<TeamSkillsResponse | null>(null)
   // User-selected skill names
   const [selectedSkillNames, setSelectedSkillNames] = useState<string[]>([])
   // Loading and error states
@@ -77,57 +83,21 @@ export function useSkillSelector({
   // Determine if current team is Chat Shell type
   const isChatShellType = useMemo(() => isChatShell(team), [team])
 
-  // Team's configured skill names (from task skills or team config)
+  // Team's configured skill names (from team skills API)
   const teamSkillNames = useMemo(() => {
-    if (taskSkills?.skills) {
-      return taskSkills.skills
-    }
-    // Fallback: extract from team's bots if available
-    if (team?.bots) {
-      const skillNames = new Set<string>()
-      for (const botWrapper of team.bots) {
-        // Skills may be directly on bot in summary format
-        const skills = (botWrapper.bot as { skills?: SkillRefLike[] })?.skills
-        if (skills) {
-          skills.forEach((skill: SkillRefLike) => {
-            if (typeof skill === 'string') {
-              skillNames.add(skill)
-            } else if (skill.name) {
-              skillNames.add(skill.name)
-            }
-          })
-        }
-      }
-      return Array.from(skillNames)
+    if (teamSkillsData?.skills) {
+      return teamSkillsData.skills
     }
     return []
-  }, [taskSkills, team])
+  }, [teamSkillsData])
 
   // Team's preloaded skill names (auto-injected into system prompt)
   const preloadedSkillNames = useMemo(() => {
-    if (taskSkills?.preload_skills) {
-      return taskSkills.preload_skills
-    }
-    // Fallback: extract from team's bots preloadSkills
-    if (team?.bots) {
-      const preloadNames = new Set<string>()
-      for (const botWrapper of team.bots) {
-        // PreloadSkills may be directly on bot in summary format
-        const preloadSkills = (botWrapper.bot as { preloadSkills?: SkillRefLike[] })?.preloadSkills
-        if (preloadSkills) {
-          preloadSkills.forEach((skill: SkillRefLike) => {
-            if (typeof skill === 'string') {
-              preloadNames.add(skill)
-            } else if (skill.name) {
-              preloadNames.add(skill.name)
-            }
-          })
-        }
-      }
-      return Array.from(preloadNames)
+    if (teamSkillsData?.preload_skills) {
+      return teamSkillsData.preload_skills
     }
     return []
-  }, [taskSkills, team])
+  }, [teamSkillsData])
 
   // Fetch available skills when enabled
   useEffect(() => {
@@ -153,25 +123,25 @@ export function useSkillSelector({
     fetchSkills()
   }, [enabled])
 
-  // Fetch task-specific skills when task ID changes
+  // Fetch team-specific skills when team ID changes
   useEffect(() => {
-    if (!enabled || !taskId) {
-      setTaskSkills(null)
+    if (!enabled || !team?.id) {
+      setTeamSkillsData(null)
       return
     }
 
-    const fetchTaskSkillsData = async () => {
+    const fetchTeamSkillsData = async () => {
       try {
-        const skills = await fetchTaskSkills(taskId)
-        setTaskSkills(skills)
+        const skills = await fetchTeamSkills(team.id)
+        setTeamSkillsData(skills)
       } catch (err) {
-        console.warn('[useSkillSelector] Failed to fetch task skills:', err)
-        // Don't set error for task skills - it's optional
+        console.warn('[useSkillSelector] Failed to fetch team skills:', err)
+        // Don't set error for team skills - it's optional
       }
     }
 
-    fetchTaskSkillsData()
-  }, [enabled, taskId])
+    fetchTeamSkillsData()
+  }, [enabled, team?.id])
 
   // Reset selected skills when team changes
   useEffect(() => {
@@ -203,11 +173,34 @@ export function useSkillSelector({
     setSelectedSkillNames([])
   }, [])
 
+  // Compute selected skills with full info (name, namespace, is_public)
+  // by looking up each selected skill name in availableSkills
+  const selectedSkills = useMemo<SkillRef[]>(() => {
+    return selectedSkillNames.map(name => {
+      const skill = availableSkills.find(s => s.name === name)
+      if (skill) {
+        return {
+          name: skill.name,
+          namespace: skill.namespace,
+          is_public: skill.is_public,
+        }
+      }
+      // If skill not found in availableSkills, return with default values
+      // This shouldn't happen in normal usage, but provides a fallback
+      return {
+        name,
+        namespace: 'default',
+        is_public: false,
+      }
+    })
+  }, [selectedSkillNames, availableSkills])
+
   return {
     availableSkills,
     teamSkillNames,
     preloadedSkillNames,
     selectedSkillNames,
+    selectedSkills,
     addSkill,
     removeSkill,
     toggleSkill,

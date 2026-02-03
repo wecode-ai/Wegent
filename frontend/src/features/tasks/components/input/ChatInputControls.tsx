@@ -296,7 +296,7 @@ export function ChatInputControls({
       className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
     >
       <div
-        className="flex-1 min-w-0 overflow-hidden flex items-center gap-3"
+        className="flex-1 min-w-0 overflow-visible flex items-center gap-3"
         data-tour="input-controls"
       >
         {/* Context Selection - only show for chat shell */}

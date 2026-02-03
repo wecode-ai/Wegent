@@ -110,6 +110,12 @@ export interface ChatMessageRequest {
   preload_skill_names?: string[]
   /** Additional skill names (for other shells - downloaded to executor) */
   additional_skill_names?: string[]
+  /** Additional skills with full info (name, namespace, is_public) - preferred over additional_skill_names */
+  additional_skills?: Array<{
+    name: string
+    namespace: string
+    is_public: boolean
+  }>
 }
 
 /**
@@ -699,8 +705,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         task_type: request.task_type,
         knowledge_base_id: request.knowledge_base_id,
         device_id: request.device_id,
-        preload_skill_names: request.preload_skill_names,
-        additional_skill_names: request.additional_skill_names,
+        additional_skills: request.additional_skills,
       }
 
       try {

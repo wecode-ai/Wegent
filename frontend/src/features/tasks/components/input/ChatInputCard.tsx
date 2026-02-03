@@ -149,6 +149,12 @@ export function ChatInputCard({
   isSubtaskStreaming,
   onStopStream,
   onSendMessage,
+  // Skill selector props
+  availableSkills,
+  teamSkillNames,
+  preloadedSkillNames,
+  selectedSkillNames,
+  onToggleSkill,
 }: ChatInputCardProps) {
   const { t } = useTranslation('chat')
 
@@ -234,6 +240,14 @@ export function ChatInputCard({
               onPasteFile={onPasteFile}
               hasNoTeams={hasNoTeams}
               disabledReason={disabledReason}
+              // Skill selector props for slash command
+              showSkillSelector={availableSkills && availableSkills.length > 0}
+              availableSkills={availableSkills}
+              teamSkillNames={teamSkillNames}
+              preloadedSkillNames={preloadedSkillNames}
+              selectedSkillNames={selectedSkillNames}
+              onSkillSelect={onToggleSkill}
+              isChatShell={selectedTeam?.agent_type === 'chat'}
             />
           </div>
         )}
@@ -296,6 +310,11 @@ export function ChatInputCard({
             onSendMessage={onSendMessage}
             hasNoTeams={hasNoTeams}
             knowledgeBaseId={knowledgeBaseId}
+            availableSkills={availableSkills}
+            teamSkillNames={teamSkillNames}
+            preloadedSkillNames={preloadedSkillNames}
+            selectedSkillNames={selectedSkillNames}
+            onToggleSkill={onToggleSkill}
           />
         </div>
       </div>
