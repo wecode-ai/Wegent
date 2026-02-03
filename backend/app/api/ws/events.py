@@ -156,7 +156,7 @@ class ChatSendPayload(BaseModel):
     )
     additional_skills: Optional[List[SkillRef]] = Field(
         None,
-        description="Additional skills with full info (name, namespace, is_public) - preferred over additional_skill_names",
+        description="Additional skills with full info (name, namespace, is_public)",
     )
     # Local device execution
     device_id: Optional[str] = Field(

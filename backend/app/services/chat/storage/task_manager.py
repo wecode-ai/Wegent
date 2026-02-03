@@ -868,13 +868,21 @@ async def create_chat_task(
         if params.additional_skills:
             from app.schemas.task import SkillRef
 
+            # Filter out entries with empty or missing names
+            valid_skills = [s for s in params.additional_skills if s.get("name")]
+            if len(valid_skills) < len(params.additional_skills):
+                logger.warning(
+                    f"[create_chat_task] Filtered out {len(params.additional_skills) - len(valid_skills)} "
+                    f"skills with empty/missing names"
+                )
+
             additional_skills_refs = [
                 SkillRef(
                     name=s.get("name", ""),
                     namespace=s.get("namespace", "default"),
                     is_public=s.get("is_public", False),
                 )
-                for s in params.additional_skills
+                for s in valid_skills
             ]
             logger.info(
                 f"[create_chat_task] Passing {len(additional_skills_refs)} additional_skills to executor: "

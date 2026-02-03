@@ -443,7 +443,7 @@ class ChatConfigBuilder:
     def _get_bot_skills(
         self,
         bot: Kind,
-        user_preload_skills: list = None,
+        user_preload_skills: list | None = None,
     ) -> tuple[list[dict], list[str], list[str]]:
         """Get skills for the bot from Ghost, plus any additional skills from frontend.
 

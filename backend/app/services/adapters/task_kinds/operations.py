@@ -262,9 +262,7 @@ class TaskOperationsMixin:
         if obj_in.additional_skills:
             # Extract skill names from SkillRef objects
             skill_names = [s.name for s in obj_in.additional_skills]
-            import json as json_module
-
-            additional_skills_label = json_module.dumps(skill_names)
+            additional_skills_label = json_lib.dumps(skill_names)
 
         task_json = {
             "kind": "Task",

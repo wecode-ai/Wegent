@@ -176,7 +176,7 @@ export default function ChatInput({
     // Convert newlines to <br> tags for proper display in contentEditable
     // Use innerHTML to properly render the <br> tags
     const htmlContent = text
-      .split('chat:\n')
+      .split('\n')
       .map(line => {
         // Escape HTML entities to prevent XSS
         const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

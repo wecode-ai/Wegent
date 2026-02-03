@@ -286,6 +286,11 @@ export function ChatInputControls({
         onStopStream={onStopStream}
         onSendMessage={onSendMessage}
         hasNoTeams={hasNoTeams}
+        availableSkills={availableSkills}
+        teamSkillNames={teamSkillNames}
+        preloadedSkillNames={preloadedSkillNames}
+        selectedSkillNames={selectedSkillNames}
+        onToggleSkill={onToggleSkill}
       />
     )
   }

@@ -8,7 +8,7 @@ Design inspired by Anthropic Messages API + OpenAI Responses API.
 from enum import Enum
 from typing import Any, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # ============================================================
 # Request Schemas
@@ -253,6 +253,51 @@ class Metadata(BaseModel):
         None,
         description="Skills explicitly selected by user for this message. These will be highlighted in system prompt.",
     )
+
+    @model_validator(mode="after")
+    def validate_user_selected_skills(self) -> "Metadata":
+        """Validate and sanitize user_selected_skills against known skills.
+
+        Ensures only known skills are included by intersecting with:
+        - skill_names
+        - skill_configs keys (skill names from config)
+        - preload_skills
+        """
+        if not self.user_selected_skills:
+            return self
+
+        # Build set of known skill names
+        known_skills: set[str] = set()
+
+        if self.skill_names:
+            known_skills.update(self.skill_names)
+
+        if self.skill_configs:
+            for config in self.skill_configs:
+                if isinstance(config, dict) and config.get("name"):
+                    known_skills.add(config["name"])
+
+        if self.preload_skills:
+            known_skills.update(self.preload_skills)
+
+        # Filter to only known skills and deduplicate
+        if known_skills:
+            validated_skills = [
+                skill for skill in self.user_selected_skills if skill in known_skills
+            ]
+            # Deduplicate while preserving order
+            seen: set[str] = set()
+            deduplicated: list[str] = []
+            for skill in validated_skills:
+                if skill not in seen:
+                    seen.add(skill)
+                    deduplicated.append(skill)
+            self.user_selected_skills = deduplicated if deduplicated else None
+        else:
+            # If no known skills defined, clear user_selected_skills
+            self.user_selected_skills = None
+
+        return self
 
 
 class AttachmentConfig(BaseModel):

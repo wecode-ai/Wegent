@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import json
 import logging
 import threading
 from datetime import datetime
@@ -1150,15 +1151,29 @@ class ExecutorKindsService(
                 )
                 if additional_skills_json:
                     try:
-                        import json as json_module
-
-                        user_selected_skills = json_module.loads(additional_skills_json)
+                        parsed_skills = json.loads(additional_skills_json)
+                        # Validate that parsed result is a list of strings
+                        if isinstance(parsed_skills, list):
+                            # Filter to only include string elements
+                            user_selected_skills = [
+                                s for s in parsed_skills if isinstance(s, str) and s
+                            ]
+                            if len(user_selected_skills) != len(parsed_skills):
+                                logger.warning(
+                                    f"[EXECUTOR_DISPATCH] Filtered out {len(parsed_skills) - len(user_selected_skills)} "
+                                    f"non-string entries from additionalSkills for task {subtask.task_id}"
+                                )
+                        else:
+                            logger.warning(
+                                f"[EXECUTOR_DISPATCH] additionalSkills is not a list for task {subtask.task_id}, "
+                                f"got {type(parsed_skills).__name__}"
+                            )
                         logger.info(
                             f"[EXECUTOR_DISPATCH] task_id={subtask.task_id} user_selected_skills={user_selected_skills}"
                         )
-                    except Exception as e:
+                    except json.JSONDecodeError as e:
                         logger.warning(
-                            f"[EXECUTOR_DISPATCH] Failed to parse additionalSkills for task {subtask.task_id}: {e}"
+                            f"[EXECUTOR_DISPATCH] Failed to parse additionalSkills JSON for task {subtask.task_id}: {e}"
                         )
 
             # Merge user_selected_skills into each bot's skills list

@@ -144,10 +144,14 @@ class LangGraphAgentBuilder:
                     new_messages.append(SystemMessage(content=updated_content))
                     system_updated = True
 
-                    # Log the final system prompt sent to the model
+                    # Log the final system prompt metadata at INFO level
+                    # Full content is only logged at DEBUG level to avoid leaking sensitive data
                     logger.info(
-                        "[prompt_modifier] Final system prompt (len=%d):\n%s",
+                        "[prompt_modifier] Final system prompt (len=%d)",
                         len(updated_content),
+                    )
+                    logger.debug(
+                        "[prompt_modifier] Final system prompt content:\n%s",
                         updated_content,
                     )
 

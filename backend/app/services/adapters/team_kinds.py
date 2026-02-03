@@ -2143,8 +2143,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         return {
             "team_id": team_id,
             "team_namespace": team.namespace or "default",
-            "skills": list(all_skills),
-            "preload_skills": list(all_preload_skills),
+            "skills": sorted(all_skills),
+            "preload_skills": sorted(all_preload_skills),
         }
 
 
