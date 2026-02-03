@@ -13,6 +13,7 @@ import { SloganDisplay } from './SloganDisplay'
 import { ChatInputCard } from '../input/ChatInputCard'
 import PipelineStageIndicator from './PipelineStageIndicator'
 import { ScrollToBottomIndicator } from './ScrollToBottomIndicator'
+import { TaskRestoreDialog } from './TaskRestoreDialog'
 import type { PipelineStageInfo } from '@/apis/tasks'
 import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers } from './useChatStreamHandlers'
@@ -769,6 +770,17 @@ function ChatAreaContent({
           </div>
         )}
       </div>
+
+      {/* Task Restore Dialog */}
+      <TaskRestoreDialog
+        open={streamHandlers.restoreDialogOpen}
+        onOpenChange={streamHandlers.setRestoreDialogOpen}
+        taskInfo={streamHandlers.restoreTaskInfo}
+        pendingMessage={streamHandlers.pendingRestoreMessage}
+        onConfirmRestore={streamHandlers.handleConfirmRestore}
+        onCancel={streamHandlers.handleCancelRestore}
+        isRestoring={streamHandlers.isRestoring}
+      />
     </div>
   )
 }

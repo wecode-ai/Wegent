@@ -15,12 +15,14 @@ Business logic has been extracted to services/chat/ modules:
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 import socketio
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.ws.context_decorators import auto_task_context
@@ -809,6 +811,18 @@ class ChatNamespace(socketio.AsyncNamespace):
                 "message_id": user_subtask.message_id if user_subtask else None,
             }
 
+        except HTTPException as e:
+            # Handle HTTPException specially to preserve structured error details
+            # This is crucial for errors like TASK_EXPIRED_RESTORABLE (409)
+            # where the detail is a dict that frontend needs to parse
+            logger.exception(f"[WS] chat:send HTTPException: {e}")
+            if isinstance(e.detail, dict):
+                # Serialize dict detail as JSON string for frontend parsing
+                error_response = {"error": json.dumps(e.detail)}
+            else:
+                error_response = {"error": str(e.detail)}
+            logger.info(f"[WS] chat:send returning error response: {error_response}")
+            return error_response
         except Exception as e:
             logger.exception(f"[WS] chat:send exception: {e}")
             error_response = {"error": str(e)}

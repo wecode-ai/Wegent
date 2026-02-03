@@ -236,12 +236,15 @@ def _create_standard_subtask(
     parent_id: int,
 ) -> None:
     """Create subtask for standard (non-pipeline) collaboration models."""
+    # Standard mode: all bots run in the same executor
+    # Get executor info from any existing assistant subtask with non-empty executor_name
     executor_name = ""
     executor_namespace = ""
-    if existing_subtasks:
-        # Take executor_name and executor_namespace from the last existing subtask
-        executor_name = existing_subtasks[0].executor_name
-        executor_namespace = existing_subtasks[0].executor_namespace
+    for s in existing_subtasks:
+        if s.role == SubtaskRole.ASSISTANT and s.executor_name:
+            executor_name = s.executor_name
+            executor_namespace = s.executor_namespace or ""
+            break
 
     assistant_subtask = Subtask(
         user_id=user_id,
