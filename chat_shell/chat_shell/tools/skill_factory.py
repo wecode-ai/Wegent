@@ -138,6 +138,7 @@ async def prepare_skill_tools(
     ws_emitter: Any = None,
     load_skill_tool: Optional[Any] = None,
     preload_skills: Optional[list[str]] = None,
+    user_selected_skills: Optional[list[str]] = None,
     user_name: str = "",
     auth_token: str = "",
     task_data: dict[str, Any] | None = None,
@@ -173,6 +174,9 @@ async def prepare_skill_tools(
         load_skill_tool: Optional LoadSkillTool instance to preload skill prompts
         preload_skills: Optional list of skill names to preload into system prompt.
                        Skills in this list will have their prompts injected automatically.
+        user_selected_skills: Optional list of skill names that were explicitly selected
+                             by the user for this message. These skills will be highlighted
+                             in the system prompt to encourage the model to prioritize them.
         user_name: Username for identifying the user
         auth_token: JWT token for API authentication (e.g., attachment upload/download)
         task_data: Optional task data for MCP variable substitution
@@ -240,10 +244,19 @@ async def prepare_skill_tools(
             if should_preload and load_skill_tool is not None:
                 skill_prompt = skill_config.get("prompt", "")
                 if skill_prompt:
-                    load_skill_tool.preload_skill_prompt(skill_name, skill_config)
+                    # Check if this skill was explicitly selected by the user
+                    is_user_selected = (
+                        user_selected_skills is not None
+                        and skill_name in user_selected_skills
+                    )
+                    load_skill_tool.preload_skill_prompt(
+                        skill_name, skill_config, is_user_selected=is_user_selected
+                    )
                     logger.info(
-                        "[skill_factory] Preloaded skill prompt for '%s' (no tools, in preload_skills list)",
+                        "[skill_factory] Preloaded skill prompt for '%s' "
+                        "(no tools, in preload_skills list, user_selected=%s)",
                         skill_name,
+                        is_user_selected,
                     )
             continue
 
@@ -342,10 +355,19 @@ async def prepare_skill_tools(
                 if load_skill_tool is not None:
                     skill_prompt = skill_config.get("prompt", "")
                     if skill_prompt:
-                        load_skill_tool.preload_skill_prompt(skill_name, skill_config)
+                        # Check if this skill was explicitly selected by the user
+                        is_user_selected = (
+                            user_selected_skills is not None
+                            and skill_name in user_selected_skills
+                        )
+                        load_skill_tool.preload_skill_prompt(
+                            skill_name, skill_config, is_user_selected=is_user_selected
+                        )
                         logger.info(
-                            "[skill_factory] Preloaded skill prompt for '%s' (in preload_skills list)",
+                            "[skill_factory] Preloaded skill prompt for '%s' "
+                            "(in preload_skills list, user_selected=%s)",
                             skill_name,
+                            is_user_selected,
                         )
             else:
                 logger.debug(

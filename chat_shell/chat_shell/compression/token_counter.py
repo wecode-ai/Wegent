@@ -25,6 +25,33 @@ from litellm import token_counter as litellm_token_counter
 logger = logging.getLogger(__name__)
 
 
+def _detect_provider(model_id: str) -> str:
+    """Detect the provider based on model identifier.
+
+    Args:
+        model_id: Model identifier string
+
+    Returns:
+        Provider name: "openai", "anthropic", "google", or "unknown"
+    """
+    model_id_lower = model_id.lower()
+
+    # Anthropic models
+    if any(prefix in model_id_lower for prefix in ["claude", "anthropic"]):
+        return "anthropic"
+
+    # Google models
+    if any(prefix in model_id_lower for prefix in ["gemini", "palm", "bison"]):
+        return "google"
+
+    # OpenAI models (most gpt-*, o1*, o3* patterns)
+    if any(prefix in model_id_lower for prefix in ["gpt-", "o1", "o3"]):
+        return "openai"
+
+    # Default to unknown if no pattern matches
+    return "unknown"
+
+
 class TokenCounter:
     """Token counter for various model providers using LiteLLM.
 
@@ -45,6 +72,15 @@ class TokenCounter:
             model_id: Deprecated alias for model_name (for backward compatibility)
         """
         self.model_id = model_id or model_name or "gpt-4"
+
+    @property
+    def provider(self) -> str:
+        """Get the detected provider for the model.
+
+        Returns:
+            Provider name: "openai", "anthropic", "google", or "unknown"
+        """
+        return _detect_provider(self.model_id)
 
     def count_text(self, text: str) -> int:
         """Count tokens in a text string.

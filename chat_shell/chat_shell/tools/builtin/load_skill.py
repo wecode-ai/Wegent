@@ -93,6 +93,10 @@ class LoadSkillTool(BaseTool):
     # Flag to indicate if state was restored from history
     _state_restored: bool = PrivateAttr(default=False)
 
+    # Track user-selected skills (skills explicitly chosen by user for this message)
+    # These skills should be prioritized by the model
+    _user_selected_skills: Set[str] = PrivateAttr(default_factory=set)
+
     def __init__(self, **data):
         """Initialize with a fresh expanded_skills cache."""
         super().__init__(**data)
@@ -102,6 +106,7 @@ class LoadSkillTool(BaseTool):
         self._skill_tools = {}
         self._skill_remaining_turns = {}
         self._state_restored = False
+        self._user_selected_skills = set()
 
     def _load_skill_internal(
         self,
@@ -254,7 +259,12 @@ class LoadSkillTool(BaseTool):
         # Fallback to skill_name
         return skill_name
 
-    def preload_skill_prompt(self, skill_name: str, skill_config: dict) -> None:
+    def preload_skill_prompt(
+        self,
+        skill_name: str,
+        skill_config: dict,
+        is_user_selected: bool = False,
+    ) -> None:
         """Preload a skill's prompt for system prompt injection.
 
         This method is called by prepare_skill_tools to preload skill prompts
@@ -264,6 +274,9 @@ class LoadSkillTool(BaseTool):
         Args:
             skill_name: The name of the skill
             skill_config: The skill configuration containing prompt and displayName
+            is_user_selected: Whether this skill was explicitly selected by the user
+                for this message. User-selected skills will be highlighted in the
+                system prompt to encourage the model to prioritize them.
         """
         # Temporarily add to skill_metadata if not present (for _load_skill_internal)
         if skill_name not in self.skill_metadata:
@@ -271,6 +284,14 @@ class LoadSkillTool(BaseTool):
 
         # Use shared internal method to load the skill
         self._load_skill_internal(skill_name, source="preload")
+
+        # Track user-selected skills
+        if is_user_selected:
+            self._user_selected_skills.add(skill_name)
+            logger.info(
+                "[LoadSkillTool] Marked skill '%s' as user-selected",
+                skill_name,
+            )
 
     def get_prompt_modification(self) -> str:
         """Get prompt modification content for system prompt injection.
@@ -350,7 +371,7 @@ The following skills provide specialized guidance for specific tasks. When your 
 
 ### When to Use Skills
 
-**⚠️ CRITICAL: Skills First Principle (技能优先原则)**
+**⚠️ CRITICAL: Skills First Principle**
 
 **When a matching skill is available, you MUST load and use it BEFORE attempting to solve the problem with your general capabilities.** Skills contain curated, domain-specific knowledge and best practices that will produce higher quality results than ad-hoc solutions.
 
@@ -386,6 +407,9 @@ The following skills provide specialized guidance for specific tasks. When your 
         Each skill's instructions are wrapped in XML tags (e.g., <skill_name>...</skill_name>)
         to help the model clearly distinguish between different skills and avoid confusion.
 
+        User-selected skills are highlighted with a special notice to encourage the model
+        to prioritize them.
+
         Returns:
             Loaded Skill Instructions section content, or empty string if no skills loaded
         """
@@ -395,6 +419,9 @@ The following skills provide specialized guidance for specific tasks. When your 
             )
             return ""
 
+        # Build user-selected skills notice if any
+        user_selected_notice = self._build_user_selected_notice()
+
         parts = []
         for skill_name, prompt in self._loaded_skill_prompts.items():
             # Include skill path for model reference (e.g., for read_file tool)
@@ -402,8 +429,17 @@ The following skills provide specialized guidance for specific tasks. When your 
             # Wrap each skill's instructions in XML tags to avoid model confusion
             # Use skill_name as the tag name (replace invalid characters with underscore)
             safe_tag_name = skill_name.replace("-", "_").replace(" ", "_")
+
+            # Add user-selected indicator if applicable
+            user_selected_indicator = ""
+            if skill_name in self._user_selected_skills:
+                user_selected_indicator = (
+                    "🎯 **[USER SELECTED - PRIORITIZE THIS SKILL]**\n\n"
+                )
+
             parts.append(
                 f"\n\n<{safe_tag_name}>\n"
+                f"{user_selected_indicator}"
                 f"### Skill: {skill_name}\n\n"
                 f"**Skill Path**: `{skill_path}`\n\n"
                 f"**Note**: All file paths mentioned in this skill's instructions are relative to the Skill Path above. "
@@ -415,8 +451,50 @@ The following skills provide specialized guidance for specific tasks. When your 
         return (
             "\n\n## Loaded Skill Instructions\n\nThe following skills have been loaded. "
             "Each skill's instructions are wrapped in XML tags for clarity."
+            + user_selected_notice
             + "".join(parts)
         )
+
+    def _build_user_selected_notice(self) -> str:
+        """Build a notice about user-selected skills.
+
+        This notice is added to the system prompt to inform the model that
+        certain skills were explicitly selected by the user and should be
+        prioritized.
+
+        Returns:
+            User-selected skills notice, or empty string if no user-selected skills
+        """
+        # Get user-selected skills that are currently loaded
+        loaded_user_selected = [
+            skill_name
+            for skill_name in self._user_selected_skills
+            if skill_name in self._loaded_skill_prompts
+        ]
+
+        if not loaded_user_selected:
+            return ""
+
+        # Get display names for user-selected skills
+        skill_display_list = []
+        for skill_name in loaded_user_selected:
+            skill_display_list.append(f"`{skill_name}`")
+
+        skills_str = ", ".join(skill_display_list)
+
+        return f"""
+
+### User-Selected Skills
+
+**The user has explicitly selected the following skill(s) for this task: {skills_str}**
+
+**You should prioritize using these skills to complete the user's request.** The user selected these skills because they believe these skills are most relevant to their task. Follow the instructions in these skills strictly and apply them to the user's request.
+
+**Priority Order:**
+1. **User-selected skills** - Apply these first and foremost
+2. **Other loaded skills** - Use as supplementary guidance if needed
+3. **General capabilities** - Only fall back to these if the skills don't cover the specific need
+"""
 
     # Alias for backward compatibility
     def get_combined_skill_prompt(self) -> str:
@@ -671,3 +749,22 @@ The following skills provide specialized guidance for specific tasks. When your 
             True if restore_from_history has been called, False otherwise
         """
         return self._state_restored
+
+    def get_user_selected_skills(self) -> set[str]:
+        """Get the set of user-selected skill names.
+
+        Returns:
+            Set of skill names that were explicitly selected by the user
+        """
+        return self._user_selected_skills.copy()
+
+    def is_user_selected_skill(self, skill_name: str) -> bool:
+        """Check if a skill was explicitly selected by the user.
+
+        Args:
+            skill_name: The name of the skill
+
+        Returns:
+            True if the skill was user-selected, False otherwise
+        """
+        return skill_name in self._user_selected_skills

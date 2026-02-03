@@ -213,6 +213,15 @@ export interface PipelineStageInfo {
   }>
 }
 
+// Task Skills Types
+export interface TaskSkillsResponse {
+  task_id: number
+  team_id: number | null
+  team_namespace: string
+  skills: string[]
+  preload_skills: string[]
+}
+
 // Task Services
 
 export const taskApis = {
@@ -434,4 +443,18 @@ export const taskApis = {
   getPipelineStageInfo: async (taskId: number): Promise<PipelineStageInfo> => {
     return apiClient.get(`/tasks/${taskId}/pipeline-stage-info`)
   },
+
+  /**
+   * Get task skills configuration
+   * @param taskId - Task ID
+   */
+  getTaskSkills: async (taskId: number): Promise<TaskSkillsResponse> => {
+    return apiClient.get(`/tasks/${taskId}/skills`)
+  },
 }
+
+/**
+ * Fetch task skills configuration
+ * @param taskId - Task ID
+ */
+export const fetchTaskSkills = taskApis.getTaskSkills

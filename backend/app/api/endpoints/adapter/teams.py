@@ -26,6 +26,7 @@ from app.schemas.team import (
     TeamDetail,
     TeamInDB,
     TeamListResponse,
+    TeamSkillsResponse,
     TeamUpdate,
 )
 from app.services.adapters.team_kinds import team_kinds_service
@@ -185,6 +186,25 @@ def get_team_input_parameters(
 ):
     """Get input parameters required by the team's external API bots"""
     return team_kinds_service.get_team_input_parameters(
+        db=db, team_id=team_id, user_id=current_user.id
+    )
+
+
+@router.get("/{team_id}/skills", response_model=TeamSkillsResponse)
+def get_team_skills(
+    team_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get all skills associated with a team.
+
+    Follows the chain: team → bots → ghosts → skills
+
+    Returns:
+        TeamSkillsResponse with team_id, team_namespace,
+        skills list (deduplicated), and preload_skills list.
+    """
+    return team_kinds_service.get_team_skills(
         db=db, team_id=team_id, user_id=current_user.id
     )
 

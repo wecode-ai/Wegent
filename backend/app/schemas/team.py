@@ -121,3 +121,16 @@ class TeamListResponse(BaseModel):
 
     total: int
     items: list[TeamInDB]
+
+
+class TeamSkillsResponse(BaseModel):
+    """Response for GET /teams/{team_id}/skills endpoint.
+
+    Returns all skills associated with a team through the chain:
+    team → bots → ghosts → skills
+    """
+
+    team_id: int
+    team_namespace: str = "default"
+    skills: List[str] = []  # All bot skills (deduplicated)
+    preload_skills: List[str] = []  # Skills to preload
