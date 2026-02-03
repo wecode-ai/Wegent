@@ -25,6 +25,7 @@ from executor.agents.agno.thinking_step_manager import ThinkingStepManager
 from executor.agents.base import Agent
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
 from executor.agents.claude_code.response_processor import process_response
+from executor.agents.claude_code.strategies import get_mode_strategy
 from executor.config import config
 from executor.services.attachment_downloader import get_api_base_url
 from executor.tasks.resource_manager import ResourceManager
@@ -323,6 +324,9 @@ class ClaudeCodeAgent(Agent):
 
         # Callback for when client is created (used for heartbeat updates)
         self.on_client_created_callback: Optional[callable] = None
+
+        # Initialize mode strategy for Local vs Docker specific behavior
+        self._mode_strategy = get_mode_strategy()
 
     def _set_git_env_variables(self, task_data: Dict[str, Any]) -> None:
         """
@@ -656,73 +660,23 @@ class ClaudeCodeAgent(Agent):
 
     def _save_claude_config_files(self, agent_config: Dict[str, Any]) -> None:
         """
-        Save Claude config files to appropriate directory based on execution mode.
+        Save Claude config files using mode strategy.
 
+        Delegates to the mode strategy which handles:
         - Docker mode: saves to ~/.claude/ (SDK reads from default location)
-        - Local mode: Does NOT write settings.json (contains sensitive API keys).
-          Sensitive config is passed via environment variables in _create_and_connect_client().
-          Only writes non-sensitive claude.json (user preferences) with strict file permissions.
+        - Local mode: saves to task-specific directory with restricted permissions
 
         Args:
             agent_config: The agent configuration dictionary
         """
-        # Store env config for passing to SDK via environment variables
-        self._claude_env_config = agent_config.get("env", {})
-
-        # Non-sensitive user preferences config for claude.json
-        claude_json_config = {
-            "numStartups": 2,
-            "installMethod": "unknown",
-            "autoUpdates": True,
-            "sonnet45MigrationComplete": True,
-            "userID": _generate_claude_code_user_id(),
-            "hasCompletedOnboarding": True,
-            "lastOnboardingVersion": "2.0.14",
-            "bypassPermissionsModeAccepted": True,
-            "hasOpusPlanDefault": False,
-            "lastReleaseNotesSeen": "2.0.14",
-            "isQualifiedForDataSharing": False,
-        }
-
-        if config.EXECUTOR_MODE == "local":
-            # Local mode: Do NOT write settings.json (contains sensitive API keys/tokens)
-            # Sensitive config is passed via env parameter in _create_and_connect_client()
-            config_dir = os.path.join(
-                config.get_workspace_root(), str(self.task_id), ".claude"
+        # Use strategy to save config files
+        self._claude_config_dir, self._claude_env_config = (
+            self._mode_strategy.save_config_files(
+                agent_config=agent_config,
+                task_id=self.task_id,
+                workspace_root=config.get_workspace_root(),
             )
-            claude_json_path = os.path.join(config_dir, "claude.json")
-
-            # Create directory with restricted permissions (owner only)
-            Path(config_dir).mkdir(parents=True, exist_ok=True)
-            os.chmod(config_dir, 0o700)
-
-            # Write only non-sensitive claude.json with restricted permissions
-            with open(claude_json_path, "w") as f:
-                json.dump(claude_json_config, f, indent=2)
-            os.chmod(claude_json_path, 0o600)
-
-            logger.info(
-                f"Local mode: Saved claude.json to {config_dir} "
-                "(settings.json skipped - sensitive config passed via env)"
-            )
-        else:
-            # Docker mode: save to user's ~/.claude directory (original behavior)
-            config_dir = os.path.expanduser("~/.claude")
-            claude_json_path = os.path.expanduser("~/.claude.json")
-
-            Path(config_dir).mkdir(parents=True, exist_ok=True)
-
-            # Save settings.json (Docker mode only - isolated container environment)
-            settings_path = os.path.join(config_dir, "settings.json")
-            with open(settings_path, "w") as f:
-                json.dump(agent_config, f, indent=2)
-
-            # Save claude.json
-            with open(claude_json_path, "w") as f:
-                json.dump(claude_json_config, f, indent=2)
-
-        # Store config directory for SDK configuration
-        self._claude_config_dir = config_dir
+        )
 
     def _resolve_env_value(self, value: str) -> str:
         """Resolve a value that may be an environment variable template or encrypted.
@@ -1252,30 +1206,21 @@ class ClaudeCodeAgent(Agent):
             os.makedirs(cwd, exist_ok=True)
             self.options["cwd"] = cwd
 
-        # In Local mode, configure SDK to use task-specific config directory
-        # to avoid modifying user's personal ~/.claude/ config
-        if config.EXECUTOR_MODE == "local" and self._claude_config_dir:
-            # Pass env config (contains ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL, etc.)
-            if self._claude_env_config:
-                existing_env = self.options.get("env", {})
-                merged_env = {**existing_env, **self._claude_env_config}
-                self.options["env"] = {k: str(v) for k, v in merged_env.items()}
+        # Use strategy to configure SDK options (handles Local vs Docker differences)
+        self.options = self._mode_strategy.configure_sdk_options(
+            options=self.options,
+            config_dir=self._claude_config_dir,
+            env_config=self._claude_env_config,
+        )
 
-            # Set CLAUDE_CONFIG_DIR env var to redirect all config reads/writes
-            # This affects settings.json, claude.json, and skills locations
-            # Note: Keep setting_sources as ["user", "project", "local"] so SDK
-            # reads config from CLAUDE_CONFIG_DIR instead of default ~/.claude/
-            env = self.options.get("env", {})
-            env["CLAUDE_CONFIG_DIR"] = self._claude_config_dir
-            self.options["env"] = env
-
-        # Check if there's a saved session ID to resume
-        saved_session_id = self._load_saved_session_id(self.task_id)
-        if saved_session_id:
-            logger.info(
-                f"Resuming Claude session for task {self.task_id}: {saved_session_id}"
-            )
-            self.options["resume"] = saved_session_id
+        # Check if there's a saved session ID to resume (only if strategy supports persistence)
+        if self._mode_strategy.supports_session_persistence():
+            saved_session_id = self._load_saved_session_id(self.task_id)
+            if saved_session_id:
+                logger.info(
+                    f"Resuming Claude session for task {self.task_id}: {saved_session_id}"
+                )
+                self.options["resume"] = saved_session_id
 
         # Create client with options
         if self.options:
@@ -1439,7 +1384,9 @@ class ClaudeCodeAgent(Agent):
         cls._clients.clear()
 
     @classmethod
-    async def cleanup_task_clients(cls, task_id: int) -> int:
+    async def cleanup_task_clients(
+        cls, task_id: int, delete_session_file: bool = True
+    ) -> int:
         """
         Close all client connections for a specific task_id.
 
@@ -1452,6 +1399,9 @@ class ClaudeCodeAgent(Agent):
 
         Args:
             task_id: Task ID to cleanup clients for
+            delete_session_file: Whether to delete the session file
+                - True: Full cleanup (manual close) - deletes session file
+                - False: Partial cleanup (pause) - keeps session file for resume
 
         Returns:
             Number of clients cleaned up
@@ -1636,6 +1586,17 @@ class ClaudeCodeAgent(Agent):
                 f"[Cleanup] No clients found to cleanup for task_id={task_id}"
             )
 
+        # Use strategy to cleanup session resources (e.g., delete session file)
+        try:
+            strategy = get_mode_strategy()
+            strategy.cleanup_session(
+                task_id=task_id,
+                workspace_root=config.get_workspace_root(),
+                delete_session_file=delete_session_file,
+            )
+        except Exception as e:
+            logger.warning(f"Error cleaning up session for task {task_id}: {e}")
+
         return cleaned_count
 
     def cancel_run(self) -> bool:
@@ -1643,7 +1604,7 @@ class ClaudeCodeAgent(Agent):
         Cancel the current running task using multi-level cancellation strategy:
         1. Set cancellation state to CANCELLED immediately (not CANCELLING)
         2. Try SDK interrupt
-        3. No longer send callback here, it will be sent asynchronously by background task to avoid blocking
+        3. Clean up client connections but keep session file for resume
         4. Wait briefly for cleanup
 
         Returns:
@@ -1664,7 +1625,11 @@ class ClaudeCodeAgent(Agent):
                     f"No client or interrupt method available for task {self.task_id}"
                 )
 
-            # Step 3: Wait briefly (2 seconds max) for graceful cleanup
+            # Step 3: Clean up client connections but keep session file for resume
+            # This runs async cleanup in background
+            self._schedule_client_cleanup(delete_session_file=False)
+
+            # Step 4: Wait briefly (2 seconds max) for graceful cleanup
             max_wait = min(config.GRACEFUL_SHUTDOWN_TIMEOUT, 2)
             waited = 0
             while waited < max_wait:
@@ -1687,6 +1652,42 @@ class ClaudeCodeAgent(Agent):
             # Ensure cancelled state even on error
             self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
             return False
+
+    def _schedule_client_cleanup(self, delete_session_file: bool = False) -> None:
+        """
+        Schedule async client cleanup to run in background.
+
+        Args:
+            delete_session_file: Whether to delete the session file
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            # If we're in an async context, create a task
+            asyncio.create_task(
+                self.cleanup_task_clients(
+                    self.task_id, delete_session_file=delete_session_file
+                )
+            )
+            logger.info(
+                f"Scheduled client cleanup for task {self.task_id} (delete_session_file={delete_session_file})"
+            )
+        except RuntimeError:
+            # No running event loop, run in a new loop
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(
+                    self.cleanup_task_clients(
+                        self.task_id, delete_session_file=delete_session_file
+                    )
+                )
+                logger.info(
+                    f"Completed client cleanup for task {self.task_id} (delete_session_file={delete_session_file})"
+                )
+            except Exception as e:
+                logger.warning(f"Error in client cleanup for task {self.task_id}: {e}")
+            finally:
+                loop.close()
 
     def _sync_cancel_run(self) -> None:
         """
@@ -1965,9 +1966,10 @@ class ClaudeCodeAgent(Agent):
         """
         Download Skills from Backend API and deploy to skills directory.
 
-        - Docker mode: deploys to ~/.claude/skills/
-        - Local mode: deploys to task config directory (same as CLAUDE_CONFIG_DIR)
-          to avoid modifying user's personal skills
+        Uses mode strategy to determine:
+        - Skills directory location
+        - Whether to skip existing skills
+        - Whether to clear cache
 
         Uses shared SkillDownloader from api_client module.
 
@@ -1985,13 +1987,12 @@ class ClaudeCodeAgent(Agent):
 
             logger.info(f"Found {len(skills)} skills to deploy: {skills}")
 
-            # Determine skills directory based on mode
-            if config.EXECUTOR_MODE == "local" and hasattr(self, "_claude_config_dir"):
-                # Local mode: use task config directory (follows CLAUDE_CONFIG_DIR)
-                skills_dir = os.path.join(self._claude_config_dir, "skills")
-            else:
-                # Docker mode: use default ~/.claude/skills
-                skills_dir = os.path.expanduser("~/.claude/skills")
+            # Use strategy to get skills deployment configuration
+            skills_dir, skip_existing, clear_cache = (
+                self._mode_strategy.get_skills_deployment_config(
+                    config_dir=self._claude_config_dir
+                )
+            )
 
             # Get auth token
             auth_token = self.task_data.get("auth_token")
@@ -2009,12 +2010,11 @@ class ClaudeCodeAgent(Agent):
                 skills_dir=skills_dir,
             )
 
-            # In Local mode, skip existing skills; in Docker mode, clear cache based on config
-            is_local_mode = config.EXECUTOR_MODE == "local"
+            # Deploy skills using strategy-determined configuration
             result = downloader.download_and_deploy(
                 skills=skills,
-                clear_cache=not is_local_mode,  # Clear cache only in Docker mode
-                skip_existing=is_local_mode,  # Skip existing only in Local mode
+                clear_cache=clear_cache,
+                skip_existing=skip_existing,
             )
 
             logger.info(

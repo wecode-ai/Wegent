@@ -260,8 +260,11 @@ class LocalRunner:
             logger.info(
                 f"[Runner] About to call cleanup_task_clients for task_id={task_id}"
             )
-            # Cleanup any lingering client for this task_id
-            cleaned = await ClaudeCodeAgent.cleanup_task_clients(task_id)
+            # Manual close: Full cleanup including session file deletion
+            # This prevents session resume after explicit close
+            cleaned = await ClaudeCodeAgent.cleanup_task_clients(
+                task_id, delete_session_file=True
+            )
             logger.info(f"[Runner] cleanup_task_clients returned: cleaned={cleaned}")
             if cleaned > 0:
                 logger.info(
