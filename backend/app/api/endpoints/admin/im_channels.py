@@ -369,9 +369,6 @@ async def update_im_channel(
     channel.json = current_json
     channel.updated_at = datetime.now()
     # Mark JSON field as modified for SQLAlchemy to detect the change
-    flag_modified(channel, "json")
-
-    # Mark JSON field as modified to ensure SQLAlchemy detects the change
     from sqlalchemy.orm.attributes import flag_modified
 
     flag_modified(channel, "json")

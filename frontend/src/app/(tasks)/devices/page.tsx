@@ -39,6 +39,8 @@ import {
   Trash2,
   ExternalLink,
   MessageCircleQuestion,
+  Plus,
+  ChevronUp,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -161,6 +163,9 @@ export default function DevicesPage() {
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)
 
+  // Guide visibility state (for showing installation guide when devices exist)
+  const [showGuide, setShowGuide] = useState(false)
+
   // Load collapsed state from localStorage
   useEffect(() => {
     const savedCollapsed = localStorage.getItem('task-sidebar-collapsed')
@@ -253,16 +258,39 @@ export default function DevicesPage() {
                   {t('beta')}
                 </span>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={refreshDevices}
-                disabled={isLoading}
-                className="flex items-center gap-2"
-              >
-                <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
-                {t('refresh')}
-              </Button>
+              <div className="flex items-center gap-2">
+                {/* Add Device button - only show when devices exist */}
+                {sortedDevices.length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowGuide(!showGuide)}
+                    className="flex items-center gap-2"
+                  >
+                    {showGuide ? (
+                      <>
+                        <ChevronUp className="w-4 h-4" />
+                        {t('hide_guide')}
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-4 h-4" />
+                        {t('add_device')}
+                      </>
+                    )}
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={refreshDevices}
+                  disabled={isLoading}
+                  className="flex items-center gap-2"
+                >
+                  <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
+                  {t('refresh')}
+                </Button>
+              </div>
             </div>
 
             {/* Instructions */}
@@ -322,6 +350,17 @@ export default function DevicesPage() {
                   </div>
                 )}
               </>
+            )}
+
+            {/* Installation guide when triggered by Add Device button */}
+            {showGuide && sortedDevices.length > 0 && (
+              <div className="mb-6">
+                <LocalExecutorGuide
+                  backendUrl={backendUrl}
+                  authToken={authToken}
+                  guideUrl={guideUrl}
+                />
+              </div>
             )}
 
             {/* Device list */}

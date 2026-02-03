@@ -138,17 +138,17 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
         if detail_type == "tool_use":
             tool_name = details.get("name", "") or details.get("tool_name", "")
             if tool_name:
-                return f"🔧 工具使用: {tool_name}"
-            return "🔧 工具使用中..."
+                return f"工具使用: {tool_name}"
+            return "工具使用中..."
 
         elif detail_type == "tool_result":
             tool_name = details.get("tool_name", "") or details.get("name", "")
             is_error = details.get("is_error", False)
             if is_error:
-                return f"⚠️ 工具执行失败: {tool_name}"
+                return f"工具执行失败: {tool_name}"
             if tool_name:
-                return f"✅ 工具完成: {tool_name}"
-            return "✅ 工具执行完成"
+                return f"工具完成: {tool_name}"
+            return "工具执行完成"
 
         elif detail_type == "assistant":
             # Assistant message - check content for tool_use or text
@@ -162,16 +162,16 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
                             if content_type == "tool_use":
                                 tool_name = content_item.get("name", "")
                                 if tool_name:
-                                    return f"🔧 工具使用: {tool_name}"
-                                return "🔧 工具使用中..."
+                                    return f"工具使用: {tool_name}"
+                                return "工具使用中..."
                             elif content_type == "text":
                                 text = content_item.get("text", "")
                                 if text:
                                     # Truncate if too long
                                     if len(text) > 100:
-                                        return f"💭 {text[:100]}..."
-                                    return f"💭 {text}"
-            return "💭 思考中..."
+                                        return f"{text[:100]}..."
+                                    return text
+            return "思考中..."
 
         elif detail_type == "text":
             # For text type, try to extract actual text content
@@ -185,21 +185,21 @@ class DingTalkCallbackService(BaseChannelCallbackService[DingTalkCallbackInfo]):
                             if text:
                                 # Truncate if too long
                                 if len(text) > 100:
-                                    return f"💭 {text[:100]}..."
-                                return f"💭 {text}"
-            return "💭 思考中..."
+                                    return f"{text[:100]}..."
+                                return text
+            return "思考中..."
 
         elif detail_type == "system":
             subtype = details.get("subtype", "")
             if subtype == "init":
-                return "⚙️ 系统初始化"
-            return "⚙️ 系统消息"
+                return "系统初始化"
+            return "系统消息"
 
         elif detail_type == "result":
-            return "📋 生成结果中..."
+            return "生成结果中..."
 
         # Default: return a generic message
-        return "🤔 处理中..."
+        return "处理中..."
 
     async def _create_emitter(
         self, task_id: int, subtask_id: int, callback_info: DingTalkCallbackInfo
