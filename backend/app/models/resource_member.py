@@ -12,10 +12,11 @@ Supports Team, Task, and KnowledgeBase resource types.
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Column, DateTime, Index, Integer, String, UniqueConstraint
+from sqlalchemy import Column, DateTime, Enum, Index, Integer, String, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.db.base import Base
+from app.models.share_link import PermissionLevel, ResourceType
 
 
 class MemberStatus(str, PyEnum):
@@ -48,7 +49,7 @@ class ResourceMember(Base):
 
     # Resource identification (polymorphic association)
     resource_type = Column(
-        String(50),
+        Enum(ResourceType),
         nullable=False,
         comment="Resource type: Team, Task, KnowledgeBase",
     )
@@ -68,17 +69,17 @@ class ResourceMember(Base):
 
     # Permission level
     permission_level = Column(
-        String(20),
+        Enum(PermissionLevel),
         nullable=False,
-        default="view",
+        default=PermissionLevel.VIEW,
         comment="Permission level: view, edit, manage",
     )
 
     # Status
     status = Column(
-        String(20),
+        Enum(MemberStatus),
         nullable=False,
-        default=MemberStatus.PENDING.value,
+        default=MemberStatus.PENDING,
         comment="Status: pending, approved, rejected",
     )
 
@@ -158,9 +159,9 @@ class ResourceMember(Base):
     @property
     def is_approved(self) -> bool:
         """Check if the member has approved access."""
-        return self.status == MemberStatus.APPROVED.value
+        return self.status == MemberStatus.APPROVED
 
     @property
     def is_pending(self) -> bool:
         """Check if the member is awaiting approval."""
-        return self.status == MemberStatus.PENDING.value
+        return self.status == MemberStatus.PENDING

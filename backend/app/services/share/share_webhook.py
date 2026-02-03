@@ -191,7 +191,7 @@ def send_share_request_notification(
         return webhook_notification_service.send_notification_sync(notification)
 
     except Exception as e:
-        logger.exception(f"Error sending share request notification: {e}")
+        logger.exception("Error sending share request notification")
         return False
     finally:
         if db:
@@ -277,7 +277,7 @@ def send_share_review_notification(
         return webhook_notification_service.send_notification_sync(notification)
 
     except Exception as e:
-        logger.exception(f"Error sending share review notification: {e}")
+        logger.exception("Error sending share review notification")
         return False
     finally:
         if db:

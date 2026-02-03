@@ -63,7 +63,7 @@ class TaskShareService(UnifiedShareService):
             ):
                 return task
 
-        return task  # Return task even if not accessible (for share info)
+        return None  # Return None if not accessible to prevent unauthorized access
 
     def _get_resource_name(self, resource: TaskResource) -> str:
         """Get Task display name."""

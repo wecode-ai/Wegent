@@ -12,7 +12,7 @@ Supports Team, Task, and KnowledgeBase resource types.
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Enum, Index, Integer, String
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -55,7 +55,7 @@ class ShareLink(Base):
 
     # Resource identification (polymorphic association)
     resource_type = Column(
-        String(50),
+        Enum(ResourceType),
         nullable=False,
         comment="Resource type: Team, Task, KnowledgeBase",
     )
@@ -81,9 +81,9 @@ class ShareLink(Base):
         comment="Whether joining requires approval",
     )
     default_permission_level = Column(
-        String(20),
+        Enum(PermissionLevel),
         nullable=False,
-        default=PermissionLevel.VIEW.value,
+        default=PermissionLevel.VIEW,
         comment="Default permission level: view, edit, manage",
     )
 

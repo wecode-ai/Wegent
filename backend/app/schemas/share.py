@@ -14,21 +14,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
-class ResourceType(str, Enum):
-    """Supported resource types for sharing."""
-
-    TEAM = "Team"
-    TASK = "Task"
-    KNOWLEDGE_BASE = "KnowledgeBase"
-
-
-class PermissionLevel(str, Enum):
-    """Permission levels for resource access."""
-
-    VIEW = "view"
-    EDIT = "edit"
-    MANAGE = "manage"
+from app.models.share_link import PermissionLevel, ResourceType
 
 
 class MemberStatus(str, Enum):

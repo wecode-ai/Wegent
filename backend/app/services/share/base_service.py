@@ -506,9 +506,11 @@ class UnifiedShareService(ABC):
                 if share_link.require_approval
                 else MemberStatus.APPROVED.value
             )
+            # Only use requested_permission_level when require_approval is True
+            # Otherwise, always use share_link.default_permission_level to prevent self-elevation
             existing_member.permission_level = (
                 requested_permission_level.value
-                if requested_permission_level
+                if share_link.require_approval and requested_permission_level
                 else share_link.default_permission_level
             )
             existing_member.share_link_id = share_link.id
@@ -527,9 +529,11 @@ class UnifiedShareService(ABC):
             )
 
             # Determine permission level
+            # Only use requested_permission_level when require_approval is True
+            # Otherwise, always use share_link.default_permission_level to prevent self-elevation
             permission_level = (
                 requested_permission_level.value
-                if requested_permission_level
+                if share_link.require_approval and requested_permission_level
                 else share_link.default_permission_level
             )
 

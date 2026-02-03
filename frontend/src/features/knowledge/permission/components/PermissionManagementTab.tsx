@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgePermissions } from '../hooks/useKnowledgePermissions'
-import { AddUserDialog } from './AddUserDialog'
+import { AddUserDialog } from './add-user-dialog'
 import type {
   PermissionLevel,
   PendingPermissionInfo,
@@ -56,16 +56,15 @@ export function PermissionManagementTab({ kbId }: PermissionManagementTabProps) 
   // Initialize approval levels when pending requests change
   useEffect(() => {
     if (permissions?.pending) {
-      const initialLevels: Record<number, PermissionLevel> = {}
-      permissions.pending.forEach(p => {
-        // Only set if not already tracked
-        if (!(p.id in approvalLevels)) {
-          initialLevels[p.id] = p.permission_level
-        }
+      setApprovalLevels(prev => {
+        const additions: Record<number, PermissionLevel> = {}
+        permissions.pending.forEach(p => {
+          if (!(p.id in prev)) {
+            additions[p.id] = p.permission_level
+          }
+        })
+        return Object.keys(additions).length ? { ...prev, ...additions } : prev
       })
-      if (Object.keys(initialLevels).length > 0) {
-        setApprovalLevels(prev => ({ ...prev, ...initialLevels }))
-      }
     }
   }, [permissions?.pending])
 

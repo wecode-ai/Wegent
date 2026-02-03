@@ -29,7 +29,7 @@ class TeamShareService(UnifiedShareService):
     Teams are joined directly without copying.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(ResourceType.TEAM)
 
     def _get_resource(
@@ -72,7 +72,7 @@ class TeamShareService(UnifiedShareService):
             if member:
                 return team
 
-        return team  # Return team even if not owned (for share info)
+        return None  # Return None if not authorized to prevent unauthorized access
 
     def _get_resource_name(self, resource: Kind) -> str:
         """Get Team display name."""

@@ -10,8 +10,8 @@ const nextConfig = {
   reactStrictMode: false,
   output: 'standalone',
   // Allow cross-origin requests in development mode
-  // This prevents the "Cross origin request detected" warning
-  allowedDevOrigins: ['*'],
+  // This prevents "Cross origin request detected" warning
+  allowedDevOrigins: ['localhost:3000'],
   // Webpack configuration for production builds
   // Note: In development mode with Turbopack, this is not used
   // The warning "Webpack is configured while Turbopack is not" can be safely ignored
