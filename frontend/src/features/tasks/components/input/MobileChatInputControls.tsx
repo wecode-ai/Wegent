@@ -26,8 +26,10 @@ import {
 } from '@/components/ui/dropdown'
 import type { Team, GitRepoInfo, GitBranch as GitBranchType, TaskDetail } from '@/types/api'
 import type { ContextItem } from '@/types/context'
-import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
+import type { UnifiedSkill } from '@/apis/skills'
+import { isChatShell, isClaudeCode, teamRequiresWorkspace } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
+import SkillSelectorPopover from '../selector/SkillSelectorPopover'
 
 export interface MobileChatInputControlsProps {
   // Team and Model
@@ -87,6 +89,13 @@ export interface MobileChatInputControlsProps {
 
   // Whether there are no available teams (shows disabled state)
   hasNoTeams?: boolean
+
+  // Skill selector support
+  availableSkills?: UnifiedSkill[]
+  teamSkillNames?: string[]
+  preloadedSkillNames?: string[]
+  selectedSkillNames?: string[]
+  onToggleSkill?: (skillName: string) => void
 }
 
 /**
@@ -131,6 +140,11 @@ export function MobileChatInputControls({
   onStopStream,
   onSendMessage,
   hasNoTeams = false,
+  availableSkills = [],
+  teamSkillNames = [],
+  preloadedSkillNames = [],
+  selectedSkillNames = [],
+  onToggleSkill,
 }: MobileChatInputControlsProps) {
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
 
@@ -217,6 +231,21 @@ export function MobileChatInputControls({
             selectedContexts={selectedContexts}
             onContextsChange={setSelectedContexts}
             excludeKnowledgeBaseId={knowledgeBaseId}
+          />
+        )}
+
+        {/* Skill Selector - show when skills are available */}
+        {/* For ClaudeCode tasks, skill selection is read-only after task creation (hasMessages) */}
+        {availableSkills.length > 0 && onToggleSkill && (
+          <SkillSelectorPopover
+            skills={availableSkills}
+            teamSkillNames={teamSkillNames}
+            preloadedSkillNames={preloadedSkillNames}
+            selectedSkillNames={selectedSkillNames}
+            onToggleSkill={onToggleSkill}
+            isChatShell={isChatShell(selectedTeam)}
+            disabled={isLoading || isStreaming}
+            readOnly={hasMessages && isClaudeCode(selectedTeam)}
           />
         )}
 

@@ -60,6 +60,14 @@ export interface TeamInputParametersResponse {
   app_mode?: string // Dify app mode: 'chat', 'chatflow', 'workflow', 'completion', 'agent'
 }
 
+// Team Skills Response Type
+export interface TeamSkillsResponse {
+  team_id: number
+  team_namespace: string
+  skills: string[] // All bot skills (deduplicated)
+  preload_skills: string[] // Skills to preload
+}
+
 export const teamApis = {
   /**
    * Get teams list
@@ -113,4 +121,17 @@ export const teamApis = {
   async checkRunningTasks(id: number): Promise<CheckRunningTasksResponse> {
     return apiClient.get(`/teams/${id}/running-tasks`)
   },
+  /**
+   * Get all skills associated with a team
+   * @param teamId - Team ID
+   * @returns TeamSkillsResponse with skills and preload_skills lists
+   */
+  async getTeamSkills(teamId: number): Promise<TeamSkillsResponse> {
+    return apiClient.get(`/teams/${teamId}/skills`)
+  },
 }
+
+/**
+ * Fetch team skills - convenience export for useSkillSelector
+ */
+export const fetchTeamSkills = teamApis.getTeamSkills
