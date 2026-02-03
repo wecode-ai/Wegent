@@ -15,7 +15,6 @@ import { QuoteCard } from '../text-selection'
 import { ConnectionStatusBanner } from './ConnectionStatusBanner'
 import type { Team, ChatTipItem } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isClaudeCode } from '../../service/messageService'
 import type { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
 
 export interface ChatInputCardProps extends Omit<ChatInputControlsProps, 'taskInputMessage'> {
@@ -258,8 +257,8 @@ export function ChatInputCard({
               selectedSkillNames={selectedSkillNames}
               onSkillSelect={onToggleSkill}
               isChatShell={selectedTeam?.agent_type === 'chat'}
-              // For ClaudeCode tasks, skill selection is read-only after task creation (hasMessages)
-              skillSelectorReadOnly={hasMessages && isClaudeCode(selectedTeam)}
+              // Skill selection is read-only after task creation (hasMessages)
+              skillSelectorReadOnly={hasMessages}
               // Pass skill button ref for fly animation
               skillButtonRef={
                 { current: getSkillButtonElement() } as React.RefObject<HTMLElement | null>
