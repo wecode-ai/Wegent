@@ -18,7 +18,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from celery.exceptions import SoftTimeLimitExceeded
 from prometheus_client import Counter, Histogram
@@ -337,6 +337,95 @@ def _bind_task_to_subscription(db: Session, subscription: Any, task_id: int) -> 
     )
 
 
+def _link_subscription_knowledge_bases(
+    db: Session,
+    user_subtask_id: int,
+    user_id: int,
+    kb_refs: List[Any],
+) -> None:
+    """
+    Link knowledge bases from subscription to user_subtask.
+
+    This function resolves knowledge base references (name + namespace) to actual
+    knowledge_id values and creates SubtaskContext records for each KB.
+
+    Note: The kb_refs.name is the displayName (spec.name), not Kind.name.
+    We query by spec.name in JSON to match the correct knowledge base.
+
+    Args:
+        db: Database session
+        user_subtask_id: User subtask ID to link KBs to
+        user_id: User ID
+        kb_refs: List of SubscriptionKnowledgeBaseRef objects with name and namespace
+    """
+    from app.api.ws.events import ContextItem
+    from app.models.kind import Kind
+    from app.services.chat.preprocessing import link_contexts_to_subtask
+
+    if not kb_refs:
+        return
+
+    # Resolve KB refs to actual knowledge IDs
+    contexts = []
+    for kb_ref in kb_refs:
+        # Query knowledge base by displayName (spec.name) since that's what frontend stores
+        # The kb_ref.name is the displayName, not Kind.name
+        kbs = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.namespace == kb_ref.namespace,
+                Kind.is_active == True,
+            )
+            .all()
+        )
+
+        # Find KB by matching spec.name (displayName)
+        kb = None
+        for candidate in kbs:
+            spec_name = candidate.json.get("spec", {}).get("name", "")
+            if spec_name == kb_ref.name:
+                kb = candidate
+                break
+
+        if kb:
+            # Create ContextItem for this knowledge base
+            context_item = ContextItem(
+                type="knowledge_base",
+                data={
+                    "knowledge_id": kb.id,
+                    "name": kb_ref.name,
+                },
+            )
+            contexts.append(context_item)
+            logger.info(
+                f"[_link_subscription_knowledge_bases] Resolved KB ref "
+                f"displayName={kb_ref.name}, namespace={kb_ref.namespace} -> id={kb.id}"
+            )
+        else:
+            logger.warning(
+                f"[_link_subscription_knowledge_bases] KB not found: "
+                f"displayName={kb_ref.name}, namespace={kb_ref.namespace}, user_id={user_id}"
+            )
+
+    if contexts:
+        # Link knowledge bases to subtask
+        linked_ids = link_contexts_to_subtask(
+            db=db,
+            subtask_id=user_subtask_id,
+            user_id=user_id,
+            attachment_ids=None,
+            contexts=contexts,
+            task=None,  # Skip syncing to task level since this is a subscription task
+            user_name=None,
+        )
+        logger.info(
+            f"[_link_subscription_knowledge_bases] Linked {len(linked_ids)} KB contexts "
+            f"to user_subtask {user_subtask_id}"
+        )
+
+
 async def _create_subscription_task(
     db: Session,
     ctx: SubscriptionExecutionContext,
@@ -358,6 +447,13 @@ async def _create_subscription_task(
     from app.services.chat.storage import TaskCreationParams, create_chat_task
 
     ws = ctx.workspace_info
+
+    # Extract knowledge base refs from subscription CRD
+    kb_refs = ctx.subscription_crd.spec.knowledgeBaseRefs
+    logger.info(
+        f"[_create_subscription_task] subscription_id={ctx.subscription.id}, "
+        f"knowledgeBaseRefs={kb_refs}"
+    )
 
     # Extract model_id from Subscription CRD's modelRef if specified
     model_id = None
@@ -427,6 +523,15 @@ async def _create_subscription_task(
     # If preserve_history is enabled and we created a new task, bind it to the subscription
     if ctx.preserve_history and reuse_task_id is None:
         _bind_task_to_subscription(db, ctx.subscription, result.task.id)
+
+    # Link knowledge bases from subscription to user_subtask
+    if kb_refs and result.user_subtask:
+        _link_subscription_knowledge_bases(
+            db=db,
+            user_subtask_id=result.user_subtask.id,
+            user_id=ctx.user.id,
+            kb_refs=kb_refs,
+        )
 
     return SubscriptionTaskResult(
         task=result.task,
@@ -512,6 +617,14 @@ async def _trigger_chat_shell_response(
     override_model_name = None
     if ctx.subscription_crd.spec.modelRef:
         override_model_name = ctx.subscription_crd.spec.modelRef.name
+
+    # Log knowledge base refs for debugging
+    kb_refs = ctx.subscription_crd.spec.knowledgeBaseRefs
+    logger.info(
+        f"[_trigger_chat_shell_response] subscription_id={ctx.subscription.id}, "
+        f"task_id={task.id}, user_subtask_id={user_subtask.id if user_subtask else None}, "
+        f"knowledgeBaseRefs={kb_refs}"
+    )
 
     payload = SubscriptionTriggerPayload(
         force_override_bot_model=override_model_name,
@@ -1242,6 +1355,7 @@ def execute_subscription_task(
                         execution_id=execution_id,
                         status=BackgroundExecutionStatus.COMPLETED,
                         result_summary=result_summary,
+                        skip_notifications=True,  # We handle notifications manually below
                     )
 
                     # Dispatch notifications to followers
@@ -1604,9 +1718,10 @@ def execute_subscription_task_sync(
                     result_summary = f"Task {task_id} created and AI response triggered"
                     subscription_service.update_execution_status(
                         db,
-                        execution_id,
-                        "COMPLETED",
+                        execution_id=execution_id,
+                        status="COMPLETED",
                         result_summary=result_summary,
+                        skip_notifications=True,  # We handle notifications manually below
                     )
 
                     # Dispatch notifications to followers
@@ -1638,8 +1753,8 @@ def execute_subscription_task_sync(
                     # For Executor type, keep as RUNNING until executor completes
                     subscription_service.update_execution_status(
                         db,
-                        execution_id,
-                        "RUNNING",
+                        execution_id=execution_id,
+                        status="RUNNING",
                         result_summary=f"Task {task_id} created, waiting for executor",
                     )
 
@@ -1672,8 +1787,8 @@ def execute_subscription_task_sync(
 
                 subscription_service.update_execution_status(
                     db,
-                    execution_id,
-                    "FAILED",
+                    execution_id=execution_id,
+                    status="FAILED",
                     error_message=error_message,
                 )
             except Exception as update_error:

@@ -414,6 +414,9 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
                     status=BackgroundExecutionStatus(status),
                     result_summary=result_summary,
                     error_message=error_message,
+                    # Skip notifications here - they are dispatched by subscription_tasks.py
+                    # after the task completes to avoid duplicate notifications
+                    skip_notifications=True,
                 )
                 logger.info(
                     f"[SubscriptionEmitter] Updated execution {self.execution_id} status to {status}"

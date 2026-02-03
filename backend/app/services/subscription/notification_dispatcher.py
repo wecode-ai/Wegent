@@ -12,17 +12,12 @@ This module provides functionality to:
 """
 
 import asyncio
-import json
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.core.cache import cache_manager
 from app.models.kind import Kind
-from app.models.subscription_follow import InvitationStatus, SubscriptionFollow
-from app.models.user import User
 from app.schemas.subscription import (
     NotificationLevel,
     SubscriptionFollowConfig,
@@ -33,12 +28,8 @@ from app.services.subscription.notification_service import (
 
 logger = logging.getLogger(__name__)
 
-# Redis key prefix for DingTalk conversation -> task_id mapping
-DINGTALK_CONV_TASK_PREFIX = "dingtalk:conv_task:"
-
 # Messager CRD kind
 MESSAGER_KIND = "Messager"
-MESSAGER_USER_ID = 0
 
 
 class SubscriptionNotificationDispatcher:
@@ -263,79 +254,59 @@ class SubscriptionNotificationDispatcher:
             execution_id: Background execution ID
         """
         try:
-            # Get conversation task_id from binding
-            conversation_id = binding.last_conversation_id
-            if not conversation_id:
+            # Get DingTalk user ID from binding
+            # For oToMessages/batchSend API, we need staffId (sender_staff_id), not sender_id
+            dingtalk_user_id = binding.sender_staff_id or binding.sender_id
+            if not dingtalk_user_id:
                 logger.warning(
                     f"[SubscriptionNotificationDispatcher] User {user_id} has no "
-                    f"conversation_id for DingTalk channel {channel.id}"
+                    f"sender_staff_id or sender_id for DingTalk channel {channel.id}"
                 )
                 return
 
-            # Get task_id from Redis cache
-            key = f"{DINGTALK_CONV_TASK_PREFIX}{conversation_id}"
-            task_id = await cache_manager.get(key)
+            # Get channel config for robot credentials
+            spec = channel.json.get("spec", {})
+            config = spec.get("config", {})
+            client_id = config.get("client_id")
+            client_secret_encrypted = config.get("client_secret")
 
-            if not task_id:
+            if not client_id or not client_secret_encrypted:
                 logger.warning(
-                    f"[SubscriptionNotificationDispatcher] No cached task for "
-                    f"conversation {conversation_id}"
+                    f"[SubscriptionNotificationDispatcher] Channel {channel.id} missing "
+                    f"client_id or client_secret"
                 )
                 return
 
-            # Create a subtask in the user's Messager conversation
-            from app.models.task import TaskResource
-            from shared.models.db.enums import SubtaskRole, SubtaskStatus
-            from shared.models.db.subtask import Subtask
+            # Decrypt the client_secret (stored encrypted in database)
+            from shared.utils.crypto import decrypt_sensitive_data
 
-            task = (
-                db.query(TaskResource).filter(TaskResource.id == int(task_id)).first()
+            client_secret = decrypt_sensitive_data(client_secret_encrypted)
+
+            # Send actual DingTalk message via robot API
+            from app.services.channels.dingtalk.sender import DingTalkRobotSender
+
+            sender = DingTalkRobotSender(
+                client_id=client_id,
+                client_secret=client_secret,
             )
-            if not task:
+
+            # Send markdown message for better formatting
+            result = await sender.send_markdown_message(
+                user_ids=[dingtalk_user_id],
+                title="订阅通知",
+                text=message,
+            )
+
+            if result.get("success"):
+                logger.info(
+                    f"[SubscriptionNotificationDispatcher] Sent DingTalk notification "
+                    f"to user {user_id} (dingtalk_id={dingtalk_user_id})"
+                )
+            else:
                 logger.warning(
-                    f"[SubscriptionNotificationDispatcher] Task {task_id} not found"
+                    f"[SubscriptionNotificationDispatcher] Failed to send DingTalk "
+                    f"notification to user {user_id}: {result.get('error')}"
                 )
-                return
-
-            # Get task metadata to populate subtask fields
-            task_json = task.json
-            team_id = task_json.get("spec", {}).get("teamRef", {}).get("id", 0)
-
-            # Create notification subtask
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
-            result_json = {
-                "type": "subscription_notification",
-                "subscription_id": subscription_id,
-                "execution_id": execution_id,
-                "message": message,
-            }
-
-            notification_subtask = Subtask(
-                task_id=int(task_id),
-                user_id=user_id,
-                team_id=team_id,
-                title="Subscription Notification",
-                bot_ids=[],
-                sender_type="SYSTEM",
-                role=SubtaskRole.ASSISTANT,
-                prompt=message,
-                status=SubtaskStatus.COMPLETED,
-                result=result_json,
-                completed_at=now,
-                created_at=now,
-                updated_at=now,
-            )
-            db.add(notification_subtask)
-            db.commit()
-
-            logger.info(
-                f"[SubscriptionNotificationDispatcher] Created notification subtask "
-                f"for user {user_id} in task {task_id}"
-            )
-
-            # TODO: Send actual DingTalk message via API
-            # This would require implementing proactive messaging via DingTalk's
-            # robot send message API, which needs additional setup
 
         except Exception as e:
             logger.error(

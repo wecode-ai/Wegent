@@ -592,6 +592,7 @@ class BackgroundExecutionManager:
         result_summary: Optional[str] = None,
         error_message: Optional[str] = None,
         expected_version: Optional[int] = None,
+        skip_notifications: bool = False,
     ) -> bool:
         """
         Update execution status with atomic update and state machine validation.
@@ -608,6 +609,8 @@ class BackgroundExecutionManager:
             result_summary: Optional result summary
             error_message: Optional error message
             expected_version: Expected version for optimistic locking (optional)
+            skip_notifications: Skip notification dispatch (default False).
+                Set to True if caller will handle notifications separately.
 
         Returns:
             True if update was successful, False if skipped due to invalid transition
@@ -740,7 +743,117 @@ class BackgroundExecutionManager:
             error_message=error_message,
         )
 
+        # Dispatch notifications to followers when execution completes
+        # This is important for Executor type subscriptions where the callback
+        # comes from executor_manager, not from subscription_tasks
+        # Skip if caller will handle notifications separately (e.g., Chat Shell tasks)
+        if status == BackgroundExecutionStatus.COMPLETED and not skip_notifications:
+            self._dispatch_completion_notifications(
+                db=db,
+                execution=execution,
+                result_summary=result_summary or "",
+                status=status.value,
+            )
+
         return True
+
+    def _dispatch_completion_notifications(
+        self,
+        db: Session,
+        execution: BackgroundExecution,
+        result_summary: str,
+        status: str,
+    ) -> None:
+        """
+        Dispatch notifications to followers when execution completes.
+
+        This is called when an execution reaches COMPLETED status.
+        It runs the notification dispatch asynchronously to avoid blocking
+        the status update.
+
+        Args:
+            db: Database session
+            execution: The execution record
+            result_summary: Summary of the execution result
+            status: Execution status string
+        """
+        import asyncio
+
+        from app.services.subscription.notification_dispatcher import (
+            subscription_notification_dispatcher,
+        )
+
+        # Get subscription details for notification
+        subscription = (
+            db.query(Kind)
+            .filter(
+                Kind.id == execution.subscription_id,
+                Kind.kind == "Subscription",
+            )
+            .first()
+        )
+
+        if not subscription:
+            logger.warning(
+                f"[Subscription] Cannot dispatch notifications: subscription "
+                f"{execution.subscription_id} not found"
+            )
+            return
+
+        subscription_crd = Subscription.model_validate(subscription.json)
+        subscription_display_name = (
+            subscription_crd.spec.displayName or subscription.name
+        )
+
+        # Run notification dispatch asynchronously
+        try:
+            # Check if there's an existing event loop running
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                # Schedule as a task if we're already in an async context
+                asyncio.create_task(
+                    subscription_notification_dispatcher.dispatch_execution_notifications(
+                        db,
+                        subscription_id=execution.subscription_id,
+                        execution_id=execution.id,
+                        subscription_display_name=subscription_display_name,
+                        result_summary=result_summary,
+                        status=status,
+                    )
+                )
+            else:
+                # Create a new event loop and run
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    new_loop.run_until_complete(
+                        subscription_notification_dispatcher.dispatch_execution_notifications(
+                            db,
+                            subscription_id=execution.subscription_id,
+                            execution_id=execution.id,
+                            subscription_display_name=subscription_display_name,
+                            result_summary=result_summary,
+                            status=status,
+                        )
+                    )
+                finally:
+                    new_loop.close()
+
+            logger.info(
+                f"[Subscription] Dispatched completion notifications for "
+                f"execution {execution.id} (subscription {execution.subscription_id})"
+            )
+
+        except Exception as e:
+            # Don't fail the status update if notification dispatch fails
+            logger.warning(
+                f"[Subscription] Failed to dispatch notifications for "
+                f"execution {execution.id}: {e}"
+            )
 
     def _update_subscription_statistics(
         self,

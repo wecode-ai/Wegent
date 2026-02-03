@@ -1295,6 +1295,7 @@ class SubscriptionFollowService:
             preserve_history=subscription_crd.spec.preserveHistory,
             history_message_count=subscription_crd.spec.historyMessageCount,
             bound_task_id=internal.get("bound_task_id", 0),
+            knowledge_base_refs=subscription_crd.spec.knowledgeBaseRefs,
             webhook_url=webhook_url,
             webhook_secret=internal.get("webhook_secret"),
             last_execution_time=last_execution_time,

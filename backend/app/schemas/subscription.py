@@ -136,6 +136,13 @@ class SubscriptionWorkspaceRef(BaseModel):
     namespace: str = "default"
 
 
+class SubscriptionKnowledgeBaseRef(BaseModel):
+    """Reference to a Knowledge Base for subscription."""
+
+    name: str = Field(..., description="Knowledge base name")
+    namespace: str = Field("default", description="Knowledge base namespace")
+
+
 class SourceSubscriptionRef(BaseModel):
     """Reference to source subscription for rentals."""
 
@@ -205,6 +212,12 @@ class SubscriptionSpec(BaseModel):
         None,
         description="Reference to source subscription (for rentals). "
         "When set, this subscription is a rental instance.",
+    )
+    # Knowledge base references
+    knowledgeBaseRefs: Optional[List[SubscriptionKnowledgeBaseRef]] = Field(
+        None,
+        description="Knowledge bases to bind to this subscription. "
+        "AI will have access to these knowledge bases during execution.",
     )
 
 
@@ -312,6 +325,12 @@ class SubscriptionBase(BaseModel):
         le=50,
         description="Number of recent messages to include as context (0-50)",
     )
+    # Knowledge base references
+    knowledge_base_refs: Optional[List[SubscriptionKnowledgeBaseRef]] = Field(
+        None,
+        description="Knowledge bases to bind to this subscription. "
+        "AI will have access to these knowledge bases during execution.",
+    )
 
 
 class SubscriptionCreate(SubscriptionBase):
@@ -346,6 +365,8 @@ class SubscriptionUpdate(BaseModel):
     # History preservation settings
     preserve_history: Optional[bool] = None
     history_message_count: Optional[int] = Field(None, ge=0, le=50)
+    # Knowledge base references
+    knowledge_base_refs: Optional[List[SubscriptionKnowledgeBaseRef]] = None
 
 
 class SubscriptionInDB(SubscriptionBase):

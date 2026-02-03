@@ -8,7 +8,7 @@
  * Subscription creation/edit form component.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Copy, Check, Terminal, Brain, ChevronDown, Eye, EyeOff } from 'lucide-react'
+import { Copy, Check, Terminal, Brain, ChevronDown, Eye, EyeOff, Database } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -46,6 +46,7 @@ import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
 import type {
   Subscription,
   SubscriptionCreateRequest,
+  SubscriptionKnowledgeBaseRef,
   SubscriptionTaskType,
   SubscriptionTriggerType,
   SubscriptionUpdateRequest,
@@ -53,6 +54,7 @@ import type {
 } from '@/types/subscription'
 import { toast } from 'sonner'
 import { CronSchedulePicker } from './CronSchedulePicker'
+import { KnowledgeBaseSelector } from './KnowledgeBaseSelector'
 import { RepositorySelector, BranchSelector } from '@/features/tasks/components/selector'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { cn, parseUTCDate } from '@/lib/utils'
@@ -291,6 +293,9 @@ export function SubscriptionForm({
     initialData?.visibility || 'private'
   ) // Visibility setting
 
+  // Knowledge base selection state
+  const [knowledgeBaseRefs, setKnowledgeBaseRefs] = useState<SubscriptionKnowledgeBaseRef[]>([])
+
   // Model selection state
   const [selectedModel, setSelectedModel] = useState<SubscriptionModel | null>(null)
   const [models, setModels] = useState<SubscriptionModel[]>([])
@@ -460,6 +465,7 @@ export function SubscriptionForm({
       setEnabled(subscription.enabled)
       setPreserveHistory(subscription.preserve_history || false)
       setVisibility(subscription.visibility || 'private')
+      setKnowledgeBaseRefs(subscription.knowledge_base_refs || [])
       const repoInfo = buildRepoInfoFromSubscription(subscription)
       setSelectedRepo(repoInfo)
       setSelectedBranch(
@@ -499,6 +505,7 @@ export function SubscriptionForm({
       setSelectedRepo(null)
       setSelectedBranch(null)
       setSelectedModel(null)
+      setKnowledgeBaseRefs([])
     }
   }, [subscription, open, initialData])
 
@@ -590,6 +597,8 @@ export function SubscriptionForm({
           // Include model selection - always override bot model when specified
           model_ref: selectedModel ? { name: selectedModel.name, namespace: 'default' } : undefined,
           force_override_bot_model: !!selectedModel, // Always override when model is selected
+          // Include knowledge base references
+          knowledge_base_refs: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
         }
         await subscriptionApis.updateSubscription(subscription.id, updateData)
         toast.success(t('update_success'))
@@ -626,6 +635,8 @@ export function SubscriptionForm({
           // Include model selection - always override bot model when specified
           model_ref: selectedModel ? { name: selectedModel.name, namespace: 'default' } : undefined,
           force_override_bot_model: !!selectedModel, // Always override when model is selected
+          // Include knowledge base references
+          knowledge_base_refs: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
         }
         await subscriptionApis.createSubscription(createData)
         toast.success(t('create_success'))
@@ -655,6 +666,7 @@ export function SubscriptionForm({
     selectedRepo,
     selectedBranch,
     selectedModel,
+    knowledgeBaseRefs,
     isEditing,
     isRental,
     subscription,
@@ -1079,6 +1091,25 @@ export function SubscriptionForm({
                       t('model_hint')
                     )}
                   </p>
+                </div>
+              </div>
+
+              {/* Knowledge Base Selection */}
+              <div className="space-y-3 rounded-lg border border-border bg-background-secondary/30 p-4">
+                <div className="flex items-center gap-2">
+                  <Database className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-medium text-text-secondary">
+                    {t('knowledge_base_settings')}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">{t('knowledge_bases')}</Label>
+                  <KnowledgeBaseSelector
+                    selectedKnowledgeBases={knowledgeBaseRefs}
+                    onChange={setKnowledgeBaseRefs}
+                    disabled={isRental}
+                  />
+                  <p className="text-xs text-text-muted">{t('knowledge_base_hint')}</p>
                 </div>
               </div>
 
