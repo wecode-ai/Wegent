@@ -624,6 +624,14 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
 
             # Build TaskCreationParams from request
+            # Convert additional_skills to list of dicts if present
+            additional_skills_dicts = None
+            if payload.additional_skills:
+                additional_skills_dicts = [
+                    {"name": s.name, "namespace": s.namespace, "is_public": s.is_public}
+                    for s in payload.additional_skills
+                ]
+
             params = TaskCreationParams(
                 message=payload.message,
                 title=payload.title,
@@ -638,6 +646,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 branch_name=payload.branch_name,
                 task_type=payload.task_type,
                 knowledge_base_id=payload.knowledge_base_id,
+                additional_skills=additional_skills_dicts,
             )
 
             result = await create_chat_task(

@@ -1194,5 +1194,24 @@
       "hint_description": "使用 hjkl 导航，i 进入插入模式，Esc 返回普通模式。:w 保存，:q 关闭。",
       "commands_hint": ":w 保存 | :q 关闭 | :wq 保存并关闭"
     }
+  },
+  "skillSelector": {
+    "slash_command_hint": "输入 / 选择技能",
+    "select_skills": "选择技能",
+    "team_skills_section": "智能体技能",
+    "personal_skills_section": "个人技能",
+    "group_skills_section": "组技能",
+    "public_skills_section": "公共技能",
+    "no_available_skills": "无可选技能",
+    "skills_selected": "已选 {{count}} 个技能",
+    "remove_skill": "移除技能",
+    "skill_autocomplete_title": "选择要使用的技能",
+    "preload_hint": "选中的技能将被自动加载",
+    "download_hint": "选中的技能将在任务执行时下载使用",
+    "search_skills": "搜索技能...",
+    "no_matching_skills": "没有匹配的技能",
+    "already_selected": "已选择",
+    "skill_button_tooltip": "选择要在此消息中使用的技能",
+    "manage_skills": "管理技能"
   }
 }

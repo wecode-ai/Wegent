@@ -406,6 +406,7 @@ class ChatContext:
             skill_configs=self._request.skill_configs,
             load_skill_tool=load_skill_tool,
             preload_skills=self._request.preload_skills,
+            user_selected_skills=self._request.user_selected_skills,
             user_name=self._request.user_name,
             auth_token=self._request.auth_token,
             task_data=self._request.task_data,

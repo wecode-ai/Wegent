@@ -814,14 +814,89 @@ class DocumentParser:
                 DocumentParseError.PARSE_FAILED,
             ) from e
 
+    def _decode_binary_data(self, binary_data: bytes) -> str:
+        """
+        Decode binary data to string with robust encoding detection.
+
+        Tries multiple encodings in order of preference, with chardet detection
+        as the first attempt. Supports GB2312, GBK, GB18030 and other Chinese
+        encodings that may contain problematic byte sequences (e.g., 0x95).
+
+        Args:
+            binary_data: Raw binary data to decode
+
+        Returns:
+            Decoded string
+
+        Raises:
+            DocumentParseError: If all decoding attempts fail
+        """
+        # Order matters: GB18030 is a superset of GBK which is a superset of GB2312
+        # Try GB18030 first as it handles more characters
+        encodings_to_try = [
+            "utf-8",
+            "utf-8-sig",
+            "gb18030",  # Superset of GBK/GB2312, handles more edge cases
+            "gbk",
+            "gb2312",
+            "big5",  # Traditional Chinese
+            "latin-1",  # Fallback that accepts any byte
+        ]
+
+        # First, try to detect encoding using chardet
+        detected_encoding = None
+        try:
+            detected = chardet.detect(binary_data)
+            detected_encoding = detected.get("encoding")
+            confidence = detected.get("confidence", 0)
+
+            if detected_encoding:
+                # Normalize encoding name for comparison
+                normalized = detected_encoding.lower().replace("-", "").replace("_", "")
+
+                # Skip unreliable detection results
+                if normalized not in ["ascii", "charmap"] and confidence > 0.5:
+                    # Insert detected encoding at the beginning if not already present
+                    if detected_encoding.lower() not in [
+                        e.lower() for e in encodings_to_try
+                    ]:
+                        encodings_to_try.insert(0, detected_encoding)
+                    else:
+                        # Move the detected encoding to front
+                        for i, enc in enumerate(encodings_to_try):
+                            if enc.lower() == detected_encoding.lower():
+                                encodings_to_try.insert(0, encodings_to_try.pop(i))
+                                break
+
+                logger.debug(
+                    f"Chardet detected encoding: {detected_encoding} "
+                    f"(confidence: {confidence:.2f})"
+                )
+        except Exception as e:
+            logger.debug(f"Chardet detection failed: {e}")
+
+        # Try each encoding in order
+        last_error = None
+        for encoding in encodings_to_try:
+            try:
+                return binary_data.decode(encoding)
+            except (UnicodeDecodeError, LookupError) as e:
+                last_error = e
+                logger.debug(f"Failed to decode with {encoding}: {e}")
+                continue
+
+        # If all encodings fail, use error replacement as last resort
+        logger.warning(
+            f"All encoding attempts failed, using UTF-8 with error replacement. "
+            f"Last error: {last_error}"
+        )
+        return binary_data.decode("utf-8", errors="replace")
+
     def _parse_csv(self, binary_data: bytes) -> str:
         """Parse CSV file and extract text."""
         try:
-            # Detect encoding
-            detected = chardet.detect(binary_data)
-            encoding = detected.get("encoding", "utf-8") or "utf-8"
-
-            text = binary_data.decode(encoding)
+            # Use robust encoding detection
+            text = self._decode_binary_data(binary_data)
             csv_file = io.StringIO(text)
 
             reader = csv.reader(csv_file)
@@ -832,6 +907,8 @@ class DocumentParser:
 
             return "\n".join(rows)
 
+        except DocumentParseError:
+            raise
         except Exception as e:
             logger.error(f"Error parsing CSV: {e}", exc_info=True)
             raise DocumentParseError(
@@ -841,38 +918,12 @@ class DocumentParser:
 
     def _parse_text(self, binary_data: bytes) -> str:
         """Parse plain text or markdown file."""
-        # Try common encodings in order of preference
-        encodings_to_try = ["utf-8", "utf-8-sig", "gbk", "gb2312", "gb18030", "latin-1"]
-
-        # First, try to detect encoding using chardet
         try:
-            detected = chardet.detect(binary_data)
-            detected_encoding = detected.get("encoding")
-            if detected_encoding and detected_encoding.lower() not in [
-                "ascii",
-                "charmap",
-            ]:
-                # Insert detected encoding at the beginning if it's valid
-                encodings_to_try.insert(0, detected_encoding)
-        except Exception:
-            pass  # Ignore chardet errors
-
-        # Try each encoding
-        last_error = None
-        for encoding in encodings_to_try:
-            try:
-                return binary_data.decode(encoding)
-            except (UnicodeDecodeError, LookupError) as e:
-                last_error = e
-                continue
-
-        # If all encodings fail, try with error handling
-        try:
-            return binary_data.decode("utf-8", errors="replace")
+            return self._decode_binary_data(binary_data)
         except Exception as e:
             logger.error(f"Error parsing text file: {e}", exc_info=True)
             raise DocumentParseError(
-                f"Failed to parse text file: {str(last_error or e)}",
+                f"Failed to parse text file: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
             ) from e
 
@@ -1260,11 +1311,8 @@ class DocumentParser:
         Keeps header row + sample rows + tail rows, omits middle.
         """
         try:
-            # Detect encoding
-            detected = chardet.detect(binary_data)
-            encoding = detected.get("encoding", "utf-8") or "utf-8"
-
-            text = binary_data.decode(encoding)
+            # Use robust encoding detection
+            text = self._decode_binary_data(binary_data)
             csv_file = io.StringIO(text)
 
             reader = csv.reader(csv_file)
