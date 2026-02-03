@@ -213,7 +213,7 @@ class UnifiedShareService(ABC):
     def _generate_share_url(self, share_token: str) -> str:
         """Generate full share URL."""
         base_url = self._get_share_url_base()
-        return f"{base_url}?share_token={share_token}"
+        return f"{base_url}?token={share_token}"
 
     # =========================================================================
     # Share Link Operations
