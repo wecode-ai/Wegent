@@ -307,6 +307,7 @@ class MessageCompressor:
                 compressed_tokens=0,
             )
 
+        logger.info("[MessageCompressor] Compressing messages: messages: %s", messages)
         original_tokens = self.count_tokens(messages)
 
         logger.info(
