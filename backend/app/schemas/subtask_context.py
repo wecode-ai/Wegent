@@ -11,7 +11,7 @@ attachments, knowledge bases, and other context types.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -221,6 +221,32 @@ class AttachmentDetailResponse(AttachmentResponse):
             truncation_info=truncation_info,
             created_at=context.created_at,
             subtask_id=context.subtask_id if context.subtask_id > 0 else None,
+        )
+
+
+class AttachmentPreviewResponse(AttachmentDetailResponse):
+    """Attachment preview response with extracted text snippet."""
+
+    preview_type: Literal["text", "image", "none"]
+    preview_text: Optional[str] = None
+    download_url: str
+
+    @classmethod
+    def from_context(
+        cls,
+        context,
+        preview_type: str,
+        preview_text: Optional[str],
+        download_url: str,
+        truncation_info: Optional[TruncationInfo] = None,
+    ) -> "AttachmentPreviewResponse":
+        """Create preview response from SubtaskContext model."""
+        base = AttachmentDetailResponse.from_context(context, truncation_info)
+        return cls(
+            **base.dict(),
+            preview_type=preview_type,
+            preview_text=preview_text,
+            download_url=download_url,
         )
 
 

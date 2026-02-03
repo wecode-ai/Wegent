@@ -315,6 +315,15 @@
       "modelPlaceholder": "搜索模型...",
       "noModel": "未选择模型"
     },
+    "callLimits": {
+      "title": "调用次数限制",
+      "description": "限制每次对话中知识库工具的调用次数，以控制 token 使用量",
+      "maxCalls": "最大调用次数",
+      "maxCallsHint": "每次对话允许的最大知识库工具调用次数 (2-50)",
+      "exemptCalls": "豁免检查次数",
+      "exemptCallsHint": "豁免 token 检查的调用次数 (必须小于最大调用次数)",
+      "validationError": "豁免次数必须小于最大调用次数"
+    },
     "retrievalTest": {
       "button": "召回测试",
       "title": "召回测试",

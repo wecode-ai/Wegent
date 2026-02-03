@@ -74,7 +74,7 @@ function buildTeamJson(data: {
     },
     spec: {
       collaborationModel: data.mode,
-      bindMode: data.bindMode,
+      bind_mode: data.bindMode,
       description: data.description || undefined,
       icon: data.icon || undefined,
       requiresWorkspace: data.requiresWorkspace ?? true,
@@ -122,7 +122,7 @@ function parseTeamJson(json: Record<string, unknown>): {
 
     const name = (metadata?.name as string) || ''
     const description = (spec?.description as string) || ''
-    const bindMode = (spec?.bindMode as ('chat' | 'code' | 'knowledge')[]) || ['chat', 'code']
+    const bindMode = (spec?.bind_mode as ('chat' | 'code' | 'knowledge')[]) || ['chat', 'code']
     const icon = (spec?.icon as string) || null
     const requiresWorkspace = (spec?.requiresWorkspace as boolean) ?? true
     const mode = (spec?.collaborationModel as TeamMode) || 'solo'

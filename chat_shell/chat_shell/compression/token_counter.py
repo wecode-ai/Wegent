@@ -4,69 +4,65 @@
 
 """Token counting utilities for message compression.
 
-This module provides token counting functionality using tiktoken for OpenAI models
-and character-based estimation for other providers.
+This module provides token counting functionality using LiteLLM for unified
+multi-model support. LiteLLM automatically selects the appropriate tokenizer
+based on the model and defaults to tiktoken if no model-specific tokenizer
+is available.
+
+Supported providers:
+- OpenAI (GPT-4, GPT-4o, o1, o3, etc.)
+- Anthropic (Claude)
+- Google (Gemini)
+- GLM (ChatGLM)
+- And 100+ other models via LiteLLM
 """
 
-import base64
 import logging
-from functools import lru_cache
 from typing import Any
+
+from litellm import token_counter as litellm_token_counter
 
 logger = logging.getLogger(__name__)
 
 
-@lru_cache(maxsize=4)
-def _get_encoding(model_name: str = "cl100k_base"):
-    """Get tiktoken encoding with caching.
+def _detect_provider(model_id: str) -> str:
+    """Detect the provider based on model identifier.
 
     Args:
-        model_name: Encoding name to use
+        model_id: Model identifier string
 
     Returns:
-        tiktoken.Encoding instance
+        Provider name: "openai", "anthropic", "google", or "unknown"
     """
-    try:
-        import tiktoken
+    model_id_lower = model_id.lower()
 
-        return tiktoken.get_encoding(model_name)
-    except ImportError:
-        logger.warning("tiktoken not available, falling back to character estimation")
-        return None
-    except Exception as e:
-        logger.warning(f"Failed to load tiktoken encoding: {e}")
-        return None
+    # Anthropic models
+    if any(prefix in model_id_lower for prefix in ["claude", "anthropic"]):
+        return "anthropic"
+
+    # Google models
+    if any(prefix in model_id_lower for prefix in ["gemini", "palm", "bison"]):
+        return "google"
+
+    # OpenAI models (most gpt-*, o1*, o3* patterns)
+    if any(prefix in model_id_lower for prefix in ["gpt-", "o1", "o3"]):
+        return "openai"
+
+    # Default to unknown if no pattern matches
+    return "unknown"
 
 
 class TokenCounter:
-    """Token counter for various model providers.
+    """Token counter for various model providers using LiteLLM.
 
-    Supports accurate counting for OpenAI models using tiktoken,
-    and character-based estimation for other providers.
+    LiteLLM provides unified token counting across 100+ LLM models,
+    automatically selecting the appropriate tokenizer for each model.
+    Supports text, images, and multimodal content.
 
     Usage:
-        counter = TokenCounter(model_id="gpt-4")
+        counter = TokenCounter(model_id="gpt-4o")
         token_count = counter.count_messages(messages)
     """
-
-    # Average characters per token for different providers
-    # These are rough estimates based on typical text
-    CHARS_PER_TOKEN: dict[str, float] = {
-        "openai": 4.0,  # GPT models
-        "anthropic": 3.5,  # Claude models (slightly more efficient)
-        "google": 4.0,  # Gemini models
-        "default": 4.0,
-    }
-
-    # Tokens per image (rough estimates)
-    # Claude: ~1600 tokens for a standard image
-    # GPT-4V: ~85 tokens for low detail, ~765 for high detail
-    TOKENS_PER_IMAGE: dict[str, int] = {
-        "openai": 765,  # High detail estimate
-        "anthropic": 1600,
-        "google": 1000,
-        "default": 1000,
-    }
 
     def __init__(self, model_name: str | None = None, model_id: str | None = None):
         """Initialize token counter.
@@ -75,24 +71,16 @@ class TokenCounter:
             model_name: Model identifier for provider detection (preferred)
             model_id: Deprecated alias for model_name (for backward compatibility)
         """
-        # Support both model_name and model_id for backward compatibility
-        # model_id takes precedence if explicitly provided (for backward compatibility)
-        self.model_id = (model_id or model_name or "gpt-4").lower()
-        self.provider = self._detect_provider()
-        self._encoding = None
+        self.model_id = model_id or model_name or "gpt-4"
 
-        # Try to load tiktoken for OpenAI models
-        if self.provider == "openai":
-            self._encoding = _get_encoding("cl100k_base")
+    @property
+    def provider(self) -> str:
+        """Get the detected provider for the model.
 
-    def _detect_provider(self) -> str:
-        if self.model_id.startswith(("gpt-", "o1-", "o3-", "chatgpt-")):
-            return "openai"
-        elif self.model_id.startswith("claude-"):
-            return "anthropic"
-        elif self.model_id.startswith("gemini-"):
-            return "google"
-        return "default"
+        Returns:
+            Provider name: "openai", "anthropic", "google", or "unknown"
+        """
+        return _detect_provider(self.model_id)
 
     def count_text(self, text: str) -> int:
         """Count tokens in a text string.
@@ -101,23 +89,15 @@ class TokenCounter:
             text: Text to count tokens for
 
         Returns:
-            Estimated token count
+            Token count
         """
         if not text:
             return 0
 
-        # Use tiktoken for accurate counting if available
-        if self._encoding:
-            try:
-                return len(self._encoding.encode(text))
-            except Exception:
-                pass
-
-        # Fall back to character-based estimation
-        chars_per_token = self.CHARS_PER_TOKEN.get(
-            self.provider, self.CHARS_PER_TOKEN["default"]
+        return litellm_token_counter(
+            model=self.model_id,
+            messages=[{"role": "user", "content": text}],
         )
-        return int(len(text) / chars_per_token)
 
     def count_image(self, image_data: dict[str, Any] | str) -> int:
         """Count tokens for an image.
@@ -126,38 +106,27 @@ class TokenCounter:
             image_data: Image data (base64 string or dict with image_url)
 
         Returns:
-            Estimated token count for the image
+            Token count for the image
         """
-        tokens_per_image = self.TOKENS_PER_IMAGE.get(
-            self.provider, self.TOKENS_PER_IMAGE["default"]
-        )
-
-        # For base64 images, estimate based on size
+        # Build image_url content for LiteLLM
         if isinstance(image_data, str):
-            # Base64 string
-            try:
-                image_bytes = len(base64.b64decode(image_data))
-                # Larger images use more tokens
-                if image_bytes > 1024 * 1024:  # > 1MB
-                    return tokens_per_image * 2
-            except Exception:
-                pass
+            # Base64 string - wrap in image_url format
+            content = [{"type": "image_url", "image_url": {"url": image_data}}]
         elif isinstance(image_data, dict):
-            # Check for image_url structure
-            url = image_data.get("image_url", {})
-            if isinstance(url, dict):
-                url_str = url.get("url", "")
-                if url_str.startswith("data:"):
-                    # Extract base64 part
-                    try:
-                        base64_part = url_str.split(",", 1)[1]
-                        image_bytes = len(base64.b64decode(base64_part))
-                        if image_bytes > 1024 * 1024:
-                            return tokens_per_image * 2
-                    except Exception:
-                        pass
+            # Already in dict format
+            if "image_url" in image_data:
+                content = [image_data]
+            elif "type" in image_data:
+                content = [image_data]
+            else:
+                content = [{"type": "image_url", "image_url": image_data}]
+        else:
+            raise ValueError(f"Unsupported image_data type: {type(image_data)}")
 
-        return tokens_per_image
+        return litellm_token_counter(
+            model=self.model_id,
+            messages=[{"role": "user", "content": content}],
+        )
 
     def count_message(self, message: dict[str, Any]) -> int:
         """Count tokens in a single message.
@@ -166,32 +135,9 @@ class TokenCounter:
             message: Message dictionary with role and content
 
         Returns:
-            Estimated token count
+            Token count (excluding per-message overhead)
         """
-        tokens = 0
-
-        # Count role (approximately 1-2 tokens)
-        role = message.get("role", "")
-        tokens += 2  # Role tokens
-
-        content = message.get("content", "")
-
-        if isinstance(content, str):
-            # Simple text content
-            tokens += self.count_text(content)
-        elif isinstance(content, list):
-            # Multimodal content (text + images)
-            for part in content:
-                if isinstance(part, dict):
-                    part_type = part.get("type", "")
-                    if part_type == "text":
-                        tokens += self.count_text(part.get("text", ""))
-                    elif part_type == "image_url":
-                        tokens += self.count_image(part)
-                elif isinstance(part, str):
-                    tokens += self.count_text(part)
-
-        return tokens
+        return litellm_token_counter(model=self.model_id, messages=[message])
 
     def count_messages(self, messages: list[dict[str, Any]]) -> int:
         """Count total tokens in a list of messages.
@@ -200,17 +146,9 @@ class TokenCounter:
             messages: List of message dictionaries
 
         Returns:
-            Total estimated token count
+            Total token count
         """
-        total = 0
-        for msg in messages:
-            total += self.count_message(msg)
-
-        # Add overhead for message formatting (varies by provider)
-        # Approximately 3 tokens per message for formatting
-        total += len(messages) * 3
-
-        return total
+        return litellm_token_counter(model=self.model_id, messages=messages)
 
     def estimate_remaining(
         self, messages: list[dict[str, Any]], context_limit: int

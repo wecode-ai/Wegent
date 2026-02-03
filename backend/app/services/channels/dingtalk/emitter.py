@@ -88,6 +88,8 @@ class SyncResponseEmitter(ChatEventEmitter):
         content: str,
         offset: int,
         result: Optional[Dict[str, Any]] = None,
+        block_id: Optional[str] = None,
+        block_offset: Optional[int] = None,
     ) -> None:
         """Emit chat:chunk event - collect chunk content."""
         if content:
@@ -283,6 +285,8 @@ class StreamingResponseEmitter(ChatEventEmitter):
         content: str,
         offset: int,
         result: Optional[Dict[str, Any]] = None,
+        block_id: Optional[str] = None,
+        block_offset: Optional[int] = None,
     ) -> None:
         """Emit chat:chunk event - send streaming update to DingTalk."""
         if not content:

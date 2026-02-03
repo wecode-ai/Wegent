@@ -267,13 +267,13 @@ export interface TaskDetail {
   completed_at?: string
   user: User
   team: Team
-  subtasks: TaskDetailSubtask[]
   workbench?: WorkbenchData | null
   model_id?: string | null // Model name used for this task
   is_group_chat?: boolean // Whether this task is a group chat
   is_group_owner?: boolean // Whether current user is the group owner
   member_count?: number // Number of active members in the group
   app?: TaskApp | null // App preview information (set by expose_service tool)
+  device_id?: string | null // Device ID used for execution (for task history)
 }
 
 /** Correction data stored in subtask.result.correction */

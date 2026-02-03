@@ -23,6 +23,7 @@ class TaskEvents:
     PROGRESS = "task:progress"
     RESULT = "task:result"
     CANCEL = "task:cancel"
+    CLOSE_SESSION = "task:close-session"
 
 
 class ChatEvents:

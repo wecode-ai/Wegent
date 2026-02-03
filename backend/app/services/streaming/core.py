@@ -113,7 +113,13 @@ class StreamingState:
     offset: int = 0
     last_redis_save: float = 0.0
     last_db_save: float = 0.0
-    thinking: list[dict[str, Any]] = field(default_factory=list)  # Tool call steps
+    thinking: list[dict[str, Any]] = field(
+        default_factory=list
+    )  # Tool call steps (legacy)
+    blocks: list[dict[str, Any]] = field(
+        default_factory=list
+    )  # Message blocks (new format)
+    current_text_block_id: str | None = None  # Track current text block for streaming
     sources: list[dict[str, Any]] = field(
         default_factory=list
     )  # Knowledge base sources for citation
@@ -129,8 +135,19 @@ class StreamingState:
         self.reasoning_content += content
 
     def add_thinking_step(self, step: dict[str, Any]) -> None:
-        """Add a thinking step (tool call)."""
+        """Add a thinking step (tool call) - legacy format."""
         self.thinking.append(step)
+
+    def add_block(self, block: dict[str, Any]) -> None:
+        """Add a message block (new format)."""
+        self.blocks.append(block)
+
+    def update_block(self, block_id: str, updates: dict[str, Any]) -> None:
+        """Update an existing block by ID."""
+        for block in self.blocks:
+            if block.get("id") == block_id:
+                block.update(updates)
+                break
 
     def add_sources(self, sources: list[dict[str, Any]]) -> None:
         """Add knowledge base sources for citation.
@@ -166,8 +183,9 @@ class StreamingState:
         include_value: bool = True,
         include_thinking: bool = True,
         slim_thinking: bool = False,
+        include_blocks: bool = True,
     ) -> dict[str, Any]:
-        """Get current result with thinking steps and sources for WebSocket emission.
+        """Get current result with thinking steps, blocks, and sources for WebSocket emission.
 
         Args:
             include_value: Whether to include full_response as 'value' field.
@@ -179,9 +197,11 @@ class StreamingState:
             slim_thinking: Whether to slim down thinking data for Chat mode.
                           When True, removes large fields like input/output details
                           that frontend doesn't need for simple display.
+            include_blocks: Whether to include message blocks (new format).
+                           Set to True to enable mixed content rendering.
 
         Returns:
-            Result dictionary with shell_type, and optionally value, thinking, sources.
+            Result dictionary with shell_type, and optionally value, thinking, blocks, sources.
         """
         result: dict[str, Any] = {
             "shell_type": self.shell_type,  # Include shell_type for frontend display
@@ -199,6 +219,9 @@ class StreamingState:
                     result["thinking"] = self.thinking
             if self.sources:
                 result["sources"] = self.sources  # Include sources for citation display
+        # Include blocks for mixed content rendering (new format)
+        if include_blocks and self.blocks:
+            result["blocks"] = self.blocks
         # Include reasoning_content if present (DeepSeek R1 and similar reasoning models)
         if self.reasoning_content:
             result["reasoning_content"] = self.reasoning_content
@@ -449,6 +472,173 @@ class StreamingCore:
 
         return shutdown_manager.is_shutting_down
 
+    async def emit_text_block(self, text: str) -> None:
+        """Create or update text block for streaming content.
+
+        This method implements the Block architecture for mixed content rendering.
+        - Creates new text block if none exists
+        - Updates existing text block by appending new text
+        - Emits block events to frontend via WebSocket
+
+        Args:
+            text: Text content to add to the current text block
+        """
+        import time
+        import uuid
+
+        if self.state.current_text_block_id is None:
+            # Create new text block
+            block_id = str(uuid.uuid4())
+            block = {
+                "id": block_id,
+                "type": "text",
+                "content": text,
+                "status": "streaming",
+                "timestamp": time.time(),
+            }
+            self.state.add_block(block)
+            self.state.current_text_block_id = block_id
+
+            logger.debug(
+                "[BLOCK] Created text block: block_id=%s subtask=%d content_len=%d",
+                block_id,
+                self.state.subtask_id,
+                len(text),
+            )
+
+            # Emit block_created event to frontend
+            await self.emitter.emit_event(
+                "chat:block_created",
+                {
+                    "task_id": self.state.task_id,
+                    "subtask_id": self.state.subtask_id,
+                    "block": block,
+                },
+            )
+        else:
+            # Update existing text block by appending content
+            for block in self.state.blocks:
+                if block.get("id") == self.state.current_text_block_id:
+                    block["content"] = block.get("content", "") + text
+
+                    # Emit block_updated event to frontend
+                    await self.emitter.emit_event(
+                        "chat:block_updated",
+                        {
+                            "task_id": self.state.task_id,
+                            "subtask_id": self.state.subtask_id,
+                            "block_id": block["id"],
+                            "content": block["content"],
+                        },
+                    )
+                    break
+
+    async def finalize_text_block(self) -> None:
+        """Mark current text block as complete.
+
+        Called when text streaming is done (e.g., before tool call or at end).
+        """
+        if self.state.current_text_block_id:
+            self.state.update_block(
+                self.state.current_text_block_id, {"status": "done"}
+            )
+
+            # Emit block_updated event with done status
+            await self.emitter.emit_event(
+                "chat:block_updated",
+                {
+                    "task_id": self.state.task_id,
+                    "subtask_id": self.state.subtask_id,
+                    "block_id": self.state.current_text_block_id,
+                    "status": "done",
+                },
+            )
+
+            # Reset current text block ID
+            self.state.current_text_block_id = None
+
+    async def emit_tool_block(
+        self,
+        tool_use_id: str,
+        tool_name: str,
+        tool_input: dict[str, Any],
+    ) -> None:
+        """Create tool block when tool call starts.
+
+        Args:
+            tool_use_id: Unique identifier for the tool call
+            tool_name: Name of the tool being called
+            tool_input: Input parameters for the tool
+        """
+        import time
+
+        # Finalize current text block before starting tool
+        await self.finalize_text_block()
+
+        block = {
+            "id": tool_use_id,  # Use tool_use_id as block ID for easy lookup
+            "type": "tool",
+            "tool_use_id": tool_use_id,
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "status": "pending",
+            "timestamp": time.time(),
+        }
+        self.state.add_block(block)
+
+        logger.debug(
+            "[BLOCK] Created tool block: tool=%s tool_use_id=%s subtask=%d",
+            tool_name,
+            tool_use_id,
+            self.state.subtask_id,
+        )
+
+        # Emit block_created event
+        await self.emitter.emit_event(
+            "chat:block_created",
+            {
+                "task_id": self.state.task_id,
+                "subtask_id": self.state.subtask_id,
+                "block": block,
+            },
+        )
+
+    async def update_tool_block(
+        self,
+        tool_use_id: str,
+        tool_output: Any = None,
+        status: str = "done",
+        is_error: bool = False,
+    ) -> None:
+        """Update tool block when tool execution completes.
+
+        Args:
+            tool_use_id: Unique identifier for the tool call
+            tool_output: Output result from the tool
+            status: Block status ('done' or 'error')
+            is_error: Whether the tool execution failed
+        """
+        updates = {
+            "tool_output": tool_output,
+            "status": status,
+        }
+
+        if is_error:
+            updates["type"] = "error"
+
+        self.state.update_block(tool_use_id, updates)
+
+        # Emit block_updated event
+        await self.emitter.emit_event(
+            "chat:block_updated",
+            {
+                "task_id": self.state.task_id,
+                "subtask_id": self.state.subtask_id,
+                "block_id": tool_use_id,
+                **updates,
+            },
+        )
+
     async def process_token(self, token: str) -> bool:
         """Process a single token from the stream.
 
@@ -487,6 +677,7 @@ class StreamingCore:
                 include_value=True,
                 include_thinking=True,
                 slim_thinking=is_chat_mode,
+                include_blocks=True,  # Include blocks for mixed content rendering
             )
             await self._storage.update_subtask_status(
                 self.state.subtask_id,
@@ -510,6 +701,7 @@ class StreamingCore:
             result = self.state.get_current_result(
                 include_value=False,
                 include_thinking=not is_chat_mode,
+                include_blocks=True,  # Include blocks for mixed content rendering
             )
             # Add reasoning_chunk flag to indicate this is reasoning content
             result["reasoning_chunk"] = reasoning_text
@@ -527,20 +719,25 @@ class StreamingCore:
         # Regular content - Accumulate content
         self.state.append_content(token)
 
+        # Create or update text block for mixed content rendering
+        await self.emit_text_block(token)
+
         # Emit chunk to client with result data
         # - include_value=False: avoid sending full response in every chunk (reduces data size)
         # - include_thinking: only for Code mode (ClaudeCode, Agno), Chat mode only needs token
+        # - include_blocks: always include for mixed content rendering
         # Frontend accumulates content from individual chunks, doesn't need full value
         is_chat_mode = self.state.shell_type == "Chat"
         result = self.state.get_current_result(
             include_value=False,
             include_thinking=not is_chat_mode,  # Chat mode doesn't need thinking in chunks
+            include_blocks=True,  # Include blocks for mixed content rendering
         )
         await self.emitter.emit_chunk(
             token,
             self.state.offset - len(token),  # offset before this token
             self.state.subtask_id,
-            result=result,  # Include result with shell_type for frontend display
+            result=result,  # Include result with shell_type and blocks for frontend display
         )
 
         # Periodic saves
@@ -568,6 +765,7 @@ class StreamingCore:
                 include_value=True,
                 include_thinking=True,  # Always include thinking (may have tool calls)
                 slim_thinking=is_chat_mode,  # Slim down for Chat mode
+                include_blocks=True,  # Include blocks for mixed content rendering
             )
             result["streaming"] = True
             # Use update_subtask_status to save the complete result
@@ -584,6 +782,9 @@ class StreamingCore:
         Returns:
             Result dictionary with the full response and thinking steps
         """
+        # Finalize any remaining text block
+        await self.finalize_text_block()
+
         # For Chat mode with tools, use slim_thinking to reduce payload size
         # For Chat mode without tools, thinking will be empty anyway
         is_chat_mode = self.state.shell_type == "Chat"
@@ -591,6 +792,13 @@ class StreamingCore:
             include_value=True,
             include_thinking=True,  # Always include thinking (may have tool calls)
             slim_thinking=is_chat_mode,  # Slim down for Chat mode
+            include_blocks=True,  # Include blocks for mixed content rendering
+        )
+
+        logger.debug(
+            "[BLOCK] Finalize result: subtask=%d blocks_count=%d",
+            self.state.subtask_id,
+            len(result.get("blocks", [])),
         )
 
         # Save final content to Redis for streaming recovery

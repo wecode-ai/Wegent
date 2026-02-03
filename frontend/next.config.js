@@ -2,12 +2,38 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const path = require('path')
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: false,
   output: 'standalone',
+  // Transpile node_modules that ship modern JS syntax for iOS 16 Safari compatibility
+  transpilePackages: [
+    'mermaid',
+    '@mermaid-js/parser',
+    'framer-motion',
+    '@codemirror/view',
+    '@codemirror/state',
+    '@codemirror/commands',
+    '@codemirror/lang-markdown',
+    '@codemirror/language',
+    '@codemirror/search',
+    '@codemirror/theme-one-dark',
+    '@replit/codemirror-vim',
+    'katex',
+  ],
   // Optimize webpack configuration to prevent chunk loading errors
-  webpack: (config, { isServer, _dev }) => {
+  webpack: (config, { isServer }) => {
+    // Force replace remark-gfm with our iOS 16 compatible version
+    // This is needed because @uiw/react-md-editor depends on remark-gfm
+    // which uses lookbehind regex not supported by iOS 16
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
+    }
+
     // Handle chunk loading issues
     config.optimization = {
       ...config.optimization,
@@ -47,6 +73,9 @@ const nextConfig = {
   },
   // Experimental features to improve stability
   experimental: {
+    // Disable CSS chunking to fix Safari/iOS bug where CSS files
+    // are incorrectly loaded as <script> tags
+    cssChunking: false,
     // Improve chunk loading reliability
     optimizeCss: false,
     // Enable server actions if needed

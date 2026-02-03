@@ -124,7 +124,11 @@ export const createPredefinedModelConfig = (
   modelName: string,
   modelType?: 'public' | 'user' | 'group',
   modelNamespace?: string
-): Record<string, unknown> => {
+): Record<string, unknown> | null => {
+  // Return null if modelName is empty - no model binding
+  if (!modelName || !modelName.trim()) {
+    return null
+  }
   const config: Record<string, unknown> = { bind_model: modelName }
   if (modelType) {
     config.bind_model_type = modelType

@@ -276,7 +276,7 @@ class SubscriptionMonitorStats(BaseModel):
     total_executions: int = Field(..., description="Total number of executions")
     completed_count: int = Field(..., description="Number of completed executions")
     failed_count: int = Field(..., description="Number of failed executions")
-    timeout_count: int = Field(..., description="Number of timed out executions")
+    retrying_count: int = Field(..., description="Number of retrying executions")
     cancelled_count: int = Field(..., description="Number of cancelled executions")
     running_count: int = Field(
         ..., description="Number of currently running executions"
@@ -284,7 +284,7 @@ class SubscriptionMonitorStats(BaseModel):
     pending_count: int = Field(..., description="Number of pending executions")
     success_rate: float = Field(..., description="Success rate (0-100)")
     failure_rate: float = Field(..., description="Failure rate (0-100)")
-    timeout_rate: float = Field(..., description="Timeout rate (0-100)")
+    retrying_rate: float = Field(..., description="Retrying rate (0-100)")
     active_subscriptions_count: int = Field(
         ..., description="Number of active subscriptions"
     )

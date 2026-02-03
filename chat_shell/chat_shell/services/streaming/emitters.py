@@ -47,8 +47,19 @@ class StreamEmitter(ABC):
         offset: int,
         subtask_id: int,
         result: Optional[dict] = None,
+        block_id: Optional[str] = None,
+        block_offset: Optional[int] = None,
     ) -> None:
-        """Emit a content chunk."""
+        """Emit a content chunk.
+
+        Args:
+            content: Content chunk (for text streaming)
+            offset: Current offset in the full response
+            subtask_id: Subtask ID
+            result: Optional full result data (for thinking/workbench display)
+            block_id: Optional block ID for text block streaming (append content to specific block)
+            block_offset: Optional character offset within the current block
+        """
         pass
 
     @abstractmethod
@@ -116,8 +127,10 @@ class SSEEmitter(StreamEmitter):
         offset: int,
         subtask_id: int,
         result: Optional[dict] = None,
+        block_id: Optional[str] = None,
+        block_offset: Optional[int] = None,
     ) -> None:
-        """Emit chunk as SSE data."""
+        """Emit chunk as SSE data with optional block_id and block_offset."""
         payload = {
             "type": "chunk",
             "content": content,
@@ -126,6 +139,10 @@ class SSEEmitter(StreamEmitter):
         }
         if result is not None:
             payload["result"] = result
+        if block_id is not None:
+            payload["block_id"] = block_id
+        if block_offset is not None:
+            payload["block_offset"] = block_offset
         self._events.append(self.format_sse(payload))
 
     async def emit_done(
@@ -146,6 +163,18 @@ class SSEEmitter(StreamEmitter):
         }
         if message_id is not None:
             payload["message_id"] = message_id
+
+        # Log loaded_skills being emitted for debugging skill persistence
+        loaded_skills = result.get("loaded_skills", [])
+        if loaded_skills:
+            logger.info(
+                "[SSE_EMITTER] Emitting done with loaded_skills: subtask_id=%d, "
+                "loaded_skills=%s, result_keys=%s",
+                subtask_id,
+                loaded_skills,
+                list(result.keys()),
+            )
+
         self._events.append(self.format_sse(payload))
 
     async def emit_error(self, subtask_id: int, error: str) -> None:
@@ -257,6 +286,8 @@ class RedisPublishingEmitter(StreamEmitter):
         offset: int,
         subtask_id: int,
         result: Optional[dict] = None,
+        block_id: Optional[str] = None,
+        block_offset: Optional[int] = None,
     ) -> None:
         """Publish chunk event to Redis channel."""
         storage = self._get_storage()
@@ -268,11 +299,17 @@ class RedisPublishingEmitter(StreamEmitter):
         }
         if result is not None:
             payload["result"] = result
+        if block_id is not None:
+            payload["block_id"] = block_id
+        if block_offset is not None:
+            payload["block_offset"] = block_offset
         await storage.publish_streaming_chunk(subtask_id, json.dumps(payload))
         logger.debug(
-            "[REDIS_EMITTER] Published chunk: subtask_id=%d, content_len=%d",
+            "[REDIS_EMITTER] Published chunk: subtask_id=%d, content_len=%d, block_id=%s, block_offset=%s",
             subtask_id,
             len(content),
+            block_id,
+            block_offset,
         )
 
     async def emit_done(
@@ -294,6 +331,18 @@ class RedisPublishingEmitter(StreamEmitter):
         }
         if message_id is not None:
             payload["message_id"] = message_id
+
+        # Log loaded_skills being sent to backend for debugging
+        loaded_skills = result.get("loaded_skills", [])
+        if loaded_skills:
+            logger.info(
+                "[REDIS_EMITTER] Sending loaded_skills to backend: subtask_id=%d, "
+                "loaded_skills=%s, payload_keys=%s",
+                subtask_id,
+                loaded_skills,
+                list(payload.keys()),
+            )
+
         await storage.publish_streaming_chunk(subtask_id, json.dumps(payload))
         logger.info("[REDIS_EMITTER] Published done event: subtask_id=%d", subtask_id)
 
@@ -384,6 +433,7 @@ class NullEmitter(StreamEmitter):
         offset: int,
         subtask_id: int,
         result: Optional[dict] = None,
+        block_id: Optional[str] = None,
     ) -> None:
         """No-op: event published to Redis channel instead."""
         pass

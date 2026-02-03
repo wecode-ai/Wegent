@@ -4,9 +4,8 @@
 
 'use client'
 
-import { useEffect, useState, useCallback, useTransition, useRef, useMemo } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { HiOutlineCode, HiOutlineChatAlt2 } from 'react-icons/hi'
 import {
   ChevronDownIcon,
   Cog6ToothIcon,
@@ -17,7 +16,6 @@ import {
 import { Wand2 } from 'lucide-react'
 import { userApis } from '@/apis/user'
 import { QuickAccessTeam, Team } from '@/types/api'
-import { saveLastTeamByMode } from '@/utils/userPreferences'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tag } from '@/components/ui/tag'
 import { Button } from '@/components/ui/button'
@@ -59,13 +57,9 @@ export function QuickAccessCards({
 }: QuickAccessCardsProps) {
   const router = useRouter()
   const { t } = useTranslation(['common', 'wizard'])
-  const [isPending, startTransition] = useTransition()
   const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([])
   const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true)
   const [clickedTeamId, setClickedTeamId] = useState<number | null>(null)
-  const [switchingToMode, setSwitchingToMode] = useState<
-    'chat' | 'code' | 'knowledge' | 'task' | null
-  >(null)
   const [showMoreTeams, setShowMoreTeams] = useState(false)
   const [showWizard, setShowWizard] = useState(false)
   const moreButtonRef = useRef<HTMLDivElement>(null)
@@ -73,12 +67,6 @@ export function QuickAccessCards({
 
   // Define the extended team type for display
   type DisplayTeam = Team & { is_system: boolean; recommended_mode?: 'chat' | 'code' | 'both' }
-
-  // Prefetch both chat and code pages on mount for smoother navigation
-  useEffect(() => {
-    router.prefetch('/chat')
-    router.prefetch('/code')
-  }, [router])
 
   // Fetch quick access teams
   useEffect(() => {
@@ -190,62 +178,23 @@ export function QuickAccessCards({
     }
   }, [showMoreTeams])
 
-  // Determine the target mode for a team based on recommended_mode or bind_mode
-  const getTeamTargetMode = (
-    team: DisplayTeam
-  ): 'chat' | 'code' | 'knowledge' | 'task' | 'both' => {
-    // First check recommended_mode (from quick access config)
-    if (team.recommended_mode && team.recommended_mode !== 'both') {
-      return team.recommended_mode
-    }
-    // Then check bind_mode - if only one mode is allowed, use that
-    if (team.bind_mode && team.bind_mode.length === 1) {
-      return team.bind_mode[0]
-    }
-    // Default to both (no mode switch needed)
-    return 'both'
-  }
-
+  // Handle team click - simply select the team with animation
   const handleTeamClick = useCallback(
     (team: DisplayTeam) => {
-      const targetMode = getTeamTargetMode(team)
-
-      // Check if we need to switch mode
-      const needsModeSwitch = targetMode !== 'both' && targetMode !== currentMode
-
-      // Always trigger click animation
+      // Trigger click animation
       setClickedTeamId(team.id)
 
-      if (needsModeSwitch) {
-        setSwitchingToMode(targetMode)
+      // Select the team after animation starts
+      setTimeout(() => {
+        onTeamSelect(team)
+      }, 150)
 
-        // When switching mode, save the team preference to the TARGET mode's localStorage
-        // This ensures the new page will restore the correct team
-        saveLastTeamByMode(team.id, targetMode)
-
-        // Use startTransition for smoother navigation without blocking UI
-        // Delay slightly to allow animation to start
-        setTimeout(() => {
-          const targetPath = targetMode === 'code' ? '/code' : '/chat'
-          startTransition(() => {
-            router.push(targetPath)
-          })
-        }, 200)
-      } else {
-        // No mode switch needed, just select the team in current page after animation
-        // First let the animation play, then select the team
-        setTimeout(() => {
-          onTeamSelect(team)
-        }, 300)
-
-        // Reset the clicked state after animation completes
-        setTimeout(() => {
-          setClickedTeamId(null)
-          setSwitchingToMode(null)
-        }, 400)
-      }
+      // Reset the clicked state after animation completes
+      setTimeout(() => {
+        setClickedTeamId(null)
+      }, 300)
     },
-    [currentMode, router, onTeamSelect, startTransition]
+    [onTeamSelect]
   )
 
   if (isLoading || isQuickAccessLoading) {
@@ -332,23 +281,21 @@ export function QuickAccessCards({
   const renderTeamCard = (team: DisplayTeam) => {
     const isSelected = selectedTeam?.id === team.id
     const isClicked = clickedTeamId === team.id
-    const targetMode = getTeamTargetMode(team)
-    const willSwitchMode = targetMode !== 'both' && targetMode !== currentMode
 
     const cardContent = (
       <div
-        onClick={() => !isClicked && !isPending && handleTeamClick(team)}
+        onClick={() => !isClicked && handleTeamClick(team)}
         className={`
           group relative flex items-center gap-1 h-[42px] px-4
           rounded-full border cursor-pointer transition-all duration-200
           ${
-            isClicked || isPending
-              ? 'switching-card border-primary bg-primary/10 ring-2 ring-primary/50'
+            isClicked
+              ? 'clicking-card border-primary bg-primary/10 ring-2 ring-primary/50'
               : isSelected
                 ? 'border-primary bg-primary/5'
                 : 'border-border bg-base hover:bg-hover hover:border-border-strong hover:shadow-sm'
           }
-          ${isClicked || isPending ? 'pointer-events-none' : ''}
+          ${isClicked ? 'pointer-events-none' : ''}
         `}
       >
         <TeamIconDisplay
@@ -377,29 +324,6 @@ export function QuickAccessCards({
             {team.namespace}
           </Tag>
         )}
-
-        {/* Mode switch indicator */}
-        {isClicked && switchingToMode && (
-          <div className="mode-indicator flex items-center gap-1 ml-0.5 text-primary">
-            <span className="text-xs">→</span>
-            {switchingToMode === 'code' ? (
-              <HiOutlineCode className="w-3.5 h-3.5" />
-            ) : (
-              <HiOutlineChatAlt2 className="w-3.5 h-3.5" />
-            )}
-          </div>
-        )}
-
-        {/* Hover hint for mode switch */}
-        {!isClicked && willSwitchMode && (
-          <div className="flex items-center text-text-muted opacity-0 group-hover:opacity-100 transition-opacity duration-200 ml-0.5">
-            {targetMode === 'code' ? (
-              <HiOutlineCode className="w-3 h-3" />
-            ) : (
-              <HiOutlineChatAlt2 className="w-3 h-3" />
-            )}
-          </div>
-        )}
       </div>
     )
 
@@ -427,7 +351,7 @@ export function QuickAccessCards({
             box-shadow: 0 0 0 0 rgba(20, 184, 166, 0.4);
           }
           50% {
-            box-shadow: 0 0 0 8px rgba(20, 184, 166, 0);
+            box-shadow: 0 0 0 6px rgba(20, 184, 166, 0);
           }
           100% {
             box-shadow: 0 0 0 0 rgba(20, 184, 166, 0);
@@ -438,36 +362,18 @@ export function QuickAccessCards({
           0% {
             transform: scale(1);
           }
-          30% {
-            transform: scale(0.95);
-          }
-          60% {
-            transform: scale(1.02);
+          50% {
+            transform: scale(0.97);
           }
           100% {
             transform: scale(1);
           }
         }
 
-        @keyframes slide-fade {
-          0% {
-            opacity: 0;
-            transform: translateX(-8px);
-          }
-          100% {
-            opacity: 1;
-            transform: translateX(0);
-          }
-        }
-
-        .switching-card {
+        .clicking-card {
           animation:
-            pulse-glow 0.4s ease-out,
-            scale-bounce 0.4s ease-out;
-        }
-
-        .mode-indicator {
-          animation: slide-fade 0.2s ease-out forwards;
+            pulse-glow 0.3s ease-out,
+            scale-bounce 0.3s ease-out;
         }
       `}</style>
       <div

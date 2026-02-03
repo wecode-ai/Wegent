@@ -160,16 +160,19 @@ class AttachmentTruncationStrategy(CompressionStrategy):
     def name(self) -> str:
         return "attachment_truncation"
 
-    # Pattern to match attachment content blocks (supports both [Attachment N] and [File Content - xxx])
+    # Pattern to match attachment content blocks wrapped in <attachment> XML tags
+    # or legacy format without tags
     ATTACHMENT_PATTERN = re.compile(
-        r"\[(?:Attachment \d+|File Content)(?:\s*-\s*[^\]]+)?\](.*?)(?=\[(?:Attachment \d+|File Content)|$)",
+        r"(?:<attachment>)?\[(?:Attachment \d+|File Content|Document)(?:\s*[:-]\s*[^\]]+)?\](.*?)(?:</attachment>|(?=\[(?:Attachment \d+|File Content|Document)|<attachment>|$))",
         re.DOTALL,
     )
 
-    # Pattern for document content markers
+    # Pattern for document content markers (including XML tag)
     DOCUMENT_MARKERS = [
+        "<attachment>",  # New XML tag format
         "[Attachment",
         "[File Content",  # New format for file attachments
+        "[Document:",  # History loader format
         "--- Sheet:",
         "--- Slide",
         "[PDF Content]",
@@ -211,26 +214,20 @@ class AttachmentTruncationStrategy(CompressionStrategy):
                     content_preview,
                 )
 
-        attachment_info = self._find_attachments(messages)
-        total_chars = sum(info["length"] for info in attachment_info)
+        attachment_info = self._find_attachments(messages, token_counter)
+        total_tokens = sum(info["tokens"] for info in attachment_info)
 
         logger.info(
-            "[AttachmentTruncation] Found %d attachments with total %d chars in %d messages",
+            "[AttachmentTruncation] Found %d attachments with total %d tokens in %d messages",
             len(attachment_info),
-            total_chars,
+            total_tokens,
             len(messages),
         )
 
-        if total_chars == 0:
+        if total_tokens == 0:
             return StrategyPotential()
 
-        # Estimate chars per token
-        chars_per_token = token_counter.CHARS_PER_TOKEN.get(
-            token_counter.provider, token_counter.CHARS_PER_TOKEN["default"]
-        )
-
-        # Estimate total tokens in attachments
-        total_attachment_tokens = int(total_chars / chars_per_token)
+        total_attachment_tokens = total_tokens
 
         # Compressible tokens = total - minimum to keep
         compressible_tokens = int(
@@ -269,10 +266,10 @@ class AttachmentTruncationStrategy(CompressionStrategy):
             return messages, {"attachments_truncated": 0, "chars_removed": 0}
 
         # Find all attachment content
-        attachment_info = self._find_attachments(messages)
-        total_attachment_chars = sum(info["length"] for info in attachment_info)
+        attachment_info = self._find_attachments(messages, token_counter)
+        total_attachment_tokens = sum(info["tokens"] for info in attachment_info)
 
-        if total_attachment_chars == 0:
+        if total_attachment_tokens == 0:
             return messages, {"attachments_truncated": 0, "chars_removed": 0}
 
         # Get original token count
@@ -281,11 +278,11 @@ class AttachmentTruncationStrategy(CompressionStrategy):
 
         logger.info(
             "[AttachmentTruncation] Compressing: tokens_to_reduce=%d, "
-            "original_tokens=%d, target_tokens=%d, total_attachment_chars=%d",
+            "original_tokens=%d, target_tokens=%d, total_attachment_tokens=%d",
             tokens_to_reduce,
             original_tokens,
             target_tokens,
-            total_attachment_chars,
+            total_attachment_tokens,
         )
 
         # Use binary search to find the right retention ratio
@@ -428,11 +425,19 @@ class AttachmentTruncationStrategy(CompressionStrategy):
 
         return compressed, total_chars_removed
 
-    def _find_attachments(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _find_attachments(
+        self,
+        messages: list[dict[str, Any]],
+        token_counter: TokenCounter,
+    ) -> list[dict[str, Any]]:
         """Find all attachment content in messages.
 
+        Args:
+            messages: Messages to search
+            token_counter: Token counter instance for accurate token counting
+
         Returns:
-            List of dicts with message index and attachment length info
+            List of dicts with message index and attachment token info
         """
         attachments = []
         for idx, msg in enumerate(messages):
@@ -442,17 +447,18 @@ class AttachmentTruncationStrategy(CompressionStrategy):
             if not self._has_attachment_content(content):
                 continue
 
-            # Find attachment blocks and sum their lengths
-            total_length = 0
+            # Find attachment blocks and count their tokens
+            attachment_text = ""
             for match in self.ATTACHMENT_PATTERN.finditer(content):
                 attachment_content = match.group(1) if match.lastindex else ""
-                total_length += len(attachment_content)
+                attachment_text += attachment_content
 
-            if total_length > 0:
+            if attachment_text:
+                tokens = token_counter.count_text(attachment_text)
                 attachments.append(
                     {
                         "message_idx": idx,
-                        "length": total_length,
+                        "tokens": tokens,
                     }
                 )
 

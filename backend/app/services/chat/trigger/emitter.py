@@ -48,6 +48,8 @@ class ChatEventEmitter(ABC):
         content: str,
         offset: int,
         result: Optional[Dict[str, Any]] = None,
+        block_id: Optional[str] = None,
+        block_offset: Optional[int] = None,
     ) -> None:
         """Emit chat:chunk event."""
         pass
@@ -129,6 +131,8 @@ class WebSocketEventEmitter(ChatEventEmitter):
         content: str,
         offset: int,
         result: Optional[Dict[str, Any]] = None,
+        block_id: Optional[str] = None,
+        block_offset: Optional[int] = None,
     ) -> None:
         from app.services.chat.ws_emitter import get_ws_emitter
 
@@ -140,6 +144,8 @@ class WebSocketEventEmitter(ChatEventEmitter):
                 content=content,
                 offset=offset,
                 result=result,
+                block_id=block_id,
+                block_offset=block_offset,
             )
 
     async def emit_chat_done(
@@ -242,6 +248,8 @@ class NoOpEventEmitter(ChatEventEmitter):
         content: str,
         offset: int,
         result: Optional[Dict[str, Any]] = None,
+        block_id: Optional[str] = None,
+        block_offset: Optional[int] = None,
     ) -> None:
         # Don't log chunks to avoid spam
         pass

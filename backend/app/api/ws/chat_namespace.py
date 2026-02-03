@@ -99,6 +99,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             "chat:retry": "on_chat_retry",
             "task:join": "on_task_join",
             "task:leave": "on_task_leave",
+            "task:close-session": "on_task_close_session",
             "history:sync": "on_history_sync",
             "skill:response": "on_skill_response",
         }
@@ -282,18 +283,26 @@ class ChatNamespace(socketio.AsyncNamespace):
         """
         Handle task:join event.
 
-        Joins the client to a task room and returns streaming info if active.
+        Joins the client to a task room and returns streaming info and subtasks.
+        This allows the frontend to immediately sync messages without a separate API call.
+
+        Supports incremental sync via after_message_id parameter:
+        - If after_message_id is provided, only returns messages after that ID (for reconnect)
+        - If after_message_id is None, returns all messages (for initial join)
 
         Args:
             sid: Socket ID
-            data: {"task_id": int}
+            data: {"task_id": int, "after_message_id": int?}
 
         Returns:
-            {"streaming": {...}} or {"streaming": None} or {"error": "..."}
+            {"streaming": {...}, "subtasks": [...]} or {"error": "..."}
         """
         payload = data  # Already validated by decorator
 
-        logger.info(f"[WS] task:join received: sid={sid}, task_id={payload.task_id}")
+        logger.info(
+            f"[WS] task:join received: sid={sid}, task_id={payload.task_id}, "
+            f"after_message_id={payload.after_message_id}"
+        )
 
         # Check token expiry before processing
         if await self._check_token_expiry(sid):
@@ -321,6 +330,90 @@ class ChatNamespace(socketio.AsyncNamespace):
             f"[WS] User {user_id} joined task room {payload.task_id} (room={task_room}, sid={sid})"
         )
 
+        # Get subtasks for immediate message sync
+        # If after_message_id is provided, only fetch messages after that ID (incremental sync)
+        # Otherwise, fetch all messages (initial join)
+        subtasks_dict = None
+        db = SessionLocal()
+        try:
+            if payload.after_message_id is not None:
+                # Incremental sync: only fetch messages after the cursor
+                from app.services.context import context_service
+
+                subtasks = (
+                    db.query(Subtask)
+                    .filter(
+                        Subtask.task_id == payload.task_id,
+                        Subtask.message_id > payload.after_message_id,
+                    )
+                    .order_by(Subtask.message_id.asc())
+                    .all()
+                )
+
+                # Convert to dict format matching task detail API
+                subtasks_dict = []
+                for st in subtasks:
+                    # Get contexts for this subtask
+                    contexts_briefs = context_service.get_briefs_by_subtask(db, st.id)
+                    contexts_list = [
+                        ctx.model_dump(mode="json") for ctx in contexts_briefs
+                    ]
+
+                    subtask_dict = {
+                        "id": st.id,
+                        "message_id": st.message_id,
+                        "role": st.role.value,
+                        "prompt": st.prompt,
+                        "result": st.result,
+                        "status": st.status.value,
+                        "progress": st.progress,
+                        "created_at": (
+                            st.created_at.isoformat() if st.created_at else None
+                        ),
+                        "updated_at": (
+                            st.updated_at.isoformat() if st.updated_at else None
+                        ),
+                        "completed_at": (
+                            st.completed_at.isoformat() if st.completed_at else None
+                        ),
+                        "contexts": contexts_list,
+                        "sender": None,
+                    }
+
+                    # Add sender info for user messages
+                    if st.role == SubtaskRole.USER and st.user_id:
+                        user = db.query(User).filter(User.id == st.user_id).first()
+                        if user:
+                            subtask_dict["sender"] = {
+                                "user_id": user.id,
+                                "user_name": user.user_name,
+                                "avatar": user.avatar,
+                            }
+
+                    subtasks_dict.append(subtask_dict)
+
+                logger.info(
+                    f"[WS] task:join incremental sync: fetched {len(subtasks_dict)} new messages "
+                    f"after message_id={payload.after_message_id} for task_id={payload.task_id}"
+                )
+            else:
+                # Full sync: fetch all messages using existing service
+                from app.services.adapters.task_kinds import task_kinds_service
+
+                task_detail = task_kinds_service.get_task_detail(
+                    db, task_id=payload.task_id, user_id=user_id
+                )
+                subtasks_dict = task_detail.get("subtasks")
+                logger.info(
+                    f"[WS] task:join full sync: fetched {len(subtasks_dict) if subtasks_dict else 0} "
+                    f"subtasks for task_id={payload.task_id}"
+                )
+        except Exception as e:
+            logger.exception(f"[WS] task:join error fetching subtasks: {e}")
+            # Continue without subtasks - frontend can fall back to API call
+        finally:
+            db.close()
+
         # Check for active streaming
         logger.info(
             f"[WS] task:join checking for active streaming, task_id={payload.task_id}"
@@ -345,13 +438,14 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "subtask_id": subtask_id,
                     "offset": offset,
                     "cached_content": cached_content or "",
-                }
+                },
+                "subtasks": subtasks_dict,
             }
 
         logger.info(
             f"[WS] task:join no active streaming found for task_id={payload.task_id}"
         )
-        return {"streaming": None}
+        return {"streaming": None, "subtasks": subtasks_dict}
 
     @auto_task_context(TaskLeavePayload)
     async def on_task_leave(self, sid: str, data: dict) -> dict:
@@ -1006,6 +1100,109 @@ class ChatNamespace(socketio.AsyncNamespace):
         except Exception as e:
             logger.error(f"[WS] chat:cancel exception: {e}", exc_info=True)
             db.rollback()
+            return {"error": f"Internal server error: {str(e)}"}
+        finally:
+            db.close()
+
+    async def on_task_close_session(self, sid: str, data: dict) -> dict:
+        """
+        Handle task:close-session event.
+
+        Sends close-session WebSocket event to device to terminate the session
+        and free up the device slot.
+
+        Args:
+            sid: Socket ID
+            data: {"task_id": int}
+
+        Returns:
+            {"success": true} or {"error": "..."}
+        """
+        # Check token expiry before processing
+        if await self._check_token_expiry(sid):
+            return await self._handle_token_expired(sid)
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+
+        if not user_id:
+            logger.error("[WS] task:close-session error: Not authenticated")
+            return {"error": "Not authenticated"}
+
+        task_id = data.get("task_id")
+        if not task_id:
+            logger.error("[WS] task:close-session error: Missing task_id")
+            return {"error": "Missing task_id"}
+
+        db = SessionLocal()
+        try:
+            # Get the task to find the executor_name (device ID)
+            from app.models.task import TaskResource
+
+            task = (
+                db.query(TaskResource)
+                .filter(
+                    TaskResource.id == task_id,
+                    TaskResource.kind == "Task",
+                    TaskResource.is_active == True,
+                )
+                .first()
+            )
+
+            if not task:
+                logger.error(
+                    f"[WS] task:close-session error: Task not found task_id={task_id} user_id={user_id}"
+                )
+                return {"error": "Task not found"}
+
+            # Get the latest subtask to find executor_name
+            subtask = (
+                db.query(Subtask)
+                .filter(Subtask.task_id == task_id)
+                .order_by(Subtask.id.desc())
+                .first()
+            )
+
+            if not subtask or not subtask.executor_name:
+                logger.error(
+                    f"[WS] task:close-session error: No executor found for task_id={task_id}"
+                )
+                return {"error": "No executor found for this task"}
+
+            # Check if this is a device task
+            if not subtask.executor_name.startswith("device-"):
+                logger.error(
+                    f"[WS] task:close-session error: Not a device task, executor_name={subtask.executor_name}"
+                )
+                return {"error": "Not a device task"}
+
+            # Extract device_id from executor_name (format: "device-{device_id}")
+            device_id = subtask.executor_name[7:]  # Remove "device-" prefix
+            device_room = f"device:{user_id}:{device_id}"
+
+            logger.info(
+                f"[WS] task:close-session Sending task:close-session to device: "
+                f"device_id={device_id}, room={device_room}, task_id={task_id}"
+            )
+
+            from app.core.socketio import get_sio
+
+            sio = get_sio()
+            await sio.emit(
+                "task:close-session",
+                {"task_id": task_id},
+                room=device_room,
+                namespace="/local-executor",
+            )
+
+            logger.info(
+                f"[WS] task:close-session Successfully sent to device for task_id={task_id}"
+            )
+
+            return {"success": True}
+
+        except Exception as e:
+            logger.error(f"[WS] task:close-session exception: {e}", exc_info=True)
             return {"error": f"Internal server error: {str(e)}"}
         finally:
             db.close()

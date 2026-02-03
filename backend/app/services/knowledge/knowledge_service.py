@@ -9,9 +9,11 @@ Knowledge base and document service using kinds table.
 from dataclasses import dataclass
 from typing import Optional
 
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.exceptions import ValidationException
 from app.models.kind import Kind
 from app.models.knowledge import (
     DocumentStatus,
@@ -60,6 +62,15 @@ class BatchDeleteResult:
 
     result: BatchOperationResult
     kb_ids: list[int]  # Unique KB IDs from successfully deleted documents
+
+
+@dataclass
+class ActiveDocumentTextStats:
+    """Aggregated stats for active documents in a knowledge base."""
+
+    file_size_total: int
+    text_length_total: int
+    active_document_count: int
 
 
 class KnowledgeService:
@@ -404,6 +415,22 @@ class KnowledgeService:
         if "summary_model_ref" in data.model_fields_set:
             spec["summaryModelRef"] = data.summary_model_ref
 
+        # Update call limit configuration if provided
+        if data.max_calls_per_conversation is not None:
+            spec["maxCallsPerConversation"] = data.max_calls_per_conversation
+
+        if data.exempt_calls_before_check is not None:
+            spec["exemptCallsBeforeCheck"] = data.exempt_calls_before_check
+
+        # Validate call limits: exempt < max (additional backend validation)
+        max_calls = spec.get("maxCallsPerConversation", 10)
+        exempt_calls = spec.get("exemptCallsBeforeCheck", 5)
+        if exempt_calls >= max_calls:
+            raise ValidationException(
+                f"exemptCallsBeforeCheck ({exempt_calls}) must be less than "
+                f"maxCallsPerConversation ({max_calls})"
+            )
+
         kb_json["spec"] = spec
         kb.json = kb_json
         # Mark JSON field as modified so SQLAlchemy detects the change
@@ -554,33 +581,6 @@ class KnowledgeService:
         )
 
     @staticmethod
-    def get_total_file_size(
-        db: Session,
-        knowledge_base_id: int,
-    ) -> int:
-        """
-        Get the total file size for all active documents in a knowledge base.
-
-        Args:
-            db: Database session
-            knowledge_base_id: Knowledge base ID
-
-        Returns:
-            Total file size in bytes for all active documents
-        """
-        from sqlalchemy import func
-
-        return (
-            db.query(func.coalesce(func.sum(KnowledgeDocument.file_size), 0))
-            .filter(
-                KnowledgeDocument.kind_id == knowledge_base_id,
-                KnowledgeDocument.is_active == True,
-            )
-            .scalar()
-            or 0
-        )
-
-    @staticmethod
     def get_active_document_count(
         db: Session,
         knowledge_base_id: int,
@@ -609,6 +609,42 @@ class KnowledgeService:
             )
             .scalar()
             or 0
+        )
+
+    @staticmethod
+    def get_active_document_text_length_stats(
+        db: Session,
+        knowledge_base_id: int,
+    ) -> "ActiveDocumentTextStats":
+        """
+        Get aggregated active document stats with extracted text length.
+
+        Returns total extracted text length (SubtaskContext.text_length),
+        total raw file size, and active document count using a single query.
+        """
+        from app.models.subtask_context import SubtaskContext
+
+        file_size_total, text_length_total, active_document_count = (
+            db.query(
+                func.coalesce(func.sum(KnowledgeDocument.file_size), 0),
+                func.coalesce(func.sum(SubtaskContext.text_length), 0),
+                func.count(KnowledgeDocument.id),
+            )
+            .outerjoin(
+                SubtaskContext,
+                KnowledgeDocument.attachment_id == SubtaskContext.id,
+            )
+            .filter(
+                KnowledgeDocument.kind_id == knowledge_base_id,
+                KnowledgeDocument.is_active == True,
+            )
+            .one()
+        )
+
+        return ActiveDocumentTextStats(
+            file_size_total=int(file_size_total or 0),
+            text_length_total=int(text_length_total or 0),
+            active_document_count=int(active_document_count or 0),
         )
 
     # ============== Knowledge Document Operations ==============
@@ -825,28 +861,37 @@ class KnowledgeService:
 
         from app.services.adapters.retriever_kinds import retriever_kinds_service
         from app.services.context import context_service
-        from app.services.rag.document_service import DocumentService
         from app.services.rag.storage.factory import create_storage_backend
 
         logger = logging.getLogger(__name__)
 
-        def run_async(coro):
+        def _ensure_event_loop() -> asyncio.AbstractEventLoop:
             """
-            Run an async coroutine safely, handling the case where
-            an event loop is already running (e.g., in FastAPI async context).
+            Ensure there is a valid, open event loop in the current thread.
+
+            LlamaIndex's ElasticsearchStore uses nest_asyncio and internally calls
+            asyncio.get_event_loop().run_until_complete(). This function ensures
+            a valid event loop exists before those calls to avoid "Event loop is closed" errors.
+
+            This is thread-safe because asyncio.set_event_loop() is thread-local.
+            Each thread maintains its own event loop, so setting it in one thread
+            does not affect other threads.
+
+            Returns:
+                A valid, open event loop
             """
             try:
-                loop = asyncio.get_running_loop()
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    # Event loop exists but is closed, create a new one
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                return loop
             except RuntimeError:
-                # No running event loop, safe to use asyncio.run()
-                return asyncio.run(coro)
-            else:
-                # Event loop is already running, create a new task
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, coro)
-                    return future.result()
+                # No event loop in current thread, create one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                return loop
 
         doc = KnowledgeService.get_document(db, document_id, user_id)
         if not doc:
@@ -900,11 +945,6 @@ class KnowledgeService:
                             # Create storage backend from retriever
                             storage_backend = create_storage_backend(retriever_crd)
 
-                            # Create document service
-                            doc_service = DocumentService(
-                                storage_backend=storage_backend
-                            )
-
                             # Get the correct user_id for index naming
                             # For group knowledge bases, use the KB creator's user_id
                             # This ensures we delete from the same index where documents were stored
@@ -914,13 +954,17 @@ class KnowledgeService:
                                 # Group knowledge base - use KB creator's user_id
                                 index_owner_user_id = kb.user_id
 
-                            # Delete RAG index using the correct user_id
-                            run_async(
-                                doc_service.delete_document(
-                                    knowledge_id=str(kind_id),
-                                    doc_ref=doc_ref,
-                                    user_id=index_owner_user_id,
-                                )
+                            # Ensure a valid event loop exists before calling storage_backend.delete_document
+                            # LlamaIndex's ElasticsearchStore uses nest_asyncio and internally calls
+                            # asyncio.get_event_loop().run_until_complete(), which requires a valid loop
+                            _ensure_event_loop()
+
+                            # Delete RAG index using the synchronous storage backend method
+                            # storage_backend.delete_document is synchronous but internally uses async operations
+                            storage_backend.delete_document(
+                                knowledge_id=str(kind_id),
+                                doc_ref=doc_ref,
+                                user_id=index_owner_user_id,
                             )
                             logger.info(
                                 f"Deleted RAG index for doc_ref '{doc_ref}' in knowledge base {kind_id} "

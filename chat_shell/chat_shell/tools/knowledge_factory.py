@@ -24,6 +24,7 @@ async def prepare_knowledge_base_tools(
     user_subtask_id: Optional[int] = None,
     is_user_selected: bool = True,
     document_ids: Optional[list[int]] = None,
+    model_id: Optional[str] = None,
     context_window: Optional[int] = None,
     skip_prompt_enhancement: bool = False,
 ) -> tuple[list, str]:
@@ -45,6 +46,8 @@ async def prepare_knowledge_base_tools(
             False = relaxed mode (KB inherited from task, can use general knowledge)
         document_ids: Optional list of document IDs to filter retrieval.
             When set, only chunks from these specific documents will be returned.
+        model_id: Optional model_id used by the current chat model.
+            Used by KnowledgeBaseTool for token counting and injection decisions.
         context_window: Optional context window size from Model CRD.
             Used by KnowledgeBaseTool for injection strategy decisions.
         skip_prompt_enhancement: If True, skip adding KB prompt instructions to system prompt.
@@ -67,11 +70,12 @@ async def prepare_knowledge_base_tools(
 
     logger.info(
         "[knowledge_factory] Creating KnowledgeBaseTool for %d knowledge bases: %s, "
-        "is_user_selected=%s, document_ids=%s, context_window=%s",
+        "is_user_selected=%s, document_ids=%s, model_id=%s, context_window=%s",
         len(knowledge_base_ids),
         knowledge_base_ids,
         is_user_selected,
         document_ids,
+        model_id,
         context_window,
     )
 
@@ -79,15 +83,14 @@ async def prepare_knowledge_base_tools(
     from chat_shell.tools.builtin import KnowledgeBaseTool
 
     # Create KnowledgeBaseTool with the specified knowledge bases
-    # Pass user_subtask_id for persisting RAG results to context database
-    # Pass document_ids for filtering to specific documents
-    # Pass context_window from Model CRD for injection strategy decisions
+    # KB configs (max_calls, exempt_calls, name) are fetched from Backend API
     kb_tool = KnowledgeBaseTool(
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids or [],
         user_id=user_id,
         db_session=db,
         user_subtask_id=user_subtask_id,
+        model_id=model_id or KnowledgeBaseTool.model_id,
         context_window=context_window,
     )
     extra_tools.append(kb_tool)
@@ -116,13 +119,15 @@ async def prepare_knowledge_base_tools(
             "[knowledge_factory] Using RELAXED mode prompt (KB inherited from task)"
         )
 
-    enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
-
-    # Add historical knowledge base meta info if available
+    # Get historical knowledge base meta info if available
+    kb_meta_prompt = ""
     if task_id:
         kb_meta_prompt = await _build_historical_kb_meta_prompt(db, task_id)
-        if kb_meta_prompt:
-            enhanced_system_prompt = f"{enhanced_system_prompt}{kb_meta_prompt}"
+
+    # Inject KB meta list into the template using format method
+    # This ensures the KB list appears inside the <knowledge_base> tag
+    kb_instruction_with_meta = kb_instruction.format(kb_meta_list=kb_meta_prompt)
+    enhanced_system_prompt = f"{base_system_prompt}{kb_instruction_with_meta}"
 
     return extra_tools, enhanced_system_prompt
 

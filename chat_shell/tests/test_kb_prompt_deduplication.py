@@ -188,6 +188,7 @@ class TestKnowledgeFactorySkipPromptEnhancement:
                 user_id=1,
                 db=MagicMock(),
                 base_system_prompt=base_prompt,
+                model_id="claude-3-5-sonnet",
                 skip_prompt_enhancement=True,
             )
 
@@ -215,6 +216,7 @@ class TestKnowledgeFactorySkipPromptEnhancement:
                 user_id=1,
                 db=MagicMock(),
                 base_system_prompt=base_prompt,
+                model_id="claude-3-5-sonnet",
                 skip_prompt_enhancement=False,
                 is_user_selected=True,
             )
@@ -242,6 +244,7 @@ class TestKnowledgeFactorySkipPromptEnhancement:
                 db=MagicMock(),
                 base_system_prompt=base_prompt,
                 task_id=1,
+                model_id="claude-3-5-sonnet",
                 skip_prompt_enhancement=True,
             )
 

@@ -484,12 +484,3 @@ Control Claude's available tools via the `allowed_tools` parameter:
 ### Permission Denied
 **Cause**: Insufficient file permissions
 **Solution**: Check file paths and permission settings
-
----
-
-## Technical Support
-
-When troubleshooting issues, consult:
-- Executor Manager logs
-- Sandbox container logs
-- E2B SDK documentation

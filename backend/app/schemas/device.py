@@ -21,6 +21,20 @@ class DeviceStatusEnum(str, Enum):
     BUSY = "busy"
 
 
+# Maximum concurrent tasks per device
+MAX_DEVICE_SLOTS = 5
+
+
+class DeviceRunningTask(BaseModel):
+    """Information about a task running on a device."""
+
+    task_id: int = Field(..., description="Parent task ID")
+    subtask_id: int = Field(..., description="Subtask ID")
+    title: str = Field(..., description="Task title")
+    status: str = Field(..., description="Task status")
+    created_at: Optional[str] = Field(None, description="Task creation timestamp")
+
+
 class DeviceInfo(BaseModel):
     """Response schema for device information."""
 
@@ -35,6 +49,19 @@ class DeviceInfo(BaseModel):
     capabilities: Optional[List[str]] = Field(
         None, description="Device capabilities/tags"
     )
+    slot_used: int = Field(0, description="Number of slots currently in use")
+    slot_max: int = Field(MAX_DEVICE_SLOTS, description="Maximum concurrent task slots")
+    running_tasks: List[DeviceRunningTask] = Field(
+        default_factory=list, description="List of tasks running on this device"
+    )
+    # Version information
+    executor_version: Optional[str] = Field(
+        None, description="Device's current executor version"
+    )
+    latest_version: Optional[str] = Field(
+        None, description="Latest available executor version"
+    )
+    update_available: bool = Field(False, description="Whether an update is available")
 
     class Config:
         from_attributes = True
@@ -62,12 +89,25 @@ class DeviceRegisterPayload(BaseModel):
         max_length=100,
         description="Device name (self-provided)",
     )
+    executor_version: Optional[str] = Field(
+        None,
+        max_length=50,
+        description="Executor version (e.g., '1.0.0')",
+    )
 
 
 class DeviceHeartbeatPayload(BaseModel):
     """Payload for device heartbeat via WebSocket."""
 
     device_id: str = Field(..., description="Device unique identifier")
+    running_task_ids: List[int] = Field(
+        default_factory=list, description="List of active task IDs on this device"
+    )
+    executor_version: Optional[str] = Field(
+        None,
+        max_length=50,
+        description="Executor version (e.g., '1.0.0')",
+    )
 
 
 class DeviceStatusPayload(BaseModel):
@@ -96,3 +136,12 @@ class DeviceStatusEvent(BaseModel):
 
     device_id: str
     status: DeviceStatusEnum
+
+
+class DeviceSlotUpdateEvent(BaseModel):
+    """Event payload for device slot usage change."""
+
+    device_id: str
+    slot_used: int
+    slot_max: int
+    running_tasks: List[DeviceRunningTask]

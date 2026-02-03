@@ -14,12 +14,23 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from ..knowledge_content_cleaner import get_content_cleaner
 from ..knowledge_injection_strategy import InjectionMode, InjectionStrategy
 
 logger = logging.getLogger(__name__)
+
+# Token thresholds for call limit enforcement (hardcoded, not configurable)
+TOKEN_WARNING_THRESHOLD = 0.70  # 70%: Strong warning but allow
+TOKEN_REJECT_THRESHOLD = 0.90  # 90%: Reject call
+
+# Token estimation heuristic (characters per token for ASCII text)
+TOKEN_CHARS_PER_TOKEN = 4  # ~4 chars/token for English, 1-2 for CJK
+
+# Default configuration values (used when KB spec doesn't specify)
+DEFAULT_MAX_CALLS_PER_CONVERSATION = 10
+DEFAULT_EXEMPT_CALLS_BEFORE_CHECK = 5
 
 
 class KnowledgeBaseInput(BaseModel):
@@ -90,7 +101,15 @@ class KnowledgeBaseTool(BaseTool):
     current_messages: List[Dict[str, Any]] = Field(default_factory=list)
 
     # Injection strategy instance (lazy initialized)
-    _injection_strategy: Optional[InjectionStrategy] = None
+    _injection_strategy: Optional[InjectionStrategy] = PrivateAttr(default=None)
+
+    # Tool call limit tracking (per conversation)
+    # These are instance variables that persist across multiple tool calls in the same conversation
+    _call_count: int = PrivateAttr(default=0)
+    _accumulated_tokens: int = PrivateAttr(default=0)
+
+    # Cache for KB info (fetched once per conversation)
+    _kb_info_cache: Optional[Dict[str, Any]] = PrivateAttr(default=None)
 
     @property
     def injection_strategy(self) -> InjectionStrategy:
@@ -105,6 +124,326 @@ class KnowledgeBaseTool(BaseTool):
                 context_buffer_ratio=self.context_buffer_ratio,
             )
         return self._injection_strategy
+
+    def _get_effective_context_window(self) -> int:
+        """Get effective context window size, using default if not provided.
+
+        Returns:
+            Context window size (uses InjectionStrategy.DEFAULT_CONTEXT_WINDOW if None)
+        """
+        return self.context_window or InjectionStrategy.DEFAULT_CONTEXT_WINDOW
+
+    def _get_kb_info_sync(self) -> Dict[str, Any]:
+        """Get KB info synchronously, using cache or fetching if needed.
+
+        This is a helper method for sync methods that need KB info.
+        It handles async/sync boundary by checking event loop state.
+
+        Returns:
+            KB info dict from cache or HTTP API
+
+        Note:
+            This method assumes cache is populated by _arun() at the start.
+            If cache is empty, it will attempt to fetch synchronously as fallback.
+        """
+        # Fast path: return cached data if available
+        if self._kb_info_cache is not None:
+            return self._kb_info_cache
+
+        # Slow path: cache not populated, need to fetch
+        # This should rarely happen if _arun() called _get_kb_info() first
+        logger.warning(
+            "[KnowledgeBaseTool] KB info cache not populated, fetching synchronously"
+        )
+
+        try:
+            import asyncio
+
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If event loop is running, we can't block
+                # Return empty dict and log warning
+                logger.warning(
+                    "[KnowledgeBaseTool] Cannot fetch KB info in running event loop, using defaults"
+                )
+                return {"items": []}
+            else:
+                # No running loop, fetch synchronously
+                return loop.run_until_complete(self._get_kb_info())
+        except RuntimeError:
+            # No event loop, create a new one
+            return asyncio.run(self._get_kb_info())
+
+    def _get_kb_limits(self) -> tuple[int, int]:
+        """Get (max_calls, exempt_calls) for knowledge base tool calls.
+
+        Returns limits for the first knowledge base in the list. If multiple KBs
+        are configured, we use the first one's limits to keep behavior simple.
+
+        Configuration is fetched from Backend API via _get_kb_info() and cached
+        for the lifetime of the tool instance.
+
+        Returns:
+            Tuple of (max_calls_per_conversation, exempt_calls_before_check)
+        """
+        if not self.knowledge_base_ids:
+            return DEFAULT_MAX_CALLS_PER_CONVERSATION, DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
+
+        # Get KB info using helper method
+        kb_info = self._get_kb_info_sync()
+
+        # Extract config for first KB
+        first_kb_id = self.knowledge_base_ids[0]
+        items = kb_info.get("items", [])
+
+        for item in items:
+            if item.get("id") == first_kb_id:
+                max_calls = item.get(
+                    "max_calls_per_conversation", DEFAULT_MAX_CALLS_PER_CONVERSATION
+                )
+                exempt_calls = item.get(
+                    "exempt_calls_before_check", DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
+                )
+
+                # Validate config
+                if exempt_calls >= max_calls:
+                    logger.warning(
+                        f"[KnowledgeBaseTool] Invalid KB config for KB {first_kb_id}: "
+                        f"exempt_calls={exempt_calls} >= max_calls={max_calls}. Using defaults."
+                    )
+                    return (
+                        DEFAULT_MAX_CALLS_PER_CONVERSATION,
+                        DEFAULT_EXEMPT_CALLS_BEFORE_CHECK,
+                    )
+
+                return max_calls, exempt_calls
+
+        # KB not found in response, use defaults
+        logger.debug(
+            "[KnowledgeBaseTool] No config found for KB %d, using default limits",
+            first_kb_id,
+        )
+        return DEFAULT_MAX_CALLS_PER_CONVERSATION, DEFAULT_EXEMPT_CALLS_BEFORE_CHECK
+
+    def _estimate_tokens_from_content(self, content: str) -> int:
+        """Estimate tokens from text content.
+
+        Uses the simple heuristic: ~4 characters per token for ASCII text.
+        Note: This may underestimate for CJK (Chinese/Japanese/Korean) text
+        where the ratio is ~1-2 characters per token.
+
+        Args:
+            content: Text content
+
+        Returns:
+            Estimated token count
+        """
+        # Simple heuristic - could be improved with tiktoken for better accuracy
+        # or by detecting CJK characters and adjusting the ratio
+        return len(content) // TOKEN_CHARS_PER_TOKEN
+
+    def _check_call_limits(
+        self, query: str
+    ) -> tuple[bool, Optional[str], Optional[str]]:
+        """Check if the tool call should be allowed based on limits.
+
+        Args:
+            query: Search query
+
+        Returns:
+            Tuple of (should_allow, rejection_reason, warning_level)
+            - should_allow: True if call should proceed
+            - rejection_reason: Reason string if rejected, None otherwise
+            - warning_level: "strong" if warning needed, None otherwise
+        """
+        max_calls, exempt_calls = self._get_kb_limits()
+        kb_name = self._get_kb_name()
+
+        # Increment call count (do this before checks so logging is accurate)
+        current_call = self._call_count + 1
+
+        # Check 1: Hard limit (max calls exceeded)
+        if current_call > max_calls:
+            logger.warning(
+                "[KnowledgeBaseTool] Call REJECTED | Reason: max_calls_exceeded | "
+                "Call count: %d/%d | KB: %s",
+                current_call,
+                max_calls,
+                kb_name,
+            )
+            return (
+                False,
+                "max_calls_exceeded",
+                None,
+            )
+
+        # Check 2: Token threshold (only after exempt period)
+        if current_call > exempt_calls:
+            # Calculate current token usage percentage
+            effective_context_window = self._get_effective_context_window()
+            usage_percent = self._accumulated_tokens / effective_context_window
+
+            # Token >= 90%: Reject (most severe)
+            if usage_percent >= TOKEN_REJECT_THRESHOLD:
+                logger.warning(
+                    "[KnowledgeBaseTool] Call REJECTED | Reason: token_limit_exceeded | "
+                    "Call count: %d/%d | Token usage: %.1f%% | KB: %s",
+                    current_call,
+                    max_calls,
+                    usage_percent * 100,
+                    kb_name,
+                )
+                return False, "token_limit_exceeded", None
+
+            # Token >= 70%: Strong warning (stricter than default warning)
+            elif usage_percent >= TOKEN_WARNING_THRESHOLD:
+                logger.warning(
+                    "[KnowledgeBaseTool] Call %d/%d (check period, high token usage) | KB: %s | Query: %s | "
+                    "Token: %d/%d (%.1f%%, threshold: 70%%) | Status: allowed_with_strong_warning",
+                    current_call,
+                    max_calls,
+                    kb_name,
+                    query[:50],
+                    self._accumulated_tokens,
+                    effective_context_window,
+                    usage_percent * 100,
+                )
+                return True, None, "strong"
+
+            # Token < 70%: Default warning for check period (gentler warning)
+            else:
+                logger.info(
+                    "[KnowledgeBaseTool] Call %d/%d (check period, normal token usage) | KB: %s | Query: %s | "
+                    "Token: %d/%d (%.1f%%) | Status: allowed_with_warning",
+                    current_call,
+                    max_calls,
+                    kb_name,
+                    query[:50],
+                    self._accumulated_tokens,
+                    effective_context_window,
+                    usage_percent * 100,
+                )
+                return (
+                    True,
+                    None,
+                    "normal",
+                )  # Return "normal" warning level instead of None
+
+        # Exempt period: Allow without checks
+        logger.info(
+            "[KnowledgeBaseTool] Call %d/%d (exempt period) | KB: %s | Query: %s",
+            current_call,
+            max_calls,
+            kb_name,
+            query[:50],
+        )
+        return True, None, None
+
+    def _get_kb_name(self) -> str:
+        """Get the name of the first knowledge base.
+
+        Fetches from Backend API via _get_kb_info() (cached).
+
+        Returns:
+            KB name or "KB-{id}" as fallback
+        """
+        if not self.knowledge_base_ids:
+            return "Unknown"
+
+        first_kb_id = self.knowledge_base_ids[0]
+
+        # Get KB info using helper method
+        kb_info = self._get_kb_info_sync()
+
+        # Extract name for first KB
+        items = kb_info.get("items", [])
+        for item in items:
+            if item.get("id") == first_kb_id:
+                return item.get("name", f"KB-{first_kb_id}")
+
+        # Fallback to ID-based name
+        return f"KB-{first_kb_id}"
+
+    def _format_rejection_message(self, rejection_reason: str, max_calls: int) -> str:
+        """Format rejection message based on reason.
+
+        Args:
+            rejection_reason: "max_calls_exceeded" or "token_limit_exceeded"
+            max_calls: Maximum calls configured
+
+        Returns:
+            JSON string with rejection message
+        """
+        effective_context_window = self._get_effective_context_window()
+        usage_percent = (self._accumulated_tokens / effective_context_window) * 100
+
+        if rejection_reason == "max_calls_exceeded":
+            message = (
+                f"🚫 Call Rejected: Maximum call limit ({max_calls}) reached for this conversation.\n"
+                f"You have made {self._call_count} successful calls. "
+                f"Please use the information you've already gathered to provide your response."
+            )
+        else:  # token_limit_exceeded
+            message = (
+                f"🚫 Call Rejected: Knowledge base content has already consumed {usage_percent:.1f}% "
+                f"of the context window.\n"
+                f"You have made {self._call_count} successful calls. "
+                f"Please use the information you've gathered to provide your response."
+            )
+
+        return json.dumps(
+            {
+                "status": "rejected",
+                "reason": rejection_reason,
+                "message": message,
+                "call_count": self._call_count,
+                "max_calls": max_calls,
+                "token_usage_percent": usage_percent,
+            },
+            ensure_ascii=False,
+        )
+
+    def _build_call_statistics_header(
+        self, warning_level: Optional[str], chunks_count: int
+    ) -> str:
+        """Build call statistics header with optional warning.
+
+        NOTE: This method should be called AFTER incrementing self._call_count,
+        as it uses the updated count to display the current call number.
+
+        Args:
+            warning_level: "normal" for default check period warning,
+                          "strong" for high token usage warning,
+                          None for exempt period
+            chunks_count: Number of chunks retrieved
+
+        Returns:
+            Formatted header string (prepended to search results)
+        """
+        max_calls, exempt_calls = self._get_kb_limits()
+        # Use self._call_count directly (caller already incremented it)
+        current_call = self._call_count
+
+        header = f"[Knowledge Base Search - Call {current_call}/{max_calls}]\n"
+        header += f"Retrieved {chunks_count} chunks from knowledge base.\n"
+
+        if warning_level == "strong":
+            # Strong warning: Token >= 70%
+            effective_context_window = self._get_effective_context_window()
+            usage_percent = (self._accumulated_tokens / effective_context_window) * 100
+            header += (
+                f"\n🚨 Strong Warning: Knowledge base content has consumed {usage_percent:.1f}% "
+                f"of the context window.\n"
+                f"Please prioritize using existing information to answer the user's question.\n"
+            )
+        elif warning_level == "normal":
+            # Normal warning: Entered check period but token < 70%
+            header += (
+                f"\n⚠️ Note: You are now in the check period (calls {exempt_calls + 1}-{max_calls}). "
+                f"Consider using the information you've already gathered before making additional searches.\n"
+            )
+
+        return header
 
     def _run(
         self,
@@ -124,10 +463,14 @@ class KnowledgeBaseTool(BaseTool):
         """Execute knowledge base search with intelligent injection strategy.
 
         The strategy is:
-        1. First get the total file size of all knowledge bases
-        2. Estimate token count from file size
-        3. If estimated tokens fit in context window, get all chunks and inject directly
-        4. Otherwise, use RAG retrieval to get relevant chunks
+        0. Fetch KB info (size, config, name) and populate cache if not already fetched
+        1. Check call limits (count and token thresholds)
+        2. If rejected, return rejection message
+        3. Get the total file size of all knowledge bases
+        4. Estimate token count from file size
+        5. If estimated tokens fit in context window, get all chunks and inject directly
+        6. Otherwise, use RAG retrieval to get relevant chunks
+        7. Update call count and accumulated tokens
 
         Args:
             query: Search query
@@ -143,6 +486,24 @@ class KnowledgeBaseTool(BaseTool):
                     {"error": "No knowledge bases configured for this conversation."}
                 )
 
+            # Step 0: Fetch KB info to populate cache (if not already fetched)
+            # This ensures _get_kb_limits() and _get_kb_name() can access cached data
+            await self._get_kb_info()
+
+            # Step 1: Check call limits BEFORE executing search
+            max_calls, _exempt_calls = self._get_kb_limits()
+            should_allow, rejection_reason, warning_level = self._check_call_limits(
+                query
+            )
+
+            if not should_allow:
+                # Return rejection message without incrementing call count
+                return self._format_rejection_message(rejection_reason, max_calls)
+
+            # Increment call count IMMEDIATELY after passing limit check
+            # This ensures accurate counting even if the search operation fails later
+            self._call_count += 1
+
             # Note: db_session may be None in HTTP mode (chat_shell running independently)
             # In that case, we use HTTP API to communicate with backend
 
@@ -155,11 +516,11 @@ class KnowledgeBaseTool(BaseTool):
                 )
             )
 
-            # Step 1: Get knowledge base size information to decide strategy
-            kb_size_info = await self._get_kb_size_info()
-            total_estimated_tokens = kb_size_info.get("total_estimated_tokens", 0)
+            # Step 2: Get knowledge base info to decide strategy (already cached from Step 0)
+            kb_info = await self._get_kb_info()
+            total_estimated_tokens = kb_info.get("total_estimated_tokens", 0)
 
-            # Step 2: Decide strategy based on estimated tokens vs context window
+            # Step 3: Decide strategy based on estimated tokens vs context window
             should_use_direct_injection = self._should_use_direct_injection(
                 total_estimated_tokens
             )
@@ -172,7 +533,7 @@ class KnowledgeBaseTool(BaseTool):
             )
 
             if should_use_direct_injection:
-                # Step 3a: Get all chunks and inject directly
+                # Step 4a: Get all chunks and inject directly
                 kb_chunks = await self._get_all_chunks_from_all_kbs(query)
 
                 if not kb_chunks:
@@ -201,7 +562,9 @@ class KnowledgeBaseTool(BaseTool):
                     logger.info(
                         f"[KnowledgeBaseTool] Direct injection: {len(injection_result.get('chunks_used', []))} chunks"
                     )
-                    return self._format_direct_injection_result(injection_result, query)
+                    return self._format_direct_injection_result(
+                        injection_result, query, warning_level
+                    )
                 else:
                     # Fallback to RAG if injection strategy decides not to inject
                     logger.info(
@@ -210,7 +573,9 @@ class KnowledgeBaseTool(BaseTool):
                     kb_chunks = await self._retrieve_chunks_from_all_kbs(
                         query, max_results
                     )
-                    return await self._format_rag_result(kb_chunks, query, max_results)
+                    return await self._format_rag_result(
+                        kb_chunks, query, max_results, warning_level
+                    )
             else:
                 # Step 3b: Use RAG retrieval
                 logger.info(
@@ -231,7 +596,9 @@ class KnowledgeBaseTool(BaseTool):
                         ensure_ascii=False,
                     )
 
-                return await self._format_rag_result(kb_chunks, query, max_results)
+                return await self._format_rag_result(
+                    kb_chunks, query, max_results, warning_level
+                )
 
         except Exception as e:
             logger.error(f"[KnowledgeBaseTool] Search failed: {e}", exc_info=True)
@@ -281,51 +648,31 @@ class KnowledgeBaseTool(BaseTool):
 
         return should_inject
 
-    async def _get_kb_size_info(self) -> Dict[str, Any]:
-        """Get size information for all knowledge bases.
+    async def _get_kb_info(self) -> Dict[str, Any]:
+        """Get complete knowledge base information (cached).
+
+        Fetches KB size, configuration, and metadata from Backend API.
+        Results are cached for the lifetime of the tool instance (one conversation).
 
         Returns:
-            Dictionary with total_file_size and total_estimated_tokens
+            Dictionary with:
+                - total_file_size: Total file size in bytes
+                - total_estimated_tokens: Estimated token count
+                - items: List of KB info dicts with id, size, config, name
         """
-        # Try to import from backend if available
-        try:
-            from app.services.knowledge_service import KnowledgeService
+        # Return cached result if available
+        if self._kb_info_cache is not None:
+            return self._kb_info_cache
 
-            total_file_size = 0
-            total_estimated_tokens = 0
+        # Fetch via HTTP API (only mode supported)
+        self._kb_info_cache = await self._get_kb_info_via_http()
+        return self._kb_info_cache
 
-            for kb_id in self.knowledge_base_ids:
-                try:
-                    file_size = KnowledgeService.get_total_file_size(
-                        self.db_session, kb_id
-                    )
-                    total_file_size += file_size
-                    # Estimate tokens: approximately 4 characters per token
-                    total_estimated_tokens += file_size // 4
-                except Exception as e:
-                    logger.warning(
-                        f"[KnowledgeBaseTool] Failed to get size for KB {kb_id}: {e}"
-                    )
-
-            logger.info(
-                f"[KnowledgeBaseTool] KB size info: total_file_size={total_file_size} bytes, "
-                f"total_estimated_tokens={total_estimated_tokens}"
-            )
-
-            return {
-                "total_file_size": total_file_size,
-                "total_estimated_tokens": total_estimated_tokens,
-            }
-
-        except ImportError:
-            # Backend not available, try HTTP fallback
-            return await self._get_kb_size_info_via_http()
-
-    async def _get_kb_size_info_via_http(self) -> Dict[str, Any]:
-        """Get KB size information via HTTP API.
+    async def _get_kb_info_via_http(self) -> Dict[str, Any]:
+        """Get KB information via HTTP API.
 
         Returns:
-            Dictionary with total_file_size and total_estimated_tokens
+            Dictionary with total_file_size, total_estimated_tokens, and items list
         """
         import httpx
 
@@ -348,7 +695,7 @@ class KnowledgeBaseTool(BaseTool):
                 if response.status_code == 200:
                     data = response.json()
                     logger.info(
-                        f"[KnowledgeBaseTool] KB size info: "
+                        f"[KnowledgeBaseTool] KB info fetched: "
                         f"total_file_size={data.get('total_file_size', 0)} bytes, "
                         f"total_estimated_tokens={data.get('total_estimated_tokens', 0)} "
                         f"(via HTTP)"
@@ -356,17 +703,17 @@ class KnowledgeBaseTool(BaseTool):
                     return data
                 else:
                     logger.warning(
-                        f"[KnowledgeBaseTool] HTTP KB size request failed: {response.status_code}, "
-                        f"returning total_file_size=0, total_estimated_tokens=0"
+                        f"[KnowledgeBaseTool] HTTP KB info request failed: {response.status_code}, "
+                        f"returning defaults"
                     )
-                    return {"total_file_size": 0, "total_estimated_tokens": 0}
+                    return {"total_file_size": 0, "total_estimated_tokens": 0, "items": []}
 
         except Exception as e:
             logger.warning(
-                f"[KnowledgeBaseTool] HTTP KB size request error: {e}, "
-                f"returning total_file_size=0, total_estimated_tokens=0"
+                f"[KnowledgeBaseTool] HTTP KB info request error: {e}, "
+                f"returning defaults"
             )
-            return {"total_file_size": 0, "total_estimated_tokens": 0}
+            return {"total_file_size": 0, "total_estimated_tokens": 0, "items": []}
 
     async def _get_all_chunks_from_all_kbs(
         self, query: Optional[str] = None
@@ -707,18 +1054,29 @@ class KnowledgeBaseTool(BaseTool):
         self,
         injection_result: Dict[str, Any],
         query: str,
+        warning_level: Optional[str] = None,
     ) -> str:
         """Format result for direct injection mode.
 
         Args:
             injection_result: Result from injection strategy
             query: Original search query
+            warning_level: "strong" if warning needed, None otherwise
 
         Returns:
             JSON string with injection result
         """
         # Extract chunks used for persistence
         chunks_used = injection_result.get("chunks_used", [])
+
+        # Update accumulated tokens (call count already incremented in _arun)
+        injected_content = injection_result.get("injected_content", "")
+        self._accumulated_tokens += self._estimate_tokens_from_content(injected_content)
+
+        # Build call statistics header
+        stats_header = self._build_call_statistics_header(
+            warning_level, len(chunks_used)
+        )
 
         # Build source references from chunks_used
         source_references = []
@@ -749,6 +1107,7 @@ class KnowledgeBaseTool(BaseTool):
             {
                 "query": query,
                 "mode": "direct_injection",
+                "stats_header": stats_header,
                 "injected_content": injection_result["injected_content"],
                 "chunks_used": len(chunks_used),
                 "count": len(chunks_used),
@@ -767,6 +1126,7 @@ class KnowledgeBaseTool(BaseTool):
         kb_chunks: Dict[int, List[Dict[str, Any]]],
         query: str,
         max_results: int,
+        warning_level: Optional[str] = None,
     ) -> str:
         """Format result for RAG fallback mode.
 
@@ -774,6 +1134,7 @@ class KnowledgeBaseTool(BaseTool):
             kb_chunks: Dictionary mapping KB IDs to their chunks
             query: Original search query
             max_results: Maximum number of results
+            warning_level: "strong" if warning needed, None otherwise
 
         Returns:
             JSON string with RAG result
@@ -816,6 +1177,15 @@ class KnowledgeBaseTool(BaseTool):
         # Limit total results
         all_chunks = all_chunks[:max_results]
 
+        # Update accumulated tokens (call count already incremented in _arun)
+        total_content = "\n".join([chunk["content"] for chunk in all_chunks])
+        self._accumulated_tokens += self._estimate_tokens_from_content(total_content)
+
+        # Build call statistics header
+        stats_header = self._build_call_statistics_header(
+            warning_level, len(all_chunks)
+        )
+
         logger.info(
             f"[KnowledgeBaseTool] RAG fallback: returning {len(all_chunks)} results with {len(source_references)} unique sources for query: {query}"
         )
@@ -828,6 +1198,7 @@ class KnowledgeBaseTool(BaseTool):
             {
                 "query": query,
                 "mode": "rag_retrieval",
+                "stats_header": stats_header,
                 "results": all_chunks,
                 "count": len(all_chunks),
                 "sources": source_references,

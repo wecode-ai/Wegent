@@ -101,9 +101,14 @@ async def _stream_response(
         set()
     )  # Track emitted tool events to avoid duplicates
     accumulated_sources: list[dict] = []  # Track knowledge base sources for citation
+    accumulated_blocks: list[dict] = (
+        []
+    )  # Track message blocks for mixed content rendering
     # Silent exit tracking for subscription tasks
     is_silent_exit = False
     silent_exit_reason = ""
+    # Extra fields from DONE event to pass through (e.g., loaded_skills)
+    done_extra_fields: dict = {}
 
     try:
         # Send response.start event
@@ -371,22 +376,40 @@ async def _stream_response(
             # Convert ChatEvent to SSE event
             if event.type == ChatEventType.CHUNK:
                 chunk_text = event.data.get("content", "")
+
+                # Check for thinking data, sources, blocks, and block_id in result
+                result = event.data.get("result")
+                block_id = event.data.get(
+                    "block_id"
+                )  # Extract block_id for text block streaming
+                block_offset = event.data.get(
+                    "block_offset"
+                )  # Extract block_offset for incremental rendering
+                logger.debug(
+                    "[RESPONSE] CHUNK event: content_len=%d, has_result=%s, "
+                    "thinking_count=%d, blocks_count=%d, block_id=%s, block_offset=%s",
+                    len(chunk_text),
+                    result is not None,
+                    len(result.get("thinking", [])) if result else 0,
+                    len(result.get("blocks", [])) if result else 0,
+                    block_id,
+                    block_offset,
+                )
+
+                # Send content.delta event with result (including blocks for real-time mixed content)
                 if chunk_text:
                     full_content += chunk_text
                     yield _format_sse_event(
                         ResponseEventType.CONTENT_DELTA.value,
-                        ContentDelta(type="text", text=chunk_text).model_dump(),
+                        ContentDelta(
+                            type="text",
+                            text=chunk_text,
+                            result=result,  # Include result for real-time mixed content rendering
+                            block_id=block_id,  # Include block_id for text block streaming
+                            block_offset=block_offset,  # Include block_offset for incremental rendering
+                        ).model_dump(exclude_none=True),
                     )
 
-                # Check for thinking data and sources in result
-                result = event.data.get("result")
-                logger.debug(
-                    "[RESPONSE] CHUNK event: content_len=%d, has_result=%s, "
-                    "thinking_count=%d",
-                    len(chunk_text),
-                    result is not None,
-                    len(result.get("thinking", [])) if result else 0,
-                )
                 # Accumulate sources from result (knowledge base citations)
                 if result and result.get("sources"):
                     for source in result["sources"]:
@@ -405,6 +428,7 @@ async def _stream_response(
                         tool_name = details.get("tool_name", details.get("name", ""))
                         run_id = step.get("run_id", "")
                         title = step.get("title", "")
+                        blocks = result.get("blocks", [])
 
                         # Create unique key for this tool event
                         event_key = f"{run_id}:{status}"
@@ -428,6 +452,7 @@ async def _stream_response(
                                     name=tool_name,
                                     input=details.get("input", {}),
                                     display_name=step.get("title", tool_name),
+                                    blocks=blocks,
                                 ).model_dump(),
                             )
                         elif status in ("completed", "failed"):
@@ -456,6 +481,7 @@ async def _stream_response(
                                     ),
                                     sources=None,
                                     display_name=title if status == "failed" else None,
+                                    blocks=blocks,
                                 ).model_dump(),
                             )
 
@@ -475,6 +501,7 @@ async def _stream_response(
                         name=event.data.get("tool_name", ""),
                         input=event.data.get("tool_input", {}),
                         display_name=event.data.get("tool_name"),
+                        blocks=event.data.get("blocks", []),
                     ).model_dump(),
                 )
 
@@ -484,6 +511,7 @@ async def _stream_response(
                     ToolDone(
                         id=event.data.get("tool_call_id", ""),
                         output=event.data.get("tool_output"),
+                        blocks=event.data.get("blocks", []),
                         duration_ms=None,
                         error=None,
                         sources=None,
@@ -506,6 +534,37 @@ async def _stream_response(
                         subtask_id,
                         silent_exit_reason,
                     )
+                # Extract blocks from DONE event (final blocks array)
+                if result and result.get("blocks"):
+                    accumulated_blocks = result["blocks"]
+                    logger.info(
+                        "[RESPONSE] Blocks extracted from DONE event: subtask_id=%d, blocks_count=%d",
+                        subtask_id,
+                        len(accumulated_blocks),
+                    )
+                # Collect extra fields from DONE event for pass-through
+                # These fields (like loaded_skills) will be forwarded to backend
+                known_fields = {
+                    "usage",
+                    "silent_exit",
+                    "silent_exit_reason",
+                    "blocks",
+                    "sources",
+                    "shell_type",
+                    "value",
+                    "thinking",
+                }
+                if result:
+                    for key, value in result.items():
+                        if key not in known_fields and value is not None:
+                            done_extra_fields[key] = value
+                    if done_extra_fields:
+                        logger.info(
+                            "[RESPONSE] Collected extra fields from DONE event: subtask_id=%d, "
+                            "extra_fields=%s",
+                            subtask_id,
+                            list(done_extra_fields.keys()),
+                        )
 
             elif event.type == ChatEventType.ERROR:
                 error_msg = event.data.get("error", "Unknown error")
@@ -546,24 +605,42 @@ async def _stream_response(
                 for source in accumulated_sources
             ]
 
+        # Build ResponseDone with extra fields passed through
+        response_done = ResponseDone(
+            id=response_id,
+            usage=(
+                UsageInfo(
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    total_tokens=total_input_tokens + total_output_tokens,
+                )
+                if total_input_tokens or total_output_tokens
+                else None
+            ),
+            stop_reason="silent_exit" if is_silent_exit else "end_turn",
+            sources=formatted_sources,
+            blocks=(
+                accumulated_blocks if accumulated_blocks else None
+            ),  # Include accumulated blocks
+            silent_exit=is_silent_exit if is_silent_exit else None,
+            silent_exit_reason=silent_exit_reason if silent_exit_reason else None,
+            **done_extra_fields,  # Pass through extra fields like loaded_skills
+        )
+
+        # Log the response.done event being sent to backend
+        response_done_data = response_done.model_dump()
+        logger.info(
+            "[RESPONSE] Sending response.done to backend: subtask_id=%d, "
+            "response_done_keys=%s, loaded_skills=%s, extra_fields=%s",
+            subtask_id,
+            list(response_done_data.keys()),
+            response_done_data.get("loaded_skills"),
+            done_extra_fields,
+        )
+
         yield _format_sse_event(
             ResponseEventType.RESPONSE_DONE.value,
-            ResponseDone(
-                id=response_id,
-                usage=(
-                    UsageInfo(
-                        input_tokens=total_input_tokens,
-                        output_tokens=total_output_tokens,
-                        total_tokens=total_input_tokens + total_output_tokens,
-                    )
-                    if total_input_tokens or total_output_tokens
-                    else None
-                ),
-                stop_reason="silent_exit" if is_silent_exit else "end_turn",
-                sources=formatted_sources,
-                silent_exit=is_silent_exit if is_silent_exit else None,
-                silent_exit_reason=silent_exit_reason if silent_exit_reason else None,
-            ).model_dump(),
+            response_done_data,
         )
 
     except asyncio.CancelledError:

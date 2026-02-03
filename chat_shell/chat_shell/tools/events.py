@@ -11,6 +11,7 @@ including thinking step generation and event emission.
 import logging
 from typing import Any, Callable
 
+from chat_shell.services.streaming.core import should_display_tool_details
 from shared.telemetry.decorators import add_span_event, set_span_attribute
 
 logger = logging.getLogger(__name__)
@@ -58,11 +59,24 @@ def _handle_tool_start(
     event_data: dict,
 ) -> None:
     """Handle tool start event."""
+    logger.info(
+        "[TOOL_START] _handle_tool_start called: tool_name=%s, run_id=%s",
+        tool_name,
+        run_id,
+    )
     # Extract tool input for better display
     tool_input = event_data.get("data", {}).get("input", {})
 
     # Convert input to JSON-serializable format
     serializable_input = _make_serializable(tool_input)
+
+    # Generate tool_use_id (prefer from event, fallback to run_id + timestamp)
+    import time
+
+    tool_use_id = event_data.get("tool_use_id")
+    if not tool_use_id:
+        # Fallback: generate unique ID from run_id + timestamp
+        tool_use_id = f"{run_id}-{int(time.time() * 1000)}"
 
     # Add OpenTelemetry span event for tool start
     add_span_event(
@@ -70,31 +84,65 @@ def _handle_tool_start(
         attributes={
             "tool.name": tool_name,
             "tool.run_id": run_id,
+            "tool.tool_use_id": tool_use_id,
             "tool.input": str(serializable_input)[:1000],
         },
     )
 
-    # Build friendly title
-    title = _build_tool_start_title(agent_builder, tool_name, serializable_input)
-
-    state.add_thinking_step(
-        {
-            "title": title,
-            "next_action": "continue",
-            "run_id": run_id,
-            "details": {
-                "type": "tool_use",
-                "tool_name": tool_name,
-                "name": tool_name,
-                "status": "started",
-                "input": serializable_input,
-            },
-        }
+    logger.info(
+        f"[TOOL_START] {tool_name} (run_id={run_id}, tool_use_id={tool_use_id})"
     )
 
+    # Build friendly title and extract display_name
+    title = _build_tool_start_title(agent_builder, tool_name, serializable_input)
+
+    # Extract display_name from tool instance
+    # Try multiple sources:
+    # 1. tool_registry (for registered tools)
+    # 2. agent_builder.all_tools (includes all tools including dynamically loaded skill tools)
+    tool_instance = None
+
+    # First try tool_registry
+    if agent_builder.tool_registry:
+        tool_instance = agent_builder.tool_registry.get(tool_name)
+
+    # If not found, search in agent_builder.all_tools (includes skill tools)
+    if not tool_instance and hasattr(agent_builder, "all_tools"):
+        for tool in agent_builder.all_tools:
+            if tool.name == tool_name:
+                tool_instance = tool
+                break
+
+    display_name = (
+        getattr(tool_instance, "display_name", None) if tool_instance else None
+    )
+
+    thinking_step = {
+        "title": title,
+        "next_action": "continue",
+        "run_id": run_id,  # Keep for backward compatibility
+        "tool_use_id": tool_use_id,  # Standard identifier
+        "details": {
+            "type": "tool_use",
+            "tool_name": tool_name,
+            "name": tool_name,
+            "status": "started",
+        },
+    }
+
+    # Only include input if tool is in whitelist
+    if should_display_tool_details(tool_name):
+        thinking_step["details"]["input"] = serializable_input
+
+    state.add_thinking_step(thinking_step)
+
+    # Add tool block for mixed content rendering
+    state.append_tool_block(tool_use_id, tool_name, serializable_input, display_name)
+
     # Emit chunk with thinking data synchronously using emit_json
-    # Note: emit_json is sync method, emit_chunk is async but we're in sync callback
-    current_result = state.get_current_result(include_value=False, slim_thinking=True)
+    current_result = state.get_current_result(
+        include_value=False, slim_thinking=True, include_blocks=True
+    )
     chunk_data = {
         "type": "chunk",
         "content": "",
@@ -116,7 +164,40 @@ def _handle_tool_end(
     """Handle tool end event."""
     # Extract and serialize tool output
     tool_output = event_data.get("data", {}).get("output", "")
+
     serializable_output = _make_output_serializable(tool_output)
+
+    # Extract tool input from event_data for load_skill tracking
+    # This is the original input before any filtering by should_display_tool_details
+    raw_tool_input = event_data.get("data", {}).get("input", {})
+    tool_input = _make_serializable(raw_tool_input) if raw_tool_input else {}
+
+    # Find matching start step first to get the tool_use_id that was created
+    # This ensures we use the same ID for updating the block
+    matching_start_idx = None
+    tool_use_id = event_data.get("tool_use_id")  # Try from event first
+
+    if not tool_use_id:
+        # Search for matching tool_start step to get the tool_use_id
+        for idx, step in enumerate(state.thinking):
+            if (
+                step.get("run_id") == run_id
+                and step.get("details", {}).get("status") == "started"
+            ):
+                matching_start_idx = idx
+                # Use the tool_use_id from the start step
+                tool_use_id = step.get("tool_use_id")
+                break
+
+    # If still no tool_use_id, generate one as fallback (should rarely happen)
+    if not tool_use_id:
+        import time
+
+        tool_use_id = f"{run_id}-{int(time.time() * 1000)}"
+        logger.warning(
+            "[TOOL_END] No tool_use_id from event or matching start step, generated: %s",
+            tool_use_id,
+        )
 
     # Add OpenTelemetry span event for tool end
     output_str = str(serializable_output)
@@ -125,11 +206,14 @@ def _handle_tool_end(
         attributes={
             "tool.name": tool_name,
             "tool.run_id": run_id,
+            "tool.tool_use_id": tool_use_id,
             "tool.output_length": len(output_str),
             "tool.output": output_str[:1000],
             "tool.status": "completed",
         },
     )
+
+    logger.info(f"[TOOL_END] {tool_name} (run_id={run_id}, tool_use_id={tool_use_id})")
 
     # Process tool output and extract metadata
     title, sources = _process_tool_output(tool_name, serializable_output)
@@ -165,28 +249,35 @@ def _handle_tool_end(
     if status == "completed" and title == f"Tool completed: {tool_name}":
         title = _build_tool_end_title(agent_builder, tool_name, run_id, state, title)
 
-    # Find matching start step and insert result after it
-    matching_start_idx = None
-    for idx, step in enumerate(state.thinking):
-        if (
-            step.get("run_id") == run_id
-            and step.get("details", {}).get("status") == "started"
-        ):
-            matching_start_idx = idx
-            break
+    # If we didn't find matching_start_idx earlier, search again for insertion position
+    if matching_start_idx is None:
+        for idx, step in enumerate(state.thinking):
+            # Try to match using tool_use_id first, fallback to run_id
+            step_id = step.get("tool_use_id") or step.get("run_id")
+            if (
+                step_id == tool_use_id
+                and step.get("details", {}).get("status") == "started"
+            ):
+                matching_start_idx = idx
+                break
 
     result_step = {
         "title": title,
         "next_action": "continue",
-        "run_id": run_id,
+        "run_id": run_id,  # Keep for backward compatibility
+        "tool_use_id": tool_use_id,  # Standard identifier
         "details": {
             "type": "tool_result",
             "tool_name": tool_name,
             "status": status,
-            "output": serializable_output,
-            "content": serializable_output,
         },
     }
+
+    # Only include output if tool is in whitelist
+    if should_display_tool_details(tool_name):
+        result_step["details"]["output"] = serializable_output
+        result_step["details"]["content"] = serializable_output
+
     # Add error field if failed
     if status == "failed" and error_msg:
         result_step["details"]["error"] = error_msg
@@ -196,8 +287,45 @@ def _handle_tool_end(
     else:
         state.add_thinking_step(result_step)
 
+    # Update tool block with output and status
+    state.update_tool_block(
+        tool_use_id,
+        tool_output=serializable_output,
+        status="done" if status == "completed" else "error",
+        is_error=(status == "failed"),
+    )
+
+    # Track loaded skills for persistence across conversation turns
+    # When load_skill tool completes successfully, record the skill name
+    if tool_name == "load_skill" and status == "completed":
+        # Get skill_name directly from tool_input (extracted from event_data)
+        skill_name = (
+            tool_input.get("skill_name") if isinstance(tool_input, dict) else None
+        )
+
+        logger.info(
+            "[TOOL_END] load_skill completed: skill_name=%s, tool_input=%s",
+            skill_name,
+            tool_input,
+        )
+
+        # Add to loaded_skills if we found the skill name
+        if skill_name and hasattr(state, "add_loaded_skill"):
+            state.add_loaded_skill(skill_name)
+            logger.info(
+                "[TOOL_END] Tracked loaded skill: %s for persistence",
+                skill_name,
+            )
+        else:
+            logger.warning(
+                "[TOOL_END] Could not track loaded skill: skill_name=%s",
+                skill_name,
+            )
+
     # Emit chunk with thinking data synchronously using emit_json
-    current_result = state.get_current_result(include_value=False, slim_thinking=True)
+    current_result = state.get_current_result(
+        include_value=False, slim_thinking=True, include_blocks=True
+    )
     chunk_data = {
         "type": "chunk",
         "content": "",

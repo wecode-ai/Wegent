@@ -13,6 +13,7 @@ Also contains the Deep Thinking Mode prompt for search tool usage guidance.
 
 CLARIFICATION_PROMPT = """
 
+<clarification_mode>
 ## Smart Follow-up Mode (智能追问模式)
 
 When you receive a user request that is ambiguous or lacks important details, ask targeted clarification questions through MULTIPLE ROUNDS before proceeding with the task.
@@ -134,6 +135,7 @@ After each round of user answers:
    - OR proceed with the task if exit criteria are met
 
 **Important:** Do NOT rush to provide a solution after just one round of questions. Take time to gather comprehensive information for a truly personalized and high-quality output.
+</clarification_mode>
 """
 
 
@@ -166,6 +168,7 @@ def append_clarification_prompt(system_prompt: str, enable_clarification: bool) 
 # Deep Thinking Mode Prompt
 DEEP_THINKING_PROMPT = """
 
+<deep_thinking_mode>
 ## Deep Thinking Mode with Search Tools
 
 You are in deep thinking mode with access to web search tools (web_search) to retrieve up-to-date information.
@@ -250,6 +253,7 @@ To help narrow down the search, could you clarify:
 ```
 
 Remember: Search tools are your PRIMARY capability for obtaining factual information. Use them FIRST, ask questions LATER.
+</deep_thinking_mode>
 """
 
 
@@ -279,48 +283,6 @@ def append_deep_thinking_prompt(system_prompt: str, enable_deep_thinking: bool) 
     return system_prompt
 
 
-# Skill Metadata Prompt Template
-SKILL_METADATA_PROMPT = """
-
-## Available Skills
-
-The following skills provide specialized guidance for specific tasks. When your task matches a skill's description, use the `load_skill` tool to load the full instructions.
-
-{skill_list}
-
-### How to Use Skills
-
-**Load the skill**: Call `load_skill(skill_name="<skill-name>")` to load detailed instructions
-"""
-
-
-def append_skill_metadata_prompt(system_prompt: str, skills: list[dict]) -> str:
-    """
-    Append skill metadata to system prompt.
-
-    Args:
-        system_prompt: The original system prompt.
-        skills: List of skill metadata [{"name": "...", "description": "..."}]
-
-    Returns:
-        System prompt with skill metadata appended.
-    """
-    if not skills:
-        return system_prompt
-
-    # Filter out skills without name or description
-    valid_skills = [s for s in skills if s.get("name") and s.get("description")]
-    if not valid_skills:
-        return system_prompt
-
-    skill_list = "\n".join(
-        [f"- **{s['name']}**: {s['description']}" for s in valid_skills]
-    )
-
-    skill_section = SKILL_METADATA_PROMPT.format(skill_list=skill_list)
-    return system_prompt + skill_section
-
-
 def build_system_prompt(
     base_prompt: str,
     enable_clarification: bool = False,
@@ -331,27 +293,28 @@ def build_system_prompt(
     Build the final system prompt with optional enhancements.
 
     This function centralizes all prompt building logic within chat_shell,
-    applying clarification mode, deep thinking mode, and on-demand skill metadata
-    based on the provided configuration.
+    applying clarification mode and deep thinking mode based on the provided
+    configuration.
 
-    Note: Skills with preload=True will be automatically injected by prompt_modifier
-    via LoadSkillTool.get_combined_skill_prompt(), so they are NOT included here.
+    Note: Skill-related prompts (Available Skills + Loaded Skill Instructions)
+    are now handled entirely by LoadSkillTool.get_prompt_modification() via
+    the prompt_modifier mechanism. The 'skills' parameter is kept for backward
+    compatibility but is no longer used here.
 
     Args:
         base_prompt: The base system prompt from Ghost
         enable_clarification: Whether to enable clarification mode
         enable_deep_thinking: Whether to enable deep thinking mode
-        skills: List of all skill configs [{"name": "...", "description": "...", "prompt": "...", "preload": bool, ...}]
+        skills: Deprecated - skill prompts are now injected by LoadSkillTool
 
     Returns:
         The final system prompt with all enhancements applied
 
     Injection Order:
-        1. Base prompt
+        1. Base prompt (caller should wrap Ghost systemPrompt in <base_prompt> tags if needed)
         2. Clarification mode instructions (if enabled)
         3. Deep thinking mode instructions (if enabled)
-        4. On-demand skill metadata (for load_skill tool)
-        5. Preloaded skills (injected later by prompt_modifier)
+        4. Skill prompts (injected dynamically by LoadSkillTool via prompt_modifier)
     """
     system_prompt = base_prompt
 
@@ -363,8 +326,10 @@ def build_system_prompt(
     if enable_deep_thinking:
         system_prompt = append_deep_thinking_prompt(system_prompt, True)
 
-    # Inject on-demand skill metadata (filter out preloaded ones)
-    if skills:
-        system_prompt = append_skill_metadata_prompt(system_prompt, skills)
+    # Note: Skill prompts are now injected dynamically by LoadSkillTool.get_prompt_modification()
+    # via the prompt_modifier mechanism in LangGraphAgentBuilder. This ensures that:
+    # 1. Available Skills and Loaded Skill Instructions are in the same <skill> block
+    # 2. The skill prompt is always up-to-date with the current loaded skills state
 
+    return system_prompt
     return system_prompt

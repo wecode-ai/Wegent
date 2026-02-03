@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     EXECUTOR_CANCEL_TASK_URL: str = (
         "http://localhost:8001/executor-manager/tasks/cancel"
     )
+    # Latest Executor version (manually updated when releasing new versions)
+    # This is used to show upgrade warnings in the UI
+    EXECUTOR_LATEST_VERSION: str = "1.0.0"
 
     # JWT configuration
     SECRET_KEY: str = "secret-key"

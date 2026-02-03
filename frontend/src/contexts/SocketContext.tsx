@@ -32,6 +32,8 @@ import {
   ChatErrorPayload,
   ChatCancelledPayload,
   ChatMessagePayload,
+  ChatBlockCreatedPayload,
+  ChatBlockUpdatedPayload,
   ChatSendPayload,
   ChatSendAck,
   TaskCreatedPayload,
@@ -52,6 +54,7 @@ import {
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config'
 import { paths } from '@/config/paths'
 import { POST_LOGIN_REDIRECT_KEY } from '@/features/login/constants'
+import { taskStateManager } from '@/features/tasks/state'
 
 const SOCKETIO_PATH = '/socket.io'
 
@@ -71,16 +74,27 @@ interface SocketContextType {
   connect: (token: string) => void
   /** Disconnect from server */
   disconnect: () => void
-  /** Join a task room. If forceRefresh is true, always emit task:join to get streaming status */
+  /**
+   * Join a task room.
+   * @param taskId - Task ID to join
+   * @param options - Join options
+   * @param options.forceRefresh - If true, always emit task:join to get streaming status
+   * @param options.afterMessageId - If provided, only return messages after this ID (for incremental sync)
+   */
   joinTask: (
     taskId: number,
-    forceRefresh?: boolean
+    options?: {
+      forceRefresh?: boolean
+      afterMessageId?: number
+    }
   ) => Promise<{
     streaming?: {
       subtask_id: number
       offset: number
       cached_content: string
     }
+    /** Subtasks data for immediate message sync (same format as task detail API) */
+    subtasks?: Array<Record<string, unknown>>
     error?: string
   }>
   /** Leave a task room */
@@ -93,6 +107,8 @@ interface SocketContextType {
     partialContent?: string,
     shellType?: string
   ) => Promise<{ success: boolean; error?: string }>
+  /** Close a device task session via WebSocket */
+  closeTaskSession: (taskId: number) => Promise<{ success: boolean; error?: string }>
   /** Retry a failed message via WebSocket */
   retryMessage: (
     taskId: number,
@@ -126,6 +142,10 @@ export interface ChatEventHandlers {
   onChatCancelled?: (data: ChatCancelledPayload) => void
   /** Handler for chat:message event (other users' messages in group chat) */
   onChatMessage?: (data: ChatMessagePayload) => void
+  /** Handler for chat:block_created event (new block added) */
+  onBlockCreated?: (data: ChatBlockCreatedPayload) => void
+  /** Handler for chat:block_updated event (block content/status updated) */
+  onBlockUpdated?: (data: ChatBlockUpdatedPayload) => void
 }
 
 /** Task event handlers for task list updates */
@@ -263,6 +283,14 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         })
       })
 
+      // Trigger recovery for all active tasks via TaskStateManager
+      // This handles message state recovery after WebSocket reconnection
+      if (taskStateManager.isInitialized()) {
+        taskStateManager.recoverAll().catch(err => {
+          console.error('[Socket.IO] Error recovering tasks after reconnect:', err)
+        })
+      }
+
       // Notify all registered reconnect callbacks
       // This is the single source of truth for reconnection events
       reconnectCallbacksRef.current.forEach(callback => {
@@ -372,20 +400,28 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    * Prevents duplicate joins by checking if already joined
    * If reconnected, always rejoin to ensure backend state is synced
    * @param taskId - The task ID to join
-   * @param forceRefresh - If true, always emit task:join to get latest streaming status
+   * @param options - Join options
+   * @param options.forceRefresh - If true, always emit task:join to get streaming status
+   * @param options.afterMessageId - If provided, only return messages after this ID (for incremental sync)
    */
   const joinTask = useCallback(
     async (
       taskId: number,
-      forceRefresh: boolean = false
+      options?: {
+        forceRefresh?: boolean
+        afterMessageId?: number
+      }
     ): Promise<{
       streaming?: {
         subtask_id: number
         offset: number
         cached_content: string
       }
+      subtasks?: Array<Record<string, unknown>>
       error?: string
     }> => {
+      const { forceRefresh = false, afterMessageId } = options || {}
+
       // Use socketRef for reliable access (socket state may be stale)
       const currentSocket = socketRef.current
       if (!currentSocket?.connected) {
@@ -395,8 +431,10 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // Check if already joined this task room to prevent duplicate joins
       // Exception 1: If we just reconnected, always rejoin to sync backend state
       // Exception 2: If forceRefresh is true, always request to get streaming status
+      // Exception 3: If afterMessageId is provided, this is an incremental sync request
       const alreadyJoined = joinedTasksRef.current.has(taskId)
-      const shouldSkip = alreadyJoined && !hasReconnectedRef.current && !forceRefresh
+      const shouldSkip =
+        alreadyJoined && !hasReconnectedRef.current && !forceRefresh && afterMessageId === undefined
 
       if (shouldSkip) {
         console.log('[Socket.IO] joinTask skipped - already joined, taskId:', taskId)
@@ -413,16 +451,26 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // could pass the above check before any callback completes
       joinedTasksRef.current.add(taskId)
 
+      // Build payload with optional after_message_id for incremental sync
+      const payload: { task_id: number; after_message_id?: number } = { task_id: taskId }
+      if (afterMessageId !== undefined) {
+        payload.after_message_id = afterMessageId
+        console.log(
+          `[Socket.IO] joinTask with incremental sync: taskId=${taskId}, afterMessageId=${afterMessageId}`
+        )
+      }
+
       return new Promise(resolve => {
         currentSocket.emit(
           'task:join',
-          { task_id: taskId },
+          payload,
           (response: {
             streaming?: {
               subtask_id: number
               offset: number
               cached_content: string
             }
+            subtasks?: Array<Record<string, unknown>>
             error?: string
           }) => {
             // If there was an error, remove from the set so it can be retried
@@ -506,6 +554,29 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   )
 
   /**
+   * Close a device task session via WebSocket
+   */
+  const closeTaskSession = useCallback(
+    async (taskId: number): Promise<{ success: boolean; error?: string }> => {
+      if (!socket?.connected) {
+        console.error('[Socket.IO] closeTaskSession failed - not connected')
+        return { success: false, error: 'Not connected to server' }
+      }
+
+      return new Promise(resolve => {
+        socket.emit(
+          'task:close-session',
+          { task_id: taskId },
+          (response: { success?: boolean; error?: string }) => {
+            resolve({ success: response.success ?? true, error: response.error })
+          }
+        )
+      })
+    },
+    [socket]
+  )
+
+  /**
    * Retry a failed message via WebSocket
    */
   const retryMessage = useCallback(
@@ -565,8 +636,16 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         return () => {}
       }
 
-      const { onChatStart, onChatChunk, onChatDone, onChatError, onChatCancelled, onChatMessage } =
-        handlers
+      const {
+        onChatStart,
+        onChatChunk,
+        onChatDone,
+        onChatError,
+        onChatCancelled,
+        onChatMessage,
+        onBlockCreated,
+        onBlockUpdated,
+      } = handlers
 
       if (onChatStart) socket.on(ServerEvents.CHAT_START, onChatStart)
       if (onChatChunk) socket.on(ServerEvents.CHAT_CHUNK, onChatChunk)
@@ -574,6 +653,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       if (onChatError) socket.on(ServerEvents.CHAT_ERROR, onChatError)
       if (onChatCancelled) socket.on(ServerEvents.CHAT_CANCELLED, onChatCancelled)
       if (onChatMessage) socket.on(ServerEvents.CHAT_MESSAGE, onChatMessage)
+      if (onBlockCreated) socket.on(ServerEvents.CHAT_BLOCK_CREATED, onBlockCreated)
+      if (onBlockUpdated) socket.on(ServerEvents.CHAT_BLOCK_UPDATED, onBlockUpdated)
 
       // Return cleanup function
       return () => {
@@ -583,6 +664,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         if (onChatError) socket.off(ServerEvents.CHAT_ERROR, onChatError)
         if (onChatCancelled) socket.off(ServerEvents.CHAT_CANCELLED, onChatCancelled)
         if (onChatMessage) socket.off(ServerEvents.CHAT_MESSAGE, onChatMessage)
+        if (onBlockCreated) socket.off(ServerEvents.CHAT_BLOCK_CREATED, onBlockCreated)
+        if (onBlockUpdated) socket.off(ServerEvents.CHAT_BLOCK_UPDATED, onBlockUpdated)
       }
     },
     [socket]
@@ -790,6 +873,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         leaveTask,
         sendChatMessage,
         cancelChatStream,
+        closeTaskSession,
         retryMessage,
         registerChatHandlers,
         registerTaskHandlers,

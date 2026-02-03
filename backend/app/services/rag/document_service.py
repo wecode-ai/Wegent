@@ -20,6 +20,11 @@ from app.services.context import context_service
 from app.services.rag.embedding.factory import create_embedding_model_from_crd
 from app.services.rag.index import DocumentIndexer
 from app.services.rag.storage.base import BaseStorageBackend
+from shared.telemetry.decorators import (
+    add_span_event,
+    capture_trace_context,
+    trace_background,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +107,7 @@ class DocumentService:
 
         return binary_data, context.original_filename, context.file_extension
 
+    @trace_background("document_service.index_document_sync", "rag.document_service")
     def _index_document_sync(
         self,
         knowledge_id: str,
@@ -113,10 +119,14 @@ class DocumentService:
         db: Session,
         splitter_config: Optional[SplitterConfig] = None,
         document_id: Optional[int] = None,
+        trace_context: Optional[dict] = None,
     ) -> Dict:
         """
         Synchronous document indexing implementation.
         Runs in thread pool to avoid event loop conflicts.
+
+        The trace_context parameter is used by @trace_background decorator to restore
+        the parent trace context, enabling distributed tracing across thread boundaries.
 
         Args:
             knowledge_id: Knowledge base ID
@@ -128,6 +138,7 @@ class DocumentService:
             db: Database session
             splitter_config: Optional splitter configuration
             document_id: Optional document ID to use as doc_ref
+            trace_context: Trace context for distributed tracing (captured via capture_trace_context())
 
         Returns:
             Indexing result dict
@@ -141,6 +152,16 @@ class DocumentService:
         else:
             doc_ref = f"doc_{uuid.uuid4().hex[:12]}"
 
+        add_span_event(
+            "rag.document_service.indexing.started",
+            {
+                "knowledge_id": str(knowledge_id),
+                "doc_ref": doc_ref,
+                "attachment_id": str(attachment_id) if attachment_id else "None",
+                "embedding_model": embedding_model_name,
+            },
+        )
+
         # Create embedding model from CRD
         embed_model = create_embedding_model_from_crd(
             db=db,
@@ -148,11 +169,27 @@ class DocumentService:
             model_name=embedding_model_name,
             model_namespace=embedding_model_namespace,
         )
+        add_span_event(
+            "rag.document_service.embedding_model.created",
+            {
+                "model_name": embedding_model_name,
+                "model_namespace": embedding_model_namespace,
+            },
+        )
 
         if attachment_id is not None:
             # Get original binary data from attachment (supports MySQL and external storage)
             binary_data, filename, file_extension = self._get_attachment_binary(
                 db, attachment_id
+            )
+            add_span_event(
+                "rag.document_service.attachment.loaded",
+                {
+                    "attachment_id": str(attachment_id),
+                    "filename": filename,
+                    "file_extension": file_extension,
+                    "binary_size": str(len(binary_data)),
+                },
             )
 
             # Create indexer with file_extension for SmartSplitter to use correct strategy
@@ -195,6 +232,17 @@ class DocumentService:
                 user_id=user_id,
             )
 
+        add_span_event(
+            "rag.document_service.indexing.completed",
+            {
+                "knowledge_id": str(knowledge_id),
+                "doc_ref": doc_ref,
+                "chunk_count": str(result.get("chunk_count", 0)),
+                "index_name": result.get("index_name", "unknown"),
+                "status": result.get("status", "unknown"),
+            },
+        )
+
         return result
 
     async def index_document(
@@ -208,6 +256,7 @@ class DocumentService:
         attachment_id: Optional[int] = None,
         splitter_config: Optional[SplitterConfig] = None,
         document_id: Optional[int] = None,
+        trace_context: Optional[dict] = None,
     ) -> Dict:
         """
         Index a document into storage backend.
@@ -222,6 +271,9 @@ class DocumentService:
             attachment_id: Attachment ID (optional, mutually exclusive with file_path)
             splitter_config: Optional splitter configuration. If None, defaults to SemanticSplitter
             document_id: Optional document ID to use as doc_ref
+            trace_context: Optional trace context for distributed tracing (captured via capture_trace_context()).
+                          If provided, this context will be propagated to the background thread.
+                          If None, the current trace context will be captured automatically.
 
         Returns:
             Indexing result dict with:
@@ -236,7 +288,15 @@ class DocumentService:
         Raises:
             Exception: If indexing fails
         """
+        # Use provided trace context or capture current context before switching to thread pool
+        # This allows the background thread to restore the trace context
+        trace_ctx = (
+            trace_context if trace_context is not None else capture_trace_context()
+        )
+
         # Run synchronous indexing in thread pool to avoid uvloop conflicts
+        # IMPORTANT: trace_context MUST be passed as a keyword argument for @trace_background
+        # decorator to properly extract it from kwargs (see decorators.py line 388)
         return await asyncio.to_thread(
             self._index_document_sync,
             knowledge_id,
@@ -248,6 +308,7 @@ class DocumentService:
             db,
             splitter_config,
             document_id,
+            trace_context=trace_ctx,
         )
 
     async def delete_document(

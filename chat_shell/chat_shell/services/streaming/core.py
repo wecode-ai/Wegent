@@ -42,6 +42,29 @@ def get_chat_semaphore() -> asyncio.Semaphore:
     return _chat_semaphore
 
 
+def should_display_tool_details(tool_name: str) -> bool:
+    """Check if a tool should display detailed input/output based on whitelist.
+
+    Uses substring matching - if any whitelist keyword is contained in the tool_name,
+    the tool will display details. For example, "read" will match "read_file", "file_read", etc.
+
+    Args:
+        tool_name: Name of the tool to check
+
+    Returns:
+        True if tool should display details, False otherwise
+    """
+    whitelist = settings.TOOL_DISPLAY_WHITELIST.strip()
+
+    # Empty string or "*" means all tools display details
+    if not whitelist or whitelist == "*":
+        return True
+
+    # Check if any whitelist keyword is contained in tool_name
+    whitelisted_keywords = [keyword.strip() for keyword in whitelist.split(",")]
+    return any(keyword in tool_name for keyword in whitelisted_keywords if keyword)
+
+
 class StorageHandlerProtocol(Protocol):
     """Protocol for storage handler operations."""
 
@@ -72,6 +95,13 @@ class StreamingState:
     thinking: list = field(default_factory=list)
     sources: list = field(default_factory=list)
     reasoning_content: str = ""
+    blocks: list = field(
+        default_factory=list
+    )  # Message blocks for mixed content rendering
+    current_text_block_id: Optional[str] = (
+        None  # Track current text block for streaming
+    )
+    block_offset: int = 0  # Track character offset within current text block
 
     # TTFT tracking
     stream_start_time: Optional[float] = None
@@ -80,6 +110,9 @@ class StreamingState:
     # Silent exit state
     is_silent_exit: bool = False
     silent_exit_reason: str = ""
+
+    # Loaded skills tracking (for persistence across conversation turns)
+    loaded_skills: list = field(default_factory=list)
 
     def append_content(self, token: str) -> None:
         """Append token to accumulated response."""
@@ -107,20 +140,58 @@ class StreamingState:
                 self.sources.append(source)
                 existing_keys.add(key)
 
+    def add_loaded_skill(self, skill_name: str) -> None:
+        """Add a loaded skill name for persistence across conversation turns.
+
+        Args:
+            skill_name: Name of the skill that was loaded via load_skill tool
+        """
+        if skill_name and skill_name not in self.loaded_skills:
+            self.loaded_skills.append(skill_name)
+            logger.info(
+                "[StreamingState] Added loaded skill: %s (total: %d)",
+                skill_name,
+                len(self.loaded_skills),
+            )
+
+    def add_block(self, block: dict) -> None:
+        """Add a message block (text or tool)."""
+        self.blocks.append(block)
+
+    def update_block(self, block_id: str, updates: dict) -> None:
+        """Update an existing block by ID."""
+        found = False
+        for block in self.blocks:
+            if block.get("id") == block_id:
+                block.update(updates)
+                found = True
+                break
+        if not found:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                "[BLOCK] update_block failed: block_id=%s not found in %d blocks",
+                block_id,
+                len(self.blocks),
+            )
+
     def get_current_result(
         self,
         include_value: bool = True,
         include_thinking: bool = True,
         slim_thinking: bool = False,
         include_sources: bool = True,
+        include_blocks: bool = True,
     ) -> dict:
-        """Get current result with thinking steps and sources.
+        """Get current result with thinking steps, sources, and blocks.
 
         Args:
             include_value: Include the full response value
             include_thinking: Include thinking steps (tool calls)
             slim_thinking: Use slimmed down thinking data (for Chat mode)
             include_sources: Include knowledge base sources (independent of thinking)
+            include_blocks: Include message blocks for mixed content rendering
         """
         result: dict = {"shell_type": self.shell_type}
         if include_value:
@@ -135,6 +206,9 @@ class StreamingState:
         # This ensures knowledge base citations are always available
         if include_sources and self.sources:
             result["sources"] = self.sources
+        # Include blocks for mixed content rendering
+        if include_blocks and self.blocks:
+            result["blocks"] = self.blocks
         if self.reasoning_content:
             result["reasoning_content"] = self.reasoning_content
         # Include silent exit flag if set
@@ -142,6 +216,10 @@ class StreamingState:
             result["silent_exit"] = True
             if self.silent_exit_reason:
                 result["silent_exit_reason"] = self.silent_exit_reason
+        # Include loaded skills for persistence across conversation turns
+        # This is saved to result and used by restore_from_history
+        if include_value and self.loaded_skills:
+            result["loaded_skills"] = self.loaded_skills
         return result
 
     def _slim_thinking_data(self, thinking: list) -> list:
@@ -154,6 +232,10 @@ class StreamingState:
             }
             if "run_id" in step:
                 slim_step["run_id"] = step["run_id"]
+            # Preserve tool_use_id for tool matching
+            if "tool_use_id" in step:
+                slim_step["tool_use_id"] = step["tool_use_id"]
+
             details = step.get("details", {})
             if details:
                 slim_details: dict = {
@@ -161,12 +243,124 @@ class StreamingState:
                     "status": details.get("status"),
                     "tool_name": details.get("tool_name") or details.get("name"),
                 }
+                if details.get("content"):
+                    slim_details["content"] = details["content"]
+                # Preserve is_error for error handling
+                if details.get("is_error"):
+                    slim_details["is_error"] = details["is_error"]
                 # Preserve error field for failed status
                 if details.get("error"):
                     slim_details["error"] = details["error"]
                 slim_step["details"] = slim_details
             slimmed.append(slim_step)
         return slimmed
+
+    def append_text_block(self, text: str) -> None:
+        """Create or update text block for streaming content.
+
+        Args:
+            text: Text content to add to the current text block
+        """
+        import uuid
+
+        if self.current_text_block_id is None:
+            # Create new text block, reset block_offset to 0
+            block_id = str(uuid.uuid4())
+            block = {
+                "id": block_id,
+                "type": "text",
+                "content": text,
+                "status": "streaming",
+                "timestamp": time.time(),
+            }
+            self.add_block(block)
+            self.current_text_block_id = block_id
+            self.block_offset = 0  # Reset block offset for new text block
+        else:
+            # Update existing text block by appending content
+            for block in self.blocks:
+                if block.get("id") == self.current_text_block_id:
+                    block["content"] = block.get("content", "") + text
+                    break
+
+        # Update block_offset after adding text
+        self.block_offset += len(text)
+
+    def finalize_text_block(self) -> None:
+        """Mark current text block as complete and reset block_offset."""
+        if self.current_text_block_id:
+            self.update_block(self.current_text_block_id, {"status": "done"})
+            self.current_text_block_id = None
+            self.block_offset = 0  # Reset block offset when finalizing
+
+    def append_tool_block(
+        self,
+        tool_use_id: str,
+        tool_name: str,
+        tool_input: dict,
+        display_name: str = None,
+    ) -> None:
+        """Create tool block when tool call starts.
+
+        Args:
+            tool_use_id: Unique identifier for the tool call
+            tool_name: Name of the tool being called
+            tool_input: Input parameters for the tool
+            display_name: Optional display name for the tool (overrides tool_name if present)
+        """
+        # Finalize current text block before starting tool (also resets block_offset)
+        self.finalize_text_block()
+
+        block = {
+            "id": tool_use_id,
+            "type": "tool",
+            "tool_use_id": tool_use_id,
+            "tool_name": tool_name,
+            "status": "pending",
+            "timestamp": time.time(),
+        }
+
+        # Only include tool_input if tool is in whitelist
+        if should_display_tool_details(tool_name):
+            block["tool_input"] = tool_input
+
+        # Add display_name if provided
+        if display_name:
+            block["display_name"] = display_name
+
+        self.add_block(block)
+
+    def update_tool_block(
+        self,
+        tool_use_id: str,
+        tool_output: Any = None,
+        status: str = "done",
+        is_error: bool = False,
+    ) -> None:
+        """Update tool block when tool execution completes.
+
+        Args:
+            tool_use_id: Unique identifier for the tool call
+            tool_output: Output result from the tool
+            status: Block status ('done' or 'error')
+            is_error: Whether the tool execution failed
+        """
+        # Find the tool block to get tool_name for whitelist checking
+        tool_name = None
+        for block in self.blocks:
+            if block.get("id") == tool_use_id:
+                tool_name = block.get("tool_name")
+                break
+
+        updates = {
+            "status": status,
+        }
+
+        # Only include tool_output if tool is in whitelist
+        if tool_name and should_display_tool_details(tool_name):
+            updates["tool_output"] = tool_output
+
+        self.update_block(tool_use_id, updates)
 
 
 @dataclass
@@ -329,27 +523,52 @@ class StreamingCore:
         # Regular content
         self.state.append_content(token)
 
+        # Save current block_offset BEFORE updating text block
+        old_block_offset = self.state.block_offset
+
+        # Create or update text block for mixed content rendering
+        self.state.append_text_block(token)
+
         is_chat_mode = self.state.shell_type == "Chat"
+
+        block_id = self.state.current_text_block_id
+
+        # IMPORTANT: Do NOT include blocks in result for text streaming
+        # Only include blocks when tool events occur (via tool_start/tool_end handlers)
         result = self.state.get_current_result(
             include_value=False,
             include_thinking=not is_chat_mode,
+            include_blocks=False,  # Don't send blocks for text streaming
         )
+
         await self.emitter.emit_chunk(
             token,
             self.state.offset - len(token),
             self.state.subtask_id,
             result=result,
+            block_id=block_id,  # Send block_id for text block streaming
+            block_offset=old_block_offset,  # Use offset before append_text_block
         )
 
         return True
 
     async def finalize(self) -> dict:
         """Finalize streaming and return results."""
+        # Finalize any remaining text block
+        self.state.finalize_text_block()
+
         is_chat_mode = self.state.shell_type == "Chat"
         result = self.state.get_current_result(
             include_value=True,
             include_thinking=True,
             slim_thinking=is_chat_mode,
+            include_blocks=True,  # Include blocks for mixed content rendering
+        )
+
+        logger.debug(
+            "[BLOCK] Finalize result: subtask=%d blocks_count=%d",
+            self.state.subtask_id,
+            len(result.get("blocks", [])),
         )
 
         # Emit done event via emitter

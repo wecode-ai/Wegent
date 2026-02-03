@@ -1433,6 +1433,13 @@ class ExecutorKindsService(
                 ):
                     value["thinking"] = existing_result["thinking"]
 
+                # Sanitize thinking data before storing to database
+                # This removes sensitive tool input/output from thinking steps
+                if isinstance(value, dict) and value.get("thinking"):
+                    from app.utils.thinking_sanitizer import sanitize_result_for_storage
+
+                    value = sanitize_result_for_storage(value)
+
             setattr(subtask, field, value)
 
         # Set completion time
