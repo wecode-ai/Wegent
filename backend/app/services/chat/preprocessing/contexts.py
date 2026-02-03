@@ -401,6 +401,15 @@ def link_contexts_to_subtask(
                 db, kb_contexts_to_create, task, user_id, user_name
             )
 
+        # Sync attachments to running sandbox (if sandbox is healthy)
+        if attachment_ids and task:
+            _schedule_attachment_sync_to_sandbox(
+                db=db,
+                task_id=task.id,
+                subtask_id=subtask_id,
+                attachment_ids=attachment_ids,
+            )
+
     except Exception as e:
         db.rollback()
         logger.exception(f"Failed to link contexts to subtask {subtask_id}: {e}")
@@ -458,6 +467,117 @@ def _sync_kb_contexts_to_task(
                 f"[_sync_kb_contexts_to_task] Failed to sync KB {knowledge_id} "
                 f"to task {task.id}: {e}"
             )
+
+
+def _schedule_attachment_sync_to_sandbox(
+    db: Session,
+    task_id: int,
+    subtask_id: int,
+    attachment_ids: List[int],
+) -> None:
+    """
+    Schedule asynchronous sync of attachments to running sandbox.
+
+    This function checks if the sandbox is running and healthy, and if so,
+    uploads attachments to the sandbox filesystem. Failures are logged but
+    do not block the main flow.
+
+    Args:
+        db: Database session
+        task_id: Task ID (sandbox_id is derived from task_id)
+        subtask_id: Subtask ID
+        attachment_ids: List of attachment context IDs to sync
+    """
+    import asyncio
+
+    from app.services.sandbox_file_syncer import (
+        get_sandbox_file_syncer,
+        sync_attachment_to_sandbox_background,
+    )
+
+    try:
+        # Check if sandbox is healthy synchronously first (fast check)
+        # This avoids fetching binary data if sandbox is not running
+        syncer = get_sandbox_file_syncer()
+
+        # Get attachment data from database
+        attachment_contexts = (
+            db.query(SubtaskContext).filter(SubtaskContext.id.in_(attachment_ids)).all()
+        )
+
+        if not attachment_contexts:
+            logger.debug(
+                f"[_schedule_attachment_sync_to_sandbox] No attachments found "
+                f"for ids={attachment_ids}"
+            )
+            return
+
+        # Schedule async sync for each attachment
+        for ctx in attachment_contexts:
+            filename = ctx.original_filename
+            if not filename:
+                continue
+
+            # Get binary data from storage backend
+            binary_data = context_service.get_attachment_binary_data(db=db, context=ctx)
+            if binary_data is None:
+                logger.warning(
+                    f"[_schedule_attachment_sync_to_sandbox] Failed to get binary data "
+                    f"for attachment {ctx.id}"
+                )
+                continue
+
+            # Schedule background sync
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    sync_attachment_to_sandbox_background(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        filename=filename,
+                        binary_data=binary_data,
+                    )
+                )
+                logger.debug(
+                    f"[_schedule_attachment_sync_to_sandbox] Scheduled sync for "
+                    f"attachment {ctx.id} (filename={filename})"
+                )
+            except RuntimeError:
+                # No event loop running - try main event loop
+                try:
+                    from app.services.chat.ws_emitter import get_main_event_loop
+
+                    main_loop = get_main_event_loop()
+                    if main_loop and main_loop.is_running():
+                        asyncio.run_coroutine_threadsafe(
+                            sync_attachment_to_sandbox_background(
+                                task_id=task_id,
+                                subtask_id=subtask_id,
+                                filename=filename,
+                                binary_data=binary_data,
+                            ),
+                            main_loop,
+                        )
+                        logger.debug(
+                            f"[_schedule_attachment_sync_to_sandbox] Scheduled sync on "
+                            f"main loop for attachment {ctx.id}"
+                        )
+                    else:
+                        logger.debug(
+                            f"[_schedule_attachment_sync_to_sandbox] No running event loop, "
+                            f"skipping sync for attachment {ctx.id}"
+                        )
+                except Exception as e:
+                    logger.debug(
+                        f"[_schedule_attachment_sync_to_sandbox] Failed to schedule sync: {e}"
+                    )
+
+    except Exception as e:
+        # Log but don't fail - syncing to sandbox is best-effort
+        logger.warning(
+            f"[_schedule_attachment_sync_to_sandbox] Error scheduling sync for "
+            f"task {task_id}: {e}"
+        )
 
 
 def _prepare_contexts_for_creation(
