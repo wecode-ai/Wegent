@@ -471,14 +471,17 @@ async def download_attachment(
 async def executor_download_attachment(
     attachment_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_flexible_for_executor),
 ):
     """
     Download attachment for executor.
 
     This endpoint is called by the Executor to download attachments
-    to the workspace. It uses JWT token authentication and validates
-    that the attachment belongs to the current user.
+    to the workspace. It supports both JWT Token and API Key authentication.
+
+    Authentication:
+    - JWT Token: Standard Bearer token in Authorization header
+    - API Key: Personal API key (wg-xxx) via X-API-Key header or Bearer token
 
     Returns:
         File binary data with appropriate content type
