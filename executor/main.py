@@ -12,11 +12,32 @@ Executor main entry point.
 Supports two modes:
 - Local mode (EXECUTOR_MODE=local): WebSocket-based executor for local deployment
 - Docker mode (default): FastAPI server for container deployment
+
+CLI options:
+- --version, -v: Print version and exit
 """
 
 import multiprocessing
 import os
 import sys
+
+
+def _handle_version_flag() -> None:
+    """Handle --version/-v flag before any other initialization.
+
+    If the flag is present, print version and exit immediately.
+    This is done before any imports to ensure fast response.
+    """
+    if "--version" in sys.argv or "-v" in sys.argv:
+        from executor.version import get_version
+
+        print(get_version())
+        sys.exit(0)
+
+
+# Check for version flag first (before any heavy imports)
+_handle_version_flag()
+
 
 # Required for PyInstaller on macOS/Windows to prevent infinite fork
 if getattr(sys, "frozen", False):
