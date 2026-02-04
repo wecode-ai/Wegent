@@ -13,7 +13,7 @@ import {
   MoreVertical,
   Globe,
   CloudDownload,
-  RefreshCw,
+  RotateCcw,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -278,7 +278,7 @@ export function DocumentItem({
                   )}
                   {ragConfigured && !document.is_active && !isTable && onReindex && (
                     <DropdownMenuItem onClick={handleReindex} disabled={isReindexing}>
-                      <RefreshCw
+                      <RotateCcw
                         className={`w-3.5 h-3.5 mr-2 ${isReindexing ? 'animate-spin' : ''}`}
                       />
                       {isReindexing
@@ -468,7 +468,7 @@ export function DocumentItem({
                   : t('knowledge:document.document.reindex')
               }
             >
-              <RefreshCw className={`w-4 h-4 ${isReindexing ? 'animate-spin' : ''}`} />
+              <RotateCcw className={`w-4 h-4 ${isReindexing ? 'animate-spin' : ''}`} />
             </button>
           )}
           {/* Delete button */}
