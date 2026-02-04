@@ -981,7 +981,7 @@ class KnowledgeBaseTool(BaseTool):
                     }
                     if self.document_ids:
                         payload["document_ids"] = self.document_ids
-                    if self.user_name:
+                    if self.user_name is not None:
                         payload["user_name"] = self.user_name
 
                     response = await client.post(
