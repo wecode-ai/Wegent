@@ -91,7 +91,8 @@
   "chat": {
     "placeholder_chat": "Use the Agent team to explore and discover",
     "placeholder_code": "Let the Agent development team build features, fix bugs, and explore the codebase",
-    "sourceReferences": "Source References"
+    "sourceReferences": "Source References",
+    "sources": "Sources"
   },
   "bot": {
     "name": "Name",

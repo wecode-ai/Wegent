@@ -71,6 +71,10 @@ class ChatConfig:
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
 
+    # Model protocol for special API routing (e.g., gemini-deep-research)
+    # This determines which API flow to use for the chat
+    protocol: str | None = None
+
 
 class ChatConfigBuilder:
     """Builder for chat configuration.
@@ -192,6 +196,7 @@ class ChatConfigBuilder:
             user_selected_skills=user_selected_skills,  # Skills explicitly chosen by user
             enable_clarification=enable_clarification,
             enable_deep_thinking=enable_deep_thinking,
+            protocol=model_config.get("protocol"),  # For special API routing
         )
 
     def _get_first_bot(self) -> Kind | None:

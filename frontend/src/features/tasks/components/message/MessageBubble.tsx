@@ -40,10 +40,12 @@ import StreamingWaitIndicator from './StreamingWaitIndicator'
 import BubbleTools, { CopyButton, EditButton } from './BubbleTools'
 import InlineMessageEdit from './InlineMessageEdit'
 import { SourceReferences } from '../chat/SourceReferences'
+import { GeminiAnnotations } from '../chat/GeminiAnnotations'
 import CollapsibleMessage from './CollapsibleMessage'
+import { processCitePatterns } from '../../utils/processCitePatterns'
 import RegenerateModelPopover from './RegenerateModelPopover'
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api'
-import type { SourceReference } from '@/types/socket'
+import type { SourceReference, GeminiAnnotation } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
 import type { MessageBlock } from './thinking/types'
 import { useTraceAction } from '@/hooks/useTraceAction'
@@ -78,6 +80,7 @@ export interface Message {
     sources?: SourceReference[] // RAG knowledge base sources
     reasoning_content?: string // Reasoning content from DeepSeek R1 etc.
     blocks?: MessageBlock[] // Message blocks for mixed rendering (new format)
+    annotations?: GeminiAnnotation[] // Gemini Deep Research grounding annotations
   }
   /** @deprecated Use contexts instead */
   attachments?: Attachment[]
@@ -485,6 +488,13 @@ const MessageBubble = memo(
       // Convert these patterns to HTML <strong> tags for proper rendering
       normalizedResult = normalizedResult.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
 
+      // Process [cite: X, Y, Z] patterns to clickable markdown links
+      // Only process when annotations are available from Gemini Deep Research
+      const annotations = msg.result?.annotations
+      if (annotations && annotations.length > 0) {
+        normalizedResult = processCitePatterns(normalizedResult, annotations)
+      }
+
       const progressMatch = normalizedResult.match(/^__PROGRESS_BAR__:(.*?):(\d+)$/)
       if (progressMatch) {
         const status = progressMatch[1]
@@ -604,6 +614,7 @@ const MessageBubble = memo(
             {markdownContent}
           </CollapsibleMessage>
           <SourceReferences sources={msg.sources || msg.result?.sources || []} />
+          <GeminiAnnotations annotations={msg.result?.annotations || []} />
           <BubbleTools
             contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`}
             onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
@@ -1223,7 +1234,13 @@ const MessageBubble = memo(
 
       // Pre-process markdown to handle edge cases where ** is followed by punctuation
       // Same fix as in renderMarkdownResult - convert all ** to <strong> tags
-      const contentToRender = msg.recoveredContent.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      let contentToRender = msg.recoveredContent.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+
+      // Process [cite: X, Y, Z] patterns to clickable markdown links
+      const annotations = msg.result?.annotations
+      if (annotations && annotations.length > 0) {
+        contentToRender = processCitePatterns(contentToRender, annotations)
+      }
 
       // Try to parse clarification format from recovered/streaming content
       // This ensures clarification forms are rendered correctly during streaming
@@ -1290,6 +1307,7 @@ const MessageBubble = memo(
             )}
             {/* Show copy and download buttons */}
             <SourceReferences sources={msg.sources || msg.result?.sources || []} />
+            <GeminiAnnotations annotations={msg.result?.annotations || []} />
             <BubbleTools
               contentToCopy={contentToRender}
               onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
@@ -1367,6 +1385,7 @@ const MessageBubble = memo(
               />
               {/* Show copy and download buttons during streaming */}
               <SourceReferences sources={msg.sources || msg.result?.sources || []} />
+              <GeminiAnnotations annotations={msg.result?.annotations || []} />
               <BubbleTools
                 contentToCopy={contentToRender}
                 onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
@@ -1515,6 +1534,7 @@ const MessageBubble = memo(
                         blocks={msg.result.blocks}
                       />
                       <SourceReferences sources={msg.sources || msg.result?.sources || []} />
+                      <GeminiAnnotations annotations={msg.result?.annotations || []} />
                       <BubbleTools
                         contentToCopy={msg.content || ''}
                         onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
