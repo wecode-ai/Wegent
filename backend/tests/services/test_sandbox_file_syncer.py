@@ -59,22 +59,17 @@ class TestBuildSandboxAttachmentPath:
     def test_normal_path(self):
         """Test normal path generation."""
         path = build_sandbox_attachment_path(123, 456, "document.pdf")
-        assert (
-            path == "/home/user/attachments/123:executor:attachments/456/document.pdf"
-        )
+        assert path == "/home/user/123:executor:attachments/456/document.pdf"
 
     def test_path_with_unsafe_filename(self):
         """Test path generation with unsafe filename."""
         path = build_sandbox_attachment_path(123, 456, "../../../etc/passwd")
-        assert path == "/home/user/attachments/123:executor:attachments/456/passwd"
+        assert path == "/home/user/123:executor:attachments/456/passwd"
 
     def test_path_with_special_chars(self):
         """Test path generation with special characters in filename."""
         path = build_sandbox_attachment_path(123, 456, "file\nwith\rnewlines.pdf")
-        assert (
-            path
-            == "/home/user/attachments/123:executor:attachments/456/filewithnewlines.pdf"
-        )
+        assert path == "/home/user/123:executor:attachments/456/filewithnewlines.pdf"
 
 
 class TestSandboxFileSyncer:
@@ -209,7 +204,7 @@ class TestSandboxFileSyncer:
 
             success = await syncer.upload_file_to_sandbox(
                 base_url="http://sandbox:8080",
-                remote_path="/home/user/attachments/123:executor:attachments/456/doc.pdf",
+                remote_path="/home/user/123:executor:attachments/456/doc.pdf",
                 binary_data=b"test content",
                 filename="doc.pdf",
             )
@@ -235,7 +230,7 @@ class TestSandboxFileSyncer:
 
             success = await syncer.upload_file_to_sandbox(
                 base_url="http://sandbox:8080",
-                remote_path="/home/user/attachments/123:executor:attachments/456/doc.pdf",
+                remote_path="/home/user/123:executor:attachments/456/doc.pdf",
                 binary_data=b"test content",
                 filename="doc.pdf",
             )

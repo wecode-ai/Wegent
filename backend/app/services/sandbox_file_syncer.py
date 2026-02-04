@@ -60,7 +60,7 @@ def build_sandbox_attachment_path(task_id: int, subtask_id: int, filename: str) 
         Path where the attachment should be stored in sandbox
     """
     safe_filename = _sanitize_filename(filename)
-    return f"/home/user/attachments/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
+    return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
 
 
 class SandboxFileSyncer:

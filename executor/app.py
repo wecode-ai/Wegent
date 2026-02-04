@@ -19,9 +19,8 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional
 
-from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from executor.mcp_servers.wegent import start_wegent_mcp_server
@@ -217,26 +216,19 @@ def _initialize_sandbox_claude(auth_token: str, task_id: str) -> None:
 def _predownload_task_attachments(auth_token: str, task_id: str) -> None:
     """Pre-download all attachments for a task at sandbox startup.
 
-    Downloads all attachments for the task to /home/user/attachments directory,
+    Downloads all attachments for the task to /home/user directory,
     organized by subtask to match the sandbox path format:
-    /home/user/attachments/{task_id}:executor:attachments/{subtask_id}/{filename}
+    /home/user/{task_id}:executor:attachments/{subtask_id}/{filename}
 
     Args:
         auth_token: JWT token for API authentication
         task_id: Task ID for fetching attachments
     """
-    from pathlib import Path
-
-    import requests
-
-    from executor.services.api_client import fetch_task_attachments, get_api_base_url
-
-    # Constants
-    ATTACHMENT_DOWNLOAD_TIMEOUT_S = 300  # 5 minutes for large files
-    ATTACHMENT_CHUNK_SIZE_BYTES = 8192
+    from executor.services.api_client import fetch_task_attachments
+    from executor.services.attachment_downloader import AttachmentDownloader
 
     # Define base attachments directory
-    attachments_base_dir = "/home/user/attachments"
+    attachments_base_dir = "/home/user"
 
     # Fetch all attachments for the task
     logger.info(f"[SandboxInit] Fetching attachments for task {task_id}...")
@@ -250,73 +242,42 @@ def _predownload_task_attachments(auth_token: str, task_id: str) -> None:
         logger.info("[SandboxInit] No attachments to download")
         return
 
-    # Download each attachment
-    api_base_url = get_api_base_url()
-    headers = {"Authorization": f"Bearer {auth_token}"}
-    success_count = 0
+    # Group attachments by subtask_id for batch downloading
+    from collections import defaultdict
 
+    attachments_by_subtask = defaultdict(list)
     for att in result.attachments:
-        try:
-            # Build per-subtask directory path matching sandbox format
-            # Format: /home/user/attachments/{task_id}:executor:attachments/{subtask_id}/
-            subtask_dir = os.path.join(
-                attachments_base_dir,
-                f"{task_id}:executor:attachments",
-                str(att.subtask_id),
-            )
-            Path(subtask_dir).mkdir(parents=True, exist_ok=True)
+        attachments_by_subtask[att.subtask_id].append(
+            {
+                "id": att.id,
+                "original_filename": att.original_filename,
+                "subtask_id": att.subtask_id,
+            }
+        )
 
-            # Sanitize filename: use basename and strip control characters
-            raw_filename = att.original_filename or "document"
-            safe_filename = os.path.basename(raw_filename)
-            safe_filename = safe_filename.replace("\n", "").replace("\r", "")
-            # Remove any remaining path separators
-            safe_filename = safe_filename.replace("/", "_").replace("\\", "_")
+    # Download attachments per subtask using AttachmentDownloader
+    total_success = 0
+    total_failed = 0
 
-            # Build download URL
-            download_url = f"{api_base_url}/api/attachments/{att.id}/executor-download"
-            logger.info(
-                f"[SandboxInit] Downloading attachment: {safe_filename} "
-                f"(id={att.id}, subtask={att.subtask_id})"
-            )
+    for subtask_id, attachments in attachments_by_subtask.items():
+        logger.info(
+            f"[SandboxInit] Downloading {len(attachments)} attachments for subtask {subtask_id}"
+        )
 
-            # Download file
-            response = requests.get(
-                download_url,
-                headers=headers,
-                timeout=ATTACHMENT_DOWNLOAD_TIMEOUT_S,
-                stream=True,
-            )
+        downloader = AttachmentDownloader(
+            workspace=attachments_base_dir,
+            task_id=task_id,
+            subtask_id=str(subtask_id),
+            auth_token=auth_token,
+        )
 
-            if response.status_code != 200:
-                logger.warning(
-                    f"[SandboxInit] Failed to download attachment '{safe_filename}': "
-                    f"HTTP {response.status_code}"
-                )
-                continue
-
-            # Save file to subtask directory
-            file_path = os.path.join(subtask_dir, safe_filename)
-            with open(file_path, "wb") as f:
-                for chunk in response.iter_content(
-                    chunk_size=ATTACHMENT_CHUNK_SIZE_BYTES
-                ):
-                    f.write(chunk)
-
-            logger.info(
-                f"[SandboxInit] Downloaded attachment '{safe_filename}' to {file_path}"
-            )
-            success_count += 1
-
-        except Exception as e:
-            logger.warning(
-                f"[SandboxInit] Error downloading attachment "
-                f"'{att.original_filename}': {e}"
-            )
+        download_result = downloader.download_all(attachments)
+        total_success += len(download_result.success)
+        total_failed += len(download_result.failed)
 
     logger.info(
         f"[SandboxInit] Attachment pre-download complete: "
-        f"{success_count}/{len(result.attachments)} downloaded to {attachments_base_dir}"
+        f"{total_success}/{total_success + total_failed} downloaded to {attachments_base_dir}"
     )
 
 
