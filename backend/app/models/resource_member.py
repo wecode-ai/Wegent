@@ -92,28 +92,32 @@ class ResourceMember(Base):
     )
     share_link_id = Column(
         Integer,
-        nullable=True,
+        nullable=False,
+        default=0,
         index=True,
-        comment="Associated share link ID (when joined via link)",
+        comment="Associated share link ID (0 = not via link)",
     )
 
     # Review info
     reviewed_by_user_id = Column(
         Integer,
-        nullable=True,
-        comment="Reviewer user ID",
+        nullable=False,
+        default=0,
+        comment="Reviewer user ID (0 = not yet reviewed)",
     )
     reviewed_at = Column(
         DateTime,
-        nullable=True,
+        nullable=False,
+        default=func.now(),
         comment="Review timestamp",
     )
 
     # Task-specific field (only for Task type)
     copied_resource_id = Column(
         Integer,
-        nullable=True,
-        comment="Copied resource ID (for Task copy behavior)",
+        nullable=False,
+        default=0,
+        comment="Copied resource ID (0 = not copied, for Task copy behavior)",
     )
 
     # Timestamps
