@@ -304,11 +304,11 @@ class TestContextServiceFormatting:
 
         # Test with valid task_id and subtask_id
         path = context_service.build_sandbox_path(123, 456, "test.pdf")
-        assert path == "123:executor:attachments/456/test.pdf"
+        assert path == "/home/user/123:executor:attachments/456/test.pdf"
 
         # Test with different values
         path = context_service.build_sandbox_path(1, 2, "image.png")
-        assert path == "1:executor:attachments/2/image.png"
+        assert path == "/home/user/1:executor:attachments/2/image.png"
 
     def test_build_sandbox_path_returns_none_for_missing_ids(self):
         """Test sandbox path returns None when task_id or subtask_id is missing"""
@@ -329,15 +329,15 @@ class TestContextServiceFormatting:
 
         # Test filename with newline
         path = context_service.build_sandbox_path(123, 456, "test\n.pdf")
-        assert path == "123:executor:attachments/456/test.pdf"
+        assert path == "/home/user/123:executor:attachments/456/test.pdf"
 
         # Test filename with carriage return
         path = context_service.build_sandbox_path(123, 456, "test\r.pdf")
-        assert path == "123:executor:attachments/456/test.pdf"
+        assert path == "/home/user/123:executor:attachments/456/test.pdf"
 
         # Test filename with both
         path = context_service.build_sandbox_path(123, 456, "test\r\n.pdf")
-        assert path == "123:executor:attachments/456/test.pdf"
+        assert path == "/home/user/123:executor:attachments/456/test.pdf"
 
     def test_build_document_text_prefix_with_sandbox_path(self):
         """Test building document text prefix with sandbox path included"""
@@ -378,7 +378,10 @@ class TestContextServiceFormatting:
         assert "Type: application/pdf" in prefix
         assert "Size: 2.5 MB" in prefix
         assert "URL: /api/attachments/12345/download" in prefix
-        assert "Sandbox: 100:executor:attachments/200/test.pdf" in prefix
+        assert (
+            "File Path(already in sandbox): /home/user/100:executor:attachments/200/test.pdf"
+            in prefix
+        )
         assert "This is the extracted PDF content." in prefix
 
     def test_build_document_text_prefix(self):

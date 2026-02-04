@@ -559,14 +559,14 @@ def _build_sandbox_path(
         filename: Original filename
 
     Returns:
-        Sandbox path in format: {task_id}:executor:attachments/{subtask_id}/{filename}
+        Sandbox path in format: /home/user/{task_id}:executor:attachments/{subtask_id}/{filename}
         Returns None if task_id or subtask_id is not provided.
     """
     if task_id is None or subtask_id is None:
         return None
     # Guard against None filename and strip control characters
     safe_filename = (filename or "document").replace("\n", "").replace("\r", "")
-    return f"{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
+    return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
 
 
 def _build_image_metadata_header(
@@ -589,7 +589,7 @@ def _build_image_metadata_header(
         return (
             f"[Image Attachment: {filename} | ID: {attachment_id} | "
             f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
-            f"Sandbox: {sandbox_path}]"
+            f"File Path in Sandbox: {sandbox_path}]"
         )
     return (
         f"[Image Attachment: {filename} | ID: {attachment_id} | "
@@ -627,7 +627,7 @@ def _build_document_text_prefix(
         return (
             f"[Attachment: {filename} | ID: {attachment_id} | "
             f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
-            f"Sandbox: {sandbox_path}]\n"
+            f"File Path(already in sandbox): {sandbox_path}]\n"
             f"{context.extracted_text}\n\n"
         )
     return (

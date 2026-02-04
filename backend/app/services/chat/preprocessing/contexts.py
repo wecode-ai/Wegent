@@ -251,7 +251,7 @@ def _process_attachment_context(
             image_header = (
                 f"[Image Attachment: {filename} | ID: {attachment_id} | "
                 f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
-                f"Sandbox: {sandbox_path}]"
+                f"File Path(already in sandbox): {sandbox_path}]"
             )
         else:
             image_header = (

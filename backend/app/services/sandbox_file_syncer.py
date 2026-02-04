@@ -130,25 +130,25 @@ class SandboxFileSyncer:
                 base_url = data.get("base_url")
 
                 if status in SANDBOX_HEALTHY_STATUSES and base_url:
-                    logger.debug(
+                    logger.info(
                         f"[SandboxFileSyncer] Sandbox {sandbox_id} is healthy: "
                         f"status={status}, base_url={base_url}"
                     )
                     return True, base_url
                 else:
-                    logger.debug(
+                    logger.warning(
                         f"[SandboxFileSyncer] Sandbox {sandbox_id} not healthy: "
                         f"status={status}, base_url={base_url}"
                     )
                     return False, None
 
         except httpx.TimeoutException:
-            logger.debug(
+            logger.warning(
                 f"[SandboxFileSyncer] Timeout checking sandbox {sandbox_id} status"
             )
             return False, None
         except Exception as e:
-            logger.debug(
+            logger.error(
                 f"[SandboxFileSyncer] Error checking sandbox {sandbox_id} status: {e}"
             )
             return False, None
