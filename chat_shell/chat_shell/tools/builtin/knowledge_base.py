@@ -74,6 +74,9 @@ class KnowledgeBaseTool(BaseTool):
     # User ID for access control
     user_id: int = 0
 
+    # User name for embedding API custom headers (placeholder replacement)
+    user_name: Optional[str] = None
+
     # Database session (will be set when tool is created)
     # Accepts both sync Session (backend) and AsyncSession (chat_shell HTTP mode)
     # In HTTP mode, db_session is not used - retrieval goes through HTTP API
@@ -906,6 +909,7 @@ class KnowledgeBaseTool(BaseTool):
                             knowledge_base_id=kb_id,
                             db=self.db_session,
                             metadata_condition=metadata_condition,
+                            user_name=self.user_name,
                         )
                     )
 
@@ -977,6 +981,8 @@ class KnowledgeBaseTool(BaseTool):
                     }
                     if self.document_ids:
                         payload["document_ids"] = self.document_ids
+                    if self.user_name is not None:
+                        payload["user_name"] = self.user_name
 
                     response = await client.post(
                         f"{backend_url}/api/internal/rag/retrieve",

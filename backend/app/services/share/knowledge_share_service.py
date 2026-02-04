@@ -48,9 +48,15 @@ class KnowledgeShareService(UnifiedShareService):
         """
         Fetch KnowledgeBase resource.
 
-        For Knowledge Bases, we check if resource exists and belongs to the user
-        OR if the user has been shared access.
+        For Knowledge Bases, we check if resource exists and user has access via:
+        1. Creator (user_id matches)
+        2. Explicit shared access (ResourceMember)
+        3. Team membership (for team knowledge bases)
         """
+        logger.info(
+            f"[_get_resource] Fetching KnowledgeBase: resource_id={resource_id}, user_id={user_id}"
+        )
+
         kb = (
             db.query(Kind)
             .filter(
@@ -61,25 +67,70 @@ class KnowledgeShareService(UnifiedShareService):
             .first()
         )
 
-        if kb and kb.user_id == user_id:
+        if not kb:
+            logger.warning(
+                f"[_get_resource] KnowledgeBase not found: resource_id={resource_id}"
+            )
+            return None
+
+        logger.info(
+            f"[_get_resource] KnowledgeBase found: id={kb.id}, "
+            f"kb.user_id={kb.user_id}, namespace={kb.namespace}"
+        )
+
+        # Check if user is creator
+        if kb.user_id == user_id:
+            logger.info(
+                f"[_get_resource] User is creator: user_id={user_id} == kb.user_id={kb.user_id}"
+            )
             return kb
 
-        # Check if user has shared access
-        if kb:
-            member = (
-                db.query(ResourceMember)
-                .filter(
-                    ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                    ResourceMember.resource_id == resource_id,
-                    ResourceMember.user_id == user_id,
-                    ResourceMember.status == MemberStatus.APPROVED.value,
-                )
-                .first()
-            )
-            if member:
-                return kb
+        logger.warning(
+            f"[_get_resource] User is NOT creator: user_id={user_id} != kb.user_id={kb.user_id}"
+        )
 
-        return None  # Only return KB for authorized users (owners or approved members)
+        # Check if user has explicit shared access
+        member = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.resource_id == resource_id,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .first()
+        )
+        if member:
+            logger.info(
+                f"[_get_resource] User has explicit shared access: member_id={member.id}"
+            )
+            return kb
+
+        logger.warning(f"[_get_resource] User has NO explicit shared access")
+
+        # For team knowledge bases, check group permission
+        if kb.namespace != "default":
+            logger.info(
+                f"[_get_resource] Checking team permission: namespace={kb.namespace}"
+            )
+            role = get_effective_role_in_group(db, user_id, kb.namespace)
+            if role is not None:
+                logger.info(f"[_get_resource] User has team role: role={role}")
+                return kb
+            logger.warning(
+                f"[_get_resource] User has NO team role in namespace={kb.namespace}"
+            )
+        else:
+            logger.info(
+                f"[_get_resource] KnowledgeBase is personal (namespace=default)"
+            )
+
+        logger.error(
+            f"[_get_resource] User has NO access to KnowledgeBase: "
+            f"resource_id={resource_id}, user_id={user_id}, "
+            f"kb.user_id={kb.user_id}, namespace={kb.namespace}"
+        )
+        return None  # Only return KB for authorized users
 
     def _get_resource_name(self, resource: Kind) -> str:
         """Get KnowledgeBase display name."""
@@ -408,6 +459,8 @@ class KnowledgeShareService(UnifiedShareService):
         Raises:
             ValueError: If token is invalid or KB not found
         """
+        import urllib.parse
+
         # Decode token
         token_info = self._decode_share_token(share_token)
         if not token_info:
@@ -419,13 +472,13 @@ class KnowledgeShareService(UnifiedShareService):
         if resource_type != self.resource_type.value:
             raise ValueError("Invalid resource type")
 
-        # Find share link
+        # Find share link by resource_id (more reliable than token matching)
+        # The token in DB is URL-encoded, but FastAPI may have decoded the input
         share_link = (
             db.query(ShareLink)
             .filter(
                 ShareLink.resource_type == self.resource_type.value,
                 ShareLink.resource_id == resource_id,
-                ShareLink.share_token == share_token,
                 ShareLink.is_active == True,
             )
             .first()
