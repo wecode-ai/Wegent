@@ -83,8 +83,14 @@
       "indexStatus": {
         "available": "Indexed",
         "unavailable": "Index Unavailable",
-        "unavailableHint": "AI will use other tools to browse documents (slightly less efficient than quick retrieval)"
+        "unavailableHint": "AI will use other tools to browse documents (slightly less efficient than quick retrieval)",
+        "indexing": "Indexing",
+        "indexingHint": "Index is being generated. Refresh the page later to check the latest status."
       },
+      "reindex": "Reindex",
+      "reindexing": "Reindexing...",
+      "reindexSuccess": "Reindex started",
+      "reindexFailed": "Failed to start reindex",
       "openLink": "Open Link",
       "columns": {
         "name": "Name",
