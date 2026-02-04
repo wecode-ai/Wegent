@@ -733,7 +733,7 @@ class BackgroundExecutionManager:
 
         # Emit WebSocket event to notify frontend of the status update
         logger.debug(
-            f"[Subscription] Emitting WS event for execution {execution_id}, user_id={execution.user_id}"
+            f"[Subscription] Emitting WS event for execution {execution_id}, user_id={execution.user_id}, summary={result_summary}"
         )
         emit_background_execution_update(
             db=db,
@@ -748,6 +748,9 @@ class BackgroundExecutionManager:
         # comes from executor_manager, not from subscription_tasks
         # Skip if caller will handle notifications separately (e.g., Chat Shell tasks)
         if status == BackgroundExecutionStatus.COMPLETED and not skip_notifications:
+            logger.info(
+                f"[Subscription] Dispatching completion notifications for execution {execution_id}, result_summary={result_summary}"
+            )
             self._dispatch_completion_notifications(
                 db=db,
                 execution=execution,

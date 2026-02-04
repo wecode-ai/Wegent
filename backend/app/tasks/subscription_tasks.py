@@ -592,16 +592,295 @@ def _link_task_to_execution(db: Session, execution: Any, task_id: int) -> None:
     db.commit()
 
 
+@dataclass
+class ThreadSafeAIData:
+    """Thread-safe data container for AI response execution.
+
+    Contains only primitive data types (IDs, strings) that can be safely
+    passed between threads without SQLAlchemy session issues.
+    """
+
+    # IDs
+    subscription_id: int
+    execution_id: int
+    task_id: int
+    user_id: int
+    team_id: int
+    assistant_subtask_id: int
+    user_subtask_id: Optional[int]
+
+    # Data needed for AI response
+    prompt: str
+    model_override_name: Optional[str]
+    kb_refs: List[Any]
+
+    # Settings
+    preserve_history: bool
+    history_message_count: int
+
+    # Subscription info for notifications
+    subscription_name: str
+    subscription_display_name: str
+    team_display_name: str
+    trigger_type: str
+    trigger_reason: str
+
+
+def _extract_thread_safe_data(
+    ctx: SubscriptionExecutionContext,
+    task: Any,
+    assistant_subtask: Any,
+    user_subtask: Any,
+) -> ThreadSafeAIData:
+    """Extract all necessary data from ORM objects into a thread-safe container.
+
+    This must be called BEFORE the database session is closed to avoid
+    DetachedInstanceError when accessing ORM objects in another thread.
+    """
+    # Extract model override from Subscription CRD's modelRef if specified
+    model_override_name = None
+    if ctx.subscription_crd.spec.modelRef:
+        model_override_name = ctx.subscription_crd.spec.modelRef.name
+
+    # Extract team display name from Team CRD
+    team_display_name = ctx.team.name
+    try:
+        from app.schemas.kind import Team
+
+        team_crd = Team.model_validate(ctx.team.json)
+        if team_crd.spec and team_crd.spec.displayName:
+            team_display_name = team_crd.spec.displayName
+    except Exception:
+        pass  # Use team name as fallback
+
+    return ThreadSafeAIData(
+        subscription_id=ctx.subscription.id,
+        execution_id=ctx.execution.id,
+        task_id=task.id,
+        user_id=ctx.user.id,
+        team_id=ctx.team.id,
+        assistant_subtask_id=assistant_subtask.id,
+        user_subtask_id=user_subtask.id if user_subtask else None,
+        prompt=ctx.execution.prompt or "",
+        model_override_name=model_override_name,
+        kb_refs=ctx.subscription_crd.spec.knowledgeBaseRefs or [],
+        preserve_history=ctx.preserve_history,
+        history_message_count=ctx.history_message_count,
+        subscription_name=ctx.subscription.name,
+        subscription_display_name=ctx.subscription_crd.spec.displayName
+        or ctx.subscription.name,
+        team_display_name=team_display_name,
+        trigger_type=ctx.trigger_type,
+        trigger_reason=ctx.execution.trigger_reason or "",
+    )
+
+
+async def _trigger_chat_shell_response_in_thread(
+    data: ThreadSafeAIData,
+) -> None:
+    """Trigger AI response for Chat Shell type subscriptions in a background thread.
+
+    This function runs in a separate thread with its own database session.
+    It loads ORM objects using the IDs from the thread-safe data container.
+    """
+    from app.core.circuit_breaker import (
+        CircuitBreakerOpenError,
+        ai_service_breaker,
+        with_circuit_breaker_async,
+    )
+    from app.core.constants import get_task_room
+    from app.db.session import get_db_session
+    from app.models.kind import Kind
+    from app.models.subtask import Subtask
+    from app.models.task import TaskResource
+    from app.models.user import User
+    from app.schemas.subscription import SubscriptionTriggerPayload
+    from app.services.chat.trigger import trigger_ai_response
+    from app.services.chat.trigger.emitter import SubscriptionEventEmitter
+
+    logger.info(
+        f"[_trigger_chat_shell_response_in_thread] Starting AI response for "
+        f"subscription_id={data.subscription_id}, execution_id={data.execution_id}, "
+        f"task_id={data.task_id}"
+    )
+
+    # Load ORM objects in this thread with a new database session
+    with get_db_session() as db:
+        # Load task
+        task = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.id == data.task_id,
+                TaskResource.kind == "Task",
+            )
+            .first()
+        )
+        if not task:
+            logger.error(f"Task {data.task_id} not found in thread")
+            return
+
+        # Load assistant subtask
+        assistant_subtask = (
+            db.query(Subtask)
+            .filter(
+                Subtask.id == data.assistant_subtask_id,
+            )
+            .first()
+        )
+        if not assistant_subtask:
+            logger.error(
+                f"Assistant subtask {data.assistant_subtask_id} not found in thread"
+            )
+            return
+
+        # Load team
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == data.team_id,
+                Kind.kind == "Team",
+            )
+            .first()
+        )
+        if not team:
+            logger.error(f"Team {data.team_id} not found in thread")
+            return
+
+        # Load user
+        user = (
+            db.query(User)
+            .filter(
+                User.id == data.user_id,
+            )
+            .first()
+        )
+        if not user:
+            logger.error(f"User {data.user_id} not found in thread")
+            return
+
+        # Build payload
+        payload = SubscriptionTriggerPayload(
+            force_override_bot_model=data.model_override_name,
+        )
+        task_room = get_task_room(data.task_id)
+
+        # Get frontend base URL from settings
+        from app.core.config import settings
+
+        base_url = getattr(settings, "TASK_SHARE_BASE_URL", None)
+
+        # Create event handler for notifications (separation of concerns)
+        from app.services.subscription.event_handler import (
+            create_subscription_event_handler,
+        )
+
+        event_handler = create_subscription_event_handler(
+            subscription_id=data.subscription_id,
+            execution_id=data.execution_id,
+            subscription_display_name=data.subscription_display_name,
+            team_display_name=data.team_display_name,
+            trigger_reason=data.trigger_reason,
+            task_id=data.task_id,
+            base_url=base_url,
+        )
+
+        # Create emitter with callback for status changes
+        subscription_emitter = SubscriptionEventEmitter(
+            execution_id=data.execution_id,
+            on_status_changed=event_handler.on_execution_completed,
+        )
+
+        # Determine history_limit
+        history_limit = data.history_message_count if data.preserve_history else None
+        logger.info(
+            f"[_trigger_chat_shell_response_in_thread] History settings: "
+            f"preserve_history={data.preserve_history}, history_limit={history_limit}"
+        )
+
+        # Wrap the AI call with circuit breaker protection
+        @with_circuit_breaker_async(ai_service_breaker)
+        async def _call_ai_service():
+            await trigger_ai_response(
+                task=task,
+                assistant_subtask=assistant_subtask,
+                team=team,
+                user=user,
+                message=data.prompt,
+                payload=payload,
+                task_room=task_room,
+                supports_direct_chat=True,
+                namespace=None,
+                user_subtask_id=data.user_subtask_id,
+                event_emitter=subscription_emitter,
+                history_limit=history_limit,
+                is_subscription=True,  # Enable SilentExitTool in chat_shell
+            )
+
+        # Execute with error handling
+        try:
+            await _call_ai_service()
+            logger.info(
+                f"[_trigger_chat_shell_response_in_thread] AI response completed successfully "
+                f"for execution_id={data.execution_id}"
+            )
+        except CircuitBreakerOpenError as e:
+            logger.error(
+                f"[_trigger_chat_shell_response_in_thread] Circuit breaker open for "
+                f"subscription {data.subscription_id}: {e}"
+            )
+            # Update execution with circuit breaker error
+            from app.schemas.subscription import BackgroundExecutionStatus
+            from app.services.subscription import subscription_service
+
+            with get_db_session() as error_db:
+                subscription_service.update_execution_status(
+                    error_db,
+                    execution_id=data.execution_id,
+                    status=BackgroundExecutionStatus.FAILED,
+                    error_message=f"AI service temporarily unavailable: {e}",
+                )
+        except Exception as e:
+            logger.error(
+                f"[_trigger_chat_shell_response_in_thread] Error in AI service call for "
+                f"subscription {data.subscription_id}: {e}",
+                exc_info=True,
+            )
+            # Update execution with error
+            from app.schemas.subscription import BackgroundExecutionStatus
+            from app.services.subscription import subscription_service
+
+            with get_db_session() as error_db:
+                subscription_service.update_execution_status(
+                    error_db,
+                    execution_id=data.execution_id,
+                    status=BackgroundExecutionStatus.FAILED,
+                    error_message=f"AI response failed: {e}",
+                )
+
+
 async def _trigger_chat_shell_response(
     ctx: SubscriptionExecutionContext,
     task: Any,
     assistant_subtask: Any,
     user_subtask: Any,
-) -> None:
+    wait_for_completion: bool = True,
+) -> Optional[asyncio.Task]:
     """
     Trigger AI response for Chat Shell type subscriptions.
 
     Uses circuit breaker to protect against AI service failures.
+
+    Args:
+        ctx: Subscription execution context
+        task: Task resource
+        assistant_subtask: Assistant subtask for AI response
+        user_subtask: User subtask
+        wait_for_completion: If True, waits for AI response to complete (blocking).
+                            If False, returns immediately with a background task.
+                            Default is True for backward compatibility.
+
+    Returns:
+        The asyncio.Task if wait_for_completion=False, None otherwise.
     """
     from app.core.circuit_breaker import (
         CircuitBreakerOpenError,
@@ -623,14 +902,51 @@ async def _trigger_chat_shell_response(
     logger.info(
         f"[_trigger_chat_shell_response] subscription_id={ctx.subscription.id}, "
         f"task_id={task.id}, user_subtask_id={user_subtask.id if user_subtask else None}, "
-        f"knowledgeBaseRefs={kb_refs}"
+        f"knowledgeBaseRefs={kb_refs}, wait_for_completion={wait_for_completion}"
     )
 
     payload = SubscriptionTriggerPayload(
         force_override_bot_model=override_model_name,
     )
     task_room = get_task_room(task.id)
-    subscription_emitter = SubscriptionEventEmitter(execution_id=ctx.execution.id)
+
+    # Extract team display name
+    team_display_name = ctx.team.name
+    try:
+        from app.schemas.kind import Team
+
+        team_crd = Team.model_validate(ctx.team.json)
+        if team_crd.spec and team_crd.spec.displayName:
+            team_display_name = team_crd.spec.displayName
+    except Exception:
+        pass
+
+    # Get base URL for detail link
+    from app.core.config import settings
+
+    base_url = getattr(settings, "TASK_SHARE_BASE_URL", None)
+
+    # Create event handler for notifications
+    from app.services.subscription.event_handler import (
+        create_subscription_event_handler,
+    )
+
+    event_handler = create_subscription_event_handler(
+        subscription_id=ctx.subscription.id,
+        execution_id=ctx.execution.id,
+        subscription_display_name=ctx.subscription_crd.spec.displayName
+        or ctx.subscription.name,
+        team_display_name=team_display_name,
+        trigger_reason=ctx.execution.trigger_reason,
+        task_id=task.id,
+        base_url=base_url,
+    )
+
+    # Create emitter with callback
+    subscription_emitter = SubscriptionEventEmitter(
+        execution_id=ctx.execution.id,
+        on_status_changed=event_handler.on_execution_completed,
+    )
 
     # Determine history_limit based on preserve_history setting
     # If preserve_history is enabled, use the configured history_message_count
@@ -660,25 +976,58 @@ async def _trigger_chat_shell_response(
             is_subscription=True,  # Enable SilentExitTool in chat_shell
         )
 
-    try:
-        await _call_ai_service()
-    except CircuitBreakerOpenError as e:
-        logger.error(
-            f"[subscription_tasks] Circuit breaker open for subscription {ctx.subscription.id}: {e}"
-        )
-        # Update execution with circuit breaker error
-        from app.db.session import get_db_session
-        from app.schemas.subscription import BackgroundExecutionStatus
-        from app.services.subscription import subscription_service
-
-        with get_db_session() as db:
-            subscription_service.update_execution_status(
-                db,
-                execution_id=ctx.execution.id,
-                status=BackgroundExecutionStatus.FAILED,
-                error_message=f"AI service temporarily unavailable: {e}",
+    async def _call_ai_service_with_error_handling():
+        """Wrapper to handle errors and update execution status."""
+        try:
+            await _call_ai_service()
+        except CircuitBreakerOpenError as e:
+            logger.error(
+                f"[subscription_tasks] Circuit breaker open for subscription {ctx.subscription.id}: {e}"
             )
-        raise
+            # Update execution with circuit breaker error
+            from app.db.session import get_db_session
+            from app.schemas.subscription import BackgroundExecutionStatus
+            from app.services.subscription import subscription_service
+
+            with get_db_session() as db:
+                subscription_service.update_execution_status(
+                    db,
+                    execution_id=ctx.execution.id,
+                    status=BackgroundExecutionStatus.FAILED,
+                    error_message=f"AI service temporarily unavailable: {e}",
+                )
+        except Exception as e:
+            logger.error(
+                f"[subscription_tasks] Error in AI service call for subscription {ctx.subscription.id}: {e}",
+                exc_info=True,
+            )
+            # Update execution with error
+            from app.db.session import get_db_session
+            from app.schemas.subscription import BackgroundExecutionStatus
+            from app.services.subscription import subscription_service
+
+            with get_db_session() as db:
+                subscription_service.update_execution_status(
+                    db,
+                    execution_id=ctx.execution.id,
+                    status=BackgroundExecutionStatus.FAILED,
+                    error_message=f"AI response failed: {e}",
+                )
+
+    if wait_for_completion:
+        # Blocking mode: wait for AI response to complete
+        try:
+            await _call_ai_service_with_error_handling()
+        except CircuitBreakerOpenError:
+            raise
+        return None
+    else:
+        # Non-blocking mode: start background task and return immediately
+        logger.info(
+            f"[subscription_tasks] Starting AI response in background task for subscription {ctx.subscription.id}"
+        )
+        background_task = asyncio.create_task(_call_ai_service_with_error_handling())
+        return background_task
 
 
 def _handle_execution_failure(
@@ -1291,25 +1640,57 @@ def execute_subscription_task(
 
                 if supports_direct_chat:
                     # Chat Shell type - trigger AI response
+                    # NOTE: We run AI response in a daemon thread to avoid blocking Celery worker.
+                    # SubscriptionEventEmitter will update execution status when AI completes.
                     if not task_result.assistant_subtask:
                         return _handle_execution_failure(
                             db, execution_id, "No assistant subtask found", trigger_type
                         )
 
-                    logger.debug(
-                        f"[subscription_tasks] Chat Shell type, triggering AI response for task {task_id}"
+                    logger.info(
+                        f"[subscription_tasks] Chat Shell type, triggering AI response for task {task_id} "
+                        f"(daemon thread, execution_id={execution_id})"
                     )
-                    loop.run_until_complete(
-                        _trigger_chat_shell_response(
-                            ctx,
-                            task,
-                            task_result.assistant_subtask,
-                            task_result.user_subtask,
-                        )
+
+                    # Extract all necessary data from ORM objects BEFORE creating thread
+                    # to avoid DetachedInstanceError when session closes
+                    thread_safe_data = _extract_thread_safe_data(
+                        ctx=ctx,
+                        task=task,
+                        assistant_subtask=task_result.assistant_subtask,
+                        user_subtask=task_result.user_subtask,
                     )
-                    logger.debug(
-                        f"[subscription_tasks] AI response completed for task {task_id}"
+
+                    # Run AI response in a daemon thread to avoid blocking Celery worker
+                    # This allows the worker to process other tasks while AI responds
+                    import threading
+
+                    def _run_ai_response_in_thread():
+                        """Run AI response in a separate thread with its own event loop and DB session."""
+                        thread_loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(thread_loop)
+                        try:
+                            thread_loop.run_until_complete(
+                                _trigger_chat_shell_response_in_thread(thread_safe_data)
+                            )
+                        finally:
+                            thread_loop.close()
+
+                    ai_thread = threading.Thread(
+                        target=_run_ai_response_in_thread,
+                        daemon=True,  # Daemon thread won't prevent process exit
+                        name=f"subscription-ai-{execution_id}",
                     )
+                    ai_thread.start()
+
+                    logger.info(
+                        f"[subscription_tasks] AI response started in daemon thread for task {task_id}, "
+                        f"Celery worker returning immediately. Status will be updated by SubscriptionEventEmitter."
+                    )
+
+                    # Note: We do NOT update status to COMPLETED here.
+                    # SubscriptionEventEmitter.emit_chat_done() will update status
+                    # when AI response actually completes in the daemon thread.
                 else:
                     # Executor type - subtask picked up by executor_manager
                     # Note: schedule_dispatch is already called inside create_task_or_append
@@ -1327,47 +1708,6 @@ def execute_subscription_task(
                         logger.warning(
                             f"[subscription_tasks] Push mode dispatch failed for task {task_id}: {e}",
                             exc_info=True,
-                        )
-
-                # Update execution status to COMPLETED for Chat Shell type
-                # For Executor type, status will be updated by executor when done
-                if supports_direct_chat:
-                    from app.schemas.subscription import BackgroundExecutionStatus
-                    from app.services.subscription import subscription_service
-
-                    result_summary = f"Task {task_id} created and AI response triggered"
-                    subscription_service.update_execution_status(
-                        db,
-                        execution_id=execution_id,
-                        status=BackgroundExecutionStatus.COMPLETED,
-                        result_summary=result_summary,
-                        skip_notifications=True,  # We handle notifications manually below
-                    )
-
-                    # Dispatch notifications to followers
-                    try:
-                        from app.services.subscription.notification_dispatcher import (
-                            subscription_notification_dispatcher,
-                        )
-
-                        subscription_display_name = (
-                            ctx.subscription_crd.spec.displayName
-                            or ctx.subscription.name
-                        )
-                        loop.run_until_complete(
-                            subscription_notification_dispatcher.dispatch_execution_notifications(
-                                db,
-                                subscription_id=subscription_id,
-                                execution_id=execution_id,
-                                subscription_display_name=subscription_display_name,
-                                result_summary=result_summary,
-                                status=BackgroundExecutionStatus.COMPLETED.value,
-                            )
-                        )
-                    except Exception as notify_error:
-                        logger.warning(
-                            f"[subscription_tasks] Failed to dispatch notifications for "
-                            f"subscription {subscription_id}: {notify_error}"
                         )
 
             finally:
@@ -1682,61 +2022,50 @@ def execute_subscription_task_sync(
                     f"[subscription_tasks] Created task {task_id} for subscription {subscription_id} execution {execution_id} (sync)"
                 )
 
-                # For Chat Shell type: trigger AI response
+                # For Chat Shell type: trigger AI response in daemon thread
                 if supports_direct_chat:
                     logger.info(
-                        f"[subscription_tasks] Triggering Chat Shell response for task {task_id} (sync)"
-                    )
-                    loop.run_until_complete(
-                        _trigger_chat_shell_response(
-                            ctx,
-                            task,
-                            task_result.assistant_subtask,
-                            task_result.user_subtask,
-                        )
+                        f"[subscription_tasks] Triggering Chat Shell response for task {task_id} (sync, daemon thread)"
                     )
 
-                # Update execution status
-                from app.services.subscription import subscription_service
-
-                if supports_direct_chat:
-                    # For Chat Shell, mark as completed after AI response is triggered
-                    result_summary = f"Task {task_id} created and AI response triggered"
-                    subscription_service.update_execution_status(
-                        db,
-                        execution_id=execution_id,
-                        status="COMPLETED",
-                        result_summary=result_summary,
-                        skip_notifications=True,  # We handle notifications manually below
+                    # Extract thread-safe data before session closes
+                    thread_safe_data = _extract_thread_safe_data(
+                        ctx=ctx,
+                        task=task,
+                        assistant_subtask=task_result.assistant_subtask,
+                        user_subtask=task_result.user_subtask,
                     )
 
-                    # Dispatch notifications to followers
-                    try:
-                        from app.services.subscription.notification_dispatcher import (
-                            subscription_notification_dispatcher,
-                        )
+                    # Run AI response in daemon thread (same as Celery version)
+                    import threading
 
-                        subscription_display_name = (
-                            ctx.subscription_crd.spec.displayName
-                            or ctx.subscription.name
-                        )
-                        loop.run_until_complete(
-                            subscription_notification_dispatcher.dispatch_execution_notifications(
-                                db,
-                                subscription_id=subscription_id,
-                                execution_id=execution_id,
-                                subscription_display_name=subscription_display_name,
-                                result_summary=result_summary,
-                                status="COMPLETED",
+                    def _run_ai_response_in_thread():
+                        """Run AI response in a separate thread with its own event loop."""
+                        thread_loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(thread_loop)
+                        try:
+                            thread_loop.run_until_complete(
+                                _trigger_chat_shell_response_in_thread(thread_safe_data)
                             )
-                        )
-                    except Exception as notify_error:
-                        logger.warning(
-                            f"[subscription_tasks] Failed to dispatch notifications for "
-                            f"subscription {subscription_id} (sync): {notify_error}"
-                        )
+                        finally:
+                            thread_loop.close()
+
+                    ai_thread = threading.Thread(
+                        target=_run_ai_response_in_thread,
+                        daemon=True,
+                        name=f"subscription-ai-sync-{execution_id}",
+                    )
+                    ai_thread.start()
+
+                    logger.info(
+                        f"[subscription_tasks] AI response started in daemon thread for task {task_id} (sync)"
+                    )
+
+                    # Status will be updated by SubscriptionEventEmitter when AI completes
                 else:
                     # For Executor type, keep as RUNNING until executor completes
+                    from app.services.subscription import subscription_service
+
                     subscription_service.update_execution_status(
                         db,
                         execution_id=execution_id,

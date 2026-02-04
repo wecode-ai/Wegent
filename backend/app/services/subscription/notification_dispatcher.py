@@ -61,6 +61,10 @@ class SubscriptionNotificationDispatcher:
         Returns:
             Dict with notification dispatch results
         """
+        logger.info(
+            f"[SubscriptionNotificationDispatcher] Dispatching notifications for "
+            f"subscription {subscription_id} execution {execution_id} result_summary: {result_summary}"
+        )
         # Get all accepted followers with their settings
         followers_with_settings = (
             subscription_notification_service.get_followers_with_settings(
@@ -336,25 +340,32 @@ class SubscriptionNotificationDispatcher:
             Formatted notification message
         """
         status_emoji = "✅" if status == "COMPLETED" else "❌"
-        status_text = "Success" if status == "COMPLETED" else "Failed"
+        status_text = "执行成功" if status == "COMPLETED" else "执行失败"
 
-        # Truncate summary to 200 characters
+        # Truncate summary to 300 characters for better readability
         truncated_summary = (
-            result_summary[:200] + "..."
-            if len(result_summary) > 200
+            result_summary[:300] + "..."
+            if len(result_summary) > 300
             else result_summary
         )
 
-        message = f"""📬 Subscription Update
-
-**Subscription**: {subscription_display_name}
-**Status**: {status_emoji} {status_text}
-
-**Summary**:
-{truncated_summary}"""
+        # For DingTalk markdown, use explicit line breaks with double newlines
+        message_lines = [
+            "📬 订阅任务通知",
+            "",
+            f"**订阅**: {subscription_display_name}",
+            "",
+            f"**状态**: {status_emoji} {status_text}",
+            "",
+            "**执行结果**:",
+            f"\n\n{truncated_summary}",
+        ]
 
         if detail_url:
-            message += f"\n\n[View Details]({detail_url})"
+            message_lines.extend(["", f"[查看详情]({detail_url})"])
+
+        # Join with explicit newlines for better DingTalk rendering
+        message = "\n".join(message_lines)
 
         return message
 

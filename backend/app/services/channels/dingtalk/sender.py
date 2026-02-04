@@ -13,6 +13,7 @@ API Reference:
 - Single chat batch send: POST /v1.0/robot/oToMessages/batchSend
 """
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -150,7 +151,9 @@ class DingTalkRobotSender:
                 "robotCode": robot_code or self.client_id,
                 "userIds": user_ids,
                 "msgKey": msg_key,
-                "msgParam": str(msg_param).replace("'", '"'),  # JSON string
+                "msgParam": json.dumps(
+                    msg_param, ensure_ascii=False
+                ),  # Properly escape JSON
             }
 
             logger.info(
