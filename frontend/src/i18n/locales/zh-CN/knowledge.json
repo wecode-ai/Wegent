@@ -292,7 +292,9 @@
       "userName": "用户名",
       "enterUserName": "请输入用户名",
       "invalidUserName": "请输入有效的用户名",
-      "invalidShareLink": "分享链接无效或已过期"
+      "invalidShareLink": "分享链接无效或已过期",
+      "noLinkToCopy": "没有可复制的链接",
+      "copyFailedManual": "链接已选中，请按 Ctrl+C 复制"
     },
     "advancedSettings": {
       "title": "高级设置",
