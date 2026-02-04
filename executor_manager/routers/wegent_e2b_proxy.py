@@ -27,6 +27,8 @@ from fastapi.responses import StreamingResponse
 from executor_manager.common.config import ROUTE_PREFIX, get_config
 from executor_manager.services.sandbox import get_sandbox_manager
 from shared.logger import setup_logger
+from shared.telemetry.config import get_otel_config
+from shared.telemetry.context import get_request_id, inject_trace_context_to_headers
 
 logger = setup_logger(__name__)
 
@@ -172,6 +174,16 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
             for key, value in request.headers.items()
             if key.lower() not in excluded_headers
         }
+
+        # Inject X-Request-ID for log correlation
+        request_id = get_request_id()
+        if request_id:
+            headers["X-Request-ID"] = request_id
+
+        # Inject OpenTelemetry trace context if enabled
+        otel_config = get_otel_config()
+        if otel_config.enabled:
+            headers = inject_trace_context_to_headers(headers)
 
         # Make request to container
         async with httpx.AsyncClient(timeout=60.0) as client:
