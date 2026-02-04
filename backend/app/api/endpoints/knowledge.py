@@ -965,6 +965,7 @@ def _index_document_background(
                     splitter_config=splitter_config,
                     document_id=document_id,
                     trace_context=current_trace_ctx,
+                    user_name=user_name,
                 )
             )
             logger.info(f"[RAG Indexing] index_document returned: result={result}")
