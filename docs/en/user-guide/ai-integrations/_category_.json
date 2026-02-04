@@ -1,0 +1,8 @@
+{
+  "label": "AI Integrations",
+  "position": 5,
+  "link": {
+    "type": "generated-index",
+    "description": "Learn how to integrate Wegent with IM channels and external services."
+  }
+}

@@ -4,7 +4,16 @@
 
 'use client'
 
-import { FileText, Pencil, Trash2, ArrowRight, Clock, BookOpen, FolderOpen } from 'lucide-react'
+import {
+  FileText,
+  Pencil,
+  Trash2,
+  ArrowRight,
+  Clock,
+  BookOpen,
+  FolderOpen,
+  Share2,
+} from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { KnowledgeBase } from '@/types/knowledge'
@@ -14,8 +23,10 @@ interface KnowledgeBaseCardProps {
   onClick: () => void
   onEdit?: () => void
   onDelete?: () => void
+  onShare?: () => void
   canEdit?: boolean
   canDelete?: boolean
+  canShare?: boolean
 }
 
 export function KnowledgeBaseCard({
@@ -23,8 +34,10 @@ export function KnowledgeBaseCard({
   onClick,
   onEdit,
   onDelete,
+  onShare,
   canEdit = true,
   canDelete = true,
+  canShare = false,
 }: KnowledgeBaseCardProps) {
   const { t } = useTranslation()
 
@@ -102,6 +115,18 @@ export function KnowledgeBaseCard({
         </div>
         {/* Action icons */}
         <div className="flex items-center gap-1">
+          {canShare && onShare && (
+            <button
+              className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"
+              onClick={e => {
+                e.stopPropagation()
+                onShare()
+              }}
+              title={t('knowledge:document.permission.share')}
+            >
+              <Share2 className="w-4 h-4" />
+            </button>
+          )}
           {canEdit && onEdit && (
             <button
               className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors opacity-0 group-hover:opacity-100"

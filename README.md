@@ -17,7 +17,7 @@ English | [简体中文](README_zh.md)
 
 
 
-[Quick Start](#-quick-start) · [Documentation](docs/en/README.md) · [Development Guide](docs/en/guides/developer/setup.md)
+[Quick Start](#-quick-start) · [Documentation](docs/en/README.md) · [Development Guide](docs/en/developer-guide/setup.md)
 
 </div>
 

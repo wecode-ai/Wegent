@@ -160,3 +160,81 @@ def get_team_first_bot_shell_type(db: Session, team: Kind) -> str:
         return get_shell_type(db, bot, team.user_id)
 
     return ""
+
+
+def is_deep_research_protocol(db: Session, team: Kind) -> bool:
+    """
+    Check if the team's first bot uses gemini-deep-research protocol.
+
+    This protocol does not support follow-up questions (multi-turn conversation).
+    Each task can only have one user message.
+
+    Args:
+        db: Database session
+        team: Team Kind object
+
+    Returns:
+        bool: True if the team uses gemini-deep-research protocol
+    """
+    from app.schemas.kind import Model
+
+    team_crd = Team.model_validate(team.json)
+
+    if not team_crd.spec.members:
+        return False
+
+    first_member = team_crd.spec.members[0]
+
+    # Get first bot
+    bot = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == team.user_id,
+            Kind.kind == "Bot",
+            Kind.name == first_member.botRef.name,
+            Kind.namespace == first_member.botRef.namespace,
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if not bot:
+        return False
+
+    bot_crd = Bot.model_validate(bot.json)
+    if not bot_crd.spec or not bot_crd.spec.modelRef:
+        return False
+
+    # Get model from bot's modelRef
+    model = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == team.user_id,
+            Kind.kind == "Model",
+            Kind.name == bot_crd.spec.modelRef.name,
+            Kind.namespace == bot_crd.spec.modelRef.namespace,
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    # If not found in user's models, try public models (user_id = 0)
+    if not model:
+        model = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.name == bot_crd.spec.modelRef.name,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+    if not model or not model.json:
+        return False
+
+    model_crd = Model.model_validate(model.json)
+    protocol = model_crd.spec.protocol if model_crd.spec else None
+
+    return protocol == "gemini-deep-research"

@@ -26,6 +26,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { teamService } from '@/features/tasks/service/teamService'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
+import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
 import { DocumentPanel, KnowledgeBaseSummaryCard } from '@/features/knowledge/document/components'
 import { BoundKnowledgeBaseSummary } from '@/features/tasks/components/group-chat'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
@@ -72,11 +73,23 @@ export function KnowledgeBaseChatPageDesktop({
     autoLoad: !!knowledgeBaseId,
   })
 
+  // Fetch user permission for this knowledge base
+  const { myPermission, fetchMyPermission } = useKnowledgePermissions({
+    kbId: knowledgeBaseId || 0,
+  })
+
+  // Fetch my permission when knowledge base is loaded
+  useEffect(() => {
+    if (knowledgeBase && knowledgeBaseId) {
+      fetchMyPermission()
+    }
+  }, [knowledgeBase, knowledgeBaseId, fetchMyPermission])
+
   // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams()
 
   // User state
-  const { user } = useUser()
+  const { user, isLoading: isUserLoading } = useUser()
 
   // Task context
   const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
@@ -208,8 +221,18 @@ export function KnowledgeBaseChatPageDesktop({
     return groupRole === 'Owner' || groupRole === 'Maintainer' || groupRole === 'Developer'
   }, [knowledgeBase, user, groupRoleMap])
 
-  // Loading state
-  if (kbLoading) {
+  // Check if user can manage permissions (is creator or has manage permission)
+  const canManagePermissions = useMemo(() => {
+    if (!knowledgeBase || !user) return false
+    // Creator can always manage permissions
+    if (knowledgeBase.user_id === user.id) return true
+    // User with manage permission can manage
+    if (myPermission?.permission_level === 'manage') return true
+    return false
+  }, [knowledgeBase, user, myPermission])
+
+  // Loading state - wait for both knowledge base and user data
+  if (kbLoading || isUserLoading) {
     return (
       <div className="flex smart-h-screen bg-base text-text-primary items-center justify-center">
         <Spinner />
@@ -318,6 +341,7 @@ export function KnowledgeBaseChatPageDesktop({
           <DocumentPanel
             knowledgeBase={knowledgeBase}
             canManage={canManageKb}
+            canManagePermissions={canManagePermissions}
             onDocumentSelectionChange={setSelectedDocumentIds}
             onNewChat={handleNewTask}
             onTypeConverted={() => {

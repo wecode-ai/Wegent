@@ -92,6 +92,15 @@ export const STEP_TYPE_CONFIGS: Record<string, StepTypeConfig> = {
     iconClass: 'text-cyan-400',
     titleClass: 'text-cyan-400',
   },
+  text: {
+    icon: FileText,
+    color: 'teal',
+    bgClass: 'bg-teal-500/5',
+    borderClass: 'border-teal-500/20',
+    hoverBorderClass: 'hover:border-teal-500/40',
+    iconClass: 'text-teal-400',
+    titleClass: 'text-teal-400',
+  },
   default: {
     icon: MessageSquare,
     color: 'gray',

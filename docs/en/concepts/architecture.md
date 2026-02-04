@@ -1,3 +1,7 @@
+---
+sidebar_position: 2
+---
+
 # 🏗️ System Architecture
 
 This document provides a detailed overview of Wegent's system architecture, component design, and technology stack.
