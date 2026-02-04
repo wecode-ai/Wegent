@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const path = require('path')
+
 // Check if running with Turbopack (development mode with --turbopack flag)
 const isTurbopack = process.env.TURBOPACK === '1'
 
@@ -12,6 +15,21 @@ const nextConfig = {
   // Allow cross-origin requests in development mode
   // This prevents "Cross origin request detected" warning
   allowedDevOrigins: ['localhost:3000'],
+  // Transpile node_modules that ship modern JS syntax for iOS 16 Safari compatibility
+  transpilePackages: [
+    'mermaid',
+    '@mermaid-js/parser',
+    'framer-motion',
+    '@codemirror/view',
+    '@codemirror/state',
+    '@codemirror/commands',
+    '@codemirror/lang-markdown',
+    '@codemirror/language',
+    '@codemirror/search',
+    '@codemirror/theme-one-dark',
+    '@replit/codemirror-vim',
+    'katex',
+  ],
   // Webpack configuration for production builds
   // Note: In development mode with Turbopack, this is not used
   // The warning "Webpack is configured while Turbopack is not" can be safely ignored
@@ -20,6 +38,14 @@ const nextConfig = {
     ? {}
     : {
         webpack: (config, { isServer, _dev }) => {
+          // Force replace remark-gfm with our iOS 16 compatible version
+          // This is needed because @uiw/react-md-editor depends on remark-gfm
+          // which uses lookbehind regex not supported by iOS 16
+          config.resolve.alias = {
+            ...config.resolve.alias,
+            'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
+          }
+
           // Handle chunk loading issues
           config.optimization = {
             ...config.optimization,
