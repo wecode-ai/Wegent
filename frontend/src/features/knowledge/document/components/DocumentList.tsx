@@ -677,9 +677,9 @@ export function DocumentList({
             </div>
           ) : (
             /* Normal mode: Table layout */
-            <div className="border border-border rounded-lg overflow-hidden">
+            <div className="border border-border rounded-lg overflow-x-auto">
               {/* Table header */}
-              <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium">
+              <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium min-w-[800px]">
                 {/* Checkbox for select all */}
                 {canManage && (
                   <div className="flex-shrink-0">

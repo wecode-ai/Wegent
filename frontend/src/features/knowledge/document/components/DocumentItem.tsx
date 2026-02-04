@@ -302,7 +302,7 @@ export function DocumentItem({
   // Normal mode: Table row layout
   return (
     <div
-      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group ${showBorder ? 'border-b border-border' : ''} ${onViewDetail ? 'cursor-pointer' : ''}`}
+      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group min-w-[800px] ${showBorder ? 'border-b border-border' : ''} ${onViewDetail ? 'cursor-pointer' : ''}`}
       onClick={handleRowClick}
     >
       {/* Checkbox for batch selection */}
