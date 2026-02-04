@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Link, Check, Copy } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -25,31 +25,40 @@ export function ShareLinkDialog({ open, onOpenChange, kbId, kbName }: ShareLinkD
   const [shareLink, setShareLink] = useState<string>('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [copyError, setCopyError] = useState<string | null>(null)
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Check if we're in a secure context where clipboard API works
+  const isSecureContext = useCallback(() => {
+    return (
+      window.isSecureContext ||
+      window.location.protocol === 'https:' ||
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1'
+    )
+  }, [])
 
   // Helper function to copy text to clipboard
-  const copyToClipboard = async (text: string) => {
-    try {
-      // Use modern Clipboard API if available, fallback to execCommand
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        await navigator.clipboard.writeText(text)
-      } else {
-        // Fallback for browsers/contexts where Clipboard API is not available
-        const textArea = document.createElement('textarea')
-        textArea.value = text
-        textArea.style.position = 'fixed'
-        textArea.style.left = '-9999px'
-        document.body.appendChild(textArea)
-        textArea.select()
-        document.execCommand('copy')
-        document.body.removeChild(textArea)
+  const copyToClipboard = useCallback(
+    async (text: string): Promise<{ success: boolean; needsManualCopy: boolean }> => {
+      // In secure context, use Clipboard API
+      if (isSecureContext() && navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+          await navigator.clipboard.writeText(text)
+          return { success: true, needsManualCopy: false }
+        } catch (err) {
+          console.warn('Clipboard API failed:', err)
+        }
       }
-      return true
-    } catch (err) {
-      console.error('Failed to copy:', err)
-      return false
-    }
-  }
+
+      // In non-secure context (HTTP), we cannot reliably copy to clipboard
+      // The execCommand('copy') may return true but not actually copy
+      // So we return needsManualCopy: true to indicate user should copy manually
+      return { success: false, needsManualCopy: true }
+    },
+    [isSecureContext]
+  )
 
   // Fetch or create share link when dialog opens
   useEffect(() => {
@@ -57,6 +66,8 @@ export function ShareLinkDialog({ open, onOpenChange, kbId, kbName }: ShareLinkD
       const fetchShareLink = async () => {
         setIsLoading(true)
         setError(null)
+        setCopyError(null)
+        setCopied(false) // Reset copied state when dialog opens
         try {
           // First try to get existing share link
           let link = await knowledgePermissionApi.getShareLink(kbId)
@@ -71,15 +82,6 @@ export function ShareLinkDialog({ open, onOpenChange, kbId, kbName }: ShareLinkD
 
           if (link) {
             setShareLink(link.share_url)
-            // Auto-copy link
-            const success = await copyToClipboard(link.share_url)
-            if (success) {
-              setCopied(true)
-              if (timeoutRef.current) {
-                clearTimeout(timeoutRef.current)
-              }
-              timeoutRef.current = setTimeout(() => setCopied(false), 2000)
-            }
           }
         } catch (err) {
           console.error('Failed to get share link:', err)
@@ -101,22 +103,43 @@ export function ShareLinkDialog({ open, onOpenChange, kbId, kbName }: ShareLinkD
     }
   }, [])
 
-  const handleCopy = async () => {
-    if (!shareLink) return
-    const success = await copyToClipboard(shareLink)
-    if (success) {
+  const handleCopy = useCallback(async () => {
+    setCopyError(null)
+    if (!shareLink) {
+      setCopyError(t('document.permission.noLinkToCopy') || 'No link to copy')
+      return
+    }
+
+    const result = await copyToClipboard(shareLink)
+    if (result.success) {
       setCopied(true)
       // Clear any existing timeout
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current)
       }
       timeoutRef.current = setTimeout(() => setCopied(false), 2000)
+    } else if (result.needsManualCopy) {
+      // In non-secure context, select the input so user can manually copy with Ctrl+C
+      setCopyError(
+        t('document.permission.copyFailedManual') || 'Please press Ctrl+C to copy the selected link'
+      )
+      if (inputRef.current) {
+        inputRef.current.focus()
+        inputRef.current.select()
+      }
     }
-  }
+  }, [shareLink, copyToClipboard, t])
+
+  // Select all text when clicking on the input
+  const handleInputClick = useCallback(() => {
+    if (inputRef.current) {
+      inputRef.current.select()
+    }
+  }, [])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" aria-describedby="share-link-description">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Link className="w-5 h-5" />
@@ -124,7 +147,7 @@ export function ShareLinkDialog({ open, onOpenChange, kbId, kbName }: ShareLinkD
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <p className="text-sm text-text-secondary">
+          <p id="share-link-description" className="text-sm text-text-secondary">
             {t('document.permission.shareLinkDescription', { name: kbName })}
           </p>
           {isLoading ? (
@@ -136,14 +159,21 @@ export function ShareLinkDialog({ open, onOpenChange, kbId, kbName }: ShareLinkD
           ) : (
             <>
               <div className="flex items-center gap-2">
-                <div className="flex-1 p-3 bg-muted rounded-lg text-sm break-all font-mono">
-                  {shareLink}
-                </div>
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={shareLink}
+                  readOnly
+                  onClick={handleInputClick}
+                  className="flex-1 p-3 bg-muted rounded-lg text-sm font-mono border-0 outline-none focus:ring-2 focus:ring-primary"
+                />
                 <Button
+                  type="button"
                   variant="outline"
                   size="icon"
                   onClick={handleCopy}
                   className="flex-shrink-0"
+                  title={t('document.permission.copyLink')}
                 >
                   {copied ? (
                     <Check className="w-4 h-4 text-success" />
@@ -155,6 +185,7 @@ export function ShareLinkDialog({ open, onOpenChange, kbId, kbName }: ShareLinkD
               {copied && (
                 <p className="text-sm text-success">{t('document.permission.linkCopied')}</p>
               )}
+              {copyError && <p className="text-sm text-warning">{copyError}</p>}
             </>
           )}
         </div>

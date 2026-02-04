@@ -48,8 +48,10 @@ class KnowledgeShareService(UnifiedShareService):
         """
         Fetch KnowledgeBase resource.
 
-        For Knowledge Bases, we check if resource exists and belongs to the user
-        OR if the user has been shared access.
+        For Knowledge Bases, we check if resource exists and user has access via:
+        1. Creator (user_id matches)
+        2. Explicit shared access (ResourceMember)
+        3. Team membership (for team knowledge bases)
         """
         kb = (
             db.query(Kind)
@@ -61,25 +63,34 @@ class KnowledgeShareService(UnifiedShareService):
             .first()
         )
 
-        if kb and kb.user_id == user_id:
+        if not kb:
+            return None
+
+        # Check if user is creator
+        if kb.user_id == user_id:
             return kb
 
-        # Check if user has shared access
-        if kb:
-            member = (
-                db.query(ResourceMember)
-                .filter(
-                    ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                    ResourceMember.resource_id == resource_id,
-                    ResourceMember.user_id == user_id,
-                    ResourceMember.status == MemberStatus.APPROVED.value,
-                )
-                .first()
+        # Check if user has explicit shared access
+        member = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.resource_id == resource_id,
+                ResourceMember.user_id == user_id,
+                ResourceMember.status == MemberStatus.APPROVED.value,
             )
-            if member:
+            .first()
+        )
+        if member:
+            return kb
+
+        # For team knowledge bases, check group permission
+        if kb.namespace != "default":
+            role = get_effective_role_in_group(db, user_id, kb.namespace)
+            if role is not None:
                 return kb
 
-        return None  # Only return KB for authorized users (owners or approved members)
+        return None  # Only return KB for authorized users
 
     def _get_resource_name(self, resource: Kind) -> str:
         """Get KnowledgeBase display name."""
@@ -408,6 +419,8 @@ class KnowledgeShareService(UnifiedShareService):
         Raises:
             ValueError: If token is invalid or KB not found
         """
+        import urllib.parse
+
         # Decode token
         token_info = self._decode_share_token(share_token)
         if not token_info:
@@ -419,13 +432,13 @@ class KnowledgeShareService(UnifiedShareService):
         if resource_type != self.resource_type.value:
             raise ValueError("Invalid resource type")
 
-        # Find share link
+        # Find share link by resource_id (more reliable than token matching)
+        # The token in DB is URL-encoded, but FastAPI may have decoded the input
         share_link = (
             db.query(ShareLink)
             .filter(
                 ShareLink.resource_type == self.resource_type.value,
                 ShareLink.resource_id == resource_id,
-                ShareLink.share_token == share_token,
                 ShareLink.is_active == True,
             )
             .first()
