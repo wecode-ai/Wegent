@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # IM Channel Integration Guide
 
-IM Channel Integration allows you to connect Wegent agents to instant messaging platforms like DingTalk, enabling users to interact with AI agents directly within their familiar chat tools.
+IM Channel Integration allows you to connect Wegent agents to instant messaging platforms, enabling users to interact with AI agents directly within their familiar chat tools.
 
 ---
 
@@ -12,10 +12,10 @@ IM Channel Integration allows you to connect Wegent agents to instant messaging 
 
 - [Overview](#-overview)
 - [Architecture](#-architecture)
-- [DingTalk Integration Setup](#-dingtalk-integration-setup)
 - [Using IM Channels](#-using-im-channels)
 - [Management Features](#-management-features)
 - [User Mapping Mechanism](#-user-mapping-mechanism)
+- [Platform Integration Guides](#-platform-integration-guides)
 - [Troubleshooting](#-troubleshooting)
 - [Related Resources](#-related-resources)
 
@@ -54,7 +54,7 @@ The following diagram illustrates how messages flow through the IM integration s
 
 ```mermaid
 sequenceDiagram
-    participant User as User (DingTalk)
+    participant User as User (IM Platform)
     participant IM as IM Platform
     participant Backend as Wegent Backend
     participant Agent as AI Agent
@@ -122,93 +122,11 @@ graph TB
 
 ---
 
-## 🔧 DingTalk Integration Setup
-
-### Prerequisites
-
-Before setting up DingTalk integration, ensure you have:
-
-- [ ] DingTalk Enterprise account with admin access
-- [ ] Access to [DingTalk Open Platform](https://open.dingtalk.com)
-- [ ] Wegent instance with admin privileges
-- [ ] At least one configured Agent (Team) in Wegent
-
-### Step 1: Create DingTalk Application
-
-1. Log in to [DingTalk Open Platform](https://open.dingtalk.com)
-2. Navigate to **Application Development** → **Enterprise Internal Application**
-3. Click **Create Application**
-4. Fill in application details:
-   - **Application Name**: Your bot name (e.g., "Wegent AI Assistant")
-   - **Application Description**: Brief description of the bot's purpose
-   - **Application Icon**: Upload an appropriate icon
-
-### Step 2: Configure Application Permissions
-
-Enable the following permissions for your application:
-
-**Robot Permissions:**
-- `qyapi_robot_sendmsg` - Send robot messages
-- `qyapi_chat_manage` - Manage group chats
-
-**User Information Permissions:**
-- `Contact.User.Read` - Read user information
-- `Contact.User.mobile` - Access user mobile (optional)
-
-### Step 3: Get Application Credentials
-
-1. In your application settings, navigate to **Credentials and Basic Info**
-2. Copy the following values:
-   - **Client ID** (AppKey)
-   - **Client Secret** (AppSecret)
-
-> ⚠️ **Security Note**: Keep your Client Secret secure. Never share it or commit it to version control.
-
-### Step 4: Enable Message Stream Mode
-
-1. In application settings, go to **Robot Configuration**
-2. Enable **Message Receiving Mode**: Stream Mode
-3. This allows Wegent to receive messages via WebSocket without configuring callback URLs
-
-### Step 5: Configure IM Channel in Wegent
-
-1. Log in to Wegent as an administrator
-2. Navigate to **Admin Panel** → **IM Channels**
-3. Click **Add Channel**
-4. Fill in the configuration:
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| **Channel Name** | Display name for this channel | "DingTalk Bot" |
-| **Channel Type** | Select platform | DingTalk |
-| **Client ID** | From Step 3 | `dingxxxxxxxx` |
-| **Client Secret** | From Step 3 | `xxxxxxxxxxxxxxxx` |
-| **Default Agent** | Agent to handle messages | Select from list |
-| **Default Model** | Override model (optional) | Leave empty to use agent's default |
-| **Enable AI Card** | Use streaming AI Card | ✅ Recommended |
-
-5. Click **Save** to create the channel
-6. Toggle **Enable** to activate the channel
-
-### Step 6: Verify Connection
-
-1. Check the channel status in the IM Channels list
-2. Status should show **Connected** (green indicator)
-3. View uptime and last error information if available
-
-### Step 7: Test the Integration
-
-1. Open DingTalk and find your bot
-2. Send a test message: "Hello"
-3. Verify you receive an AI response
-
----
-
 ## 💬 Using IM Channels
 
 ### Basic Conversation
 
-Simply send messages to the bot in DingTalk as you would in any chat:
+Simply send messages to the bot in your IM platform as you would in any chat:
 
 ```
 User: What can you help me with?
@@ -289,16 +207,16 @@ Available metrics for each channel:
 
 ### Automatic User Creation
 
-When a DingTalk user interacts with the bot for the first time:
+When an IM platform user interacts with the bot for the first time:
 
 1. System attempts to find existing Wegent user
 2. If not found, automatically creates a new user account
-3. User is linked to their DingTalk identity
+3. User is linked to their IM platform identity
 
 **Default user creation:**
-- **Username**: DingTalk Staff ID
-- **Email**: `{staff_id}@dingtalk.com`
-- **Auth Source**: `dingtalk`
+- **Username**: IM platform user ID
+- **Email**: `{user_id}@im-platform.com`
+- **Auth Source**: Corresponding IM platform name
 
 ### Enterprise User Mapping
 
@@ -306,7 +224,7 @@ For organizations with existing user directories (ERP, LDAP), custom user mapper
 
 ```mermaid
 flowchart LR
-    DT[DingTalk User] --> UM[User Mapper]
+    IM[IM Platform User] --> UM[User Mapper]
     UM --> |Custom Mapper| ERP[ERP/LDAP Lookup]
     UM --> |Default| AC[Auto Create]
     ERP --> WU[Wegent User]
@@ -314,6 +232,16 @@ flowchart LR
 ```
 
 Contact your system administrator to configure enterprise user mapping.
+
+---
+
+## 🔗 Platform Integration Guides
+
+The following platforms have detailed integration configuration guides:
+
+| Platform | Link |
+|----------|------|
+| **DingTalk** | [DingTalk Integration Guide](./dingtalk-integration.md) |
 
 ---
 
@@ -326,23 +254,23 @@ Contact your system administrator to configure enterprise user mapping.
 **Possible causes:**
 1. Invalid Client ID or Client Secret
 2. Network connectivity issues
-3. DingTalk API service disruption
+3. IM platform API service disruption
 
 **Solutions:**
-1. Verify credentials in DingTalk Open Platform
+1. Verify credentials in the open platform
 2. Check network connectivity from Wegent server
 3. Try restarting the channel
-4. Check DingTalk service status
+4. Check IM platform service status
 
 #### Messages not being received
 
 **Possible causes:**
-1. Stream mode not enabled in DingTalk
+1. Stream mode not enabled in IM platform
 2. Robot permissions not configured
 3. Channel not enabled in Wegent
 
 **Solutions:**
-1. Verify Stream Mode is enabled in DingTalk app settings
+1. Verify Stream Mode is enabled in IM app settings
 2. Check all required permissions are granted
 3. Ensure channel is enabled (toggle is on)
 
@@ -378,10 +306,10 @@ Contact your system administrator to configure enterprise user mapping.
 
 **Possible causes:**
 1. User mapping configuration issues
-2. DingTalk user info not accessible
+2. IM platform user info not accessible
 
 **Solutions:**
-1. Check user permissions in DingTalk app
+1. Check user permissions in IM app
 2. Verify user mapping configuration
 3. Contact administrator for enterprise user mapping
 
@@ -393,6 +321,7 @@ Contact your system administrator to configure enterprise user mapping.
 - [Core Concepts](../../concepts/core-concepts.md) - Understand Wegent's architecture
 - [Agent Settings](../settings/agent-settings.md) - Configure agents for IM channels
 - [Configuring Models](../settings/configuring-models.md) - Set up AI models
+- [DingTalk Integration Guide](./dingtalk-integration.md) - Detailed DingTalk setup steps
 
 ### External Resources
 - [DingTalk Open Platform Documentation](https://open.dingtalk.com/document/)
@@ -410,4 +339,4 @@ Need assistance?
 
 ---
 
-<p align="center">Connect your AI agents to DingTalk and empower your team! 🚀</p>
+<p align="center">Connect your AI agents to IM platforms and empower your team! 🚀</p>

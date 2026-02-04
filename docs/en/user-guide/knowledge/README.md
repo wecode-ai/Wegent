@@ -18,6 +18,15 @@ A **Knowledge Base** is a container for storing and managing knowledge:
 - **Vector Storage**: Document content converted to vectors for semantic retrieval
 - **Access Control**: Supports private and public access
 
+### Knowledge Base Types
+
+Wegent provides two types of knowledge bases:
+
+| Type | Document Limit | Chat Support | Best For |
+|------|----------------|--------------|----------|
+| **Notebook** | 50 documents | ✅ Yes | Small knowledge bases, interactive Q&A |
+| **Classic** | Unlimited | ❌ No | Large document libraries, batch retrieval |
+
 ### Retrievers
 
 A **Retriever** defines how to search for information in the knowledge base:
@@ -26,20 +35,14 @@ A **Retriever** defines how to search for information in the knowledge base:
 - **Keyword Retrieval**: Traditional keyword matching
 - **Hybrid Retrieval**: Combines the advantages of both approaches
 
-```
-Knowledge Base = Document Collection + Vectorization + Metadata
-Retriever = Retrieval Strategy + Relevance Algorithm + Result Ranking
-```
-
 ---
 
 ## 🎯 Main Features
 
 ### 1. Knowledge Base Management
 
-Create and manage knowledge bases:
-
 - Create multiple knowledge bases
+- Choose knowledge base type (Notebook/Classic)
 - Upload and manage documents
 - Automatic document chunking and processing
 - View processing status and statistics
@@ -48,39 +51,35 @@ Create and manage knowledge bases:
 
 Supports multiple document formats and data sources:
 
-| Format | Description |
+| Source | Description |
 |--------|-------------|
-| **Markdown** | Recommended, preserves formatting and structure |
-| **PDF** | Automatic text extraction |
-| **Word** | Supports .docx format |
-| **Plain Text** | .txt files |
+| **File Upload** | Supports Markdown, PDF, Word, plain text |
+| **Text Paste** | Paste text content directly |
+| **External Table** | Import from DingTalk/Feishu tables |
 | **Web Scraping** | Automatically scrape content from URLs |
 
-#### Web Scraping
+### 3. Chunking Strategies
 
-Supports direct content scraping from web pages:
+Flexible document chunking options:
 
-- Enter a URL to automatically scrape
-- Intelligent extraction of main content
-- Support for dynamic page rendering
-- Automatic handling of paginated content
+| Strategy | Best For |
+|----------|----------|
+| **Smart Chunking** | General documents, auto-detect structure |
+| **Sentence-based** | FAQ, Q&A content, precise matching |
+| **Semantic** | Long articles, maintain topic coherence |
 
-### 3. Retrieval Configuration
-
-Flexible configuration of retrieval behavior:
+### 4. Retrieval Configuration
 
 - Choose retrieval strategy (semantic/keyword/hybrid)
 - Set number of returned results
 - Configure relevance threshold
-- Customize chunk size
+- Retrieval test feature
 
-### 4. Knowledge Base Application
+### 5. Summary Features
 
-Associate knowledge bases with agents:
-
-- Select knowledge bases in agent configuration
-- Automatic retrieval of relevant knowledge during conversations
-- View citation sources
+- Document-level summaries: Auto-generate document summaries
+- Knowledge base-level summaries: Overall knowledge base overview
+- Summary retry: Retry when generation fails
 
 ---
 
@@ -88,8 +87,11 @@ Associate knowledge bases with agents:
 
 | Document | Description |
 |----------|-------------|
-| [Knowledge Base Guide](./knowledge-base-guide.md) | Creating and managing knowledge bases |
-| [Configuring Retrievers](./configuring-retrievers.md) | Setting retrieval strategies and parameters |
+| [User Guide](./knowledge-base-guide.md) | Complete knowledge base guide |
+| [Knowledge Base Types](./knowledge-base-types.md) | Notebook vs Classic comparison |
+| [Document Management](./document-management.md) | Adding and managing documents |
+| [Chunking Strategies](./chunking-strategies.md) | Document chunking strategies |
+| [Configuring Retrievers](./configuring-retrievers.md) | Retrieval strategy and parameter configuration |
 
 ---
 
@@ -99,11 +101,12 @@ Associate knowledge bases with agents:
 
 1. Navigate to the **Knowledge** page
 2. Click **New Knowledge Base**
-3. Fill in knowledge base information:
-   - Name: e.g., "Product Documentation"
-   - Description: Purpose of the knowledge base
-4. Upload document files
-5. Wait for document processing to complete
+3. Choose knowledge base type:
+   - **Notebook**: For small knowledge bases, supports chat
+   - **Classic**: For large document libraries
+4. Fill in name and description
+5. Upload document files
+6. Wait for document processing to complete
 
 ### Configure Retrievers
 
@@ -113,7 +116,8 @@ Associate knowledge bases with agents:
    - Semantic: Suitable for conceptual questions
    - Keyword: Suitable for exact matching
    - Hybrid: Balances both approaches
-4. Adjust parameters and save
+4. Use **Retrieval Test** to verify effectiveness
+5. Adjust parameters and save
 
 ### Use in Agents
 
@@ -129,7 +133,7 @@ Associate knowledge bases with agents:
 ### Product Documentation
 
 - **User Manuals**: Store product usage instructions
-- **FAQ Collections**: Common questions and answers
+- **FAQ Collections**: Common questions and answers (Notebook recommended)
 - **Release Notes**: Product update logs
 
 ### Technical Documentation
@@ -141,8 +145,8 @@ Associate knowledge bases with agents:
 ### Enterprise Knowledge
 
 - **Policies**: Company internal regulations
-- **Training Materials**: Employee training documents
-- **Project Documentation**: Historical project archives
+- **Training Materials**: Employee training documents (Notebook recommended)
+- **Project Documentation**: Historical project archives (Classic recommended)
 
 ---
 

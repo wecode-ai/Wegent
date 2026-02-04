@@ -1,16 +1,10 @@
 ---
-sidebar_position: 8
+sidebar_position: 10
 ---
 
-# Configuring Retrievers for RAG
+# Configuring Retrievers
 
-English | [简体中文](../../zh/guides/user/configuring-retrievers.md)
-
-> ⚠️ **EXPERIMENTAL FEATURE**: The RAG (Retrieval-Augmented Generation) functionality is currently under active development. APIs, configurations, and behaviors may change in future releases.
-
-## Overview
-
-Retrievers are storage backend configurations for RAG (Retrieval-Augmented Generation) functionality in Wegent. They define how documents are indexed, stored, and retrieved using vector databases like Elasticsearch.
+Retrievers are configurations for RAG (Retrieval-Augmented Generation) functionality in Wegent. They define how documents are indexed, stored, and retrieved.
 
 ## Prerequisites
 
@@ -120,36 +114,67 @@ This creates indices like `wegent_user_123`, providing better performance and is
 
 Pure vector similarity search for semantic understanding:
 
-```json
-{
-  "retrieval_mode": "vector",
-  "top_k": 5,
-  "score_threshold": 0.7
-}
-```
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `retrieval_mode` | Retrieval mode | `vector` |
+| `top_k` | Number of results | 5 |
+| `score_threshold` | Relevance threshold | 0.7 |
 
 **Use cases**: Concept matching, understanding questions, semantic search
+
+### Keyword Search
+
+Traditional BM25 keyword matching:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `retrieval_mode` | Retrieval mode | `keyword` |
+| `top_k` | Number of results | 5 |
+
+**Use cases**: Exact term matching, code search, API names
 
 ### Hybrid Search (Vector + Keyword)
 
 Combines vector similarity with BM25 keyword matching:
 
-```json
-{
-  "retrieval_mode": "hybrid",
-  "hybrid_weights": {
-    "vector_weight": 0.7,
-    "keyword_weight": 0.3
-  },
-  "top_k": 5,
-  "score_threshold": 0.7
-}
-```
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `retrieval_mode` | Retrieval mode | `hybrid` |
+| `vector_weight` | Vector weight | 0.7 |
+| `keyword_weight` | Keyword weight | 0.3 |
+| `top_k` | Number of results | 5 |
+| `score_threshold` | Relevance threshold | 0.7 |
 
 **Weight recommendations**:
 - **Conceptual queries** (0.8/0.2): Understanding, explanations
 - **Balanced** (0.7/0.3): General purpose (default)
 - **Precise matching** (0.3/0.7): Code search, API names, exact terms
+
+---
+
+## Retrieval Test
+
+Before saving retrieval configuration, you can use the retrieval test feature to verify effectiveness.
+
+### How to Use
+
+1. Go to Knowledge Base **Retrieval Settings**
+2. Configure retrieval parameters (mode, top_k, threshold, etc.)
+3. Enter a test query in the **Retrieval Test** area
+4. Click **Test** button
+5. Review returned document chunks and relevance scores
+6. Adjust parameters based on results
+7. Click **Save** when satisfied
+
+### Test Recommendations
+
+| Test Type | Suggested Query |
+|-----------|-----------------|
+| Conceptual | Use descriptive questions like "What is..." |
+| Precise | Use specific terms or names |
+| Boundary | Use vague or unrelated queries |
+
+Retrieval test helps you optimize retrieval configuration before actual use.
 
 ## Using Retrievers with RAG
 
