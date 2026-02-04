@@ -1062,7 +1062,7 @@ async def reindex_document(
         )
 
     # Check if knowledge base has RAG configured
-    spec = knowledge_base.json.get("spec", {})
+    spec = (knowledge_base.json or {}).get("spec", {})
     retrieval_config = spec.get("retrievalConfig")
 
     if not retrieval_config:
