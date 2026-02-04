@@ -153,7 +153,39 @@ Before registering a local device, ensure you have:
 
 ### Installing Wegent Executor
 
-1. Clone or download the Wegent Executor package
+#### One-Line Installation (Recommended)
+
+**macOS / Linux:**
+```bash
+curl -fsSL https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
+```
+
+The installation script will:
+- Check and install Node.js 18+ (required for Claude Code)
+- Install or upgrade Claude Code SDK
+- Download the appropriate binary for your platform
+- Add the binary to your PATH
+
+#### Installing a Specific Version
+
+**macOS / Linux:**
+```bash
+curl -fsSL https://github.com/wecode-ai/Wegent/releases/download/v1.0.0/local_executor_install.sh | bash -s -- --version v1.0.0
+```
+
+**Windows (PowerShell):**
+```powershell
+$env:WEGENT_VERSION='v1.0.0'; irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
+```
+
+#### Manual Installation (Development)
+
+1. Clone or download the Wegent repository
 2. Install dependencies:
 
 ```bash

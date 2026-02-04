@@ -153,7 +153,39 @@ flowchart TB
 
 ### 安装 Wegent Executor
 
-1. 克隆或下载 Wegent Executor 包
+#### 一键安装（推荐）
+
+**macOS / Linux：**
+```bash
+curl -fsSL https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh | bash
+```
+
+**Windows (PowerShell)：**
+```powershell
+irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
+```
+
+安装脚本将会：
+- 检查并安装 Node.js 18+（Claude Code 运行所需）
+- 安装或升级 Claude Code SDK
+- 下载适合您平台的二进制文件
+- 将二进制文件添加到系统 PATH
+
+#### 安装指定版本
+
+**macOS / Linux：**
+```bash
+curl -fsSL https://github.com/wecode-ai/Wegent/releases/download/v1.0.0/local_executor_install.sh | bash -s -- --version v1.0.0
+```
+
+**Windows (PowerShell)：**
+```powershell
+$env:WEGENT_VERSION='v1.0.0'; irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.ps1 | iex
+```
+
+#### 手动安装（开发环境）
+
+1. 克隆或下载 Wegent 仓库
 2. 安装依赖：
 
 ```bash

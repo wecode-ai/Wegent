@@ -289,6 +289,25 @@ def build_executable(target_arch: str | None = None):
             str(executor_root / "main.py"),
         ]
 
+        # Add Windows-specific hidden imports for PTY and Win32 API support
+        if platform.system() == "Windows":
+            windows_imports = [
+                "--hidden-import=winpty",
+                "--hidden-import=win32api",
+                "--hidden-import=win32con",
+                "--hidden-import=win32security",
+                "--hidden-import=win32file",
+                "--hidden-import=win32event",
+                "--hidden-import=win32process",
+                "--hidden-import=ntsecuritycon",
+                "--hidden-import=pywintypes",
+                "--hidden-import=msvcrt",
+            ]
+            # Insert before entry point (last element)
+            for imp in windows_imports:
+                cmd.insert(-1, imp)
+            print("Added Windows-specific hidden imports")
+
         # Add target architecture for cross-compilation on macOS
         if target_arch and platform.system() == "Darwin":
             cmd.insert(-1, f"--target-arch={target_arch}")
