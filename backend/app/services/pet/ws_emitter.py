@@ -8,10 +8,14 @@ This module provides WebSocket event emission methods for pet-related events.
 It wraps the global WebSocket emitter and provides typed methods for pet events.
 
 This keeps pet-related WebSocket logic within the pet module for better cohesion.
+
+Note: These functions handle event loop issues gracefully. When called from
+background tasks that may run in different event loop contexts, errors are
+logged but don't propagate to callers since pet events are non-critical.
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 

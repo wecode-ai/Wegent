@@ -332,6 +332,7 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
         """Emit chat:done event and update BackgroundExecution status.
 
         If result contains silent_exit=True, status is set to COMPLETED_SILENT.
+        Also checks subtask's result in database for silent_exit flag set by MCP tool.
         Otherwise, status is set to COMPLETED.
         """
         from app.services.subscription.helpers import extract_result_summary
@@ -341,8 +342,14 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
             f"execution_id={self.execution_id}"
         )
 
-        # Check if this is a silent exit
+        # Check if this is a silent exit from result parameter
         is_silent_exit = result.get("silent_exit", False) if result else False
+
+        # Also check subtask's result in database for silent_exit flag
+        # This handles the case where MCP silent_exit tool directly updated the subtask
+        if not is_silent_exit:
+            is_silent_exit = await self._check_subtask_silent_exit(subtask_id)
+
         status = "COMPLETED_SILENT" if is_silent_exit else "COMPLETED"
 
         if is_silent_exit:
@@ -355,6 +362,37 @@ class SubscriptionEventEmitter(NoOpEventEmitter):
             status=status,
             result_summary=extract_result_summary(result),
         )
+
+    async def _check_subtask_silent_exit(self, subtask_id: int) -> bool:
+        """Check if subtask has silent_exit flag set in its result.
+
+        This handles the case where MCP silent_exit tool directly updated
+        the subtask's result in the database.
+
+        Args:
+            subtask_id: The subtask ID to check
+
+        Returns:
+            True if subtask has silent_exit=True in its result
+        """
+        try:
+            from app.db.session import get_db_session
+            from app.models.subtask import Subtask
+
+            with get_db_session() as db:
+                subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+                if subtask and subtask.result and isinstance(subtask.result, dict):
+                    is_silent = subtask.result.get("silent_exit", False)
+                    if is_silent:
+                        logger.info(
+                            f"[SubscriptionEmitter] Found silent_exit flag in subtask {subtask_id} result"
+                        )
+                    return is_silent
+        except Exception as e:
+            logger.error(
+                f"[SubscriptionEmitter] Failed to check subtask {subtask_id} silent_exit: {e}"
+            )
+        return False
 
     async def emit_chat_error(
         self,
