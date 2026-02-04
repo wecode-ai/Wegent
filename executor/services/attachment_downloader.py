@@ -85,7 +85,28 @@ class AttachmentDownloader:
         Returns:
             Full path to the attachment file
         """
-        return os.path.join(self.get_attachments_dir(), filename)
+        # Sanitize filename to prevent path traversal attacks
+        safe_filename = self._sanitize_filename(filename)
+        return os.path.join(self.get_attachments_dir(), safe_filename)
+
+    @staticmethod
+    def _sanitize_filename(filename: str) -> str:
+        """
+        Sanitize filename to prevent path traversal and metadata corruption.
+
+        Args:
+            filename: Original filename
+
+        Returns:
+            Sanitized filename safe for filesystem operations
+        """
+        # Use basename to strip any directory components
+        safe_name = os.path.basename(filename)
+        # Strip control characters (newline, carriage return)
+        safe_name = safe_name.replace("\n", "").replace("\r", "")
+        # Remove any remaining path separators
+        safe_name = safe_name.replace("/", "_").replace("\\", "_")
+        return safe_name or "document"
 
     def download_all(
         self, attachments: List[Dict[str, Any]]

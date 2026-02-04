@@ -19,9 +19,8 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional
 
-from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from executor.mcp_servers.wegent import start_wegent_mcp_server
@@ -144,6 +143,10 @@ async def lifespan(app: FastAPI):
                 f"AUTH_TOKEN found, initializing Claude Code for sandbox {task_id}..."
             )
             _initialize_sandbox_claude(auth_token, task_id)
+
+            # Pre-download all attachments for the task
+            logger.info(f"Pre-downloading attachments for sandbox {task_id}...")
+            _predownload_task_attachments(auth_token, task_id)
     except Exception as e:
         logger.warning(f"Failed to initialize Claude Code for sandbox: {e}")
 
@@ -207,6 +210,74 @@ def _initialize_sandbox_claude(auth_token: str, task_id: str) -> None:
     logger.info(
         f"[SandboxInit] Skills deployment complete: "
         f"{result.success_count}/{result.total_count} deployed to {result.skills_dir}"
+    )
+
+
+def _predownload_task_attachments(auth_token: str, task_id: str) -> None:
+    """Pre-download all attachments for a task at sandbox startup.
+
+    Downloads all attachments for the task to /home/user directory,
+    organized by subtask to match the sandbox path format:
+    /home/user/{task_id}:executor:attachments/{subtask_id}/{filename}
+
+    Args:
+        auth_token: JWT token for API authentication
+        task_id: Task ID for fetching attachments
+    """
+    from executor.services.api_client import fetch_task_attachments
+    from executor.services.attachment_downloader import AttachmentDownloader
+
+    # Define base attachments directory
+    attachments_base_dir = "/home/user"
+
+    # Fetch all attachments for the task
+    logger.info(f"[SandboxInit] Fetching attachments for task {task_id}...")
+    result = fetch_task_attachments(task_id, auth_token)
+
+    if result.error:
+        logger.warning(f"[SandboxInit] Failed to fetch attachments: {result.error}")
+        return
+
+    if not result.attachments:
+        logger.info("[SandboxInit] No attachments to download")
+        return
+
+    # Group attachments by subtask_id for batch downloading
+    from collections import defaultdict
+
+    attachments_by_subtask = defaultdict(list)
+    for att in result.attachments:
+        attachments_by_subtask[att.subtask_id].append(
+            {
+                "id": att.id,
+                "original_filename": att.original_filename,
+                "subtask_id": att.subtask_id,
+            }
+        )
+
+    # Download attachments per subtask using AttachmentDownloader
+    total_success = 0
+    total_failed = 0
+
+    for subtask_id, attachments in attachments_by_subtask.items():
+        logger.info(
+            f"[SandboxInit] Downloading {len(attachments)} attachments for subtask {subtask_id}"
+        )
+
+        downloader = AttachmentDownloader(
+            workspace=attachments_base_dir,
+            task_id=task_id,
+            subtask_id=str(subtask_id),
+            auth_token=auth_token,
+        )
+
+        download_result = downloader.download_all(attachments)
+        total_success += len(download_result.success)
+        total_failed += len(download_result.failed)
+
+    logger.info(
+        f"[SandboxInit] Attachment pre-download complete: "
+        f"{total_success}/{total_success + total_failed} downloaded to {attachments_base_dir}"
     )
 
 
