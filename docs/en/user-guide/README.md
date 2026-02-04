@@ -23,13 +23,13 @@ Subscribe and follow content of interest, receive intelligent notifications.
 ### 💻 [AI Coding](./ai-coding/README.md)
 Use AI assistance for code development and project management.
 
-> 🚧 This feature is under development, stay tuned...
+- [Managing Code Tasks](./ai-coding/managing-code-tasks.md) - Create, execute and manage coding tasks
+- [Spec Clarification](./ai-coding/spec-clarification-guide.md) - Refine vague requirements into clear tasks
 
 ### 📖 [AI Knowledge](./ai-knowledge/README.md)
 Create and manage knowledge bases, implement RAG (Retrieval-Augmented Generation).
 
 - [Knowledge Base Guide](./ai-knowledge/knowledge-base-guide.md) - Complete guide to using knowledge bases
-- [Managing Knowledge Bases](./ai-knowledge/managing-knowledge-bases.md) - Create and manage knowledge bases
 - [Configuring Retrievers](./ai-knowledge/configuring-retrievers.md) - Configure RAG retrieval backends
 
 ### 🖥️ [AI Devices](./ai-devices/README.md)

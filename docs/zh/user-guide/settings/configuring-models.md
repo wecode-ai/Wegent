@@ -2,7 +2,7 @@
 sidebar_position: 2
 ---
 
-# 🧠 Model (模型) 配置指南
+# Model (模型) 配置指南
 
 Model 是 Wegent 中 AI 模型的配置参数,定义了 Bot 使用哪个 AI 服务、如何认证以及使用什么模型。本指南将帮助您完成 Model 的完整配置和验证。
 

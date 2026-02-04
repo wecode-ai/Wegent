@@ -2,7 +2,7 @@
 sidebar_position: 4
 ---
 
-# ✨ 管理 Skills
+# 管理 Skills
 
 Skills 是 Claude Code 的能力扩展包,可以为您的 Bot 添加专门的功能。本指南将教您如何上传、管理和使用 Wegent 中的 Skills。
 

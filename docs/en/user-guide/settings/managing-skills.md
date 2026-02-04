@@ -2,7 +2,7 @@
 sidebar_position: 4
 ---
 
-# ✨ Managing Skills
+# Managing Skills
 
 Skills are Claude Code capability extension packages that add specialized functionality to your Bots. This guide will teach you how to upload, manage, and use Skills in Wegent.
 

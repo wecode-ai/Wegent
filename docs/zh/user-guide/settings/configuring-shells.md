@@ -2,7 +2,7 @@
 sidebar_position: 3
 ---
 
-# 🔧 Shell (执行器) 配置指南
+# Shell (执行器) 配置指南
 
 Shell 是 Wegent 中的运行时环境容器,为 Bot 提供代码执行、文件操作、工具调用等能力。本指南将帮助您理解并配置 Shell。
 
