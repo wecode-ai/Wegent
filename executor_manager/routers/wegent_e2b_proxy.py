@@ -36,10 +36,10 @@ router = APIRouter(tags=["sandbox-proxy"])
 
 
 async def _find_sandbox_by_e2b_id(manager, e2b_sandbox_id: str):
-    """Find sandbox by E2B sandbox ID in metadata.
+    """Find sandbox by E2B sandbox ID using index lookup (O(1)).
 
-    Searches through active sandboxes for one with matching e2b_sandbox_id
-    in metadata.
+    Uses the e2b_sandbox_id index in Redis for fast lookup instead of
+    iterating through all active sandboxes.
 
     Args:
         manager: SandboxManager instance
@@ -49,11 +49,26 @@ async def _find_sandbox_by_e2b_id(manager, e2b_sandbox_id: str):
         Sandbox if found, None otherwise
     """
     repository = manager._repository
+
+    # O(1) lookup using index
+    sandbox_id = repository.lookup_sandbox_id_by_e2b_id(e2b_sandbox_id)
+    if sandbox_id:
+        sandbox = repository.load_sandbox(sandbox_id)
+        if sandbox:
+            return sandbox
+
+    # Fallback to linear search for backward compatibility with existing sandboxes
+    # that don't have index entries yet
+    logger.debug(
+        f"[SandboxProxy] E2B index miss for {e2b_sandbox_id}, falling back to linear search"
+    )
     sandbox_ids = repository.get_active_sandbox_ids()
 
     for sandbox_id in sandbox_ids:
         sandbox = repository.load_sandbox(sandbox_id)
         if sandbox and sandbox.metadata.get("e2b_sandbox_id") == e2b_sandbox_id:
+            # Save index for future lookups
+            repository._save_e2b_index(e2b_sandbox_id, sandbox_id)
             return sandbox
 
     return None
