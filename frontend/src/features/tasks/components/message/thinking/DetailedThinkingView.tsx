@@ -324,6 +324,15 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
       )
     }
 
+    // Handle direct text type (used by deep research progress, etc.)
+    if (details.type === 'text' && details.text) {
+      return (
+        <div className="mt-2">
+          {renderTextContent(details.text as string, `item-${itemIndex}-direct-text`)}
+        </div>
+      )
+    }
+
     // Handle execution failed with error_message
     if (details.error_message || details.execution_type) {
       return (
