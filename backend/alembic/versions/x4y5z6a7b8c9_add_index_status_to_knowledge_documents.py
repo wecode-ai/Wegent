@@ -31,16 +31,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def column_exists(table_name: str, column_name: str) -> bool:
-    """Check if a column exists in a table."""
+    """Check if a column exists in a table using SQLAlchemy Inspector."""
     conn = op.get_bind()
-    result = conn.execute(
-        sa.text(
-            "SELECT COUNT(*) FROM information_schema.columns "
-            "WHERE table_name = :table_name AND column_name = :column_name"
-        ),
-        {"table_name": table_name, "column_name": column_name},
-    )
-    return result.scalar() > 0
+    inspector = sa.inspect(conn)
+    columns = inspector.get_columns(table_name)
+    return any(col["name"] == column_name for col in columns)
 
 
 def upgrade() -> None:

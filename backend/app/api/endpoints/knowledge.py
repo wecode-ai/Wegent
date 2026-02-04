@@ -979,18 +979,27 @@ def _index_document_background(
         )
         # Update document index_status to 'failed' when indexing fails
         if document_id:
-            from app.models.knowledge import KnowledgeDocument
+            try:
+                # Rollback any failed transaction before making new queries
+                db.rollback()
 
-            doc = (
-                db.query(KnowledgeDocument)
-                .filter(KnowledgeDocument.id == document_id)
-                .first()
-            )
-            if doc:
-                doc.index_status = "failed"
-                db.commit()
-                logger.info(
-                    f"[RAG Indexing] Updated document {document_id} index_status to 'failed'"
+                from app.models.knowledge import KnowledgeDocument
+
+                doc = (
+                    db.query(KnowledgeDocument)
+                    .filter(KnowledgeDocument.id == document_id)
+                    .first()
+                )
+                if doc:
+                    doc.index_status = "failed"
+                    db.commit()
+                    logger.info(
+                        f"[RAG Indexing] Updated document {document_id} index_status to 'failed'"
+                    )
+            except Exception as update_error:
+                logger.error(
+                    f"[RAG Indexing] Failed to update document {document_id} index_status: "
+                    f"{str(update_error)}"
                 )
     finally:
         # Always close the database session
