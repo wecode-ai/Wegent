@@ -213,6 +213,8 @@ class KnowledgeService:
         Returns:
             Kind if found and accessible, None otherwise
         """
+        from app.services.share import knowledge_share_service
+
         kb = (
             db.query(Kind)
             .filter(
@@ -226,14 +228,13 @@ class KnowledgeService:
         if not kb:
             return None
 
-        # Check access permission
-        if kb.namespace == "default":
-            if kb.user_id != user_id:
-                return None
-        else:
-            role = get_effective_role_in_group(db, user_id, kb.namespace)
-            if role is None:
-                return None
+        # Use the knowledge share service to check access
+        has_access, _, _ = knowledge_share_service.get_user_kb_permission(
+            db, knowledge_base_id, user_id
+        )
+
+        if not has_access:
+            return None
 
         return kb
 
@@ -257,17 +258,47 @@ class KnowledgeService:
             List of accessible knowledge bases
         """
         if scope == ResourceScope.PERSONAL:
-            return (
+            from app.models.resource_member import MemberStatus, ResourceMember
+            from app.models.share_link import ResourceType
+
+            # Get knowledge bases with explicit approved permission (shared to user)
+            shared_permissions = (
+                db.query(ResourceMember.resource_id)
+                .filter(
+                    ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                    ResourceMember.user_id == user_id,
+                    ResourceMember.status == MemberStatus.APPROVED.value,
+                )
+                .all()
+            )
+            shared_kb_ids = [p.resource_id for p in shared_permissions]
+
+            # Single query to get both personal and shared knowledge bases
+            # Personal: user_id matches and namespace is "default"
+            # Shared: id is in shared_kb_ids
+            all_kbs = (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "KnowledgeBase",
-                    Kind.user_id == user_id,
-                    Kind.namespace == "default",
                     Kind.is_active == True,
+                    ((Kind.user_id == user_id) & (Kind.namespace == "default"))
+                    | (Kind.id.in_(shared_kb_ids) if shared_kb_ids else False),
                 )
-                .order_by(Kind.updated_at.desc())
                 .all()
             )
+
+            # Separate into personal and shared for sorting
+            personal = [
+                kb
+                for kb in all_kbs
+                if kb.user_id == user_id and kb.namespace == "default"
+            ]
+            shared = [kb for kb in all_kbs if kb not in personal]
+
+            # Combine and sort by updated_at
+            all_kbs = personal + shared
+            all_kbs.sort(key=lambda kb: kb.updated_at, reverse=True)
+            return all_kbs
 
         elif scope == ResourceScope.GROUP:
             if not group_name:
@@ -290,35 +321,54 @@ class KnowledgeService:
             )
 
         else:  # ALL
-            # Get personal knowledge bases
-            personal = (
+            from app.models.resource_member import MemberStatus, ResourceMember
+            from app.models.share_link import ResourceType
+
+            # Get team knowledge bases from accessible groups
+            accessible_groups = get_user_groups(db, user_id)
+
+            # Get knowledge bases with explicit approved permission (shared to user)
+            shared_permissions = (
+                db.query(ResourceMember.resource_id)
+                .filter(
+                    ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                    ResourceMember.user_id == user_id,
+                    ResourceMember.status == MemberStatus.APPROVED.value,
+                )
+                .all()
+            )
+            shared_kb_ids = [p.resource_id for p in shared_permissions]
+
+            # Single query to get personal, team, and shared knowledge bases
+            # Personal: user_id matches and namespace is "default"
+            # Team: namespace is in accessible_groups
+            # Shared: id is in shared_kb_ids
+            all_kbs = (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "KnowledgeBase",
-                    Kind.user_id == user_id,
-                    Kind.namespace == "default",
                     Kind.is_active == True,
+                    ((Kind.user_id == user_id) & (Kind.namespace == "default"))
+                    | (
+                        (Kind.namespace.in_(accessible_groups))
+                        if accessible_groups
+                        else False
+                    )
+                    | ((Kind.id.in_(shared_kb_ids)) if shared_kb_ids else False),
                 )
                 .all()
             )
 
-            # Get team knowledge bases from accessible groups
-            accessible_groups = get_user_groups(db, user_id)
-            team = (
-                (
-                    db.query(Kind)
-                    .filter(
-                        Kind.kind == "KnowledgeBase",
-                        Kind.namespace.in_(accessible_groups),
-                        Kind.is_active == True,
-                    )
-                    .all()
-                )
-                if accessible_groups
-                else []
-            )
+            # Separate into personal, team, and shared
+            personal = [
+                kb
+                for kb in all_kbs
+                if kb.user_id == user_id and kb.namespace == "default"
+            ]
+            team = [kb for kb in all_kbs if kb.namespace in accessible_groups]
+            shared = [kb for kb in all_kbs if kb not in personal and kb not in team]
 
-            return personal + team
+            return personal + team + shared
 
     @staticmethod
     def update_knowledge_base(
@@ -460,18 +510,15 @@ class KnowledgeService:
         Raises:
             ValueError: If permission denied or knowledge base has documents
         """
+        from app.services.share import knowledge_share_service
+
         kb = KnowledgeService.get_knowledge_base(db, knowledge_base_id, user_id)
         if not kb:
             return False
 
-        # Check permission for team knowledge base
-        if kb.namespace != "default":
-            if not check_group_permission(
-                db, user_id, kb.namespace, GroupRole.Maintainer
-            ):
-                raise ValueError(
-                    "Only Owner or Maintainer can delete knowledge base in this group"
-                )
+        # Only creator can delete knowledge base
+        if kb.user_id != user_id:
+            raise ValueError("Only the creator can delete this knowledge base")
 
         # Check if knowledge base has documents - prevent deletion if documents exist
         document_count = KnowledgeService.get_document_count(db, knowledge_base_id)
@@ -480,6 +527,9 @@ class KnowledgeService:
                 f"Cannot delete knowledge base with {document_count} document(s). "
                 "Please delete all documents first."
             )
+
+        # Delete all members for this KB
+        knowledge_share_service.delete_members_for_kb(db, knowledge_base_id)
 
         # Physically delete the knowledge base
         db.delete(kb)
