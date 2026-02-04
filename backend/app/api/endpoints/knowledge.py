@@ -1048,6 +1048,13 @@ async def reindex_document(
             detail="Document not found",
         )
 
+    # TABLE documents do not support RAG indexing (real-time query instead)
+    if document.source_type == DocumentSourceType.TABLE.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Table documents do not support indexing",
+        )
+
     # Check access permission via knowledge base
     knowledge_base = KnowledgeService.get_knowledge_base(
         db=db,
