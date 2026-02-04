@@ -132,6 +132,14 @@ class LocalModeStrategy(ExecutionModeStrategy):
         # This affects settings.json, claude.json, and skills locations
         env = updated_options.get("env", {})
         env["CLAUDE_CONFIG_DIR"] = config_dir
+
+        # Add ANTHROPIC_CUSTOM_HEADERS if configured via environment variable
+        if config.ANTHROPIC_CUSTOM_HEADERS:
+            env["ANTHROPIC_CUSTOM_HEADERS"] = config.ANTHROPIC_CUSTOM_HEADERS
+            logger.info(
+                f"Local mode: ANTHROPIC_CUSTOM_HEADERS={config.ANTHROPIC_CUSTOM_HEADERS}"
+            )
+
         updated_options["env"] = env
 
         logger.debug(f"Local mode: Configured CLAUDE_CONFIG_DIR={config_dir}")

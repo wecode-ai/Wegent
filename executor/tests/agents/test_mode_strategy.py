@@ -217,6 +217,27 @@ class TestLocalModeStrategy:
 
         assert result["env"]["CLAUDE_CONFIG_DIR"] == config_dir
 
+    def test_configure_client_options_adds_anthropic_custom_headers(self, strategy):
+        """Test that ANTHROPIC_CUSTOM_HEADERS is added when configured."""
+        options = {"cwd": "/workspace"}
+        config_dir = "/workspace/12345/.claude"
+        custom_headers = "x-custom-user: test\nx-custom-source: executor"
+
+        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", custom_headers):
+            result = strategy.configure_client_options(options, config_dir, {})
+
+        assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == custom_headers
+
+    def test_configure_client_options_no_custom_headers_when_empty(self, strategy):
+        """Test that ANTHROPIC_CUSTOM_HEADERS is not added when empty."""
+        options = {"cwd": "/workspace"}
+        config_dir = "/workspace/12345/.claude"
+
+        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", ""):
+            result = strategy.configure_client_options(options, config_dir, {})
+
+        assert "ANTHROPIC_CUSTOM_HEADERS" not in result["env"]
+
     def test_get_skills_directory_with_config_dir(self, strategy):
         """Test skills directory within task config dir."""
         config_dir = "/workspace/12345/.claude"
