@@ -322,6 +322,7 @@ class ChatContext:
             model_id=model_id,
             context_window=context_window,
             skip_prompt_enhancement=skip_prompt_enhancement,
+            user_name=self._request.user_name,
         )
         add_span_event("kb_tools_prepared", {"tools_count": len(result[0])})
         return result

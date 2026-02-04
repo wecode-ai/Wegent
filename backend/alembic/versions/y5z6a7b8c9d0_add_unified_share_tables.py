@@ -300,7 +300,7 @@ def migrate_data_from_old_tables() -> None:
                 """
                 INSERT INTO share_links (
                     resource_type, resource_id, share_token,
-                    require_approval, default_permission_level,
+                    require_approval, default_permission_level, expires_at,
                     created_by_user_id, is_active, created_at, updated_at
                 )
                 SELECT DISTINCT
@@ -309,6 +309,7 @@ def migrate_data_from_old_tables() -> None:
                     CONCAT('team_', team_id, '_', MD5(CONCAT(team_id, NOW()))) as share_token,
                     0 as require_approval,
                     'view' as default_permission_level,
+                    DATE_ADD(NOW(), INTERVAL 100 YEAR) as expires_at,
                     original_user_id as created_by_user_id,
                     is_active,
                     created_at,
@@ -363,7 +364,7 @@ def migrate_data_from_old_tables() -> None:
                 """
                 INSERT INTO share_links (
                     resource_type, resource_id, share_token,
-                    require_approval, default_permission_level,
+                    require_approval, default_permission_level, expires_at,
                     created_by_user_id, is_active, created_at, updated_at
                 )
                 SELECT DISTINCT
@@ -372,6 +373,7 @@ def migrate_data_from_old_tables() -> None:
                     CONCAT('task_', original_task_id, '_', MD5(CONCAT(original_task_id, NOW()))) as share_token,
                     0 as require_approval,
                     'view' as default_permission_level,
+                    DATE_ADD(NOW(), INTERVAL 100 YEAR) as expires_at,
                     original_user_id as created_by_user_id,
                     is_active,
                     created_at,
@@ -428,7 +430,7 @@ def migrate_data_from_old_tables() -> None:
                 """
                 INSERT INTO share_links (
                     resource_type, resource_id, share_token,
-                    require_approval, default_permission_level,
+                    require_approval, default_permission_level, expires_at,
                     created_by_user_id, is_active, created_at, updated_at
                 )
                 SELECT DISTINCT
@@ -437,6 +439,7 @@ def migrate_data_from_old_tables() -> None:
                     CONCAT('task_', tm.task_id, '_', MD5(CONCAT(tm.task_id, NOW()))) as share_token,
                     0 as require_approval,
                     'view' as default_permission_level,
+                    DATE_ADD(NOW(), INTERVAL 100 YEAR) as expires_at,
                     tm.invited_by as created_by_user_id,
                     CASE WHEN tm.status = 'ACTIVE' THEN 1 ELSE 0 END as is_active,
                     tm.created_at,
