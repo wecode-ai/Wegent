@@ -142,8 +142,8 @@ class KnowledgeShareService(UnifiedShareService):
 
     def _get_share_url_base(self) -> str:
         """Get base URL for KnowledgeBase share links."""
-        # Use token-based URL pattern consistent with Task sharing
-        base_url = getattr(settings, "FRONTEND_BASE_URL", "http://localhost:3000")
+        # Use TASK_SHARE_BASE_URL consistent with Task sharing
+        base_url = getattr(settings, "TASK_SHARE_BASE_URL", "http://localhost:3000")
         return f"{base_url}/shared/knowledge"
 
     def _on_member_approved(
