@@ -53,6 +53,10 @@ class KnowledgeShareService(UnifiedShareService):
         2. Explicit shared access (ResourceMember)
         3. Team membership (for team knowledge bases)
         """
+        logger.info(
+            f"[_get_resource] Fetching KnowledgeBase: resource_id={resource_id}, user_id={user_id}"
+        )
+
         kb = (
             db.query(Kind)
             .filter(
@@ -64,11 +68,26 @@ class KnowledgeShareService(UnifiedShareService):
         )
 
         if not kb:
+            logger.warning(
+                f"[_get_resource] KnowledgeBase not found: resource_id={resource_id}"
+            )
             return None
+
+        logger.info(
+            f"[_get_resource] KnowledgeBase found: id={kb.id}, "
+            f"kb.user_id={kb.user_id}, namespace={kb.namespace}"
+        )
 
         # Check if user is creator
         if kb.user_id == user_id:
+            logger.info(
+                f"[_get_resource] User is creator: user_id={user_id} == kb.user_id={kb.user_id}"
+            )
             return kb
+
+        logger.warning(
+            f"[_get_resource] User is NOT creator: user_id={user_id} != kb.user_id={kb.user_id}"
+        )
 
         # Check if user has explicit shared access
         member = (
@@ -82,14 +101,35 @@ class KnowledgeShareService(UnifiedShareService):
             .first()
         )
         if member:
+            logger.info(
+                f"[_get_resource] User has explicit shared access: member_id={member.id}"
+            )
             return kb
+
+        logger.warning(f"[_get_resource] User has NO explicit shared access")
 
         # For team knowledge bases, check group permission
         if kb.namespace != "default":
+            logger.info(
+                f"[_get_resource] Checking team permission: namespace={kb.namespace}"
+            )
             role = get_effective_role_in_group(db, user_id, kb.namespace)
             if role is not None:
+                logger.info(f"[_get_resource] User has team role: role={role}")
                 return kb
+            logger.warning(
+                f"[_get_resource] User has NO team role in namespace={kb.namespace}"
+            )
+        else:
+            logger.info(
+                f"[_get_resource] KnowledgeBase is personal (namespace=default)"
+            )
 
+        logger.error(
+            f"[_get_resource] User has NO access to KnowledgeBase: "
+            f"resource_id={resource_id}, user_id={user_id}, "
+            f"kb.user_id={kb.user_id}, namespace={kb.namespace}"
+        )
         return None  # Only return KB for authorized users
 
     def _get_resource_name(self, resource: Kind) -> str:
