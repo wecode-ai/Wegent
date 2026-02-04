@@ -6,6 +6,8 @@ sidebar_position: 1
 
 AI Knowledge is Wegent's knowledge management feature that allows you to create and manage structured knowledge for AI agents to retrieve and reference during conversations.
 
+<img src="https://github.com/user-attachments/assets/2b210d33-2569-4bc9-acac-e163de4e12a5" width="100%" alt="Knowledge Demo"/>
+
 ---
 
 ## 📋 Core Concepts

@@ -6,6 +6,8 @@ sidebar_position: 1
 
 Chat is Wegent's core interaction feature that allows you to have real-time conversations with AI agents to complete various tasks.
 
+<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
+
 ---
 
 ## 📋 Core Concepts

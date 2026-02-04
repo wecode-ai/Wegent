@@ -6,6 +6,8 @@ sidebar_position: 1
 
 Welcome to the AI Coding guide! This section covers how to use Wegent's AI-powered coding features to automate software development tasks.
 
+<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
+
 ---
 
 ## Table of Contents

@@ -6,6 +6,8 @@ sidebar_position: 1
 
 Feed is Wegent's automated task execution feature that allows AI agents to automatically execute tasks based on scheduled times or events, displaying results in a social media-like timeline format.
 
+<img src="https://github.com/user-attachments/assets/6680c33a-f4ba-4ef2-aa8c-e7a53bd003dc" width="100%" alt="Feed Demo"/>
+
 ---
 
 ## 📋 Core Concepts

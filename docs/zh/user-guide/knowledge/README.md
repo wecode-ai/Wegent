@@ -6,6 +6,8 @@ sidebar_position: 1
 
 AI Knowledge（AI 知识库）是 Wegent 的知识管理功能，让您可以创建和管理结构化知识，供 AI 智能体在对话中检索和引用。
 
+<img src="https://github.com/user-attachments/assets/2b210d33-2569-4bc9-acac-e163de4e12a5" width="100%" alt="Knowledge Demo"/>
+
 ---
 
 ## 📋 核心概念

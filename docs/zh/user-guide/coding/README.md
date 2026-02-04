@@ -6,6 +6,8 @@ sidebar_position: 1
 
 欢迎使用 AI 编码指南！本章节介绍如何使用 Wegent 的 AI 驱动编码功能来自动化软件开发任务。
 
+<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
+
 ---
 
 ## 目录
