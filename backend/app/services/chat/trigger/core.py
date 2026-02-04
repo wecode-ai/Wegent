@@ -1597,9 +1597,15 @@ async def _stream_deep_research(
     async def stream_final_report(
         client: httpx.AsyncClient,
         stream_url: str,
-    ) -> str:
-        """Stream the final report from index=1 content.delta events."""
+    ) -> tuple[str, list[dict]]:
+        """Stream the final report from index=1 content.delta events.
+
+        Returns:
+            Tuple of (content, annotations) where annotations is a list of
+            dicts with start_index, end_index, and source URL.
+        """
         full_content = ""
+        all_annotations: list[dict] = []
 
         logger.info(
             "[deep_research][STREAM_FINAL] Request: url=%s",
@@ -1654,9 +1660,11 @@ async def _stream_deep_research(
                             if data_str == "[DONE]":
                                 logger.info(
                                     "[deep_research][STREAM_FINAL] Stream received [DONE], "
-                                    "total_events=%d, content_length=%d",
+                                    "total_events=%d, content_length=%d, "
+                                    "annotations_count=%d",
                                     event_count,
                                     len(full_content),
+                                    len(all_annotations),
                                 )
                                 continue
                             try:
@@ -1673,6 +1681,11 @@ async def _stream_deep_research(
                                     if text:
                                         full_content += text
 
+                                    # Collect annotations (grounding metadata)
+                                    annotations = delta.get("annotations", [])
+                                    if annotations:
+                                        all_annotations.extend(annotations)
+
                             except json.JSONDecodeError:
                                 logger.warning(
                                     "[deep_research] Failed to parse SSE data: %s",
@@ -1684,10 +1697,12 @@ async def _stream_deep_research(
             raise
 
         logger.info(
-            "[deep_research][STREAM_FINAL] Completed: content_length=%d",
+            "[deep_research][STREAM_FINAL] Completed: content_length=%d, "
+            "annotations_count=%d",
             len(full_content),
+            len(all_annotations),
         )
-        return full_content
+        return full_content, all_annotations
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
@@ -1865,7 +1880,7 @@ async def _stream_deep_research(
             )
 
             # Stream the final report content
-            full_content = await stream_final_report(client, stream_url)
+            full_content, annotations = await stream_final_report(client, stream_url)
 
             if full_content:
                 await emitter.emit_chat_chunk(
@@ -1876,20 +1891,24 @@ async def _stream_deep_research(
                 )
                 offset += len(full_content)
 
-            # Save the result to database
+            # Save the result to database (include annotations for persistence)
+            result_data = {"value": full_content}
+            if annotations:
+                result_data["annotations"] = annotations
             await db_handler.update_subtask_status(
                 subtask_id=subtask_id,
                 status="COMPLETED",
-                result={"value": full_content},
+                result=result_data,
             )
             logger.info(
                 "[deep_research] Saved result to database: subtask_id=%d, "
-                "content_length=%d",
+                "content_length=%d, annotations_count=%d",
                 subtask_id,
                 len(full_content),
+                len(annotations),
             )
 
-            # Emit chat:done event
+            # Emit chat:done event (include annotations for frontend rendering)
             logger.info(
                 "[deep_research] Completed: task_id=%d, subtask_id=%d",
                 task_id,
@@ -1899,7 +1918,7 @@ async def _stream_deep_research(
                 task_id=task_id,
                 subtask_id=subtask_id,
                 offset=offset,
-                result={"value": full_content},
+                result=result_data,
                 message_id=message_id,
             )
 

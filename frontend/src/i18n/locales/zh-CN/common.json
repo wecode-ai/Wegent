@@ -91,7 +91,8 @@
   "chat": {
     "placeholder_chat": "使用智能体进行探索和发现",
     "placeholder_code": "让开发智能体构建功能、修复错误、探索代码仓库",
-    "sourceReferences": "资料来源"
+    "sourceReferences": "资料来源",
+    "sources": "参考来源"
   },
   "bots": {
     "title": "机器人",
