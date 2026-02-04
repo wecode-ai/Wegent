@@ -399,6 +399,19 @@ class TaskDispatcher:
                     logger.info(
                         f"Push mode: dispatched task {task_id} via new event loop"
                     )
+                    # Wait for all pending tasks to complete before closing the loop
+                    # This ensures WebSocket emit tasks are finished
+                    pending = asyncio.all_tasks(loop)
+                    current_task = asyncio.current_task(loop)
+                    # Exclude current task from pending tasks
+                    pending = {t for t in pending if t is not current_task}
+                    if pending:
+                        logger.debug(
+                            f"Push mode: waiting for {len(pending)} pending tasks"
+                        )
+                        loop.run_until_complete(
+                            asyncio.gather(*pending, return_exceptions=True)
+                        )
                 finally:
                     loop.close()
             except Exception as e:

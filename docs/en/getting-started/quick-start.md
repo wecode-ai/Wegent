@@ -116,9 +116,7 @@ Congratulations on running your first task! Here's what to explore next:
 
 ### 🎨 Create Custom Agents
 
-- [Creating Ghosts](../guides/user/creating-ghosts.md) - Define the "soul" of your agents
-- [Creating Bots](../guides/user/creating-bots.md) - Assemble complete agent instances
-- [Creating Teams](../guides/user/creating-teams.md) - Build collaborative teams
+- [Agent Settings](../guides/user/agent-settings.md) - Configure agents, bots, prompts, and collaboration modes
 
 ### 💻 Development & Extension
 

@@ -387,7 +387,7 @@ Contact your system administrator to configure enterprise user mapping.
 
 ### Documentation
 - [Core Concepts](../../concepts/core-concepts.md) - Understand Wegent's architecture
-- [Creating Teams](./creating-teams.md) - Configure agents for IM channels
+- [Agent Settings](./agent-settings.md) - Configure agents for IM channels
 - [Configuring Models](./configuring-models.md) - Set up AI models
 
 ### External Resources

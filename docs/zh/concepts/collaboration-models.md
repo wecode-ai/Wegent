@@ -1125,7 +1125,7 @@ spec:
 - [核心概念](./core-concepts.md) - 理解 Bot、Team 等核心概念
 - [系统架构](./architecture.md) - 了解 Wegent 的架构设计
 - [YAML 配置规范](../reference/yaml-specification.md) - 完整的配置格式说明
-- [创建 Team 指南](../guides/user/creating-teams.md) - 逐步创建团队的指南
+- [智能体设置](../guides/user/agent-settings.md) - 配置智能体和机器人
 
 ---
 
