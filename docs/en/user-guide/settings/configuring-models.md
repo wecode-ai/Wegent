@@ -2,7 +2,7 @@
 sidebar_position: 2
 ---
 
-# 🧠 Model Configuration Guide
+# Model Configuration Guide
 
 A Model in Wegent defines the AI model configuration, specifying which AI service to use, how to authenticate, and which model to employ. This guide will help you configure models through the Web interface.
 

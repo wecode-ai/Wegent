@@ -2,7 +2,7 @@
 sidebar_position: 1
 ---
 
-# 🤖 Agent Settings Guide
+# Agent Settings Guide
 
 This guide covers everything you need to configure AI agents in Wegent through the Web interface. An Agent combines Bots, collaboration modes, and AI models to accomplish tasks.
 
