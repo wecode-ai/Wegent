@@ -423,84 +423,35 @@ async def create_document(
         # If knowledge base has retrieval_config, trigger RAG indexing
         # Skip RAG indexing for TABLE source type as table data should be queried in real-time
         if knowledge_base and data.source_type != DocumentSourceType.TABLE:
-            spec = knowledge_base.json.get("spec", {})
-            retrieval_config = spec.get("retrievalConfig")
+            rag_params = _extract_rag_config_from_knowledge_base(
+                knowledge_base, current_user.id
+            )
 
-            if retrieval_config:
-                # Extract configuration using snake_case format
-                retriever_name = retrieval_config.get("retriever_name")
-                retriever_namespace = retrieval_config.get(
-                    "retriever_namespace", "default"
+            if rag_params:
+                # Fill in document-specific fields
+                rag_params.knowledge_base_id = str(knowledge_base_id)
+                rag_params.attachment_id = data.attachment_id
+                rag_params.document_id = document.id
+                rag_params.user_name = current_user.user_name
+                rag_params.splitter_config = data.splitter_config
+
+                _schedule_rag_indexing(
+                    background_tasks,
+                    rag_params,
+                    event_name="knowledge.rag.indexing.scheduled",
                 )
-                embedding_config = retrieval_config.get("embedding_config")
-
-                if retriever_name and embedding_config:
-                    # Extract embedding model info
-                    embedding_model_name = embedding_config.get("model_name")
-                    embedding_model_namespace = embedding_config.get(
-                        "model_namespace", "default"
-                    )
-
-                    # Pre-compute KB index info from already-fetched knowledge_base object
-                    # This avoids redundant DB query in the background task
-                    summary_enabled = spec.get("summaryEnabled", False)
-                    if knowledge_base.namespace == "default":
-                        index_owner_user_id = current_user.id
-                    else:
-                        # Group KB - use creator's user_id for shared index
-                        index_owner_user_id = knowledge_base.user_id
-
-                    kb_index_info = KnowledgeBaseIndexInfo(
-                        index_owner_user_id=index_owner_user_id,
-                        summary_enabled=summary_enabled,
-                    )
-
-                    # Capture trace context for propagation to background task
-                    trace_ctx = capture_trace_context()
-
-                    # Schedule RAG indexing in background
-                    # Note: We use a synchronous function that creates its own event loop
-                    # because BackgroundTasks runs in a thread pool without an event loop.
-                    # We also don't pass db session because it will be closed
-                    # after the request ends. The background task creates its own session.
-                    background_tasks.add_task(
-                        _index_document_background,
-                        knowledge_base_id=str(knowledge_base_id),
-                        attachment_id=data.attachment_id,
-                        retriever_name=retriever_name,
-                        retriever_namespace=retriever_namespace,
-                        embedding_model_name=embedding_model_name,
-                        embedding_model_namespace=embedding_model_namespace,
-                        user_id=current_user.id,
-                        user_name=current_user.user_name,
-                        splitter_config=data.splitter_config,
-                        document_id=document.id,
-                        kb_index_info=kb_index_info,
-                        trace_context=trace_ctx,
-                    )
-                    logger.info(
-                        f"Scheduled RAG indexing for document {document.id} in knowledge base {knowledge_base_id}"
-                    )
-                    add_span_event(
-                        "knowledge.rag.indexing.scheduled",
-                        {
-                            "document_id": str(document.id),
-                            "knowledge_base_id": str(knowledge_base_id),
-                            "retriever": retriever_name,
-                        },
-                    )
-                else:
-                    logger.warning(
-                        f"Knowledge base {knowledge_base_id} has incomplete retrieval_config, skipping RAG indexing"
-                    )
-                    add_span_event(
-                        "knowledge.rag.indexing.skipped",
-                        {
-                            "reason": "incomplete_config",
-                            "document_id": str(document.id),
-                            "knowledge_base_id": str(knowledge_base_id),
-                        },
-                    )
+            else:
+                logger.warning(
+                    f"Knowledge base {knowledge_base_id} has incomplete retrieval_config, skipping RAG indexing"
+                )
+                add_span_event(
+                    "knowledge.rag.indexing.skipped",
+                    {
+                        "reason": "incomplete_config",
+                        "document_id": str(document.id),
+                        "knowledge_base_id": str(knowledge_base_id),
+                    },
+                )
 
         return KnowledgeDocumentResponse.model_validate(document)
     except ValueError as e:
@@ -520,6 +471,137 @@ class KnowledgeBaseIndexInfo:
 
     index_owner_user_id: int
     summary_enabled: bool = False
+
+
+@dataclass
+class RAGIndexingParams:
+    """Parameters for scheduling RAG document indexing."""
+
+    knowledge_base_id: str
+    attachment_id: int
+    document_id: int
+    retriever_name: str
+    retriever_namespace: str
+    embedding_model_name: str
+    embedding_model_namespace: str
+    user_id: int
+    user_name: str
+    splitter_config: Optional[SplitterConfig]
+    kb_index_info: KnowledgeBaseIndexInfo
+
+
+def _extract_rag_config_from_knowledge_base(
+    knowledge_base, current_user_id: int
+) -> Optional[RAGIndexingParams]:
+    """
+    Extract RAG indexing configuration from a knowledge base.
+
+    Returns None if the knowledge base doesn't have complete RAG configuration.
+    Otherwise returns a dict with all configuration values needed for indexing.
+
+    Args:
+        knowledge_base: The knowledge base object
+        current_user_id: The current user's ID for determining index owner
+
+    Returns:
+        RAGIndexingParams with extracted config, or None if incomplete config
+    """
+    spec = (knowledge_base.json or {}).get("spec", {})
+    retrieval_config = spec.get("retrievalConfig")
+
+    if not retrieval_config:
+        return None
+
+    retriever_name = retrieval_config.get("retriever_name")
+    retriever_namespace = retrieval_config.get("retriever_namespace", "default")
+    embedding_config = retrieval_config.get("embedding_config")
+
+    if not retriever_name or not embedding_config:
+        return None
+
+    embedding_model_name = embedding_config.get("model_name")
+    embedding_model_namespace = embedding_config.get("model_namespace", "default")
+
+    if not embedding_model_name:
+        return None
+
+    # Pre-compute KB index info
+    summary_enabled = spec.get("summaryEnabled", False)
+    if knowledge_base.namespace == "default":
+        index_owner_user_id = current_user_id
+    else:
+        # Group KB - use creator's user_id for shared index
+        index_owner_user_id = knowledge_base.user_id
+
+    kb_index_info = KnowledgeBaseIndexInfo(
+        index_owner_user_id=index_owner_user_id,
+        summary_enabled=summary_enabled,
+    )
+
+    # Return partial params - document-specific fields will be filled by caller
+    return RAGIndexingParams(
+        knowledge_base_id="",  # To be filled by caller
+        attachment_id=0,  # To be filled by caller
+        document_id=0,  # To be filled by caller
+        retriever_name=retriever_name,
+        retriever_namespace=retriever_namespace,
+        embedding_model_name=embedding_model_name,
+        embedding_model_namespace=embedding_model_namespace,
+        user_id=current_user_id,
+        user_name="",  # To be filled by caller
+        splitter_config=None,  # To be filled by caller
+        kb_index_info=kb_index_info,
+    )
+
+
+def _schedule_rag_indexing(
+    background_tasks: BackgroundTasks,
+    params: RAGIndexingParams,
+    event_name: str = "knowledge.rag.indexing.scheduled",
+) -> None:
+    """
+    Schedule RAG document indexing as a background task.
+
+    This is a common helper function used by both create_document and reindex_document
+    to avoid code duplication.
+
+    Args:
+        background_tasks: FastAPI BackgroundTasks for scheduling
+        params: RAGIndexingParams containing all indexing configuration
+        event_name: Telemetry event name to emit (for distinguishing create vs reindex)
+    """
+    # Capture trace context for propagation to background task
+    trace_ctx = capture_trace_context()
+
+    # Schedule RAG indexing in background
+    background_tasks.add_task(
+        _index_document_background,
+        knowledge_base_id=params.knowledge_base_id,
+        attachment_id=params.attachment_id,
+        retriever_name=params.retriever_name,
+        retriever_namespace=params.retriever_namespace,
+        embedding_model_name=params.embedding_model_name,
+        embedding_model_namespace=params.embedding_model_namespace,
+        user_id=params.user_id,
+        user_name=params.user_name,
+        splitter_config=params.splitter_config,
+        document_id=params.document_id,
+        kb_index_info=params.kb_index_info,
+        trace_context=trace_ctx,
+    )
+
+    logger.info(
+        f"Scheduled RAG indexing for document {params.document_id} "
+        f"in knowledge base {params.knowledge_base_id}"
+    )
+    add_span_event(
+        event_name,
+        {
+            "document_id": str(params.document_id),
+            "knowledge_base_id": params.knowledge_base_id,
+            "retriever": params.retriever_name,
+        },
+    )
 
 
 def _get_kb_index_info_sync(
@@ -1068,74 +1150,30 @@ async def reindex_document(
             detail="Access denied to this document",
         )
 
-    # Check if knowledge base has RAG configured
-    spec = (knowledge_base.json or {}).get("spec", {})
-    retrieval_config = spec.get("retrievalConfig")
+    # Extract RAG config using shared helper
+    rag_params = _extract_rag_config_from_knowledge_base(knowledge_base, current_user.id)
 
-    if not retrieval_config:
+    if not rag_params:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Knowledge base has no retrieval configuration",
+            detail="Knowledge base has no or incomplete retrieval configuration",
         )
 
-    retriever_name = retrieval_config.get("retriever_name")
-    retriever_namespace = retrieval_config.get("retriever_namespace", "default")
-    embedding_config = retrieval_config.get("embedding_config")
-
-    if not retriever_name or not embedding_config:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Knowledge base has incomplete retrieval configuration",
-        )
-
-    # Extract embedding model info
-    embedding_model_name = embedding_config.get("model_name")
-    embedding_model_namespace = embedding_config.get("model_namespace", "default")
-
-    # Pre-compute KB index info
-    summary_enabled = spec.get("summaryEnabled", False)
-    if knowledge_base.namespace == "default":
-        index_owner_user_id = current_user.id
-    else:
-        index_owner_user_id = knowledge_base.user_id
-
-    kb_index_info = KnowledgeBaseIndexInfo(
-        index_owner_user_id=index_owner_user_id,
-        summary_enabled=summary_enabled,
+    # Fill in document-specific fields
+    rag_params.knowledge_base_id = str(document.kind_id)
+    rag_params.attachment_id = document.attachment_id
+    rag_params.document_id = document.id
+    rag_params.user_name = current_user.user_name
+    rag_params.splitter_config = (
+        _parse_splitter_config(document.splitter_config)
+        if document.splitter_config
+        else None
     )
 
-    # Capture trace context for propagation to background task
-    trace_ctx = capture_trace_context()
-
-    # Schedule RAG re-indexing in background
-    background_tasks.add_task(
-        _index_document_background,
-        knowledge_base_id=str(document.kind_id),
-        attachment_id=document.attachment_id,
-        retriever_name=retriever_name,
-        retriever_namespace=retriever_namespace,
-        embedding_model_name=embedding_model_name,
-        embedding_model_namespace=embedding_model_namespace,
-        user_id=current_user.id,
-        user_name=current_user.user_name,
-        splitter_config=(
-            _parse_splitter_config(document.splitter_config)
-            if document.splitter_config
-            else None
-        ),
-        document_id=document.id,
-        kb_index_info=kb_index_info,
-        trace_context=trace_ctx,
-    )
-
-    logger.info(f"Scheduled RAG re-indexing for document {document.id}")
-    add_span_event(
-        "knowledge.document.reindex.scheduled",
-        {
-            "document_id": str(document_id),
-            "kb_id": str(document.kind_id),
-            "user_id": str(current_user.id),
-        },
+    _schedule_rag_indexing(
+        background_tasks,
+        rag_params,
+        event_name="knowledge.document.reindex.scheduled",
     )
 
     return {
