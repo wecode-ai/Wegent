@@ -6,5 +6,9 @@
   "internal_step_start": "启动",
   "internal_step_start_desc": "启动 Executor 服务",
   "view_config": "查看配置",
-  "beta_warning": "此功能为测试版本，运行在个人设备上存在一定风险，请谨慎使用"
+  "beta_warning": "此功能为测试版本，运行在个人设备上存在一定风险，请谨慎使用",
+  "plugins_title": "插件管理（可选）",
+  "plugins_description": "安装插件以扩展 Agent 的能力",
+  "plugin_browser_name": "Browser 插件",
+  "plugin_browser_description": "让 Agent 能够操作浏览器，实现网页自动化"
 }
