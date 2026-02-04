@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.subscription_follow import (
+    FollowType,
     InvitationStatus,
     NotificationLevel,
     SubscriptionFollow,
@@ -167,6 +168,216 @@ class SubscriptionNotificationService:
             notification_channel_ids=notification_channel_ids or [],
             notification_channels=selected_channels,
             available_channels=self._get_available_channels(db, user_id),
+        )
+
+    def get_developer_settings(
+        self,
+        db: Session,
+        *,
+        subscription_id: int,
+        user_id: int,
+    ) -> "DeveloperNotificationSettingsResponse":
+        """
+        Get notification settings for the subscription developer.
+
+        Args:
+            db: Database session
+            subscription_id: Subscription ID
+            user_id: Developer user ID (must be subscription owner)
+
+        Returns:
+            Developer notification settings with available channels
+
+        Raises:
+            ValueError: If user is not the subscription owner
+        """
+        from app.schemas.subscription import (
+            DeveloperNotificationSettingsResponse,
+        )
+
+        # Verify user is the subscription owner
+        subscription = (
+            db.query(Kind)
+            .filter(
+                Kind.id == subscription_id,
+                Kind.kind == "Subscription",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not subscription:
+            raise ValueError("Subscription not found")
+
+        if subscription.user_id != user_id:
+            raise ValueError("Only subscription owner can access developer settings")
+
+        # Get developer follow record (follower_user_id matches subscription owner)
+        follow = (
+            db.query(SubscriptionFollow)
+            .filter(
+                SubscriptionFollow.subscription_id == subscription_id,
+                SubscriptionFollow.follower_user_id == user_id,
+            )
+            .first()
+        )
+
+        if follow:
+            # Parse config
+            config = self._parse_follow_config(follow.config)
+            return DeveloperNotificationSettingsResponse(
+                notification_level=config.notification_level,
+                notification_channel_ids=config.notification_channel_ids or [],
+                available_channels=self._get_available_channels(db, user_id),
+            )
+
+        # No developer follow record yet, return defaults (NOTIFY level)
+        return DeveloperNotificationSettingsResponse(
+            notification_level=SchemaNotificationLevel.NOTIFY,
+            notification_channel_ids=[],
+            available_channels=self._get_available_channels(db, user_id),
+        )
+
+    def update_developer_settings(
+        self,
+        db: Session,
+        *,
+        subscription_id: int,
+        user_id: int,
+        notification_level: SchemaNotificationLevel,
+        notification_channel_ids: Optional[List[int]] = None,
+    ) -> "DeveloperNotificationSettingsResponse":
+        """
+        Update notification settings for the subscription developer.
+
+        Args:
+            db: Database session
+            subscription_id: Subscription ID
+            user_id: Developer user ID (must be subscription owner)
+            notification_level: New notification level
+            notification_channel_ids: Messager channel IDs (for notify level)
+
+        Returns:
+            Updated developer notification settings
+
+        Raises:
+            ValueError: If user is not the subscription owner
+        """
+        from app.schemas.subscription import DeveloperNotificationSettingsResponse
+
+        # Verify user is the subscription owner
+        subscription = (
+            db.query(Kind)
+            .filter(
+                Kind.id == subscription_id,
+                Kind.kind == "Subscription",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not subscription:
+            raise ValueError("Subscription not found")
+
+        if subscription.user_id != user_id:
+            raise ValueError("Only subscription owner can update developer settings")
+
+        # Get or create developer follow record
+        follow = (
+            db.query(SubscriptionFollow)
+            .filter(
+                SubscriptionFollow.subscription_id == subscription_id,
+                SubscriptionFollow.follower_user_id == user_id,
+            )
+            .first()
+        )
+
+        if not follow:
+            # Create new developer follow record
+            follow = SubscriptionFollow(
+                subscription_id=subscription_id,
+                follower_user_id=user_id,
+                follow_type=FollowType.DIRECT.value,
+                invitation_status=InvitationStatus.ACCEPTED.value,
+                config="",
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+            db.add(follow)
+
+        # Build and save config
+        config = SubscriptionFollowConfig(
+            notification_level=notification_level,
+            notification_channel_ids=notification_channel_ids,
+        )
+        follow.config = config.model_dump_json()
+        follow.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+
+        logger.info(
+            f"[SubscriptionNotification] Updated developer settings for user {user_id} "
+            f"on subscription {subscription_id}: level={notification_level.value}, "
+            f"channels={notification_channel_ids}"
+        )
+
+        return DeveloperNotificationSettingsResponse(
+            notification_level=notification_level,
+            notification_channel_ids=notification_channel_ids or [],
+            available_channels=self._get_available_channels(db, user_id),
+        )
+
+    def ensure_developer_follow(
+        self,
+        db: Session,
+        *,
+        subscription_id: int,
+        user_id: int,
+    ) -> None:
+        """
+        Ensure developer follow record exists for subscription owner.
+
+        Called when creating a new subscription. Creates a follow record
+        with default NOTIFY level if it doesn't exist.
+
+        Args:
+            db: Database session
+            subscription_id: Subscription ID
+            user_id: Developer user ID (subscription owner)
+        """
+        # Check if developer follow record already exists
+        existing = (
+            db.query(SubscriptionFollow)
+            .filter(
+                SubscriptionFollow.subscription_id == subscription_id,
+                SubscriptionFollow.follower_user_id == user_id,
+            )
+            .first()
+        )
+
+        if existing:
+            return
+
+        # Create new developer follow record with default NOTIFY level
+        config = SubscriptionFollowConfig(
+            notification_level=SchemaNotificationLevel.NOTIFY,
+            notification_channel_ids=[],
+        )
+
+        follow = SubscriptionFollow(
+            subscription_id=subscription_id,
+            follower_user_id=user_id,
+            follow_type=FollowType.DIRECT.value,
+            invitation_status=InvitationStatus.ACCEPTED.value,
+            config=config.model_dump_json(),
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        db.add(follow)
+        db.commit()
+
+        logger.info(
+            f"[SubscriptionNotification] Created developer follow for user {user_id} "
+            f"on subscription {subscription_id} with NOTIFY level"
         )
 
     def get_followers_with_settings(
@@ -321,7 +532,7 @@ class SubscriptionNotificationService:
         Returns:
             List of channel info with binding status
         """
-        # Get all enabled Messager channels
+        # Get all enabled Messager channels (global channels created by admin)
         channels = (
             db.query(Kind)
             .filter(
@@ -332,18 +543,23 @@ class SubscriptionNotificationService:
             .all()
         )
 
-        # Get user's IM bindings
+        # Get user's IM bindings (stores which Messager channels user has bound to)
         user_bindings = self.get_user_im_bindings(db, user_id=user_id)
 
         result = []
         for channel in channels:
-            spec = channel.json.get("spec", {})
+            # Get channel spec from json field
+            spec = channel.json.get("spec", {}) if channel.json else {}
             if not spec.get("isEnabled", True):
                 continue
 
             channel_info = NotificationChannelInfo(
                 id=channel.id,
-                name=channel.json.get("metadata", {}).get("name", channel.name),
+                name=(
+                    channel.json.get("metadata", {}).get("name", channel.name)
+                    if channel.json
+                    else channel.name
+                ),
                 channel_type=spec.get("channelType", "unknown"),
                 is_bound=str(channel.id) in user_bindings,
             )
@@ -371,6 +587,7 @@ class SubscriptionNotificationService:
         if not channel_ids:
             return []
 
+        # Get channel details from Messager kinds (global channels)
         channels = (
             db.query(Kind)
             .filter(
@@ -386,14 +603,101 @@ class SubscriptionNotificationService:
 
         result = []
         for channel in channels:
-            spec = channel.json.get("spec", {})
+            # Get spec from json field for Messager kind
+            spec = channel.json.get("spec", {}) if channel.json else {}
             channel_info = NotificationChannelInfo(
                 id=channel.id,
-                name=channel.json.get("metadata", {}).get("name", channel.name),
+                name=(
+                    channel.json.get("metadata", {}).get("name", channel.name)
+                    if channel.json
+                    else channel.name
+                ),
                 channel_type=spec.get("channelType", "unknown"),
                 is_bound=str(channel.id) in user_bindings,
             )
             result.append(channel_info)
+
+        return result
+
+    async def notify_execution_completed(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        subscription: Any,
+        execution: Any,
+    ) -> Dict[str, Any]:
+        """
+        Notify followers that a subscription execution has completed.
+
+        This method is called when a subscription-triggered task completes,
+        dispatching notifications to followers based on their notification settings.
+
+        Args:
+            db: Database session
+            user_id: User ID who owns the subscription
+            subscription: Subscription CRD object
+            execution: BackgroundExecution object
+
+        Returns:
+            Dict with notification dispatch results
+        """
+        from app.core.config import settings
+        from app.schemas.subscription import BackgroundExecutionStatus
+        from app.services.subscription.notification_dispatcher import (
+            subscription_notification_dispatcher,
+        )
+
+        # Generate detail URL for the execution
+        # Link to the subscription detail page
+        base_url = getattr(settings, "TASK_SHARE_BASE_URL", "http://localhost:3000")
+        subscription_id = execution.subscription_id
+        execution_id = execution.id
+        task_id = execution.task_id
+
+        # Build detail URL - link to subscription page with execution and task info
+        # Frontend can use these parameters to show the specific execution
+        detail_url = f"{base_url}/feed/subscriptions/{subscription_id}?execution={execution_id}&task={task_id}"
+
+        logger.info(
+            f"[notify_execution_completed] Generated detail_url: {detail_url}, "
+            f"base_url: {base_url}, subscription_id: {subscription_id}, "
+            f"execution_id: {execution_id}, task_id: {task_id}"
+        )
+
+        # Map execution status to string
+        status_map = {
+            BackgroundExecutionStatus.COMPLETED.value: "COMPLETED",
+            BackgroundExecutionStatus.COMPLETED_SILENT.value: "COMPLETED",
+            BackgroundExecutionStatus.FAILED.value: "FAILED",
+            BackgroundExecutionStatus.CANCELLED.value: "CANCELLED",
+        }
+        status = status_map.get(execution.status, execution.status)
+
+        # Get subscription display name
+        subscription_display_name = (
+            subscription.spec.displayName
+            if subscription and subscription.spec
+            else "Unknown"
+        )
+
+        # Dispatch notifications
+        result = (
+            await subscription_notification_dispatcher.dispatch_execution_notifications(
+                db=db,
+                subscription_id=subscription_id,
+                execution_id=execution_id,
+                subscription_display_name=subscription_display_name,
+                result_summary=execution.result_summary or "",
+                status=status,
+                detail_url=detail_url,
+            )
+        )
+
+        logger.info(
+            f"[notify_execution_completed] Dispatched notifications for "
+            f"subscription {subscription_id}, execution {execution_id}: {result}"
+        )
 
         return result
 

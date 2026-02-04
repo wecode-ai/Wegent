@@ -2,6 +2,11 @@
   "title": "Feed",
   "subtitle": "AI-powered information tracking and updates",
   "tab_timeline": "Feed",
+  "notification_level": {
+    "silent": "Silent",
+    "default": "Default",
+    "notify": "Notify"
+  },
   "tab_config": "My Subscriptions",
   "my_subscriptions": "My Subscriptions",
   "execution_timeline": "Execution Timeline",
@@ -288,6 +293,16 @@
     "bind_hint": "To use unbound channels, send a message via that channel first",
     "save_success": "Notification settings saved",
     "save_failed": "Failed to save notification settings"
+  },
+  "developer_notification_settings": {
+    "title": "Developer Notification Settings",
+    "description": "Configure how you want to be notified when \"{{name}}\" executes (as the subscription owner)",
+    "level_silent_desc": "Don't receive any notifications",
+    "level_default_desc": "Only display results in frontend",
+    "level_notify_desc": "Receive instant notifications via Messager channels (recommended)",
+    "channels": "Notification Channels",
+    "channels_hint": "Select channels to receive notifications (need to bind in personal settings first)",
+    "no_channels_hint": "No notification channels available. Please bind a Messager in personal settings first."
   },
   "feed": {
     "title": "Feed",

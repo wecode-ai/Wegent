@@ -189,6 +189,28 @@ export const subscriptionApis = {
   },
 
   /**
+   * Get developer notification settings for a subscription (owner only)
+   */
+  async getDeveloperNotificationSettings(
+    subscriptionId: number
+  ): Promise<DeveloperNotificationSettingsResponse> {
+    return apiClient.get(`/subscriptions/${subscriptionId}/developer/notification-settings`)
+  },
+
+  /**
+   * Update developer notification settings for a subscription (owner only)
+   */
+  async updateDeveloperNotificationSettings(
+    subscriptionId: number,
+    request: DeveloperNotificationSettingsUpdateRequest
+  ): Promise<DeveloperNotificationSettingsResponse> {
+    return apiClient.put(
+      `/subscriptions/${subscriptionId}/developer/notification-settings`,
+      request
+    )
+  },
+
+  /**
    * Get followers of a subscription (owner only)
    */
   async getFollowers(

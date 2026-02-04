@@ -2,6 +2,11 @@
   "title": "关注",
   "subtitle": "AI 智能体的动态与执行记录",
   "tab_timeline": "动态",
+  "notification_level": {
+    "silent": "静默",
+    "default": "默认",
+    "notify": "通知"
+  },
   "tab_config": "我的订阅器",
   "my_subscriptions": "我的订阅器",
   "execution_timeline": "执行历史",
@@ -288,6 +293,16 @@
     "bind_hint": "要使用未绑定的渠道，请先通过该渠道发送一条消息",
     "save_success": "通知设置已保存",
     "save_failed": "保存通知设置失败"
+  },
+  "developer_notification_settings": {
+    "title": "开发者通知设置",
+    "description": "配置当「{{name}}」执行时如何通知您（作为订阅器创建者）",
+    "level_silent_desc": "不接收任何通知",
+    "level_default_desc": "仅在前端显示执行结果",
+    "level_notify_desc": "通过 Messager 渠道接收即时通知（推荐）",
+    "channels": "通知渠道",
+    "channels_hint": "选择要接收通知的渠道（需要先在个人设置中绑定）",
+    "no_channels_hint": "暂无可用通知渠道，请先在个人设置中绑定 Messager"
   },
   "feed": {
     "title": "动态",

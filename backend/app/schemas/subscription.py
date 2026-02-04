@@ -807,6 +807,30 @@ class FollowSettingsResponse(BaseModel):
     )
 
 
+class DeveloperNotificationSettingsResponse(BaseModel):
+    """Response for developer notification settings."""
+
+    notification_level: NotificationLevel = Field(
+        ..., description="Current notification level"
+    )
+    notification_channel_ids: List[int] = Field(
+        default_factory=list, description="List of selected Messager channel IDs"
+    )
+    available_channels: List[NotificationChannelInfo] = Field(
+        default_factory=list,
+        description="List of available Messager channels with binding status",
+    )
+
+
+class DeveloperNotificationSettingsUpdateRequest(BaseModel):
+    """Request to update developer notification settings."""
+
+    notification_level: NotificationLevel = Field(..., description="Notification level")
+    notification_channel_ids: Optional[List[int]] = Field(
+        default=None, description="List of Messager channel IDs for notifications"
+    )
+
+
 class IMChannelBinding(BaseModel):
     """IM channel binding information in user preferences."""
 

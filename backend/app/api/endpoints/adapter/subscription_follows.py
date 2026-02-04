@@ -21,6 +21,8 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
 from app.schemas.subscription import (
+    DeveloperNotificationSettingsResponse,
+    DeveloperNotificationSettingsUpdateRequest,
     DiscoverSubscriptionsListResponse,
     FollowingSubscriptionsListResponse,
     FollowSettingsResponse,
@@ -170,6 +172,62 @@ def update_follow_settings(
     """
     try:
         return subscription_notification_service.update_follow_settings(
+            db=db,
+            subscription_id=subscription_id,
+            user_id=current_user.id,
+            notification_level=request.notification_level,
+            notification_channel_ids=request.notification_channel_ids,
+        )
+    except ValueError as e:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ========== Developer Notification Settings Endpoints ==========
+
+
+@router.get(
+    "/{subscription_id}/developer/notification-settings",
+    response_model=DeveloperNotificationSettingsResponse,
+)
+def get_developer_notification_settings(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get notification settings for the subscription developer.
+
+    Returns the current notification level and selected channels.
+    If no settings exist, returns defaults (NOTIFY level with empty channels).
+    Only the subscription owner can access this endpoint.
+    """
+    return subscription_notification_service.get_developer_settings(
+        db=db,
+        subscription_id=subscription_id,
+        user_id=current_user.id,
+    )
+
+
+@router.put(
+    "/{subscription_id}/developer/notification-settings",
+    response_model=DeveloperNotificationSettingsResponse,
+)
+def update_developer_notification_settings(
+    subscription_id: int,
+    request: DeveloperNotificationSettingsUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Update notification settings for the subscription developer.
+
+    Allows changing the notification level and selecting notification channels.
+    Only the subscription owner can access this endpoint.
+    """
+    try:
+        return subscription_notification_service.update_developer_settings(
             db=db,
             subscription_id=subscription_id,
             user_id=current_user.id,

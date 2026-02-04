@@ -570,16 +570,30 @@ def _add_subscription_labels_to_task(
     from app.schemas.kind import Task
 
     task_crd = Task.model_validate(task.json)
-    if task_crd.metadata.labels:
-        # Subscription task identification
-        task_crd.metadata.labels["type"] = "subscription"
-        task_crd.metadata.labels["userInteracted"] = "false"
-        # Subscription-specific labels
-        task_crd.metadata.labels[LABEL_SUBSCRIPTION_ID] = str(subscription_id)
-        task_crd.metadata.labels[LABEL_EXECUTION_ID] = str(execution_id)
-        task_crd.metadata.labels[LABEL_BACKGROUND_EXECUTION_ID] = str(execution_id)
+    logger.info(
+        f"[_add_subscription_labels_to_task] Before: task_id={task.id}, "
+        f"subscription_id={subscription_id}, execution_id={execution_id}, "
+        f"labels={task_crd.metadata.labels}"
+    )
+    # Ensure labels dict exists
+    if task_crd.metadata.labels is None:
+        task_crd.metadata.labels = {}
+        logger.info(
+            f"[_add_subscription_labels_to_task] Created empty labels for task {task.id}"
+        )
+    # Subscription task identification
+    task_crd.metadata.labels["type"] = "subscription"
+    task_crd.metadata.labels["userInteracted"] = "false"
+    # Subscription-specific labels
+    task_crd.metadata.labels[LABEL_SUBSCRIPTION_ID] = str(subscription_id)
+    task_crd.metadata.labels[LABEL_EXECUTION_ID] = str(execution_id)
+    task_crd.metadata.labels[LABEL_BACKGROUND_EXECUTION_ID] = str(execution_id)
     task.json = task_crd.model_dump(mode="json")
     db.commit()
+    logger.info(
+        f"[_add_subscription_labels_to_task] After: task_id={task.id}, "
+        f"labels={task_crd.metadata.labels}"
+    )
 
 
 def _link_task_to_execution(db: Session, execution: Any, task_id: int) -> None:
@@ -1627,8 +1641,15 @@ def execute_subscription_task(
                 task_id = task.id
 
                 # Add subscription labels to task
+                logger.info(
+                    f"[subscription_tasks] About to call _add_subscription_labels_to_task "
+                    f"for task {task_id}, subscription {subscription_id}, execution {execution_id}"
+                )
                 _add_subscription_labels_to_task(
                     db, task, subscription_id, execution_id, supports_direct_chat
+                )
+                logger.info(
+                    f"[subscription_tasks] Finished _add_subscription_labels_to_task for task {task_id}"
                 )
 
                 # Link task to execution
@@ -2011,8 +2032,15 @@ def execute_subscription_task_sync(
                 task_id = task.id
 
                 # Add subscription labels to task
+                logger.info(
+                    f"[subscription_tasks] About to call _add_subscription_labels_to_task "
+                    f"for task {task_id}, subscription {subscription_id}, execution {execution_id}"
+                )
                 _add_subscription_labels_to_task(
                     db, task, subscription_id, execution_id, supports_direct_chat
+                )
+                logger.info(
+                    f"[subscription_tasks] Finished _add_subscription_labels_to_task for task {task_id}"
                 )
 
                 # Link task to execution

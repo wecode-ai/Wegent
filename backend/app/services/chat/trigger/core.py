@@ -853,14 +853,32 @@ async def _stream_with_http_adapter(
     )
 
     # Build task_data for MCP variable substitution
-    # This must be built before _append_mcp_servers to support ${{user.name}} etc.
+    # This must be built before _append_mcp_servers to support ${{...}} placeholders.
+    backend_url = settings.BACKEND_INTERNAL_URL.rstrip("/")
+    task_token = ""
+    try:
+        from app.mcp_server.auth import create_task_token
+
+        task_token = create_task_token(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            user_id=stream_data.user_id,
+            user_name=str(stream_data.user_name or ""),
+            expires_delta_minutes=1440,  # 24 hours
+        )
+    except Exception as e:
+        logger.warning("[HTTP_ADAPTER] Failed to create task token for MCP: %s", e)
+
     task_data = {
         "user": {
             "name": str(stream_data.user_name or ""),
             "id": stream_data.user_id,
         },
         "task_id": task_id,
+        "subtask_id": subtask_id,
         "team_id": stream_data.team_id,
+        "backend_url": backend_url,
+        "task_token": task_token,
     }
 
     # Parse MCP servers with separate span (includes variable substitution)
@@ -869,24 +887,21 @@ async def _stream_with_http_adapter(
     )
 
     # Inject system MCP for subscription tasks (provides silent_exit tool)
-    # For subscription tasks, we create a task token since there's no user auth_token
     if is_subscription:
         try:
-            from app.mcp_server.auth import create_task_token
             from app.mcp_server.server import get_mcp_system_config
 
-            # Create task token for MCP Server authentication
-            # This is needed for subscription tasks which run in background without user JWT
-            task_token = create_task_token(
-                task_id=task_id,
-                subtask_id=subtask_id,
-                user_id=stream_data.user_id,
-                user_name=stream_data.user_name,
-                expires_delta_minutes=1440,  # 24 hours
-            )
+            # Use the task token created above; fallback to creating one if needed.
+            if not task_token:
+                from app.mcp_server.auth import create_task_token
 
-            # Get backend URL from settings
-            backend_url = settings.BACKEND_INTERNAL_URL
+                task_token = create_task_token(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    user_id=stream_data.user_id,
+                    user_name=str(stream_data.user_name or ""),
+                    expires_delta_minutes=1440,  # 24 hours
+                )
             system_mcp_config = get_mcp_system_config(backend_url, task_token)
 
             # Convert system MCP config to list format expected by chat_shell
@@ -1527,11 +1542,32 @@ async def _stream_with_bridge(
             # Load MCP tools if enabled
             if settings.CHAT_MCP_ENABLED:
                 logger.info("[BRIDGE] Loading MCP tools for task %d", task_id)
+                backend_url = settings.BACKEND_INTERNAL_URL.rstrip("/")
+                task_token = ""
+                try:
+                    from app.mcp_server.auth import create_task_token
+
+                    task_token = create_task_token(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        user_id=ws_config.user_id,
+                        user_name=str(ws_config.user_name or ""),
+                        expires_delta_minutes=1440,  # 24 hours
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "[BRIDGE] Failed to create task token for MCP: %s",
+                        e,
+                    )
                 mcp_task_data = {
                     "user": {
                         "name": str(ws_config.user_name or ""),
                         "id": ws_config.user_id,
                     },
+                    "task_id": task_id,
+                    "subtask_id": subtask_id,
+                    "backend_url": backend_url,
+                    "task_token": task_token,
                 }
                 # Note: Table context is now handled via DataTableTool,
                 # no need to pass table_mcp_config here

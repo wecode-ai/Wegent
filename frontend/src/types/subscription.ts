@@ -428,3 +428,16 @@ export interface FollowSettingsResponse {
   notification_channels: NotificationChannelInfo[]
   available_channels: NotificationChannelInfo[]
 }
+
+// Developer notification settings response
+export interface DeveloperNotificationSettingsResponse {
+  notification_level: NotificationLevel
+  notification_channel_ids: number[]
+  available_channels: NotificationChannelInfo[]
+}
+
+// Update developer notification settings request
+export interface DeveloperNotificationSettingsUpdateRequest {
+  notification_level: NotificationLevel
+  notification_channel_ids?: number[]
+}

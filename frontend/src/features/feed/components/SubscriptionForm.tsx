@@ -44,6 +44,8 @@ import { teamApis } from '@/apis/team'
 import { modelApis, UnifiedModel } from '@/apis/models'
 import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
 import type {
+  NotificationChannelInfo,
+  NotificationLevel,
   Subscription,
   SubscriptionCreateRequest,
   SubscriptionKnowledgeBaseRef,
@@ -314,6 +316,35 @@ export function SubscriptionForm({
 
   // Submit state
   const [submitting, setSubmitting] = useState(false)
+
+  // Developer notification settings state (inline form)
+  const [devNotificationLevel, setDevNotificationLevel] = useState<NotificationLevel>('notify')
+  const [devNotificationChannels, setDevNotificationChannels] = useState<number[]>([])
+  const [devAvailableChannels, setDevAvailableChannels] = useState<NotificationChannelInfo[]>([])
+  const [devSettingsLoading, setDevSettingsLoading] = useState(false)
+
+  // Load developer notification settings when editing
+  useEffect(() => {
+    const loadDeveloperSettings = async () => {
+      if (!isEditing || !subscription || isRental) return
+
+      setDevSettingsLoading(true)
+      try {
+        const response = await subscriptionApis.getDeveloperNotificationSettings(subscription.id)
+        setDevNotificationLevel(response.notification_level)
+        setDevNotificationChannels(response.notification_channel_ids || [])
+        setDevAvailableChannels(response.available_channels || [])
+      } catch (error) {
+        console.error('Failed to load developer notification settings:', error)
+      } finally {
+        setDevSettingsLoading(false)
+      }
+    }
+
+    if (open) {
+      loadDeveloperSettings()
+    }
+  }, [isEditing, subscription, isRental, open])
 
   // Load teams - only show teams with chat or code mode (exclude knowledge-only teams)
   useEffect(() => {
@@ -601,6 +632,20 @@ export function SubscriptionForm({
           knowledge_base_refs: knowledgeBaseRefs.length > 0 ? knowledgeBaseRefs : undefined,
         }
         await subscriptionApis.updateSubscription(subscription.id, updateData)
+
+        // Update developer notification settings if not rental
+        if (!isRental) {
+          try {
+            await subscriptionApis.updateDeveloperNotificationSettings(subscription.id, {
+              notification_level: devNotificationLevel,
+              notification_channel_ids: devNotificationChannels,
+            })
+          } catch (error) {
+            console.error('Failed to update developer notification settings:', error)
+            // Don't block the main update if this fails
+          }
+        }
+
         toast.success(t('update_success'))
       } else {
         // Generate name from display name
@@ -674,6 +719,8 @@ export function SubscriptionForm({
     onOpenChange,
     t,
     teams,
+    devNotificationLevel,
+    devNotificationChannels,
   ])
 
   // Filter models based on search
@@ -1168,6 +1215,95 @@ export function SubscriptionForm({
                 <Label className="text-sm font-medium">{t('enable_subscription')}</Label>
                 <Switch checked={enabled} onCheckedChange={setEnabled} />
               </div>
+
+              {/* Developer Notification Settings - Only show when editing and not rental */}
+              {isEditing && !isRental && (
+                <div className="space-y-3 pt-4 border-t border-border/50">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">
+                      {t('developer_notification_settings.title')}
+                    </Label>
+                    <p className="text-xs text-text-muted">
+                      {t('developer_notification_settings.description', {
+                        name: subscription?.display_name || displayName,
+                      })}
+                    </p>
+                  </div>
+
+                  {/* Notification Level Selection */}
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      {(['silent', 'default', 'notify'] as NotificationLevel[]).map(level => (
+                        <Button
+                          key={level}
+                          type="button"
+                          variant={devNotificationLevel === level ? 'primary' : 'outline'}
+                          size="sm"
+                          className="flex-1 h-9"
+                          onClick={() => setDevNotificationLevel(level)}
+                          disabled={devSettingsLoading}
+                        >
+                          {t(`notification_level.${level}`)}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Notification Channels - Only show when level is 'notify' */}
+                  {devNotificationLevel === 'notify' && (
+                    <div className="space-y-2">
+                      <Label className="text-xs text-text-muted">
+                        {t('developer_notification_settings.channels')}
+                      </Label>
+                      {devAvailableChannels.length > 0 ? (
+                        <>
+                          <div className="flex flex-wrap gap-2">
+                            {devAvailableChannels.map(channel => (
+                              <Button
+                                key={channel.id}
+                                type="button"
+                                variant={
+                                  devNotificationChannels.includes(channel.id)
+                                    ? 'primary'
+                                    : 'outline'
+                                }
+                                size="sm"
+                                className="h-8"
+                                onClick={() => {
+                                  setDevNotificationChannels(prev =>
+                                    prev.includes(channel.id)
+                                      ? prev.filter(id => id !== channel.id)
+                                      : [...prev, channel.id]
+                                  )
+                                }}
+                                disabled={devSettingsLoading}
+                              >
+                                {channel.name}
+                                {!channel.is_bound && (
+                                  <span className="ml-1 text-xs opacity-60">
+                                    ({t('common:actions.configure')})
+                                  </span>
+                                )}
+                              </Button>
+                            ))}
+                          </div>
+                          <p className="text-xs text-text-muted">
+                            {t('developer_notification_settings.channels_hint')}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-xs text-text-muted">
+                          {t('developer_notification_settings.no_channels_hint')}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {devSettingsLoading && (
+                    <p className="text-xs text-text-muted">{t('common:loading')}</p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Right Column - Trigger & Execution */}

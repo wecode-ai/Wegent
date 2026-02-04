@@ -170,6 +170,9 @@ class SubscriptionNotificationDispatcher:
         )
 
         # Format the notification message
+        logger.info(
+            f"[_send_messager_notifications] Formatting message with detail_url: {detail_url}"
+        )
         message = self._format_notification_message(
             subscription_display_name=subscription_display_name,
             status=status,
@@ -295,6 +298,9 @@ class SubscriptionNotificationDispatcher:
             )
 
             # Send markdown message for better formatting
+            logger.info(
+                f"[_send_dingtalk_notification] Sending message with length: {len(message)}, contains detail_url: {'[查看详情]' in message}"
+            )
             result = await sender.send_markdown_message(
                 user_ids=[dingtalk_user_id],
                 title="订阅通知",
