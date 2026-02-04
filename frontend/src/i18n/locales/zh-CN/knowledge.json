@@ -83,7 +83,9 @@
       "indexStatus": {
         "available": "可用",
         "unavailable": "索引不可用",
-        "unavailableHint": "AI 将使用其它工具浏览文档（效率略低于快速检索）"
+        "unavailableHint": "AI 将使用其它工具浏览文档（效率略低于快速检索）",
+        "indexing": "索引中",
+        "indexingHint": "索引正在生成中，稍后刷新页面查看最新状态"
       },
       "openLink": "打开链接",
       "columns": {

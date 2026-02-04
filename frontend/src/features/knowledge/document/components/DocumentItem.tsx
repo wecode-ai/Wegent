@@ -208,10 +208,18 @@ export function DocumentItem({
                 </Tooltip>
               </TooltipProvider>
             ) : (
-              <span
-                className="w-1 h-1 rounded-full flex-shrink-0 bg-yellow-500"
-                title={t('knowledge:document.document.indexStatus.unavailable')}
-              />
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-yellow-500 cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs">
+                    <p className="text-xs">
+                      {t('knowledge:document.document.indexStatus.indexingHint')}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             )}
           </div>
         </div>
@@ -382,9 +390,22 @@ export function DocumentItem({
             </Tooltip>
           </TooltipProvider>
         ) : (
-          <Badge variant="warning" size="sm" className="whitespace-nowrap">
-            {t('knowledge:document.document.indexStatus.unavailable')}
-          </Badge>
+          <TooltipProvider>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <span>
+                  <Badge variant="warning" size="sm" className="whitespace-nowrap cursor-help">
+                    {t('knowledge:document.document.indexStatus.indexing')}
+                  </Badge>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                <p className="text-xs">
+                  {t('knowledge:document.document.indexStatus.indexingHint')}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         )}
       </div>
 

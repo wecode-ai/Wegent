@@ -83,7 +83,9 @@
       "indexStatus": {
         "available": "Indexed",
         "unavailable": "Index Unavailable",
-        "unavailableHint": "AI will use other tools to browse documents (slightly less efficient than quick retrieval)"
+        "unavailableHint": "AI will use other tools to browse documents (slightly less efficient than quick retrieval)",
+        "indexing": "Indexing",
+        "indexingHint": "Index is being generated. Refresh the page later to check the latest status."
       },
       "openLink": "Open Link",
       "columns": {
