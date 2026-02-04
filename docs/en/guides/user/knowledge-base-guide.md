@@ -624,7 +624,7 @@ flowchart TB
 ### Documentation
 - [Core Concepts](../../concepts/core-concepts.md) - Understand Wegent's architecture
 - [Configuring Retrievers](./configuring-retrievers.md) - Set up vector databases
-- [Creating Ghosts](./creating-ghosts.md) - Configure agents with KB access
+- [Agent Settings](./agent-settings.md) - Configure agents with KB access
 
 ### Technical References
 - [YAML Specification](../../reference/yaml-specification.md) - CRD definitions

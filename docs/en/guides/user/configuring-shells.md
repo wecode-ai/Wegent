@@ -545,8 +545,7 @@ spec:
 - [Model Configuration Guide](./configuring-models.md) - Configure AI model parameters
 
 ### Next Steps
-- [Creating Bots](./creating-bots.md) - Create complete Bot instances using Shells
-- [Creating Ghosts](./creating-ghosts.md) - Define the "soul" of Bots
+- [Agent Settings](./agent-settings.md) - Configure agents and bots with Shells
 
 ### Reference Documentation
 - [Core Concepts](../../concepts/core-concepts.md) - Understand Shell's role in the architecture

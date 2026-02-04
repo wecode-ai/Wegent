@@ -1125,7 +1125,7 @@ spec:
 - [Core Concepts](./core-concepts.md) - Understand Bot, Team, and other core concepts
 - [System Architecture](./architecture.md) - Learn about Wegent's architecture design
 - [YAML Specification](../reference/yaml-specification.md) - Complete configuration format guide
-- [Creating Teams Guide](../guides/user/creating-teams.md) - Step-by-step team creation guide
+- [Agent Settings Guide](../guides/user/agent-settings.md) - Configure agents and collaboration modes
 
 ---
 

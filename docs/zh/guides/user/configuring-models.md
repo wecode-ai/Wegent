@@ -1190,8 +1190,7 @@ Wegent 在初始化时可能已经创建了一些示例 Model 配置。
 - [Shell (执行器) 配置完整指南](./configuring-shells.md) - 配置运行时环境
 
 ### 下一步
-- [创建 Bot](./creating-bots.md) - 使用 Model 创建完整的 Bot 实例
-- [创建 Ghost](./creating-ghosts.md) - 定义 Bot 的"灵魂"
+- [智能体设置](./agent-settings.md) - 配置智能体和机器人
 
 ### 参考文档
 - [核心概念](../../concepts/core-concepts.md) - 理解 Model 在架构中的角色

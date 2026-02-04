@@ -383,8 +383,7 @@ graph LR
 
 - [YAML Specification](../reference/yaml-specification.md) - Complete YAML configuration format
 - [Collaboration Models](./collaboration-models.md) - Detailed explanation of collaboration patterns
-- [Creating Bots](../guides/user/creating-bots.md) - How to create and configure Bots
-- [Creating Teams](../guides/user/creating-teams.md) - How to build collaborative teams
+- [Agent Settings](../guides/user/agent-settings.md) - How to configure agents, bots, and teams
 
 ---
 
