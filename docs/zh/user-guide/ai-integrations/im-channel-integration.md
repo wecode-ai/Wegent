@@ -1,5 +1,5 @@
 ---
-sidebar_position: 9
+sidebar_position: 1
 ---
 
 # 📱 IM 通道集成指南
@@ -391,8 +391,8 @@ flowchart LR
 
 ### 文档
 - [核心概念](../../concepts/core-concepts.md) - 了解 Wegent 的架构
-- [智能体设置](./agent-settings.md) - 为 IM 通道配置智能体
-- [配置模型](./configuring-models.md) - 设置 AI 模型
+- [智能体设置](../settings/agent-settings.md) - 为 IM 通道配置智能体
+- [配置模型](../settings/configuring-models.md) - 设置 AI 模型
 
 ### 外部资源
 - [钉钉开放平台文档](https://open.dingtalk.com/document/)

@@ -1,0 +1,8 @@
+{
+  "label": "AI Knowledge",
+  "position": 3,
+  "link": {
+    "type": "generated-index",
+    "description": "了解如何管理知识库和检索器。"
+  }
+}

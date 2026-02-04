@@ -1,5 +1,5 @@
 ---
-sidebar_position: 9
+sidebar_position: 1
 ---
 
 # 📱 IM Channel Integration Guide
@@ -391,8 +391,8 @@ Contact your system administrator to configure enterprise user mapping.
 
 ### Documentation
 - [Core Concepts](../../concepts/core-concepts.md) - Understand Wegent's architecture
-- [Agent Settings](./agent-settings.md) - Configure agents for IM channels
-- [Configuring Models](./configuring-models.md) - Set up AI models
+- [Agent Settings](../settings/agent-settings.md) - Configure agents for IM channels
+- [Configuring Models](../settings/configuring-models.md) - Set up AI models
 
 ### External Resources
 - [DingTalk Open Platform Documentation](https://open.dingtalk.com/document/)
