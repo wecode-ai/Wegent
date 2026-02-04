@@ -95,6 +95,7 @@ class DockerModeStrategy(ExecutionModeStrategy):
         options: Dict[str, Any],
         config_dir: str,
         env_config: Dict[str, Any],
+        task_data: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         """Configure SDK client with default behavior.
 
@@ -105,6 +106,7 @@ class DockerModeStrategy(ExecutionModeStrategy):
             options: Existing client options
             config_dir: Config directory (unused - SDK uses default)
             env_config: Environment config (unused - written to settings.json)
+            task_data: Task data (unused in Docker mode)
 
         Returns:
             Options unchanged (default SDK behavior)

@@ -73,6 +73,7 @@ class ExecutionModeStrategy(ABC):
         options: Dict[str, Any],
         config_dir: str,
         env_config: Dict[str, Any],
+        task_data: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         """Configure SDK client options based on mode-specific requirements.
 
@@ -80,6 +81,7 @@ class ExecutionModeStrategy(ABC):
             options: Existing client options dictionary
             config_dir: Path to configuration directory
             env_config: Environment configuration (sensitive data)
+            task_data: Task data containing user info and other metadata
 
         Returns:
             Updated options dictionary with mode-specific configurations

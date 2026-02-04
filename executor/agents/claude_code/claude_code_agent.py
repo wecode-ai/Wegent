@@ -1242,6 +1242,7 @@ class ClaudeCodeAgent(Agent):
                 options=self.options,
                 config_dir=self._claude_config_dir,
                 env_config=self._claude_env_config,
+                task_data=self.task_data,
             )
 
         # Check if there's a saved session ID to resume

@@ -103,6 +103,7 @@ class LocalModeStrategy(ExecutionModeStrategy):
         options: Dict[str, Any],
         config_dir: str,
         env_config: Dict[str, Any],
+        task_data: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         """Configure SDK client with environment variables for sensitive data.
 
@@ -115,6 +116,7 @@ class LocalModeStrategy(ExecutionModeStrategy):
             options: Existing client options
             config_dir: Task-specific config directory
             env_config: Sensitive configuration (ANTHROPIC_AUTH_TOKEN, etc.)
+            task_data: Task data containing user info and other metadata
 
         Returns:
             Updated options with env configuration
@@ -132,6 +134,24 @@ class LocalModeStrategy(ExecutionModeStrategy):
         # This affects settings.json, claude.json, and skills locations
         env = updated_options.get("env", {})
         env["CLAUDE_CONFIG_DIR"] = config_dir
+
+        # Add ANTHROPIC_CUSTOM_HEADERS for tracking and analytics
+        user_name = "unknown"
+        if task_data:
+            user_name = task_data.get("user", {}).get("name") or "unknown"
+        model_id = env_config.get("ANTHROPIC_MODEL", "")
+
+        custom_headers = "\n".join(
+            [
+                f"wecode-user: {user_name}",
+                f"wecode-model-id: {model_id}",
+                "wecode-source: wegent",
+                "wecode-action: wegent-local",
+                "wecode-executor: claudecode",
+            ]
+        )
+        env["ANTHROPIC_CUSTOM_HEADERS"] = custom_headers
+
         updated_options["env"] = env
 
         logger.debug(f"Local mode: Configured CLAUDE_CONFIG_DIR={config_dir}")

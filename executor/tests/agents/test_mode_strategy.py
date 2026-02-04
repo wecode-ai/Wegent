@@ -217,6 +217,48 @@ class TestLocalModeStrategy:
 
         assert result["env"]["CLAUDE_CONFIG_DIR"] == config_dir
 
+    def test_configure_client_options_sets_custom_headers(self, strategy):
+        """Test that ANTHROPIC_CUSTOM_HEADERS is set with correct values."""
+        options = {"cwd": "/workspace"}
+        env_config = {"ANTHROPIC_MODEL": "claude-opus-4-5-20251101"}
+        config_dir = "/workspace/12345/.claude"
+        task_data = {"user": {"name": "testuser"}}
+
+        result = strategy.configure_client_options(
+            options, config_dir, env_config, task_data
+        )
+
+        custom_headers = result["env"]["ANTHROPIC_CUSTOM_HEADERS"]
+        assert "wecode-user: testuser" in custom_headers
+        assert "wecode-model-id: claude-opus-4-5-20251101" in custom_headers
+        assert "wecode-source: wegent" in custom_headers
+        assert "wecode-action: wegent-local" in custom_headers
+        assert "wecode-executor: claudecode" in custom_headers
+
+    def test_configure_client_options_handles_missing_user(self, strategy):
+        """Test that missing user defaults to 'unknown'."""
+        options = {"cwd": "/workspace"}
+        env_config = {"ANTHROPIC_MODEL": "claude-model"}
+        config_dir = "/workspace/12345/.claude"
+
+        result = strategy.configure_client_options(options, config_dir, env_config)
+
+        custom_headers = result["env"]["ANTHROPIC_CUSTOM_HEADERS"]
+        assert "wecode-user: unknown" in custom_headers
+
+    def test_configure_client_options_handles_none_task_data(self, strategy):
+        """Test that None task_data defaults user to 'unknown'."""
+        options = {"cwd": "/workspace"}
+        env_config = {"ANTHROPIC_MODEL": "claude-model"}
+        config_dir = "/workspace/12345/.claude"
+
+        result = strategy.configure_client_options(
+            options, config_dir, env_config, task_data=None
+        )
+
+        custom_headers = result["env"]["ANTHROPIC_CUSTOM_HEADERS"]
+        assert "wecode-user: unknown" in custom_headers
+
     def test_get_skills_directory_with_config_dir(self, strategy):
         """Test skills directory within task config dir."""
         config_dir = "/workspace/12345/.claude"
@@ -342,7 +384,10 @@ class TestDockerModeStrategy:
         }
 
         result = strategy.configure_client_options(
-            options=original_options.copy(), config_dir="/irrelevant", env_config={}
+            options=original_options.copy(),
+            config_dir="/irrelevant",
+            env_config={},
+            task_data={"user": {"name": "testuser"}},
         )
 
         assert result == original_options
