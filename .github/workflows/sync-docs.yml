@@ -1,0 +1,26 @@
+name: Sync Documentation to Docs Repository
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+  workflow_dispatch:
+
+jobs:
+  trigger-docs-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger docs repository sync
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.DOCS_REPO_TOKEN }}
+          repository: wecode-ai/wegent-docs
+          event-type: docs-updated
+          client-payload: '{"ref": "${{ github.ref }}", "sha": "${{ github.sha }}"}'
+
+      - name: Log sync trigger
+        run: |
+          echo "Documentation sync triggered for commit ${{ github.sha }}"
+          echo "Changes in docs/ directory detected and sync dispatched to wegent-docs repository"

@@ -323,7 +323,6 @@ class SharedTaskService:
             db.query(Kind)
             .filter(
                 Kind.id == new_team_id,
-                Kind.user_id == new_user_id,
                 Kind.kind == "Team",
                 Kind.is_active == True,
             )

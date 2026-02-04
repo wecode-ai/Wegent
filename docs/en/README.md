@@ -29,11 +29,11 @@ Deep dive into Wegent's design:
 
 Guides for Wegent platform users:
 
-- [Creating Ghosts](./guides/user/creating-ghosts.md) - Define the "soul" of your agents
-- [Creating Bots](./guides/user/creating-bots.md) - Assemble complete agent instances
-- [Managing Skills](./guides/user/managing-skills.md) - Upload and use Claude Code Skills
-- [Creating Teams](./guides/user/creating-teams.md) - Build collaborative agent teams
+- [Agent Settings](./guides/user/agent-settings.md) - Configure agents, bots, prompts, and collaboration modes
 - [Managing Tasks](./guides/user/managing-tasks.md) - Create and manage work tasks
+- [Configuring Models](./guides/user/configuring-models.md) - Set up AI models (LLM, Embedding, Rerank)
+- [Configuring Shells](./guides/user/configuring-shells.md) - Configure execution environments
+- [Managing Skills](./guides/user/managing-skills.md) - Upload and use Claude Code Skills
 - [Spec Clarification Mode](./guides/user/spec-clarification-guide.md) - Interactive requirement specification clarification guide
 - [Knowledge Base Guide](./guides/user/knowledge-base-guide.md) - RAG-based knowledge base system usage
 - [IM Channel Integration](./guides/user/im-channel-integration.md) - Integrate DingTalk and other IM channels

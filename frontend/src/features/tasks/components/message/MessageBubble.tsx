@@ -369,6 +369,28 @@ const MessageBubble = memo(
       isWaiting ||
       msg.isWaiting
 
+    // Check if message contains special format (clarification or final prompt)
+    // This is used to determine whether to use MixedContentView or renderMessageBody
+    // We check this early to avoid duplicate parsing in the render logic
+    const hasSpecialFormat = React.useMemo(() => {
+      if (!msg.content || msg.type === 'user') return false
+
+      // Quick check: if content doesn't contain any header markers, skip parsing
+      const content = msg.content
+      const hasClarificationMarker =
+        content.includes('智能追问') ||
+        content.toLowerCase().includes('smart follow') ||
+        content.includes('澄清问题') ||
+        content.toLowerCase().includes('clarification')
+      const hasFinalPromptMarker =
+        content.includes('最终') ||
+        content.toLowerCase().includes('final') ||
+        content.includes('提示词') ||
+        content.toLowerCase().includes('prompt')
+
+      return hasClarificationMarker || hasFinalPromptMarker
+    }, [msg.content, msg.type])
+
     const renderProgressBar = (status: string, progress: number) => {
       const normalizedStatus = (status ?? '').toUpperCase()
       const isActiveStatus = ['RUNNING', 'PENDING', 'PROCESSING'].includes(normalizedStatus)
@@ -838,9 +860,13 @@ const MessageBubble = memo(
 
       // Find the position of the header and extract everything from the header onwards
       const headerIndex = headerMatch.index!
-      const prefixText = content.substring(0, headerIndex).trim()
+      let prefixText = content.substring(0, headerIndex).trim()
       let actualContent = content.substring(headerIndex)
       let suffixText = ''
+
+      // Clean up prefixText: remove trailing code block markers (```markdown, ```, etc.)
+      // This handles cases where the clarification is wrapped in a code block
+      prefixText = prefixText.replace(/```\s*(?:markdown|md)?\s*$/i, '').trim()
 
       // Find the last ``` in the content
       const lastCodeBlockMarkerIndex = actualContent.lastIndexOf('\n```')
@@ -1504,8 +1530,14 @@ const MessageBubble = memo(
                   msg.subtaskStatus === 'RUNNING' &&
                   !msg.result?.blocks ? (
                     renderRecoveredContent()
-                  ) : !isUserTypeMessage && msg.result?.blocks && msg.result.blocks.length > 0 ? (
-                    /* For AI messages with blocks data, use mixed content view to interleave text and tools */
+                  ) : !isUserTypeMessage &&
+                    msg.result?.blocks &&
+                    msg.result.blocks.length > 0 &&
+                    // IMPORTANT: If content contains clarification or final prompt format,
+                    // use renderMessageBody instead to properly render the interactive form.
+                    // hasSpecialFormat is a quick check using keyword detection.
+                    !hasSpecialFormat ? (
+                    /* For AI messages with blocks data (without clarification), use mixed content view to interleave text and tools */
                     <>
                       <MixedContentView
                         thinking={msg.thinking ?? null}

@@ -1312,36 +1312,22 @@ def execute_subscription_task(
                     )
                 else:
                     # Executor type - subtask picked up by executor_manager
-                    # Push mode: dispatch task to executor_manager immediately
-                    # Note: We must await the dispatch here because the event loop
-                    # will be closed after this block, so scheduled tasks won't run.
+                    # Note: schedule_dispatch is already called inside create_task_or_append
+                    # after db.commit(). However, we call it again here as a safety measure
+                    # in case the first call failed silently.
                     try:
                         from app.services.task_dispatcher import task_dispatcher
 
                         if task_dispatcher.enabled:
-                            # Use dispatch_pending_tasks directly since we're in async context
-                            success = loop.run_until_complete(
-                                task_dispatcher.dispatch_pending_tasks(
-                                    db, task_ids=[task_id], task_type="online"
-                                )
+                            task_dispatcher.schedule_dispatch(task_id)
+                            logger.info(
+                                f"[subscription_tasks] Push mode: scheduled dispatch for task {task_id}"
                             )
-                            if success:
-                                logger.info(
-                                    f"[subscription_tasks] Push mode: dispatched task {task_id}"
-                                )
-                            else:
-                                logger.warning(
-                                    f"[subscription_tasks] Push mode: dispatch returned False for task {task_id}"
-                                )
                     except Exception as e:
                         logger.warning(
                             f"[subscription_tasks] Push mode dispatch failed for task {task_id}: {e}",
                             exc_info=True,
                         )
-
-                    logger.debug(
-                        f"[subscription_tasks] Executor type, task {task_id} dispatched to executor_manager"
-                    )
 
                 # Update execution status to COMPLETED for Chat Shell type
                 # For Executor type, status will be updated by executor when done

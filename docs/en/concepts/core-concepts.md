@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # 🧠 Core Concepts
 
 This document introduces the core concepts of the Wegent platform to help you understand each component and their relationships.
@@ -62,283 +66,30 @@ All features above are customizable:
 
 ---
 
-## 🔗 Features and CRD Mapping
+## 🤖 Understanding Agents and Bots
 
-| Feature | Related CRDs | Description |
-|---------|--------------|-------------|
-| **Chat** | Chat Shell + Team | Direct LLM conversation via Chat Shell |
-| **Code** | ClaudeCode Shell + Team + Workspace | Cloud coding execution with Git integration |
-| **Follow** | Subscription + Team | Scheduled/event-triggered AI tasks |
-| **Knowledge** | KnowledgeBase + Retriever | Document storage and RAG retrieval |
-| **Customization** | Ghost + Bot + Team | Configure prompts, tools, and collaboration |
+### What is an Agent?
 
----
+An **Agent** is the AI assistant you interact with directly. When you create a task or start a conversation, you're working with an Agent. Think of it as your personal AI team that can help you with various tasks.
 
-## ⚠️ Terminology Note: Team vs Bot
+### What is a Bot?
 
-> **Important:** Please note the distinction between code-level terminology and user interface display names.
+A **Bot** is a building block that makes up an Agent. Each Bot is configured with:
+- **Persona (Ghost)**: Defines the Bot's personality, expertise, and available tools
+- **Executor (Shell)**: The engine that executes tasks (Chat, Code, etc.)
+- **Model**: The AI model powering the Bot (GPT, Claude, etc.)
 
-| Code/CRD Level | UI Display | Description |
-|----------------|------------|-------------|
-| **Team** | **Agent** | The user-facing AI agent that executes tasks |
-| **Bot** | **Bot** | A building block component that makes up a Team |
+### How They Work Together
 
-**Simple Understanding:**
-- **Bot** = A configured AI worker unit (includes prompt, runtime, model)
-- **Team** = A "working team" composed of one or more Bots - this is what users interact with to execute tasks
-
----
-
-## 📋 CRD Architecture Overview
-
-Wegent is built on Kubernetes-style declarative API and CRD (Custom Resource Definition) design patterns, providing a standardized framework for creating and managing AI agent ecosystems.
-
-### Core Resource Types
-
-| Icon | Code Name | Description | Analogy |
-|------|-----------|-------------|---------|
-| 👻 | **Ghost** | The "soul" of an agent | Defines personality and capabilities |
-| 🧠 | **Model** | AI model configuration | Brain configuration parameters |
-| 🐚 | **Shell** | Runtime environment | Executable program container |
-| 🤖 | **Bot** | Agent building block | Ghost + Shell + Model |
-| 👥 | **Team** | User-facing agent | Combination of multiple Bots |
-| 🤝 | **Collaboration** | Collaboration mode | Interaction pattern between Bots |
-| 💼 | **Workspace** | Work environment | Isolated code workspace |
-| 🎯 | **Task** | Task | Work unit assigned to a Team |
-
----
-
-## 👻 Ghost - Soul of the Agent
-
-Ghost represents the "soul" of an agent, defining its personality, capabilities, and behavior patterns.
-
-### YAML Configuration Example
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Ghost
-metadata:
-  name: developer-ghost
-  namespace: default
-spec:
-  systemPrompt: "You are a professional software developer, skilled in using TypeScript and React to develop frontend applications."
-  mcpServers:
-    github:
-      env:
-        GITHUB_PERSONAL_ACCESS_TOKEN: ghp_xxxxx
-      command: docker
-      args:
-        - run
-        - -i
-        - --rm
-        - -e
-        - GITHUB_PERSONAL_ACCESS_TOKEN
-        - ghcr.io/github/github-mcp-server
-status:
-  state: "Available"
+```
+Bot = Persona + Executor + Model
+Agent = One or more Bots working together
+Task = Agent + Your request
 ```
 
----
-
-## 🧠 Model - AI Model Configuration
-
-Model defines AI model configuration, including environment variables and model parameters.
-
-### YAML Configuration Example
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Model
-metadata:
-  name: claude-model
-  namespace: default
-spec:
-  modelConfig:
-    env:
-      ANTHROPIC_MODEL: "openrouter,anthropic/claude-sonnet-4"
-      ANTHROPIC_AUTH_TOKEN: "sk-xxxxxx"
-      ANTHROPIC_BASE_URL: "http://xxxxx"
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: "openrouter,anthropic/claude-haiku-4.5"
-status:
-  state: "Available"
-```
-
----
-
-## 🐚 Shell - Runtime Environment
-
-Shell is the container where agents run, specifying the runtime environment.
-
-### Shell Types
-
-| Type | Description | Use Case |
-|------|-------------|----------|
-| **Chat** | Direct LLM API (no Docker) | Lightweight conversations |
-| **ClaudeCode** | Claude Code SDK in Docker | Cloud coding tasks |
-| **Agno** | Agno framework in Docker | Multi-agent collaboration |
-| **Dify** | External Dify API proxy | Dify workflow integration |
-
-### YAML Configuration Example
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Shell
-metadata:
-  name: claude-shell
-  namespace: default
-spec:
-  runtime: "ClaudeCode"
-  supportModel:
-    - "openai"
-    - "anthropic"
-status:
-  state: "Available"
-```
-
----
-
-## 🤖 Bot - Complete Agent Instance
-
-Bot is a complete agent instance combining Ghost (soul), Shell (container), and Model (configuration).
-
-### YAML Configuration Example
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Bot
-metadata:
-  name: developer-bot
-  namespace: default
-spec:
-  ghostRef:
-    name: developer-ghost
-    namespace: default
-  shellRef:
-    name: claude-shell
-    namespace: default
-  modelRef:
-    name: claude-model
-    namespace: default
-status:
-  state: "Available"
-```
-
----
-
-## 👥 Team - Collaborative Team
-
-Team defines a collection of Bots working together with specific roles and collaboration patterns.
-
-### YAML Configuration Example
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Team
-metadata:
-  name: dev-team
-  namespace: default
-spec:
-  members:
-    - name: "developer"
-      botRef:
-        name: developer-bot
-        namespace: default
-      prompt: "You are the developer in the team, responsible for implementing features..."
-      role: "leader"
-    - name: "reviewer"
-      botRef:
-        name: reviewer-bot
-        namespace: default
-      prompt: "You are the code reviewer in the team, responsible for reviewing code quality..."
-      role: "member"
-  collaborationModel: "pipeline"
-status:
-  state: "Available"
-```
-
----
-
-## 🤝 Collaboration Models
-
-Four collaboration patterns define how Bots interact within a Team:
-
-### 1. **Pipeline**
-Sequential execution where each Bot's output feeds into the next.
-```
-Developer Bot → Reviewer Bot → Tester Bot → Deployer Bot
-```
-
-### 2. **Route**
-Leader assigns tasks to appropriate Bots based on content.
-```
-User Query → Leader Bot → {Frontend Bot | Backend Bot | DB Bot}
-```
-
-### 3. **Coordinate**
-Leader coordinates parallel Bot execution and aggregates results.
-```
-Leader Bot → [Analyst Bot, Data Bot, Report Bot] → Leader Bot (aggregate)
-```
-
-### 4. **Collaborate**
-All Bots share context and freely discuss.
-```
-[Bot A ↔ Bot B ↔ Bot C] (shared context)
-```
-
----
-
-## 💼 Workspace - Work Environment
-
-Workspace defines the team's work environment, including repository and branch information.
-
-### YAML Configuration Example
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Workspace
-metadata:
-  name: project-workspace
-  namespace: default
-spec:
-  repository:
-    gitUrl: "https://github.com/user/repo.git"
-    gitRepo: "user/repo"
-    gitRepoId: 12345
-    branchName: "main"
-    gitDomain: "github.com"
-status:
-  state: "Available"
-```
-
----
-
-## 🎯 Task - Executable Work Unit
-
-Task is an executable work unit assigned to a Team, associating Team and Workspace.
-
-### YAML Configuration Example
-
-```yaml
-apiVersion: agent.wecode.io/v1
-kind: Task
-metadata:
-  name: implement-feature
-  namespace: default
-spec:
-  title: "Implement new feature"
-  prompt: "Please implement a user authentication feature with JWT tokens"
-  teamRef:
-    name: dev-team
-    namespace: default
-  workspaceRef:
-    name: project-workspace
-    namespace: default
-status:
-  state: "Available"
-  status: "PENDING"
-  progress: 0
-```
+**Example:**
+- A simple chat Agent might have just one Bot
+- A development Agent might have multiple Bots: one for coding, one for code review, one for testing
 
 ---
 
@@ -346,45 +97,165 @@ status:
 
 ```mermaid
 graph LR
-    Ghost["👻 Ghost"] --> Bot["🤖 Bot"]
-    Model["🧠 Model"] --> Bot
-    Shell["🐚 Shell"] --> Bot
-    Bot --> Team["👥 Team"]
-    Collaboration["🤝 Collaboration"] --> Team
-    Team --> TeamInstance["👥 Team Instance"]
-    Workspace["💼 Workspace"] --> TeamInstance
-    User["👤 User"] --> Task["🎯 Task"]
-    Task --> TeamInstance
-    TeamInstance --> Task
+    subgraph Main["Task Execution Flow"]
+        direction TB
+        User["👤 You"]
+        Web["🌐 Web"]
+        API["🔌 API"]
+        IM["💬 IM"]
+        Task["🎯 Task"]
+        Wegent["🌐 Wegent System"]
+        
+        User --> Web
+        User --> API
+        User --> IM
+        Web --> Task
+        API --> Task
+        IM --> Task
+        Task --> Wegent
+        
+        subgraph Workspace["💼 Workspace"]
+            subgraph Cloud["☁️ Cloud Host"]
+                ClaudeCode1["🐚 Claude Code"]
+                WegentChat1["💬 Wegent Chat"]
+            end
+            
+            subgraph PC["💻 Personal Computer"]
+                ClaudeCode2["🐚 Claude Code"]
+                WegentChat2["💬 Wegent Chat"]
+            end
+        end
+        
+        Wegent --> Cloud
+        Wegent --> PC
+    end
+    
+    subgraph AgentDetail["📋 Agent Structure"]
+        direction TB
+        AgentNote["🤖 Agent"]
+        Bot1["🔧 Bot 1"]
+        Bot2["🔧 Bot 2"]
+        Ghost1["👻 Persona"]
+        Model1["🧠 Model"]
+        Ghost2["👻 Persona"]
+        Model2["🧠 Model"]
+        Prompt1["📝 Prompt"]
+        Skill1["🎯 Skill 1"]
+        Skill2["🎯 Skill 2"]
+        
+        AgentNote --> Bot1
+        AgentNote --> Bot2
+        Bot1 --> Ghost1
+        Bot1 --> Model1
+        Bot2 --> Ghost2
+        Bot2 --> Model2
+        Ghost1 --> Prompt1
+        Ghost1 -.-> Skill1
+        Ghost1 -.-> Skill2
+        Ghost2 -.-> Skill1
+    end
 ```
+
+> **Note:**
+> - Users can submit tasks via Web, API, or IM.
+> - Tasks are submitted to the Wegent system, which dispatches them to Workspaces (Cloud Host or Personal Computer).
+> - Workspaces run Claude Code or Wegent Chat executors.
+> - Agents consist of multiple Bots, each containing a Persona and Model. Skills (dotted lines) are loaded on-demand.
 
 ---
 
-## 💡 Best Practices
+## 🎯 Key Components Explained
 
-### 1. Ghost Design
-- ✅ Clearly define the agent's expertise
-- ✅ Provide clear behavioral guidelines
-- ✅ Configure necessary MCP tools
+### 👻 Persona (Ghost)
 
-### 2. Bot Composition
-- ✅ Create specialized Bots for different tasks
-- ✅ Reuse Ghost and Model configurations
-- ✅ Choose appropriate Shell types
+The **Persona** defines what your AI assistant knows and how it behaves. It includes:
+- System instructions (e.g., "You are a helpful coding assistant")
+- Available tools and MCP servers
+- Skills that can be loaded on-demand
+- Behavioral guidelines
 
-### 3. Team Building
-- ✅ Select suitable collaboration models
-- ✅ Define clear member roles
-- ✅ Provide clear task prompts for each member
+### 🐚 Executor (Shell)
+
+The **Executor** determines how and where your AI executes tasks. It includes:
+
+| Executor | Best For |
+|----------|----------|
+| **Chat** | Quick conversations, Q&A |
+| **Code** | Programming tasks, code generation |
+| **Agno** | Multi-agent collaboration |
+| **Dify** | Workflow automation |
+
+### 🧠 Model
+
+The **Model** is the AI brain powering your assistant:
+- Configure API keys and endpoints
+- Choose from various providers (OpenAI, Anthropic, etc.)
+- Adjust model parameters
+
+### 💼 Workspace
+
+For coding tasks, a **Workspace** connects your Agent to a code repository:
+- Clone from GitHub/GitLab/Gitea/Gerrit
+- Make changes and create pull requests
+- Work on specific branches
+
+### 🎯 Skill
+
+**Skills** are special capabilities that can be added to your AI assistant on-demand. Instead of loading all instructions at once, Skills are loaded only when needed.
+
+**Why use Skills?**
+- **Efficiency**: Only load detailed instructions when needed
+- **Modularity**: Package related capabilities together
+- **Extensibility**: Add new abilities without changing the core agent
+
+**Examples of Skills:**
+- **Chart Drawing**: Generate diagrams and charts using Mermaid.js
+- **Code Analysis**: Specialized code review capabilities
+- **Data Processing**: Handle specific data formats
+
+**How Skills Work:**
+1. You configure which Skills are available to your Agent
+2. During a conversation, the AI decides when a Skill is needed
+3. The Skill is loaded on-demand, providing specialized instructions and tools
+
+> 📖 For detailed information about Skills, see [Skill System](./skill-system.md)
+
+---
+
+## 🤝 Collaboration Modes
+
+When an Agent has multiple Bots, they can work together in different ways:
+
+### Pipeline
+Bots work in sequence, each passing results to the next.
+```
+Developer → Reviewer → Tester
+```
+
+### Route
+A leader Bot assigns tasks to the most suitable Bot.
+```
+Leader → {Frontend Bot | Backend Bot | Database Bot}
+```
+
+### Coordinate
+A leader Bot coordinates parallel work and combines results.
+```
+Leader → [Analyst, Data, Report] → Leader (combine)
+```
+
+### Collaborate
+All Bots share context and discuss freely.
+```
+[Bot A ↔ Bot B ↔ Bot C]
+```
 
 ---
 
 ## 🔗 Related Resources
 
-- [YAML Specification](../reference/yaml-specification.md) - Complete YAML configuration format
 - [Collaboration Models](./collaboration-models.md) - Detailed explanation of collaboration patterns
-- [Creating Bots](../guides/user/creating-bots.md) - How to create and configure Bots
-- [Creating Teams](../guides/user/creating-teams.md) - How to build collaborative teams
+- [Quick Start](../getting-started/quick-start.md) - Get started with Wegent
 
 ---
 

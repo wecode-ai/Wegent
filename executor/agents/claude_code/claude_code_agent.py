@@ -23,6 +23,10 @@ from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
 from executor.agents.agno.thinking_step_manager import ThinkingStepManager
 from executor.agents.base import Agent
+from executor.agents.claude_code.mode_strategy import (
+    ExecutionModeStrategy,
+    ModeStrategyFactory,
+)
 from executor.agents.claude_code.progress_state_manager import ProgressStateManager
 from executor.agents.claude_code.response_processor import process_response
 from executor.config import config
@@ -323,6 +327,9 @@ class ClaudeCodeAgent(Agent):
 
         # Callback for when client is created (used for heartbeat updates)
         self.on_client_created_callback: Optional[callable] = None
+
+        # Initialize execution mode strategy
+        self._mode_strategy: ExecutionModeStrategy = ModeStrategyFactory.create()
 
     def _set_git_env_variables(self, task_data: Dict[str, Any]) -> None:
         """
@@ -658,6 +665,7 @@ class ClaudeCodeAgent(Agent):
         """
         Save Claude config files to appropriate directory based on execution mode.
 
+        Delegates to the mode strategy which handles:
         - Docker mode: saves to ~/.claude/ (SDK reads from default location)
         - Local mode: Does NOT write settings.json (contains sensitive API keys).
           Sensitive config is passed via environment variables in _create_and_connect_client().
@@ -666,9 +674,6 @@ class ClaudeCodeAgent(Agent):
         Args:
             agent_config: The agent configuration dictionary
         """
-        # Store env config for passing to SDK via environment variables
-        self._claude_env_config = agent_config.get("env", {})
-
         # Non-sensitive user preferences config for claude.json
         claude_json_config = {
             "numStartups": 2,
@@ -684,45 +689,16 @@ class ClaudeCodeAgent(Agent):
             "isQualifiedForDataSharing": False,
         }
 
-        if config.EXECUTOR_MODE == "local":
-            # Local mode: Do NOT write settings.json (contains sensitive API keys/tokens)
-            # Sensitive config is passed via env parameter in _create_and_connect_client()
-            config_dir = os.path.join(
-                config.get_workspace_root(), str(self.task_id), ".claude"
-            )
-            claude_json_path = os.path.join(config_dir, "claude.json")
+        # Delegate to mode strategy
+        config_dir, env_config = self._mode_strategy.save_config_files(
+            task_id=self.task_id,
+            agent_config=agent_config,
+            claude_json_config=claude_json_config,
+        )
 
-            # Create directory with restricted permissions (owner only)
-            Path(config_dir).mkdir(parents=True, exist_ok=True)
-            os.chmod(config_dir, 0o700)
-
-            # Write only non-sensitive claude.json with restricted permissions
-            with open(claude_json_path, "w") as f:
-                json.dump(claude_json_config, f, indent=2)
-            os.chmod(claude_json_path, 0o600)
-
-            logger.info(
-                f"Local mode: Saved claude.json to {config_dir} "
-                "(settings.json skipped - sensitive config passed via env)"
-            )
-        else:
-            # Docker mode: save to user's ~/.claude directory (original behavior)
-            config_dir = os.path.expanduser("~/.claude")
-            claude_json_path = os.path.expanduser("~/.claude.json")
-
-            Path(config_dir).mkdir(parents=True, exist_ok=True)
-
-            # Save settings.json (Docker mode only - isolated container environment)
-            settings_path = os.path.join(config_dir, "settings.json")
-            with open(settings_path, "w") as f:
-                json.dump(agent_config, f, indent=2)
-
-            # Save claude.json
-            with open(claude_json_path, "w") as f:
-                json.dump(claude_json_config, f, indent=2)
-
-        # Store config directory for SDK configuration
+        # Store config directory and env config for SDK configuration
         self._claude_config_dir = config_dir
+        self._claude_env_config = env_config
 
     def _resolve_env_value(self, value: str) -> str:
         """Resolve a value that may be an environment variable template or encrypted.
@@ -1253,22 +1229,13 @@ class ClaudeCodeAgent(Agent):
             os.makedirs(cwd, exist_ok=True)
             self.options["cwd"] = cwd
 
-        # In Local mode, configure SDK to use task-specific config directory
-        # to avoid modifying user's personal ~/.claude/ config
-        if config.EXECUTOR_MODE == "local" and self._claude_config_dir:
-            # Pass env config (contains ANTHROPIC_AUTH_TOKEN, ANTHROPIC_MODEL, etc.)
-            if self._claude_env_config:
-                existing_env = self.options.get("env", {})
-                merged_env = {**existing_env, **self._claude_env_config}
-                self.options["env"] = {k: str(v) for k, v in merged_env.items()}
-
-            # Set CLAUDE_CONFIG_DIR env var to redirect all config reads/writes
-            # This affects settings.json, claude.json, and skills locations
-            # Note: Keep setting_sources as ["user", "project", "local"] so SDK
-            # reads config from CLAUDE_CONFIG_DIR instead of default ~/.claude/
-            env = self.options.get("env", {})
-            env["CLAUDE_CONFIG_DIR"] = self._claude_config_dir
-            self.options["env"] = env
+        # Delegate mode-specific configuration to strategy
+        if self._claude_config_dir:
+            self.options = self._mode_strategy.configure_client_options(
+                options=self.options,
+                config_dir=self._claude_config_dir,
+                env_config=self._claude_env_config,
+            )
 
         # Check if there's a saved session ID to resume
         saved_session_id = self._load_saved_session_id(self.task_id)
@@ -1966,9 +1933,9 @@ class ClaudeCodeAgent(Agent):
         """
         Download Skills from Backend API and deploy to skills directory.
 
-        - Docker mode: deploys to ~/.claude/skills/
-        - Local mode: deploys to task config directory (same as CLAUDE_CONFIG_DIR)
-          to avoid modifying user's personal skills
+        Delegates to the mode strategy which handles:
+        - Docker mode: deploys to ~/.claude/skills/, clears cache
+        - Local mode: deploys to task config directory, preserves cache
 
         Uses shared SkillDownloader from api_client module.
 
@@ -1986,13 +1953,10 @@ class ClaudeCodeAgent(Agent):
 
             logger.info(f"Found {len(skills)} skills to deploy: {skills}")
 
-            # Determine skills directory based on mode
-            if config.EXECUTOR_MODE == "local" and hasattr(self, "_claude_config_dir"):
-                # Local mode: use task config directory (follows CLAUDE_CONFIG_DIR)
-                skills_dir = os.path.join(self._claude_config_dir, "skills")
-            else:
-                # Docker mode: use default ~/.claude/skills
-                skills_dir = os.path.expanduser("~/.claude/skills")
+            # Get skills directory from strategy
+            skills_dir = self._mode_strategy.get_skills_directory(
+                config_dir=getattr(self, "_claude_config_dir", None)
+            )
 
             # Get auth token
             auth_token = self.task_data.get("auth_token")
@@ -2010,12 +1974,12 @@ class ClaudeCodeAgent(Agent):
                 skills_dir=skills_dir,
             )
 
-            # In Local mode, skip existing skills; in Docker mode, clear cache based on config
-            is_local_mode = config.EXECUTOR_MODE == "local"
+            # Get deployment options from strategy
+            deployment_options = self._mode_strategy.get_skills_deployment_options()
             result = downloader.download_and_deploy(
                 skills=skills,
-                clear_cache=not is_local_mode,  # Clear cache only in Docker mode
-                skip_existing=is_local_mode,  # Skip existing only in Local mode
+                clear_cache=deployment_options["clear_cache"],
+                skip_existing=deployment_options["skip_existing"],
             )
 
             logger.info(

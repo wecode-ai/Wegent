@@ -123,12 +123,26 @@ class EventBus:
         Handlers are executed concurrently in fire-and-forget mode.
         Errors in handlers are logged but don't propagate to the publisher.
 
+        Note: In Celery worker context, events are skipped because WebSocket
+        operations cannot work across process boundaries.
+
         Args:
             event: The event instance to publish
 
         Example:
             await event_bus.publish(ChatCompletedEvent(user_id=123))
         """
+        # Skip event publishing in Celery worker context
+        # WebSocket operations don't work across process boundaries
+        from app.services.chat.ws_emitter import get_ws_emitter
+
+        if get_ws_emitter() is None:
+            logger.debug(
+                "[EVENT_BUS] Skipping event %s - not in FastAPI context (likely Celery worker)",
+                type(event).__name__,
+            )
+            return
+
         event_type = type(event)
         handlers = self._handlers.get(event_type, [])
 
