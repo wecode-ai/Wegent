@@ -292,7 +292,8 @@ class UnifiedShareService(ABC):
                     hours=config.expires_in_hours
                 )
             else:
-                existing_link.expires_at = None
+                # Set to far future instead of None to avoid NOT NULL constraint
+                existing_link.expires_at = datetime.utcnow() + timedelta(days=365 * 100)
             existing_link.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(existing_link)
@@ -303,9 +304,11 @@ class UnifiedShareService(ABC):
         share_token = self._generate_share_token(user_id, resource_id)
 
         # Calculate expiration
-        expires_at = None
+        # Use far future instead of None to avoid NOT NULL constraint
         if config.expires_in_hours:
             expires_at = datetime.utcnow() + timedelta(hours=config.expires_in_hours)
+        else:
+            expires_at = datetime.utcnow() + timedelta(days=365 * 100)
 
         # Create new share link
         share_link = ShareLink(
