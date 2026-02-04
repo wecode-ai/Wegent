@@ -298,7 +298,9 @@
       "userName": "Username",
       "enterUserName": "Enter username",
       "invalidUserName": "Please enter a valid username",
-      "invalidShareLink": "Share link is invalid or expired"
+      "invalidShareLink": "Share link is invalid or expired",
+      "noLinkToCopy": "No link to copy",
+      "copyFailedManual": "Link selected. Press Ctrl+C to copy."
     },
     "advancedSettings": {
       "title": "Advanced Settings",

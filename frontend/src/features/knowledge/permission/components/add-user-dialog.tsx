@@ -35,8 +35,8 @@ export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDi
 
   const { addPermission, loading, error } = useKnowledgePermissions({ kbId })
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault()
+  const handleSubmit = async (e?: FormEvent) => {
+    e?.preventDefault()
     setLocalError(null)
 
     const trimmedUserName = userName.trim()
@@ -64,6 +64,10 @@ export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDi
     onOpenChange(false)
   }
 
+  const handleAddClick = () => {
+    handleSubmit()
+  }
+
   const displayError = localError || error
 
   return (
@@ -87,7 +91,7 @@ export function AddUserDialog({ open, onOpenChange, kbId, onSuccess }: AddUserDi
           <Button type="button" variant="outline" onClick={handleClose}>
             {t('common:actions.cancel')}
           </Button>
-          <Button type="submit" variant="primary" disabled={loading}>
+          <Button type="button" variant="primary" disabled={loading} onClick={handleAddClick}>
             {loading ? <Spinner className="w-4 h-4" /> : t('document.permission.add')}
           </Button>
         </DialogFooter>
