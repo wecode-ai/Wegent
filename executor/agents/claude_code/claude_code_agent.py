@@ -604,8 +604,6 @@ class ClaudeCodeAgent(Agent):
             # Set state_manager to thinking_manager for immediate reporting
             self.thinking_manager.set_state_manager(self.state_manager)
 
-            logger.info("Initialized progress state manager")
-
     def update_prompt(self, new_prompt: str) -> None:
         """
         Update the prompt attribute while keeping other attributes unchanged
@@ -614,7 +612,7 @@ class ClaudeCodeAgent(Agent):
             new_prompt: The new prompt to use
         """
         if new_prompt:
-            logger.info(f"Updating prompt for session_id: {self.session_id}")
+            logger.debug(f"Updating prompt for session_id: {self.session_id}")
             self.prompt = new_prompt
 
     def initialize(self) -> TaskStatus:
@@ -725,9 +723,7 @@ class ClaudeCodeAgent(Agent):
         if match:
             var_name = match.group(1)
             resolved = os.environ.get(var_name, "")
-            if resolved:
-                logger.info(f"Resolved env var ${{{var_name}}} from environment")
-            else:
+            if not resolved:
                 logger.warning(f"Environment variable {var_name} not found")
             return resolved
 
@@ -735,7 +731,6 @@ class ClaudeCodeAgent(Agent):
         if is_data_encrypted(value):
             decrypted = decrypt_sensitive_data(value)
             if decrypted:
-                logger.info("Decrypted sensitive data")
                 return decrypted
             logger.warning("Failed to decrypt sensitive data")
             return ""
@@ -974,16 +969,12 @@ class ClaudeCodeAgent(Agent):
                 loop = asyncio.get_running_loop()
                 # If we can get running event loop, we're in coroutine
                 # Call async version directly
-                logger.info(
-                    "Detected running in an async context, calling execute_async"
-                )
+                logger.debug("Running in async context")
 
                 if is_subscription:
                     # For subscription tasks, we need to wait for completion
                     # so the container can exit with proper status
-                    logger.info(
-                        "Subscription task detected, waiting for async execution to complete"
-                    )
+                    logger.debug("Subscription task: waiting for completion")
                     # Run in a new event loop in a separate thread to avoid blocking
                     # the current async context while still waiting for completion
                     import concurrent.futures
@@ -999,20 +990,16 @@ class ClaudeCodeAgent(Agent):
                     with concurrent.futures.ThreadPoolExecutor() as executor:
                         future = executor.submit(run_async_task)
                         result = future.result()
-                        logger.info(
-                            f"Subscription task async execution completed with status: {result}"
-                        )
+                        logger.debug(f"Subscription task completed: status={result}")
                         return result
                 else:
                     # For non-subscription tasks, create background task and return immediately
                     asyncio.create_task(self.execute_async())
-                    logger.info(
-                        "Created async task for execution, returning RUNNING status"
-                    )
+                    logger.debug("Created async task, returning RUNNING")
                     return TaskStatus.RUNNING
             except RuntimeError:
                 # No running event loop, can safely use run_until_complete
-                logger.info("No running event loop detected, using new event loop")
+                logger.debug("No event loop, using new loop")
                 self.add_thinking_step(
                     title="Sync Execution",
                     report_immediately=False,
@@ -1104,16 +1091,14 @@ class ClaudeCodeAgent(Agent):
                     if hasattr(cached_client, "_process") and cached_client._process:
                         if cached_client._process.poll() is not None:
                             # Process has terminated, remove from cache
-                            logger.warning(
-                                f"Cached client process terminated for session_id: {self.session_id}, creating new client"
+                            logger.debug(
+                                f"Cached client process terminated, creating new: session={self.session_id}"
                             )
                             del self._clients[self.session_id]
                             # Proceed to create new client
                         else:
                             # Process is still running, reuse client
-                            logger.info(
-                                f"Reusing existing Claude client for session_id: {self.session_id}"
-                            )
+                            logger.debug(f"Reusing client: session={self.session_id}")
                             self.add_thinking_step(
                                 title="Reuse Existing Client",
                                 report_immediately=False,
@@ -1123,14 +1108,10 @@ class ClaudeCodeAgent(Agent):
                             self.client = cached_client
                     else:
                         # No process info available, assume client is valid
-                        logger.info(
-                            f"Reusing existing Claude client for session_id: {self.session_id}"
-                        )
+                        logger.debug(f"Reusing client: session={self.session_id}")
                         self.client = cached_client
                 except Exception as e:
-                    logger.warning(
-                        f"Error checking client validity: {e}, creating new client"
-                    )
+                    logger.warning(f"Error checking client validity: {e}")
                     # Remove potentially invalid client from cache
                     if self.session_id in self._clients:
                         del self._clients[self.session_id]
@@ -1150,8 +1131,8 @@ class ClaudeCodeAgent(Agent):
             if user_selected_skills:
                 skill_emphasis = self._build_skill_emphasis_prompt(user_selected_skills)
                 prompt = skill_emphasis + "\n\n" + prompt
-                logger.info(
-                    f"Added skill emphasis for {len(user_selected_skills)} user-selected skills: {user_selected_skills}"
+                logger.debug(
+                    f"Added skill emphasis for {len(user_selected_skills)} skills"
                 )
 
             if self.options.get("cwd"):
@@ -1185,21 +1166,19 @@ class ClaudeCodeAgent(Agent):
                 # 2. Pipeline tasks may jump back to previous bots, which need their own clients
                 # 3. The old client's session_id key is different from new one (task_id:bot_id format)
                 # Create new client with current bot's configuration
-                logger.info(
-                    f"new_session=True, creating new client with subtask_id {new_session_id} as session_id "
-                    f"(old: {old_session_id}, internal_key: {self._internal_session_key})"
+                logger.debug(
+                    f"new_session=True, creating new client: subtask={new_session_id}, old={old_session_id}"
                 )
                 await self._create_and_connect_client()
 
             # Use session_id to send messages, ensuring messages are in the same session
             # Use the current updated prompt for each execution, even with the same session ID
-            logger.info(
-                f"Sending query with prompt (length: {len(self.prompt)}) for session_id: {self.session_id}"
+            logger.debug(
+                f"Sending query: prompt_len={len(self.prompt)}, session={self.session_id}"
             )
 
             await self.client.query(prompt, session_id=self.session_id)
 
-            logger.info(f"Waiting for response for prompt: {prompt}")
             # Process and handle the response using the external processor
             result = await process_response(
                 self.client,
@@ -1228,7 +1207,7 @@ class ClaudeCodeAgent(Agent):
 
         Config files are generated in initialize() and passed via 'settings' parameter.
         """
-        logger.info(f"Creating new Claude client for session_id: {self.session_id}")
+        logger.debug(f"Creating new Claude client: session={self.session_id}")
 
         # Ensure working directory exists
         if self.options.get("cwd") is None or self.options.get("cwd") == "":
@@ -1247,8 +1226,8 @@ class ClaudeCodeAgent(Agent):
         # Check if there's a saved session ID to resume
         saved_session_id = self._load_saved_session_id(self.task_id)
         if saved_session_id:
-            logger.info(
-                f"Resuming Claude session for task {self.task_id}: {saved_session_id}"
+            logger.debug(
+                f"Resuming session: task={self.task_id}, session={saved_session_id}"
             )
             self.options["resume"] = saved_session_id
 
@@ -1269,9 +1248,6 @@ class ClaudeCodeAgent(Agent):
         # This ensures cleanup_task_clients can find all clients by task_id
         if hasattr(self, "_internal_session_key"):
             self._session_id_map[self._internal_session_key] = self.session_id
-            logger.info(
-                f"Updated _session_id_map: {self._internal_session_key} -> {self.session_id}"
-            )
 
         # Trigger callback to notify that client is created (e.g., for heartbeat update)
         if self.on_client_created_callback:
@@ -1304,8 +1280,8 @@ class ClaudeCodeAgent(Agent):
             TaskStatus: Execution status
         """
         if result_content:
-            logger.info(
-                f"{execution_type} completed with content length: {len(result_content)}"
+            logger.debug(
+                f"{execution_type} completed: content_len={len(result_content)}"
             )
             self.add_thinking_step(
                 title="Execution Completed",
@@ -1389,13 +1365,11 @@ class ClaudeCodeAgent(Agent):
                 client = cls._clients[session_id]
                 await client.disconnect()
                 del cls._clients[session_id]
-                logger.info(f"Closed Claude client for session_id: {session_id}")
+                logger.debug(f"Closed client: session={session_id}")
                 return TaskStatus.SUCCESS
             return TaskStatus.FAILED
         except Exception as e:
-            logger.exception(
-                f"Error closing client for session_id {session_id}: {str(e)}"
-            )
+            logger.exception(f"Error closing client session={session_id}: {e}")
             return TaskStatus.FAILED
 
     @classmethod
@@ -1406,11 +1380,10 @@ class ClaudeCodeAgent(Agent):
         for session_id, client in list(cls._clients.items()):
             try:
                 await client.disconnect()
-                logger.info(f"Closed Claude client for session_id: {session_id}")
+                logger.debug(f"Closed client: session={session_id}")
             except Exception as e:
-                logger.exception(
-                    f"Error closing client for session_id {session_id}: {str(e)}"
-                )
+                logger.exception(f"Error closing client session={session_id}: {e}")
+        cls._clients.clear()
         cls._clients.clear()
 
     @classmethod
@@ -1435,128 +1408,63 @@ class ClaudeCodeAgent(Agent):
         task_id_str = str(task_id)
         task_id_prefix = f"{task_id}:"
 
-        # Debug: Log cleanup start
-        logger.debug(f"[Cleanup] Starting cleanup for task_id={task_id}")
         logger.debug(
-            f"[Cleanup] _session_id_map keys={list(cls._session_id_map.keys())}"
-        )
-        logger.debug(f"[Cleanup] _clients keys={list(cls._clients.keys())}")
-
-        # Debug: Log current state
-        logger.info(
-            f"[Cleanup] Starting cleanup for task_id={task_id}, "
-            f"_session_id_map keys={list(cls._session_id_map.keys())}, "
-            f"_clients keys={list(cls._clients.keys())}"
+            f"[Cleanup] task_id={task_id}, sessions={list(cls._session_id_map.keys())}, clients={list(cls._clients.keys())}"
         )
 
         # Step 1: Check _session_id_map to find all session_ids for this task
         internal_keys_to_cleanup = []
-        logger.debug(
-            f"[Cleanup] Checking _session_id_map for task_id_prefix={task_id_prefix}"
-        )
         for internal_key, session_id in list(cls._session_id_map.items()):
-            logger.debug(
-                f"[Cleanup] Checking internal_key={internal_key}, session_id={session_id}"
-            )
             if internal_key.startswith(task_id_prefix) or internal_key == task_id_str:
-                logger.debug(f"[Cleanup] MATCH! Adding to cleanup list")
                 internal_keys_to_cleanup.append((internal_key, session_id))
-                logger.info(
-                    f"[Cleanup] Found internal_key={internal_key} -> session_id={session_id} for task {task_id}"
-                )
-            else:
-                logger.debug(f"[Cleanup] NO MATCH for internal_key={internal_key}")
-
-        logger.debug(f"[Cleanup] internal_keys_to_cleanup={internal_keys_to_cleanup}")
 
         # Clean up clients found in _session_id_map
-        logger.debug(
-            f"[Cleanup] Starting to clean up {len(internal_keys_to_cleanup)} clients"
-        )
         for internal_key, session_id in internal_keys_to_cleanup:
-            logger.debug(
-                f"[Cleanup] Processing internal_key={internal_key}, session_id={session_id}"
-            )
-            logger.debug(
-                f"[Cleanup] Checking if session_id in _clients: {session_id in cls._clients}"
-            )
             if session_id in cls._clients:
-                logger.debug(
-                    f"[Cleanup] Found client, attempting to terminate process..."
-                )
                 try:
                     client = cls._clients[session_id]
 
                     # Directly terminate the process instead of using disconnect()
                     # disconnect() has cancel scope issues when called from different asyncio context
-                    logger.debug(f"[Cleanup] Accessing transport and process...")
-
                     # Get the process from the transport
                     if hasattr(client, "_transport") and client._transport:
                         transport = client._transport
                         if hasattr(transport, "_process") and transport._process:
                             process = transport._process
                             pid = process.pid if hasattr(process, "pid") else None
-                            logger.debug(f"[Cleanup] Found process with PID={pid}")
 
                             # Try graceful termination first
                             try:
                                 process.terminate()
-                                logger.debug(
-                                    f"[Cleanup] Sent SIGTERM to process PID={pid}"
-                                )
-
                                 # Wait briefly for process to exit
                                 try:
                                     await asyncio.wait_for(process.wait(), timeout=2.0)
-                                    logger.debug(
-                                        f"[Cleanup] Process PID={pid} exited gracefully"
-                                    )
                                 except asyncio.TimeoutError:
                                     # Force kill if it doesn't exit
-                                    logger.debug(
-                                        f"[Cleanup] Process didn't exit, sending SIGKILL..."
-                                    )
                                     process.kill()
                                     await asyncio.wait_for(process.wait(), timeout=1.0)
-                                    logger.debug(f"[Cleanup] Process PID={pid} killed")
 
                                 logger.info(
-                                    f"Terminated Claude Code process for task_id={task_id}, session_id={session_id}, internal_key={internal_key}, PID={pid}"
+                                    f"Terminated Claude Code process: task={task_id}, session={session_id}, PID={pid}"
                                 )
                             except Exception as proc_error:
-                                logger.debug(
-                                    f"[Cleanup] Error terminating process: {proc_error}"
-                                )
                                 logger.warning(
-                                    f"Error terminating process for session_id={session_id}: {proc_error}"
+                                    f"Error terminating process session={session_id}: {proc_error}"
                                 )
                         else:
-                            logger.debug(f"[Cleanup] No process found in transport")
                             logger.warning(
-                                f"No process found in transport for session_id={session_id}"
+                                f"No process in transport: session={session_id}"
                             )
                     else:
-                        logger.debug(f"[Cleanup] No transport found in client")
-                        logger.warning(
-                            f"No transport found in client for session_id={session_id}"
-                        )
+                        logger.warning(f"No transport in client: session={session_id}")
 
                     # Remove from _clients dict
-                    logger.debug(f"[Cleanup] Removing from _clients...")
                     del cls._clients[session_id]
-                    logger.debug(f"[Cleanup] Successfully cleaned up client!")
                     cleaned_count += 1
                 except Exception as e:
-                    logger.debug(f"[Cleanup] ERROR closing client: {e}")
-                    logger.exception(
-                        f"Error closing client for session_id {session_id}: {str(e)}"
-                    )
+                    logger.exception(f"Error closing client session={session_id}: {e}")
             else:
-                logger.debug(f"[Cleanup] session_id NOT in _clients!")
-                logger.warning(
-                    f"[Cleanup] session_id={session_id} not found in _clients for internal_key={internal_key}"
-                )
+                logger.debug(f"[Cleanup] session={session_id} not in _clients")
             # Clean up the mapping
             try:
                 del cls._session_id_map[internal_key]
@@ -1590,26 +1498,24 @@ class ClaudeCodeAgent(Agent):
                                         )
 
                                     logger.info(
-                                        f"Terminated Claude Code process (direct match) for task_id={task_id}, session_id={session_id}, PID={pid}"
+                                        f"Terminated Claude Code process (direct): task={task_id}, session={session_id}, PID={pid}"
                                     )
                                 except Exception as proc_error:
                                     logger.warning(
-                                        f"Error terminating process (direct match) for session_id={session_id}: {proc_error}"
+                                        f"Error terminating process (direct) session={session_id}: {proc_error}"
                                     )
 
                         del cls._clients[session_id]
                         cleaned_count += 1
                     except Exception as e:
                         logger.exception(
-                            f"Error closing client for session_id {session_id}: {str(e)}"
+                            f"Error closing client session={session_id}: {e}"
                         )
 
         if cleaned_count > 0:
             logger.info(f"Cleaned up {cleaned_count} client(s) for task_id={task_id}")
         else:
-            logger.warning(
-                f"[Cleanup] No clients found to cleanup for task_id={task_id}"
-            )
+            logger.debug(f"No clients to cleanup for task_id={task_id}")
 
         return cleaned_count
 

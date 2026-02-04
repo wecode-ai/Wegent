@@ -89,10 +89,7 @@ class LocalModeStrategy(ExecutionModeStrategy):
             json.dump(claude_json_config, f, indent=2)
         os.chmod(claude_json_path, 0o600)
 
-        logger.info(
-            f"Local mode: Saved claude.json to {config_dir} "
-            "(settings.json skipped - sensitive config passed via env)"
-        )
+        logger.debug(f"Local mode: Saved claude.json to {config_dir}")
 
         # Return env config to be passed via environment variables
         env_config = agent_config.get("env", {})
