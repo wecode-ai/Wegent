@@ -73,5 +73,12 @@
   "security_warning": "安全提示：请勿分享上述命令，它包含您的认证信息",
   "gatekeeper_hint": "首次运行可能需要在「系统设置 > 隐私与安全性」中允许运行",
   "token_expiry_hint": "认证 Token 有效期为 7 天，过期后可重新执行上述启动命令刷新",
-  "copy_success": "已复制到剪贴板"
+  "copy_success": "已复制到剪贴板",
+  "version": {
+    "current": "当前版本",
+    "latest": "最新版本",
+    "updateAvailable": "有新版本可用"
+  },
+  "add_device": "添加设备",
+  "hide_guide": "收起指南"
 }

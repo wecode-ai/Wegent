@@ -82,7 +82,8 @@
       },
       "indexStatus": {
         "available": "Indexed",
-        "unavailable": "Index Unavailable"
+        "unavailable": "Index Unavailable",
+        "unavailableHint": "AI will use other tools to browse documents (slightly less efficient than quick retrieval)"
       },
       "openLink": "Open Link",
       "columns": {
@@ -308,6 +309,8 @@
       "embeddingModelSelect": "Select an embedding model",
       "embeddingModelHint": "Model for generating vector embeddings",
       "noEmbeddingModel": "No embedding model available. Please configure one in Settings.",
+      "ragUnavailable": "Quick retrieval is not available",
+      "ragUnavailableHint": "You can still create the knowledge base. AI will use kb_ls/kb_head tools to browse document contents manually (less efficient than quick search).",
       "retrievalMode": "Retrieval Mode",
       "vector": "Vector Search",
       "keyword": "Full-Text Search",

@@ -451,3 +451,79 @@ class TestContextServiceFormatting:
         assert "PDF content here" in result
         assert "[User Question]:" in result
         assert "Summarize this document" in result
+
+
+class TestContextServiceOverwrite:
+    """Test attachment overwrite functionality"""
+
+    def test_overwrite_attachment_updates_existing_context(self):
+        """Test overwriting an attachment updates metadata and storage data."""
+        import sys
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.attachment.parser import ParseResult
+        from app.services.context.context_service import context_service as cs_instance
+
+        cs_module = sys.modules["app.services.context.context_service"]
+
+        mock_db = Mock()
+        storage_key = "attachments/test123_20250113_1_100"
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="old.txt",
+            status=ContextStatus.READY.value,
+            binary_data=b"old data",
+            type_data={
+                "storage_backend": "mysql",
+                "storage_key": storage_key,
+                "original_filename": "old.txt",
+                "file_extension": ".txt",
+                "file_size": 7,
+                "mime_type": "text/plain",
+                "is_encrypted": False,
+            },
+        )
+        context.id = 100
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = context
+
+        new_binary_data = b"new data"
+        parse_result = ParseResult(text="new data", text_length=8)
+
+        with patch.object(cs_module, "_should_encrypt", return_value=False):
+            with patch.object(cs_module, "get_storage_backend") as mock_get_backend:
+                mock_backend = Mock()
+                mock_get_backend.return_value = mock_backend
+
+                with patch.object(
+                    cs_instance.parser, "parse", return_value=parse_result
+                ):
+                    updated_context, truncation_info = cs_instance.overwrite_attachment(
+                        db=mock_db,
+                        context_id=context.id,
+                        user_id=context.user_id,
+                        filename="new.txt",
+                        binary_data=new_binary_data,
+                    )
+
+        assert truncation_info is None
+        assert updated_context.id == context.id
+        assert updated_context.status == ContextStatus.READY.value
+        assert updated_context.name == "new.txt"
+        assert updated_context.original_filename == "new.txt"
+        assert updated_context.file_size == len(new_binary_data)
+        assert updated_context.storage_key == storage_key
+        mock_backend.save.assert_called_once()
+        saved_key, saved_data, saved_metadata = mock_backend.save.call_args.args
+        assert saved_key == storage_key
+        assert saved_data == new_binary_data
+        assert saved_metadata["file_size"] == len(new_binary_data)

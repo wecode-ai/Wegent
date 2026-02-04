@@ -8,6 +8,7 @@ This module provides utilities for creating and managing tasks and subtasks
 for the chat functionality.
 """
 
+import json as json_lib
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -57,6 +58,8 @@ class TaskCreationParams:
     knowledge_base_id: Optional[int] = (
         None  # Knowledge base ID for knowledge type tasks
     )
+    # Skill selection - backend determines preload vs download based on executor type
+    additional_skills: Optional[List[Dict[str, Any]]] = None
 
 
 def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
@@ -322,6 +325,19 @@ def create_new_task(
                 **(
                     {"forceOverrideBotModelType": params.force_override_bot_model_type}
                     if params.force_override_bot_model_type
+                    else {}
+                ),
+                **(
+                    {
+                        "additionalSkills": json_lib.dumps(
+                            [
+                                s.get("name")
+                                for s in params.additional_skills
+                                if s.get("name")
+                            ]
+                        )
+                    }
+                    if params.additional_skills
                     else {}
                 ),
             },
@@ -861,6 +877,32 @@ async def create_chat_task(
         if not task_type:
             task_type = "code" if params.git_url else "chat"
 
+        # Convert additional_skills from list of dicts to list of SkillRef objects
+        additional_skills_refs = None
+        if params.additional_skills:
+            from app.schemas.task import SkillRef
+
+            # Filter out entries with empty or missing names
+            valid_skills = [s for s in params.additional_skills if s.get("name")]
+            if len(valid_skills) < len(params.additional_skills):
+                logger.warning(
+                    f"[create_chat_task] Filtered out {len(params.additional_skills) - len(valid_skills)} "
+                    f"skills with empty/missing names"
+                )
+
+            additional_skills_refs = [
+                SkillRef(
+                    name=s.get("name", ""),
+                    namespace=s.get("namespace", "default"),
+                    is_public=s.get("is_public", False),
+                )
+                for s in valid_skills
+            ]
+            logger.info(
+                f"[create_chat_task] Passing {len(additional_skills_refs)} additional_skills to executor: "
+                f"{[s.name for s in additional_skills_refs]}"
+            )
+
         # Build TaskCreate object
         task_create = TaskCreate(
             title=params.title,
@@ -880,6 +922,7 @@ async def create_chat_task(
             model_id=params.model_id,
             force_override_bot_model=params.force_override_bot_model,
             force_override_bot_model_type=params.force_override_bot_model_type,
+            additional_skills=additional_skills_refs,
         )
 
         # Call create_task_or_append (synchronous method)

@@ -1199,9 +1199,22 @@ def execute_subscription_task(
                     )
                 else:
                     # Executor type - subtask picked up by executor_manager
-                    logger.debug(
-                        f"[subscription_tasks] Executor type, task {task_id} dispatched to executor_manager"
-                    )
+                    # Note: schedule_dispatch is already called inside create_task_or_append
+                    # after db.commit(). However, we call it again here as a safety measure
+                    # in case the first call failed silently.
+                    try:
+                        from app.services.task_dispatcher import task_dispatcher
+
+                        if task_dispatcher.enabled:
+                            task_dispatcher.schedule_dispatch(task_id)
+                            logger.info(
+                                f"[subscription_tasks] Push mode: scheduled dispatch for task {task_id}"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"[subscription_tasks] Push mode dispatch failed for task {task_id}: {e}",
+                            exc_info=True,
+                        )
 
                 # Update execution status to COMPLETED for Chat Shell type
                 # For Executor type, status will be updated by executor when done

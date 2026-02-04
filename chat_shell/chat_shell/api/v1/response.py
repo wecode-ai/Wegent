@@ -107,6 +107,8 @@ async def _stream_response(
     # Silent exit tracking for subscription tasks
     is_silent_exit = False
     silent_exit_reason = ""
+    # Extra fields from DONE event to pass through (e.g., loaded_skills)
+    done_extra_fields: dict = {}
 
     try:
         # Send response.start event
@@ -231,6 +233,7 @@ async def _stream_response(
         history_limit = None  # For subscription tasks
         auth_token = ""  # JWT token for API authentication
         is_subscription = False  # For SilentExitTool injection
+        user_selected_skills = []
 
         if request.metadata:
             task_id = getattr(request.metadata, "task_id", 0) or 0
@@ -262,6 +265,9 @@ async def _stream_response(
             auth_token = getattr(request.metadata, "auth_token", None) or ""
             is_subscription = (
                 getattr(request.metadata, "is_subscription", False) or False
+            )
+            user_selected_skills = (
+                getattr(request.metadata, "user_selected_skills", None) or []
             )
         # Merge skill configs from tools and metadata
         all_skill_configs = skill_configs + skill_configs_from_meta
@@ -307,13 +313,14 @@ async def _stream_response(
             mcp_servers=mcp_servers,
             auth_token=auth_token,
             is_subscription=is_subscription,
+            user_selected_skills=user_selected_skills,
         )
 
         logger.info(
             "[RESPONSE] Processing request: task_id=%d, subtask_id=%d, user_subtask_id=%s, "
             "enable_web_search=%s, mcp_servers=%d, skills=%d, "
             "skill_names=%s, preload_skills=%s, knowledge_base_ids=%s, document_ids=%s, "
-            "table_contexts_count=%d, table_contexts=%s",
+            "table_contexts_count=%d, table_contexts=%s, user_selected_skills=%s",
             task_id,
             subtask_id,
             user_subtask_id,
@@ -326,6 +333,7 @@ async def _stream_response(
             document_ids,
             len(table_contexts),
             table_contexts,  # Log the actual content
+            user_selected_skills,  # Log user selected skills from backend
         )
 
         # Record request details to trace
@@ -540,6 +548,29 @@ async def _stream_response(
                         subtask_id,
                         len(accumulated_blocks),
                     )
+                # Collect extra fields from DONE event for pass-through
+                # These fields (like loaded_skills) will be forwarded to backend
+                known_fields = {
+                    "usage",
+                    "silent_exit",
+                    "silent_exit_reason",
+                    "blocks",
+                    "sources",
+                    "shell_type",
+                    "value",
+                    "thinking",
+                }
+                if result:
+                    for key, value in result.items():
+                        if key not in known_fields and value is not None:
+                            done_extra_fields[key] = value
+                    if done_extra_fields:
+                        logger.info(
+                            "[RESPONSE] Collected extra fields from DONE event: subtask_id=%d, "
+                            "extra_fields=%s",
+                            subtask_id,
+                            list(done_extra_fields.keys()),
+                        )
 
             elif event.type == ChatEventType.ERROR:
                 error_msg = event.data.get("error", "Unknown error")
@@ -580,27 +611,42 @@ async def _stream_response(
                 for source in accumulated_sources
             ]
 
+        # Build ResponseDone with extra fields passed through
+        response_done = ResponseDone(
+            id=response_id,
+            usage=(
+                UsageInfo(
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    total_tokens=total_input_tokens + total_output_tokens,
+                )
+                if total_input_tokens or total_output_tokens
+                else None
+            ),
+            stop_reason="silent_exit" if is_silent_exit else "end_turn",
+            sources=formatted_sources,
+            blocks=(
+                accumulated_blocks if accumulated_blocks else None
+            ),  # Include accumulated blocks
+            silent_exit=is_silent_exit if is_silent_exit else None,
+            silent_exit_reason=silent_exit_reason if silent_exit_reason else None,
+            **done_extra_fields,  # Pass through extra fields like loaded_skills
+        )
+
+        # Log the response.done event being sent to backend
+        response_done_data = response_done.model_dump()
+        logger.info(
+            "[RESPONSE] Sending response.done to backend: subtask_id=%d, "
+            "response_done_keys=%s, loaded_skills=%s, extra_fields=%s",
+            subtask_id,
+            list(response_done_data.keys()),
+            response_done_data.get("loaded_skills"),
+            done_extra_fields,
+        )
+
         yield _format_sse_event(
             ResponseEventType.RESPONSE_DONE.value,
-            ResponseDone(
-                id=response_id,
-                usage=(
-                    UsageInfo(
-                        input_tokens=total_input_tokens,
-                        output_tokens=total_output_tokens,
-                        total_tokens=total_input_tokens + total_output_tokens,
-                    )
-                    if total_input_tokens or total_output_tokens
-                    else None
-                ),
-                stop_reason="silent_exit" if is_silent_exit else "end_turn",
-                sources=formatted_sources,
-                blocks=(
-                    accumulated_blocks if accumulated_blocks else None
-                ),  # Include accumulated blocks
-                silent_exit=is_silent_exit if is_silent_exit else None,
-                silent_exit_reason=silent_exit_reason if silent_exit_reason else None,
-            ).model_dump(),
+            response_done_data,
         )
 
     except asyncio.CancelledError:

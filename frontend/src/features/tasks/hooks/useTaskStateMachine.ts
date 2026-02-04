@@ -60,11 +60,11 @@ export function useTaskStateMachine(
 
     // Subscribe to updates
     const unsubscribe = machine.subscribe(newState => {
-      console.log('[useTaskStateMachine] Received state update', {
-        taskId,
-        status: newState.status,
-        messagesSize: newState.messages.size,
-      })
+      // console.log('[useTaskStateMachine] Received state update', {
+      //   taskId,
+      //   status: newState.status,
+      //   messagesSize: newState.messages.size,
+      // })
       setState(newState)
     })
     return () => {

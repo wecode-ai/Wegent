@@ -97,9 +97,21 @@ def _handle_tool_start(
     title = _build_tool_start_title(agent_builder, tool_name, serializable_input)
 
     # Extract display_name from tool instance
+    # Try multiple sources:
+    # 1. tool_registry (for registered tools)
+    # 2. agent_builder.all_tools (includes all tools including dynamically loaded skill tools)
     tool_instance = None
+
+    # First try tool_registry
     if agent_builder.tool_registry:
         tool_instance = agent_builder.tool_registry.get(tool_name)
+
+    # If not found, search in agent_builder.all_tools (includes skill tools)
+    if not tool_instance and hasattr(agent_builder, "all_tools"):
+        for tool in agent_builder.all_tools:
+            if tool.name == tool_name:
+                tool_instance = tool
+                break
 
     display_name = (
         getattr(tool_instance, "display_name", None) if tool_instance else None
@@ -154,6 +166,11 @@ def _handle_tool_end(
     tool_output = event_data.get("data", {}).get("output", "")
 
     serializable_output = _make_output_serializable(tool_output)
+
+    # Extract tool input from event_data for load_skill tracking
+    # This is the original input before any filtering by should_display_tool_details
+    raw_tool_input = event_data.get("data", {}).get("input", {})
+    tool_input = _make_serializable(raw_tool_input) if raw_tool_input else {}
 
     # Find matching start step first to get the tool_use_id that was created
     # This ensures we use the same ID for updating the block
@@ -277,6 +294,33 @@ def _handle_tool_end(
         status="done" if status == "completed" else "error",
         is_error=(status == "failed"),
     )
+
+    # Track loaded skills for persistence across conversation turns
+    # When load_skill tool completes successfully, record the skill name
+    if tool_name == "load_skill" and status == "completed":
+        # Get skill_name directly from tool_input (extracted from event_data)
+        skill_name = (
+            tool_input.get("skill_name") if isinstance(tool_input, dict) else None
+        )
+
+        logger.info(
+            "[TOOL_END] load_skill completed: skill_name=%s, tool_input=%s",
+            skill_name,
+            tool_input,
+        )
+
+        # Add to loaded_skills if we found the skill name
+        if skill_name and hasattr(state, "add_loaded_skill"):
+            state.add_loaded_skill(skill_name)
+            logger.info(
+                "[TOOL_END] Tracked loaded skill: %s for persistence",
+                skill_name,
+            )
+        else:
+            logger.warning(
+                "[TOOL_END] Could not track loaded skill: skill_name=%s",
+                skill_name,
+            )
 
     # Emit chunk with thinking data synchronously using emit_json
     current_result = state.get_current_result(

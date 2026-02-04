@@ -86,6 +86,9 @@ const nextConfig = {
       }),
   // Experimental features to improve stability
   experimental: {
+    // Disable CSS chunking to fix Safari/iOS bug where CSS files
+    // are incorrectly loaded as <script> tags
+    cssChunking: false,
     // Improve chunk loading reliability
     optimizeCss: false,
     // Enable server actions if needed

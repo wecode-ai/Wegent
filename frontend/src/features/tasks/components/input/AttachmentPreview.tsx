@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useCallback, useState, useEffect } from 'react'
+import React, { useCallback, useState } from 'react'
 import { Download, X, ZoomIn, ZoomOut, RotateCw, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -12,10 +12,9 @@ import {
   getFileIcon,
   downloadAttachment,
   isImageExtension,
-  getAttachmentPreviewUrl,
 } from '@/apis/attachments'
-import { getToken } from '@/apis/user'
 import type { Attachment } from '@/types/api'
+import { useAttachmentImage } from '@/hooks/useAttachmentImage'
 
 interface AttachmentPreviewProps {
   /** Attachment data */
@@ -24,6 +23,8 @@ interface AttachmentPreviewProps {
   showDownload?: boolean
   /** Compact mode (smaller size) */
   compact?: boolean
+  /** Share token for public access (no login required) */
+  shareToken?: string
 }
 
 /**
@@ -175,88 +176,21 @@ function ImageLightbox({
   )
 }
 
-/**
- * Custom hook to fetch image with authentication and return blob URL
- */
-function useAuthenticatedImage(attachmentId: number, isImage: boolean) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState(false)
-
-  useEffect(() => {
-    if (!isImage) return
-
-    let isMounted = true
-    const fetchImage = async () => {
-      setIsLoading(true)
-      setError(false)
-
-      try {
-        const token = getToken()
-        const response = await fetch(getAttachmentPreviewUrl(attachmentId), {
-          headers: {
-            ...(token && { Authorization: `Bearer ${token}` }),
-          },
-        })
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch image: ${response.status}`)
-        }
-
-        const blob = await response.blob()
-        if (isMounted) {
-          const url = URL.createObjectURL(blob)
-          setBlobUrl(url)
-        }
-      } catch (err) {
-        console.error('Failed to load image:', err)
-        if (isMounted) {
-          setError(true)
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false)
-        }
-      }
-    }
-
-    fetchImage()
-
-    return () => {
-      isMounted = false
-      // Clean up blob URL when component unmounts
-      if (blobUrl) {
-        URL.revokeObjectURL(blobUrl)
-      }
-    }
-  }, [attachmentId, isImage])
-
-  // Clean up blob URL when it changes
-  useEffect(() => {
-    return () => {
-      if (blobUrl) {
-        URL.revokeObjectURL(blobUrl)
-      }
-    }
-  }, [blobUrl])
-
-  return { blobUrl, isLoading, error }
-}
-
 export default function AttachmentPreview({
   attachment,
   showDownload = true,
   compact = false,
+  shareToken,
 }: AttachmentPreviewProps) {
   const [showLightbox, setShowLightbox] = useState(false)
 
   const handleDownload = useCallback(async () => {
     try {
-      await downloadAttachment(attachment.id, attachment.filename)
+      await downloadAttachment(attachment.id, attachment.filename, shareToken)
     } catch (err) {
       console.error('Failed to download attachment:', err)
     }
-  }, [attachment.id, attachment.filename])
+  }, [attachment.id, attachment.filename, shareToken])
 
   const handleImageClick = useCallback(() => {
     setShowLightbox(true)
@@ -274,7 +208,7 @@ export default function AttachmentPreview({
     blobUrl: imageUrl,
     isLoading: imageLoading,
     error: imageError,
-  } = useAuthenticatedImage(attachment.id, isImage)
+  } = useAttachmentImage(attachment.id, isImage, shareToken)
 
   // Render image preview for image types
   if (isImage && !imageError) {

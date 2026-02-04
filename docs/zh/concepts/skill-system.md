@@ -1,4 +1,8 @@
-# 🎯 Skill 系统架构
+---
+sidebar_position: 3
+---
+
+# 🎯 Skill 系统
 
 本文档提供了 Wegent 中 Skill 系统的全面指南，涵盖架构、实现细节和开发指南。
 

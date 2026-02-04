@@ -287,6 +287,11 @@ class ChatContext:
             "preparing_kb_tools",
             {"kb_ids_count": len(self._request.knowledge_base_ids)},
         )
+        model_id = (
+            self._request.model_config.get("model_id")
+            if self._request.model_config
+            else None
+        )
         context_window = (
             self._request.model_config.get("context_window")
             if self._request.model_config
@@ -314,6 +319,7 @@ class ChatContext:
             user_subtask_id=self._request.user_subtask_id,  # Use user_subtask_id for RAG persistence
             is_user_selected=self._request.is_user_selected_kb,
             document_ids=self._request.document_ids,
+            model_id=model_id,
             context_window=context_window,
             skip_prompt_enhancement=skip_prompt_enhancement,
         )
@@ -389,6 +395,7 @@ class ChatContext:
             skill_configs=self._request.skill_configs,
             load_skill_tool=load_skill_tool,
             preload_skills=self._request.preload_skills,
+            user_selected_skills=self._request.user_selected_skills,
             user_name=self._request.user_name,
             auth_token=self._request.auth_token,
             task_data=self._request.task_data,

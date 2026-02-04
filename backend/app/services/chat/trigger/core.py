@@ -444,7 +444,7 @@ async def _stream_chat_response(
                 enable_clarification=payload.enable_clarification,
                 enable_deep_thinking=True,
                 task_id=stream_data.task_id,
-                preload_skills=getattr(payload, "preload_skills", None),
+                preload_skills=getattr(payload, "additional_skills", None),
             )
         except ValueError as e:
             error_msg = str(e)
@@ -638,45 +638,50 @@ async def _stream_chat_response(
             has_table_context=has_table_context,  # Pass table context flag
         )
 
+        # Prepare knowledge base data before closing db session
+        knowledge_base_ids = None
+        document_ids = None
+        is_user_selected_kb = False
+
+        if chat_shell_mode == "http" and user_subtask_id:
+            from app.services.chat.preprocessing.contexts import (
+                _get_bound_knowledge_base_ids,
+                get_document_ids_from_subtask,
+                get_knowledge_base_ids_from_subtask,
+            )
+
+            # Priority 1: Get subtask-level KB selection (user explicitly selected for this message)
+            knowledge_base_ids = get_knowledge_base_ids_from_subtask(
+                db, user_subtask_id
+            )
+            is_user_selected_kb = bool(knowledge_base_ids)
+
+            if knowledge_base_ids:
+                document_ids = get_document_ids_from_subtask(db, user_subtask_id)
+                logger.info(
+                    "[ai_trigger] HTTP mode: subtask-level KB selected, knowledge_base_ids=%s, "
+                    "document_ids=%s (strict mode)",
+                    knowledge_base_ids,
+                    document_ids,
+                )
+            elif stream_data.task_id:
+                # Priority 2: Fall back to task-level bound knowledge bases
+                knowledge_base_ids = _get_bound_knowledge_base_ids(
+                    db, stream_data.task_id
+                )
+                if knowledge_base_ids:
+                    logger.info(
+                        "[ai_trigger] HTTP mode: task-level KB fallback, knowledge_base_ids=%s (relaxed mode)",
+                        knowledge_base_ids,
+                    )
+
+        # Close db session before streaming starts
+        # All database operations are done at this point
+        db.close()
+        db = None  # Prevent accidental use after close
+
         if chat_shell_mode == "http":
             # HTTP mode: Call chat_shell service via HTTP/SSE
-            # Get knowledge_base_ids and document_ids from user subtask's contexts
-            knowledge_base_ids = None
-            document_ids = None
-            is_user_selected_kb = False
-
-            if user_subtask_id:
-                from app.services.chat.preprocessing.contexts import (
-                    _get_bound_knowledge_base_ids,
-                    get_document_ids_from_subtask,
-                    get_knowledge_base_ids_from_subtask,
-                )
-
-                # Priority 1: Get subtask-level KB selection (user explicitly selected for this message)
-                knowledge_base_ids = get_knowledge_base_ids_from_subtask(
-                    db, user_subtask_id
-                )
-                is_user_selected_kb = bool(knowledge_base_ids)
-
-                if knowledge_base_ids:
-                    document_ids = get_document_ids_from_subtask(db, user_subtask_id)
-                    logger.info(
-                        "[ai_trigger] HTTP mode: subtask-level KB selected, knowledge_base_ids=%s, "
-                        "document_ids=%s (strict mode)",
-                        knowledge_base_ids,
-                        document_ids,
-                    )
-                elif stream_data.task_id:
-                    # Priority 2: Fall back to task-level bound knowledge bases
-                    knowledge_base_ids = _get_bound_knowledge_base_ids(
-                        db, stream_data.task_id
-                    )
-                    if knowledge_base_ids:
-                        logger.info(
-                            "[ai_trigger] HTTP mode: task-level KB fallback, knowledge_base_ids=%s (relaxed mode)",
-                            knowledge_base_ids,
-                        )
-
             await _stream_with_http_adapter(
                 stream_data=stream_data,
                 message=final_message,
@@ -692,6 +697,7 @@ async def _stream_chat_response(
                 event_emitter=emitter,
                 is_user_selected_kb=is_user_selected_kb,
                 preload_skills=chat_config.preload_skills,  # Use resolved from ChatConfig
+                user_selected_skills=chat_config.user_selected_skills,  # Pass user-selected skills for prompt highlighting
                 user_subtask_id=user_subtask_id,  # Pass user subtask ID for RAG persistence
                 history_limit=history_limit,  # Pass history limit for subscription tasks
                 auth_token=auth_token,  # Pass auth token from WebSocket session
@@ -743,7 +749,9 @@ async def _stream_chat_response(
         # Exit span context
         span_manager.exit_span()
 
-        db.close()
+        # Close db if not already closed (only needed if error occurred before db.close())
+        if db is not None:
+            db.close()
 
 
 async def _stream_with_http_adapter(
@@ -753,14 +761,15 @@ async def _stream_with_http_adapter(
     system_prompt: str,
     ws_config: Any,
     extra_tools: list,
-    skill_names: list = None,
-    skill_configs: list = None,
-    knowledge_base_ids: list = None,
-    document_ids: list = None,
-    table_contexts: list = None,
+    skill_names: list | None = None,
+    skill_configs: list | None = None,
+    knowledge_base_ids: list | None = None,
+    document_ids: list | None = None,
+    table_contexts: list | None = None,
     event_emitter: Optional["ChatEventEmitter"] = None,
     is_user_selected_kb: bool = True,
-    preload_skills: list = None,
+    preload_skills: list | None = None,
+    user_selected_skills: list[str] | None = None,
     user_subtask_id: Optional[int] = None,
     history_limit: Optional[int] = None,
     auth_token: str = "",
@@ -898,6 +907,8 @@ async def _stream_with_http_adapter(
         skill_names=skill_names or [],
         skill_configs=skill_configs or [],
         preload_skills=preload_skills or [],  # Pass preload_skills to ChatRequest
+        user_selected_skills=user_selected_skills
+        or [],  # Pass user-selected skills for prompt highlighting
         knowledge_base_ids=knowledge_base_ids,
         document_ids=document_ids,
         is_user_selected_kb=is_user_selected_kb,
@@ -1050,12 +1061,16 @@ async def _stream_with_http_adapter(
                 display_name = event.data.get("display_name", tool_name)
                 blocks = event.data.get("blocks", [])
 
+                # Log event.data without blocks to reduce log size
+                event_data_without_blocks = {
+                    k: v for k, v in event.data.items() if k != "blocks"
+                }
                 logger.info(
                     "[HTTP_ADAPTER] TOOL_START: id=%s, name=%s, display_name=%s, event.data=%s",
                     tool_id,
                     tool_name,
                     display_name,
-                    event.data,
+                    event_data_without_blocks,
                 )
 
                 thinking_steps.append(
@@ -1096,13 +1111,15 @@ async def _stream_with_http_adapter(
                 )
                 blocks = event.data.get("blocks", [])
 
+                # Log event.data without blocks and output to reduce log size
+                event_data_without_blocks_output = {
+                    k: v for k, v in event.data.items() if k not in ("output", "blocks")
+                }
                 logger.info(
                     "[HTTP_ADAPTER] TOOL_RESULT: id=%s, name=%s, event.data=%s",
                     tool_id,
                     tool_name,
-                    {
-                        k: v for k, v in event.data.items() if k != "output"
-                    },  # Skip output to reduce log size
+                    event_data_without_blocks_output,
                 )
 
                 # Determine status based on event data
@@ -1196,6 +1213,17 @@ async def _stream_with_http_adapter(
                     )
                 else:
                     logger.info("[HTTP_ADAPTER] No sources in result")
+
+                # Log loaded_skills from chat_shell for debugging skill persistence
+                loaded_skills = result.get("loaded_skills", [])
+                if loaded_skills:
+                    logger.info(
+                        "[HTTP_ADAPTER] Received loaded_skills from chat_shell: "
+                        "subtask_id=%d, loaded_skills=%s, result_keys=%s",
+                        subtask_id,
+                        loaded_skills,
+                        list(result.keys()),
+                    )
 
                 # Update subtask status to COMPLETED in database
                 # This is critical for persistence - without this, messages show as "running" after refresh

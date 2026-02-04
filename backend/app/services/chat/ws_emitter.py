@@ -119,32 +119,6 @@ class WebSocketEmitter:
         if result is not None:
             payload["result"] = result
 
-        # DEBUG: Log WebSocket emit with blocks info
-        logger.info(
-            "[WS_EMITTER] emit_chat_chunk: subtask_id=%d, has_result=%s, has_blocks=%s, blocks_count=%d, block_id=%s, block_offset=%s",
-            subtask_id,
-            result is not None,
-            result.get("blocks") is not None if result else False,
-            len(result.get("blocks", [])) if result and result.get("blocks") else 0,
-            block_id,
-            block_offset,
-        )
-        if result and result.get("blocks"):
-            logger.info(
-                "[WS_EMITTER] blocks detail: %s",
-                [
-                    {
-                        "id": b.get("id"),
-                        "type": b.get("type"),
-                        "status": b.get("status"),
-                        "tool_name": (
-                            b.get("tool_name") if b.get("type") == "tool" else None
-                        ),
-                    }
-                    for b in result["blocks"]
-                ],
-            )
-
         await self.sio.emit(
             ServerEvents.CHAT_CHUNK,
             payload,

@@ -154,6 +154,9 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
             slot_used: 0,
             slot_max: 5,
             running_tasks: [],
+            executor_version: null,
+            latest_version: null,
+            update_available: false,
           },
         ]
       })

@@ -68,6 +68,9 @@ class LangGraphAgentBuilder:
         if self.tool_registry:
             self.tools = self.tool_registry.get_all()
 
+        # Initialize all_tools (will be updated during agent build to include skill tools)
+        self.all_tools: list[BaseTool] = self.tools
+
         # Automatically detect PromptModifierTool instances from registered tools
         self._prompt_modifier_tools = self._find_prompt_modifier_tools()
 
@@ -141,16 +144,23 @@ class LangGraphAgentBuilder:
                     new_messages.append(SystemMessage(content=updated_content))
                     system_updated = True
 
+                    # Log the final system prompt metadata at INFO level
+                    # Full content is only logged at DEBUG level to avoid leaking sensitive data
+                    logger.info(
+                        "[prompt_modifier] Final system prompt (len=%d)",
+                        len(updated_content),
+                    )
+                    logger.debug(
+                        "[prompt_modifier] Final system prompt content:\n%s",
+                        updated_content,
+                    )
+
                 else:
                     new_messages.append(msg)
 
             # If no system message found, prepend one with modifications
             if not system_updated:
                 new_messages.insert(0, SystemMessage(content=combined_modification))
-                logger.debug(
-                    "[prompt_modifier] Created new system message with modifications, len=%d",
-                    len(combined_modification),
-                )
 
             return new_messages
 
@@ -267,6 +277,9 @@ class LangGraphAgentBuilder:
                 "all_tools_count": len(all_tools),
             },
         )
+
+        # Store all_tools for external access (e.g., for display_name lookup)
+        self.all_tools = all_tools
 
         # Build agent with optional prompt modifier for dynamic system prompt updates
         # If we have a model configurator, use it for dynamic tool selection

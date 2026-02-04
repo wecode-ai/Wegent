@@ -3,6 +3,7 @@
     "name": "Wegent AI 助手",
     "description": "浏览器中的完整 AI 团队。"
   },
+  "loading": "加载中...",
   "repos": {
     "repository": "选择仓库",
     "branch": "选择分支",
@@ -1169,10 +1170,17 @@
       "content_truncated_hint": "文件内容过长，已自动保留前 {{length}} 万字符",
       "batch_limit_exceeded": "选择的文件过多（最多 {{max}} 个文件）"
     },
+    "preview": {
+      "label": "预览",
+      "loading": "正在加载预览...",
+      "unavailable": "暂无预览"
+    },
     "truncation": {
       "notice": "⚠️ 文件内容过长，已自动压缩（原始 {{original}} 字符 → 压缩至 {{truncated}} 字符）"
     },
-    "supported_types": "PDF、Word、Excel、TXT、Markdown、图片、代码文件",
+    "supported_types": "PDF、Word、Excel、TXT、Markdown、图片、HTML、代码文件",
+    "html_preview": "HTML 预览",
+    "click_to_preview": "点击预览",
     "characters": "字符",
     "upload_tooltip": "支持的文件类型: 文档(PDF, Word, PPT, Excel), 图片, 代码文件及各类文本文件\n最大文件大小: {{size}} MB"
   },
@@ -1186,5 +1194,24 @@
       "hint_description": "使用 hjkl 导航，i 进入插入模式，Esc 返回普通模式。:w 保存，:q 关闭。",
       "commands_hint": ":w 保存 | :q 关闭 | :wq 保存并关闭"
     }
+  },
+  "skillSelector": {
+    "slash_command_hint": "输入 / 选择技能",
+    "select_skills": "选择技能",
+    "team_skills_section": "智能体技能",
+    "personal_skills_section": "个人技能",
+    "group_skills_section": "组技能",
+    "public_skills_section": "公共技能",
+    "no_available_skills": "无可选技能",
+    "skills_selected": "已选 {{count}} 个技能",
+    "remove_skill": "移除技能",
+    "skill_autocomplete_title": "选择要使用的技能",
+    "preload_hint": "选中的技能将被自动加载",
+    "download_hint": "选中的技能将在任务执行时下载使用",
+    "search_skills": "搜索技能...",
+    "no_matching_skills": "没有匹配的技能",
+    "already_selected": "已选择",
+    "skill_button_tooltip": "选择要在此消息中使用的技能",
+    "manage_skills": "管理技能"
   }
 }

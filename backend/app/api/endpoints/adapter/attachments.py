@@ -12,155 +12,36 @@ import logging
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.models.subtask import Subtask
 from app.models.subtask_context import ContextType
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.subtask_context import (
     AttachmentDetailResponse,
+    AttachmentPreviewResponse,
     AttachmentResponse,
     TruncationInfo,
 )
 from app.services.attachment.parser import DocumentParseError, DocumentParser
 from app.services.context import context_service
+from app.services.context.context_service import NotFoundException
+from app.services.shared_task import shared_task_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-
-@router.post("/upload", response_model=AttachmentResponse)
-async def upload_attachment(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Upload a document file for chat attachment.
-
-    Supported file types:
-    - PDF (.pdf)
-    - Word (.doc, .docx)
-    - PowerPoint (.ppt, .pptx)
-    - Excel (.xls, .xlsx, .csv)
-    - Plain text (.txt)
-    - Markdown (.md)
-    - Images (.jpg, .jpeg, .png, .gif, .bmp, .webp)
-
-    Limits:
-    - Maximum file size: 100 MB
-    - Maximum extracted text: 1,500,000 characters (auto-truncated if exceeded)
-
-    Returns:
-        Attachment details including ID, processing status, and truncation info
-    """
-    logger.info(
-        f"[attachments.py] upload_attachment: user_id={current_user.id}, filename={file.filename}"
-    )
-
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="Filename is required")
-
-    # Read file content
-    try:
-        binary_data = await file.read()
-    except Exception as e:
-        logger.error(f"Error reading uploaded file: {e}")
-        raise HTTPException(
-            status_code=400, detail="Failed to read uploaded file"
-        ) from e
-
-    # Validate file size before processing
-    if not DocumentParser.validate_file_size(len(binary_data)):
-        max_size_mb = DocumentParser.get_max_file_size() / (1024 * 1024)
-        raise HTTPException(
-            status_code=400,
-            detail=f"File size exceeds maximum limit ({max_size_mb} MB)",
-        )
-
-    try:
-        context, truncation_info = context_service.upload_attachment(
-            db=db,
-            user_id=current_user.id,
-            filename=file.filename,
-            binary_data=binary_data,
-        )
-
-        # Build truncation info for response
-        response_truncation_info = None
-        if truncation_info and truncation_info.is_truncated:
-            response_truncation_info = TruncationInfo(
-                is_truncated=True,
-                original_length=truncation_info.original_length,
-                truncated_length=truncation_info.truncated_length,
-                truncation_message_key="content_truncated",
-            )
-
-        return AttachmentResponse(
-            id=context.id,
-            filename=context.original_filename,
-            file_size=context.file_size,
-            mime_type=context.mime_type,
-            status=(
-                context.status
-                if isinstance(context.status, str)
-                else context.status.value
-            ),
-            file_extension=context.file_extension,
-            text_length=context.text_length,
-            error_message=context.error_message,
-            truncation_info=response_truncation_info,
-            created_at=context.created_at,
-        )
-
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except DocumentParseError as e:
-        # Return error with error_code for i18n mapping
-        error_code = getattr(e, "error_code", None)
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": str(e),
-                "error_code": error_code,
-            },
-        ) from e
-    except Exception as e:
-        logger.error(f"Error uploading attachment: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="Failed to upload attachment"
-        ) from e
+ATTACHMENT_PREVIEW_TEXT_LIMIT = 4000
 
 
-@router.get("/{attachment_id}", response_model=AttachmentDetailResponse)
-async def get_attachment(
-    attachment_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Get attachment details by ID.
-
-    Returns:
-        Attachment details including status and metadata
-    """
-    # Get context without user_id filter first
-    context = context_service.get_context_optional(
-        db=db,
-        context_id=attachment_id,
-    )
-
-    if context is None:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    # Verify it's an attachment type
-    if context.context_type != ContextType.ATTACHMENT.value:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
+def _ensure_attachment_access(db: Session, context, current_user: User) -> None:
+    """Ensure current user has access to the attachment context."""
     # Check access permission:
     # 1. User is the uploader
     # 2. User is the task owner
@@ -203,26 +84,13 @@ async def get_attachment(
     if not has_access:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    return AttachmentDetailResponse.from_context(context)
 
-
-@router.get("/{attachment_id}/download")
-async def download_attachment(
-    attachment_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Download the original file.
-
-    Returns:
-        File binary data with appropriate content type
-    """
-    # Get context without user_id filter first
+def _get_attachment_context(db: Session, attachment_id: int, current_user: User):
     context = context_service.get_context_optional(
         db=db,
         context_id=attachment_id,
     )
+
     if context is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
@@ -230,44 +98,342 @@ async def download_attachment(
     if context.context_type != ContextType.ATTACHMENT.value:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
-    # Check access permission:
-    # 1. User is the uploader
-    # 2. User is the task owner
-    # 3. User is a member of the task that contains this attachment
-    has_access = context.user_id == current_user.id
+    _ensure_attachment_access(db, context, current_user)
+    return context
 
-    if not has_access and context.subtask_id > 0:
-        # Check if user is a task owner or member
-        from app.models.subtask import Subtask
-        from app.models.task import TaskResource
-        from app.models.task_member import MemberStatus, TaskMember
 
-        subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
-        if subtask:
-            # Check if user is the task owner
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == subtask.task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.user_id == current_user.id,
-                )
-                .first()
+def _build_attachment_response(
+    context,
+    truncation_info: Optional[TruncationInfo],
+) -> AttachmentResponse:
+    response_truncation_info = None
+    if truncation_info and truncation_info.is_truncated:
+        response_truncation_info = TruncationInfo(
+            is_truncated=True,
+            original_length=truncation_info.original_length,
+            truncated_length=truncation_info.truncated_length,
+            truncation_message_key="content_truncated",
+        )
+
+    return AttachmentResponse.from_context(context, response_truncation_info)
+
+
+def _validate_share_token_access(
+    db: Session, attachment_id: int, share_token: str
+) -> bool:
+    """
+    Validate that a share_token has access to a specific attachment.
+
+    This validates that:
+    1. The share_token is valid and decrypts to user_id#task_id
+    2. The attachment belongs to a subtask of the task in the token
+    3. The task owner matches the user_id in the token
+
+    Args:
+        db: Database session
+        attachment_id: The attachment ID to check access for
+        share_token: The encrypted share token
+
+    Returns:
+        True if access is granted, False otherwise
+    """
+    # Decode share token to get task info
+    share_info = shared_task_service.decode_share_token(share_token, db)
+    if not share_info:
+        return False
+
+    # Get the context (attachment)
+    context = context_service.get_context_optional(
+        db=db,
+        context_id=attachment_id,
+    )
+    if context is None:
+        return False
+
+    # Verify it's an attachment type
+    if context.context_type != ContextType.ATTACHMENT.value:
+        return False
+
+    # Get the subtask that this attachment belongs to
+    if context.subtask_id <= 0:
+        # Attachment not linked to a subtask
+        # For unlinked attachments, verify the attachment owner matches the task owner
+        if context.user_id == share_info.user_id:
+            return True
+        else:
+            logger.warning(
+                f"[_validate_share_token_access] Ownership mismatch: context.user_id={context.user_id}, "
+                f"share_info.user_id={share_info.user_id}"
             )
-            if task:
-                has_access = True
-            else:
-                # Check if user is a task member
-                task_member = (
-                    db.query(TaskMember)
-                    .filter(
-                        TaskMember.task_id == subtask.task_id,
-                        TaskMember.user_id == current_user.id,
-                        TaskMember.status == MemberStatus.ACTIVE,
-                    )
-                    .first()
+            return False
+
+    subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
+    if not subtask:
+        return False
+
+    # Verify the subtask belongs to the task in the token
+    if subtask.task_id != share_info.task_id:
+        return False
+
+    # Verify the task owner matches the user_id in the token
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == share_info.task_id,
+            TaskResource.user_id == share_info.user_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == True,
+        )
+        .first()
+    )
+    if not task:
+        return False
+
+    return True
+
+
+@router.post("/upload", response_model=AttachmentResponse)
+async def upload_attachment(
+    file: UploadFile = File(...),
+    overwrite_attachment_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Upload a document file for chat attachment.
+
+    Supported file types:
+    - PDF (.pdf)
+    - Word (.doc, .docx)
+    - PowerPoint (.ppt, .pptx)
+    - Excel (.xls, .xlsx, .csv)
+    - Plain text (.txt)
+    - Markdown (.md)
+    - Images (.jpg, .jpeg, .png, .gif, .bmp, .webp)
+
+    Limits:
+    - Maximum file size: 100 MB
+    - Maximum extracted text: 1,500,000 characters (auto-truncated if exceeded)
+
+    Returns:
+        Attachment details including ID, processing status, and truncation info
+
+    Optional:
+        overwrite_attachment_id: Existing attachment ID to overwrite in-place
+    """
+    logger.info(
+        f"[attachments.py] upload_attachment: user_id={current_user.id}, filename={file.filename}"
+    )
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename is required")
+
+    # Read file content
+    try:
+        binary_data = await file.read()
+    except Exception as e:
+        logger.error(f"Error reading uploaded file: {e}")
+        raise HTTPException(
+            status_code=400, detail="Failed to read uploaded file"
+        ) from e
+
+    # Validate file size before processing
+    if not DocumentParser.validate_file_size(len(binary_data)):
+        max_size_mb = DocumentParser.get_max_file_size() / (1024 * 1024)
+        raise HTTPException(
+            status_code=400,
+            detail=f"File size exceeds maximum limit ({max_size_mb} MB)",
+        )
+
+    try:
+        if overwrite_attachment_id is not None:
+            if overwrite_attachment_id <= 0:
+                raise HTTPException(
+                    status_code=400, detail="overwrite_attachment_id must be positive"
                 )
-                has_access = task_member is not None
+            context, truncation_info = context_service.overwrite_attachment(
+                db=db,
+                context_id=overwrite_attachment_id,
+                user_id=current_user.id,
+                filename=file.filename,
+                binary_data=binary_data,
+            )
+        else:
+            context, truncation_info = context_service.upload_attachment(
+                db=db,
+                user_id=current_user.id,
+                filename=file.filename,
+                binary_data=binary_data,
+            )
+
+        return _build_attachment_response(context, truncation_info)
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except NotFoundException as e:
+        raise HTTPException(status_code=404, detail="Attachment not found") from e
+    except DocumentParseError as e:
+        # Return error with error_code for i18n mapping
+        error_code = getattr(e, "error_code", None)
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": str(e),
+                "error_code": error_code,
+            },
+        ) from e
+    except Exception as e:
+        logger.error(f"Error uploading attachment: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to upload attachment"
+        ) from e
+
+
+@router.get("/{attachment_id}", response_model=AttachmentDetailResponse)
+async def get_attachment(
+    attachment_id: int,
+    share_token: Optional[str] = Query(
+        None, description="Share token for public access"
+    ),
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
+):
+    """
+    Get attachment details by ID.
+
+    Supports two authentication methods:
+    1. JWT token (for logged-in users)
+    2. Share token (for public shared task viewers)
+
+    Returns:
+        Attachment details including status and metadata
+    """
+
+    context = None
+
+    # Method 1: Share token authentication (no login required)
+    if share_token:
+        has_access = _validate_share_token_access(db, attachment_id, share_token)
+        if has_access:
+            # Get context for share token access
+            context = context_service.get_context_optional(
+                db=db,
+                context_id=attachment_id,
+            )
+            if context is None:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+        else:
+            raise HTTPException(status_code=403, detail="Share token access denied")
+    # Method 2: JWT token authentication (existing logic)
+    elif current_user:
+        context = _get_attachment_context(db, attachment_id, current_user)
+    else:
+        # No authentication provided
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    return AttachmentDetailResponse.from_context(context)
+
+
+@router.get("/{attachment_id}/preview", response_model=AttachmentPreviewResponse)
+async def get_attachment_preview(
+    attachment_id: int,
+    share_token: Optional[str] = Query(
+        None, description="Share token for public access"
+    ),
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
+):
+    """
+    Get attachment preview content.
+
+    Supports two authentication methods:
+    1. JWT token (for logged-in users)
+    2. Share token (for public shared task viewers)
+
+    Returns:
+        Attachment metadata and preview snippet (if available).
+    """
+    has_access = False
+
+    # Method 1: Share token authentication (no login required)
+    if share_token:
+        has_access = _validate_share_token_access(db, attachment_id, share_token)
+        if has_access:
+            # Get context for share token access
+            context = context_service.get_context_optional(
+                db=db,
+                context_id=attachment_id,
+            )
+            if context is None:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+        else:
+            raise HTTPException(status_code=403, detail="Share token access denied")
+    # Method 2: JWT token authentication (existing logic)
+    elif current_user:
+        context = _get_attachment_context(db, attachment_id, current_user)
+        has_access = True
+    else:
+        # No authentication provided
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    preview_type = "none"
+    preview_text = None
+
+    if context_service.is_image_context(context):
+        preview_type = "image"
+    elif context.extracted_text:
+        preview_type = "text"
+        preview_text = context.extracted_text[:ATTACHMENT_PREVIEW_TEXT_LIMIT]
+
+    download_url = context_service.build_attachment_url(attachment_id)
+
+    return AttachmentPreviewResponse.from_context(
+        context=context,
+        preview_type=preview_type,
+        preview_text=preview_text,
+        download_url=download_url,
+    )
+
+
+@router.get("/{attachment_id}/download")
+async def download_attachment(
+    attachment_id: int,
+    share_token: Optional[str] = Query(
+        None, description="Share token for public access"
+    ),
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
+):
+    """
+    Download the original file.
+
+    Supports two authentication methods:
+    1. JWT token (for logged-in users)
+    2. Share token (for public shared task viewers)
+
+    Returns:
+        File binary data with appropriate content type
+    """
+    has_access = False
+
+    # Method 1: Share token authentication (no login required)
+    if share_token:
+        has_access = _validate_share_token_access(db, attachment_id, share_token)
+        if has_access:
+            # Get context for share token access
+            context = context_service.get_context_optional(
+                db=db,
+                context_id=attachment_id,
+            )
+            if context is None:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+    # Method 2: JWT token authentication (existing logic)
+    elif current_user:
+        context = _get_attachment_context(db, attachment_id, current_user)
+        has_access = True
+    else:
+        # No authentication provided
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     if not has_access:
         raise HTTPException(status_code=404, detail="Attachment not found")
@@ -305,14 +471,17 @@ async def download_attachment(
 async def executor_download_attachment(
     attachment_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_flexible_for_executor),
 ):
     """
     Download attachment for executor.
 
     This endpoint is called by the Executor to download attachments
-    to the workspace. It uses JWT token authentication and validates
-    that the attachment belongs to the current user.
+    to the workspace. It supports both JWT Token and API Key authentication.
+
+    Authentication:
+    - JWT Token: Standard Bearer token in Authorization header
+    - API Key: Personal API key (wg-xxx) via X-API-Key header or Bearer token
 
     Returns:
         File binary data with appropriate content type
