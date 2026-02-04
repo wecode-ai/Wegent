@@ -32,6 +32,14 @@ logger = logging.getLogger(__name__)
 CHANNEL_TASK_CALLBACK_PREFIX = "channel:task_callback:"
 # TTL for task callback info (1 hour - should be enough for most tasks)
 CHANNEL_TASK_CALLBACK_TTL = 60 * 60
+# Redis key prefix for task result deduplication (prevents duplicate sends in multi-instance)
+CHANNEL_TASK_RESULT_DEDUP_PREFIX = "channel:task_result_dedup:"
+# TTL for task result deduplication (5 minutes)
+CHANNEL_TASK_RESULT_DEDUP_TTL = 300
+# Redis key prefix for task streaming ownership (prevents duplicate emitters in multi-instance)
+CHANNEL_TASK_STREAM_OWNER_PREFIX = "channel:task_stream_owner:"
+# TTL for task streaming ownership (10 minutes - refreshed while streaming)
+CHANNEL_TASK_STREAM_OWNER_TTL = 600
 
 
 class ChannelType(str, Enum):
@@ -185,14 +193,15 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         """Get existing emitter or create a new one for streaming.
 
         Uses per-task locking to prevent concurrent creation of multiple emitters
-        for the same task.
+        for the same task. Also uses distributed lock to ensure only one instance
+        handles streaming for a given task in multi-instance deployments.
 
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
 
         Returns:
-            ChatEventEmitter or None if callback info not found
+            ChatEventEmitter or None if callback info not found or another instance owns the task
         """
         # Quick check without lock - if emitter exists, return it
         if task_id in self._active_emitters:
@@ -212,6 +221,18 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 )
                 return self._active_emitters[task_id]
 
+            # Try to acquire distributed ownership for this task's streaming
+            # Only one instance can own a task at a time
+            owner_key = f"{CHANNEL_TASK_STREAM_OWNER_PREFIX}{task_id}"
+            is_owner = await cache_manager.setnx(
+                owner_key, "1", expire=CHANNEL_TASK_STREAM_OWNER_TTL
+            )
+            if not is_owner:
+                logger.debug(
+                    f"[{self._channel_type.value}Callback] Another instance owns streaming for task {task_id}"
+                )
+                return None
+
             logger.info(
                 f"[{self._channel_type.value}Callback] Creating new emitter for task {task_id}"
             )
@@ -219,12 +240,16 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             # Get callback info
             callback_info = await self.get_callback_info(task_id)
             if not callback_info:
+                # Release ownership since we can't process
+                await cache_manager.delete(owner_key)
                 return None
 
             try:
                 # Create channel-specific emitter
                 emitter = await self._create_emitter(task_id, subtask_id, callback_info)
                 if not emitter:
+                    # Release ownership since we can't process
+                    await cache_manager.delete(owner_key)
                     return None
 
                 # Start the emitter
@@ -246,15 +271,24 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                 logger.exception(
                     f"[{self._channel_type.value}Callback] Failed to create emitter for task {task_id}: {e}"
                 )
+                # Release ownership on failure
+                await cache_manager.delete(owner_key)
                 return None
 
     def _remove_emitter(self, task_id: int) -> None:
-        """Remove emitter, lock, and offset tracking from cache."""
+        """Remove emitter, lock, and offset tracking from cache (sync version)."""
         if task_id in self._active_emitters:
             del self._active_emitters[task_id]
         self._remove_lock_for_task(task_id)
         # Clean up offset tracking
         self._last_emitted_offsets.pop(task_id, None)
+
+    async def _remove_emitter_async(self, task_id: int) -> None:
+        """Remove emitter, lock, offset tracking, and distributed ownership from cache."""
+        self._remove_emitter(task_id)
+        # Release distributed ownership
+        owner_key = f"{CHANNEL_TASK_STREAM_OWNER_PREFIX}{task_id}"
+        await cache_manager.delete(owner_key)
 
     async def send_progress(
         self,
@@ -411,6 +445,8 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         If streaming was active (emitter exists), finishes the stream.
         Otherwise creates a new emitter and sends the complete result.
 
+        Uses distributed lock to prevent duplicate sends in multi-instance deployments.
+
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
@@ -421,6 +457,17 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         Returns:
             True if sent successfully, False otherwise
         """
+        # Deduplication check - prevent multiple instances from sending the same result
+        dedup_key = f"{CHANNEL_TASK_RESULT_DEDUP_PREFIX}{task_id}"
+        is_first = await cache_manager.setnx(
+            dedup_key, "1", expire=CHANNEL_TASK_RESULT_DEDUP_TTL
+        )
+        if not is_first:
+            logger.info(
+                f"[{self._channel_type.value}Callback] Task result already sent by another instance: task={task_id}"
+            )
+            return False
+
         callback_info = await self.get_callback_info(task_id)
         if not callback_info:
             logger.debug(
@@ -460,7 +507,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
 
                 # Build message content
                 if status == "FAILED":
-                    message = f"❌ 任务执行失败\n\n任务 ID: {task_id}\n错误: {error_message or '未知错误'}"
+                    message = f"任务执行失败\n\n任务 ID: {task_id}\n错误: {error_message or '未知错误'}"
                     await emitter.emit_chat_chunk(
                         task_id=task_id,
                         subtask_id=subtask_id,
@@ -494,8 +541,8 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                     f"[{self._channel_type.value}Callback] Sent result for task {task_id}"
                 )
 
-            # Clean up
-            self._remove_emitter(task_id)
+            # Clean up (async version to release distributed ownership)
+            await self._remove_emitter_async(task_id)
             await self.delete_callback_info(task_id)
             return True
 
@@ -503,8 +550,10 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             logger.exception(
                 f"[{self._channel_type.value}Callback] Failed to send result for task {task_id}: {e}"
             )
-            # Clean up on error
-            self._remove_emitter(task_id)
+            # Clean up on error (async version to release distributed ownership)
+            await self._remove_emitter_async(task_id)
+            # Delete dedup key to allow retry by other instances
+            await cache_manager.delete(dedup_key)
             return False
 
 
