@@ -6,6 +6,8 @@ sidebar_position: 1
 
 Chat（对话）是 Wegent 的核心交互功能，让您可以与 AI 智能体进行实时对话，完成各种任务。
 
+<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
+
 ---
 
 ## 📋 核心概念

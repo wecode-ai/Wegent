@@ -6,6 +6,8 @@ sidebar_position: 1
 
 Feed（关注）是 Wegent 的自动化任务执行功能，让 AI 智能体按照设定的时间或事件自动执行任务，并以类似社交媒体动态的形式展示执行结果。
 
+<img src="https://github.com/user-attachments/assets/6680c33a-f4ba-4ef2-aa8c-e7a53bd003dc" width="100%" alt="Feed Demo"/>
+
 ---
 
 ## 📋 核心概念
