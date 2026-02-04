@@ -8,7 +8,7 @@
  *
  * Example:
  *   Input: "Some text [cite: 13, 14]."
- *   Output: "Some text [[13]](url_13)[[14]](url_14)."
+ *   Output: "Some text (参考来源: [13](url_13), [14](url_14))."
  */
 
 import type { GeminiAnnotation } from '@/types/socket'
@@ -70,11 +70,12 @@ export function processCitePatterns(
         // Format: [13](url) - clickable number
         return `[${num}](${url})`
       }
-      // No URL found, just return the number in brackets
-      return `[${num}]`
+      // No URL found, just return the number
+      return `${num}`
     })
 
-    // Join with no separator - each link is self-contained
-    return links.join('')
+    // Format as (参考来源: 13, 14, 15) with clickable numbers
+    // Use parentheses to avoid markdown parsing issues with brackets
+    return `(参考来源: ${links.join(', ')})`
   })
 }
