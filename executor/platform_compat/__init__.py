@@ -12,7 +12,7 @@ This module provides unified interfaces for platform-specific operations:
 - User/group information
 
 Usage:
-    from executor.platform import (
+    from executor.platform_compat import (
         get_pty_manager,
         get_permissions_manager,
         get_signal_handler,
@@ -32,17 +32,17 @@ IS_MACOS = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")
 
 if IS_WINDOWS:
-    from executor.platform.windows import (
+    from executor.platform_compat.windows import (
         WindowsPermissionsManager as _PermissionsManager,
     )
-    from executor.platform.windows import WindowsPtyManager as _PtyManager
-    from executor.platform.windows import WindowsSignalHandler as _SignalHandler
-    from executor.platform.windows import WindowsUserInfoProvider as _UserInfoProvider
+    from executor.platform_compat.windows import WindowsPtyManager as _PtyManager
+    from executor.platform_compat.windows import WindowsSignalHandler as _SignalHandler
+    from executor.platform_compat.windows import WindowsUserInfoProvider as _UserInfoProvider
 else:
-    from executor.platform.unix import UnixPermissionsManager as _PermissionsManager
-    from executor.platform.unix import UnixPtyManager as _PtyManager
-    from executor.platform.unix import UnixSignalHandler as _SignalHandler
-    from executor.platform.unix import UnixUserInfoProvider as _UserInfoProvider
+    from executor.platform_compat.unix import UnixPermissionsManager as _PermissionsManager
+    from executor.platform_compat.unix import UnixPtyManager as _PtyManager
+    from executor.platform_compat.unix import UnixSignalHandler as _SignalHandler
+    from executor.platform_compat.unix import UnixUserInfoProvider as _UserInfoProvider
 
 # Singleton instances
 _pty_manager_instance = None

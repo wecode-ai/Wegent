@@ -9,7 +9,7 @@ import signal
 import sys
 from typing import Optional
 
-from executor.platform.base import SignalHandler
+from executor.platform_compat.base import SignalHandler
 
 # Import win32 modules only on Windows
 if sys.platform == "win32":

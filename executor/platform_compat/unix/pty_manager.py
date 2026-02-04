@@ -13,7 +13,7 @@ import subprocess
 import termios
 from typing import Dict, List, Optional
 
-from executor.platform.base import PtyManager, PtyProcess
+from executor.platform_compat.base import PtyManager, PtyProcess
 
 
 class UnixPtyProcess(PtyProcess):

@@ -8,7 +8,7 @@ import grp
 import os
 import pwd
 
-from executor.platform.base import UserInfoProvider
+from executor.platform_compat.base import UserInfoProvider
 
 
 class UnixUserInfoProvider(UserInfoProvider):

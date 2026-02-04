@@ -8,7 +8,7 @@ import os
 import sys
 from typing import Dict, List, Optional
 
-from executor.platform.base import PtyManager, PtyProcess
+from executor.platform_compat.base import PtyManager, PtyProcess
 
 # Import winpty only on Windows
 if sys.platform == "win32":

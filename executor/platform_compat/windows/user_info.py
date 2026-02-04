@@ -8,7 +8,7 @@ import os
 import sys
 from typing import Optional
 
-from executor.platform.base import UserInfoProvider
+from executor.platform_compat.base import UserInfoProvider
 
 # Import win32 modules only on Windows
 if sys.platform == "win32":

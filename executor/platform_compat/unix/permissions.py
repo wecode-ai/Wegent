@@ -7,7 +7,7 @@
 import os
 import stat
 
-from executor.platform.base import PermissionsManager
+from executor.platform_compat.base import PermissionsManager
 
 
 class UnixPermissionsManager(PermissionsManager):

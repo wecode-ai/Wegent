@@ -38,7 +38,7 @@ from typing import Any, Callable, Dict, Optional
 import socketio
 
 from executor.config import config
-from executor.platform import get_permissions_manager
+from executor.platform_compat import get_permissions_manager
 from executor.version import get_version
 from shared.logger import setup_logger
 

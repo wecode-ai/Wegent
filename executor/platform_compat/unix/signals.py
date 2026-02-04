@@ -7,7 +7,7 @@
 import os
 import signal
 
-from executor.platform.base import SignalHandler
+from executor.platform_compat.base import SignalHandler
 
 
 class UnixSignalHandler(SignalHandler):

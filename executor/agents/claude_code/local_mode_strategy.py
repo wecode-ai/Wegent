@@ -28,7 +28,7 @@ from typing import Any, Dict, Tuple
 
 from executor.agents.claude_code.mode_strategy import ExecutionModeStrategy
 from executor.config import config
-from executor.platform import get_permissions_manager
+from executor.platform_compat import get_permissions_manager
 from shared.logger import setup_logger
 
 logger = setup_logger("local_mode_strategy")
