@@ -27,6 +27,8 @@ from fastapi.responses import StreamingResponse
 from executor_manager.common.config import ROUTE_PREFIX, get_config
 from executor_manager.services.sandbox import get_sandbox_manager
 from shared.logger import setup_logger
+from shared.telemetry.config import get_otel_config
+from shared.telemetry.context import get_request_id, inject_trace_context_to_headers
 
 logger = setup_logger(__name__)
 
@@ -34,10 +36,10 @@ router = APIRouter(tags=["sandbox-proxy"])
 
 
 async def _find_sandbox_by_e2b_id(manager, e2b_sandbox_id: str):
-    """Find sandbox by E2B sandbox ID in metadata.
+    """Find sandbox by E2B sandbox ID using index lookup (O(1)).
 
-    Searches through active sandboxes for one with matching e2b_sandbox_id
-    in metadata.
+    Uses the e2b_sandbox_id index in Redis for fast lookup instead of
+    iterating through all active sandboxes.
 
     Args:
         manager: SandboxManager instance
@@ -47,11 +49,26 @@ async def _find_sandbox_by_e2b_id(manager, e2b_sandbox_id: str):
         Sandbox if found, None otherwise
     """
     repository = manager._repository
+
+    # O(1) lookup using index
+    sandbox_id = repository.lookup_sandbox_id_by_e2b_id(e2b_sandbox_id)
+    if sandbox_id:
+        sandbox = repository.load_sandbox(sandbox_id)
+        if sandbox:
+            return sandbox
+
+    # Fallback to linear search for backward compatibility with existing sandboxes
+    # that don't have index entries yet
+    logger.debug(
+        f"[SandboxProxy] E2B index miss for {e2b_sandbox_id}, falling back to linear search"
+    )
     sandbox_ids = repository.get_active_sandbox_ids()
 
     for sandbox_id in sandbox_ids:
         sandbox = repository.load_sandbox(sandbox_id)
         if sandbox and sandbox.metadata.get("e2b_sandbox_id") == e2b_sandbox_id:
+            # Save index for future lookups
+            repository._save_e2b_index(e2b_sandbox_id, sandbox_id)
             return sandbox
 
     return None
@@ -172,6 +189,16 @@ async def proxy_to_sandbox(sandbox_id: str, port: int, path: str, request: Reque
             for key, value in request.headers.items()
             if key.lower() not in excluded_headers
         }
+
+        # Inject X-Request-ID for log correlation
+        request_id = get_request_id()
+        if request_id:
+            headers["X-Request-ID"] = request_id
+
+        # Inject OpenTelemetry trace context if enabled
+        otel_config = get_otel_config()
+        if otel_config.enabled:
+            headers = inject_trace_context_to_headers(headers)
 
         # Make request to container
         async with httpx.AsyncClient(timeout=60.0) as client:
