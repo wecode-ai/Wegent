@@ -2067,35 +2067,41 @@ class ExecutorKindsService(
         This method schedules the WebSocket event emission asynchronously to avoid
         blocking the database transaction.
 
+        Note: In Celery worker context, ws_emitter is not available (different process),
+        so this method will skip WebSocket emission silently.
+
         Args:
             user_id: User ID who owns the task
             task_id: Task ID
             status: New task status
             progress: Optional progress percentage
         """
+        from app.services.chat.ws_emitter import get_main_event_loop, get_ws_emitter
+
+        # Early check: if ws_emitter is not initialized (e.g., in Celery worker),
+        # skip WebSocket emission entirely to avoid event loop issues
+        ws_emitter = get_ws_emitter()
+        if not ws_emitter:
+            logger.debug(
+                f"[WS] ws_emitter not available (likely Celery worker), skipping task:status event for task={task_id}"
+            )
+            return
+
         logger.info(
             f"[WS] _emit_task_status_ws_event called for task={task_id} status={status} progress={progress} user_id={user_id}"
         )
 
         async def emit_async():
             try:
-                from app.services.chat.ws_emitter import get_ws_emitter
-
-                ws_emitter = get_ws_emitter()
-                if ws_emitter:
-                    await ws_emitter.emit_task_status(
-                        user_id=user_id,
-                        task_id=task_id,
-                        status=status,
-                        progress=progress,
-                    )
-                    logger.info(
-                        f"[WS] Successfully emitted task:status event for task={task_id} status={status} progress={progress}"
-                    )
-                else:
-                    logger.warning(
-                        f"[WS] ws_emitter is None, cannot emit task:status event for task={task_id}"
-                    )
+                await ws_emitter.emit_task_status(
+                    user_id=user_id,
+                    task_id=task_id,
+                    status=status,
+                    progress=progress,
+                )
+                logger.info(
+                    f"[WS] Successfully emitted task:status event for task={task_id} status={status} progress={progress}"
+                )
             except Exception as e:
                 logger.error(
                     f"[WS] Failed to emit task:status WebSocket event: {e}",
@@ -2103,47 +2109,25 @@ class ExecutorKindsService(
                 )
 
         # Schedule async execution
-        # First try to get the running event loop from the current context
-        try:
-            # Try to get the running event loop
-            loop = asyncio.get_running_loop()
-            # We're in an async context, use create_task directly
-            loop.create_task(emit_async())
+        # Only use the main event loop (FastAPI's loop) to avoid cross-loop issues
+        main_loop = get_main_event_loop()
+        if main_loop and main_loop.is_running():
+            # Schedule the coroutine to run in the main event loop
+            asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
             logger.info(
-                f"[WS] Scheduled task:status event via loop.create_task for task={task_id}"
+                f"[WS] Scheduled task:status event via run_coroutine_threadsafe for task={task_id}"
             )
-        except RuntimeError:
-            # No running event loop in current thread
-            # Try to use the main event loop reference from ws_emitter
-            logger.info(
-                f"[WS] No running event loop in current thread, trying main event loop for task={task_id}"
-            )
+        else:
+            # Try to use current running loop (if we're already in FastAPI context)
             try:
-                from app.services.chat.ws_emitter import get_main_event_loop
-
-                main_loop = get_main_event_loop()
-                if main_loop and main_loop.is_running():
-                    # Schedule the coroutine to run in the main event loop
-                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
-                    logger.info(
-                        f"[WS] Scheduled task:status event via run_coroutine_threadsafe (main loop) for task={task_id}"
-                    )
-                else:
-                    # Fallback: try asyncio.get_event_loop()
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.run_coroutine_threadsafe(emit_async(), loop)
-                        logger.info(
-                            f"[WS] Scheduled task:status event via run_coroutine_threadsafe (fallback) for task={task_id}"
-                        )
-                    else:
-                        logger.warning(
-                            f"[WS] No running event loop available, cannot emit task:status event for task={task_id}"
-                        )
-            except RuntimeError as e:
-                # No event loop available at all
+                loop = asyncio.get_running_loop()
+                loop.create_task(emit_async())
+                logger.info(
+                    f"[WS] Scheduled task:status event via loop.create_task for task={task_id}"
+                )
+            except RuntimeError:
                 logger.warning(
-                    f"[WS] Could not emit task:status event - no event loop available: {e}"
+                    f"[WS] No running event loop available, cannot emit task:status event for task={task_id}"
                 )
 
     def _emit_chat_start_ws_event(
@@ -2159,75 +2143,66 @@ class ExecutorKindsService(
         This method is called when an executor task starts running. It allows the frontend
         to establish the subtask-to-task mapping and prepare for receiving chat:done event.
 
+        Note: In Celery worker context, ws_emitter is not available (different process),
+        so this method will skip WebSocket emission silently.
+
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
             bot_name: Optional bot name
             shell_type: Shell type for frontend display (Chat, ClaudeCode, Agno, etc.)
         """
+        from app.services.chat.ws_emitter import get_main_event_loop, get_ws_emitter
+
+        # Early check: if ws_emitter is not initialized (e.g., in Celery worker),
+        # skip WebSocket emission entirely to avoid event loop issues
+        ws_emitter = get_ws_emitter()
+        if not ws_emitter:
+            logger.debug(
+                f"[WS] ws_emitter not available (likely Celery worker), skipping chat:start event for task={task_id}"
+            )
+            return
+
         logger.info(
             f"[WS] _emit_chat_start_ws_event called for task={task_id} subtask={subtask_id} shell_type={shell_type}"
         )
 
         async def emit_async():
             try:
-                from app.services.chat.ws_emitter import get_ws_emitter
-
-                ws_emitter = get_ws_emitter()
-                if ws_emitter:
-                    await ws_emitter.emit_chat_start(
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                        bot_name=bot_name,
-                        shell_type=shell_type,
-                    )
-                    logger.info(
-                        f"[WS] Successfully emitted chat:start event for task={task_id} subtask={subtask_id} shell_type={shell_type}"
-                    )
-                else:
-                    logger.warning(
-                        f"[WS] ws_emitter is None, cannot emit chat:start event for task={task_id}"
-                    )
+                await ws_emitter.emit_chat_start(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    bot_name=bot_name,
+                    shell_type=shell_type,
+                )
+                logger.info(
+                    f"[WS] Successfully emitted chat:start event for task={task_id} subtask={subtask_id} shell_type={shell_type}"
+                )
             except Exception as e:
                 logger.error(
                     f"[WS] Failed to emit chat:start WebSocket event: {e}",
                     exc_info=True,
                 )
 
-        # Schedule async execution using the same pattern as _emit_task_status_ws_event
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(emit_async())
+        # Schedule async execution
+        # Only use the main event loop (FastAPI's loop) to avoid cross-loop issues
+        main_loop = get_main_event_loop()
+        if main_loop and main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
             logger.info(
-                f"[WS] Scheduled chat:start event via loop.create_task for task={task_id}"
+                f"[WS] Scheduled chat:start event via run_coroutine_threadsafe for task={task_id}"
             )
-        except RuntimeError:
-            logger.info(
-                f"[WS] No running event loop in current thread, trying main event loop for task={task_id}"
-            )
+        else:
+            # Try to use current running loop (if we're already in FastAPI context)
             try:
-                from app.services.chat.ws_emitter import get_main_event_loop
-
-                main_loop = get_main_event_loop()
-                if main_loop and main_loop.is_running():
-                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
-                    logger.info(
-                        f"[WS] Scheduled chat:start event via run_coroutine_threadsafe (main loop) for task={task_id}"
-                    )
-                else:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.run_coroutine_threadsafe(emit_async(), loop)
-                        logger.info(
-                            f"[WS] Scheduled chat:start event via run_coroutine_threadsafe (fallback) for task={task_id}"
-                        )
-                    else:
-                        logger.warning(
-                            f"[WS] No running event loop available, cannot emit chat:start event for task={task_id}"
-                        )
-            except RuntimeError as e:
+                loop = asyncio.get_running_loop()
+                loop.create_task(emit_async())
+                logger.info(
+                    f"[WS] Scheduled chat:start event via loop.create_task for task={task_id}"
+                )
+            except RuntimeError:
                 logger.warning(
-                    f"[WS] Could not emit chat:start event - no event loop available: {e}"
+                    f"[WS] No running event loop available, cannot emit chat:start event for task={task_id}"
                 )
 
     def _emit_chat_done_ws_event(
@@ -2243,83 +2218,74 @@ class ExecutorKindsService(
         This method sends the message content to the frontend via WebSocket so that
         the frontend can display the AI response in real-time without polling.
 
+        Note: In Celery worker context, ws_emitter is not available (different process),
+        so this method will skip WebSocket emission silently.
+
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
             result: Result data containing the message content
             message_id: Message ID for ordering (primary sort key)
         """
+        from app.services.chat.ws_emitter import get_main_event_loop, get_ws_emitter
+
+        # Early check: if ws_emitter is not initialized (e.g., in Celery worker),
+        # skip WebSocket emission entirely to avoid event loop issues
+        ws_emitter = get_ws_emitter()
+        if not ws_emitter:
+            logger.debug(
+                f"[WS] ws_emitter not available (likely Celery worker), skipping chat:done event for task={task_id}"
+            )
+            return
+
         logger.info(
             f"[WS] _emit_chat_done_ws_event called for task={task_id} subtask={subtask_id} message_id={message_id}"
         )
 
         async def emit_async():
             try:
-                from app.services.chat.ws_emitter import get_ws_emitter
+                # Calculate offset from result content length
+                offset = 0
+                if result and isinstance(result, dict):
+                    value = result.get("value", "")
+                    if isinstance(value, str):
+                        offset = len(value)
 
-                ws_emitter = get_ws_emitter()
-                if ws_emitter:
-                    # Calculate offset from result content length
-                    offset = 0
-                    if result and isinstance(result, dict):
-                        value = result.get("value", "")
-                        if isinstance(value, str):
-                            offset = len(value)
-
-                    await ws_emitter.emit_chat_done(
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                        offset=offset,
-                        result=result,
-                        message_id=message_id,
-                    )
-                    logger.info(
-                        f"[WS] Successfully emitted chat:done event for task={task_id} subtask={subtask_id} message_id={message_id}"
-                    )
-                else:
-                    logger.warning(
-                        f"[WS] ws_emitter is None, cannot emit chat:done event for task={task_id}"
-                    )
+                await ws_emitter.emit_chat_done(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    offset=offset,
+                    result=result,
+                    message_id=message_id,
+                )
+                logger.info(
+                    f"[WS] Successfully emitted chat:done event for task={task_id} subtask={subtask_id} message_id={message_id}"
+                )
             except Exception as e:
                 logger.error(
                     f"[WS] Failed to emit chat:done WebSocket event: {e}",
                     exc_info=True,
                 )
 
-        # Schedule async execution using the same pattern as _emit_task_status_ws_event
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(emit_async())
+        # Schedule async execution
+        # Only use the main event loop (FastAPI's loop) to avoid cross-loop issues
+        main_loop = get_main_event_loop()
+        if main_loop and main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
             logger.info(
-                f"[WS] Scheduled chat:done event via loop.create_task for task={task_id}"
+                f"[WS] Scheduled chat:done event via run_coroutine_threadsafe for task={task_id}"
             )
-        except RuntimeError:
-            logger.info(
-                f"[WS] No running event loop in current thread, trying main event loop for task={task_id}"
-            )
+        else:
+            # Try to use current running loop (if we're already in FastAPI context)
             try:
-                from app.services.chat.ws_emitter import get_main_event_loop
-
-                main_loop = get_main_event_loop()
-                if main_loop and main_loop.is_running():
-                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
-                    logger.info(
-                        f"[WS] Scheduled chat:done event via run_coroutine_threadsafe (main loop) for task={task_id}"
-                    )
-                else:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.run_coroutine_threadsafe(emit_async(), loop)
-                        logger.info(
-                            f"[WS] Scheduled chat:done event via run_coroutine_threadsafe (fallback) for task={task_id}"
-                        )
-                    else:
-                        logger.warning(
-                            f"[WS] No running event loop available, cannot emit chat:done event for task={task_id}"
-                        )
-            except RuntimeError as e:
+                loop = asyncio.get_running_loop()
+                loop.create_task(emit_async())
+                logger.info(
+                    f"[WS] Scheduled chat:done event via loop.create_task for task={task_id}"
+                )
+            except RuntimeError:
                 logger.warning(
-                    f"[WS] Could not emit chat:done event - no event loop available: {e}"
+                    f"[WS] No running event loop available, cannot emit chat:done event for task={task_id}"
                 )
 
     def _emit_chat_chunk_ws_event(
@@ -2336,6 +2302,9 @@ class ExecutorKindsService(
         This method sends incremental content updates to the frontend via WebSocket
         for real-time streaming display.
 
+        Note: In Celery worker context, ws_emitter is not available (different process),
+        so this method will skip WebSocket emission silently.
+
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
@@ -2343,30 +2312,30 @@ class ExecutorKindsService(
             offset: Current offset in the full response
             result: Optional full result data (for executor tasks with thinking/workbench)
         """
+        from app.services.chat.ws_emitter import get_main_event_loop, get_ws_emitter
+
+        # Early check: if ws_emitter is not initialized (e.g., in Celery worker),
+        # skip WebSocket emission entirely to avoid event loop issues
+        ws_emitter = get_ws_emitter()
+        if not ws_emitter:
+            return  # Silently skip for chunk events
+
         logger.info(
             f"[WS] _emit_chat_chunk_ws_event called for task={task_id} subtask={subtask_id} offset={offset}"
         )
 
         async def emit_async():
             try:
-                from app.services.chat.ws_emitter import get_ws_emitter
-
-                ws_emitter = get_ws_emitter()
-                if ws_emitter:
-                    await ws_emitter.emit_chat_chunk(
-                        task_id=task_id,
-                        subtask_id=subtask_id,
-                        content=content,
-                        offset=offset,
-                        result=result,
-                    )
-                    logger.info(
-                        f"[WS] Successfully emitted chat:chunk event for task={task_id} subtask={subtask_id}"
-                    )
-                else:
-                    logger.warning(
-                        f"[WS] ws_emitter is None, cannot emit chat:chunk event for task={task_id}"
-                    )
+                await ws_emitter.emit_chat_chunk(
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    content=content,
+                    offset=offset,
+                    result=result,
+                )
+                logger.info(
+                    f"[WS] Successfully emitted chat:chunk event for task={task_id} subtask={subtask_id}"
+                )
             except Exception as e:
                 logger.error(
                     f"[WS] Failed to emit chat:chunk WebSocket event: {e}",
@@ -2374,20 +2343,15 @@ class ExecutorKindsService(
                 )
 
         # Schedule async execution
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(emit_async())
-        except RuntimeError:
+        # Only use the main event loop (FastAPI's loop) to avoid cross-loop issues
+        main_loop = get_main_event_loop()
+        if main_loop and main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
+        else:
+            # Try to use current running loop (if we're already in FastAPI context)
             try:
-                from app.services.chat.ws_emitter import get_main_event_loop
-
-                main_loop = get_main_event_loop()
-                if main_loop and main_loop.is_running():
-                    asyncio.run_coroutine_threadsafe(emit_async(), main_loop)
-                else:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.run_coroutine_threadsafe(emit_async(), loop)
+                loop = asyncio.get_running_loop()
+                loop.create_task(emit_async())
             except RuntimeError:
                 pass  # Silently ignore if no event loop available for chunk events
 
