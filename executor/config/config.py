@@ -138,5 +138,4 @@ WEGENT_EXECUTOR_LOG_BACKUP_COUNT = _get_int_env("WEGENT_EXECUTOR_LOG_BACKUP_COUN
 # Anthropic custom headers for local mode
 # Custom HTTP headers to send with Anthropic API requests
 # Format: "header1: value1\nheader2: value2"
-# Example: "wecode-user: yunpeng7\nwecode-model-id: claude-opus-4-5-20251101"
 ANTHROPIC_CUSTOM_HEADERS = os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "")
