@@ -13,6 +13,7 @@ import {
   MoreVertical,
   Globe,
   CloudDownload,
+  RefreshCw,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -31,6 +32,7 @@ interface DocumentItemProps {
   onEdit?: (doc: KnowledgeDocument) => void
   onDelete?: (doc: KnowledgeDocument) => void
   onRefresh?: (doc: KnowledgeDocument) => void
+  onReindex?: (doc: KnowledgeDocument) => void
   onViewDetail?: (doc: KnowledgeDocument) => void
   canManage?: boolean
   showBorder?: boolean
@@ -40,6 +42,8 @@ interface DocumentItemProps {
   compact?: boolean
   /** Whether the document is currently being refreshed */
   isRefreshing?: boolean
+  /** Whether the document is currently being reindexed */
+  isReindexing?: boolean
   /** Whether the knowledge base has RAG configured (retriever + embedding model) */
   ragConfigured?: boolean
 }
@@ -49,6 +53,7 @@ export function DocumentItem({
   onEdit,
   onDelete,
   onRefresh,
+  onReindex,
   onViewDetail,
   canManage = true,
   showBorder = true,
@@ -56,6 +61,7 @@ export function DocumentItem({
   onSelect,
   compact = false,
   isRefreshing = false,
+  isReindexing = false,
   ragConfigured = true,
 }: DocumentItemProps) {
   const { t } = useTranslation()
@@ -99,6 +105,11 @@ export function DocumentItem({
   const handleRefresh = (e: React.MouseEvent) => {
     e.stopPropagation()
     onRefresh?.(document)
+  }
+
+  const handleReindex = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onReindex?.(document)
   }
 
   const handleOpenLink = (e: React.MouseEvent) => {
@@ -265,6 +276,16 @@ export function DocumentItem({
                         : t('knowledge:document.upload.web.refetch')}
                     </DropdownMenuItem>
                   )}
+                  {ragConfigured && !document.is_active && !isTable && onReindex && (
+                    <DropdownMenuItem onClick={handleReindex} disabled={isReindexing}>
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 mr-2 ${isReindexing ? 'animate-spin' : ''}`}
+                      />
+                      {isReindexing
+                        ? t('knowledge:document.document.reindexing')
+                        : t('knowledge:document.document.reindex')}
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem danger onClick={handleDelete}>
                     <Trash2 className="w-3.5 h-3.5 mr-2" />
                     {t('common:actions.delete')}
@@ -395,7 +416,7 @@ export function DocumentItem({
               <TooltipTrigger asChild>
                 <span>
                   <Badge variant="warning" size="sm" className="whitespace-nowrap cursor-help">
-                    {t('knowledge:document.document.indexStatus.indexing')}
+                    {t('knowledge:document.document.indexStatus.unavailable')}
                   </Badge>
                 </span>
               </TooltipTrigger>
@@ -429,6 +450,25 @@ export function DocumentItem({
               }
             >
               <CloudDownload className={`w-4 h-4 ${isRefreshing ? 'animate-pulse' : ''}`} />
+            </button>
+          )}
+          {/* Reindex button - only when RAG configured and document not indexed */}
+          {ragConfigured && !document.is_active && !isTable && onReindex && (
+            <button
+              className={`p-1.5 rounded-md transition-colors ${
+                isReindexing
+                  ? 'text-primary cursor-not-allowed'
+                  : 'text-text-muted hover:text-primary hover:bg-primary/10'
+              }`}
+              onClick={handleReindex}
+              disabled={isReindexing}
+              title={
+                isReindexing
+                  ? t('knowledge:document.document.reindexing')
+                  : t('knowledge:document.document.reindex')
+              }
+            >
+              <RefreshCw className={`w-4 h-4 ${isReindexing ? 'animate-spin' : ''}`} />
             </button>
           )}
           {/* Delete button */}

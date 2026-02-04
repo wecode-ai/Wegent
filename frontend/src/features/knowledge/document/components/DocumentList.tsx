@@ -95,6 +95,8 @@ export function DocumentList({
   const [initialSelectionDone, setInitialSelectionDone] = useState(false)
   // Track which document is being refreshed
   const [refreshingDocId, setRefreshingDocId] = useState<number | null>(null)
+  // Track which document is being reindexed
+  const [reindexingDocId, setReindexingDocId] = useState<number | null>(null)
   // Track if summary is being retried
   const [isSummaryRetrying, setIsSummaryRetrying] = useState(false)
 
@@ -353,6 +355,39 @@ export function DocumentList({
       // Error will be shown via toast in the API layer
     } finally {
       setRefreshingDocId(null)
+    }
+  }
+
+  // Handle document reindex
+  const handleReindexDocument = async (doc: KnowledgeDocument) => {
+    setReindexingDocId(doc.id)
+    try {
+      const { reindexDocument } = await import('@/apis/knowledge')
+      const result = await reindexDocument(doc.id)
+
+      if (!result.success) {
+        throw new Error(t('document.document.reindexFailed'))
+      }
+
+      toast({
+        description: t('document.document.reindexSuccess'),
+      })
+
+      // Refresh document list after a short delay to allow backend to start processing
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          refresh()
+        }
+      }, 2000)
+    } catch {
+      toast({
+        variant: 'destructive',
+        description: t('document.document.reindexFailed'),
+      })
+    } finally {
+      if (isMountedRef.current) {
+        setReindexingDocId(null)
+      }
     }
   }
 
@@ -628,7 +663,9 @@ export function DocumentList({
                   onEdit={setEditingDoc}
                   onDelete={setDeletingDoc}
                   onRefresh={handleRefreshWebDocument}
+                  onReindex={handleReindexDocument}
                   isRefreshing={refreshingDocId === doc.id}
+                  isReindexing={reindexingDocId === doc.id}
                   canManage={canManage}
                   showBorder={false}
                   selected={selectedIds.has(doc.id)}
@@ -700,7 +737,9 @@ export function DocumentList({
                   onEdit={setEditingDoc}
                   onDelete={setDeletingDoc}
                   onRefresh={handleRefreshWebDocument}
+                  onReindex={handleReindexDocument}
                   isRefreshing={refreshingDocId === doc.id}
+                  isReindexing={reindexingDocId === doc.id}
                   canManage={canManage}
                   showBorder={index < filteredAndSortedDocuments.length - 1}
                   selected={selectedIds.has(doc.id)}

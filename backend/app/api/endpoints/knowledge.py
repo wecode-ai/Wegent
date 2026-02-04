@@ -1017,6 +1017,127 @@ def update_document(
         )
 
 
+@document_router.post("/{document_id}/reindex")
+@trace_async("reindex_document", "knowledge.api")
+async def reindex_document(
+    document_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Trigger re-indexing for a document.
+
+    Re-indexes the document using the knowledge base's configured retriever
+    and embedding model. Only works for documents in knowledge bases with
+    RAG configured.
+
+    Returns:
+        Success message indicating reindex has started
+    """
+    from app.models.knowledge import KnowledgeDocument
+
+    # Get document with access check
+    document = (
+        db.query(KnowledgeDocument).filter(KnowledgeDocument.id == document_id).first()
+    )
+
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    # Check access permission via knowledge base
+    knowledge_base = KnowledgeService.get_knowledge_base(
+        db=db,
+        knowledge_base_id=document.kind_id,
+        user_id=current_user.id,
+    )
+
+    if not knowledge_base:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this document",
+        )
+
+    # Check if knowledge base has RAG configured
+    spec = knowledge_base.json.get("spec", {})
+    retrieval_config = spec.get("retrievalConfig")
+
+    if not retrieval_config:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Knowledge base has no retrieval configuration",
+        )
+
+    retriever_name = retrieval_config.get("retriever_name")
+    retriever_namespace = retrieval_config.get("retriever_namespace", "default")
+    embedding_config = retrieval_config.get("embedding_config")
+
+    if not retriever_name or not embedding_config:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Knowledge base has incomplete retrieval configuration",
+        )
+
+    # Extract embedding model info
+    embedding_model_name = embedding_config.get("model_name")
+    embedding_model_namespace = embedding_config.get("model_namespace", "default")
+
+    # Pre-compute KB index info
+    summary_enabled = spec.get("summaryEnabled", False)
+    if knowledge_base.namespace == "default":
+        index_owner_user_id = current_user.id
+    else:
+        index_owner_user_id = knowledge_base.user_id
+
+    kb_index_info = KnowledgeBaseIndexInfo(
+        index_owner_user_id=index_owner_user_id,
+        summary_enabled=summary_enabled,
+    )
+
+    # Capture trace context for propagation to background task
+    trace_ctx = capture_trace_context()
+
+    # Schedule RAG re-indexing in background
+    background_tasks.add_task(
+        _index_document_background,
+        knowledge_base_id=str(document.kind_id),
+        attachment_id=document.attachment_id,
+        retriever_name=retriever_name,
+        retriever_namespace=retriever_namespace,
+        embedding_model_name=embedding_model_name,
+        embedding_model_namespace=embedding_model_namespace,
+        user_id=current_user.id,
+        user_name=current_user.user_name,
+        splitter_config=(
+            _parse_splitter_config(document.splitter_config)
+            if document.splitter_config
+            else None
+        ),
+        document_id=document.id,
+        kb_index_info=kb_index_info,
+        trace_context=trace_ctx,
+    )
+
+    logger.info(f"Scheduled RAG re-indexing for document {document.id}")
+    add_span_event(
+        "knowledge.document.reindex.scheduled",
+        {
+            "document_id": str(document_id),
+            "kb_id": str(document.kind_id),
+            "user_id": str(current_user.id),
+        },
+    )
+
+    return {
+        "success": True,
+        "document_id": document.id,
+        "message": "Reindex started",
+    }
+
+
 @document_router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 @trace_sync("delete_document", "knowledge.api")
 def delete_document(

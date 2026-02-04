@@ -87,6 +87,10 @@
         "indexing": "Indexing",
         "indexingHint": "Index is being generated. Refresh the page later to check the latest status."
       },
+      "reindex": "Reindex",
+      "reindexing": "Reindexing...",
+      "reindexSuccess": "Reindex started",
+      "reindexFailed": "Failed to start reindex",
       "openLink": "Open Link",
       "columns": {
         "name": "Name",
