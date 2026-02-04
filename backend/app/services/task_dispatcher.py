@@ -13,6 +13,8 @@ This module provides task dispatch functionality with support for:
 import asyncio
 import logging
 import os
+from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -160,12 +162,15 @@ class TaskDispatcher:
         # This token is already generated for task execution
         auth_token = tasks[0].get("auth_token")
         if not auth_token:
-            logger.warning("No auth_token in task, generating new one for dispatch")
+            logger.warning(
+                "[TaskDispatcher] No auth_token in task, generating new one for dispatch"
+            )
             auth_token = _generate_auth_token_from_task(tasks[0])
 
         headers = {"Content-Type": "application/json"}
         if auth_token:
             headers["Authorization"] = f"Bearer {auth_token}"
+            logger.info("[TaskDispatcher] Using auth_token for authentication")
 
         # Propagate request_id for distributed tracing
         try:
@@ -356,69 +361,58 @@ class TaskDispatcher:
         creating/updating a task). It handles finding an event loop and scheduling
         the async dispatch operation.
 
-        When called from Celery worker (no running event loop), creates a new
-        event loop to execute the dispatch synchronously.
-
         Args:
             task_id: Task ID to dispatch
         """
         if not self.enabled:
             return
 
-        # Schedule async dispatch
+        for strategy in self._get_dispatch_strategies():
+            if strategy.can_handle():
+                strategy.execute(task_id)
+                return
+
+        logger.error(f"No suitable dispatch strategy found for task {task_id}")
+
+    def _get_dispatch_strategies(self) -> List["_DispatchStrategy"]:
+        """Get ordered list of dispatch strategies to try.
+
+        Returns:
+            List of dispatch strategies in priority order
+        """
+        return [
+            _RunningLoopStrategy(self),
+            _MainLoopStrategy(self),
+            _NewLoopStrategy(self),
+        ]
+
+    def _run_in_new_loop(self, coro) -> Any:
+        """Run coroutine in a new event loop.
+
+        Helper method to avoid code duplication when creating new event loops.
+
+        Args:
+            coro: Coroutine to execute
+
+        Returns:
+            Result of the coroutine execution
+        """
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._dispatch_task_async(task_id))
-            logger.debug(f"Push mode: scheduled dispatch for task {task_id}")
-        except RuntimeError:
-            # No event loop running - try main loop first (FastAPI context)
-            try:
-                from app.services.chat.ws_emitter import get_main_event_loop
-
-                main_loop = get_main_event_loop()
-                if main_loop and main_loop.is_running():
-                    asyncio.run_coroutine_threadsafe(
-                        self._dispatch_task_async(task_id), main_loop
-                    )
-                    logger.debug(
-                        f"Push mode: scheduled dispatch on main loop for task {task_id}"
-                    )
-                    return
-            except Exception as e:
-                logger.debug(
-                    f"Push mode: main loop not available for task {task_id}: {e}"
+            result = loop.run_until_complete(coro)
+            # Wait for pending tasks (e.g., WebSocket emissions)
+            pending = asyncio.all_tasks(loop)
+            current_task = asyncio.current_task(loop)
+            pending = {t for t in pending if t is not current_task}
+            if pending:
+                logger.debug(f"Waiting for {len(pending)} pending tasks")
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
                 )
-
-            # Fallback: create new event loop (Celery worker context)
-            # This is synchronous but necessary when no event loop exists
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(self._dispatch_task_async(task_id))
-                    logger.info(
-                        f"Push mode: dispatched task {task_id} via new event loop"
-                    )
-                    # Wait for all pending tasks to complete before closing the loop
-                    # This ensures WebSocket emit tasks are finished
-                    pending = asyncio.all_tasks(loop)
-                    current_task = asyncio.current_task(loop)
-                    # Exclude current task from pending tasks
-                    pending = {t for t in pending if t is not current_task}
-                    if pending:
-                        logger.debug(
-                            f"Push mode: waiting for {len(pending)} pending tasks"
-                        )
-                        loop.run_until_complete(
-                            asyncio.gather(*pending, return_exceptions=True)
-                        )
-                finally:
-                    loop.close()
-            except Exception as e:
-                logger.error(
-                    f"Push mode: failed to dispatch task {task_id}: {e}",
-                    exc_info=True,
-                )
+            return result
+        finally:
+            loop.close()
 
     async def _emit_task_failed_ws_event(
         self,
@@ -468,6 +462,138 @@ class TaskDispatcher:
         except Exception as e:
             logger.error(
                 f"Push mode: failed to emit WebSocket events for task={task_id}: {e}"
+            )
+
+
+# Dispatch strategy pattern for handling different event loop contexts
+class _DispatchStrategy(ABC):
+    """Abstract base class for task dispatch strategies."""
+
+    def __init__(self, dispatcher: TaskDispatcher):
+        self.dispatcher = dispatcher
+
+    @abstractmethod
+    def can_handle(self) -> bool:
+        """Check if this strategy can handle the current context.
+
+        Returns:
+            True if this strategy is applicable, False otherwise
+        """
+        pass
+
+    @abstractmethod
+    def execute(self, task_id: int) -> None:
+        """Execute the dispatch using this strategy.
+
+        Args:
+            task_id: Task ID to dispatch
+        """
+        pass
+
+
+class _RunningLoopStrategy(_DispatchStrategy):
+    """Strategy for when there's already a running event loop.
+
+    This happens in async contexts (e.g., FastAPI endpoints, Celery with async).
+    We need to run in a separate thread to avoid blocking.
+    """
+
+    def can_handle(self) -> bool:
+        try:
+            asyncio.get_running_loop()
+            return True
+        except RuntimeError:
+            return False
+
+    def execute(self, task_id: int) -> None:
+        logger.info(
+            f"[TaskDispatcher] Using running loop strategy for task_id={task_id}"
+        )
+
+        # Use shared thread pool to avoid creating new executor each time
+        if not hasattr(self.dispatcher, "_thread_pool"):
+            self.dispatcher._thread_pool = ThreadPoolExecutor(max_workers=5)
+
+        def run_in_thread():
+            return self.dispatcher._run_in_new_loop(
+                self.dispatcher._dispatch_task_async(task_id)
+            )
+
+        # Submit to thread pool without blocking
+        future = self.dispatcher._thread_pool.submit(run_in_thread)
+
+        # Add callback for logging
+        def log_result(f):
+            try:
+                f.result(timeout=30)
+                logger.info(
+                    f"[TaskDispatcher] Task completed in thread for task_id={task_id}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"[TaskDispatcher] Task failed in thread for task_id={task_id}: {e}",
+                    exc_info=True,
+                )
+
+        future.add_done_callback(log_result)
+
+
+class _MainLoopStrategy(_DispatchStrategy):
+    """Strategy for using the main event loop (FastAPI context).
+
+    This is the preferred approach when no loop is running but the main
+    loop is available and running.
+    """
+
+    def can_handle(self) -> bool:
+        try:
+            from app.services.chat.ws_emitter import get_main_event_loop
+
+            main_loop = get_main_event_loop()
+            return main_loop is not None and main_loop.is_running()
+        except Exception:
+            return False
+
+    def execute(self, task_id: int) -> None:
+        try:
+            from app.services.chat.ws_emitter import get_main_event_loop
+
+            main_loop = get_main_event_loop()
+            asyncio.run_coroutine_threadsafe(
+                self.dispatcher._dispatch_task_async(task_id), main_loop
+            )
+            logger.debug(
+                f"Push mode: scheduled dispatch on main loop for task {task_id}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Push mode: failed to schedule on main loop for task {task_id}: {e}",
+                exc_info=True,
+            )
+            raise
+
+
+class _NewLoopStrategy(_DispatchStrategy):
+    """Strategy for creating a new event loop (Celery worker context).
+
+    This is the fallback when no event loop is available. It's synchronous
+    but necessary in some contexts like Celery workers.
+    """
+
+    def can_handle(self) -> bool:
+        # This strategy always works as a fallback
+        return True
+
+    def execute(self, task_id: int) -> None:
+        try:
+            self.dispatcher._run_in_new_loop(
+                self.dispatcher._dispatch_task_async(task_id)
+            )
+            logger.info(f"Push mode: dispatched task {task_id} via new event loop")
+        except Exception as e:
+            logger.error(
+                f"Push mode: failed to dispatch task {task_id}: {e}",
+                exc_info=True,
             )
 
 

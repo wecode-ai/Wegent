@@ -7,6 +7,7 @@
 import React, { memo, useMemo, useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfmSafe from '@/lib/remark-gfm-safe'
+import { autolinkUrls } from '@/lib/autolink-urls'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
@@ -372,8 +373,10 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   theme,
   components,
 }: EnhancedMarkdownProps) {
-  // Pre-process source to convert \[...\] and \(...\) to dollar syntax
-  const processedSource = useMemo(() => preprocessLatexSyntax(source), [source])
+  // Pre-process source:
+  // 1. Convert \[...\] and \(...\) to dollar syntax for LaTeX
+  // 2. Convert bare URLs to markdown link format (iOS 16 Safari compatibility)
+  const processedSource = useMemo(() => autolinkUrls(preprocessLatexSyntax(source)), [source])
 
   // Check if source contains math formulas
   const hasMath = useMemo(() => containsMathFormulas(processedSource), [processedSource])

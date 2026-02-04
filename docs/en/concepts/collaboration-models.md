@@ -1,3 +1,7 @@
+---
+sidebar_position: 4
+---
+
 # 🤝 Collaboration Models
 
 This document provides an in-depth introduction to the four collaboration models in Wegent, helping you choose the most suitable pattern for building your agent teams.

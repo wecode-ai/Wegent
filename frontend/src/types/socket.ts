@@ -181,6 +181,16 @@ export interface SourceReference {
   kb_id: number
 }
 
+/** Gemini Deep Research grounding annotation */
+export interface GeminiAnnotation {
+  /** Start index in the text where the citation appears */
+  start_index: number
+  /** End index in the text where the citation appears */
+  end_index: number
+  /** Source URL for the citation */
+  source: string
+}
+
 export interface ChatStartPayload {
   task_id: number
   subtask_id: number
@@ -222,6 +232,8 @@ export interface ChatChunkPayload {
       status?: 'pending' | 'streaming' | 'done' | 'error'
       timestamp?: number
     }>
+    /** Gemini Deep Research grounding annotations */
+    annotations?: GeminiAnnotation[]
   }
   /** Knowledge base source references (for RAG citations) */
   sources?: SourceReference[]
@@ -251,6 +263,8 @@ export interface ChatDonePayload {
       timestamp?: number
     }>
     error?: string // Error message if result represents error completion
+    /** Gemini Deep Research grounding annotations */
+    annotations?: GeminiAnnotation[]
   }
   /** Message ID for ordering (primary sort key) */
   message_id?: number

@@ -186,7 +186,7 @@ export function ChatInputControls(props: Props) {
 - Use `h-11 min-w-[44px]` for buttons
 - Example: `<Button className="h-11 min-w-[44px] px-4">...</Button>`
 
-**📖 Detailed Documentation:** See [`docs/en/guides/responsive-development.md`](docs/en/guides/responsive-development.md) or [`docs/zh/guides/responsive-development.md`](docs/zh/guides/responsive-development.md)
+**📖 Detailed Documentation:** See [`docs/en/developer-guide/responsive-development.md`](docs/en/developer-guide/responsive-development.md) or [`docs/zh/developer-guide/responsive-development.md`](docs/zh/developer-guide/responsive-development.md)
 
 ---
 

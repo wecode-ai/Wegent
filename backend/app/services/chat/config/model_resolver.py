@@ -633,6 +633,8 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         "model": model_type,
         "default_headers": default_headers,
         "api_format": api_format,
+        # Protocol for special API routing (e.g., gemini-deep-research)
+        "protocol": protocol,
         # Context window and output token limits from ModelSpec or modelConfig
         "context_window": context_window,
         "max_output_tokens": max_output_tokens,
