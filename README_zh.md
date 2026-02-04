@@ -17,7 +17,7 @@
 
 
 
-[快速开始](#-快速开始) · [文档](docs/zh/README.md) · [开发指南](docs/zh/guides/developer/setup.md)
+[快速开始](#-快速开始) · [文档](docs/zh/README.md) · [开发指南](docs/zh/developer-guide/setup.md)
 
 </div>
 

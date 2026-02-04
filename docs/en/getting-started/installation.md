@@ -1,3 +1,7 @@
+---
+sidebar_position: 2
+---
+
 # 📦 Installation Guide
 
 This guide provides detailed installation and configuration instructions for the Wegent platform, including system requirements, installation steps, and configuration options.

@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # 🚀 Quick Start
 
 This guide will help you get started with the Wegent platform in 5 minutes.
