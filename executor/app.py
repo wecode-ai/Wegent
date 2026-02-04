@@ -325,10 +325,16 @@ async def _maybe_initialize_skills_from_env() -> None:
             f"[WarmPool] First request received, initializing skills for task {task_id}..."
         )
         _initialize_sandbox_claude(auth_token, str(task_id))
-        _skills_initialized = True
         logger.info("[WarmPool] Skills initialization completed")
+
+        # Also pre-download attachments for the task
+        logger.info(f"[WarmPool] Pre-downloading attachments for task {task_id}...")
+        _predownload_task_attachments(auth_token, str(task_id))
+        logger.info("[WarmPool] Attachments pre-download completed")
+
+        _skills_initialized = True
     except Exception as e:
-        logger.warning(f"[WarmPool] Failed to initialize skills: {e}")
+        logger.warning(f"[WarmPool] Failed to initialize skills or attachments: {e}")
         # Don't fail the request, just log the warning
         _skills_initialized = True  # Mark as initialized to avoid retrying
 
