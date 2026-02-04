@@ -45,6 +45,7 @@ from app.schemas.rag import (
     SentenceSplitterConfig,
     SplitterConfig,
 )
+from app.models.kind import Kind
 from app.services.adapters.retriever_kinds import retriever_kinds_service
 from app.services.knowledge import (
     KnowledgeBaseQAService,
@@ -490,8 +491,9 @@ class RAGIndexingParams:
     kb_index_info: KnowledgeBaseIndexInfo
 
 
+@trace_sync("extract_rag_config", "knowledge.api")
 def _extract_rag_config_from_knowledge_base(
-    knowledge_base, current_user_id: int
+    knowledge_base: Kind, current_user_id: int
 ) -> Optional[RAGIndexingParams]:
     """
     Extract RAG indexing configuration from a knowledge base.
@@ -500,7 +502,7 @@ def _extract_rag_config_from_knowledge_base(
     Otherwise returns a dict with all configuration values needed for indexing.
 
     Args:
-        knowledge_base: The knowledge base object
+        knowledge_base: The knowledge base Kind object
         current_user_id: The current user's ID for determining index owner
 
     Returns:
@@ -554,6 +556,7 @@ def _extract_rag_config_from_knowledge_base(
     )
 
 
+@trace_sync("schedule_rag_indexing", "knowledge.api")
 def _schedule_rag_indexing(
     background_tasks: BackgroundTasks,
     params: RAGIndexingParams,
