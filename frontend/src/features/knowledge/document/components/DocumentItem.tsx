@@ -194,6 +194,32 @@ export function DocumentItem({
                 className="w-1 h-1 rounded-full flex-shrink-0 bg-green-500"
                 title={t('knowledge:document.document.indexStatus.available')}
               />
+            ) : document.index_status === 'indexing' ? (
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-blue-500 animate-pulse cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs">
+                    <p className="text-xs">
+                      {t('knowledge:document.document.indexStatus.indexingHint')}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : document.index_status === 'failed' ? (
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <span className="w-1 h-1 rounded-full flex-shrink-0 bg-yellow-500 cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs">
+                    <p className="text-xs">
+                      {t('knowledge:document.document.indexStatus.failedHint')}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             ) : !ragConfigured ? (
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
@@ -364,6 +390,42 @@ export function DocumentItem({
           <Badge variant="success" size="sm" className="whitespace-nowrap">
             {t('knowledge:document.document.indexStatus.available')}
           </Badge>
+        ) : document.index_status === 'indexing' ? (
+          <TooltipProvider>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <span>
+                  <Badge
+                    variant="info"
+                    size="sm"
+                    className="whitespace-nowrap cursor-help animate-pulse"
+                  >
+                    {t('knowledge:document.document.indexStatus.indexing')}
+                  </Badge>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                <p className="text-xs">
+                  {t('knowledge:document.document.indexStatus.indexingHint')}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : document.index_status === 'failed' ? (
+          <TooltipProvider>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <span>
+                  <Badge variant="warning" size="sm" className="whitespace-nowrap cursor-help">
+                    {t('knowledge:document.document.indexStatus.unavailable')}
+                  </Badge>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                <p className="text-xs">{t('knowledge:document.document.indexStatus.failedHint')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         ) : !ragConfigured ? (
           <TooltipProvider>
             <Tooltip delayDuration={200}>

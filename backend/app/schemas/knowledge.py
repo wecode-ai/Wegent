@@ -297,6 +297,10 @@ class KnowledgeDocumentResponse(BaseModel):
     doc_ref: Optional[str] = Field(
         None, description="RAG storage document reference ID"
     )
+    index_status: str = Field(
+        default="",
+        description="Index status: '' (legacy), 'indexing', 'completed', 'failed'",
+    )
     created_at: datetime
     updated_at: datetime
 

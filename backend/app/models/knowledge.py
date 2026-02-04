@@ -92,6 +92,9 @@ class KnowledgeDocument(Base):
     chunks = Column(
         JSON, nullable=True
     )  # Chunk metadata including content and position info
+    index_status = Column(
+        String(20), nullable=False, default=""
+    )  # Index status: '' (legacy default), 'indexing', 'completed', 'failed'
     created_at = Column(DateTime, nullable=False, default=func.now())
     updated_at = Column(
         DateTime, nullable=False, default=func.now(), onupdate=func.now()

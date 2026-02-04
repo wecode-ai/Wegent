@@ -441,6 +441,11 @@ async def create_document(
                         "model_namespace", "default"
                     )
 
+                    # Set index_status to 'indexing' before triggering background task
+                    document.index_status = "indexing"
+                    db.commit()
+                    db.refresh(document)
+
                     # Pre-compute KB index info from already-fetched knowledge_base object
                     # This avoids redundant DB query in the background task
                     summary_enabled = spec.get("summaryEnabled", False)
@@ -922,6 +927,7 @@ def _index_document_background(
             if doc:
                 doc.is_active = True
                 doc.status = DocumentStatus.ENABLED
+                doc.index_status = "completed"
                 # Save chunk metadata from indexing result only if CHUNK_STORAGE_ENABLED is True
                 # When disabled (default), chunks are only stored in vector database for retrieval
                 if settings.CHUNK_STORAGE_ENABLED:
@@ -971,8 +977,21 @@ def _index_document_background(
                 "error": str(e),
             },
         )
-        # Document status remains DISABLED (default) when indexing fails
-        # No need to update status - it was never set to ENABLED
+        # Update document index_status to 'failed' when indexing fails
+        if document_id:
+            from app.models.knowledge import KnowledgeDocument
+
+            doc = (
+                db.query(KnowledgeDocument)
+                .filter(KnowledgeDocument.id == document_id)
+                .first()
+            )
+            if doc:
+                doc.index_status = "failed"
+                db.commit()
+                logger.info(
+                    f"[RAG Indexing] Updated document {document_id} index_status to 'failed'"
+                )
     finally:
         # Always close the database session
         db.close()

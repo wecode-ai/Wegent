@@ -152,6 +152,8 @@ export interface KnowledgeDocument {
   status: DocumentStatus
   user_id: number
   is_active: boolean
+  /** Index status: '' (legacy), 'indexing', 'completed', 'failed' */
+  index_status: string
   splitter_config?: SplitterConfig
   source_type: DocumentSourceType
   source_config: Record<string, unknown>
