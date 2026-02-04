@@ -160,12 +160,15 @@ class TaskDispatcher:
         # This token is already generated for task execution
         auth_token = tasks[0].get("auth_token")
         if not auth_token:
-            logger.warning("No auth_token in task, generating new one for dispatch")
+            logger.warning(
+                "[TaskDispatcher] No auth_token in task, generating new one for dispatch"
+            )
             auth_token = _generate_auth_token_from_task(tasks[0])
 
         headers = {"Content-Type": "application/json"}
         if auth_token:
             headers["Authorization"] = f"Bearer {auth_token}"
+            logger.info("[TaskDispatcher] Using auth_token for authentication")
 
         # Propagate request_id for distributed tracing
         try:
@@ -368,9 +371,32 @@ class TaskDispatcher:
         # Schedule async dispatch
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._dispatch_task_async(task_id))
-            logger.debug(f"Push mode: scheduled dispatch for task {task_id}")
-        except RuntimeError:
+            logger.info(
+                f"[TaskDispatcher] Found running event loop, scheduling task for task_id={task_id}"
+            )
+            # In Celery context with running loop, we need to run the coroutine in a separate thread
+            # to avoid blocking the current task
+            import concurrent.futures
+            import threading
+
+            def run_async_in_thread():
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    return new_loop.run_until_complete(
+                        self._dispatch_task_async(task_id)
+                    )
+                finally:
+                    new_loop.close()
+
+            # Run in thread pool to avoid blocking
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(run_async_in_thread)
+                result = future.result(timeout=30)
+                logger.info(
+                    f"[TaskDispatcher] Task completed in thread for task_id={task_id}"
+                )
+        except RuntimeError as e:
             # No event loop running - try main loop first (FastAPI context)
             try:
                 from app.services.chat.ws_emitter import get_main_event_loop
@@ -385,7 +411,7 @@ class TaskDispatcher:
                     )
                     return
             except Exception as e:
-                logger.debug(
+                logger.warning(
                     f"Push mode: main loop not available for task {task_id}: {e}"
                 )
 
