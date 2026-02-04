@@ -6,5 +6,9 @@
   "internal_step_start": "Start",
   "internal_step_start_desc": "Start the Executor service",
   "view_config": "View Configuration",
-  "beta_warning": "This feature is in beta. Running on personal devices carries risks, please use with caution"
+  "beta_warning": "This feature is in beta. Running on personal devices carries risks, please use with caution",
+  "plugins_title": "Plugins (Optional)",
+  "plugins_description": "Install plugins to extend Agent capabilities",
+  "plugin_browser_name": "Browser Plugin",
+  "plugin_browser_description": "Enable Agent to control browsers for web automation"
 }

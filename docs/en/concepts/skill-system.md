@@ -1,4 +1,8 @@
-# 🎯 Skill System Architecture
+---
+sidebar_position: 3
+---
+
+# 🎯 Skill System
 
 This document provides a comprehensive guide to the Skill system in Wegent, covering architecture, implementation details, and development guidelines.
 

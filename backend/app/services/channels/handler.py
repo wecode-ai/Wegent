@@ -429,22 +429,28 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         model_selection = await model_selection_manager.get_selection(user.id)
 
-        # If user has selected a Claude model, use it
-        if model_selection and model_selection.is_claude_model():
-            return model_selection.model_name, model_selection.model_type
+        # Get all available models to check provider accurately
+        all_models = model_aggregation_service.list_available_models(
+            db=db,
+            current_user=user,
+            shell_type=None,
+            include_config=False,
+            scope="personal",
+            model_category_type="llm",
+        )
 
-        # Check if there's a default device model configured
+        # If user has selected a model, check if it's Claude from the model list
+        if model_selection:
+            for model in all_models:
+                if model.get("name") == model_selection.model_name:
+                    if is_claude_provider(model.get("provider")):
+                        # User selected a Claude model, use it
+                        return model_selection.model_name, model_selection.model_type
+                    break  # Found the model but it's not Claude
+
+        # User hasn't selected a Claude model, check if there's a default device model
         default_model_name = settings.IM_CHANNEL_DEVICE_DEFAULT_MODEL.strip()
         if default_model_name:
-            # Try to find the default model in available models
-            all_models = model_aggregation_service.list_available_models(
-                db=db,
-                current_user=user,
-                shell_type=None,
-                include_config=False,
-                scope="personal",
-                model_category_type="llm",
-            )
             for model in all_models:
                 m_name = model.get("name", "")
                 m_display = model.get("displayName") or ""
@@ -643,18 +649,42 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 )
                 return
 
-            # Check if current model is Claude (required for device mode)
-            model_selection = await model_selection_manager.get_selection(user.id)
-            if model_selection and not model_selection.is_claude_model():
-                model_display = (
-                    model_selection.display_name or model_selection.model_name
+            # Get model for device mode (uses default Claude if user hasn't selected one)
+            override_model_name, _ = await self._get_device_mode_model_override(
+                db, user
+            )
+
+            # Check if we have a valid Claude model for device mode
+            if not override_model_name:
+                model_selection = await model_selection_manager.get_selection(user.id)
+                if model_selection and not model_selection.is_claude_model():
+                    model_display = (
+                        model_selection.display_name or model_selection.model_name
+                    )
+                    await self.send_text_reply(
+                        message_context,
+                        f"⚠️ 当前模型 **{model_display}** 不支持设备模式\n\n"
+                        "设备模式仅支持 Claude 模型，请先使用 `/models` 切换到 Claude 模型",
+                    )
+                    return
+
+            # Get display name for the model
+            from app.services.model_aggregation_service import model_aggregation_service
+
+            model_display_name = override_model_name or "默认模型"
+            if override_model_name:
+                all_models = model_aggregation_service.list_available_models(
+                    db=db,
+                    current_user=user,
+                    shell_type=None,
+                    include_config=False,
+                    scope="personal",
+                    model_category_type="llm",
                 )
-                await self.send_text_reply(
-                    message_context,
-                    f"⚠️ 当前模型 **{model_display}** 不支持设备模式\n\n"
-                    "设备模式仅支持 Claude 模型，请先使用 `/models` 切换到 Claude 模型",
-                )
-                return
+                for m in all_models:
+                    if m.get("name") == override_model_name:
+                        model_display_name = m.get("displayName") or override_model_name
+                        break
 
             await device_selection_manager.set_local_device(
                 user.id,
@@ -664,7 +694,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
             await self.send_text_reply(
                 message_context,
-                f"✅ 已切换到设备 **{matched_device['name']}**\n\n现在的消息将在该设备上执行",
+                f"✅ 已切换到设备 **{matched_device['name']}**\n\n"
+                f"当前模型: **{model_display_name}**\n"
+                "现在的消息将在该设备上执行",
             )
             return
 
@@ -981,8 +1013,37 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         team_name = team.name if team else "未配置"
 
         # Get model selection
+        # For device mode, show the actual model that will be used (may be default device model)
         model_selection = await model_selection_manager.get_selection(user.id)
-        if model_selection:
+        if selection.device_type == DeviceType.LOCAL:
+            # In device mode, use _get_device_mode_model_override to get the actual model
+            override_model_name, _ = await self._get_device_mode_model_override(
+                db, user
+            )
+            if override_model_name:
+                # Find the display name for this model
+                from app.services.model_aggregation_service import (
+                    model_aggregation_service,
+                )
+
+                all_models = model_aggregation_service.list_available_models(
+                    db=db,
+                    current_user=user,
+                    shell_type=None,
+                    include_config=False,
+                    scope="personal",
+                    model_category_type="llm",
+                )
+                model_name = override_model_name
+                for m in all_models:
+                    if m.get("name") == override_model_name:
+                        model_name = m.get("displayName") or override_model_name
+                        break
+            elif model_selection:
+                model_name = model_selection.display_name or model_selection.model_name
+            else:
+                model_name = self.default_model_name or "默认模型"
+        elif model_selection:
             model_name = model_selection.display_name or model_selection.model_name
         else:
             model_name = self.default_model_name or "默认模型"
@@ -1558,6 +1619,32 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 f"⏰ 距离上次对话已超过 {timeout_minutes} 分钟，已自动开始新对话",
             )
 
+        # Send acknowledgment BEFORE routing to device
+        # This ensures the "task sent" card appears before the result card
+        streaming_emitter = await self.create_streaming_emitter(message_context)
+        if streaming_emitter:
+            await streaming_emitter.emit_chat_start(
+                task_id=result.task.id,
+                subtask_id=result.assistant_subtask.id,
+                shell_type="ClaudeCode",
+            )
+            await streaming_emitter.emit_chat_chunk(
+                task_id=result.task.id,
+                subtask_id=result.assistant_subtask.id,
+                content=(
+                    f"任务已发送到设备 **{device_id[:8]}**\n\n"
+                    f"任务 ID: {result.task.id}\n"
+                    "状态: 正在执行\n\n"
+                    "任务完成后将自动发送结果。"
+                ),
+                offset=0,
+            )
+            await streaming_emitter.emit_chat_done(
+                task_id=result.task.id,
+                subtask_id=result.assistant_subtask.id,
+                offset=0,
+            )
+
         try:
             await route_task_to_device(
                 db=db,
@@ -1577,31 +1664,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 await callback_service.save_callback_info(
                     task_id=result.task.id,
                     callback_info=callback_info,
-                )
-
-            # Send acknowledgment
-            streaming_emitter = await self.create_streaming_emitter(message_context)
-            if streaming_emitter:
-                await streaming_emitter.emit_chat_start(
-                    task_id=result.task.id,
-                    subtask_id=result.assistant_subtask.id,
-                    shell_type="ClaudeCode",
-                )
-                await streaming_emitter.emit_chat_chunk(
-                    task_id=result.task.id,
-                    subtask_id=result.assistant_subtask.id,
-                    content=(
-                        f"✅ 任务已发送到设备 **{device_id[:8]}**\n\n"
-                        f"任务 ID: {result.task.id}\n"
-                        "状态: 正在执行\n\n"
-                        "💡 任务完成后将自动发送结果。"
-                    ),
-                    offset=0,
-                )
-                await streaming_emitter.emit_chat_done(
-                    task_id=result.task.id,
-                    subtask_id=result.assistant_subtask.id,
-                    offset=0,
                 )
 
             return None

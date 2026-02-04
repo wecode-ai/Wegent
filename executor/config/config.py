@@ -134,3 +134,8 @@ WEGENT_EXECUTOR_LOG_DIR = os.environ.get(
 WEGENT_EXECUTOR_LOG_FILE = os.environ.get("WEGENT_EXECUTOR_LOG_FILE", "executor.log")
 WEGENT_EXECUTOR_LOG_MAX_SIZE = _get_int_env("WEGENT_EXECUTOR_LOG_MAX_SIZE", 10)  # MB
 WEGENT_EXECUTOR_LOG_BACKUP_COUNT = _get_int_env("WEGENT_EXECUTOR_LOG_BACKUP_COUNT", 5)
+
+# Anthropic custom headers for local mode
+# Custom HTTP headers to send with Anthropic API requests
+# Format: "header1: value1\nheader2: value2"
+ANTHROPIC_CUSTOM_HEADERS = os.environ.get("ANTHROPIC_CUSTOM_HEADERS", "")

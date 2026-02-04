@@ -1,0 +1,8 @@
+{
+  "label": "Settings",
+  "position": 7,
+  "link": {
+    "type": "generated-index",
+    "description": "配置智能体、模型、Shell 和技能。"
+  }
+}

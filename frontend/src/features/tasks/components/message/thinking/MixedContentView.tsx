@@ -168,34 +168,10 @@ const MixedContentView = memo(function MixedContentView({
 
   // Check if we should show "Processing..." indicator
   const shouldShowProcessing = useMemo(() => {
-    // Only show if task is running
-    if (taskStatus !== 'RUNNING') {
-      return false
-    }
-
-    // Check if we have blocks and the last block is completed
-    if (blocks && blocks.length > 0) {
-      const lastBlock = blocks[blocks.length - 1]
-      // Check last block
-      if (lastBlock.type === 'tool' && lastBlock.status === 'done') {
-        return true
-      }
-
-      // If last block is empty text, check second-to-last block
-      if (
-        lastBlock.type === 'text' &&
-        (!lastBlock.content || lastBlock.content.trim() === '') &&
-        blocks.length > 1
-      ) {
-        const secondLastBlock = blocks[blocks.length - 2]
-        if (secondLastBlock.type === 'tool' && secondLastBlock.status === 'done') {
-          return true
-        }
-      }
-    }
-
-    return false
-  }, [taskStatus, blocks])
+    // Show processing indicator whenever task is running
+    // This ensures users always see feedback that the task is being processed
+    return taskStatus === 'RUNNING'
+  }, [taskStatus])
 
   return (
     <div className="space-y-3">

@@ -29,11 +29,11 @@ Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、
 
 面向 Wegent 平台用户的操作指南:
 
-- [创建 Ghost](./guides/user/creating-ghosts.md) - 定义智能体的"灵魂"
-- [创建 Bot](./guides/user/creating-bots.md) - 组装完整的智能体实例
-- [管理 Skills](./guides/user/managing-skills.md) - 上传和使用 Claude Code Skills
-- [创建 Team](./guides/user/creating-teams.md) - 构建协作团队
+- [智能体设置](./guides/user/agent-settings.md) - 配置智能体、机器人、提示词和协作模式
 - [管理任务](./guides/user/managing-tasks.md) - 创建和管理工作任务
+- [配置模型](./guides/user/configuring-models.md) - 设置 AI 模型（LLM、Embedding、Rerank）
+- [配置执行器](./guides/user/configuring-shells.md) - 配置执行环境
+- [管理 Skills](./guides/user/managing-skills.md) - 上传和使用 Claude Code Skills
 - [需求规范澄清](./guides/user/spec-clarification-guide.md) - Spec Clarification 需求澄清使用指南
 - [知识库使用指南](./guides/user/knowledge-base-guide.md) - RAG 知识库系统使用指南
 - [IM 通道集成](./guides/user/im-channel-integration.md) - 集成钉钉等 IM 通道

@@ -298,6 +298,92 @@ class TestContextServiceFormatting:
         )
         assert context_service.build_attachment_url(1) == "/api/attachments/1/download"
 
+    def test_build_sandbox_path(self):
+        """Test sandbox path generation"""
+        from app.services.context import context_service
+
+        # Test with valid task_id and subtask_id
+        path = context_service.build_sandbox_path(123, 456, "test.pdf")
+        assert path == "/home/user/123:executor:attachments/456/test.pdf"
+
+        # Test with different values
+        path = context_service.build_sandbox_path(1, 2, "image.png")
+        assert path == "/home/user/1:executor:attachments/2/image.png"
+
+    def test_build_sandbox_path_returns_none_for_missing_ids(self):
+        """Test sandbox path returns None when task_id or subtask_id is missing"""
+        from app.services.context import context_service
+
+        # Test with None task_id
+        assert context_service.build_sandbox_path(None, 456, "test.pdf") is None
+
+        # Test with None subtask_id
+        assert context_service.build_sandbox_path(123, None, "test.pdf") is None
+
+        # Test with both None
+        assert context_service.build_sandbox_path(None, None, "test.pdf") is None
+
+    def test_build_sandbox_path_strips_control_characters(self):
+        """Test sandbox path strips control characters from filename"""
+        from app.services.context import context_service
+
+        # Test filename with newline
+        path = context_service.build_sandbox_path(123, 456, "test\n.pdf")
+        assert path == "/home/user/123:executor:attachments/456/test.pdf"
+
+        # Test filename with carriage return
+        path = context_service.build_sandbox_path(123, 456, "test\r.pdf")
+        assert path == "/home/user/123:executor:attachments/456/test.pdf"
+
+        # Test filename with both
+        path = context_service.build_sandbox_path(123, 456, "test\r\n.pdf")
+        assert path == "/home/user/123:executor:attachments/456/test.pdf"
+
+    def test_build_document_text_prefix_with_sandbox_path(self):
+        """Test building document text prefix with sandbox path included"""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        # Arrange
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="test.pdf",
+            status=ContextStatus.READY.value,
+            extracted_text="This is the extracted PDF content.",
+            text_length=35,
+            type_data={
+                "file_extension": ".pdf",
+                "original_filename": "test.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 2621440,  # 2.5 MB
+            },
+        )
+        context.id = 12345
+
+        # Act - with task_id and subtask_id
+        prefix = context_service.build_document_text_prefix(
+            context, task_id=100, subtask_id=200
+        )
+
+        # Assert
+        assert prefix is not None
+        assert "[Attachment: test.pdf |" in prefix
+        assert "ID: 12345" in prefix
+        assert "Type: application/pdf" in prefix
+        assert "Size: 2.5 MB" in prefix
+        assert "URL: /api/attachments/12345/download" in prefix
+        assert (
+            "File Path(already in sandbox): /home/user/100:executor:attachments/200/test.pdf"
+            in prefix
+        )
+        assert "This is the extracted PDF content." in prefix
+
     def test_build_document_text_prefix(self):
         """Test building document text prefix with attachment metadata"""
         from app.models.subtask_context import (

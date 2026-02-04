@@ -8,12 +8,15 @@ Models package
 Note: Import order matters for SQLAlchemy relationship resolution.
 Models with relationships should be imported after their related models.
 """
+
 from app.models.api_key import APIKey
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
 from app.models.project import Project
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import PermissionLevel, ResourceType, ShareLink
 from app.models.shared_task import SharedTask
 from app.models.shared_team import SharedTeam
 from app.models.skill_binary import SkillBinary
@@ -50,4 +53,10 @@ __all__ = [
     "Project",
     "SubscriptionFollow",
     "SubscriptionShareNamespace",
+    # Unified share system
+    "ShareLink",
+    "ResourceMember",
+    "ResourceType",
+    "PermissionLevel",
+    "MemberStatus",
 ]

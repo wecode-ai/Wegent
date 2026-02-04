@@ -219,6 +219,8 @@ def _process_attachment_context(
     idx: int,
     text_contents: List[str],
     image_contents: List[dict],
+    task_id: Optional[int] = None,
+    subtask_id: Optional[int] = None,
 ) -> None:
     """
     Process an attachment context and add to appropriate list.
@@ -228,6 +230,8 @@ def _process_attachment_context(
         idx: Attachment index (for labeling)
         text_contents: List to append text content to
         image_contents: List to append image content to
+        task_id: Optional task ID for building sandbox path
+        subtask_id: Optional subtask ID for building sandbox path
     """
     # Check if it's an image attachment
     if context_service.is_image_context(context) and context.image_base64:
@@ -239,11 +243,21 @@ def _process_attachment_context(
         formatted_size = context_service.format_file_size(file_size)
         url = context_service.build_attachment_url(attachment_id)
 
-        # Build image metadata header
-        image_header = (
-            f"[Image Attachment: {filename} | ID: {attachment_id} | "
-            f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]"
-        )
+        # Build sandbox path if task_id and subtask_id are provided
+        sandbox_path = context_service.build_sandbox_path(task_id, subtask_id, filename)
+
+        # Build image metadata header with optional sandbox path
+        if sandbox_path:
+            image_header = (
+                f"[Image Attachment: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
+                f"File Path(already in sandbox): {sandbox_path}]"
+            )
+        else:
+            image_header = (
+                f"[Image Attachment: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]"
+            )
 
         image_contents.append(
             {
@@ -258,7 +272,9 @@ def _process_attachment_context(
     else:
         # Text document - get formatted content with attachment index
         # The content is wrapped in <attachment> XML tags by context_service
-        doc_prefix = context_service.build_document_text_prefix(context)
+        doc_prefix = context_service.build_document_text_prefix(
+            context, task_id=task_id, subtask_id=subtask_id
+        )
         if doc_prefix:
             text_contents.append(f"[Attachment {idx}]\n{doc_prefix}")
 
@@ -385,6 +401,15 @@ def link_contexts_to_subtask(
                 db, kb_contexts_to_create, task, user_id, user_name
             )
 
+        # Sync attachments to running sandbox (if sandbox is healthy)
+        if attachment_ids and task:
+            _schedule_attachment_sync_to_sandbox(
+                db=db,
+                task_id=task.id,
+                subtask_id=subtask_id,
+                attachment_ids=attachment_ids,
+            )
+
     except Exception as e:
         db.rollback()
         logger.exception(f"Failed to link contexts to subtask {subtask_id}: {e}")
@@ -442,6 +467,114 @@ def _sync_kb_contexts_to_task(
                 f"[_sync_kb_contexts_to_task] Failed to sync KB {knowledge_id} "
                 f"to task {task.id}: {e}"
             )
+
+
+def _schedule_attachment_sync_to_sandbox(
+    db: Session,
+    task_id: int,
+    subtask_id: int,
+    attachment_ids: List[int],
+) -> None:
+    """
+    Schedule asynchronous sync of attachments to running sandbox.
+
+    This function checks if the sandbox is running and healthy, and if so,
+    uploads attachments to the sandbox filesystem. Failures are logged but
+    do not block the main flow.
+
+    Args:
+        db: Database session
+        task_id: Task ID (sandbox_id is derived from task_id)
+        subtask_id: Subtask ID
+        attachment_ids: List of attachment context IDs to sync
+    """
+    import asyncio
+
+    from app.services.sandbox_file_syncer import sync_attachment_to_sandbox_background
+
+    try:
+        # Import sandbox sync utilities (deferred to avoid circular imports)
+        # Health check is performed asynchronously in the background task
+        # to avoid blocking the main flow
+
+        # Get attachment data from database
+        attachment_contexts = (
+            db.query(SubtaskContext).filter(SubtaskContext.id.in_(attachment_ids)).all()
+        )
+
+        if not attachment_contexts:
+            logger.debug(
+                f"[_schedule_attachment_sync_to_sandbox] No attachments found "
+                f"for ids={attachment_ids}"
+            )
+            return
+
+        # Schedule async sync for each attachment
+        for ctx in attachment_contexts:
+            filename = ctx.original_filename
+            if not filename:
+                continue
+
+            # Get binary data from storage backend
+            binary_data = context_service.get_attachment_binary_data(db=db, context=ctx)
+            if binary_data is None:
+                logger.warning(
+                    f"[_schedule_attachment_sync_to_sandbox] Failed to get binary data "
+                    f"for attachment {ctx.id}"
+                )
+                continue
+
+            # Schedule background sync
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    sync_attachment_to_sandbox_background(
+                        task_id=task_id,
+                        subtask_id=subtask_id,
+                        filename=filename,
+                        binary_data=binary_data,
+                    )
+                )
+                logger.debug(
+                    f"[_schedule_attachment_sync_to_sandbox] Scheduled sync for "
+                    f"attachment {ctx.id} (filename={filename})"
+                )
+            except RuntimeError:
+                # No event loop running - try main event loop
+                try:
+                    from app.services.chat.ws_emitter import get_main_event_loop
+
+                    main_loop = get_main_event_loop()
+                    if main_loop and main_loop.is_running():
+                        asyncio.run_coroutine_threadsafe(
+                            sync_attachment_to_sandbox_background(
+                                task_id=task_id,
+                                subtask_id=subtask_id,
+                                filename=filename,
+                                binary_data=binary_data,
+                            ),
+                            main_loop,
+                        )
+                        logger.debug(
+                            f"[_schedule_attachment_sync_to_sandbox] Scheduled sync on "
+                            f"main loop for attachment {ctx.id}"
+                        )
+                    else:
+                        logger.debug(
+                            f"[_schedule_attachment_sync_to_sandbox] No running event loop, "
+                            f"skipping sync for attachment {ctx.id}"
+                        )
+                except Exception as e:
+                    logger.debug(
+                        f"[_schedule_attachment_sync_to_sandbox] Failed to schedule sync: {e}"
+                    )
+
+    except Exception as e:
+        # Log but don't fail - syncing to sandbox is best-effort
+        logger.warning(
+            f"[_schedule_attachment_sync_to_sandbox] Error scheduling sync for "
+            f"task {task_id}: {e}"
+        )
 
 
 def _prepare_contexts_for_creation(
@@ -731,7 +864,7 @@ async def prepare_contexts_for_chat(
 
     # 1. Process attachment contexts - inject into message
     final_message = await _process_attachment_contexts_for_message(
-        attachment_contexts, message
+        attachment_contexts, message, task_id=task_id, subtask_id=user_subtask_id
     )
 
     # 2. Process knowledge base contexts - create tools
@@ -832,6 +965,8 @@ async def prepare_contexts_for_chat(
 async def _process_attachment_contexts_for_message(
     attachment_contexts: List[SubtaskContext],
     message: str,
+    task_id: Optional[int] = None,
+    subtask_id: Optional[int] = None,
 ) -> str | dict[str, Any]:
     """
     Process attachment contexts and build message with content.
@@ -839,6 +974,8 @@ async def _process_attachment_contexts_for_message(
     Args:
         attachment_contexts: List of attachment SubtaskContext records
         message: Original user message
+        task_id: Optional task ID for building sandbox path
+        subtask_id: Optional subtask ID for building sandbox path
 
     Returns:
         Message with attachment contents prepended, or vision structure for images
@@ -851,7 +988,14 @@ async def _process_attachment_contexts_for_message(
 
     for idx, context in enumerate(attachment_contexts, start=1):
         try:
-            _process_attachment_context(context, idx, text_contents, image_contents)
+            _process_attachment_context(
+                context,
+                idx,
+                text_contents,
+                image_contents,
+                task_id=task_id,
+                subtask_id=subtask_id,
+            )
         except Exception as e:
             logger.exception(f"Error processing attachment context {context.id}: {e}")
             continue

@@ -988,6 +988,7 @@ class TaskQueryMixin:
         """Get all skills associated with a task.
 
         Follows the chain: task → team → bots → ghosts → skills
+        Also includes user-selected skills from task labels (additionalSkills).
 
         Args:
             db: Database session
@@ -999,12 +1000,14 @@ class TaskQueryMixin:
             - task_id: The task ID
             - team_id: The team ID (if found)
             - team_namespace: The team namespace
-            - skills: List of skill names (deduplicated)
+            - skills: List of skill names (deduplicated, includes user-selected skills)
             - preload_skills: List of skills to preload
 
         Raises:
             HTTPException: If task not found
         """
+        import json as json_lib
+
         from app.models.task import TaskResource
         from app.services.readers.kinds import KindType, kindReader
         from app.services.task_member_service import task_member_service
@@ -1035,6 +1038,27 @@ class TaskQueryMixin:
         # Use task owner's user_id for querying related resources
         task_owner_id = task.user_id
 
+        # Extract user-selected skills from task labels (additionalSkills)
+        # These are skills explicitly selected by the user for this task
+        user_selected_skills = []
+        if task_crd.metadata.labels:
+            additional_skills_json = task_crd.metadata.labels.get("additionalSkills")
+            if additional_skills_json:
+                try:
+                    parsed_skills = json_lib.loads(additional_skills_json)
+                    if isinstance(parsed_skills, list):
+                        user_selected_skills = [
+                            s for s in parsed_skills if isinstance(s, str) and s
+                        ]
+                        logger.info(
+                            f"[get_task_skills] Found {len(user_selected_skills)} user-selected skills "
+                            f"from task labels: {user_selected_skills}"
+                        )
+                except json_lib.JSONDecodeError as e:
+                    logger.warning(
+                        f"[get_task_skills] Failed to parse additionalSkills JSON for task {task_id}: {e}"
+                    )
+
         # Get team
         team = kindReader.get_by_name_and_namespace(
             db, task_owner_id, KindType.TEAM, team_namespace, team_name
@@ -1045,11 +1069,12 @@ class TaskQueryMixin:
                 f"[get_task_skills] Team not found for task {task_id}: "
                 f"namespace={team_namespace}, name={team_name}"
             )
+            # Even if team not found, return user-selected skills
             return {
                 "task_id": task_id,
                 "team_id": None,
                 "team_namespace": team_namespace,
-                "skills": [],
+                "skills": user_selected_skills,
                 "preload_skills": [],
             }
 
@@ -1086,9 +1111,15 @@ class TaskQueryMixin:
                 if ghost_crd.spec.preload_skills:
                     all_preload_skills.update(ghost_crd.spec.preload_skills)
 
+        # Add user-selected skills to the skills set
+        # This ensures user-selected skills are downloaded by sandbox/executor
+        if user_selected_skills:
+            all_skills.update(user_selected_skills)
+
         logger.info(
             f"[get_task_skills] task_id={task_id}, team_id={team.id}, "
-            f"skills={list(all_skills)}, preload_skills={list(all_preload_skills)}"
+            f"skills={list(all_skills)}, preload_skills={list(all_preload_skills)}, "
+            f"user_selected_skills={user_selected_skills}"
         )
 
         return {

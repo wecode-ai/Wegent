@@ -8,7 +8,7 @@ import '@wecode/i18n' // side-effect import to load wecode translations
 import { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
-import { Terminal, Copy, Check, ExternalLink, AlertTriangle } from 'lucide-react'
+import { Terminal, Copy, Check, ExternalLink, AlertTriangle, Puzzle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -146,6 +146,34 @@ export function LocalExecutorGuide({ guideUrl }: LocalExecutorGuideProps) {
           description={t('internal_step_start_desc')}
           command={executorStartCommand}
         />
+
+        {/* Plugins section */}
+        <div className="border-t border-border pt-5 mt-2 mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Puzzle className="w-4 h-4 text-primary" />
+            <h4 className="font-medium text-text-primary">{t('plugins_title')}</h4>
+          </div>
+          <p className="text-sm text-text-muted mb-4 ml-6">{t('plugins_description')}</p>
+
+          {/* Browser plugin */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 ml-6">
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <span className="font-medium text-text-primary">{t('plugin_browser_name')}</span>
+                <p className="text-xs text-text-muted mt-1">{t('plugin_browser_description')}</p>
+              </div>
+            </div>
+            <div className="bg-gray-900 rounded-lg px-4 py-3">
+              <div className="flex items-center gap-3">
+                <span className="text-gray-500 select-none">$</span>
+                <code className="flex-1 text-sm font-mono text-green-400">
+                  wecode executor install browser
+                </code>
+                <CopyButton text="wecode executor install browser" />
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* Gatekeeper hint */}
         <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg mb-3">
