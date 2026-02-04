@@ -13,21 +13,16 @@ Archive format: tar.gz containing all Git-tracked files plus session state files
 Storage: S3-compatible object storage (AWS S3, MinIO, etc.)
 """
 
-import io
 import logging
-import os
-import subprocess
-import tarfile
-import tempfile
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Optional, Tuple
 
 import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.task import TaskResource
-from app.schemas.kind import Task
+from app.schemas.kind import Task, Workspace, WorkspaceStatus
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +145,7 @@ class WorkspaceArchiveService:
         This method:
         1. Calls the executor's archive API to create a tar.gz
         2. Uploads the archive to S3
-        3. Updates the task record with archive information
+        3. Updates the Workspace CRD's status with archive information
 
         Args:
             db: Database session
@@ -189,11 +184,26 @@ class WorkspaceArchiveService:
             logger.debug(f"Task {task_id} is not a code task, skipping archive")
             return False, "Only code tasks can be archived"
 
-        # Get workspace info from task
-        git_url = task_crd.spec.gitUrl if task_crd.spec else None
-        if not git_url:
-            logger.debug(f"Task {task_id} has no git URL, skipping archive")
-            return False, "Task has no git repository"
+        # Get workspace from workspaceRef
+        if not task_crd.spec.workspaceRef:
+            logger.debug(f"Task {task_id} has no workspace reference, skipping archive")
+            return False, "Task has no workspace reference"
+
+        workspace = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.user_id == task.user_id,
+                TaskResource.kind == "Workspace",
+                TaskResource.name == task_crd.spec.workspaceRef.name,
+                TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
+                TaskResource.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not workspace:
+            logger.debug(f"Workspace not found for task {task_id}")
+            return False, "Workspace not found"
 
         try:
             # Call executor's archive API
@@ -218,9 +228,14 @@ class WorkspaceArchiveService:
             if not self.s3_client.upload_bytes(archive_data, archive_key):
                 return False, "Failed to upload archive to S3"
 
-            # Update task record
-            task.workspace_archived_at = datetime.now()
-            task.workspace_archive_key = archive_key
+            # Update Workspace CRD's status with archive info
+            workspace_crd = Workspace.model_validate(workspace.json)
+            if workspace_crd.status is None:
+                workspace_crd.status = WorkspaceStatus(state="Available")
+            workspace_crd.status.archivedAt = datetime.now()
+            workspace_crd.status.archiveKey = archive_key
+
+            workspace.json = workspace_crd.model_dump(mode="json", exclude_none=True)
             db.commit()
 
             logger.info(
@@ -317,7 +332,7 @@ class WorkspaceArchiveService:
         if not is_workspace_archive_enabled():
             return False
 
-        # Get task to find archive key
+        # Get task to find workspace
         task = (
             db.query(TaskResource)
             .filter(
@@ -327,17 +342,42 @@ class WorkspaceArchiveService:
             .first()
         )
 
-        if not task or not task.workspace_archive_key:
+        if not task:
             return False
 
-        archive_key = task.workspace_archive_key
+        task_crd = Task.model_validate(task.json)
+        if not task_crd.spec.workspaceRef:
+            return False
+
+        # Get workspace
+        workspace = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.user_id == task.user_id,
+                TaskResource.kind == "Workspace",
+                TaskResource.name == task_crd.spec.workspaceRef.name,
+                TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
+                TaskResource.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not workspace:
+            return False
+
+        workspace_crd = Workspace.model_validate(workspace.json)
+        if not workspace_crd.status or not workspace_crd.status.archiveKey:
+            return False
+
+        archive_key = workspace_crd.status.archiveKey
 
         # Delete from S3
         success = self.s3_client.delete(archive_key)
 
-        # Clear archive fields in database
-        task.workspace_archived_at = None
-        task.workspace_archive_key = None
+        # Clear archive fields in Workspace status
+        workspace_crd.status.archivedAt = None
+        workspace_crd.status.archiveKey = None
+        workspace.json = workspace_crd.model_dump(mode="json", exclude_none=True)
         db.commit()
 
         logger.info(f"Deleted workspace archive for task {task_id}: {archive_key}")
@@ -370,7 +410,34 @@ class WorkspaceArchiveService:
             .first()
         )
 
-        if not task or not task.workspace_archive_key:
+        if not task:
+            logger.debug(f"Task {task_id} not found")
+            return False
+
+        task_crd = Task.model_validate(task.json)
+        if not task_crd.spec.workspaceRef:
+            logger.debug(f"Task {task_id} has no workspace reference")
+            return False
+
+        # Get workspace to check for archive
+        workspace = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.user_id == task.user_id,
+                TaskResource.kind == "Workspace",
+                TaskResource.name == task_crd.spec.workspaceRef.name,
+                TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
+                TaskResource.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not workspace:
+            logger.debug(f"Workspace not found for task {task_id}")
+            return False
+
+        workspace_crd = Workspace.model_validate(workspace.json)
+        if not workspace_crd.status or not workspace_crd.status.archiveKey:
             logger.debug(f"Task {task_id} has no archive to restore")
             return False
 
@@ -381,7 +448,6 @@ class WorkspaceArchiveService:
             return False
 
         # Update task metadata to include restore info
-        task_crd = Task.model_validate(task.json)
         if task_crd.metadata.labels is None:
             task_crd.metadata.labels = {}
 

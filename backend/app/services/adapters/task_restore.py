@@ -25,7 +25,7 @@ from app.core.config import settings
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
-from app.schemas.kind import Task
+from app.schemas.kind import Task, Workspace
 from app.services.adapters.workspace_archive import (
     is_workspace_archive_enabled,
     workspace_archive_service,
@@ -229,7 +229,7 @@ class TaskRestoreService:
             )
             return False
 
-        # Check if task has an archive
+        # Get task and its workspace reference
         task = (
             db.query(TaskResource)
             .filter(
@@ -239,7 +239,34 @@ class TaskRestoreService:
             .first()
         )
 
-        if not task or not task.workspace_archive_key:
+        if not task:
+            logger.debug(f"Task {task_id} not found")
+            return False
+
+        task_crd = Task.model_validate(task.json)
+        if not task_crd.spec.workspaceRef:
+            logger.debug(f"Task {task_id} has no workspace reference")
+            return False
+
+        # Get workspace to check for archive
+        workspace = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.user_id == task.user_id,
+                TaskResource.kind == "Workspace",
+                TaskResource.name == task_crd.spec.workspaceRef.name,
+                TaskResource.namespace == task_crd.spec.workspaceRef.namespace,
+                TaskResource.is_active.is_(True),
+            )
+            .first()
+        )
+
+        if not workspace:
+            logger.debug(f"Workspace not found for task {task_id}")
+            return False
+
+        workspace_crd = Workspace.model_validate(workspace.json)
+        if not workspace_crd.status or not workspace_crd.status.archiveKey:
             logger.debug(f"Task {task_id} has no workspace archive")
             return False
 
