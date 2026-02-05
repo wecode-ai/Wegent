@@ -253,7 +253,6 @@ wegent-web:
   variables:
     SERVICE: wegent-web
     DOCKERFILE_PATH: wecode/docker/frontend
-    DOCKER_BUILD_ARGS: "--build-arg DOCS_REPO_PAT=${DOCS_REPO_PAT}"
   script:
     - build_image
   rules:
