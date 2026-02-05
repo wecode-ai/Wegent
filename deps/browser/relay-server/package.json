@@ -1,6 +1,6 @@
 {
   "name": "@wb/wegent-cdp-relay-server",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Chrome DevTools Protocol relay server and browser automation tool",
   "type": "module",
   "main": "dist/index.js",
