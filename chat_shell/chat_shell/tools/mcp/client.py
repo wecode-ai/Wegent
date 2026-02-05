@@ -167,7 +167,7 @@ def build_connections(
         config = replace_mcp_server_variables(config, task_data)
         logger.debug(
             "[MCP] Applied variable substitution to MCP config with task_data keys: %s",
-            task_data,
+            sorted(task_data.keys()),
         )
 
     connections = {}

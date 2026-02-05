@@ -855,7 +855,10 @@ class ClaudeCodeAgent(Agent):
             if mcp_servers:
                 # Replace placeholders in MCP servers config with actual values from task_data
                 mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
-                logger.info(f"Detected MCP servers configuration: {mcp_servers}")
+                logger.info(
+                    "Detected MCP servers configuration (masked): %s",
+                    mask_sensitive_data(mcp_servers),
+                )
                 bot_config["mcp_servers"] = mcp_servers
 
             # Add wegent MCP server for subscription tasks (provides silent_exit tool via HTTP)
