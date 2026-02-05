@@ -115,7 +115,8 @@ function launchBrowserWithInstructions(url?: string): { launched: boolean; messa
   }
 
   const userDataDir = path.join(getBrowserPrefix(), "chrome-profile");
-  const targetUrl = url || "https://weibo.com";
+  // Use provided URL, or open a blank page if none provided
+  const targetUrl = url || "about:blank";
 
   const args = [
     `--user-data-dir=${userDataDir}`,
@@ -187,6 +188,25 @@ function openExtensionsPage(): { opened: boolean; message: string } {
 4. Select folder: ${extensionPath}
 5. Click extension icon on a tab to attach`,
   };
+}
+
+function openUrlInChrome(url: string): void {
+  // On macOS, use osascript to open URL in Chrome
+  if (os.platform() === "darwin") {
+    try {
+      spawn("osascript", ["-e", `
+        tell application "Google Chrome"
+          activate
+          open location "${url}"
+        end tell
+      `], {
+        detached: true,
+        stdio: "ignore",
+      }).unref();
+    } catch {
+      // Ignore errors
+    }
+  }
 }
 
 async function waitForConnection(maxWaitMs: number = 5000): Promise<boolean> {
@@ -355,41 +375,40 @@ export async function executeBrowserTool(params: BrowserToolParams): Promise<Bro
     if (!status.extensionConnected) {
       const chromeRunning = isChromeRunningWithProfile();
 
-      if (chromeRunning) {
-        // Chrome is running but extension not connected
-        // Just open extensions page, don't launch another browser
-        const extResult = openExtensionsPage();
-        return {
-          ok: false,
-          error: `Extension not connected. ${extResult.message}`,
-        };
-      }
-
-      // Chrome not running - launch with user's URL if available, otherwise default
+      // Get target URL from params if available
       const targetUrl = (params.action === "open" || params.action === "navigate") ? params.url : undefined;
-      const launchResult = launchBrowserWithInstructions(targetUrl);
-      if (!launchResult.launched) {
-        return { ok: false, error: launchResult.message };
+
+      if (!chromeRunning) {
+        // Chrome not running - launch with user's URL first
+        const launchResult = launchBrowserWithInstructions(targetUrl);
+        if (!launchResult.launched) {
+          return { ok: false, error: launchResult.message };
+        }
+      } else if (targetUrl) {
+        // Chrome is running but extension not connected - open the target page first
+        // Extension may auto-attach to the new tab
+        openUrlInChrome(targetUrl);
       }
 
       // Wait for extension to attach
       const connected = await waitForConnection(8000);
 
-      if (!connected) {
-        // Attach failed - extension probably not installed, open extensions page
+      if (connected) {
+        // Connected! For open/navigate actions with URL, page is already open
+        if (targetUrl && (params.action === "open" || params.action === "navigate")) {
+          // Already opened the target URL during launch, return success
+          const tabs = await listTabs();
+          const tab = tabs.find(t => t.url.includes(new URL(targetUrl).hostname));
+          return { ok: true, data: { targetId: tab?.targetId, url: targetUrl, launchedWithUrl: true } };
+        }
+        // Connected and not open/navigate, continue to switch/case below
+      } else {
+        // Attach failed - extension probably not installed, now open extensions page
         const extResult = openExtensionsPage();
         return {
           ok: false,
           error: `Extension not connected. ${extResult.message}`,
         };
-      }
-
-      // Connected! For open/navigate actions with URL, page is already open
-      if (targetUrl && (params.action === "open" || params.action === "navigate")) {
-        // Already opened the target URL during launch, return success
-        const tabs = await listTabs();
-        const tab = tabs.find(t => t.url.includes(new URL(targetUrl).hostname));
-        return { ok: true, data: { targetId: tab?.targetId, url: targetUrl, launchedWithUrl: true } };
       }
     }
 
