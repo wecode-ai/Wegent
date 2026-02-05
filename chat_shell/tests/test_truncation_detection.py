@@ -107,7 +107,7 @@ class TestStreamingStateTruncation:
         assert result["truncated"] is True
         assert result["truncation_reason"] == "max_tokens"
 
-    def test_truncation_info_in_result_all_providers(self, streaming_state):
+    def test_truncation_info_in_result_all_providers(self):
         """Test truncation info is correctly included for all provider reasons."""
         for reason in ["length", "max_tokens", "MAX_TOKENS"]:
             # Reset state

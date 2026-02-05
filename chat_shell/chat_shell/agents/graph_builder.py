@@ -606,6 +606,39 @@ class LangGraphAgentBuilder:
                         # Reset for potential next LLM call (e.g., after tool execution)
                         llm_request_start_time = None
 
+                    # Fallback truncation detection for non-streaming models
+                    # When model doesn't emit on_chat_model_stream events, check final output
+                    if not streamed_content:
+                        output = event.get("data", {}).get("output")
+                        metadata = {}
+                        if hasattr(output, "response_metadata"):
+                            metadata = output.response_metadata or {}
+                        elif isinstance(output, dict):
+                            metadata = output.get("response_metadata") or output.get(
+                                "generation_info", {}
+                            )
+                        finish_reason = metadata.get("finish_reason") or metadata.get(
+                            "stop_reason"
+                        )
+                        if finish_reason in TRUNCATION_REASONS:
+                            model_name = event.get("name", "unknown")
+                            logger.warning(
+                                "[stream_tokens] Content truncated (non-streaming fallback): "
+                                "reason=%s, model=%s",
+                                finish_reason,
+                                model_name,
+                            )
+                            add_span_event(
+                                "content_truncated",
+                                {
+                                    "reason": finish_reason,
+                                    "model_name": model_name,
+                                    "streamed_content": streamed_content,
+                                    "detection_mode": "non_streaming_fallback",
+                                },
+                            )
+                            yield f"{TRUNCATED_MARKER_START}{finish_reason}{TRUNCATED_MARKER_END}"
+
                 elif kind == "on_chain_end" and event.get("name") == "LangGraph":
                     # Extract final content from the top-level LangGraph chain end
                     # This is useful for non-streaming models
