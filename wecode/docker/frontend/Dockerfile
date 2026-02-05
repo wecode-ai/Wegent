@@ -29,7 +29,7 @@ RUN npm config set registry http://registry.npmmirror.com
 
 # Clone wegent-docs repository
 ARG DOCS_REPO_PAT
-RUN git clone --depth 1 https://oauth2:${DOCS_REPO_PAT}@git.intra.weibo.com/weibo_rd/common/wecode/wegent-docs.git .
+RUN git clone --depth 1 https://oauth2:NhtcYXkLv7TGivkjtmXx@git.intra.weibo.com/weibo_rd/common/wecode/wegent-docs.git .
 
 RUN npm ci
 RUN npm run build
