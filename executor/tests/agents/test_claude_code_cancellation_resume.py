@@ -112,6 +112,63 @@ async def test_process_response_fails_on_error_during_execution_system_message()
 
 
 @pytest.mark.asyncio
+async def test_process_response_treats_exit_143_as_cancelled():
+    class FakeClient:
+        async def receive_response(self):
+            raise Exception(
+                "Command failed with exit code 143 (exit code: 143)\n"
+                "Error output: Check stderr output for details"
+            )
+            if False:
+                yield None
+
+    class FakeStateManager:
+        def __init__(self):
+            self.task_data = {"task_id": 2333}
+            self.workbench_statuses: list[str] = []
+            self.progress_reports: list[dict] = []
+
+        def update_workbench_status(self, status: str) -> None:
+            self.workbench_statuses.append(status)
+
+        def report_progress(
+            self,
+            progress: int,
+            status: str,
+            message: str,
+            include_thinking: bool = True,
+            include_workbench: bool = True,
+            extra_result=None,
+        ) -> None:
+            self.progress_reports.append(
+                {
+                    "progress": progress,
+                    "status": status,
+                    "message": message,
+                    "extra_result": extra_result,
+                }
+            )
+
+    task_state_manager = TaskStateManager()
+    task_state_manager.set_state(2333, TaskState.CANCELLED)
+
+    state_manager = FakeStateManager()
+    result = await process_response(
+        client=FakeClient(),
+        state_manager=state_manager,
+        thinking_manager=None,
+        task_state_manager=task_state_manager,
+        session_id="s1",
+    )
+
+    assert result == TaskStatus.COMPLETED
+    assert state_manager.workbench_statuses == ["completed"]
+    assert not state_manager.progress_reports
+
+    task_state_manager.cleanup(2333)
+
+
+@pytest.mark.asyncio
 async def test_interrupt_timeout_forces_cleanup(monkeypatch: pytest.MonkeyPatch):
     task_id = 99102
     task_data = {

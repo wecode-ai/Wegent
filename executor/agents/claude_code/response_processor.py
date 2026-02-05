@@ -175,6 +175,16 @@ async def process_response(
 
             return TaskStatus.RUNNING
     except Exception as e:
+        task_id = state_manager.task_data.get("task_id") if state_manager else None
+        if task_state_manager and task_id and task_state_manager.is_cancelled(task_id):
+            logger.info(
+                f"Response processing interrupted by cancellation for task_id={task_id}: {e}",
+                exc_info=True,
+            )
+            if state_manager:
+                state_manager.update_workbench_status("completed")
+            return TaskStatus.COMPLETED
+
         logger.exception(f"Error processing response: {str(e)}")
 
         # Add thinking step for error
