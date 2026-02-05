@@ -176,36 +176,58 @@ def find_claude_agent_sdk_binary(
 def _download_windows_claude_binary() -> tuple[str, str] | None:
     """Download Windows claude.exe from PyPI wheel.
 
+    Uses PyPI JSON API to find the correct wheel URL dynamically.
+
     Returns:
         Tuple of (source_path, dest_dir) for PyInstaller --add-binary,
         or None if failed.
     """
+    import json as json_module
     import tempfile
     import urllib.request
     import zipfile
 
-    # Get SDK version from installed package or default to latest
+    # Get SDK version from installed package
     try:
         import claude_agent_sdk
 
-        sdk_version = getattr(claude_agent_sdk, "__version__", "0.1.26")
+        sdk_version = getattr(claude_agent_sdk, "__version__", None)
     except ImportError:
-        sdk_version = "0.1.26"
-
-    wheel_url = f"https://files.pythonhosted.org/packages/57/c7/9b3ddc3bc1c70b7372a6ee0a3de5627662e126946ad0f3d5a6a0d551941a/claude_agent_sdk-{sdk_version}-py3-none-win_amd64.whl"
+        sdk_version = None
 
     print(
-        f"Downloading Windows Claude CLI binary from PyPI (sdk version {sdk_version})..."
+        f"Looking for Windows Claude CLI binary (sdk version: {sdk_version or 'latest'})..."
     )
 
     try:
+        # Query PyPI API for package info
+        pypi_url = "https://pypi.org/pypi/claude-agent-sdk/json"
+        with urllib.request.urlopen(pypi_url, timeout=30) as response:
+            pypi_data = json_module.loads(response.read().decode())
+
+        # Find Windows wheel URL
+        version = sdk_version or pypi_data["info"]["version"]
+        releases = pypi_data["releases"].get(version, [])
+
+        wheel_url = None
+        for release in releases:
+            filename = release.get("filename", "")
+            if "win_amd64" in filename and filename.endswith(".whl"):
+                wheel_url = release["url"]
+                break
+
+        if not wheel_url:
+            print(f"Error: No Windows wheel found for version {version}")
+            return None
+
+        print(f"Downloading from: {wheel_url}")
+
         # Create temp directory for extraction
         temp_dir = Path(tempfile.mkdtemp(prefix="claude_sdk_"))
         wheel_path = temp_dir / "claude_agent_sdk.whl"
 
         # Download wheel
         urllib.request.urlretrieve(wheel_url, wheel_path)
-        print(f"Downloaded wheel to {wheel_path}")
 
         # Extract claude.exe from wheel
         with zipfile.ZipFile(wheel_path, "r") as zf:

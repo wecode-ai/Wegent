@@ -14,6 +14,7 @@ import random
 import re
 import string
 import subprocess
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -180,8 +181,6 @@ class ClaudeCodeAgent(Agent):
         Windows cmd has ~8191 char limit, causing WinError 206 when exceeded.
         This writes mcp_servers and system_prompt to files instead.
         """
-        import sys
-
         if sys.platform != "win32":
             return
 
@@ -1340,38 +1339,8 @@ class ClaudeCodeAgent(Agent):
         else:
             self.client = ClaudeSDKClient()
 
-        # Connect the client with detailed error logging for Windows debugging
-        try:
-            await self.client.connect()
-        except Exception as e:
-            # Log detailed error info for debugging Windows asyncio + subprocess issues
-            import sys
-            import traceback
-
-            logger.error(
-                f"Failed to connect Claude SDK client: {type(e).__name__}: {e}"
-            )
-            logger.error(f"Python version: {sys.version}")
-            logger.error(f"Platform: {sys.platform}")
-            logger.error(f"Full traceback:\n{traceback.format_exc()}")
-
-            # Try to get more info about the bundled CLI
-            try:
-                from pathlib import Path
-
-                import claude_agent_sdk
-
-                sdk_path = Path(claude_agent_sdk.__file__).parent
-                bundled_dir = sdk_path / "_bundled"
-                logger.error(f"SDK path: {sdk_path}")
-                logger.error(f"Bundled dir exists: {bundled_dir.exists()}")
-                if bundled_dir.exists():
-                    for f in bundled_dir.iterdir():
-                        logger.error(f"  Bundled file: {f} (size: {f.stat().st_size})")
-            except Exception as debug_e:
-                logger.error(f"Debug info collection failed: {debug_e}")
-
-            raise
+        # Connect the client
+        await self.client.connect()
 
         # Store client connection for reuse
         self._clients[self.session_id] = self.client
