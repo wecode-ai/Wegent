@@ -98,7 +98,7 @@ class DeviceService:
         key = DeviceService.generate_online_key(user_id, device_id)
         data = await cache_manager.get(key)
         if data:
-            data["last_heartbeat"] = datetime.now().isoformat()
+            data["last_heartbeat"] = datetime.now(timezone.utc).isoformat()
             if running_task_ids is not None:
                 data["running_task_ids"] = running_task_ids
             if executor_version is not None:
@@ -148,7 +148,7 @@ class DeviceService:
         data = await cache_manager.get(key)
         if data:
             data["status"] = status
-            data["last_heartbeat"] = datetime.now().isoformat()
+            data["last_heartbeat"] = datetime.now(timezone.utc).isoformat()
             result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
             logger.debug(
                 f"[DeviceService] update_device_status_in_redis: key={key}, status={status}"
@@ -424,7 +424,7 @@ class DeviceService:
             device_json = device_kind.json.copy()
             device_json["spec"]["displayName"] = name
             device_kind.json = device_json
-            device_kind.updated_at = datetime.now()
+            device_kind.updated_at = datetime.now(timezone.utc)
             device_kind.is_active = True  # Reactivate if was soft-deleted
             db.add(device_kind)
             logger.info(f"Updated device CRD: user_id={user_id}, device_id={device_id}")

@@ -193,7 +193,7 @@ function SharedTaskContent() {
     return {
       type: 'ai',
       content,
-      timestamp: new Date(subtask.created_at).getTime(),
+      timestamp: parseUTCDate(subtask.created_at)?.getTime() || Date.now(),
       botName: 'AI Assistant',
       subtaskStatus: subtask.status,
       subtaskId: subtask.id,

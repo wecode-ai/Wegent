@@ -50,7 +50,8 @@ function ConversationMessage({
     ? subtask.prompt || ''
     : (typeof rawValue === 'string' ? rawValue : '') || (subtask.result?.message as string) || ''
   // Parse timestamp - backend returns UTC time with timezone suffix
-  const timestamp = subtask.created_at ? parseUTCDate(subtask.created_at) : null
+  const parsedDate = subtask.created_at ? parseUTCDate(subtask.created_at) : null
+  const timestamp = parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : null
 
   return (
     <div className={cn('flex gap-3', isUser ? 'flex-row-reverse' : 'flex-row')}>

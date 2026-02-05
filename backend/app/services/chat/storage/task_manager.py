@@ -528,11 +528,11 @@ def update_task_timestamp(db: Session, task: TaskResource) -> None:
     """
     from sqlalchemy.orm.attributes import flag_modified
 
-    task.updated_at = datetime.now()
+    task.updated_at = datetime.now(timezone.utc)
     # Also update the JSON status.updatedAt for consistency
     task_crd = Task.model_validate(task.json)
     if task_crd.status:
-        task_crd.status.updatedAt = datetime.now()
+        task_crd.status.updatedAt = datetime.now(timezone.utc).isoformat()
         task.json = task_crd.model_dump(mode="json")
         flag_modified(task, "json")
 

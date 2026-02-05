@@ -143,7 +143,7 @@ export default function SearchDialog({
   // Format time ago
   const formatTimeAgo = (dateString: string) => {
     const date = parseUTCDate(dateString)
-    if (!date) return 'just now'
+    if (!date || Number.isNaN(date.getTime())) return 'just now'
     const now = new Date()
     const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000)
 

@@ -316,11 +316,15 @@ export function DocumentDetailDialog({
                     <span>{document.file_extension.toUpperCase()}</span>
                     <span>•</span>
                     <span>
-                      {parseUTCDate(document.created_at)?.toLocaleDateString(getCurrentLanguage(), {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                      }) || '-'}
+                      {(() => {
+                        const date = parseUTCDate(document.created_at)
+                        if (!date || Number.isNaN(date.getTime())) return '-'
+                        return date.toLocaleDateString(getCurrentLanguage(), {
+                          year: 'numeric',
+                          month: '2-digit',
+                          day: '2-digit',
+                        })
+                      })()}
                     </span>
                   </DialogDescription>
                 </div>

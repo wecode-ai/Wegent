@@ -157,7 +157,7 @@ class TaskOperationsMixin:
         )
         if task_shell_source != "chat_shell":
             if (
-                datetime.now() - existing_task.updated_at
+                datetime.now(timezone.utc) - existing_task.updated_at
             ).total_seconds() > expire_hours * 3600:
                 raise HTTPException(
                     status_code=400,
@@ -192,7 +192,7 @@ class TaskOperationsMixin:
             task_crd.status.status = "PENDING"
             task_crd.status.progress = 0
         existing_task.json = task_crd.model_dump(mode="json", exclude_none=True)
-        existing_task.updated_at = datetime.now()
+        existing_task.updated_at = datetime.now(timezone.utc)
 
         return existing_task, team
 
@@ -399,16 +399,16 @@ class TaskOperationsMixin:
 
         # Update timestamps
         if task_crd.status:
-            task_crd.status.updatedAt = datetime.now()
+            task_crd.status.updatedAt = datetime.now(timezone.utc).isoformat()
             if "status" in update_data and update_data["status"] in [
                 "COMPLETED",
                 "FAILED",
                 "CANCELLED",
             ]:
-                task_crd.status.completedAt = datetime.now()
+                task_crd.status.completedAt = datetime.now(timezone.utc).isoformat()
 
         task.json = task_crd.model_dump(mode="json", exclude_none=True)
-        task.updated_at = datetime.now()
+        task.updated_at = datetime.now(timezone.utc)
         flag_modified(task, "json")
 
         db.commit()
@@ -549,7 +549,7 @@ class TaskOperationsMixin:
             {
                 Subtask.executor_deleted_at: True,
                 Subtask.status: SubtaskStatus.DELETE,
-                Subtask.updated_at: datetime.now(),
+                Subtask.updated_at: datetime.now(timezone.utc),
             }
         )
 
@@ -557,9 +557,9 @@ class TaskOperationsMixin:
         task_crd = Task.model_validate(task.json)
         if task_crd.status:
             task_crd.status.status = "DELETE"
-            task_crd.status.updatedAt = datetime.now()
+            task_crd.status.updatedAt = datetime.now(timezone.utc).isoformat()
         task.json = task_crd.model_dump(mode="json", exclude_none=True)
-        task.updated_at = datetime.now()
+        task.updated_at = datetime.now(timezone.utc)
         task.is_active = False
         flag_modified(task, "json")
 
@@ -604,7 +604,7 @@ class TaskOperationsMixin:
         # User is a member, not owner - handle as "leave group chat"
         logger.info(f"User {user_id} leaving group chat task {task_id}")
         task_member.status = MemberStatus.REMOVED
-        task_member.removed_at = datetime.now()
+        task_member.removed_at = datetime.now(timezone.utc)
         db.commit()
         return None
 
@@ -752,8 +752,8 @@ class TaskOperationsMixin:
 
             running_subtask.status = SubtaskStatus.COMPLETED
             running_subtask.progress = 100
-            running_subtask.completed_at = datetime.now()
-            running_subtask.updated_at = datetime.now()
+            running_subtask.completed_at = datetime.now(timezone.utc)
+            running_subtask.updated_at = datetime.now(timezone.utc)
             running_subtask.error_message = ""
             db.commit()
 
