@@ -1457,6 +1457,7 @@ async def _stream_deep_research(
     dr_model_config = {
         "api_key": model_config.get("api_key", ""),
         "base_url": gemini_base_url,
+        "default_headers": model_config.get("default_headers", {}),
     }
 
     async def fetch_thought_summaries(

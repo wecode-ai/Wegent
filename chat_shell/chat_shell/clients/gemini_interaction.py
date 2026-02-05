@@ -40,6 +40,7 @@ class GeminiInteractionClient:
         base_url: str,
         api_key: str,
         timeout: float = 30.0,
+        default_headers: dict[str, str] | None = None,
     ):
         """Initialize the client.
 
@@ -47,17 +48,22 @@ class GeminiInteractionClient:
             base_url: Base URL for the Gemini Interaction API
             api_key: API key for authentication
             timeout: Request timeout in seconds
+            default_headers: Optional custom headers for authentication
         """
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+        self.default_headers = default_headers or {}
 
     def _get_headers(self) -> dict[str, str]:
         """Get request headers with authentication."""
-        return {
+        headers = {
             "Content-Type": "application/json",
-            "x-goog-api-key": self.api_key,
+            **self.default_headers,
         }
+        if self.api_key:
+            headers["x-goog-api-key"] = self.api_key
+        return headers
 
     async def create_interaction(
         self,
