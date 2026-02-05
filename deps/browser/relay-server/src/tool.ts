@@ -399,7 +399,7 @@ async function tryEnsureConnected(params: BrowserToolParams): Promise<{
   }
 
   // Wait for extension to attach
-  const connected = await waitForConnection(8000);
+  const connected = await waitForConnection(3000);
 
   if (connected) {
     return { connected: true };
