@@ -5,10 +5,10 @@
 """Unify sharing tables: migrate data and drop legacy tables.
 
 This migration:
-1. Migrates data from shared_teams to resource_members
-2. Migrates data from shared_tasks to resource_members
-3. Migrates data from task_members to resource_members
-4. Drops the legacy tables (shared_teams, shared_tasks, task_members)
+1. Migrates data from shared_teams to resource_members (if table exists)
+2. Migrates data from shared_tasks to resource_members (if table exists)
+3. Migrates data from task_members to resource_members (if table exists)
+4. Drops the legacy tables (shared_teams, shared_tasks, task_members) if they exist
 5. Adds user_id foreign key constraint to resource_members
 
 Revision ID: f1e2d3c4b5a6
@@ -33,131 +33,149 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def table_exists(conn, table_name: str) -> bool:
+    """Check if a table exists in the current database."""
+    result = conn.execute(sa.text("""
+        SELECT COUNT(*)
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = :table_name
+    """), {"table_name": table_name})
+    return result.scalar() > 0
+
+
 def upgrade() -> None:
     """Migrate data from legacy tables to resource_members and drop legacy tables."""
+    conn = op.get_bind()
 
-    # 1. Migrate shared_teams data to resource_members
-    # Map: is_active=true -> approved, is_active=false -> rejected
-    op.execute("""
-    INSERT INTO resource_members (
-        resource_type,
-        resource_id,
-        user_id,
-        permission_level,
-        status,
-        invited_by_user_id,
-        share_link_id,
-        reviewed_by_user_id,
-        reviewed_at,
-        copied_resource_id,
-        requested_at,
-        created_at,
-        updated_at
-    )
-    SELECT
-        'Team' as resource_type,
-        team_id as resource_id,
-        user_id,
-        'manage' as permission_level,
-        CASE WHEN is_active = 1 THEN 'approved' ELSE 'rejected' END as status,
-        COALESCE(original_user_id, 0) as invited_by_user_id,
-        0 as share_link_id,
-        0 as reviewed_by_user_id,
-        '1970-01-01 00:00:00' as reviewed_at,
-        0 as copied_resource_id,
-        created_at as requested_at,
-        created_at,
-        updated_at
-    FROM shared_teams st
-    WHERE NOT EXISTS (
-        SELECT 1 FROM resource_members rm
-        WHERE rm.resource_type = 'Team'
-        AND rm.resource_id = st.team_id
-        AND rm.user_id = st.user_id
-    )
-    """)
+    # 1. Migrate shared_teams data to resource_members (if table exists)
+    if table_exists(conn, 'shared_teams'):
+        op.execute("""
+        INSERT INTO resource_members (
+            resource_type,
+            resource_id,
+            user_id,
+            permission_level,
+            status,
+            invited_by_user_id,
+            share_link_id,
+            reviewed_by_user_id,
+            reviewed_at,
+            copied_resource_id,
+            requested_at,
+            created_at,
+            updated_at
+        )
+        SELECT
+            'Team' as resource_type,
+            team_id as resource_id,
+            user_id,
+            'manage' as permission_level,
+            CASE WHEN is_active = 1 THEN 'approved' ELSE 'rejected' END as status,
+            COALESCE(original_user_id, 0) as invited_by_user_id,
+            0 as share_link_id,
+            0 as reviewed_by_user_id,
+            '1970-01-01 00:00:00' as reviewed_at,
+            0 as copied_resource_id,
+            created_at as requested_at,
+            created_at,
+            updated_at
+        FROM shared_teams st
+        WHERE NOT EXISTS (
+            SELECT 1 FROM resource_members rm
+            WHERE rm.resource_type = 'Team'
+            AND rm.resource_id = st.team_id
+            AND rm.user_id = st.user_id
+        )
+        """)
+        # Drop table after migration
+        op.drop_table('shared_teams')
 
-    # 2. Migrate shared_tasks data to resource_members
-    # Map: is_active=true -> approved, is_active=false -> rejected
-    op.execute("""
-    INSERT INTO resource_members (
-        resource_type,
-        resource_id,
-        user_id,
-        permission_level,
-        status,
-        invited_by_user_id,
-        share_link_id,
-        reviewed_by_user_id,
-        reviewed_at,
-        copied_resource_id,
-        requested_at,
-        created_at,
-        updated_at
-    )
-    SELECT
-        'Task' as resource_type,
-        task_id as resource_id,
-        user_id,
-        'manage' as permission_level,
-        CASE WHEN is_active = 1 THEN 'approved' ELSE 'rejected' END as status,
-        COALESCE(original_user_id, 0) as invited_by_user_id,
-        0 as share_link_id,
-        0 as reviewed_by_user_id,
-        '1970-01-01 00:00:00' as reviewed_at,
-        COALESCE(copied_task_id, 0) as copied_resource_id,
-        created_at as requested_at,
-        created_at,
-        updated_at
-    FROM shared_tasks sts
-    WHERE NOT EXISTS (
-        SELECT 1 FROM resource_members rm
-        WHERE rm.resource_type = 'Task'
-        AND rm.resource_id = sts.task_id
-        AND rm.user_id = sts.user_id
-    )
-    """)
+    # 2. Migrate shared_tasks data to resource_members (if table exists)
+    if table_exists(conn, 'shared_tasks'):
+        op.execute("""
+        INSERT INTO resource_members (
+            resource_type,
+            resource_id,
+            user_id,
+            permission_level,
+            status,
+            invited_by_user_id,
+            share_link_id,
+            reviewed_by_user_id,
+            reviewed_at,
+            copied_resource_id,
+            requested_at,
+            created_at,
+            updated_at
+        )
+        SELECT
+            'Task' as resource_type,
+            task_id as resource_id,
+            user_id,
+            'manage' as permission_level,
+            CASE WHEN is_active = 1 THEN 'approved' ELSE 'rejected' END as status,
+            COALESCE(original_user_id, 0) as invited_by_user_id,
+            0 as share_link_id,
+            0 as reviewed_by_user_id,
+            '1970-01-01 00:00:00' as reviewed_at,
+            COALESCE(copied_task_id, 0) as copied_resource_id,
+            created_at as requested_at,
+            created_at,
+            updated_at
+        FROM shared_tasks sts
+        WHERE NOT EXISTS (
+            SELECT 1 FROM resource_members rm
+            WHERE rm.resource_type = 'Task'
+            AND rm.resource_id = sts.task_id
+            AND rm.user_id = sts.user_id
+        )
+        """)
+        # Drop table after migration
+        op.drop_table('shared_tasks')
 
-    # 3. Migrate task_members data to resource_members
-    # Map: status='ACTIVE' -> approved, status='REMOVED' -> rejected
-    op.execute("""
-    INSERT INTO resource_members (
-        resource_type,
-        resource_id,
-        user_id,
-        permission_level,
-        status,
-        invited_by_user_id,
-        share_link_id,
-        reviewed_by_user_id,
-        reviewed_at,
-        copied_resource_id,
-        requested_at,
-        created_at,
-        updated_at
-    )
-    SELECT
-        'Task' as resource_type,
-        task_id as resource_id,
-        user_id,
-        'manage' as permission_level,
-        CASE WHEN status = 'ACTIVE' THEN 'approved' ELSE 'rejected' END as status,
-        COALESCE(invited_by, 0) as invited_by_user_id,
-        0 as share_link_id,
-        0 as reviewed_by_user_id,
-        '1970-01-01 00:00:00' as reviewed_at,
-        0 as copied_resource_id,
-        joined_at as requested_at,
-        joined_at as created_at,
-        updated_at
-    FROM task_members tm
-    WHERE NOT EXISTS (
-        SELECT 1 FROM resource_members rm
-        WHERE rm.resource_type = 'Task'
-        AND rm.resource_id = tm.task_id
-        AND rm.user_id = tm.user_id
-    )
-    """)
+    # 3. Migrate task_members data to resource_members (if table exists)
+    if table_exists(conn, 'task_members'):
+        op.execute("""
+        INSERT INTO resource_members (
+            resource_type,
+            resource_id,
+            user_id,
+            permission_level,
+            status,
+            invited_by_user_id,
+            share_link_id,
+            reviewed_by_user_id,
+            reviewed_at,
+            copied_resource_id,
+            requested_at,
+            created_at,
+            updated_at
+        )
+        SELECT
+            'Task' as resource_type,
+            task_id as resource_id,
+            user_id,
+            'manage' as permission_level,
+            CASE WHEN status = 'ACTIVE' THEN 'approved' ELSE 'rejected' END as status,
+            COALESCE(invited_by, 0) as invited_by_user_id,
+            0 as share_link_id,
+            0 as reviewed_by_user_id,
+            '1970-01-01 00:00:00' as reviewed_at,
+            0 as copied_resource_id,
+            joined_at as requested_at,
+            joined_at as created_at,
+            updated_at
+        FROM task_members tm
+        WHERE NOT EXISTS (
+            SELECT 1 FROM resource_members rm
+            WHERE rm.resource_type = 'Task'
+            AND rm.resource_id = tm.task_id
+            AND rm.user_id = tm.user_id
+        )
+        """)
+        # Drop table after migration
+        op.drop_table('task_members')
 
     # 4. Update resource_members to ensure all NOT NULL constraints
     # Set default values for any NULL fields
@@ -177,14 +195,20 @@ def upgrade() -> None:
     """)
 
     # 5. Update share_links to ensure NOT NULL constraint on expires_at
-    op.execute("""
-    UPDATE share_links
-    SET expires_at = '9999-12-31 23:59:59'
-    WHERE expires_at IS NULL
-    """)
+    if table_exists(conn, 'share_links'):
+        op.execute("""
+        UPDATE share_links
+        SET expires_at = '9999-12-31 23:59:59'
+        WHERE expires_at IS NULL
+        """)
 
-    # 6. Add foreign key constraint to resource_members.user_id
-    # First check if constraint already exists to avoid duplicates
+        # 6. Update share_links expires_at to NOT NULL with default
+        op.execute("""
+        ALTER TABLE share_links
+        MODIFY COLUMN expires_at DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59'
+        """)
+
+    # 7. Update resource_members columns to NOT NULL with defaults
     op.execute("""
     ALTER TABLE resource_members
     MODIFY COLUMN user_id INT NOT NULL,
@@ -195,9 +219,7 @@ def upgrade() -> None:
     MODIFY COLUMN copied_resource_id INT NOT NULL DEFAULT 0
     """)
 
-    # 7. Add foreign key constraint (only if it doesn't exist)
-    # Using a try-except approach via conditional execution
-    conn = op.get_bind()
+    # 8. Add foreign key constraint (only if it doesn't exist)
     result = conn.execute(sa.text("""
         SELECT COUNT(*)
         FROM information_schema.TABLE_CONSTRAINTS
@@ -212,23 +234,12 @@ def upgrade() -> None:
         FOREIGN KEY (user_id) REFERENCES users(id)
         """)
 
-    # 8. Update share_links expires_at to NOT NULL with default
-    op.execute("""
-    ALTER TABLE share_links
-    MODIFY COLUMN expires_at DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59'
-    """)
-
-    # 9. Drop legacy tables
-    op.drop_table('shared_teams')
-    op.drop_table('shared_tasks')
-    op.drop_table('task_members')
-
 
 def downgrade() -> None:
     """Recreate legacy tables (without restoring data)."""
+    conn = op.get_bind()
 
     # 1. Remove foreign key constraint from resource_members
-    conn = op.get_bind()
     result = conn.execute(sa.text("""
         SELECT COUNT(*)
         FROM information_schema.TABLE_CONSTRAINTS
