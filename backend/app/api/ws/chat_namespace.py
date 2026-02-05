@@ -1210,12 +1210,10 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             from app.core.socketio import get_sio
 
-            sio = get_sio()
-            await sio.emit(
+            sio.emit(
                 "task:close-session",
                 {"task_id": task_id},
                 room=device_room,
-                namespace="/local-executor",
             )
 
             logger.info(
