@@ -38,6 +38,14 @@ TOOL_LIMIT_REACHED_MESSAGE = """[SYSTEM NOTICE] Tool call limit reached. You hav
 
 Please provide your final response to the user based on the information you have gathered so far. Do NOT attempt to call any more tools - simply summarize your findings and provide a helpful response."""
 
+# Truncation detection constants
+# These finish_reason values indicate content was truncated due to max_token limit
+TRUNCATION_REASONS = frozenset({"length", "max_tokens", "MAX_TOKENS"})
+
+# Special marker format for truncation info (similar to reasoning content markers)
+TRUNCATED_MARKER_START = "__TRUNCATED__"
+TRUNCATED_MARKER_END = "__END_TRUNCATED__"
+
 
 class LangGraphAgentBuilder:
     """Builder for LangGraph-based agent workflows using prebuilt ReAct agent."""
@@ -546,6 +554,36 @@ class LangGraphAgentBuilder:
                         # Log empty content case
                         else:
                             logger.debug("[stream_tokens] Empty content in chunk")
+
+                    # Check for truncation due to max_token limit
+                    # Different LLM providers use different field names and values:
+                    # - GPT (OpenAI): finish_reason="length"
+                    # - Claude (Anthropic): stop_reason="max_tokens" (mapped to finish_reason by LangChain)
+                    # - Gemini (Google): finish_reason="MAX_TOKENS"
+                    if chunk and hasattr(chunk, "response_metadata"):
+                        metadata = chunk.response_metadata or {}
+                        finish_reason = metadata.get("finish_reason") or metadata.get(
+                            "stop_reason"
+                        )
+
+                        if finish_reason in TRUNCATION_REASONS:
+                            model_name = event.get("name", "unknown")
+                            logger.warning(
+                                "[stream_tokens] Content truncated due to max_token limit: "
+                                "reason=%s, model=%s",
+                                finish_reason,
+                                model_name,
+                            )
+                            add_span_event(
+                                "content_truncated",
+                                {
+                                    "reason": finish_reason,
+                                    "model_name": model_name,
+                                    "streamed_content": streamed_content,
+                                },
+                            )
+                            # Yield special truncation marker for upstream processing
+                            yield f"{TRUNCATED_MARKER_START}{finish_reason}{TRUNCATED_MARKER_END}"
 
                 elif kind == "on_chat_model_end":
                     # Track LLM request completion
