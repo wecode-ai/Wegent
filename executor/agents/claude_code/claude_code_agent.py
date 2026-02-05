@@ -144,6 +144,47 @@ class ClaudeCodeAgent(Agent):
         except Exception as e:
             logger.warning(f"Failed to save session ID for task {task_id}: {e}")
 
+    def _write_mcp_config_file(self, mcp_servers: dict) -> str | None:
+        """Write MCP servers configuration to a temp file.
+
+        On Windows, command line length is limited to ~8191 characters.
+        Large MCP configs with URLs and headers can exceed this limit,
+        causing WinError 206 (filename or extension too long).
+
+        This method writes the MCP config to a JSON file that the SDK
+        can read instead of passing it via command line arguments.
+
+        Args:
+            mcp_servers: MCP servers configuration dict
+
+        Returns:
+            Path to the config file, or None if failed
+        """
+        try:
+            # Use task workspace directory for the config file
+            cwd = self.options.get("cwd", "")
+            if cwd:
+                config_dir = os.path.join(cwd, ".claude")
+            else:
+                config_dir = os.path.join(
+                    config.get_workspace_root(), str(self.task_id), ".claude"
+                )
+
+            os.makedirs(config_dir, exist_ok=True)
+
+            config_path = os.path.join(config_dir, "mcp_servers.json")
+
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(mcp_servers, f, ensure_ascii=False, indent=2)
+
+            logger.info(
+                f"Written MCP servers config ({len(mcp_servers)} servers) to {config_path}"
+            )
+            return config_path
+        except Exception as e:
+            logger.error(f"Failed to write MCP config file: {e}")
+            return None
+
     @classmethod
     def get_active_task_ids(cls) -> list[int]:
         """Get list of active task IDs.
@@ -1251,6 +1292,21 @@ class ClaudeCodeAgent(Agent):
                 f"Resuming Claude session for task {self.task_id}: {saved_session_id}"
             )
             self.options["resume"] = saved_session_id
+
+        # On Windows, write MCP servers config to a temp file to avoid command line length limit
+        # Windows has a ~8191 character limit, and large MCP configs with URLs/headers exceed this
+        import sys
+
+        if sys.platform == "win32" and "mcp_servers" in self.options:
+            mcp_servers = self.options.get("mcp_servers")
+            if isinstance(mcp_servers, dict) and mcp_servers:
+                mcp_config_path = self._write_mcp_config_file(mcp_servers)
+                if mcp_config_path:
+                    # Replace dict with file path - SDK will read from file
+                    self.options["mcp_servers"] = mcp_config_path
+                    logger.info(
+                        f"Windows: MCP servers config written to file: {mcp_config_path}"
+                    )
 
         # Create client with options
         if self.options:
