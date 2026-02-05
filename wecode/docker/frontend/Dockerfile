@@ -20,12 +20,18 @@ RUN npm run build
 # ---- Build wegent-docs stage ----
 FROM registry.api.weibo.com/wecode/node:22-slim AS docs-builder
 
+# Install git for cloning
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /docs-build
 
 RUN npm config set registry http://registry.npmmirror.com
-COPY wegent-docs/package.json wegent-docs/package-lock.json ./
+
+# Clone wegent-docs repository
+ARG DOCS_REPO_PAT
+RUN git clone --depth 1 https://oauth2:${DOCS_REPO_PAT}@git.intra.weibo.com/weibo_rd/common/wecode/wegent-docs.git .
+
 RUN npm ci
-COPY wegent-docs .
 RUN npm run build
 
 # ---- Production runtime stage ----

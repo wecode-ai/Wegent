@@ -253,8 +253,8 @@ wegent-web:
   variables:
     SERVICE: wegent-web
     DOCKERFILE_PATH: wecode/docker/frontend
+    DOCKER_BUILD_ARGS: "--build-arg DOCS_REPO_PAT=${DOCS_REPO_PAT}"
   script:
-    - git clone --depth 1 https://oauth2:${DOCS_REPO_PAT}@git.intra.weibo.com/weibo_rd/common/wecode/wegent-docs.git wegent-docs
     - build_image
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
