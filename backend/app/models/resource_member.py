@@ -14,13 +14,17 @@ to provide a unified access control system for all shareable resources.
 
 from datetime import datetime
 from enum import Enum as PyEnum
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.sql import func
 
 from app.db.base import Base
 from app.models.share_link import PermissionLevel, ResourceType
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 # Define epoch time for default datetime values
@@ -77,7 +81,9 @@ class ResourceMember(Base):
     )
 
     # Relationship to User
-    user = relationship("User", foreign_keys=[user_id], back_populates="resource_members")
+    user: Mapped["User"] = relationship(
+        "User", foreign_keys=[user_id], back_populates="resource_members"
+    )
 
     # Permission level
     permission_level = Column(
