@@ -119,7 +119,23 @@ export type BrowserClient = {
   close: () => void;
 };
 
-export async function createBrowserClient(): Promise<BrowserClient> {
+function normalizeConnectError(err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  const lower = message.toLowerCase();
+  if (
+    lower.includes("unexpected server response: 409") ||
+    lower.includes("extension_not_connected")
+  ) {
+    return new Error(
+      "Browser extension not connected. Click extension icon on a tab to attach."
+    );
+  }
+  return err instanceof Error ? err : new Error(message);
+}
+
+export async function createBrowserClient(opts?: {
+  skipStatusCheck?: boolean;
+}): Promise<BrowserClient> {
   const port = getRelayPort();
   const token = getAuthToken();
 
@@ -127,13 +143,15 @@ export async function createBrowserClient(): Promise<BrowserClient> {
     throw new Error("No auth token found. Is relay server running?");
   }
 
-  // Check status first
-  const status = await getStatus();
-  if (!status.relayRunning) {
-    throw new Error("Relay server not running. Start it with: cd ~/dev/git/browser/relay-server && npm start");
-  }
-  if (!status.extensionConnected) {
-    throw new Error("Browser extension not connected. Click extension icon on a tab to attach.");
+  if (!opts?.skipStatusCheck) {
+    // Check status first
+    const status = await getStatus();
+    if (!status.relayRunning) {
+      throw new Error("Relay server not running. Start it with: cd ~/dev/git/browser/relay-server && npm start");
+    }
+    if (!status.extensionConnected) {
+      throw new Error("Browser extension not connected. Click extension icon on a tab to attach.");
+    }
   }
 
   const wsUrl = `ws://127.0.0.1:${port}/cdp`;
@@ -145,10 +163,17 @@ export async function createBrowserClient(): Promise<BrowserClient> {
   let nextId = 1;
   const pending = new Map<number, Pending>();
 
-  await new Promise<void>((resolve, reject) => {
-    ws.once("open", () => resolve());
-    ws.once("error", (err) => reject(err));
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      ws.once("open", () => resolve());
+      ws.once("error", (err) => reject(err));
+    });
+  } catch (err) {
+    try {
+      ws.close();
+    } catch {}
+    throw normalizeConnectError(err);
+  }
 
   ws.on("message", (data) => {
     try {
@@ -198,37 +223,57 @@ export async function listTabs(): Promise<
   return status.targets;
 }
 
-export async function openTab(url: string): Promise<{ targetId: string }> {
-  const client = await createBrowserClient();
+export async function openTab(
+  url: string,
+  opts?: { client?: BrowserClient }
+): Promise<{ targetId: string }> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     const result = (await client.send("Target.createTarget", { url })) as { targetId: string };
     return { targetId: result.targetId };
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
-export async function closeTab(targetId: string): Promise<{ success: boolean }> {
-  const client = await createBrowserClient();
+export async function closeTab(
+  targetId: string,
+  opts?: { client?: BrowserClient }
+): Promise<{ success: boolean }> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     const result = (await client.send("Target.closeTarget", { targetId })) as { success: boolean };
     return { success: result.success };
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
-export async function focusTab(targetId: string): Promise<void> {
-  const client = await createBrowserClient();
+export async function focusTab(targetId: string, opts?: { client?: BrowserClient }): Promise<void> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     await client.send("Target.activateTarget", { targetId });
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
-export async function navigate(url: string, _targetId?: string): Promise<{ url: string }> {
-  const client = await createBrowserClient();
+export async function navigate(
+  url: string,
+  _targetId?: string,
+  opts?: { client?: BrowserClient }
+): Promise<{ url: string }> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     await client.send("Page.enable", {});
     await client.send("Page.navigate", { url });
@@ -236,7 +281,9 @@ export async function navigate(url: string, _targetId?: string): Promise<{ url: 
     await new Promise((r) => setTimeout(r, 500));
     return { url };
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
@@ -244,8 +291,10 @@ export async function screenshot(opts?: {
   fullPage?: boolean;
   format?: "png" | "jpeg";
   quality?: number;
+  client?: BrowserClient;
 }): Promise<Buffer> {
-  const client = await createBrowserClient();
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     await client.send("Page.enable", {});
 
@@ -280,15 +329,21 @@ export async function screenshot(opts?: {
     }
     return Buffer.from(result.data, "base64");
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
-export async function evaluate(expression: string): Promise<{
+export async function evaluate(
+  expression: string,
+  opts?: { client?: BrowserClient }
+): Promise<{
   result: unknown;
   error?: string;
 }> {
-  const client = await createBrowserClient();
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     await client.send("Runtime.enable", {});
     const result = (await client.send("Runtime.evaluate", {
@@ -312,7 +367,9 @@ export async function evaluate(expression: string): Promise<{
     }
     return { result: result.result?.value };
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 

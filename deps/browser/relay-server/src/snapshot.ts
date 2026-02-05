@@ -4,7 +4,7 @@
  * Generate AI-readable page structure for element interaction
  */
 
-import { createBrowserClient } from "./browser-client.js";
+import { createBrowserClient, type BrowserClient } from "./browser-client.js";
 
 export type RoleRef = {
   role: string;
@@ -246,8 +246,10 @@ export async function getSnapshot(opts?: {
   compact?: boolean;
   maxDepth?: number;
   limit?: number;
+  client?: BrowserClient;
 }): Promise<SnapshotResult> {
-  const client = await createBrowserClient();
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     const limit = Math.max(1, Math.min(2000, opts?.limit ?? 500));
 
@@ -262,7 +264,9 @@ export async function getSnapshot(opts?: {
       maxDepth: opts?.maxDepth,
     });
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 
@@ -272,8 +276,10 @@ export async function getSnapshot(opts?: {
 export async function getDomSnapshot(opts?: {
   limit?: number;
   maxTextChars?: number;
+  client?: BrowserClient;
 }): Promise<{ nodes: DomNode[] }> {
-  const client = await createBrowserClient();
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
   try {
     const limit = Math.max(1, Math.min(5000, opts?.limit ?? 800));
     const maxText = Math.max(0, Math.min(5000, opts?.maxTextChars ?? 220));
@@ -330,7 +336,9 @@ export async function getDomSnapshot(opts?: {
 
     return { nodes: result?.result?.value?.nodes ?? [] };
   } finally {
-    client.close();
+    if (ownsClient) {
+      client.close();
+    }
   }
 }
 

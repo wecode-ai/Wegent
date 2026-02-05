@@ -5,6 +5,8 @@
  */
 
 import {
+  createBrowserClient,
+  type BrowserClient,
   getStatus,
   listTabs,
   openTab,
@@ -115,7 +117,8 @@ function launchBrowserWithInstructions(url?: string): { launched: boolean; messa
   }
 
   const userDataDir = path.join(getBrowserPrefix(), "chrome-profile");
-  const targetUrl = url || "https://weibo.com";
+  // Use provided URL, or open a blank page if none provided
+  const targetUrl = url || "about:blank";
 
   const args = [
     `--user-data-dir=${userDataDir}`,
@@ -187,6 +190,25 @@ function openExtensionsPage(): { opened: boolean; message: string } {
 4. Select folder: ${extensionPath}
 5. Click extension icon on a tab to attach`,
   };
+}
+
+function openUrlInChrome(url: string): void {
+  // On macOS, use osascript to open URL in Chrome
+  if (os.platform() === "darwin") {
+    try {
+      spawn("osascript", ["-e", `
+        tell application "Google Chrome"
+          activate
+          open location "${url}"
+        end tell
+      `], {
+        detached: true,
+        stdio: "ignore",
+      }).unref();
+    } catch {
+      // Ignore errors
+    }
+  }
 }
 
 async function waitForConnection(maxWaitMs: number = 5000): Promise<boolean> {
@@ -262,6 +284,10 @@ Workflow:
         type: "boolean",
         description: "For screenshot: capture full page",
       },
+      ensure: {
+        type: "boolean",
+        description: "For status: ensure browser profile is launched and try to attach extension",
+      },
       request: {
         type: "object",
         description: "For act: action request object",
@@ -313,6 +339,7 @@ export type BrowserToolParams = {
   interactive?: boolean;
   compact?: boolean;
   fullPage?: boolean;
+  ensure?: boolean;
   request?: ActRequest;
   expression?: string;
 };
@@ -323,75 +350,82 @@ export type BrowserToolResult = {
   data?: unknown;
 };
 
+function isConnectionErrorMessage(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("no auth token found") ||
+    lower.includes("relay server not running") ||
+    lower.includes("browser extension not connected") ||
+    lower.includes("connection not open") ||
+    lower.includes("econnrefused") ||
+    lower.includes("fetch failed") ||
+    lower.includes("socket hang up") ||
+    lower.includes("websocket") ||
+    lower.includes("unexpected server response: 503") ||
+    lower.includes("unexpected server response: 409")
+  );
+}
+
+async function tryEnsureConnected(params: BrowserToolParams): Promise<{
+  connected: boolean;
+  error?: string;
+}> {
+  const status = await getStatus();
+
+  if (!status.relayRunning) {
+    return {
+      connected: false,
+      error: "Relay server not running. Start it with: cdp-relay-server",
+    };
+  }
+
+  if (status.extensionConnected) {
+    return { connected: true };
+  }
+
+  const chromeRunning = isChromeRunningWithProfile();
+  const targetUrl = (params.action === "open" || params.action === "navigate") ? params.url : undefined;
+
+  if (!chromeRunning) {
+    // Chrome not running - launch with user's URL first
+    const launchResult = launchBrowserWithInstructions(targetUrl);
+    if (!launchResult.launched) {
+      return { connected: false, error: launchResult.message };
+    }
+  } else if (targetUrl) {
+    // Chrome is running but extension not connected - open the target page first
+    // Extension may auto-attach to the new tab
+    openUrlInChrome(targetUrl);
+  }
+
+  // Wait for extension to attach
+  const connected = await waitForConnection(8000);
+
+  if (connected) {
+    return { connected: true };
+  }
+
+  // Attach failed - extension probably not installed, now open extensions page
+  const extResult = openExtensionsPage();
+  return {
+    connected: false,
+    error: `Extension not connected. ${extResult.message}`,
+  };
+}
+
 /**
  * Execute browser tool
  */
 export async function executeBrowserTool(params: BrowserToolParams): Promise<BrowserToolResult> {
-  try {
-    // For status action, just return status without auto-launching
-    if (params.action === "status") {
-      const status = await getStatus();
-      return {
-        ok: true,
-        data: {
-          relayRunning: status.relayRunning,
-          extensionConnected: status.extensionConnected,
-          attachedTabs: status.targets.length,
-          targets: status.targets,
-        },
-      };
-    }
-
-    // For all other actions, check if extension is connected
-    const status = await getStatus();
-
-    if (!status.relayRunning) {
-      return {
-        ok: false,
-        error: "Relay server not running. Start it with: cdp-relay-server",
-      };
-    }
-
-    if (!status.extensionConnected) {
-      const chromeRunning = isChromeRunningWithProfile();
-
-      if (chromeRunning) {
-        // Chrome is running but extension not connected
-        // Just open extensions page, don't launch another browser
-        const extResult = openExtensionsPage();
-        return {
-          ok: false,
-          error: `Extension not connected. ${extResult.message}`,
-        };
+  const runAction = async (): Promise<BrowserToolResult> => {
+    const runWithClient = async <T>(fn: (client: BrowserClient) => Promise<T>): Promise<T> => {
+      const client = await createBrowserClient({ skipStatusCheck: true });
+      try {
+        return await fn(client);
+      } finally {
+        client.close();
       }
-
-      // Chrome not running - launch with user's URL if available, otherwise default
-      const targetUrl = (params.action === "open" || params.action === "navigate") ? params.url : undefined;
-      const launchResult = launchBrowserWithInstructions(targetUrl);
-      if (!launchResult.launched) {
-        return { ok: false, error: launchResult.message };
-      }
-
-      // Wait for extension to attach
-      const connected = await waitForConnection(8000);
-
-      if (!connected) {
-        // Attach failed - extension probably not installed, open extensions page
-        const extResult = openExtensionsPage();
-        return {
-          ok: false,
-          error: `Extension not connected. ${extResult.message}`,
-        };
-      }
-
-      // Connected! For open/navigate actions with URL, page is already open
-      if (targetUrl && (params.action === "open" || params.action === "navigate")) {
-        // Already opened the target URL during launch, return success
-        const tabs = await listTabs();
-        const tab = tabs.find(t => t.url.includes(new URL(targetUrl).hostname));
-        return { ok: true, data: { targetId: tab?.targetId, url: targetUrl, launchedWithUrl: true } };
-      }
-    }
+    };
 
     switch (params.action) {
 
@@ -414,10 +448,14 @@ export async function executeBrowserTool(params: BrowserToolParams): Promise<Bro
         );
         if (tempTab) {
           // Reuse temp tab by navigating instead of opening new tab
-          await navigate(params.url, tempTab.targetId);
+          await runWithClient(async (client) => {
+            await navigate(params.url!, tempTab.targetId, { client });
+          });
           return { ok: true, data: { targetId: tempTab.targetId, reused: true } };
         }
-        const result = await openTab(params.url);
+        const result = await runWithClient(async (client) => {
+          return await openTab(params.url!, { client });
+        });
         return { ok: true, data: result };
       }
 
@@ -425,7 +463,9 @@ export async function executeBrowserTool(params: BrowserToolParams): Promise<Bro
         if (!params.targetId) {
           return { ok: false, error: "targetId is required for close action" };
         }
-        const result = await closeTab(params.targetId);
+        const result = await runWithClient(async (client) => {
+          return await closeTab(params.targetId!, { client });
+        });
         return { ok: true, data: result };
       }
 
@@ -433,7 +473,9 @@ export async function executeBrowserTool(params: BrowserToolParams): Promise<Bro
         if (!params.targetId) {
           return { ok: false, error: "targetId is required for focus action" };
         }
-        await focusTab(params.targetId);
+        await runWithClient(async (client) => {
+          await focusTab(params.targetId!, { client });
+        });
         return { ok: true, data: { focused: params.targetId } };
       }
 
@@ -441,14 +483,19 @@ export async function executeBrowserTool(params: BrowserToolParams): Promise<Bro
         if (!params.url) {
           return { ok: false, error: "url is required for navigate action" };
         }
-        const result = await navigate(params.url);
+        const result = await runWithClient(async (client) => {
+          return await navigate(params.url!, undefined, { client });
+        });
         return { ok: true, data: result };
       }
 
       case "snapshot": {
-        const result = await getSnapshot({
-          interactive: params.interactive,
-          compact: params.compact,
+        const result = await runWithClient(async (client) => {
+          return await getSnapshot({
+            interactive: params.interactive,
+            compact: params.compact,
+            client,
+          });
         });
         // Store refs for subsequent actions
         storeRefs(result.refs);
@@ -462,7 +509,9 @@ export async function executeBrowserTool(params: BrowserToolParams): Promise<Bro
       }
 
       case "screenshot": {
-        const buffer = await screenshot({ fullPage: params.fullPage });
+        const buffer = await runWithClient(async (client) => {
+          return await screenshot({ fullPage: params.fullPage, client });
+        });
         // Save to temp file
         const tmpDir = path.join(os.tmpdir(), "browser-skill");
         if (!fs.existsSync(tmpDir)) {
@@ -483,7 +532,9 @@ export async function executeBrowserTool(params: BrowserToolParams): Promise<Bro
         if (!params.request) {
           return { ok: false, error: "request is required for act action" };
         }
-        const result = await executeAction(params.request);
+        const result = await runWithClient(async (client) => {
+          return await executeAction(params.request!, { client });
+        });
         return { ok: result.ok, error: result.error, data: result.ok ? { acted: params.request.kind } : undefined };
       }
 
@@ -491,7 +542,9 @@ export async function executeBrowserTool(params: BrowserToolParams): Promise<Bro
         if (!params.expression) {
           return { ok: false, error: "expression is required for evaluate action" };
         }
-        const result = await evaluate(params.expression);
+        const result = await runWithClient(async (client) => {
+          return await evaluate(params.expression!, { client });
+        });
         return {
           ok: !result.error,
           error: result.error,
@@ -502,10 +555,83 @@ export async function executeBrowserTool(params: BrowserToolParams): Promise<Bro
       default:
         return { ok: false, error: `Unknown action: ${params.action}` };
     }
+  };
+
+  // For status action, just return status without auto-launching
+  if (params.action === "status") {
+    try {
+      let launched = false;
+      let launchMessage: string | undefined;
+      let waitedForAttach = false;
+
+      if (params.ensure) {
+        const ensureUrl = typeof params.url === "string" ? params.url : undefined;
+        const running = isChromeRunningWithProfile();
+        if (!running) {
+          const launchResult = launchBrowserWithInstructions(ensureUrl);
+          launched = launchResult.launched;
+          launchMessage = launchResult.message;
+        } else if (ensureUrl) {
+          openUrlInChrome(ensureUrl);
+        }
+        waitedForAttach = true;
+        await waitForConnection(5000);
+      }
+
+      const status = await getStatus();
+      return {
+        ok: true,
+        data: {
+          relayRunning: status.relayRunning,
+          extensionConnected: status.extensionConnected,
+          attachedTabs: status.targets.length,
+          targets: status.targets,
+          ...(params.ensure
+            ? {
+                ensure: {
+                  requested: true,
+                  launched,
+                  launchMessage,
+                  waitedForAttach,
+                },
+              }
+            : {}),
+        },
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  try {
+    return await runAction();
   } catch (err) {
-    return {
-      ok: false,
-      error: err instanceof Error ? err.message : String(err),
-    };
+    const firstError = err instanceof Error ? err.message : String(err);
+    if (!isConnectionErrorMessage(firstError)) {
+      return {
+        ok: false,
+        error: firstError,
+      };
+    }
+
+    const ensure = await tryEnsureConnected(params);
+    if (!ensure.connected) {
+      return {
+        ok: false,
+        error: ensure.error ?? firstError,
+      };
+    }
+
+    try {
+      return await runAction();
+    } catch (retryErr) {
+      return {
+        ok: false,
+        error: retryErr instanceof Error ? retryErr.message : String(retryErr),
+      };
+    }
   }
 }
