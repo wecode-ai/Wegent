@@ -59,16 +59,16 @@ Congratulations on starting Wegent! Here's what to explore next:
 
 - [Detailed Installation Guide](./installation.md) - Learn about production deployment
 - [Core Concepts](../concepts/core-concepts.md) - Understand Ghost, Bot, Team, and more
-- [Architecture Overview](../concepts/architecture.md) - Learn about Wegent's architecture
+- [Architecture Overview](../developer-guide/architecture.md) - Learn about Wegent's architecture
 
 ### 🎨 Create Custom Agents
 
-- [Agent Settings](../guides/user/agent-settings.md) - Configure agents, bots, prompts, and collaboration modes
+- [Agent Settings](../user-guide/settings/agent-settings.md) - Configure agents, bots, prompts, and collaboration modes
 - [Collaboration Models](../concepts/collaboration-models.md) - Learn about multi-bot collaboration
 
 ### 💻 Development & Extension
 
-- [Development Setup](../guides/developer/setup.md) - Set up local development environment
+- [Development Setup](../developer-guide/setup.md) - Set up local development environment
 
 ---
 

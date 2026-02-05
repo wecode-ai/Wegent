@@ -190,4 +190,4 @@ Here's a typical workflow for adding a new model field:
 
 - [Alembic Documentation](https://alembic.sqlalchemy.org/)
 - [SQLAlchemy Documentation](https://docs.sqlalchemy.org/)
-- [AGENTS.md - Backend Section](../../../../AGENTS.md#backend)
+- [AGENTS.md - Backend Section](../../../AGENTS.md#backend)

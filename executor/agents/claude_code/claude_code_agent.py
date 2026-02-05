@@ -1965,12 +1965,13 @@ class ClaudeCodeAgent(Agent):
 
             # Get team namespace for skill lookup
             team_namespace = self.task_data.get("team_namespace", "default")
-
             # Create downloader and deploy skills
+            # Pass task_id for task-based authorization (enables shared team scenarios)
             downloader = SkillDownloader(
                 auth_token=auth_token,
                 team_namespace=team_namespace,
                 skills_dir=skills_dir,
+                task_id=self.task_id,
             )
 
             # Get deployment options from strategy

@@ -81,6 +81,6 @@ sequenceDiagram
 
 ## 参考资料
 
-- [架构设计](../../concepts/architecture.md)
+- [架构设计](../../developer-guide/architecture.md)
 - [核心概念](../../concepts/core-concepts.md)
 - [YAML 规范](../../reference/yaml-specification.md)

@@ -211,6 +211,9 @@ def _initialize_sandbox_claude(auth_token: str, task_id: str) -> None:
     downloader = SkillDownloader(
         auth_token=auth_token,
         team_namespace=skills_info.team_namespace,
+        task_id=(
+            int(task_id) if task_id else None
+        ),  # Enable task-based authorization for shared teams
     )
     result = downloader.download_and_deploy(all_skills)
     logger.info(
