@@ -33,6 +33,13 @@ You now have access to Wegent Knowledge Base management tools.
   - knowledge_base_id: ID of the knowledge base
   - status: "enabled", "disabled", or "all" (default)
 
+- **create_knowledge_base**: Create a new knowledge base
+  - name: Knowledge base display name
+  - description: Optional description
+  - namespace: "default" (personal) or a group namespace (requires Maintainer+)
+  - kb_type: "notebook" (default) or "classic"
+  - summary_enabled: Enable automatic summary generation (default: false)
+
 - **create_document**: Create a new document in a knowledge base
   - knowledge_base_id: Target knowledge base ID
   - name: Document name
@@ -41,6 +48,9 @@ You now have access to Wegent Knowledge Base management tools.
   - file_base64: Base64 encoded file when source_type="file"
   - file_extension: File extension when source_type="file"
   - url: URL to fetch when source_type="web"
+
+- **delete_document**: Delete a document from a knowledge base
+  - document_id: Document ID to delete
 
 - **update_document**: Update a document's content
   - document_id: Document ID to update
@@ -68,7 +78,17 @@ You now have access to Wegent Knowledge Base management tools.
    list_documents(knowledge_base_id=123)
    ```
 
-3. Create a new text document:
+3. Create a new knowledge base:
+   ```
+   create_knowledge_base(
+     name="My KB",
+     description="My personal notes",
+     namespace="default",
+     kb_type="notebook"
+   )
+   ```
+
+4. Create a new text document:
    ```
    create_document(
      knowledge_base_id=123,
@@ -78,11 +98,16 @@ You now have access to Wegent Knowledge Base management tools.
    )
    ```
 
-4. Append content to an existing document:
+5. Append content to an existing document:
    ```
    update_document(
      document_id=456,
      content="Additional notes...",
      mode="append"
    )
+   ```
+
+6. Delete a document:
+   ```
+   delete_document(document_id=456)
    ```

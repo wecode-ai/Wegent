@@ -161,6 +161,45 @@ def list_documents(
 
 
 @knowledge_mcp_server.tool()
+def create_knowledge_base(
+    name: str,
+    description: str = "",
+    namespace: str = "default",
+    kb_type: str = "notebook",
+    summary_enabled: bool = False,
+) -> str:
+    """Create a new knowledge base.
+
+    Args:
+        name: Knowledge base display name
+        description: Optional description
+        namespace: "default" for personal knowledge base, or group namespace
+        kb_type: Knowledge base type, e.g. "notebook" or "classic"
+        summary_enabled: Enable automatic summary generation
+
+    Returns:
+        JSON string with created knowledge base info
+    """
+    from app.mcp_server.tools.knowledge import (
+        create_knowledge_base as impl_create_knowledge_base,
+    )
+
+    token_info = _get_token_info_from_context()
+    if not token_info:
+        return json.dumps({"error": "Authentication required"})
+
+    result = impl_create_knowledge_base(
+        token_info=token_info,
+        name=name,
+        description=description if description else None,
+        namespace=namespace,
+        kb_type=kb_type,
+        summary_enabled=summary_enabled,
+    )
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+@knowledge_mcp_server.tool()
 def create_document(
     knowledge_base_id: int,
     name: str,
@@ -199,6 +238,31 @@ def create_document(
         file_base64=file_base64 if file_base64 else None,
         file_extension=file_extension if file_extension else None,
         url=url if url else None,
+    )
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+@knowledge_mcp_server.tool()
+def delete_document(
+    document_id: int,
+) -> str:
+    """Delete a document from a knowledge base.
+
+    Args:
+        document_id: Document ID to delete
+
+    Returns:
+        JSON string with deletion result
+    """
+    from app.mcp_server.tools.knowledge import delete_document as impl_delete_document
+
+    token_info = _get_token_info_from_context()
+    if not token_info:
+        return json.dumps({"error": "Authentication required"})
+
+    result = impl_delete_document(
+        token_info=token_info,
+        document_id=document_id,
     )
     return json.dumps(result, ensure_ascii=False, default=str)
 
