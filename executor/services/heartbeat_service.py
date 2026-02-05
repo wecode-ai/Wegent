@@ -77,9 +77,7 @@ class HeartbeatService:
         """
         # Get heartbeat ID from env/file, fall back to legacy SANDBOX_ID
         self._heartbeat_id = (
-            heartbeat_id
-            or get_env("HEARTBEAT_ID")
-            or get_env("SANDBOX_ID")
+            heartbeat_id or get_env("HEARTBEAT_ID") or get_env("SANDBOX_ID")
         )
 
         # Get heartbeat type from parameter or env/file config
@@ -270,7 +268,9 @@ class HeartbeatService:
         if new_heartbeat_type != self._heartbeat_type:
             self._heartbeat_type = new_heartbeat_type
             self._heartbeat_url = self._build_heartbeat_url()
-            logger.info(f"[HeartbeatService] Config updated: type={self._heartbeat_type}")
+            logger.info(
+                f"[HeartbeatService] Config updated: type={self._heartbeat_type}"
+            )
 
     def _send_heartbeat(self) -> bool:
         """Send a single heartbeat to executor_manager.
