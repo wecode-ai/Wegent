@@ -111,7 +111,7 @@ def upgrade() -> None:
         )
         SELECT
             'Task' as resource_type,
-            task_id as resource_id,
+            original_task_id as resource_id,
             user_id,
             'manage' as permission_level,
             CASE WHEN is_active = 1 THEN 'approved' ELSE 'rejected' END as status,
@@ -127,7 +127,7 @@ def upgrade() -> None:
         WHERE NOT EXISTS (
             SELECT 1 FROM resource_members rm
             WHERE rm.resource_type = 'Task'
-            AND rm.resource_id = sts.task_id
+            AND rm.resource_id = sts.original_task_id
             AND rm.user_id = sts.user_id
         )
         """)
@@ -274,21 +274,22 @@ def downgrade() -> None:
     # 3. Recreate shared_tasks table
     op.execute("""
     CREATE TABLE IF NOT EXISTS shared_tasks (
-        id INT NOT NULL AUTO_INCREMENT,
-        user_id INT NOT NULL,
-        original_user_id INT NOT NULL,
-        task_id INT NOT NULL,
-        copied_task_id INT,
-        is_active BOOLEAN DEFAULT TRUE,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        id INT NOT NULL AUTO_INCREMENT COMMENT 'Primary key ID',
+        user_id INT NOT NULL DEFAULT 0 COMMENT 'Current user ID',
+        original_user_id INT NOT NULL DEFAULT 0 COMMENT 'Original task owner user ID',
+        original_task_id INT NOT NULL DEFAULT 0 COMMENT 'Original task ID',
+        copied_task_id INT NOT NULL DEFAULT 0 COMMENT 'Copied task ID',
+        is_active BOOLEAN NOT NULL DEFAULT TRUE COMMENT 'Is active',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Created at',
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Updated at',
         PRIMARY KEY (id),
-        KEY ix_shared_tasks_id (id),
-        KEY ix_shared_tasks_user_id (user_id),
-        KEY ix_shared_tasks_original_user_id (original_user_id),
-        KEY ix_shared_tasks_task_id (task_id),
-        KEY ix_shared_tasks_copied_task_id (copied_task_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        KEY idx_shared_tasks_id (id),
+        KEY idx_shared_tasks_user_id (user_id),
+        KEY idx_shared_tasks_original_user_id (original_user_id),
+        KEY idx_shared_tasks_original_task_id (original_task_id),
+        KEY idx_shared_tasks_copied_task_id (copied_task_id),
+        UNIQUE KEY uniq_user_original_task (user_id, original_task_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
     # 4. Recreate task_members table
