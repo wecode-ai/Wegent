@@ -165,9 +165,14 @@ def list_skills(
     exact_match: bool = Query(
         False,
         description="If true, only search in the specified namespace (for upload check). "
-        "If false, search with fallback: personal -> group -> public (for usage).",
+        "If false, search with fallback: personal -> group -> task_owner -> public (for usage).",
     ),
-    current_user: User = Depends(security.get_current_user),
+    task_id: int = Query(
+        None,
+        description="Task ID for task-based authorization. "
+        "If provided, also searches skills owned by the task owner.",
+    ),
+    current_user: User = Depends(security.get_current_user_flexible_for_executor),
     db: Session = Depends(get_db),
 ):
     """
@@ -180,7 +185,14 @@ def list_skills(
     - exact_match=false (default): Search with fallback order (used for skill usage):
       1. User's skill in default namespace (personal)
       2. Group-level skill in specified namespace (any user in that group, if namespace != 'default')
-      3. Public skill (user_id=0)
+      3. Task owner's skill (if task_id provided and user is task member)
+      4. Public skill (user_id=0)
+
+    Task-based authorization:
+    When task_id is provided, the API will also search for skills owned by the
+    task owner. This enables shared team scenarios where user B executes a task
+    using user A's team, and needs to find user A's private skills.
+    Authorization is verified by checking if current_user is a member of the task.
     """
     if name:
         if exact_match:
@@ -203,7 +215,32 @@ def list_skills(
                 db=db, name=name, namespace=namespace
             )
 
-        # 3. Public skill (user_id=0)
+        # 3. Task owner's skill (if task_id provided)
+        # This enables shared team scenarios where executor queries skills
+        # owned by the original team owner
+        if not skill and task_id:
+            from app.models.task import TaskResource
+            from app.services.task_member_service import task_member_service
+
+            # Verify current user is a member of the task (owner or group member)
+            if task_member_service.is_member(db, task_id, current_user.id):
+                # Get task to find the owner
+                task = (
+                    db.query(TaskResource)
+                    .filter(
+                        TaskResource.id == task_id,
+                        TaskResource.kind == "Task",
+                        TaskResource.is_active == True,
+                    )
+                    .first()
+                )
+                if task and task.user_id != current_user.id:
+                    # Search skill owned by task owner
+                    skill = skill_kinds_service.get_skill_by_name(
+                        db=db, name=name, namespace="default", user_id=task.user_id
+                    )
+
+        # 4. Public skill (user_id=0)
         if not skill:
             skill = skill_kinds_service.get_skill_by_name(
                 db=db, name=name, namespace="default", user_id=0
