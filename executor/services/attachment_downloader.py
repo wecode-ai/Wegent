@@ -11,6 +11,7 @@ similar to the skill download pattern.
 
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
@@ -22,6 +23,24 @@ logger = logging.getLogger(__name__)
 
 # Re-export get_api_base_url for backward compatibility
 from executor.services.api_client import get_api_base_url  # noqa: E402
+
+
+def get_attachments_subdir_name(task_id: str) -> str:
+    """Get the attachments subdirectory name for a task.
+
+    On Windows, colons are not allowed in directory names,
+    so we use underscore as separator instead.
+
+    Args:
+        task_id: The task ID
+
+    Returns:
+        Directory name like '{task_id}_executor_attachments' (Windows)
+        or '{task_id}:executor:attachments' (Unix)
+    """
+    if sys.platform == "win32":
+        return f"{task_id}_executor_attachments"
+    return f"{task_id}:executor:attachments"
 
 
 @dataclass
@@ -67,11 +86,12 @@ class AttachmentDownloader:
         Get attachments directory path.
 
         Returns:
-            Path in format: {workspace}/{task_id}:executor:attachments/{subtask_id}/
+            Path in format: {workspace}/{task_id}_executor_attachments/{subtask_id}/ (Windows)
+            or {workspace}/{task_id}:executor:attachments/{subtask_id}/ (Unix)
         """
         return os.path.join(
             self.workspace,
-            f"{self.task_id}:executor:attachments",
+            get_attachments_subdir_name(self.task_id),
             str(self.subtask_id),
         )
 
