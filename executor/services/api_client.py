@@ -37,6 +37,7 @@ from typing import List, Optional
 import requests
 
 from executor.config import config
+from executor.config.env_reader import get_task_api_domain
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,11 @@ def get_api_base_url() -> str:
     """
     if config.EXECUTOR_MODE == "local":
         return config.WEGENT_BACKEND_URL.rstrip("/")
-    return os.getenv("TASK_API_DOMAIN", "http://wegent-backend:8000").rstrip("/")
+
+    task_api_domain = get_task_api_domain()
+    if task_api_domain:
+        return task_api_domain.rstrip("/")
+    return "http://wegent-backend:8000"
 
 
 class ApiClient:
