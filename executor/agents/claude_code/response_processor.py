@@ -97,7 +97,11 @@ async def process_response(
 
                 if isinstance(msg, SystemMessage):
                     # Handle SystemMessage
-                    _handle_system_message(msg, state_manager, thinking_manager)
+                    terminal_status = _handle_system_message(
+                        msg, state_manager, thinking_manager
+                    )
+                    if terminal_status:
+                        return terminal_status
 
                 elif isinstance(msg, UserMessage):
                     # Handle UserMessage and check for silent_exit in tool results
@@ -193,7 +197,9 @@ async def process_response(
         return TaskStatus.FAILED
 
 
-def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=None):
+def _handle_system_message(
+    msg: SystemMessage, state_manager, thinking_manager=None
+) -> Optional[TaskStatus]:
     """处理系统消息，提取详细信息"""
 
     # 构建系统消息的详细信息，符合目标格式
@@ -220,6 +226,39 @@ def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=N
             use_i18n_keys=True,
             details=masked_system_detail,
         )
+
+    if msg.subtype == "error_during_execution":
+        error_text = (
+            msg.data.get("message")
+            or msg.data.get("error")
+            or msg.data.get("detail")
+            or json.dumps(masked_system_detail, ensure_ascii=False)
+        )
+
+        logger.error(f"SystemMessage error_during_execution received: {error_text}")
+
+        if state_manager:
+            state_manager.update_workbench_status("failed")
+            state_manager.report_progress(
+                progress=100,
+                status=TaskStatus.FAILED.value,
+                message=str(error_text),
+                extra_result={
+                    "error_subtype": msg.subtype,
+                    "error": error_text,
+                },
+            )
+
+        if thinking_manager:
+            thinking_manager.add_thinking_step_by_key(
+                title_key="thinking.task_execution_failed",
+                report_immediately=False,
+                details={"subtype": msg.subtype, "error": error_text},
+            )
+
+        return TaskStatus.FAILED
+
+    return None
 
 
 def _handle_user_message(msg: UserMessage, thinking_manager=None) -> tuple[bool, str]:
@@ -669,7 +708,9 @@ async def _process_result_message(
             )
         return TaskStatus.COMPLETED
 
-    if msg.is_error:
+    is_error = msg.is_error or msg.subtype == "error_during_execution"
+
+    if is_error:
         logger.error(f"Received error from Claude SDK: {msg.result}")
         result_str = str(msg.result) if msg.result is not None else "No result"
 

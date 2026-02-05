@@ -51,6 +51,8 @@ from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = setup_logger("claude_code_agent")
 
+INTERRUPT_TIMEOUT_SECONDS = 5.0
+
 
 def _extract_claude_agent_attributes(self, *args, **kwargs) -> Dict[str, Any]:
     """Extract trace attributes from ClaudeCodeAgent instance."""
@@ -1085,10 +1087,13 @@ class ClaudeCodeAgent(Agent):
             TaskStatus: Execution status
         """
         try:
-            # Check if task was cancelled before execution
-            if self.task_state_manager.is_cancelled(self.task_id):
-                logger.info(f"Task {self.task_id} was cancelled before execution")
-                return TaskStatus.COMPLETED
+            # Soft-cancel: cancellation should only interrupt the current operation.
+            # If a previous run was cancelled, allow follow-up messages to execute normally.
+            if self.task_state_manager.get_state(self.task_id) == TaskState.CANCELLED:
+                logger.info(
+                    f"Task {self.task_id} was previously cancelled; resetting state to RUNNING for new execution"
+                )
+                self.task_state_manager.set_state(self.task_id, TaskState.RUNNING)
 
             progress = 65
             # Update current progress
@@ -1708,12 +1713,29 @@ class ClaudeCodeAgent(Agent):
         """
         try:
             if self.client is not None:
-                await self.client.interrupt()
-                # Note: No longer send callback here
-                # Callback will be sent asynchronously by background task in main.py
-                logger.info(
-                    f"Successfully sent interrupt to client for session_id: {self.session_id}"
-                )
+                try:
+                    await asyncio.wait_for(
+                        self.client.interrupt(), timeout=INTERRUPT_TIMEOUT_SECONDS
+                    )
+                    # Note: No longer send callback here
+                    # Callback will be sent asynchronously by background task in main.py
+                    logger.info(
+                        f"Successfully sent interrupt to client for session_id: {self.session_id}"
+                    )
+                    return
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"Interrupt timed out after {INTERRUPT_TIMEOUT_SECONDS}s for task_id={self.task_id}, "
+                        f"session_id={self.session_id}; forcing process cleanup"
+                    )
+                except Exception as interrupt_error:
+                    logger.exception(
+                        f"Interrupt failed for task_id={self.task_id}, session_id={self.session_id}: {interrupt_error}. "
+                        "Forcing process cleanup"
+                    )
+
+                await type(self).cleanup_task_clients(self.task_id)
+                self.client = None
         except Exception as e:
             logger.exception(
                 f"Error during async interrupt for session_id {self.session_id}: {str(e)}"
