@@ -52,6 +52,7 @@ from shared.utils.sensitive_data_masker import mask_sensitive_data
 logger = setup_logger("claude_code_agent")
 
 INTERRUPT_TIMEOUT_SECONDS = 5.0
+DISCONNECT_TIMEOUT_SECONDS = 2.0
 
 
 def _extract_claude_agent_attributes(self, *args, **kwargs) -> Dict[str, Any]:
@@ -1388,35 +1389,87 @@ class ClaudeCodeAgent(Agent):
         return TaskStatus.FAILED
 
     @classmethod
+    async def _force_close_client_process(
+        cls, client: ClaudeSDKClient, session_id: str
+    ) -> None:
+        transport = getattr(client, "_transport", None)
+        process = getattr(transport, "_process", None) if transport else None
+        if not process:
+            return
+
+        pid = process.pid if hasattr(process, "pid") else None
+
+        try:
+            process.terminate()
+            try:
+                await asyncio.wait_for(
+                    process.wait(), timeout=DISCONNECT_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await asyncio.wait_for(process.wait(), timeout=1.0)
+
+            logger.info(
+                f"Force-terminated Claude Code process for session_id={session_id}, PID={pid}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to force-terminate process for session_id={session_id}, PID={pid}: {e}"
+            )
+
+    @classmethod
     async def close_client(cls, session_id: str) -> TaskStatus:
         try:
-            if session_id in cls._clients:
-                client = cls._clients[session_id]
-                await client.disconnect()
-                del cls._clients[session_id]
-                logger.info(f"Closed Claude client for session_id: {session_id}")
+            client = cls._clients.get(session_id)
+            if not client:
                 return TaskStatus.SUCCESS
-            return TaskStatus.FAILED
+
+            try:
+                await asyncio.wait_for(
+                    client.disconnect(), timeout=DISCONNECT_TIMEOUT_SECONDS
+                )
+                logger.info(f"Disconnected Claude client for session_id: {session_id}")
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Disconnect timed out after {DISCONNECT_TIMEOUT_SECONDS}s for session_id={session_id}; "
+                    "forcing process termination"
+                )
+                await cls._force_close_client_process(client, session_id)
+            except RuntimeError as e:
+                if "Attempted to exit cancel scope in a different task" in str(e):
+                    logger.warning(
+                        f"Disconnect failed due to cancel-scope mismatch for session_id={session_id}; "
+                        "forcing process termination"
+                    )
+                    await cls._force_close_client_process(client, session_id)
+                else:
+                    raise
+            finally:
+                cls._clients.pop(session_id, None)
+                for internal_key, mapped_session_id in list(
+                    cls._session_id_map.items()
+                ):
+                    if mapped_session_id == session_id:
+                        cls._session_id_map.pop(internal_key, None)
+
+            return TaskStatus.SUCCESS
         except Exception as e:
             logger.exception(
                 f"Error closing client for session_id {session_id}: {str(e)}"
             )
-            return TaskStatus.FAILED
+            cls._clients.pop(session_id, None)
+            for internal_key, mapped_session_id in list(cls._session_id_map.items()):
+                if mapped_session_id == session_id:
+                    cls._session_id_map.pop(internal_key, None)
+            return TaskStatus.SUCCESS
 
     @classmethod
     async def close_all_clients(cls) -> None:
         """
         Close all client connections
         """
-        for session_id, client in list(cls._clients.items()):
-            try:
-                await client.disconnect()
-                logger.info(f"Closed Claude client for session_id: {session_id}")
-            except Exception as e:
-                logger.exception(
-                    f"Error closing client for session_id {session_id}: {str(e)}"
-                )
-        cls._clients.clear()
+        for session_id in list(cls._clients.keys()):
+            await cls.close_client(session_id)
 
     @classmethod
     async def cleanup_task_clients(cls, task_id: int) -> int:

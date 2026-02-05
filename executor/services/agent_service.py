@@ -168,7 +168,7 @@ class AgentService:
     ) -> Tuple[TaskStatus, Optional[str]]:
         try:
             agent_name = agent.get_name()
-            if agent_name == "ClaudeCodeAgent":
+            if agent_name == "ClaudeCode":
                 await ClaudeCodeAgent.close_client(task_id)
                 logger.info(f"[{_format_task_log(task_id, -1)}] Closed Claude client")
             elif agent_name == "Agno":
@@ -434,13 +434,13 @@ class AgentService:
         error_detail: Dict[str, str] = {}
         agent_types = {s.agent.get_name() for s in self._agent_sessions.values()}
 
-        if "ClaudeCodeAgent" in agent_types:
+        if "ClaudeCode" in agent_types:
             status, msg = await self._close_claude_sessions()
             if status == TaskStatus.SUCCESS:
                 results.append("Claude")
             else:
                 errors.append("Claude")
-                error_detail["ClaudeCodeAgent"] = msg or "Unknown error"
+                error_detail["ClaudeCode"] = msg or "Unknown error"
 
         if "Agno" in agent_types:
             status, msg = await self._close_agno_sessions()
