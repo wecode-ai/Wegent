@@ -32,6 +32,8 @@ ARG DOCS_REPO_PAT
 RUN git clone --depth 1 https://oauth2:NhtcYXkLv7TGivkjtmXx@git.intra.weibo.com/weibo_rd/common/wecode/wegent-docs.git .
 
 RUN npm ci
+# Fix MDX compatibility issues before build
+RUN node scripts/fix-mdx-compat.mjs
 RUN npm run build
 
 # ---- Production runtime stage ----
