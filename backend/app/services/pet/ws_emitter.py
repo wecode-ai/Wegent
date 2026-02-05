@@ -8,10 +8,14 @@ This module provides WebSocket event emission methods for pet-related events.
 It wraps the global WebSocket emitter and provides typed methods for pet events.
 
 This keeps pet-related WebSocket logic within the pet module for better cohesion.
+
+Note: These functions handle event loop issues gracefully. When called from
+background tasks that may run in different event loop contexts, errors are
+logged but don't propagate to callers since pet events are non-critical.
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +38,15 @@ async def emit_pet_experience_gained(
         multiplier: Multiplier applied to the base experience
     """
     from app.api.ws.events import ServerEvents
-    from app.services.chat.ws_emitter import get_ws_emitter
+    from app.services.chat.ws_emitter import get_ws_emitter, safe_emit_in_main_loop
 
     ws_emitter = get_ws_emitter()
     if not ws_emitter:
         logger.warning("[PET_WS] WebSocket emitter not initialized, skipping emit")
         return
 
-    await ws_emitter.sio.emit(
+    await safe_emit_in_main_loop(
+        ws_emitter.sio.emit,
         ServerEvents.PET_EXPERIENCE_GAINED,
         {
             "amount": amount,
@@ -75,14 +80,15 @@ async def emit_pet_stage_evolved(
         new_stage_name: New stage name
     """
     from app.api.ws.events import ServerEvents
-    from app.services.chat.ws_emitter import get_ws_emitter
+    from app.services.chat.ws_emitter import get_ws_emitter, safe_emit_in_main_loop
 
     ws_emitter = get_ws_emitter()
     if not ws_emitter:
         logger.warning("[PET_WS] WebSocket emitter not initialized, skipping emit")
         return
 
-    await ws_emitter.sio.emit(
+    await safe_emit_in_main_loop(
+        ws_emitter.sio.emit,
         ServerEvents.PET_STAGE_EVOLVED,
         {
             "old_stage": old_stage,
@@ -110,14 +116,15 @@ async def emit_pet_traits_updated(
         traits: Updated appearance traits
     """
     from app.api.ws.events import ServerEvents
-    from app.services.chat.ws_emitter import get_ws_emitter
+    from app.services.chat.ws_emitter import get_ws_emitter, safe_emit_in_main_loop
 
     ws_emitter = get_ws_emitter()
     if not ws_emitter:
         logger.warning("[PET_WS] WebSocket emitter not initialized, skipping emit")
         return
 
-    await ws_emitter.sio.emit(
+    await safe_emit_in_main_loop(
+        ws_emitter.sio.emit,
         ServerEvents.PET_TRAITS_UPDATED,
         {
             "traits": traits,

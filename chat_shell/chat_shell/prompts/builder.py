@@ -332,4 +332,3 @@ def build_system_prompt(
     # 2. The skill prompt is always up-to-date with the current loaded skills state
 
     return system_prompt
-    return system_prompt

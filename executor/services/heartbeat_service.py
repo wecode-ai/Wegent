@@ -18,6 +18,7 @@ from typing import Optional
 
 import requests
 
+from executor.config.env_reader import get_env, get_heartbeat_base_url
 from shared.logger import setup_logger
 
 logger = setup_logger("heartbeat_service")
@@ -25,6 +26,17 @@ logger = setup_logger("heartbeat_service")
 # Default configuration
 DEFAULT_HEARTBEAT_INTERVAL = 10  # seconds
 DEFAULT_HEARTBEAT_TIMEOUT = 5  # HTTP request timeout
+
+
+def _is_heartbeat_enabled() -> bool:
+    """Check if heartbeat is enabled via env or file config."""
+    value = get_env("HEARTBEAT_ENABLED", "false")
+    return value.lower() == "true"
+
+
+def _get_heartbeat_type() -> str:
+    """Get heartbeat type via env or file config."""
+    return get_env("HEARTBEAT_TYPE", "sandbox")
 
 
 class HeartbeatService:
@@ -57,24 +69,23 @@ class HeartbeatService:
             heartbeat_id: Heartbeat ID (sandbox_id or task_id). If not provided,
                          reads from HEARTBEAT_ID or SANDBOX_ID environment variable.
             heartbeat_type: Type of heartbeat ('sandbox' or 'task'). If not provided,
-                           reads from HEARTBEAT_TYPE environment variable.
+                           reads from HEARTBEAT_TYPE environment variable or file.
             heartbeat_url: Full URL for heartbeat endpoint. If not provided,
                           constructs from EXECUTOR_MANAGER_HEARTBEAT_BASE_URL or CALLBACK_URL.
             interval: Heartbeat interval in seconds. If not provided,
                      reads from HEARTBEAT_INTERVAL env var or uses default.
         """
-        # Get heartbeat ID from new env var first, fall back to legacy SANDBOX_ID
+        # Get heartbeat ID from env/file, fall back to legacy SANDBOX_ID
         self._heartbeat_id = (
-            heartbeat_id or os.getenv("HEARTBEAT_ID") or os.getenv("SANDBOX_ID")
+            heartbeat_id or get_env("HEARTBEAT_ID") or get_env("SANDBOX_ID")
         )
 
-        # Get heartbeat type: 'sandbox' or 'task'
-        self._heartbeat_type = heartbeat_type or os.getenv("HEARTBEAT_TYPE", "sandbox")
+        # Get heartbeat type from parameter or env/file config
+        self._heartbeat_type = heartbeat_type or _get_heartbeat_type()
 
         self._interval = interval or int(
-            os.getenv("HEARTBEAT_INTERVAL", str(DEFAULT_HEARTBEAT_INTERVAL))
+            get_env("HEARTBEAT_INTERVAL", str(DEFAULT_HEARTBEAT_INTERVAL))
         )
-        self._enabled = os.getenv("HEARTBEAT_ENABLED", "false").lower() == "true"
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._claude_initialized = False  # Track if Claude has been initialized
@@ -91,11 +102,12 @@ class HeartbeatService:
         Returns:
             The heartbeat URL string
         """
-        heartbeat_base = os.getenv("EXECUTOR_MANAGER_HEARTBEAT_BASE_URL")
+        # Use env_reader to support file-based config (e.g., from DownwardAPI)
+        heartbeat_base = get_heartbeat_base_url()
 
         if not heartbeat_base:
             # Derive from CALLBACK_URL for backward compatibility
-            callback_url = os.getenv(
+            callback_url = get_env(
                 "CALLBACK_URL",
                 "http://localhost:8001/executor-manager/callback",
             )
@@ -127,8 +139,8 @@ class HeartbeatService:
 
     @property
     def is_enabled(self) -> bool:
-        """Check if heartbeat service is enabled."""
-        return self._enabled and self._heartbeat_id is not None
+        """Check if heartbeat sending is currently enabled (reads from file/env each time)."""
+        return _is_heartbeat_enabled()
 
     @property
     def is_running(self) -> bool:
@@ -138,16 +150,13 @@ class HeartbeatService:
     def start(self) -> bool:
         """Start the heartbeat service in a background thread.
 
-        Returns:
-            True if started successfully, False if disabled or already running
-        """
-        if not self.is_enabled:
-            logger.info(
-                f"[HeartbeatService] Disabled or no heartbeat_id configured "
-                f"(enabled={self._enabled}, heartbeat_id={self._heartbeat_id})"
-            )
-            return False
+        The service will always start and run the loop, but will only send
+        heartbeats when HEARTBEAT_ENABLED is true (checked each interval).
+        This allows dynamic enable/disable via file config (DownwardAPI).
 
+        Returns:
+            True if started successfully, False if already running
+        """
         if self._running:
             logger.warning("[HeartbeatService] Already running")
             return False
@@ -162,7 +171,7 @@ class HeartbeatService:
 
         logger.info(
             f"[HeartbeatService] Started: type={self._heartbeat_type}, "
-            f"id={self._heartbeat_id}, interval={self._interval}s, url={self._heartbeat_url}"
+            f"id={self._heartbeat_id}, interval={self._interval}s"
         )
         return True
 
@@ -181,31 +190,87 @@ class HeartbeatService:
         logger.info("[HeartbeatService] Stopped")
 
     def _heartbeat_loop(self) -> None:
-        """Main heartbeat loop running in background thread."""
+        """Main heartbeat loop running in background thread.
+
+        The loop runs continuously but only sends heartbeats when:
+        1. HEARTBEAT_ENABLED is true (checked each interval from file/env)
+        2. Required config (heartbeat_id, heartbeat_url) is available
+
+        This allows dynamic enable/disable via DownwardAPI file updates.
+        """
         consecutive_failures = 0
         max_failures = 5  # Log warning after consecutive failures
+        was_enabled = False
 
         while self._running:
-            try:
-                success = self._send_heartbeat()
-                if success:
-                    consecutive_failures = 0
-                else:
-                    consecutive_failures += 1
-                    if consecutive_failures >= max_failures:
-                        logger.warning(
-                            f"[HeartbeatService] {consecutive_failures} consecutive "
-                            f"heartbeat failures"
+            # Check if heartbeat is enabled (re-read from file/env each time)
+            is_enabled = self.is_enabled
+
+            if is_enabled:
+                # Re-read dynamic config that may have changed
+                self._refresh_config()
+
+                # Check if we have required config
+                if not self._heartbeat_id or not self._heartbeat_url:
+                    if was_enabled:
+                        logger.debug(
+                            "[HeartbeatService] Waiting for config "
+                            f"(heartbeat_id={self._heartbeat_id})"
                         )
-            except Exception as e:
-                consecutive_failures += 1
-                logger.error(f"[HeartbeatService] Heartbeat error: {e}")
+                else:
+                    if not was_enabled:
+                        logger.info(
+                            f"[HeartbeatService] Enabled, starting heartbeat: "
+                            f"type={self._heartbeat_type}, id={self._heartbeat_id}"
+                        )
+
+                    try:
+                        success = self._send_heartbeat()
+                        if success:
+                            consecutive_failures = 0
+                        else:
+                            consecutive_failures += 1
+                            if consecutive_failures >= max_failures:
+                                logger.warning(
+                                    f"[HeartbeatService] {consecutive_failures} consecutive "
+                                    f"heartbeat failures"
+                                )
+                    except Exception as e:
+                        consecutive_failures += 1
+                        logger.error(f"[HeartbeatService] Heartbeat error: {e}")
+            else:
+                if was_enabled:
+                    logger.info("[HeartbeatService] Disabled, skipping heartbeat")
+                consecutive_failures = 0
+
+            was_enabled = is_enabled
 
             # Sleep in small intervals to allow quick shutdown
             for _ in range(self._interval * 2):  # Check every 0.5 seconds
                 if not self._running:
                     break
                 time.sleep(0.5)
+
+    def _refresh_config(self) -> None:
+        """Refresh dynamic config from file/env.
+
+        Called each heartbeat interval to pick up config changes from DownwardAPI.
+        """
+        # Re-read heartbeat ID
+        new_heartbeat_id = get_env("HEARTBEAT_ID") or get_env("SANDBOX_ID")
+        if new_heartbeat_id and new_heartbeat_id != self._heartbeat_id:
+            self._heartbeat_id = new_heartbeat_id
+            self._heartbeat_url = self._build_heartbeat_url()
+            logger.info(f"[HeartbeatService] Config updated: id={self._heartbeat_id}")
+
+        # Re-read heartbeat type
+        new_heartbeat_type = _get_heartbeat_type()
+        if new_heartbeat_type != self._heartbeat_type:
+            self._heartbeat_type = new_heartbeat_type
+            self._heartbeat_url = self._build_heartbeat_url()
+            logger.info(
+                f"[HeartbeatService] Config updated: type={self._heartbeat_type}"
+            )
 
     def _send_heartbeat(self) -> bool:
         """Send a single heartbeat to executor_manager.

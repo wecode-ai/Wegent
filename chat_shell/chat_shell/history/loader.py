@@ -789,11 +789,16 @@ def get_knowledge_base_meta_for_task(
     Returns:
         List of dicts with kb_name, kb_id, and kb_kind (Kind object)
     """
-    from app.models.subtask import Subtask
-    from app.models.subtask_context import ContextType, SubtaskContext
-    from app.services.knowledge.task_knowledge_base_service import (
-        task_knowledge_base_service,
-    )
+    try:
+        from app.models.subtask import Subtask
+        from app.models.subtask_context import ContextType, SubtaskContext
+        from app.services.knowledge.task_knowledge_base_service import (
+            task_knowledge_base_service,
+        )
+    except (ImportError, ModuleNotFoundError):
+        # Backend ORM is not available when chat_shell runs as an independent service.
+        # This helper is only meaningful in package mode; return empty meta in other modes.
+        return []
 
     try:
         # Get all subtask IDs for this task

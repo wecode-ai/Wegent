@@ -97,6 +97,13 @@ class ExecutionRunner(metaclass=SingletonMeta):
             "timeout": timeout,
         }
 
+        # Add auth_token for skill downloads in sandbox (from sandbox or execution metadata)
+        auth_token = sandbox.metadata.get("auth_token") or execution.metadata.get(
+            "auth_token"
+        )
+        if auth_token:
+            task_data["auth_token"] = auth_token
+
         return task_data
 
     async def send_execution_request(

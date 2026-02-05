@@ -17,6 +17,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.subscription import BackgroundExecution
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -1199,6 +1200,7 @@ class ExecutorKindsService(
             # Generate auth token for skills download
             # Use user's JWT token or generate a temporary one
             auth_token = None
+            task_token = None
             if user:
                 # Generate a JWT token for the user to access backend API
                 from app.core.config import settings
@@ -1217,6 +1219,38 @@ class ExecutorKindsService(
                     logger.warning(
                         f"Failed to generate auth token for user {user.id}: {e}"
                     )
+
+                # Generate task token for MCP Server authentication
+                try:
+                    from app.mcp_server.auth import create_task_token
+
+                    task_token = create_task_token(
+                        task_id=subtask.task_id,
+                        subtask_id=subtask.id,
+                        user_id=user.id,
+                        user_name=user.user_name,
+                        expires_delta_minutes=1440,  # 24 hours
+                    )
+                    logger.info(
+                        f"Successfully generated task token for task={subtask.task_id}, subtask={subtask.id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to generate task token: {e}")
+
+            # Generate system MCP configuration for subscription tasks
+            system_mcp_config = None
+            if is_subscription and task_token:
+                try:
+                    from app.mcp_server.server import get_mcp_system_config
+
+                    # Get backend URL from settings
+                    backend_url = settings.BACKEND_INTERNAL_URL
+                    system_mcp_config = get_mcp_system_config(backend_url, task_token)
+                    logger.info(
+                        f"Generated system MCP config for subscription task {subtask.task_id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to generate system MCP config: {e}")
 
             # Query attachments for this subtask using context service
             attachments_data = []
@@ -1284,8 +1318,11 @@ class ExecutorKindsService(
                     "git_repo_id": git_repo_id,
                     "branch_name": branch_name,
                     "git_url": git_url,
+                    "backend_url": settings.BACKEND_INTERNAL_URL.rstrip("/"),
                     "prompt": aggregated_prompt,
                     "auth_token": auth_token,
+                    "task_token": task_token,  # For MCP Server authentication
+                    "system_mcp_config": system_mcp_config,  # System MCP for subscription tasks
                     "attachments": attachments_data,
                     "status": subtask.status,
                     "progress": subtask.progress,
@@ -1578,6 +1615,22 @@ class ExecutorKindsService(
         if not task:
             return
 
+        # Force refresh to get latest data from database
+        db.refresh(task)
+
+        # Debug: Check labels in raw task.json
+        try:
+            raw_json = task.json or {}
+            metadata = raw_json.get("metadata", {})
+            labels = metadata.get("labels", {})
+            logger.info(
+                f"[_update_task_status_based_on_subtasks] Task {task_id} raw labels from DB: {labels}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[_update_task_status_based_on_subtasks] Error reading labels: {e}"
+            )
+
         subtasks = (
             db.query(Subtask)
             .filter(Subtask.task_id == task_id, Subtask.role == SubtaskRole.ASSISTANT)
@@ -1721,6 +1774,23 @@ class ExecutorKindsService(
         # Update timestamps
         if task_crd.status:
             task_crd.status.updatedAt = datetime.now()
+
+        # CRITICAL: Merge with latest task.json from database to preserve labels
+        # set by other processes (e.g., subscription tasks set backgroundExecutionId)
+        db.refresh(task)
+        latest_task_crd = Task.model_validate(task.json)
+        # Preserve metadata.labels from the latest database version
+        if latest_task_crd.metadata.labels:
+            if task_crd.metadata.labels is None:
+                task_crd.metadata.labels = {}
+            # Merge: keep existing labels in task_crd, but add any new ones from DB
+            for key, value in latest_task_crd.metadata.labels.items():
+                if key not in task_crd.metadata.labels:
+                    task_crd.metadata.labels[key] = value
+                    logger.info(
+                        f"[_sync_task_status] Merged label '{key}' from DB for task {task_id}"
+                    )
+
         task.json = task_crd.model_dump(mode="json")
         task.updated_at = datetime.now()
         flag_modified(task, "json")
@@ -2415,6 +2485,26 @@ class ExecutorKindsService(
         if not task_crd.status or task_crd.status.status not in ["COMPLETED", "FAILED"]:
             return
 
+        # Skip webhook notification for subscription-type tasks
+        # Check BackgroundExecution table to reliably identify subscription tasks
+        # This avoids issues with MySQL transaction isolation (REPEATABLE READ)
+        execution = (
+            db.query(BackgroundExecution)
+            .filter(BackgroundExecution.task_id == task_id)
+            .first()
+        )
+        if execution:
+            logger.info(
+                f"[_send_task_completion_notification] Task {task_id} is a subscription task "
+                f"(BackgroundExecution id={execution.id}), skipping webhook notification"
+            )
+            return
+
+        logger.info(
+            f"[_send_task_completion_notification] Task {task_id} is not a subscription task, "
+            f"proceeding with webhook notification"
+        )
+
         try:
             user_message = task_crd.spec.title
             task_start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -2510,7 +2600,7 @@ class ExecutorKindsService(
         """
         Update BackgroundExecution status when a Subscription-triggered task completes.
 
-        This method checks if the task was triggered by a Subscription (via backgroundExecutionId label),
+        This method checks if the task was triggered by a Subscription (via background_executions table),
         and if so, updates the corresponding BackgroundExecution record in the database.
 
         Args:
@@ -2527,25 +2617,20 @@ class ExecutorKindsService(
             return
 
         # Check if this task was triggered by a Subscription
-        background_execution_id = None
-        if task_crd.metadata and task_crd.metadata.labels:
-            background_execution_id = task_crd.metadata.labels.get(
-                "backgroundExecutionId"
-            )
+        # Query background_executions table by task_id (same as _send_task_completion_notification)
+        execution = (
+            db.query(BackgroundExecution)
+            .filter(BackgroundExecution.task_id == task_id)
+            .first()
+        )
 
-        if not background_execution_id:
-            # Not a Subscription-triggered task
+        if not execution:
+            # Not a Subscription-triggered task, skip
             return
 
+        execution_id = execution.id
+
         try:
-            # Convert to int if it's a string
-            try:
-                execution_id = int(background_execution_id)
-            except (ValueError, TypeError):
-                logger.warning(
-                    f"Invalid backgroundExecutionId '{background_execution_id}' for task {task_id}"
-                )
-                return
 
             # Use BackgroundExecutionManager directly for status update
             # This avoids circular dependency with subscription_service
@@ -2593,12 +2678,14 @@ class ExecutorKindsService(
                 error_message = "Task was cancelled"
 
             # Use BackgroundExecutionManager to update status (this will also emit WebSocket event)
+            # Skip notifications here because we will handle them separately with detail_url
             success = background_execution_manager.update_execution_status(
                 db=db,
                 execution_id=execution_id,
                 status=new_status,
                 result_summary=result_summary,
                 error_message=error_message,
+                skip_notifications=True,
             )
 
             if success:
@@ -2606,6 +2693,52 @@ class ExecutorKindsService(
                     f"Updated BackgroundExecution {execution_id} status to {new_status.value} "
                     f"for task {task_id} via background_execution_manager"
                 )
+
+                # Trigger IM notification (DingTalk, etc.) if user has configured notify level
+                try:
+                    # We already have execution object from earlier query
+                    if execution:
+                        # Get Subscription CRD
+                        subscription_kind = (
+                            db.query(Kind)
+                            .filter(
+                                Kind.id == execution.subscription_id,
+                                Kind.kind == "Subscription",
+                            )
+                            .first()
+                        )
+
+                        if subscription_kind:
+                            from app.schemas.subscription import Subscription
+                            from app.services.subscription.notification_service import (
+                                subscription_notification_service,
+                            )
+
+                            subscription = Subscription.model_validate(
+                                subscription_kind.json
+                            )
+
+                            # Call notify_execution_completed to trigger IM notifications
+                            # Use run_coroutine_threadsafe since this is a sync method
+                            asyncio.run_coroutine_threadsafe(
+                                subscription_notification_service.notify_execution_completed(
+                                    db=db,
+                                    user_id=execution.user_id,
+                                    subscription=subscription,
+                                    execution=execution,
+                                ),
+                                asyncio.get_event_loop(),
+                            )
+                            logger.info(
+                                f"[DingTalk Notification] Scheduled notification for "
+                                f"execution {execution_id}, user {execution.user_id}"
+                            )
+                except Exception as notify_error:
+                    # Log error but don't fail the task status update
+                    logger.error(
+                        f"[DingTalk Notification] Failed to schedule notification for "
+                        f"execution {execution_id}: {str(notify_error)}"
+                    )
             else:
                 logger.warning(
                     f"Failed to update BackgroundExecution {execution_id} status for task {task_id}"

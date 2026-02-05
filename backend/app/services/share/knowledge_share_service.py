@@ -27,6 +27,7 @@ from app.schemas.share import (
 from app.schemas.share import PermissionLevel as SchemaPermissionLevel
 from app.services.group_permission import get_effective_role_in_group
 from app.services.share.base_service import UnifiedShareService
+from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -140,11 +141,25 @@ class KnowledgeShareService(UnifiedShareService):
         """Get KnowledgeBase owner user ID."""
         return resource.user_id
 
+    @trace_sync(
+        span_name="knowledge_share.get_share_url_base",
+        tracer_name="backend.services.share",
+    )
     def _get_share_url_base(self) -> str:
         """Get base URL for KnowledgeBase share links."""
-        # Use token-based URL pattern consistent with Task sharing
-        base_url = getattr(settings, "FRONTEND_BASE_URL", "http://localhost:3000")
-        return f"{base_url}/shared/knowledge"
+
+        # Use TASK_SHARE_BASE_URL consistent with Task sharing
+        base_url = getattr(settings, "TASK_SHARE_BASE_URL", "http://localhost:3000")
+        share_url = f"{base_url}/shared/knowledge"
+
+        # Record tracing information
+        add_span_event(
+            "share_url_resolved",
+            {"config_source": "TASK_SHARE_BASE_URL", "base_url": base_url},
+        )
+        set_span_attribute("share.base_url", share_url)
+
+        return share_url
 
     def _on_member_approved(
         self, db: Session, member: ResourceMember, resource: Kind

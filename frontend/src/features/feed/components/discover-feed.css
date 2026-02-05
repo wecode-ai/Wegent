@@ -1,0 +1,361 @@
+/* SPDX-FileCopyrightText: 2025 Weibo, Inc. */
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/**
+ * Discover Feed Masonry Layout Styles
+ * CSS Columns based waterfall layout for subscription discovery feed
+ */
+
+/* Masonry Grid Container */
+.discover-feed-masonry {
+  columns: 1;
+  column-gap: 1rem;
+  padding: 1rem;
+}
+
+@media (min-width: 768px) {
+  .discover-feed-masonry {
+    columns: 2;
+  }
+}
+
+@media (min-width: 1280px) {
+  .discover-feed-masonry {
+    columns: 3;
+  }
+}
+
+@media (min-width: 1536px) {
+  .discover-feed-masonry {
+    columns: 4;
+    max-width: 1440px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
+/* Masonry Item - prevents breaking inside columns */
+.discover-feed-item {
+  break-inside: avoid;
+  margin-bottom: 1rem;
+  page-break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+}
+
+/* Card Base Styles */
+.discover-feed-card {
+  background-color: rgb(var(--color-bg-surface));
+  border: 1px solid rgb(var(--color-border) / 0.5);
+  border-radius: 1rem;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1);
+  transition: all 0.3s ease-out;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.discover-feed-card:hover {
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+  border-color: rgb(var(--color-primary) / 0.3);
+  transform: translateY(-2px);
+}
+
+/* Content Area */
+.discover-feed-content {
+  padding: 1rem;
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+.discover-feed-content.collapsed {
+  max-height: 400px;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Fade out effect for collapsed content */
+.discover-feed-content.collapsed::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 80px;
+  background: linear-gradient(to bottom, transparent, rgb(var(--color-bg-surface)));
+  pointer-events: none;
+}
+
+/* Expand Button */
+.discover-feed-expand-btn {
+  width: 100%;
+  padding: 0.5rem 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgb(var(--color-primary));
+  border-top: 1px solid rgb(var(--color-border) / 0.5);
+  background-color: rgb(var(--color-bg-surface));
+  transition:
+    background-color 0.2s,
+    color 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  border: none;
+  cursor: pointer;
+}
+
+.discover-feed-expand-btn:hover {
+  color: rgb(var(--color-primary) / 0.8);
+  background-color: rgb(var(--color-bg-surface) / 0.8);
+}
+
+/* Footer Area - Ultra Compact Design */
+.discover-feed-footer {
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid rgb(var(--color-border) / 0.5);
+  background-color: rgb(var(--color-bg-surface) / 0.5);
+}
+
+/* Subscription Title */
+.discover-feed-title {
+  font-weight: 600;
+  font-size: 0.9375rem;
+  color: rgb(var(--color-text-primary));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.discover-feed-title:hover {
+  color: rgb(var(--color-primary));
+}
+
+/* Status Badge */
+.discover-feed-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.25rem 0.5rem;
+  border-radius: 9999px;
+}
+
+/* Task Type Badge */
+.discover-feed-type-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.25rem;
+  background-color: rgb(var(--color-primary) / 0.1);
+  color: rgb(var(--color-primary));
+}
+
+/* Loading Skeleton */
+.discover-feed-skeleton {
+  background-color: rgb(var(--color-bg-surface));
+  border: 1px solid rgb(var(--color-border) / 0.5);
+  border-radius: 1rem;
+  overflow: hidden;
+}
+
+.discover-feed-skeleton-content {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.discover-feed-skeleton-line {
+  height: 1rem;
+  background-color: rgb(var(--color-muted));
+  border-radius: 0.25rem;
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.discover-feed-skeleton-line.short {
+  width: 66.666667%;
+}
+
+.discover-feed-skeleton-footer {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid rgb(var(--color-border) / 0.5);
+}
+
+/* Empty State */
+.discover-feed-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 1rem;
+  text-align: center;
+}
+
+.discover-feed-empty-icon {
+  width: 5rem;
+  height: 5rem;
+  border-radius: 9999px;
+  background-color: rgb(var(--color-bg-surface));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+.discover-feed-empty-title {
+  font-size: 1.125rem;
+  font-weight: 500;
+  color: rgb(var(--color-text-primary));
+  margin-bottom: 0.5rem;
+}
+
+.discover-feed-empty-hint {
+  font-size: 0.875rem;
+  color: rgb(var(--color-text-muted));
+  max-width: 20rem;
+}
+
+/* Load More Button */
+.discover-feed-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 1.5rem 0;
+  column-span: all;
+}
+
+/* Markdown Content Overrides */
+.discover-feed-content .prose {
+  max-width: 100% !important;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+}
+
+.discover-feed-content .prose p {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.discover-feed-content .prose p:first-child {
+  margin-top: 0;
+}
+
+.discover-feed-content .prose p:last-child {
+  margin-bottom: 0;
+}
+
+.discover-feed-content .prose img {
+  border-radius: 0.5rem;
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+  max-width: 100% !important;
+  width: 100% !important;
+  height: auto !important;
+  display: block;
+}
+
+/* Ensure image preview containers don't overflow */
+.discover-feed-content .prose span[class*='relative'] {
+  max-width: 100% !important;
+}
+
+.discover-feed-content .prose span[class*='relative'] img {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+.discover-feed-content .prose pre {
+  border-radius: 0.5rem;
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.75rem;
+}
+
+.discover-feed-content .prose code {
+  font-size: 0.75rem;
+}
+
+.discover-feed-content .prose h1,
+.discover-feed-content .prose h2,
+.discover-feed-content .prose h3,
+.discover-feed-content .prose h4 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-top: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.discover-feed-content .prose ul,
+.discover-feed-content .prose ol {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  padding-left: 1rem;
+}
+
+.discover-feed-content .prose li {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.discover-feed-content .prose blockquote {
+  border-left: 2px solid rgb(var(--color-primary) / 0.3);
+  padding-left: 0.75rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  color: rgb(var(--color-text-muted));
+}
+
+.discover-feed-content .prose table {
+  font-size: 0.75rem;
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.discover-feed-content .prose th,
+.discover-feed-content .prose td {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid rgb(var(--color-border) / 0.5);
+}
+
+/* Smooth scrolling for the feed container */
+.discover-feed-scroll-container {
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Hide scrollbar but keep functionality */
+.discover-feed-scroll-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.discover-feed-scroll-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.discover-feed-scroll-container::-webkit-scrollbar-thumb {
+  background-color: rgb(var(--color-border));
+  border-radius: 9999px;
+}
+
+.discover-feed-scroll-container::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(var(--color-border-hover));
+}
+
+/* Animation keyframes */
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}

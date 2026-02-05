@@ -39,6 +39,9 @@ from shared.telemetry.core import is_telemetry_enabled
 # Use the shared logger setup function
 logger = setup_logger("task_executor")
 
+# Flag to track if skills have been initialized
+_skills_initialized = False
+
 
 # Define lifespan context manager for startup and shutdown events
 @asynccontextmanager
@@ -136,8 +139,11 @@ async def lifespan(app: FastAPI):
     # Initialize Claude Code for sandbox mode if AUTH_TOKEN is provided
     # This allows sandbox containers to download skills at startup
     try:
-        auth_token = os.getenv("AUTH_TOKEN")
-        task_id = os.getenv("TASK_ID")
+        # Use env_reader to support both env vars and file-based config
+        from executor.config.env_reader import get_auth_token, get_task_id
+
+        auth_token = get_auth_token()
+        task_id = get_task_id()
         if auth_token and task_id:
             logger.info(
                 f"AUTH_TOKEN found, initializing Claude Code for sandbox {task_id}..."
@@ -281,6 +287,60 @@ def _predownload_task_attachments(auth_token: str, task_id: str) -> None:
     )
 
 
+async def _maybe_initialize_skills_from_env() -> None:
+    """Initialize skills on first HTTP request (for preload sandbox mode).
+
+    This function is called by HTTP middleware when the first request arrives.
+    It reads auth_token and task_id from environment variables or Downward API files,
+    then downloads and deploys skills.
+
+    Only applies to sandbox mode. For non-sandbox tasks, skills are downloaded
+    automatically during agent initialization.
+    """
+    global _skills_initialized
+
+    if _skills_initialized:
+        return
+
+    # Check if sandbox preload mode is enabled via environment variable
+    import os
+
+    preload_mode = os.getenv("PRELOAD_MODE", "").lower() == "true"
+    if not preload_mode:
+        _skills_initialized = True  # Preload mode not enabled, skip
+        return
+
+    # Read auth_token and task_id from env vars or Downward API files
+    from executor.config.env_reader import get_auth_token, get_task_id
+
+    auth_token = get_auth_token()
+    task_id = get_task_id()
+
+    if not auth_token or not task_id:
+        logger.debug(
+            "[PreloadMode] No auth_token or task_id available yet, skipping skills init"
+        )
+        return
+
+    try:
+        logger.info(
+            f"[PreloadMode] First request received, initializing skills for task {task_id}..."
+        )
+        _initialize_sandbox_claude(auth_token, str(task_id))
+        logger.info("[PreloadMode] Skills initialization completed")
+
+        # Also pre-download attachments for the task
+        logger.info(f"[PreloadMode] Pre-downloading attachments for task {task_id}...")
+        _predownload_task_attachments(auth_token, str(task_id))
+        logger.info("[PreloadMode] Attachments pre-download completed")
+
+        _skills_initialized = True
+    except Exception as e:
+        logger.warning(f"[PreloadMode] Failed to initialize skills or attachments: {e}")
+        # Don't fail the request, just log the warning
+        _skills_initialized = True  # Mark as initialized to avoid retrying
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     return FastAPI(
@@ -310,6 +370,8 @@ if envd_enabled:
 async def log_requests(request: Request, call_next):
     from opentelemetry import context
     from starlette.responses import StreamingResponse
+
+    await _maybe_initialize_skills_from_env()
 
     # Skip logging for health check requests
     if request.url.path == "/":

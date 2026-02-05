@@ -245,7 +245,7 @@ export async function ensureRelayServer(opts: RelayServerOptions): Promise<CdpRe
       const timer = setTimeout(() => {
         pendingExtension.delete(payload.id);
         reject(new Error(`extension request timeout: ${payload.params.method}`));
-      }, 30_000);
+      }, 10_000);
       pendingExtension.set(payload.id, { resolve, reject, timer });
     });
   };
@@ -519,7 +519,11 @@ export async function ensureRelayServer(opts: RelayServerOptions): Promise<CdpRe
         return;
       }
       if (!extensionWs) {
-        rejectUpgrade(socket, 503, "Extension not connected");
+        rejectUpgrade(
+          socket,
+          409,
+          "EXTENSION_NOT_CONNECTED: Chrome extension is not connected to any tab"
+        );
         return;
       }
       wssCdp.handleUpgrade(req, socket, head, (ws) => {
