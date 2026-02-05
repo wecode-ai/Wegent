@@ -299,7 +299,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                             literal_column("2").label(
                                 "share_status"
                             ),  # 2 for shared teams
-                            ResourceMember.invited_by_user_id.label("context_user_id"),
+                            Kind.user_id.label("context_user_id"),  # Use team owner, not inviter
                         )
                         .join(
                             ResourceMember,

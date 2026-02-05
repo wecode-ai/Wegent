@@ -603,16 +603,18 @@ def build_lite_task_list(
             {"user_id": user_id, "name": team_name, "namespace": team_namespace},
         ).fetchone()
 
-        # If not found in user's teams, check shared teams
+        # If not found in user's teams, check shared teams via resource_members
         team_id = team_result[0] if team_result else None
         if not team_id:
             shared_team_result = db.execute(
                 text(
                     """
                     SELECT k.id FROM kinds k
-                    INNER JOIN shared_teams st ON k.user_id = st.original_user_id
-                    WHERE st.user_id = :user_id
-                    AND st.is_active = true
+                    INNER JOIN resource_members rm
+                        ON rm.resource_id = k.id
+                        AND rm.resource_type = 'Team'
+                    WHERE rm.user_id = :user_id
+                    AND rm.status = 'approved'
                     AND k.kind = 'Team'
                     AND k.name = :name
                     AND k.namespace = :namespace
