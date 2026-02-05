@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
-from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.resource_member import EPOCH_TIME, MemberStatus, ResourceMember
 from app.models.share_link import PermissionLevel, ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
@@ -229,6 +229,9 @@ class TaskMemberService:
             existing.requested_at = datetime.utcnow()
             existing.updated_at = datetime.utcnow()
             existing.permission_level = PermissionLevel.MANAGE  # Group chat members get manage permission
+            # Clear stale review metadata from previous rejection
+            existing.reviewed_by_user_id = 0
+            existing.reviewed_at = EPOCH_TIME
             db.commit()
             db.refresh(existing)
             return existing

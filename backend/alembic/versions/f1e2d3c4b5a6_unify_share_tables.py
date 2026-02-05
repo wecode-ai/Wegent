@@ -19,11 +19,13 @@ Migration rules:
 - is_active=true -> status='approved', is_active=false -> status='rejected'
 - Default permission_level: 'manage'
 - task_members.status='ACTIVE' -> approved, 'REMOVED' -> rejected
-- Use 0 as default for foreign key fields
+- Use 0 as default for optional foreign key fields (matches ResourceMember model NOT NULL constraints)
 """
+from datetime import datetime
 from typing import Sequence, Union
 
 from alembic import op
+from sqlalchemy import inspect
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
@@ -32,25 +34,25 @@ down_revision: Union[str, Sequence[str], None] = '26e05c6de5a5'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+# Timestamp constants
+EPOCH_TIMESTAMP = '1970-01-01 00:00:00'
+FAR_FUTURE_TIMESTAMP = '9999-12-31 23:59:59'
+
 
 def table_exists(conn, table_name: str) -> bool:
-    """Check if a table exists in the current database."""
-    result = conn.execute(sa.text("""
-        SELECT COUNT(*)
-        FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = DATABASE()
-        AND TABLE_NAME = :table_name
-    """), {"table_name": table_name})
-    return result.scalar() > 0
+    """Check if a table exists using SQLAlchemy Inspector (DB-agnostic)."""
+    inspector = inspect(conn)
+    return table_name in inspector.get_table_names()
 
 
 def upgrade() -> None:
     """Migrate data from legacy tables to resource_members and drop legacy tables."""
     conn = op.get_bind()
+    dialect = op.get_context().dialect.name
 
     # 1. Migrate shared_teams data to resource_members (if table exists)
     if table_exists(conn, 'shared_teams'):
-        op.execute("""
+        op.execute(f"""
         INSERT INTO resource_members (
             resource_type,
             resource_id,
@@ -72,10 +74,10 @@ def upgrade() -> None:
             user_id,
             'manage' as permission_level,
             CASE WHEN is_active = 1 THEN 'approved' ELSE 'rejected' END as status,
-            COALESCE(original_user_id, 0) as invited_by_user_id,
+            original_user_id as invited_by_user_id,
             0 as share_link_id,
             0 as reviewed_by_user_id,
-            '1970-01-01 00:00:00' as reviewed_at,
+            '{EPOCH_TIMESTAMP}' as reviewed_at,
             0 as copied_resource_id,
             created_at as requested_at,
             created_at,
@@ -93,7 +95,7 @@ def upgrade() -> None:
 
     # 2. Migrate shared_tasks data to resource_members (if table exists)
     if table_exists(conn, 'shared_tasks'):
-        op.execute("""
+        op.execute(f"""
         INSERT INTO resource_members (
             resource_type,
             resource_id,
@@ -115,11 +117,11 @@ def upgrade() -> None:
             user_id,
             'manage' as permission_level,
             CASE WHEN is_active = 1 THEN 'approved' ELSE 'rejected' END as status,
-            COALESCE(original_user_id, 0) as invited_by_user_id,
+            original_user_id as invited_by_user_id,
             0 as share_link_id,
             0 as reviewed_by_user_id,
-            '1970-01-01 00:00:00' as reviewed_at,
-            COALESCE(copied_task_id, 0) as copied_resource_id,
+            '{EPOCH_TIMESTAMP}' as reviewed_at,
+            copied_task_id as copied_resource_id,
             created_at as requested_at,
             created_at,
             updated_at
@@ -136,7 +138,7 @@ def upgrade() -> None:
 
     # 3. Migrate task_members data to resource_members (if table exists)
     if table_exists(conn, 'task_members'):
-        op.execute("""
+        op.execute(f"""
         INSERT INTO resource_members (
             resource_type,
             resource_id,
@@ -161,7 +163,7 @@ def upgrade() -> None:
             COALESCE(invited_by, 0) as invited_by_user_id,
             0 as share_link_id,
             0 as reviewed_by_user_id,
-            '1970-01-01 00:00:00' as reviewed_at,
+            '{EPOCH_TIMESTAMP}' as reviewed_at,
             0 as copied_resource_id,
             joined_at as requested_at,
             joined_at as created_at,
@@ -177,15 +179,32 @@ def upgrade() -> None:
         # Drop table after migration
         op.drop_table('task_members')
 
-    # 4. Update resource_members to ensure all NOT NULL constraints
-    # Set default values for any NULL fields
-    op.execute("""
+    # 4. Update share_links to ensure NOT NULL constraint on expires_at
+    if table_exists(conn, 'share_links'):
+        op.execute(f"""
+        UPDATE share_links
+        SET expires_at = '{FAR_FUTURE_TIMESTAMP}'
+        WHERE expires_at IS NULL
+        """)
+
+        # Use portable Alembic API to alter share_links.expires_at
+        with op.batch_alter_table('share_links') as batch_op:
+            batch_op.alter_column(
+                'expires_at',
+                existing_type=sa.DateTime(),
+                nullable=False,
+                server_default=FAR_FUTURE_TIMESTAMP,
+            )
+
+    # 5. Update resource_members columns using portable Alembic API
+    # First, set default values for any NULL fields before making them NOT NULL
+    op.execute(f"""
     UPDATE resource_members
     SET
         invited_by_user_id = COALESCE(invited_by_user_id, 0),
         share_link_id = COALESCE(share_link_id, 0),
         reviewed_by_user_id = COALESCE(reviewed_by_user_id, 0),
-        reviewed_at = COALESCE(reviewed_at, '1970-01-01 00:00:00'),
+        reviewed_at = COALESCE(reviewed_at, '{EPOCH_TIMESTAMP}'),
         copied_resource_id = COALESCE(copied_resource_id, 0)
     WHERE invited_by_user_id IS NULL
        OR share_link_id IS NULL
@@ -194,121 +213,126 @@ def upgrade() -> None:
        OR copied_resource_id IS NULL
     """)
 
-    # 5. Update share_links to ensure NOT NULL constraint on expires_at
-    if table_exists(conn, 'share_links'):
-        op.execute("""
-        UPDATE share_links
-        SET expires_at = '9999-12-31 23:59:59'
-        WHERE expires_at IS NULL
-        """)
+    # Use portable Alembic API to alter resource_members columns
+    with op.batch_alter_table('resource_members') as batch_op:
+        batch_op.alter_column(
+            'user_id',
+            existing_type=sa.Integer(),
+            nullable=False,
+        )
+        batch_op.alter_column(
+            'invited_by_user_id',
+            existing_type=sa.Integer(),
+            nullable=False,
+            server_default='0',
+        )
+        batch_op.alter_column(
+            'share_link_id',
+            existing_type=sa.Integer(),
+            nullable=False,
+            server_default='0',
+        )
+        batch_op.alter_column(
+            'reviewed_by_user_id',
+            existing_type=sa.Integer(),
+            nullable=False,
+            server_default='0',
+        )
+        batch_op.alter_column(
+            'reviewed_at',
+            existing_type=sa.DateTime(),
+            nullable=False,
+            server_default=EPOCH_TIMESTAMP,
+        )
+        batch_op.alter_column(
+            'copied_resource_id',
+            existing_type=sa.Integer(),
+            nullable=False,
+            server_default='0',
+        )
 
-        # 6. Update share_links expires_at to NOT NULL with default
-        op.execute("""
-        ALTER TABLE share_links
-        MODIFY COLUMN expires_at DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59'
-        """)
+    # 6. Add foreign key constraint using portable Alembic API
+    # Check if constraint exists first (MySQL-specific check wrapped in dialect guard)
+    constraint_exists = False
+    if dialect == 'mysql':
+        result = conn.execute(sa.text("""
+            SELECT COUNT(*)
+            FROM information_schema.TABLE_CONSTRAINTS
+            WHERE CONSTRAINT_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'resource_members'
+            AND CONSTRAINT_NAME = 'fk_resource_members_user_id'
+        """))
+        constraint_exists = result.scalar() > 0
 
-    # 7. Update resource_members columns to NOT NULL with defaults
-    op.execute("""
-    ALTER TABLE resource_members
-    MODIFY COLUMN user_id INT NOT NULL,
-    MODIFY COLUMN invited_by_user_id INT NOT NULL DEFAULT 0,
-    MODIFY COLUMN share_link_id INT NOT NULL DEFAULT 0,
-    MODIFY COLUMN reviewed_by_user_id INT NOT NULL DEFAULT 0,
-    MODIFY COLUMN reviewed_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00',
-    MODIFY COLUMN copied_resource_id INT NOT NULL DEFAULT 0
-    """)
-
-    # 8. Add foreign key constraint (only if it doesn't exist)
-    result = conn.execute(sa.text("""
-        SELECT COUNT(*)
-        FROM information_schema.TABLE_CONSTRAINTS
-        WHERE CONSTRAINT_SCHEMA = DATABASE()
-        AND TABLE_NAME = 'resource_members'
-        AND CONSTRAINT_NAME = 'fk_resource_members_user_id'
-    """))
-    if result.scalar() == 0:
-        op.execute("""
-        ALTER TABLE resource_members
-        ADD CONSTRAINT fk_resource_members_user_id
-        FOREIGN KEY (user_id) REFERENCES users(id)
-        """)
+    if not constraint_exists:
+        op.create_foreign_key(
+            'fk_resource_members_user_id',
+            'resource_members',
+            'users',
+            ['user_id'],
+            ['id'],
+        )
 
 
 def downgrade() -> None:
     """Recreate legacy tables (without restoring data)."""
     conn = op.get_bind()
+    dialect = op.get_context().dialect.name
 
-    # 1. Remove foreign key constraint from resource_members
-    result = conn.execute(sa.text("""
-        SELECT COUNT(*)
-        FROM information_schema.TABLE_CONSTRAINTS
-        WHERE CONSTRAINT_SCHEMA = DATABASE()
-        AND TABLE_NAME = 'resource_members'
-        AND CONSTRAINT_NAME = 'fk_resource_members_user_id'
-    """))
-    if result.scalar() > 0:
-        op.execute("""
-        ALTER TABLE resource_members
-        DROP FOREIGN KEY fk_resource_members_user_id
-        """)
+    # 1. Remove foreign key constraint from resource_members using portable API
+    try:
+        op.drop_constraint('fk_resource_members_user_id', 'resource_members', type_='foreignkey')
+    except Exception:
+        # Constraint may not exist
+        pass
 
-    # 2. Recreate shared_teams table
-    op.execute("""
-    CREATE TABLE IF NOT EXISTS shared_teams (
-        id INT NOT NULL AUTO_INCREMENT,
-        user_id INT NOT NULL,
-        original_user_id INT NOT NULL,
-        team_id INT NOT NULL,
-        is_active BOOLEAN DEFAULT TRUE,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (id),
-        KEY ix_shared_teams_id (id),
-        KEY ix_shared_teams_user_id (user_id),
-        KEY ix_shared_teams_original_user_id (original_user_id),
-        KEY ix_shared_teams_team_id (team_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """)
+    # 2. Recreate shared_teams table using portable Alembic API
+    op.create_table(
+        'shared_teams',
+        sa.Column('id', sa.Integer, primary_key=True, autoincrement=True),
+        sa.Column('user_id', sa.Integer, nullable=False),
+        sa.Column('original_user_id', sa.Integer, nullable=False),
+        sa.Column('team_id', sa.Integer, nullable=False),
+        sa.Column('is_active', sa.Boolean, server_default=sa.true()),
+        sa.Column('created_at', sa.DateTime, server_default=sa.func.now()),
+        sa.Column('updated_at', sa.DateTime, server_default=sa.func.now(), onupdate=sa.func.now()),
+    )
+    op.create_index('ix_shared_teams_user_id', 'shared_teams', ['user_id'])
+    op.create_index('ix_shared_teams_original_user_id', 'shared_teams', ['original_user_id'])
+    op.create_index('ix_shared_teams_team_id', 'shared_teams', ['team_id'])
 
-    # 3. Recreate shared_tasks table
-    op.execute("""
-    CREATE TABLE IF NOT EXISTS shared_tasks (
-        id INT NOT NULL AUTO_INCREMENT COMMENT 'Primary key ID',
-        user_id INT NOT NULL DEFAULT 0 COMMENT 'Current user ID',
-        original_user_id INT NOT NULL DEFAULT 0 COMMENT 'Original task owner user ID',
-        original_task_id INT NOT NULL DEFAULT 0 COMMENT 'Original task ID',
-        copied_task_id INT NOT NULL DEFAULT 0 COMMENT 'Copied task ID',
-        is_active BOOLEAN NOT NULL DEFAULT TRUE COMMENT 'Is active',
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Created at',
-        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Updated at',
-        PRIMARY KEY (id),
-        KEY idx_shared_tasks_id (id),
-        KEY idx_shared_tasks_user_id (user_id),
-        KEY idx_shared_tasks_original_user_id (original_user_id),
-        KEY idx_shared_tasks_original_task_id (original_task_id),
-        KEY idx_shared_tasks_copied_task_id (copied_task_id),
-        UNIQUE KEY uniq_user_original_task (user_id, original_task_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    """)
+    # 3. Recreate shared_tasks table using portable Alembic API
+    op.create_table(
+        'shared_tasks',
+        sa.Column('id', sa.Integer, primary_key=True, autoincrement=True),
+        sa.Column('user_id', sa.Integer, nullable=False, server_default='0'),
+        sa.Column('original_user_id', sa.Integer, nullable=False, server_default='0'),
+        sa.Column('original_task_id', sa.Integer, nullable=False, server_default='0'),
+        sa.Column('copied_task_id', sa.Integer, nullable=False, server_default='0'),
+        sa.Column('is_active', sa.Boolean, nullable=False, server_default=sa.true()),
+        sa.Column('created_at', sa.DateTime, nullable=False, server_default=sa.func.now()),
+        sa.Column('updated_at', sa.DateTime, nullable=False, server_default=sa.func.now(), onupdate=sa.func.now()),
+        sa.UniqueConstraint('user_id', 'original_task_id', name='uniq_user_original_task'),
+    )
+    op.create_index('idx_shared_tasks_user_id', 'shared_tasks', ['user_id'])
+    op.create_index('idx_shared_tasks_original_user_id', 'shared_tasks', ['original_user_id'])
+    op.create_index('idx_shared_tasks_original_task_id', 'shared_tasks', ['original_task_id'])
+    op.create_index('idx_shared_tasks_copied_task_id', 'shared_tasks', ['copied_task_id'])
 
-    # 4. Recreate task_members table
-    op.execute("""
-    CREATE TABLE IF NOT EXISTS task_members (
-        id INT NOT NULL AUTO_INCREMENT,
-        task_id INT NOT NULL,
-        user_id INT NOT NULL,
-        invited_by INT,
-        status ENUM('ACTIVE', 'REMOVED') NOT NULL DEFAULT 'ACTIVE',
-        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (id),
-        UNIQUE KEY uq_task_members (task_id, user_id),
-        KEY ix_task_members_id (id),
-        KEY ix_task_members_task_id (task_id),
-        KEY ix_task_members_user_id (user_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """)
+    # 4. Recreate task_members table using portable Alembic API
+    op.create_table(
+        'task_members',
+        sa.Column('id', sa.Integer, primary_key=True, autoincrement=True),
+        sa.Column('task_id', sa.Integer, nullable=False),
+        sa.Column('user_id', sa.Integer, nullable=False),
+        sa.Column('invited_by', sa.Integer, nullable=True),
+        sa.Column('status', sa.Enum('ACTIVE', 'REMOVED', name='task_member_status'), nullable=False, server_default='ACTIVE'),
+        sa.Column('joined_at', sa.DateTime, server_default=sa.func.now()),
+        sa.Column('updated_at', sa.DateTime, server_default=sa.func.now(), onupdate=sa.func.now()),
+        sa.UniqueConstraint('task_id', 'user_id', name='uq_task_members'),
+    )
+    op.create_index('ix_task_members_task_id', 'task_members', ['task_id'])
+    op.create_index('ix_task_members_user_id', 'task_members', ['user_id'])
 
     # Note: Data is not restored in downgrade. Manual data migration would be needed
     # if rollback is required with data preservation.
