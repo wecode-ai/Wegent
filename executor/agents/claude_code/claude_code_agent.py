@@ -736,7 +736,7 @@ class ClaudeCodeAgent(Agent):
             )
 
         # Check if there's a saved session ID to resume
-        saved_session_id = self._load_saved_session_id(self.task_id)
+        saved_session_id = SessionManager.load_saved_session_id(self.task_id)
         if saved_session_id:
             logger.info(
                 f"Resuming Claude session for task {self.task_id}: {saved_session_id}"
