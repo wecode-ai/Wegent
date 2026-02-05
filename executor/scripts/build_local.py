@@ -125,6 +125,42 @@ def restore_version_source(original_content: str) -> None:
     print("Restored version.py to original content")
 
 
+def find_claude_agent_sdk_binary() -> tuple[str, str] | None:
+    """Find the bundled Claude CLI binary from claude-agent-sdk.
+
+    Returns:
+        Tuple of (source_path, dest_path) for PyInstaller --add-binary,
+        or None if not found.
+    """
+    try:
+        import claude_agent_sdk
+
+        sdk_path = Path(claude_agent_sdk.__file__).parent
+        bundled_dir = sdk_path / "_bundled"
+
+        # Determine binary name based on platform
+        if platform.system() == "Windows":
+            binary_name = "claude.exe"
+        else:
+            binary_name = "claude"
+
+        binary_path = bundled_dir / binary_name
+
+        if binary_path.exists():
+            # PyInstaller destination: claude_agent_sdk/_bundled/
+            dest = f"claude_agent_sdk/_bundled/{binary_name}"
+            print(
+                f"Found Claude CLI binary: {binary_path} ({binary_path.stat().st_size / 1024 / 1024:.1f} MB)"
+            )
+            return (str(binary_path), f"claude_agent_sdk{os.sep}_bundled")
+        else:
+            print(f"Warning: Claude CLI binary not found at {binary_path}")
+            return None
+    except ImportError:
+        print("Warning: claude_agent_sdk not installed, cannot bundle CLI binary")
+        return None
+
+
 def build_executable(target_arch: str | None = None):
     """Build the executable using PyInstaller.
 
@@ -284,6 +320,19 @@ def build_executable(target_arch: str | None = None):
             "--hidden-import=sse_starlette.sse",
             # SSL certificates (needed for HTTPS connections)
             "--collect-data=certifi",
+        ]
+
+        # Add Claude CLI binary if found (critical for Windows to avoid asyncio + .cmd issue)
+        claude_binary = find_claude_agent_sdk_binary()
+        if claude_binary:
+            src_path, dest_dir = claude_binary
+            cmd.append(f"--add-binary={src_path}{os.pathsep}{dest_dir}")
+            print(f"Adding Claude CLI binary to build: {src_path} -> {dest_dir}")
+        else:
+            print("Warning: Claude CLI binary not found, executor may fail on Windows")
+
+        # Continue with remaining options
+        cmd += [
             # Exclude packages not needed in local mode
             "--exclude-module=uvicorn",
             "--exclude-module=fastapi",
